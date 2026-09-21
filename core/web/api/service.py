@@ -1025,6 +1025,26 @@ def dispatch_get(
             runtime,
         )
 
+    if normalized_path == "/companion":
+        # The Windows native pet loads the existing, presentation-only renderer from the same
+        # origin as chat. No live state or authority is accepted through this GET route; the
+        # native host sends sanitized state only after the hidden window has loaded.
+        if query or not is_loopback_host(client_host):
+            return apply_runtime_headers(json_response(404, {"error": "not_found"}), runtime)
+        from core.companion_world_fragment import render_desktop_companion_html
+
+        return apply_runtime_headers(
+            html_response(
+                200,
+                render_desktop_companion_html(),
+                headers={
+                    "X-Vool-Workstation-Surface": "companion",
+                    **WALLET_PAGE_FRAMING_HEADERS,
+                },
+            ),
+            runtime,
+        )
+
     if normalized_path == "/chat":
         # VOOL's own chat surface (Phase B option b): the product serves its main UI itself, so
         # the desktop bundle does not depend on the external OpenClaw Node app.
@@ -4176,9 +4196,9 @@ def _dispatch_post_inner(
         return apply_runtime_headers(json_response(_tr_status, _tr_payload), runtime)
 
     if normalized_path == "/api/mode":
-        # Trusted application-state endpoint. It is loopback-only; prompt text, retrieved content,
-        # tool arguments, and model output have no route to it. Every change is also a runtime
-        # receipt event so an active task and the permanent Activity ledger can show what happened.
+        # Application-state endpoint. The Windows bundle transport also requires a native
+        # control proof before this dispatcher runs; loopback alone is not owner identity.
+        # Every change is a runtime receipt event for the task and Activity ledger.
         if not is_loopback_host(client_host):
             return apply_runtime_headers(json_response(403, {"error": "mode changes are local-session only"}), runtime)
         op = str(body.get("op") or "set").strip().lower()

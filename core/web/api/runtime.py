@@ -1267,6 +1267,20 @@ def host_header_allowed(host_value: str) -> bool:
     return hostname in {entry.strip().lower() for entry in extra.split(",") if entry.strip()}
 
 
+def bundle_browser_origin_allowed(host_value: str, origin_value: str) -> bool:
+    """Bind Windows bundle browser requests to its exact WebView origin.
+
+    Requests without Origin remain possible for native/local clients, so this is a
+    browser CSRF guard, not per-user authentication or protected-effect authority.
+    """
+    if os.environ.get("VOOL_WINDOWS_BUNDLE") != "1":
+        return True
+    if str(host_value or "").strip().lower() != "127.0.0.1:11435":
+        return False
+    origin = str(origin_value or "").strip().lower()
+    return not origin or origin == "http://127.0.0.1:11435"
+
+
 def run_agent(
     runtime: RuntimeServices,
     user_text: str,

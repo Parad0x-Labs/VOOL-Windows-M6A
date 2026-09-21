@@ -70,19 +70,13 @@ REM so python.exe would ALLOCATE a fresh visible console window in the taskbar. 
 REM GUI-subsystem interpreter -- it never creates a console -- and the redirect keeps the server
 REM output in a log file so nothing is lost. Fall back to python.exe only if pythonw is absent.
 if not exist "%PYTHONW_EXE%" set "PYTHONW_EXE=%PYTHON_EXE%"
-REM Single-instance + stale recovery. See docs/audits/vool_api_stale_startup_diagnostic_20260711.md:
-REM a stale apps.vool_api_server process that is alive-but-not-listening keeps
-REM %TEMP%\vool_api_server.log (and the runtime SQLite DB) locked, so this fresh start's redirect
-REM fails with "The process cannot access the file because it is being used by another process" and
-REM the launcher retries forever. If the API is already healthy, don't start a duplicate; otherwise
-REM terminate any stale server process (it is not serving, since 11435 is unhealthy) to free the locks.
-powershell -NoProfile -Command "try { $null = Invoke-WebRequest -Uri 'http://127.0.0.1:11435/healthz' -UseBasicParsing -TimeoutSec 2; exit 0 } catch { exit 1 }" >nul 2>&1
-if not errorlevel 1 (
-  echo VOOL API already healthy on http://127.0.0.1:11435 - not starting a duplicate.
+REM A listener on the canonical port is not proof that it belongs to this checkout. Never
+REM terminate or attach to a process based on its port, image name, or command line.
+powershell -NoProfile -Command "if (Get-NetTCPConnection -LocalPort 11435 -State Listen -ErrorAction SilentlyContinue) { exit 1 } else { exit 0 }" >nul 2>&1
+if errorlevel 1 (
+  echo Port 11435 is already in use. Close the existing application before starting VOOL.
   endlocal
-  exit /b 0
+  exit /b 1
 )
-powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { ($_.Name -eq 'pythonw.exe' -or $_.Name -eq 'python.exe') -and ($_.CommandLine -like '*apps.vool_api_server*' -or $_.CommandLine -like '*vool_api_server.py*') } | ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }" >nul 2>&1
-powershell -NoProfile -Command "Start-Sleep -Milliseconds 800" >nul 2>&1
 "%PYTHONW_EXE%" -m apps.vool_api_server >> "%TEMP%\vool_api_server.log" 2>&1
 endlocal

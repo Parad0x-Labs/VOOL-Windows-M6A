@@ -145,10 +145,8 @@ class JobRunnerTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0)
             self.assertIn("sandbox-ok", result.stdout)
 
-    def test_windows_missing_backend_error_names_heuristic_only_and_wsl2(self) -> None:
-        # On native Windows there is no kernel network-isolation backend, so a
-        # no-network 'auto' job must fail closed with an ACTIONABLE message that
-        # names the two real options: WSL2/Linux and the heuristic_only override.
+    def test_windows_missing_backend_requires_native_broker(self) -> None:
+        # No heuristic or WSL2 dependency is an acceptable desktop fallback.
         with tempfile.TemporaryDirectory() as tmpdir:
             runner = JobRunner(
                 ExecutionPolicy(
@@ -161,12 +159,18 @@ class JobRunnerTests(unittest.TestCase):
             ), patch("sandbox.job_runner.shutil.which", return_value=None):
                 message = runner._no_kernel_isolation_message()
 
-        self.assertIn("WSL2", message)
-        # The message used to offer `heuristic_only` as an informed override. There is no
-        # override any more — the only thing one could buy is running with no boundary while
-        # still reporting a sandbox — so the message must say so rather than name a way out.
+        self.assertIn("Windows broker", message)
         self.assertIn("no override", message.lower())
-        self.assertNotIn("static command guard", message.lower())
+        self.assertNotIn("WSL2", message)
+
+    def test_windows_unavailable_backend_never_returns_bare_argv(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runner = JobRunner(ExecutionPolicy(workspace_root=Path(tmpdir), network_isolation_mode="heuristic_only"))
+            with patch("sandbox.job_runner.os.name", "nt"), patch(
+                "sandbox.job_runner.sys.platform", "win32"
+            ):
+                with self.assertRaises(KernelIsolationUnavailableError):
+                    runner._with_network_isolation(["python", "-c", "print('unsafe')"])
 
     def test_linux_bwrap_prefix_preferred_when_available(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -382,6 +386,7 @@ class BytecodeContainmentTests(unittest.TestCase):
                 "it doesn't, the tests below prove nothing about what the guard is preventing",
             )
 
+    @unittest.skipIf(sys.platform == "win32", "native Windows broker not implemented")
     def test_job_runner_execution_creates_no_bytecode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             subject = Path(tmp) / "subject.py"
@@ -398,6 +403,7 @@ class BytecodeContainmentTests(unittest.TestCase):
                 "JobRunner execution must not leave bytecode behind in a tree it only read",
             )
 
+    @unittest.skipIf(sys.platform == "win32", "native Windows broker not implemented")
     def test_removing_the_bytecode_guard_from_child_env_turns_the_test_red(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             subject = Path(tmp) / "subject.py"

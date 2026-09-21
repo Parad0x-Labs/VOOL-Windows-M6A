@@ -10,6 +10,20 @@ import core.onboarding as onboarding
 
 
 class OnboardingOpenClawRegistrationTests(unittest.TestCase):
+    def test_windows_bundle_does_not_write_openclaw_config_without_opt_in(self) -> None:
+        with mock.patch.dict("os.environ", {"VOOL_WINDOWS_BUNDLE": "1", "VOOL_ENABLE_OPENCLAW_INTEGRATION": ""}), mock.patch(
+            "installer.register_openclaw_agent.register"
+        ) as register:
+            self.assertFalse(onboarding.ensure_openclaw_registration(display_name="VOOL"))
+        register.assert_not_called()
+
+    def test_windows_bundle_can_register_after_explicit_opt_in(self) -> None:
+        with mock.patch.dict("os.environ", {"VOOL_WINDOWS_BUNDLE": "1", "VOOL_ENABLE_OPENCLAW_INTEGRATION": "1"}), mock.patch(
+            "installer.register_openclaw_agent.register", return_value=True
+        ) as register:
+            self.assertTrue(onboarding.ensure_openclaw_registration(display_name="VOOL"))
+        register.assert_called_once()
+
     def test_ensure_openclaw_registration_repairs_missing_vool_agent(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             openclaw_home = Path(tmpdir) / ".openclaw"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from unittest import mock
 
 import pytest
@@ -81,6 +82,27 @@ def test_matching_existing_runtime_is_attached_without_claiming_ownership(tmp_pa
     supervisor._popen.assert_not_called()
 
 
+def test_windows_bundle_attach_only_never_starts_or_stops_an_api(tmp_path, monkeypatch) -> None:
+    supervisor = _supervisor(tmp_path, require_owned=False)
+    supervisor.attach_only = True
+    kill = mock.Mock()
+    monkeypatch.setattr("installer.bundle.native_runtime_supervisor.os.kill", kill)
+
+    supervisor._health = mock.Mock(return_value=_health())
+    assert supervisor.ensure_ready()["commit_full"] == SHA
+    supervisor._popen.assert_not_called()
+
+    supervisor._health = mock.Mock(return_value=_health(OTHER_SHA))
+    with pytest.raises(NativeRuntimeError, match="different runtime"):
+        supervisor.ensure_ready()
+    kill.assert_not_called()
+
+    supervisor._health = mock.Mock(return_value=None)
+    with pytest.raises(NativeRuntimeError, match="not ready"):
+        supervisor.ensure_ready()
+    supervisor._popen.assert_not_called()
+
+
 def test_bundle_mode_replaces_even_a_matching_runtime_to_make_teardown_owned(tmp_path, monkeypatch) -> None:
     child = _Child(pid=9000)
     supervisor = _supervisor(tmp_path, child=child, require_owned=True)
@@ -103,7 +125,10 @@ def test_missing_runtime_is_spawned_and_gated_on_exact_health_identity(tmp_path)
     call = supervisor._popen.call_args
     assert call.args[0][0] == "bash"
     assert call.kwargs["cwd"] == str(tmp_path.resolve())
-    assert call.kwargs["start_new_session"] is True
+    if os.name == "nt":
+        assert call.kwargs["creationflags"] != 0
+    else:
+        assert call.kwargs["start_new_session"] is True
 
 
 def test_unidentifiable_port_occupant_fails_closed_and_is_never_killed(tmp_path, monkeypatch) -> None:
@@ -141,6 +166,7 @@ def test_recognized_stale_runtime_is_stopped_before_the_exact_child_starts(tmp_p
     assert supervisor.owns_runtime is True
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group teardown")
 def test_spawned_identity_mismatch_is_red_and_child_is_torn_down(tmp_path, monkeypatch) -> None:
     child = _Child(pid=9003)
     supervisor = _supervisor(tmp_path, child=child)
@@ -154,6 +180,7 @@ def test_spawned_identity_mismatch_is_red_and_child_is_torn_down(tmp_path, monke
     assert supervisor.owns_runtime is False
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group teardown")
 def test_owned_child_process_group_is_torn_down_on_native_quit(tmp_path, monkeypatch) -> None:
     child = _Child(pid=9004)
     supervisor = _supervisor(tmp_path, child=child)

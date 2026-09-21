@@ -1,7 +1,7 @@
-name: Windows Release Gauntlet
+name: Windows Source Gauntlet
 
 concurrency:
-  group: windows-release-gauntlet-${{ github.ref }}
+  group: windows-source-gauntlet-${{ github.ref }}
   cancel-in-progress: true
 
 on:
@@ -9,10 +9,33 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/windows-release-gauntlet.yml"
-      - "Install_And_Run_NULLA.ps1"
-      - "Install_And_Run_NULLA.bat"
-      - "Test_NULLA_Windows_Gauntlet.cmd"
+      - "Install_And_Run_VOOL.ps1"
+      - "Install_And_Run_VOOL.bat"
+      - "Test_VOOL_Windows_Gauntlet.cmd"
       - "installer/**"
+      - "apps/vool_api_server.py"
+      - "core/onboarding.py"
+      - "core/native_control.py"
+      - "core/plugin_executor.py"
+      - "core/request_trust.py"
+      - "core/runtime_tool_contracts.py"
+      - "core/web/api/app.py"
+      - "core/web/api/runtime.py"
+      - "core/web/api/service.py"
+      - "sandbox/job_runner.py"
+      - "docs/windows_parity/**"
+      - "tools/windows_parity_inventory.py"
+      - "tools/windows_authority_audit.py"
+      - "tests/test_windows_parity_inventory.py"
+      - "tests/test_windows_authority_audit.py"
+      - "tests/test_native_control.py"
+      - "tests/test_windows_host_native_control.py"
+      - "tests/test_audit_security_hardening.py"
+      - "tests/test_onboarding_openclaw_registration.py"
+      - "tests/test_plugin_executor.py"
+      - "tests/test_p0_mcp_trust.py"
+      - "tests/test_p0_plugin_dispatch_boundaries.py"
+      - "tests/test_job_runner.py"
       # Only the core modules this gauntlet's tests actually import. A blanket core/** triggered a
       # 2x-billed Windows runner for routing and context edits that cannot reach the installer
       # surface; ubuntu CI still covers every one of these files on each push, and only
@@ -34,14 +57,41 @@ on:
       - "tests/test_install_surface_contracts.py"
       - "tests/test_local_only_policy.py"
       - "tests/test_validate_install_profile.py"
+      - "tests/test_bundle_tooling.py"
+      - "tests/test_native_runtime_supervisor.py"
+      - "tests/test_windows_inno_compile.py"
+      - "tests/test_windows_fresh_host_gauntlet.py"
   push:
     branches: [main, develop]
     paths:
       - ".github/workflows/windows-release-gauntlet.yml"
-      - "Install_And_Run_NULLA.ps1"
-      - "Install_And_Run_NULLA.bat"
-      - "Test_NULLA_Windows_Gauntlet.cmd"
+      - "Install_And_Run_VOOL.ps1"
+      - "Install_And_Run_VOOL.bat"
+      - "Test_VOOL_Windows_Gauntlet.cmd"
       - "installer/**"
+      - "apps/vool_api_server.py"
+      - "core/onboarding.py"
+      - "core/native_control.py"
+      - "core/plugin_executor.py"
+      - "core/request_trust.py"
+      - "core/runtime_tool_contracts.py"
+      - "core/web/api/app.py"
+      - "core/web/api/runtime.py"
+      - "core/web/api/service.py"
+      - "sandbox/job_runner.py"
+      - "docs/windows_parity/**"
+      - "tools/windows_parity_inventory.py"
+      - "tools/windows_authority_audit.py"
+      - "tests/test_windows_parity_inventory.py"
+      - "tests/test_windows_authority_audit.py"
+      - "tests/test_native_control.py"
+      - "tests/test_windows_host_native_control.py"
+      - "tests/test_audit_security_hardening.py"
+      - "tests/test_onboarding_openclaw_registration.py"
+      - "tests/test_plugin_executor.py"
+      - "tests/test_p0_mcp_trust.py"
+      - "tests/test_p0_plugin_dispatch_boundaries.py"
+      - "tests/test_job_runner.py"
       # Only the core modules this gauntlet's tests actually import. A blanket core/** triggered a
       # 2x-billed Windows runner for routing and context edits that cannot reach the installer
       # surface; ubuntu CI still covers every one of these files on each push, and only
@@ -63,6 +113,10 @@ on:
       - "tests/test_install_surface_contracts.py"
       - "tests/test_local_only_policy.py"
       - "tests/test_validate_install_profile.py"
+      - "tests/test_bundle_tooling.py"
+      - "tests/test_native_runtime_supervisor.py"
+      - "tests/test_windows_inno_compile.py"
+      - "tests/test_windows_fresh_host_gauntlet.py"
   workflow_dispatch:
 
 jobs:
@@ -74,14 +128,60 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.401"
       - name: Install package with runtime test dependencies
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          python -m pip install -e ".[dev,companion]"
+      - name: Check native bundle contracts
+        shell: pwsh
+        run: python -m pytest -q tests/test_bundle_tooling.py tests/test_native_runtime_supervisor.py tests/test_windows_inno_compile.py
+      - name: Compile native approval host from locked dependencies
+        shell: pwsh
+        run: |
+          dotnet restore installer/windows_host/VOOL.WindowsHost.csproj --locked-mode
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build installer/windows_host/VOOL.WindowsHost.csproj --configuration Release --no-restore -warnaserror
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pytest -q tests/test_windows_host_native_control.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build and exercise native execution broker
+        shell: pwsh
+        run: |
+          dotnet restore installer/windows_broker/Vool.WindowsBroker.csproj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet publish installer/windows_broker/Vool.WindowsBroker.csproj --configuration Release --no-restore -warnaserror
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet restore installer/windows_broker/tests/Vool.WindowsBroker.Tests.csproj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet build installer/windows_broker/tests/Vool.WindowsBroker.Tests.csproj --configuration Release --no-restore -warnaserror
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $broker = (Resolve-Path installer/windows_broker/bin/Release/net10.0-windows10.0.17763.0/win-x64/publish/vool-broker.exe).Path
+          $tests = (Resolve-Path installer/windows_broker/tests/bin/Release/net10.0-windows10.0.17763.0/win-x64/vool-broker-tests.exe).Path
+          & $tests $broker
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check Windows trust and source inventory
+        shell: pwsh
+        run: |
+          python tools/windows_parity_inventory.py --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m tools.windows_authority_audit --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pytest -q tests/test_native_control.py tests/test_windows_authority_audit.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pytest -q tests/test_windows_parity_inventory.py tests/test_audit_security_hardening.py tests/test_onboarding_openclaw_registration.py tests/test_vool_api_server.py -k "host_header or origin or main_runs_uvicorn or windows_bundle or windows_source_inventory"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check protected executable paths fail closed
+        shell: pwsh
+        run: python -m pytest -q tests/test_plugin_executor.py tests/test_p0_mcp_trust.py tests/test_p0_plugin_dispatch_boundaries.py tests/test_job_runner.py
       - name: Run Windows gauntlet without live model pull
         shell: cmd
-        run: Test_NULLA_Windows_Gauntlet.cmd -SkipInstall -SkipBenchmark -Json
+        # The legacy source-zip builder is not the native installed artifact and cannot count as
+        # Windows release evidence. Native bundle/installer compilation is gated above.
+        run: Test_VOOL_Windows_Gauntlet.cmd -SkipInstall -SkipBenchmark -SkipPackageBuild -Json
       - name: Upload gauntlet report
         uses: actions/upload-artifact@v7
         if: always()

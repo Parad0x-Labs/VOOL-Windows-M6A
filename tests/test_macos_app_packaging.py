@@ -674,8 +674,8 @@ def test_native_start_failure_also_fails_closed(tmp_path: Path) -> None:
     assert "refusing silent browser fallback" in log
 
 
-def test_windows_edge_lane_is_untouched_by_the_posix_fail_closed_gate(tmp_path: Path) -> None:
-    """WebView2-absent Edge fallback remains the documented Windows contract."""
+def test_windows_missing_webview2_fails_without_browser_fallback(tmp_path: Path) -> None:
+    """The Windows edition must never turn a failed native launch into a browser success."""
     home = tmp_path / "home-win32"
     home.mkdir()
     driver = tmp_path / "driver_win32.py"
@@ -692,6 +692,8 @@ def test_windows_edge_lane_is_untouched_by_the_posix_fail_closed_gate(tmp_path: 
         nrs.NativeRuntimeSupervisor.from_environment = classmethod(lambda cls, **kwargs: FakeSupervisor())
         nw.sys.platform = "win32"
         nw._has_webview2 = lambda: False
+        from types import SimpleNamespace
+        nw.ctypes.windll = SimpleNamespace(user32=SimpleNamespace(MessageBoxW=lambda *a: 0))
         nw._wait_for_server = lambda timeout_s=None: False
         launched = []
         class FakePopen:
@@ -704,8 +706,8 @@ def test_windows_edge_lane_is_untouched_by_the_posix_fail_closed_gate(tmp_path: 
     ))
     done = subprocess.run([sys.executable, str(driver)], capture_output=True, text=True,
                           env={"PATH": BASE_PATH, "HOME": str(home)}, timeout=120)
-    assert "RC=0" in done.stdout
-    assert "powershell" in done.stdout and "vool-open.ps1" in done.stdout
+    assert "RC=1" in done.stdout
+    assert "LAUNCHED=[]" in done.stdout
 
 
 # ------------------------------------------------------------------------------------------

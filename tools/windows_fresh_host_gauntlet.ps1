@@ -192,13 +192,14 @@ function Invoke-PackageBuild {
 }
 
 function Invoke-OpenClawChecks {
+    if (-not $RequireOpenClaw) {
+        Add-Check -Name "OpenClaw integration" -Status "skipped" -ExitCode $null -DurationSeconds 0 -Detail "Not required by the native Windows artifact; explicit -RequireOpenClaw opt-in was not provided."
+        return
+    }
+
     $openclaw = Resolve-Tool "openclaw"
     if ([string]::IsNullOrWhiteSpace($openclaw)) {
-        if ($RequireOpenClaw) {
-            throw "OpenClaw CLI was not found on PATH."
-        }
-        Add-Check -Name "OpenClaw CLI" -Status "skipped" -ExitCode $null -DurationSeconds 0 -Detail "OpenClaw CLI was not found on PATH."
-        return
+        throw "OpenClaw CLI was not found on PATH."
     }
 
     Invoke-Checked -Name "OpenClaw config validate" -FilePath $openclaw -Arguments @("config", "validate")

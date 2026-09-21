@@ -20,6 +20,9 @@ class _Req:
     async def body(self):
         return self._body
 
+    async def stream(self):
+        yield self._body
+
 
 def _dispatch(req):
     from core.web.api import app as appmod
@@ -53,6 +56,30 @@ def test_no_origin_header_is_allowed():
     req = _Req("POST", "/api/chat", {"host": "127.0.0.1:11435", "content-type": "application/json"}, body=b'{"messages":[]}')
     resp = _dispatch(req)
     assert resp.status_code != 403
+
+
+def test_windows_bundle_rejects_other_loopback_browser_origin_on_get(monkeypatch):
+    monkeypatch.setenv("VOOL_WINDOWS_BUNDLE", "1")
+    req = _Req("GET", "/healthz", {"host": "127.0.0.1:11435", "origin": "http://127.0.0.1:9999"})
+    assert _dispatch(req).status_code == 403
+
+
+def test_windows_bundle_rejects_forged_host_even_with_matching_origin(monkeypatch):
+    monkeypatch.setenv("VOOL_WINDOWS_BUNDLE", "1")
+    req = _Req("POST", "/api/chat", {"host": "127.0.0.1:9999", "origin": "http://127.0.0.1:9999"})
+    assert _dispatch(req).status_code == 403
+
+
+def test_windows_bundle_accepts_its_exact_webview_origin(monkeypatch):
+    monkeypatch.setenv("VOOL_WINDOWS_BUNDLE", "1")
+    req = _Req("GET", "/healthz", {"host": "127.0.0.1:11435", "origin": "http://127.0.0.1:11435"})
+    assert _dispatch(req).status_code != 403
+
+
+def test_windows_bundle_origin_guard_is_not_local_process_authentication(monkeypatch):
+    monkeypatch.setenv("VOOL_WINDOWS_BUNDLE", "1")
+    req = _Req("GET", "/healthz", {"host": "127.0.0.1:11435"})
+    assert _dispatch(req).status_code != 403
 
 
 # --- #4: a forged internal _trusted_local_only flag is stripped before dispatch ---

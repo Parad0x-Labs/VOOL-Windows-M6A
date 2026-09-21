@@ -12,6 +12,7 @@ Blackbox journal, or the budget store read back in the daemon's own home — nev
 from __future__ import annotations
 
 import json
+import os
 import threading
 from pathlib import Path
 from typing import Any
@@ -22,7 +23,10 @@ import pytest
 from tests._blackbox_served_rig import REPO_ROOT, SEED_MANIFEST, ScriptedProvider, ServedDaemon, run_in_home
 from tests._toolchain_fixtures import PLUGIN_ID, calls_logged, make_plugin
 
-pytestmark = [pytest.mark.served]
+pytestmark = [
+    pytest.mark.served,
+    pytest.mark.skipif(os.name == "nt", reason="native Windows broker not implemented"),
+]
 
 MODEL = "qwen3-stub:2b"
 

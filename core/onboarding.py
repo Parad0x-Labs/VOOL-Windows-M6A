@@ -128,6 +128,8 @@ def ensure_bootstrap_identity(
 
 def ensure_openclaw_registration(*, display_name: str | None = None, model_tag: str = "") -> bool:
     """Keep the OpenClaw config/agent bridge aligned with VOOL's current identity."""
+    if os.environ.get("VOOL_WINDOWS_BUNDLE") == "1" and os.environ.get("VOOL_ENABLE_OPENCLAW_INTEGRATION") != "1":
+        return False
     chosen_name = str(display_name or get_agent_display_name() or "VOOL").strip() or "VOOL"
     try:
         from installer.register_openclaw_agent import register

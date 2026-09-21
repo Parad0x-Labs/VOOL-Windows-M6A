@@ -9,22 +9,13 @@ from tests.platform_helpers import bash_path, bash_script_args
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_start_vool_bat_recovers_from_stale_api_process() -> None:
-    # A stale apps.vool_api_server process (alive but not listening on 11435) keeps the server log
-    # and runtime DB locked, so a fresh start's redirect fails and the launcher retries forever
-    # (docs/audits/vool_api_stale_startup_diagnostic_20260711.md). Start_VOOL.bat must skip a
-    # duplicate when already healthy, and otherwise kill the stale server before launching.
+def test_start_vool_bat_never_kills_or_attaches_to_an_unverified_port_occupant() -> None:
     script = (PROJECT_ROOT / "Start_VOOL.bat").read_text(encoding="utf-8")
-    assert "not starting a duplicate" in script
-    assert "/healthz" in script
-    assert "Stop-Process" in script
+    assert "Get-NetTCPConnection -LocalPort 11435 -State Listen" in script
+    assert "Port 11435 is already in use" in script
+    assert "Stop-Process" not in script
     assert "apps.vool_api_server" in script
-    # The kill must gate on the process command line, not just the image name, so unrelated
-    # python.exe/pythonw.exe processes are never terminated.
-    assert "CommandLine -like '*apps.vool_api_server*'" in script
-    assert "CommandLine -like '*vool_api_server.py*'" in script
-    # The stale kill must run BEFORE the server launch line.
-    assert script.index("Stop-Process") < script.rindex("-m apps.vool_api_server")
+    assert script.index("Get-NetTCPConnection") < script.rindex("-m apps.vool_api_server")
 
 
 def test_xsearch_up_reports_searxng_state_honestly() -> None:

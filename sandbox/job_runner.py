@@ -612,15 +612,12 @@ class JobRunner:
             "it actually runs, not merely for whether it is on PATH."
         )
         if os.name == "nt":
-            # Native Windows has no kernel network-namespace backend, so a
-            # no-network job fails closed here. Name the two real options so the
-            # operator can make an informed choice instead of guessing.
+            # Native Windows needs a broker with OS-enforced filesystem, process,
+            # and network policy. WSL2 is not a one-download desktop prerequisite.
             return (
-                f"{base} Windows has no kernel confinement backend, so executable tools cannot "
-                "run here at all: run VOOL under WSL2/Linux so bwrap/unshare/firejail provide "
-                "kernel-enforced confinement. There is deliberately no override — the only thing "
-                "an override could buy is running the job with no boundary while still calling "
-                "it sandboxed."
+                "Native Windows command execution is unavailable until the VOOL Windows broker "
+                "can enforce filesystem, process-tree, and network policy. There is no override: "
+                "an unsandboxed command cannot be advertised as a protected tool."
             )
         return (
             f"{base} There is no override: `network_isolation_mode='heuristic_only'` relaxes "

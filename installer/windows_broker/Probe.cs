@@ -1,0 +1,335 @@
+using System.Diagnostics;
+using System.Globalization;
+using System.Net.Sockets;
+using System.Text;
+using System.Text.Json;
+
+namespace Vool.WindowsBroker;
+
+internal static class Probe
+{
+    internal static int Run(IReadOnlyList<string> arguments)
+    {
+        var result = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["probe"] = true,
+        };
+        var returnCode = 0;
+
+        try
+        {
+            if (!NativeMethods.IsProcessInJob(
+                    NativeMethods.GetCurrentProcess(),
+                    IntPtr.Zero,
+                    out var inJob))
+            {
+                throw NativeMethods.LastError("IsProcessInJob");
+            }
+
+            using var token = OpenCurrentToken();
+            result["inJob"] = inJob;
+            result["token"] = TokenInspector.Inspect(token);
+        }
+        catch (Exception exception)
+        {
+            result["securityInspectionError"] = exception.GetType().Name + ": " + exception.Message;
+            returnCode = 2;
+        }
+
+        for (var index = 0; index < arguments.Count; index++)
+        {
+            switch (arguments[index])
+            {
+                case "--sleep-ms":
+                    var sleepMilliseconds = ReadInt(arguments, ref index, "--sleep-ms");
+                    if (sleepMilliseconds is < 0 or > 60_000)
+                        throw new ArgumentOutOfRangeException(nameof(sleepMilliseconds));
+                    Thread.Sleep(sleepMilliseconds);
+                    result["sleptMs"] = sleepMilliseconds;
+                    break;
+
+                case "--write-scratch":
+                    var scratchName = ReadValue(arguments, ref index, "--write-scratch");
+                    var scratchPath = ScratchPath(scratchName);
+                    File.WriteAllText(scratchPath, "vool-broker-scratch\n", Encoding.UTF8);
+                    result["scratchWrite"] = File.Exists(scratchPath);
+                    result["scratchName"] = scratchName;
+                    break;
+
+                case "--file":
+                    var filePath = ReadValue(arguments, ref index, "--file");
+                    try
+                    {
+                        result["fileRead"] = File.ReadAllText(filePath).Length >= 0;
+                        result["fileReadPath"] = filePath;
+                        if ((bool)result["fileRead"]!)
+                            returnCode = Math.Max(returnCode, 20);
+                    }
+                    catch (Exception exception) when (exception is UnauthorizedAccessException or IOException)
+                    {
+                        result["fileRead"] = false;
+                        result["fileError"] = exception.GetType().Name;
+                    }
+                    break;
+
+                case "--write-file":
+                    var writePath = ReadValue(arguments, ref index, "--write-file");
+                    try
+                    {
+                        using var stream = new FileStream(
+                            writePath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                        stream.WriteByte(0x56);
+                        result["fileWrite"] = true;
+                        returnCode = Math.Max(returnCode, 24);
+                    }
+                    catch (Exception exception) when (exception is UnauthorizedAccessException or IOException)
+                    {
+                        result["fileWrite"] = false;
+                        result["fileWriteError"] = exception.GetType().Name;
+                    }
+                    break;
+
+                case "--socket":
+                    var host = ReadValue(arguments, ref index, "--socket host");
+                    var port = ReadInt(arguments, ref index, "--socket port");
+                    var connected = TryConnect(host, port, out var socketError);
+                    result["socketConnected"] = connected;
+                    result["socketError"] = socketError;
+                    if (connected)
+                        returnCode = Math.Max(returnCode, 21);
+                    break;
+
+                case "--handle":
+                    var handleText = ReadValue(arguments, ref index, "--handle");
+                    var expectedPath = ReadValue(arguments, ref index, "--handle expected path");
+                    var handlePointsToExpected = InspectHandle(handleText, expectedPath, out var handlePath);
+                    result["handlePointsToExpected"] = handlePointsToExpected;
+                    result["handlePath"] = handlePath;
+                    if (handlePointsToExpected)
+                        returnCode = Math.Max(returnCode, 22);
+                    break;
+
+                case "--spawn-child-report":
+                    var childReport = ReadValue(arguments, ref index, "--spawn-child-report");
+                    var childResult = SpawnJobChild(childReport);
+                    result["child"] = childResult is null
+                        ? null
+                        : new { childResult.Value.ExitCode, childResult.Value.InJob };
+                    if (childResult is null || !childResult.Value.InJob || childResult.Value.ExitCode != 0)
+                        returnCode = Math.Max(returnCode, 23);
+                    break;
+
+                case "--spawn-child-sleeper":
+                    var childSleep = ReadInt(arguments, ref index, "--spawn-child-sleeper");
+                    if (childSleep is < 1 or > 60_000)
+                        throw new ArgumentOutOfRangeException(nameof(childSleep));
+                    result["childSleeperPid"] = SpawnSleeper(childSleep);
+                    break;
+
+                case "--job-child-report":
+                    var reportPath = ReadValue(arguments, ref index, "--job-child-report");
+                    WriteJobChildReport(reportPath);
+                    result["jobChildReport"] = true;
+                    break;
+
+                case "--inspect":
+                    break;
+
+                case "--echo-value":
+                    result["echoValue"] = ReadValue(arguments, ref index, "--echo-value");
+                    break;
+
+                default:
+                    throw new ArgumentException($"Unknown probe argument: {arguments[index]}");
+            }
+        }
+
+        Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+        return returnCode;
+    }
+
+    private static SafeNativeHandle OpenCurrentToken()
+    {
+        if (!NativeMethods.OpenProcessToken(
+                NativeMethods.GetCurrentProcess(),
+                NativeMethods.TokenQuery,
+                out var token))
+        {
+            throw NativeMethods.LastError("OpenProcessToken(probe)");
+        }
+        return token;
+    }
+
+    private static string ScratchPath(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name) || Path.IsPathRooted(name))
+            throw new BrokerSecurityException("Probe scratch names must be relative.");
+        var scratch = Environment.GetEnvironmentVariable("VOOL_BROKER_SCRATCH");
+        if (string.IsNullOrWhiteSpace(scratch))
+            throw new BrokerSecurityException("VOOL_BROKER_SCRATCH is not set.");
+        var root = Path.GetFullPath(scratch).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var candidate = Path.GetFullPath(Path.Combine(root, name));
+        if (!candidate.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+            throw new BrokerSecurityException("Probe scratch path escaped its root.");
+        return candidate;
+    }
+
+    private static bool TryConnect(string host, int port, out string? error)
+    {
+        using var client = new TcpClient();
+        try
+        {
+            var task = client.ConnectAsync(host, port);
+            if (!task.Wait(TimeSpan.FromMilliseconds(750)))
+            {
+                error = "timeout";
+                return false;
+            }
+            task.GetAwaiter().GetResult();
+            error = null;
+            return client.Connected;
+        }
+        catch (Exception exception)
+        {
+            error = exception.GetBaseException().GetType().Name;
+            return false;
+        }
+    }
+
+    private static bool InspectHandle(string handleText, string expectedPath, out string? actualPath)
+    {
+        actualPath = null;
+        if (!ulong.TryParse(
+                handleText,
+                NumberStyles.HexNumber,
+                CultureInfo.InvariantCulture,
+                out var numericHandle))
+        {
+            return false;
+        }
+
+        var handle = new IntPtr(unchecked((long)numericHandle));
+        bool isOpen;
+        try
+        {
+            isOpen = NativeMethods.GetHandleInformation(handle, out _);
+        }
+        catch (System.Runtime.InteropServices.SEHException)
+        {
+            // Some Windows handle-verifier configurations raise on an invalid handle.
+            return false;
+        }
+        if (!isOpen || NativeMethods.GetFileType(handle) != NativeMethods.FileTypeDisk)
+            return false;
+        var buffer = new StringBuilder(1024);
+        var length = NativeMethods.GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Capacity, 0);
+        if (length == 0 || length >= buffer.Capacity)
+            return false;
+
+        actualPath = buffer.ToString();
+        var normalizedActual = actualPath.StartsWith(@"\\?\", StringComparison.Ordinal)
+            ? actualPath[4..]
+            : actualPath;
+        var normalizedExpected = Path.GetFullPath(expectedPath);
+        return string.Equals(
+            Path.GetFullPath(normalizedActual),
+            normalizedExpected,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static (int ExitCode, bool InJob)? SpawnJobChild(string reportPath)
+    {
+        var processPath = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(processPath))
+            return null;
+
+        var startInfo = new ProcessStartInfo(processPath)
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        startInfo.ArgumentList.Add("probe");
+        startInfo.ArgumentList.Add("--job-child-report");
+        startInfo.ArgumentList.Add(reportPath);
+        using var child = Process.Start(startInfo);
+        if (child is null)
+            return null;
+        if (!child.WaitForExit(5_000))
+        {
+            try
+            {
+                child.Kill(entireProcessTree: true);
+            }
+            catch (InvalidOperationException)
+            {
+                // The job remains the authoritative cleanup boundary.
+            }
+            return null;
+        }
+
+        _ = child.StandardOutput.ReadToEnd();
+        _ = child.StandardError.ReadToEnd();
+        var inJob = false;
+        if (File.Exists(reportPath))
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(reportPath));
+            inJob = document.RootElement.TryGetProperty("inJob", out var property)
+                && property.ValueKind == JsonValueKind.True;
+        }
+        return (child.ExitCode, inJob);
+    }
+
+    private static int SpawnSleeper(int milliseconds)
+    {
+        var processPath = Environment.ProcessPath
+            ?? throw new BrokerSecurityException("Probe executable path is unavailable.");
+        var startInfo = new ProcessStartInfo(processPath)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        startInfo.ArgumentList.Add("probe");
+        startInfo.ArgumentList.Add("--sleep-ms");
+        startInfo.ArgumentList.Add(milliseconds.ToString(CultureInfo.InvariantCulture));
+        using var child = Process.Start(startInfo)
+            ?? throw new BrokerSecurityException("Sleeper child did not start.");
+        return child.Id;
+    }
+
+    private static void WriteJobChildReport(string reportPath)
+    {
+        var inJob = NativeMethods.IsProcessInJob(
+            NativeMethods.GetCurrentProcess(),
+            IntPtr.Zero,
+            out var isInJob) && isInJob;
+        using var token = OpenCurrentToken();
+        var payload = new
+        {
+            inJob,
+            token = TokenInspector.Inspect(token),
+        };
+        File.WriteAllText(reportPath, JsonSerializer.Serialize(payload, JsonOptions), Encoding.UTF8);
+    }
+
+    private static string ReadValue(IReadOnlyList<string> arguments, ref int index, string option)
+    {
+        if (++index >= arguments.Count)
+            throw new ArgumentException($"Missing value for {option}.");
+        return arguments[index];
+    }
+
+    private static int ReadInt(IReadOnlyList<string> arguments, ref int index, string option)
+    {
+        var value = ReadValue(arguments, ref index, option);
+        if (!int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+            throw new ArgumentException($"Invalid integer for {option}.");
+        return parsed;
+    }
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        WriteIndented = false,
+    };
+}

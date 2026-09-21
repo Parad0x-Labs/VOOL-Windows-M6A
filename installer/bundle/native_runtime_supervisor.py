@@ -49,6 +49,7 @@ class NativeRuntimeSupervisor:
         health_url: str = "http://127.0.0.1:11435/healthz",
         env: dict[str, str] | None = None,
         require_owned: bool = True,
+        attach_only: bool = False,
         startup_timeout: float = 90.0,
         poll_interval: float = 0.25,
         popen: Callable[..., Any] = subprocess.Popen,
@@ -60,6 +61,7 @@ class NativeRuntimeSupervisor:
         self.health_url = str(health_url)
         self.env = dict(os.environ if env is None else env)
         self.require_owned = bool(require_owned)
+        self.attach_only = bool(attach_only)
         self.startup_timeout = float(startup_timeout)
         self.poll_interval = float(poll_interval)
         self._popen = popen
@@ -101,12 +103,16 @@ class NativeRuntimeSupervisor:
         require_owned = str(os.environ.get("VOOL_NATIVE_REQUIRE_OWNED_RUNTIME") or "1").strip().lower() not in {
             "0", "false", "no", "off",
         }
+        attach_only = str(os.environ.get("VOOL_NATIVE_ATTACH_ONLY") or "").strip().lower() in {
+            "1", "true", "yes", "on",
+        }
         return cls(
             root,
             command,
             expected_sha=expected,
             health_url=f"{origin}/healthz",
             require_owned=require_owned,
+            attach_only=attach_only,
             startup_timeout=timeout,
         )
 
@@ -188,10 +194,14 @@ class NativeRuntimeSupervisor:
                 self.attached_existing = True
                 self.ready_identity = self._identity(existing)
                 return dict(self.ready_identity)
+            if self.attach_only:
+                raise NativeRuntimeError("bundle API port is occupied by a different runtime")
             # The native bundle's default is an owned process tree: even an exact pre-existing API
             # is replaced so Quit has a mechanically provable child to tear down. An integration
             # host may opt into exact-match attachment with VOOL_NATIVE_REQUIRE_OWNED_RUNTIME=0.
             self._stop_stale_runtime(existing)
+        elif self.attach_only:
+            raise NativeRuntimeError("bundle API is not ready; the native window cannot attach")
         if not self.command:
             raise NativeRuntimeError("native runtime start command is empty")
         if self.command[0] == "bash" and len(self.command) > 1 and not Path(self.command[1]).is_file():

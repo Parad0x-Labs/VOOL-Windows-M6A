@@ -228,6 +228,12 @@ test_data/*.bin
 
 .venv
 
+# Native Windows host SDK intermediates (including its isolated policy-check harness).
+installer/windows_host/**/bin/
+installer/windows_host/**/obj/
+installer/windows_broker/**/bin/
+installer/windows_broker/**/obj/
+
 # Crash-recovery journals written by tests/_source_guard while a deliberate mutation is on disk.
 .vool_source_journal/
 # C15 (2026-09-03): the keychain-preflight sabotage runner — named-red proof per invariant.

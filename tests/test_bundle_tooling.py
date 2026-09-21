@@ -5,11 +5,13 @@ later edit can't silently break the installer (which CI can't compile).
 """
 from __future__ import annotations
 
+import io
 import json
 import tempfile
 from pathlib import Path
 from unittest import mock
 
+from core import native_control
 from core.runtime_install_profiles import default_ollama_models_path
 from installer.bundle import bundle_supervisor
 from installer.bundle.bundle_supervisor import BundleSupervisor
@@ -26,6 +28,35 @@ def test_bundle_build_provenance_is_checkout_derived_and_fail_closed() -> None:
     assert "[string]$buildSource.commit_full -notmatch '^[0-9a-f]{40}$'" in script
     assert "[bool]$buildSource.dirty_state" in script
     assert "Build from a native Git checkout" in script
+    assert "Bundle stage must be empty" in script
+    assert "git -C $RepoRoot archive" in script
+    assert '$SourceRoot = $releaseArchiveRoot' in script
+    assert 'dirty_state = $false' in script
+    assert "Remove-Item $pyDir -Recurse" not in script
+    assert "Remove-Item $appDir -Recurse" not in script
+
+
+def test_inno_separates_internal_and_release_identity() -> None:
+    script = (_BUNDLE / "vool.iss").read_text(encoding="utf-8")
+
+    assert '#define AppName "VOOL Internal Test"' in script
+    assert '#define AppName "VOOL"' in script
+    assert "AppId={#AppIdValue}" in script
+    assert "OutputBaseFilename={#InstallerBaseName}" in script
+    assert "UninstallDisplayIcon={app}\\native\\VOOL.exe" in script
+
+
+def test_candidate_iso_builder_is_fail_closed() -> None:
+    script = (Path(__file__).resolve().parent.parent / "tools" / "build_windows_candidate_iso.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "refusing to overwrite existing ISO" in script
+    assert 'choices=("NotSigned", "Valid")' in script
+    assert "a release candidate must have a valid signature" in script
+    assert "a non-release installer must be visibly named internal" in script
+    assert '"installer_sha256"' in script
+    assert 'purpose": "internal-clean-vm-packaging-test"' in script
 
 
 def test_launcher_starts_server_windowless_and_delegates_open() -> None:
@@ -41,6 +72,7 @@ def test_launcher_starts_server_windowless_and_delegates_open() -> None:
     assert "bundle_supervisor.py" in cmd
     assert "bundle_manifest.json" in cmd
     assert '--root "%VOOL_ROOT:~0,-1%"' in cmd
+    assert 'PYTHONPATH=%VOOL_ROOT%app;' in cmd
 
 
 def test_bundle_supervisor_is_stoppable_and_persists_diagnostics() -> None:
@@ -50,6 +82,7 @@ def test_bundle_supervisor_is_stoppable_and_persists_diagnostics() -> None:
     assert "bundle-supervisor.json" in supervisor
     assert "retry_in" in supervisor
     assert "CREATE_NO_WINDOW" in supervisor
+    assert "VOOL_BUNDLE_SUPERVISOR" in supervisor and "CreateMutexW" in supervisor
 
 
 def test_bundle_manifest_controls_model_store_for_supervisor_and_runtime(tmp_path) -> None:
@@ -78,6 +111,73 @@ def test_bundle_manifest_controls_model_store_for_supervisor_and_runtime(tmp_pat
     assert Path(supervisor.env["OLLAMA_MODELS"]) == home / "models"
     assert default_ollama_models_path(env) == (home / "models").resolve()
     assert (home / "models").is_dir()
+
+
+def test_bundle_window_attaches_to_the_supervisor_owned_api(tmp_path) -> None:
+    root = tmp_path / "bundle"
+    root.mkdir()
+    commit = "a" * 40
+    (root / "bundle_manifest.json").write_text(
+        json.dumps({"source_commit_full": commit, "selected_model": "qwen2.5:7b"}), encoding="utf-8"
+    )
+    supervisor = BundleSupervisor(
+        root,
+        env={
+            "LOCALAPPDATA": str(tmp_path / "local"),
+            "VOOL_PUBLIC_HIVE_ENABLED": "1",
+            "VOOL_ENABLE_WINDOWS_MESH_DAEMON": "1",
+        },
+    )
+    supervisor._prepare()
+
+    assert supervisor.env["VOOL_EXPECTED_COMMIT"] == commit
+    assert supervisor.env["VOOL_PROJECT_ROOT"] == str(root / "app")
+    assert supervisor.env["VOOL_WINDOWS_BUNDLE"] == "1"
+    assert supervisor.env["VOOL_DISABLE_MESH_DAEMON"] == "1"
+    assert supervisor.env["VOOL_PUBLIC_HIVE_ENABLED"] == "0"
+    assert supervisor.env["VOOL_RUNTIME_MODE"] == "self-contained"
+    assert supervisor.env["VOOL_NATIVE_REQUIRE_OWNED_RUNTIME"] == "0"
+    assert supervisor.env["VOOL_NATIVE_ATTACH_ONLY"] == "1"
+
+
+def test_bundle_control_secret_uses_child_pipes_and_rotates_with_api(tmp_path) -> None:
+    class CapturePipe(io.BytesIO):
+        captured = b""
+
+        def close(self) -> None:
+            self.captured = self.getvalue()
+            super().close()
+
+    root = tmp_path / "bundle"
+    root.mkdir()
+    supervisor = BundleSupervisor(root, env={"VOOL_HOME": str(tmp_path / "home")})
+    supervisor._prepare()
+    children = [mock.Mock(pid=101, stdin=CapturePipe()), mock.Mock(pid=102, stdin=CapturePipe()), mock.Mock(pid=103, stdin=CapturePipe())]
+    for child in children:
+        child.poll.return_value = 0
+
+    with mock.patch("installer.bundle.bundle_supervisor.subprocess.Popen", side_effect=children) as popen:
+        supervisor._start("api", ["api"], cwd=root)
+        first_secret = children[0].stdin.captured
+        supervisor._start("window", ["window"], cwd=root)
+        old_proof = native_control.sign_headers(first_secret, "POST", "/api/mode", b"{}")
+
+        assert len(first_secret) == 32
+        assert children[1].stdin.captured == first_secret
+        for call in popen.call_args_list[:2]:
+            assert call.kwargs["stdin"] == bundle_supervisor.subprocess.PIPE
+            assert call.kwargs["env"]["VOOL_NATIVE_CONTROL_STDIN"] == "1"
+            assert first_secret.hex() not in repr(call.kwargs)
+        assert first_secret.hex() not in supervisor.state_path.read_text(encoding="utf-8")
+
+        supervisor._stop_child("api")
+        assert "window" not in supervisor.processes
+        assert supervisor._control_secret is None
+        supervisor._start("api", ["api"], cwd=root)
+        assert children[2].stdin.captured != first_secret
+        assert not native_control.NativeControlVerifier(children[2].stdin.captured).verify(
+            "POST", "/api/mode", b"{}", old_proof
+        )
 
 
 def test_bundle_supervisor_restarts_dead_child_with_backoff_and_logs() -> None:
@@ -190,25 +290,45 @@ def test_bundle_supervisor_startup_timeout_enters_bounded_backoff(tmp_path) -> N
     assert "startup timeout" in log
 
 
-def test_bundle_supervisor_clears_stale_api_processes_before_bundle_start(tmp_path, monkeypatch) -> None:
+def test_bundle_supervisor_refuses_a_foreign_api_listener(tmp_path) -> None:
     root = tmp_path / "bundle"
     root.mkdir()
     home = tmp_path / "home"
     supervisor = BundleSupervisor(root, env={"VOOL_HOME": str(home)})
     supervisor._prepare()
-    monkeypatch.setattr(bundle_supervisor.os, "name", "nt")
 
     with mock.patch.object(supervisor, "_health_probe", return_value=False), mock.patch.object(
         supervisor, "_start"
-    ) as start, mock.patch("installer.bundle.bundle_supervisor.subprocess.run") as run:
+    ) as start, mock.patch.object(supervisor, "_api_listener_pid", return_value=1234):
         supervisor._ensure_api()
 
-    assert start.called
-    command = run.call_args.args[0]
-    assert command[0] == "powershell.exe"
-    assert "*apps.vool_api_server*" in command[-1]
-    assert "*vool_api_server.py*" in command[-1]
-    assert "Stop-Process" in command[-1]
+    start.assert_not_called()
+    assert "non-owned pid=1234" in (home / "logs" / "bundle-supervisor.log").read_text(encoding="utf-8")
+
+
+def test_bundle_supervisor_accepts_only_its_own_exact_api(tmp_path) -> None:
+    root = tmp_path / "bundle"
+    root.mkdir()
+    home = tmp_path / "home"
+    supervisor = BundleSupervisor(root, env={"VOOL_HOME": str(home)})
+    supervisor._prepare()
+    commit = "a" * 40
+    supervisor.env["VOOL_EXPECTED_COMMIT"] = commit
+    child = mock.Mock(pid=4321)
+    child.poll.return_value = None
+    supervisor.processes["api"] = child
+    payload = {"ok": True, "runtime": {"pid": 4321, "commit_full": commit}}
+
+    with mock.patch.object(supervisor, "_api_listener_pid", return_value=4321), mock.patch(
+        "installer.bundle.bundle_supervisor.urllib.request.urlopen",
+        side_effect=lambda *args, **kwargs: io.BytesIO(json.dumps(payload).encode()),
+    ):
+        assert supervisor._owned_api_healthy() is True
+        payload["runtime"]["commit_full"] = "b" * 40
+        assert supervisor._owned_api_healthy() is False
+
+    with mock.patch.object(supervisor, "_api_listener_pid", return_value=9876):
+        assert supervisor._owned_api_healthy() is False
 
 
 def test_bundle_supervisor_treats_http_error_as_unhealthy(tmp_path) -> None:
@@ -262,6 +382,28 @@ def test_bundle_supervisor_once_releases_lease_and_cleans_state(tmp_path) -> Non
         replacement._release_lease()
 
 
+def test_bundle_supervisor_quits_with_the_window_and_retries_launch_failures(tmp_path) -> None:
+    root = tmp_path / "bundle"
+    root.mkdir()
+    supervisor = BundleSupervisor(root, env={"VOOL_HOME": str(tmp_path / "home")})
+    supervisor._prepare()
+    supervisor.window_started = True
+    failed = mock.Mock(pid=7001)
+    failed.poll.return_value = 1
+    supervisor.processes["window"] = failed
+    supervisor._reap_dead("window")
+    assert supervisor.window_started is False
+    assert supervisor.window_closed is False
+    assert supervisor.failures["window"] == 1
+
+    supervisor.window_started = True
+    closed = mock.Mock(pid=7002)
+    closed.poll.return_value = 0
+    supervisor.processes["window"] = closed
+    supervisor._reap_dead("window")
+    assert supervisor.window_closed is True
+
+
 def test_native_window_host_uses_webview_and_owned_exact_runtime() -> None:
     py = (_BUNDLE / "vool_window.py").read_text(encoding="utf-8")
     assert "import webview" in py  # native WebView2 window, not a browser
@@ -269,18 +411,32 @@ def test_native_window_host_uses_webview_and_owned_exact_runtime() -> None:
     assert 'URL = f"{_API_ORIGIN}/chat"' in py
     assert "supervisor.ensure_ready()" in py  # exact health + identity before any window
     assert "supervisor.shutdown()" in py  # owned backend child ends with native host
-    assert "vool-open.ps1" in py  # graceful Edge --app fallback when WebView2 is unavailable
-    assert "_has_webview2" in py  # checks the runtime up front so the fallback is reachable when it is absent
+    assert "_fallback_to_edge" not in py  # a native failure must never open a browser
+    assert "_has_webview2" in py
     assert "_single_instance" in py  # repeated launches don't stack multiple windows
 
 
-def test_edge_fallback_opener_is_chromeless_app_window() -> None:
-    ps1 = (_BUNDLE / "vool-open.ps1").read_text(encoding="utf-8")
-    assert "/chat" in ps1  # opens VOOL's own UI, not OpenClaw
-    assert "--app=" in ps1  # chromeless app window (no tabs/address bar)
-    assert "msedge.exe" in ps1  # rides Windows' built-in Edge/WebView2
-    assert "--user-data-dir=" in ps1  # dedicated profile -> real app window even when Edge is already open (not a tab)
-    assert "Start-Process $url" in ps1  # default-browser fallback
+def test_windows_native_failure_never_launches_a_browser(tmp_path, monkeypatch) -> None:
+    from installer.bundle import vool_window
+
+    monkeypatch.setattr(vool_window.sys, "platform", "win32")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    with mock.patch.object(vool_window.ctypes, "windll", create=True), mock.patch.object(
+        vool_window.subprocess, "Popen"
+    ) as popen:
+        assert vool_window._no_native_window("WebView2 unavailable") == 1
+    popen.assert_not_called()
+
+
+def test_fixed_webview2_runtime_is_detected_without_registry(tmp_path, monkeypatch) -> None:
+    from installer.bundle import vool_window
+
+    runtime = tmp_path / "webview2"
+    runtime.mkdir()
+    monkeypatch.setenv("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", str(runtime))
+    assert vool_window._has_webview2() is False
+    (runtime / "msedgewebview2.exe").touch()
+    assert vool_window._has_webview2() is True
 
 
 def test_build_bundle_copies_every_runtime_package_and_stays_lean() -> None:
@@ -302,16 +458,19 @@ def test_build_bundle_copies_every_runtime_package_and_stays_lean() -> None:
     assert "vool_window.py" in ps1
     assert "bundle_supervisor.py" in ps1
     assert "bundle_manifest.json" in ps1
+    assert "WebView2Installer" in ps1 and "WebView2Sha256" in ps1
+    assert "Get-AuthenticodeSignature" in ps1
+    assert "webview2_installer_sha256" in ps1
+    assert 'Copy-Item (Join-Path $PSScriptRoot "vool-open.ps1")' not in ps1
     assert '"installer\\stamp_build_source.py"' in ps1
     assert 'Join-Path $appDir "config\\build-source.json"' in ps1
     for field in ("app_version", "source_commit", "source_dirty_state"):
         assert field in ps1
     for canonical_source in (
-        "AGENT_HANDOVER.md",
         "README.md",
         "docs\\SYSTEM_SPINE.md",
         "docs\\STATUS.md",
-        "docs\\PROOF_PATH.md",
+        "docs\\VOOL_DESKTOP_BLUEPRINT.md",
     ):
         assert f'"{canonical_source}"' in ps1
     assert "Canonical grounding source missing" in ps1
@@ -327,23 +486,41 @@ def test_build_bundle_copies_the_ollama_runner_runtime() -> None:
 
 def test_iss_packages_stage_and_installs_per_user() -> None:
     iss = (_BUNDLE / "vool.iss").read_text(encoding="utf-8")
-    assert "OutputBaseFilename=VOOL-Setup" in iss
+    assert "OutputBaseFilename={#InstallerBaseName}" in iss
     assert 'Source: "{#Stage}\\app\\*"' in iss
     assert 'Source: "{#Stage}\\ollama\\*"' in iss
     assert 'DestDir: "{localappdata}\\VOOL\\models"' in iss
     assert "uninsneveruninstall" in iss
     assert 'DestDir: "{app}\\models"' not in iss
     assert 'Source: "{#Stage}\\python\\*"' in iss
+    assert 'Source: "{#Stage}\\native\\host\\*"' in iss
+    assert 'Source: "{#Stage}\\native\\broker\\*"' in iss
+    assert 'Filename: "{app}\\native\\VOOL.exe"' in iss
     assert 'Source: "{#Stage}\\bundle_manifest.json"' in iss
     assert 'Source: "{#Stage}\\VOOL.cmd"' in iss
+    assert 'Source: "{#Stage}\\webview2\\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"' in iss
+    assert "PrepareToInstall" in iss and "WebView2Present" in iss
+    assert 'Source: "{#Stage}\\vool-open.ps1"' not in iss
     assert "PrivilegesRequired=lowest" in iss  # no admin needed
     assert "vool.vbs" in iss  # shortcuts launch windowless via the VBS wrapper (no console flash)
     assert "{#Stage}" in iss  # packages the staging dir
     # uninstall must NOT delete the user's data/models dir (wallet, keys, LLMs survive)
     assert 'Type: filesandordirs; Name: "{localappdata}\\VOOL"' not in iss
-    # installer stops the running server itself -> no "close Python" prompt on reinstall
-    assert "StopNulla" in iss and "vool_api_server.py" in iss
+    assert "AppMutex=Local\\VOOL_BUNDLE_SUPERVISOR,Local\\VOOL_WINDOW_SINGLETON" in iss
+    assert "StopNulla" not in iss and "Stop-Process" not in iss
+    assert "AppPublisher={#AppPublisher}" in iss
     assert "CloseApplications=no" in iss
+
+
+def test_windows_bundle_publishes_native_host_and_broker() -> None:
+    ps1 = (_BUNDLE / "build_bundle.ps1").read_text(encoding="utf-8")
+    assert 'ValidateSet("Internal", "Release")' in ps1
+    assert "windows_authority_audit --release-check" in ps1
+    assert "VOOL.WindowsHost.csproj" in ps1
+    assert "Vool.WindowsBroker.csproj" in ps1
+    assert 'build_mode = $BuildMode.ToLowerInvariant()' in ps1
+    supervisor = (_BUNDLE / "bundle_supervisor.py").read_text(encoding="utf-8")
+    assert 'self.root / "native" / "VOOL.exe"' in supervisor
 
 
 def test_vbs_runs_the_launcher_hidden() -> None:

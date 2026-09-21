@@ -2,10 +2,8 @@
 
 Opens the VOOL chat UI (served by the local runtime on 127.0.0.1:11435) in a real native window --
 its own title and taskbar/Dock entry, no browser tab strip, no address bar -- so VOOL looks like a
-desktop app rather than a browser tab. On Windows, when the WebView2 runtime is absent (WebView2 is
-not guaranteed on Windows 10), it falls back to the Edge --app opener BEFORE trying pywebview,
-because a missing runtime does not always raise from webview.start(); this keeps a launch from
-dead-ending on a blank window. On macOS/Linux there is no such runtime gate (WKWebView/WebKitGTK are
+desktop app rather than a browser tab. On Windows, a missing WebView2 runtime fails visibly instead
+of opening a browser. On macOS/Linux there is no such runtime gate (WKWebView/WebKitGTK are
 part of the OS), so pywebview is tried directly; if no native window can be shown there, a packaged
 launch FAILS CLOSED (exit 1) rather than silently opening a browser and calling it success -- an
 app-mode browser window is used only when VOOL_ALLOW_BROWSER_FALLBACK=1 opts in explicitly.
@@ -56,6 +54,17 @@ from installer.bundle import pet_native
 
 _WEBVIEW2_GUID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 _LOCK_HANDLE = None  # POSIX: keeps the flock held for the process lifetime
+_NATIVE_CONTROL_SECRET: bytes | None = None  # private host memory; never a pywebview API field
+
+
+def _native_control_headers(method: str, path: str, body: bytes) -> dict[str, str]:
+    """Sign a host-owned request; no page bridge exposes this method or the secret."""
+    from core.native_control import sign_headers
+
+    secret = _NATIVE_CONTROL_SECRET
+    if secret is None:
+        raise RuntimeError("native control channel is unavailable")
+    return sign_headers(secret, method, path, body)
 
 
 def _state_dir() -> str:
@@ -109,7 +118,10 @@ def _single_instance() -> bool:
 
 
 def _has_webview2() -> bool:
-    """True if the Evergreen WebView2 runtime is installed (registry), so pywebview can render."""
+    """True if the bundled Fixed Version or installed Evergreen WebView2 can render."""
+    fixed_runtime = os.environ.get("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER")
+    if fixed_runtime:
+        return os.path.isfile(os.path.join(fixed_runtime, "msedgewebview2.exe"))
     try:
         import winreg
     except Exception:
@@ -144,22 +156,6 @@ def _wait_for_server(timeout_s: float | None = None) -> bool:
             pass
         time.sleep(1.0)
     return False
-
-
-def _fallback_to_edge() -> None:
-    """Open via the Edge --app opener when the native window is unavailable; log if even that fails."""
-    ps1 = os.path.join(_HERE, "vool-open.ps1")
-    if not os.path.exists(ps1):
-        _log("fallback: vool-open.ps1 not found; no window opened")
-        return
-    try:
-        subprocess.Popen(
-            ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", ps1],
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        _log("opened via Edge --app fallback")
-    except Exception as exc:
-        _log(f"fallback FAILED to launch Edge opener: {exc!r}")
 
 
 _MAC_APP_MODE_BROWSERS = (
@@ -265,13 +261,17 @@ def _browser_fallback_allowed() -> bool:
 
 
 def _no_native_window(reason: object) -> int:
-    """macOS/Linux fail-closed handler when no real native window can be shown. Windows keeps its
-    own documented WebView2-absent Edge lane (_fallback above) — that is KAS's packaging contract,
-    not this one."""
+    """Fail a packaged native launch without silently opening the user's browser."""
     if sys.platform == "win32":
-        _log(f"native window unavailable ({reason!r}); using Edge fallback")
-        _fallback()
-        return 0
+        _log(f"ERROR: native window unavailable ({reason!r}); no browser fallback")
+        with contextlib.suppress(Exception):
+            ctypes.windll.user32.MessageBoxW(
+                None,
+                "VOOL could not open its native window. Repair or reinstall VOOL; your data is preserved.",
+                "VOOL could not start",
+                0x10,
+            )
+        return 1
     if _browser_fallback_allowed():
         _log(f"native window unavailable ({reason!r}); VOOL_ALLOW_BROWSER_FALLBACK set, using browser")
         _fallback()
@@ -282,11 +282,8 @@ def _no_native_window(reason: object) -> int:
 
 
 def _fallback() -> None:
-    """Per-OS 'no native window' path: Edge opener on Windows, app-mode browser on macOS/Linux."""
-    if sys.platform == "win32":
-        _fallback_to_edge()
-    else:
-        _fallback_to_browser_posix()
+    """Explicit opt-in app-mode fallback for macOS/Linux development only."""
+    _fallback_to_browser_posix()
 
 
 # Strong refs to the delegate proxies + the pywebview delegates they forward to (NSWindow/NSApp
@@ -1184,11 +1181,20 @@ def _start_notification_bridge(window: object) -> object | None:
 
 
 def main() -> int:
+    global _NATIVE_CONTROL_SECRET
     supervisor = None
     notification_bridge = None
     owned_pid: dict[str, int | None] = {"pid": None}
     done = threading.Event()
     try:
+        if os.environ.get("VOOL_WINDOWS_BUNDLE") == "1":
+            from core.native_control import NativeControlUnavailable, read_bootstrap_secret
+
+            try:
+                _NATIVE_CONTROL_SECRET = read_bootstrap_secret()
+            except NativeControlUnavailable:
+                _log("ERROR: native control bootstrap unavailable; refusing the Windows window")
+                return 1
         if not _single_instance():
             _log("another VOOL window is already open; not opening a second")
             return 0
@@ -1230,9 +1236,7 @@ def main() -> int:
         # The WebView2 runtime gate is Windows-only; macOS (WKWebView) and Linux (WebKitGTK) ship a
         # web view with the OS, so pywebview is tried directly there.
         if sys.platform == "win32" and not _has_webview2():
-            _log("WebView2 runtime not found; using Edge fallback")
-            _fallback_to_edge()
-            return 0
+            return _no_native_window("WebView2 runtime not found")
         try:
             import webview  # pywebview -> WebView2 (Windows) / WKWebView (macOS) / WebKitGTK (Linux)
         except Exception as exc:
@@ -1276,6 +1280,7 @@ def main() -> int:
         _log(f"native window failed ({exc!r})")
         return _no_native_window(exc)
     finally:
+        _NATIVE_CONTROL_SECRET = None
         if notification_bridge is not None:
             with contextlib.suppress(Exception):
                 notification_bridge.stop()

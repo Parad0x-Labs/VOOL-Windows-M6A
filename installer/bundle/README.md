@@ -11,6 +11,7 @@ not ship or patch OpenClaw.
 | Embedded Python + lean runtime deps | ~90 MB | `pydantic, cryptography, requests, pynacl, keyring, psutil, pyyaml, starlette, uvicorn, solders`. **No torch/transformers** — those are training-only and never imported by the server. |
 | VOOL source (`app/`) | ~15 MB | all runtime packages (verified by running the staged bundle) |
 | Ollama | ~3.2 GB with the current official Windows runtime | `ollama.exe` plus the complete `lib\ollama\` runner/DLL support tree, bundled |
+| WebView2 | size varies | Microsoft-signed offline x64 Evergreen standalone installer, carried in setup and installed per-user only when absent |
 | Model (`models/`) | 0 or ~4.7 GB | first-run download by default; embedded with `-IncludeModel` |
 
 Result: a **multi-GB installer** with the current official Ollama runtime (model on first run) or a
@@ -20,15 +21,22 @@ payloads and selected model; this builder does not download a model unless `-Inc
 ## Build (on a Windows machine)
 
 ```powershell
-# 1. assemble the bundle staging dir
+# 1. assemble the bundle in a NEW, empty staging directory
 $stage = "C:\vool-build\bundle"
 $outDir = "C:\vool-build\dist"
-installer\bundle\build_bundle.ps1 -Stage $stage -OllamaExe "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe"
+$webview2 = "C:\vool-build\inputs\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
+# Download the offline x64 Evergreen standalone installer from Microsoft's WebView2 page.
+# Pin its SHA-256 in the release input record; do not infer trust from the filename.
+$webview2Sha256 = "<release-pinned 64-character SHA-256>"
+installer\bundle\build_bundle.ps1 -Stage $stage `
+  -OllamaExe "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe" `
+  -WebView2Installer $webview2 -WebView2Sha256 $webview2Sha256
 #    (add -IncludeModel for the fully-offline ~5 GB bundle)
 
 # 2. compile the installer (Inno Setup 6; install once via: winget install JRSoftware.InnoSetup)
 $appVersion = & "$stage\python\python.exe" -c "import sys; sys.path.insert(0, r'$stage\app'); from core.app_version import VOOL_VERSION; print(VOOL_VERSION)"
-& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DStage=$stage" "/DOutDir=$outDir" "/DAppVersion=$appVersion" installer\bundle\vool.iss
+& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DStage=$stage" "/DOutDir=$outDir" `
+  "/DAppVersion=$appVersion" "/DAppPublisher=<owner-authorized publisher>" installer\bundle\vool.iss
 #    -> C:\vool-build\dist\VOOL-Setup.exe
 ```
 
@@ -47,8 +55,12 @@ records the app version, exact source commit, dirty-state flag, selected model, 
 store. The installed runtime exposes the platform-tagged identity through `/healthz` and
 `/api/runtime/version`.
 
-The launcher runs the server windowless on `127.0.0.1:11435`, pulls the model once if it isn't
-present, waits for `/healthz`, then opens `http://127.0.0.1:11435/chat`.
+The launcher runs the server windowless on `127.0.0.1:11435`, pulls a missing model in the
+background, and opens `/chat` in a native WebView2 window. Setup carries the offline WebView2
+installer, so the user does not download it separately. If the native window cannot open, VOOL
+reports an error and exits nonzero; it never silently opens Edge or the user's default browser.
+Setup asks the user to close a running VOOL instance before an upgrade and never kills an
+unrelated process merely because it owns a port.
 
 ## macOS (`VOOL.app` / `VOOL.dmg`)
 
@@ -152,8 +164,9 @@ exactly as before.
 
 ## Code signing
 
-The `.exe` is **unsigned** unless compiled on a machine with a code-signing certificate; unsigned
-installers trigger SmartScreen until signed (OV/EV cert).
+The `.exe` is **unsigned** unless compiled and signed on a machine with an owner-authorized
+code-signing certificate. This build recipe is for development; public release also requires
+signed payloads, a clean source commit, pinned dependencies, and installed-artifact tests.
 
 The macOS `.app`/`.dmg` is likewise **unsigned and un-notarized**. It runs when built locally, but a
 DMG *downloaded* from the internet carries the quarantine flag and Gatekeeper blocks it ("Apple

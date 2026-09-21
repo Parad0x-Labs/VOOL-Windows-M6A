@@ -288,7 +288,6 @@ def build_report(
     if bundle:
         launchers = {
             "command": project / "VOOL.cmd",
-            "browser": project / "vool-open.ps1",
             "one_click": project / "vool.vbs",
             "window": project / "vool_window.py",
             "supervisor": project / "bundle_supervisor.py",

@@ -14,8 +14,10 @@ from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route
 
+from core.native_control import authorize_http_request
+
 from ..request_ids import log_http_request, resolve_request_id, response_headers_with_request_id
-from .runtime import RuntimeServices, default_workspace_root, host_header_allowed
+from .runtime import RuntimeServices, bundle_browser_origin_allowed, default_workspace_root, host_header_allowed
 from .service import (
     ApiResponse,
     dictation_body_ceiling,
@@ -108,6 +110,8 @@ async def _dispatch(request: Request) -> Response:
         # DNS-rebinding guard: only loopback/localhost Host headers (or VOOL_ALLOWED_HOSTS) may
         # reach the always-on local API, so a rebound external origin cannot read local data.
         response = json_response(403, {"error": "host not allowed"})
+    elif not bundle_browser_origin_allowed(request.headers.get("host", ""), request.headers.get("origin", "")):
+        response = json_response(403, {"error": "bundle origin not allowed"})
     elif request.method == "GET":
         if is_raw_dictation_path(request.url.path):
             # The dictation availability probe rides the same door: GET answers whether THIS
@@ -197,9 +201,23 @@ async def _dispatch(request: Request) -> Response:
                     client_host=(request.client.host if request.client else ""),
                 )
         else:
-            raw_body = await request.body()
-            if len(raw_body) > _MAX_REQUEST_BODY_BYTES:
+            chunks: list[bytes] = []
+            received = 0
+            oversized = False
+            async for chunk in request.stream():
+                received += len(chunk)
+                if received > _MAX_REQUEST_BODY_BYTES:
+                    oversized = True
+                    break
+                chunks.append(chunk)
+            raw_body = b"".join(chunks)
+            if oversized:
                 response = json_response(413, {"error": "request body too large"})
+            elif not authorize_http_request(
+                request.method, request.url.path + (f"?{request.url.query}" if request.url.query else ""),
+                raw_body, request.headers,
+            ):
+                response = json_response(403, {"error": "native control required"})
             elif not raw_body:
                 response = json_response(400, {"error": "empty body"})
             else:

@@ -82,7 +82,7 @@ def scan_file(path: Path, *, repo_root: Path) -> list[EgressSite]:
         tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
     except (OSError, SyntaxError):
         return []
-    relative = str(path.relative_to(repo_root))
+    relative = path.relative_to(repo_root).as_posix()
     sites: list[EgressSite] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
@@ -116,7 +116,7 @@ def scan_tree(repo_root: Path | None = None) -> list[EgressSite]:
         for path in sorted(base.rglob("*.py")):
             if "__pycache__" in path.parts:
                 continue
-            relative = str(path.relative_to(root))
+            relative = path.relative_to(root).as_posix()
             if relative in DOOR_MODULES:
                 continue
             sites.extend(scan_file(path, repo_root=root))

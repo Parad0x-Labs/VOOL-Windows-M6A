@@ -254,8 +254,8 @@ def confined_argv(
     """The argv to launch and a label naming how it is confined.
 
     ``mode="auto"`` (default) raises `ConfinementUnavailableError` when the host cannot enforce
-    confinement; ``mode="heuristic_only"`` is the explicit opt-in that runs the bare argv in that
-    case and labels the result so nothing downstream can mistake it for a confined run.
+    confinement. On POSIX only, ``mode="heuristic_only"`` is an explicit local-development
+    opt-in that runs bare argv and labels the weaker result. Native Windows never takes it.
     """
 
     clean_mode = str(mode or "auto").strip().lower()
@@ -268,6 +268,13 @@ def confined_argv(
     )
     if wrapped is not None:
         return list(wrapped), _backend_label(list(wrapped), bare) or "kernel:unknown"
+    if os.name == "nt":
+        # The Windows desktop cannot treat an explicit config opt-in as a sandbox.
+        # Until a native broker enforces filesystem, process, and network policy,
+        # plugin and MCP handlers must not run as ordinary user processes.
+        raise ConfinementUnavailableError(
+            "Native Windows has no OS-enforced plugin execution broker; the child was not started."
+        )
     if clean_mode == "heuristic_only":
         return bare, "heuristic_only"
     raise ConfinementUnavailableError(

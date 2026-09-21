@@ -61,6 +61,7 @@ def test_registered_plugin_tool_is_dispatchable_not_unsupported(plugin_world) ->
     assert _intent_is_dispatchable(f"{PLUGIN_ID}.nope") is False
 
 
+@pytest.mark.skipif(os.name == "nt", reason="native Windows broker not implemented")
 def test_read_only_plugin_tool_executes_in_manual_mode(plugin_world) -> None:
     out = _run(f"{PLUGIN_ID}.echo", {"text": "alpha"})
     assert out.handled and out.ok, (out.status, out.response_text)
@@ -91,6 +92,7 @@ def test_mutating_plugin_tool_stops_at_the_permission_gate(plugin_world, tmp_pat
     assert not Path(target).exists()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="native Windows broker not implemented")
 def test_an_approved_mutating_plugin_tool_runs_and_is_replay_cached(plugin_world, tmp_path) -> None:
     from core.mode_permission_policy import resolve_approval
     from core.plugin_tools import plugin_scratch_dir
@@ -130,6 +132,7 @@ def test_an_approved_mutating_plugin_tool_runs_and_is_replay_cached(plugin_world
     assert calls_logged(plugin_world) == [f"{PLUGIN_ID}.touch"]
 
 
+@pytest.mark.skipif(os.name == "nt", reason="native Windows broker not implemented")
 def test_plugin_execution_writes_an_execution_record(plugin_world) -> None:
     from core import execution_records
 
@@ -143,6 +146,7 @@ def test_plugin_execution_writes_an_execution_record(plugin_world) -> None:
     assert records[0].resolved_target == "beta"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="native Windows broker not implemented")
 def test_read_only_nested_handler_reads_own_assets_but_not_peer_files(plugin_world, tmp_path):
     from core.plugin_executor import run_plugin_tool
 
@@ -206,17 +210,20 @@ def test_plugin_child_runs_confined_with_a_minimal_environment(plugin_world, tmp
     assert os.environ.get("SECRET_TOKEN_FOR_PLUGIN_TEST") == "must-not-cross"  # parent untouched
 
 
-def test_unavailable_confinement_refuses_rather_than_running_bare(plugin_world, monkeypatch) -> None:
+def test_unavailable_confinement_refuses_rather_than_running_bare(plugin_world, monkeypatch, tmp_path) -> None:
     from core import plugin_executor
 
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
     monkeypatch.setattr(plugin_executor, "_kernel_confinement_prefix", lambda *a, **k: None)
-    out = _run(f"{PLUGIN_ID}.echo", {"text": "delta"})
+    out = _run(f"{PLUGIN_ID}.echo", {"text": "delta"}, workspace_root=str(workspace))
     assert out.handled and not out.ok
-    assert out.status == "confinement_unavailable"
+    assert out.status == "confinement_unavailable", (out.status, out.details)
     assert "confine" in out.response_text.lower()
     assert calls_logged(plugin_world) == []
 
 
+@pytest.mark.skipif(os.name == "nt", reason="native Windows broker not implemented")
 def test_a_crashing_handler_is_reported_not_fabricated(plugin_world) -> None:
     out = _run(f"{PLUGIN_ID}.crash", {})
     assert out.handled and not out.ok

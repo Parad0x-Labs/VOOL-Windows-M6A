@@ -1,0 +1,3206 @@
+{
+  "schema": "vool.windows_source_inventory.v1",
+  "route_candidates": [
+    {
+      "path": "/",
+      "sources": [
+        "core/web/api/app.py",
+        "core/web/api/media_editor_api.py",
+        "core/web/api/money_authority_api.py",
+        "core/web/api/runtime.py",
+        "core/web/api/service.py",
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/about",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/adaptation/evals",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/adaptation/job-events",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/adaptation/jobs",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/adaptation/loop",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/adaptation/loop/tick",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/adaptation/status",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/auth/",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/bug-report/",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/bug-report/approve",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/bug-report/candidates",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/bug-report/destination",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/bug-report/draft",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/bug-report/export",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/bug-report/preview",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/bug-report/receipts",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/bug-report/revoke",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/bug-report/status",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/bug-report/submit",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/bug-report/update",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/calendar/accounts",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/calendar/accounts/add",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/calendar/accounts/disconnect",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/calendar/accounts/discover",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/calendar/accounts/opt-in",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/calendar/accounts/reconnect",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/calendar/accounts/select",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/calendar/alerts",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/calendar/alerts/policy",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/calendar/sync",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/chat",
+      "sources": [
+        "core/web/api/mobile_companion_api.py",
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/chat/attachments",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/chat/attachments/documents",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/chat/attachments/limits",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/chat/attachments/preview",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/chat/attachments/remove",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/chat/attachments/upload",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/chat/cancel",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/chat/dictation",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/chat/export",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/chat/history",
+      "sources": [
+        "core/web/api/mobile_companion_api.py",
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/chat/pin",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/chat/pins",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/chat/proof",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/chat/queue",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/chat/session",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/chat/sessions",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/cloud/acceptances",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/cloud/auto-model",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/cloud/diagnostics",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/cloud/keys",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/cloud/market-events",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/cloud/model",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/cloud/models",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/cloud/price-history",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/cloud/providers",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/cloud/spend-limits",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/cloud/status",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/cloud/test",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/cloud/usepod/",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/cloud/usepod/approve-route",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/cloud/usepod/balance",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/cloud/usepod/discovery",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/cloud/usepod/forget-route",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/cloud/usepod/lane",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/cloud/usepod/price-wait/",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/cloud/usepod/refresh",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/cloud/usepod/route-policy",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/cloud/usepod/spend-approval/confirm",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/cloud/usepod/spend-approval/pending",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/cloud/usepod/spend-approval/propose",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/cloud/usepod/x402/resume",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/cloud/usepod/x402/unresolved",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/commands",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/commands/",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/commands/dispatch",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/connections",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/contacts",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/contacts/create",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/contacts/credential",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/contacts/credential/change",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/contacts/credential/enroll",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/contacts/credential/reset",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/contacts/delete",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/contacts/detail",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/contacts/import/apply",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/contacts/import/connect",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/contacts/import/preview",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/contacts/import/remove",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/contacts/import/sources",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/contacts/operations",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/contacts/operations/cancel",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/contacts/operations/commit",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/contacts/operations/confirm",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/contacts/operations/detail",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/contacts/options",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/contacts/resolve",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/contacts/suggestions",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/contacts/suggestions/accept",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/contacts/suggestions/dismiss",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/contacts/update",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/context/pages",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/council/convene",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/council/events",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/council/lock",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/council/resume",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/council/runs",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/council/scorecard",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/council/seat",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/council/status",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/council/stop",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/credits/balance",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/credits/settle",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/discovery",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/discovery/refresh",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/email/accounts",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/email/recovery",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/email/recovery/acknowledge",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/email/recovery/check",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/files",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/files/open",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/files/raw",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/generate",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/intake/",
+      "sources": [
+        "core/web/api/onboarding_endpoints.py",
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/intake/begin",
+      "sources": [
+        "core/web/api/onboarding_endpoints.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/intake/classify",
+      "sources": [
+        "core/web/api/onboarding_endpoints.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/intake/complete",
+      "sources": [
+        "core/web/api/onboarding_endpoints.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/intake/preview",
+      "sources": [
+        "core/web/api/onboarding_endpoints.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/intake/quarantine/delete",
+      "sources": [
+        "core/web/api/onboarding_endpoints.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/intake/quarantine/list",
+      "sources": [
+        "core/web/api/onboarding_endpoints.py",
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/intake/quarantine/retry",
+      "sources": [
+        "core/web/api/onboarding_endpoints.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/intake/verify",
+      "sources": [
+        "core/web/api/onboarding_endpoints.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/learning/procedures",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/learning/procedures/",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/memory/entries",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/memory/forget",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/mobile/",
+      "sources": [
+        "core/web/api/mobile_companion_api.py",
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/mobile/companion",
+      "sources": [
+        "core/web/api/mobile_companion_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/mobile/devices",
+      "sources": [
+        "core/web/api/mobile_companion_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/mobile/devices/revoke",
+      "sources": [
+        "core/web/api/mobile_companion_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/mobile/info",
+      "sources": [
+        "core/web/api/mobile_companion_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/mobile/pairing/challenge",
+      "sources": [
+        "core/web/api/mobile_companion_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/mobile/pairing/claim",
+      "sources": [
+        "core/web/api/mobile_companion_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/mobile/pairing/page",
+      "sources": [
+        "core/web/api/mobile_companion_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/mobile/pairing/start",
+      "sources": [
+        "core/web/api/mobile_companion_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/mobile/pairing/status",
+      "sources": [
+        "core/web/api/mobile_companion_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/mobile/receipts",
+      "sources": [
+        "core/web/api/mobile_companion_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/mode",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/model-radar/dismiss",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/model-radar/feed",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/model-radar/preferences",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/model-radar/try-once",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/model-radar/viewed",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/model-tool-certification",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/model-tool-certification/run",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/models/local",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/models/local/register",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/money/",
+      "sources": [
+        "core/web/api/money_authority_api.py",
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/money/contract",
+      "sources": [
+        "core/web/api/money_authority_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/money/conversion-bounds",
+      "sources": [
+        "core/web/api/money_authority_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/money/funding",
+      "sources": [
+        "core/web/api/money_authority_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/money/funding-policy",
+      "sources": [
+        "core/web/api/money_authority_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/money/grants",
+      "sources": [
+        "core/web/api/money_authority_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/money/grants/revoke",
+      "sources": [
+        "core/web/api/money_authority_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/money/liabilities",
+      "sources": [
+        "core/web/api/money_authority_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/money/liabilities/",
+      "sources": [
+        "core/web/api/money_authority_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/money/projection",
+      "sources": [
+        "core/web/api/money_authority_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/money/reconcile",
+      "sources": [
+        "core/web/api/money_authority_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/money/rules",
+      "sources": [
+        "core/web/api/money_authority_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/notifications",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/notifications/action",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/notifications/native/authorize",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/notifications/native/outbox",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/notifications/native/report",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/notifications/native/status",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/notifications/native/test",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/notifications/preferences",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/null",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/oauth/status",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/onboarding/",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/onboarding/choice",
+      "sources": [
+        "core/web/api/onboarding_endpoints.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/onboarding/pact",
+      "sources": [
+        "core/web/api/onboarding_endpoints.py",
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/onboarding/pact/advance",
+      "sources": [
+        "core/web/api/onboarding_endpoints.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/onboarding/pact/begin",
+      "sources": [
+        "core/web/api/onboarding_endpoints.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/onboarding/pact/boundary",
+      "sources": [
+        "core/web/api/onboarding_endpoints.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/onboarding/pact/choice/local-only",
+      "sources": [
+        "core/web/api/onboarding_endpoints.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/onboarding/pact/denial/claim",
+      "sources": [
+        "core/web/api/onboarding_endpoints.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/onboarding/pact/facts",
+      "sources": [
+        "core/web/api/onboarding_endpoints.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/onboarding/pact/facts/forget",
+      "sources": [
+        "core/web/api/onboarding_endpoints.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/onboarding/pact/hide",
+      "sources": [
+        "core/web/api/onboarding_endpoints.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/onboarding/pact/name",
+      "sources": [
+        "core/web/api/onboarding_endpoints.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/onboarding/pact/reset",
+      "sources": [
+        "core/web/api/onboarding_endpoints.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/onboarding/pact/skip",
+      "sources": [
+        "core/web/api/onboarding_endpoints.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/onboarding/pact/task/claim",
+      "sources": [
+        "core/web/api/onboarding_endpoints.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/onboarding/reset",
+      "sources": [
+        "core/web/api/onboarding_endpoints.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/onboarding/state",
+      "sources": [
+        "core/web/api/onboarding_endpoints.py",
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/plugins",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/plugins/enable",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/plugins/lifecycle",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/plugins/rescan",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/profile",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/profile/",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/profile/export",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/projects",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/projects/delete",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/projects/emoji",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/projects/reveal",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/pull",
+      "sources": [
+        "core/web/api/runtime.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/reminders",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/repoops/authorize-forge-action",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/repoops/authorize-push",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/repoops/session",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/repoops/sessions",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/runtime/capabilities",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/runtime/changes",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/runtime/control-plane/status",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/runtime/events",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/runtime/operator-snapshot",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/runtime/receipts",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/runtime/sessions",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/runtime/unresolved-effects",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/runtime/unresolved-effects/resolve",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/runtime/usage",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/runtime/version",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/search/detect",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/search/providers",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/search/test",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/session/bundle/download",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/session/bundle/export",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/session/bundle/import",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/session/bundle/inspect-import",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/session/bundle/preview",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/session/bundle/upload",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/settings/credentials",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/settings/prefs",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/setup/state",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/show",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/skills",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/skills/enable",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/tags",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/task/recovery",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/update/check",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/update/install",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/update/restart",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/update/status",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/",
+      "sources": [
+        "core/web/api/service.py",
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/approval-method",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/approve",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/balance",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/dna-fees",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/dna-fees/policy",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/environment",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/export",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/external",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/external/submit",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/facilitator/discover",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/facilitators",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/info",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/limits",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/pocket/create",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/pocket/restore",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/pocket/terms",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/proposals/",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/propose",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/quote",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/receipts",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/recovery/backup",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/recovery/device",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/recovery/options",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/reject",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/safety",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/setup/acknowledge",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/setup/cancel",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/setup/create",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/setup/resume",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/setup/reveal",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/status",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/transfers",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/transfers/discard",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/transfers/refresh",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/transfers/resend",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/transfers/stop-waiting",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/usepod/status",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/usepod/topup",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/wallets/",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/watch-only",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/x402/fetch",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/x402/propose",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/wallet/x402/retry",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/web0/resolve",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/build",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/callback",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/chat",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/chat-assets/",
+      "sources": [
+        "core/web/api/chat_assets_api.py",
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/check",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/companion",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/discard",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/forget-route",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/gate/unlock",
+      "sources": [
+        "core/web/api/app.py",
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/healthz",
+      "sources": [
+        "core/web/api/app.py",
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/invalidate",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/livez",
+      "sources": [
+        "core/web/api/app.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/media-editor",
+      "sources": [
+        "core/web/api/media_editor_api.py",
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/media-editor/",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/media-editor/preview",
+      "sources": [
+        "core/web/api/media_editor_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/media-editor/project",
+      "sources": [
+        "core/web/api/media_editor_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/media-editor/proxy",
+      "sources": [
+        "core/web/api/media_editor_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/null-browser",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/pending",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/propose",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/readyz",
+      "sources": [
+        "core/web/api/app.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/save",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/school",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/school/api/",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/school/api/state",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/school/student",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/settings",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/setup",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/stop-waiting",
+      "sources": [
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/task-rail",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/trace",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/v1/",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/v1/chat/completions",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/v1/credits/balance",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/v1/credits/settle",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/v1/healthz",
+      "sources": [
+        "core/web/api/app.py",
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/v1/models",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/v1/null",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/v1/runtime/capabilities",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/v1/runtime/changes",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/v1/runtime/usage",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/v1/runtime/version",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/v1/wallet/info",
+      "sources": [
+        "core/web/api/service.py",
+        "core/web/api/wallet_api.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/version",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/web0",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/{path:path}",
+      "sources": [
+        "core/web/api/app.py"
+      ],
+      "classification": "unreviewed"
+    }
+  ],
+  "builtin_tool_candidates": [
+    {
+      "intent": "browser.render",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "capability.expand_family",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "code.review_evidence",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "contacts.delete",
+      "side_effect_class": "creative_state",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "contacts.resolve",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "contacts.save",
+      "side_effect_class": "creative_state",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "contacts.search",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "contacts.update",
+      "side_effect_class": "creative_state",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "demo.plan",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "email.draft.approve",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "email.draft.get",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "email.draft.reconcile",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "email.draft.save",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "email.draft.send",
+      "side_effect_class": "network_send",
+      "approval_requirement": "explicit_user_opt_in",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "email.open",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "email.read",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "email.reply",
+      "side_effect_class": "network_send",
+      "approval_requirement": "explicit_user_opt_in",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "email.send",
+      "side_effect_class": "network_send",
+      "approval_requirement": "explicit_user_opt_in",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "image.generate",
+      "side_effect_class": "media_generation",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "machine.disk_usage",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "machine.display_inspect",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "machine.ensure_directory",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "machine.event_log_errors",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "machine.find_file",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "machine.find_folder",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "machine.find_largest",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "machine.host_state",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "machine.inspect_specs",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "machine.list_directory",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "machine.list_processes",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "machine.move_path",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "explicit_user_opt_in",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "machine.read_file",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "machine.write_file",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "marketplace.purchase_knowledge",
+      "side_effect_class": "credit_spend",
+      "approval_requirement": "explicit_user_opt_in",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "marketplace.search_listings",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "media.edit",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "media.export",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "explicit_user_opt_in",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "media.inspect",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "media.open",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "media.redo",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "media.undo",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "operator.apple_note_list",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "operator.apple_note_read",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "operator.check_availability",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "operator.cleanup_temp_files",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "explicit_user_opt_in",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "operator.find_notes",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "operator.inspect_calendar_event",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "operator.inspect_disk_usage",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "operator.inspect_processes",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "operator.inspect_services",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "operator.list_calendars",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "operator.list_reminders",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "operator.list_tools",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "operator.move_path",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "explicit_user_opt_in",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "operator.propose_calendar_event",
+      "side_effect_class": "network_publish",
+      "approval_requirement": "explicit_user_opt_in",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "operator.save_note",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "explicit_user_opt_in",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "operator.schedule_calendar_event",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "explicit_user_opt_in",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "operator.search_calendar_event",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "operator.show_agenda",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "operator.show_note",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "operator.update_calendar_event",
+      "side_effect_class": "network_publish",
+      "approval_requirement": "explicit_user_opt_in",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "orchestration.execute_envelope",
+      "side_effect_class": "task_orchestration",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "pay.x402",
+      "side_effect_class": "wallet_spend",
+      "approval_requirement": "explicit_user_opt_in",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "pdf.extract_text",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "pdf.ocr",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "profile.forget",
+      "side_effect_class": "creative_state",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "profile.list",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "profile.remember",
+      "side_effect_class": "creative_state",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "respond.direct",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "sandbox.run_command",
+      "side_effect_class": "sandbox_command",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "sell.quote",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "set.save",
+      "side_effect_class": "creative_state",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "set.use",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "skill.create",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "skill.inspect",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "skill.install",
+      "side_effect_class": "runtime_capability_change",
+      "approval_requirement": "explicit_user_opt_in",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "skill.list",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "skill.rollback",
+      "side_effect_class": "runtime_capability_change",
+      "approval_requirement": "explicit_user_opt_in",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "skill.validate",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "video.generate",
+      "side_effect_class": "media_generation",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "vool-browser.assert",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "vool-browser.cancel",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "vool-browser.checkout.begin",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "explicit_user_opt_in",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "vool-browser.checkout.handoff",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "explicit_user_opt_in",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "vool-browser.click",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "vool-browser.download",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "vool-browser.inspect",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "vool-browser.navigate",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "vool-browser.offer.compare",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "vool-browser.offer.extract",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "vool-browser.order.reconcile",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "explicit_user_opt_in",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "vool-browser.permission.grant",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "vool-browser.permission.list",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "vool-browser.profile.confirm",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "vool-browser.screenshot",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "vool-browser.session.close",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "vool-browser.session.open",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "vool-browser.session.status",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "vool-browser.type",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "vool-browser.upload",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "vool-browser.upload.stage",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "wallet.payment_status",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "wallet.propose",
+      "side_effect_class": "creative_state",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "wallet.simulate",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "wallet.spend",
+      "side_effect_class": "wallet_spend",
+      "approval_requirement": "explicit_user_opt_in",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "wallet.status",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "web.fetch",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "web.research",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "web.search",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "web0.add_block",
+      "side_effect_class": "builder_state",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "web0.add_gated_section",
+      "side_effect_class": "builder_state",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "web0.compile_preview",
+      "side_effect_class": "builder_state",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "web0.create_project",
+      "side_effect_class": "builder_state",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "web0.encrypt_whole_site",
+      "side_effect_class": "builder_state",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "web0.fill_slots",
+      "side_effect_class": "builder_state",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "web0.open_builder_draft",
+      "side_effect_class": "builder_state",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "web0.publish",
+      "side_effect_class": "network_publish",
+      "approval_requirement": "explicit_user_opt_in",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "workspace.apply_unified_diff",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "workspace.ensure_directory",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "workspace.git_diff",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "workspace.git_status",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "workspace.git_summary",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "workspace.identity",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "workspace.list_files",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "workspace.list_tree",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "workspace.read_file",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "workspace.replace_in_file",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "workspace.rollback_last_change",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "workspace.run_formatter",
+      "side_effect_class": "validation_command",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "workspace.run_lint",
+      "side_effect_class": "validation_command",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "workspace.run_tests",
+      "side_effect_class": "validation_command",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "workspace.search_text",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "workspace.symbol_search",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "workspace.write_file",
+      "side_effect_class": "workspace_write",
+      "approval_requirement": "runtime_policy",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "x.trending",
+      "side_effect_class": "read_only",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    },
+    {
+      "intent": "x402.propose",
+      "side_effect_class": "creative_state",
+      "approval_requirement": "none",
+      "classification": "unreviewed"
+    }
+  ],
+  "limitations": [
+    "Static path literals are candidates, not a proof of route reachability.",
+    "Dynamic paths, plugin/MCP tools, UI surfaces, background jobs, and direct effects need separate review."
+  ]
+}

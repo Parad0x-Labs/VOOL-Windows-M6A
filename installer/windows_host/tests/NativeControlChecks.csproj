@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../NativeControl.cs" Link="NativeControl.cs" />
+    <Compile Include="../NativeBridge.cs" Link="NativeBridge.cs" />
+    <Compile Include="../NativeExport.cs" Link="NativeExport.cs" />
+    <Compile Include="../BridgeScript.cs" Link="BridgeScript.cs" />
+    <Compile Include="../CompanionGeometry.cs" Link="CompanionGeometry.cs" />
+    <Compile Include="../CompanionPayload.cs" Link="CompanionPayload.cs" />
+  </ItemGroup>
+</Project>

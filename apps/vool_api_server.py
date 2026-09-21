@@ -44,6 +44,7 @@ from core.windows_quiet_subprocess import enable_quiet_subprocess
 
 enable_quiet_subprocess()
 
+from core.native_control import authorize_http_request
 from core.runtime_capabilities import runtime_capability_snapshot
 from core.runtime_provider_defaults import default_runtime_model_tag
 from core.vool_workstation_ui import VOOL_WORKSTATION_DEPLOYMENT_VERSION
@@ -52,6 +53,7 @@ from core.web.api.runtime import (
     MODEL_NAME,
     RuntimeServices,
     bootstrap_runtime_services,
+    bundle_browser_origin_allowed,
     host_header_allowed,
 )
 from core.web.api.runtime import (
@@ -372,6 +374,9 @@ class VoolAPIHandler(BaseHTTPRequestHandler):
         if not host_header_allowed(self.headers.get("Host", "")):
             self._write_response(json_response(403, {"error": "host not allowed"}))
             return
+        if not bundle_browser_origin_allowed(self.headers.get("Host", ""), self.headers.get("Origin", "")):
+            self._write_response(json_response(403, {"error": "bundle origin not allowed"}))
+            return
         parsed = urlparse(self.path)
         runtime = _legacy_handler_runtime(getattr(self, "server", None))
         response = _dispatch_get(
@@ -388,8 +393,15 @@ class VoolAPIHandler(BaseHTTPRequestHandler):
         if not host_header_allowed(self.headers.get("Host", "")):
             self._write_response(json_response(403, {"error": "host not allowed"}))
             return
+        if not bundle_browser_origin_allowed(self.headers.get("Host", ""), self.headers.get("Origin", "")):
+            self._write_response(json_response(403, {"error": "bundle origin not allowed"}))
+            return
         runtime = _legacy_handler_runtime(getattr(self, "server", None))
-        content_length = int(self.headers.get("Content-Length", 0))
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            self._write_response(json_response(400, {"error": "invalid content length"}))
+            return
         if content_length <= 0:
             self._write_response(apply_runtime_headers(json_response(400, {"error": "empty body"}), runtime))
             return
@@ -414,7 +426,13 @@ class VoolAPIHandler(BaseHTTPRequestHandler):
                 )
             )
             return
+        if content_length > 4 * 1024 * 1024:
+            self._write_response(json_response(413, {"error": "request body too large"}))
+            return
         raw = self.rfile.read(content_length)
+        if not authorize_http_request("POST", self.path, raw, dict(self.headers.items())):
+            self._write_response(json_response(403, {"error": "native control required"}))
+            return
         try:
             body = json.loads(raw)
         except json.JSONDecodeError:
@@ -558,6 +576,14 @@ def _start_parent_death_watch(server: Any) -> None:
 
 
 def main() -> int:
+    from core.native_control import NativeControlUnavailable, install_secret, read_bootstrap_secret, windows_bundle
+
+    if windows_bundle():
+        try:
+            install_secret(read_bootstrap_secret())
+        except NativeControlUnavailable:
+            logger.error("Windows bundle native control bootstrap unavailable; API will not start")
+            return 1
     # Diagnosability law (F46): a served turn spent a measured ~97 s idle between
     # task_classified and model_routing — no events, no model call, no network — and the
     # process sample showed a bare condition-variable wait nothing could attribute.
@@ -566,7 +592,8 @@ def main() -> int:
     import faulthandler
     import signal
 
-    faulthandler.register(signal.SIGUSR1, all_threads=True, file=sys.stderr)
+    if hasattr(faulthandler, "register") and hasattr(signal, "SIGUSR1"):
+        faulthandler.register(signal.SIGUSR1, all_threads=True, file=sys.stderr)
     # C15: the ONE bounded unattended preflight, before any bootstrap can reach an OS
     # credential API. A scratch/synthetic home gets non-interactive storage pinned; the
     # operator's established home is recorded, never rewritten.

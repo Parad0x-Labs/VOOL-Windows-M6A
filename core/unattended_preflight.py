@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import contextlib
 import glob
+import hashlib
 import json
 import os
 import subprocess
@@ -440,7 +441,11 @@ def _select_isolated_browser(report: PreflightReport) -> None:
     Safe Storage" Keychain item to look for.
     """
     if not os.environ.get(BROWSER_PROFILE_ROOT_ENV):
-        profile_root = Path(tempfile.gettempdir()) / f"vool-browser-profiles-{os.getuid()}"
+        user_key = (
+            str(os.getuid()) if hasattr(os, "getuid")
+            else hashlib.sha256(str(Path.home()).casefold().encode("utf-8")).hexdigest()[:12]
+        )
+        profile_root = Path(tempfile.gettempdir()) / f"vool-browser-profiles-{user_key}"
         try:
             profile_root.mkdir(parents=True, exist_ok=True)
             os.environ[BROWSER_PROFILE_ROOT_ENV] = str(profile_root)

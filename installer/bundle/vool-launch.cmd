@@ -6,6 +6,7 @@ set "VOOL_BUNDLE_ROOT=%VOOL_ROOT%"
 set "VOOL_MANIFEST=%VOOL_ROOT%bundle_manifest.json"
 set "VOOL_BUNDLE_MANIFEST=%VOOL_MANIFEST%"
 set "VOOL_HOME=%LOCALAPPDATA%\VOOL"
+set "PYTHONPATH=%VOOL_ROOT%app;%PYTHONPATH%"
 set "OLLAMA_MODELS=%VOOL_HOME%\models"
 if not exist "%VOOL_HOME%" mkdir "%VOOL_HOME%" >nul 2>&1
 if not exist "%OLLAMA_MODELS%" mkdir "%OLLAMA_MODELS%" >nul 2>&1

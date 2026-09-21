@@ -470,7 +470,7 @@ def test_bundle_doctor_grades_shipped_launchers_without_source_install_artifacts
         (root / "ollama" / "ollama.exe").write_bytes(b"stub")
         (root / "app" / "apps").mkdir(parents=True)
         (root / "app" / "apps" / "vool_api_server.py").write_text("# api\n", encoding="utf-8")
-        for name in ("VOOL.cmd", "vool-open.ps1", "vool.vbs", "vool_window.py", "bundle_supervisor.py"):
+        for name in ("VOOL.cmd", "vool.vbs", "vool_window.py", "bundle_supervisor.py"):
             (root / name).write_text("# launcher\n", encoding="utf-8")
         (root / "bundle_manifest.json").write_text(
             json.dumps(

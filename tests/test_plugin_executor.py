@@ -25,6 +25,36 @@ import pytest
 
 from core import plugin_executor
 
+
+def test_native_windows_never_runs_plugin_with_heuristic_only(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(plugin_executor, "_kernel_confinement_prefix", lambda *args, **kwargs: None)
+    with monkeypatch.context() as context:
+        context.setattr(plugin_executor.os, "name", "nt")
+        with pytest.raises(plugin_executor.ConfinementUnavailableError, match="Native Windows"):
+            plugin_executor.confined_argv(
+                ["plugin-handler"], writable_roots=(tmp_path,), mode="heuristic_only"
+            )
+
+
+def test_posix_heuristic_only_remains_an_explicit_local_override(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(plugin_executor, "_kernel_confinement_prefix", lambda *args, **kwargs: None)
+    with monkeypatch.context() as context:
+        context.setattr(plugin_executor.os, "name", "posix")
+        argv, label = plugin_executor.confined_argv(
+            ["plugin-handler"], writable_roots=(tmp_path,), mode="heuristic_only"
+        )
+    assert argv == ["plugin-handler"] and label == "heuristic_only"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native Windows fail-closed path")
+def test_native_windows_plugin_handler_is_never_started(plugin: Path, monkeypatch) -> None:
+    def unexpected_launch(*args, **kwargs):
+        raise AssertionError("unconfined plugin handler was launched")
+
+    monkeypatch.setattr(plugin_executor.subprocess, "run", unexpected_launch)
+    result = _run(plugin)
+    assert not result.ok and result.status == "confinement_unavailable"
+
 SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -85,6 +115,7 @@ def _run(plugin: Path, *, arguments=None, args=(), **kwargs):
 # --------------------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(os.name == "nt", reason="native Windows broker not implemented")
 def test_a_plugin_tool_runs_and_returns_a_grounded_observation(plugin: Path) -> None:
     result = _run(plugin)
     assert result.ok and result.status == "executed"
@@ -103,6 +134,7 @@ def test_declared_defaults_are_applied_before_dispatch(plugin: Path) -> None:
     assert filled["limit"] == 25
 
 
+@pytest.mark.skipif(os.name == "nt", reason="native Windows broker not implemented")
 def test_a_plugin_reporting_failure_is_not_an_error(plugin: Path) -> None:
     """`ok:false` is an observation the model can act on, like any built-in failure."""
 
@@ -143,6 +175,7 @@ def test_other_declared_shapes_are_checked(plugin: Path, field: str, value: str)
     assert result.ok is False and result.status == "invalid_argument_shape"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="native Windows broker not implemented")
 def test_a_correctly_shaped_value_passes(plugin: Path) -> None:
     result = _run(plugin, arguments={"jql": "x", "name": "ENG", "where": "/tmp", "site": "https://a.test"})
     assert result.ok, result.error
@@ -161,6 +194,7 @@ def test_build_child_env_returns_only_what_was_granted(monkeypatch: pytest.Monke
     assert env["ALLOWED_ONE"] == "yes" and env["JIRA_TOKEN"] == "t"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="uses POSIX /usr/bin/env")
 def test_the_exec_boundary_passes_exactly_the_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
     """Asserted against `/usr/bin/env`, which adds nothing of its own."""
 
@@ -174,6 +208,7 @@ def test_the_exec_boundary_passes_exactly_the_allowlist(monkeypatch: pytest.Monk
     assert seen <= {"PATH", "TMPDIR", "LANG", "LC_ALL", "TZ", "GRANTED", "PLUGIN_SCRATCH"}
 
 
+@pytest.mark.skipif(os.name == "nt", reason="native Windows broker not implemented")
 def test_an_unlisted_secret_does_not_reach_a_running_plugin(
     plugin: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -184,6 +219,7 @@ def test_an_unlisted_secret_does_not_reach_a_running_plugin(
     assert "JIRA_TOKEN" in seen
 
 
+@pytest.mark.skipif(os.name == "nt", reason="uses POSIX python3 shim")
 def test_a_parent_value_does_not_cross_even_for_a_name_the_interpreter_also_sets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -234,27 +270,32 @@ def test_a_missing_handler_is_reported_not_raised(plugin: Path) -> None:
     assert result.ok is False and result.status == "handler_missing"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="native Windows broker not implemented")
 def test_non_json_output_is_a_protocol_error_not_a_crash(plugin: Path) -> None:
     result = _run(plugin, args=["garbage"])
     assert result.ok is False and result.status == "handler_protocol_error"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="native Windows broker not implemented")
 def test_a_crashing_handler_is_reported_with_its_stderr(plugin: Path) -> None:
     result = _run(plugin, args=["crash"])
     assert result.ok is False and result.status == "handler_failed"
     assert "boom" in result.error
 
 
+@pytest.mark.skipif(os.name == "nt", reason="native Windows broker not implemented")
 def test_a_hanging_handler_is_killed_by_the_timeout(plugin: Path) -> None:
     result = _run(plugin, args=["hang"], timeout_seconds=1.0)
     assert result.ok is False and result.status == "timeout"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="native Windows broker not implemented")
 def test_the_handler_runs_with_the_plugin_as_its_working_directory(plugin: Path) -> None:
     result = _run(plugin)
     assert result.ok, "a relative entry must resolve against the plugin root"
 
 
+@pytest.mark.skipif(os.name == "nt", reason="native Windows broker not implemented")
 def test_no_shell_is_involved(plugin: Path) -> None:
     """argv is a list, so a filename containing shell syntax cannot become an injection."""
 
