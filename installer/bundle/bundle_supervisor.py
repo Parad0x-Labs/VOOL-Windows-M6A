@@ -31,6 +31,7 @@ class BundleSupervisor:
         self.state_path = self.run_dir / "bundle-supervisor.json"
         self.lock_path = self.run_dir / "bundle-supervisor.lock"
         self.stop_path = self.run_dir / "stop"
+        self.window_reopen_path = self.run_dir / "window-reopen"
         self.model_status_path = self.run_dir / "model-pull.json"
         self.processes: dict[str, subprocess.Popen[Any]] = {}
         self.handles: dict[str, Any] = {}
@@ -181,6 +182,33 @@ class BundleSupervisor:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
         with contextlib.suppress(OSError):
             handle.close()
+
+    def _request_window_reopen(self) -> None:
+        """Ask the owned supervisor to ensure the native window is visible again."""
+        try:
+            self.run_dir.mkdir(parents=True, exist_ok=True)
+            self.window_reopen_path.write_text(f"{os.getpid()}\n", encoding="ascii")
+        except OSError:
+            # A duplicate launch must never turn into an unbounded retry or a second
+            # supervisor. The existing instance remains the single owner of the runtime.
+            pass
+
+    def _consume_window_reopen(self) -> bool:
+        """Consume a same-user relaunch request without starting a second supervisor."""
+        try:
+            self.window_reopen_path.unlink()
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return False
+
+        self._log("window reopen requested")
+        self.window_closed = False
+        if "window" in self.processes:
+            self._stop_child("window")
+        self.window_started = False
+        self.next_attempt["window"] = 0.0
+        return True
 
     def _healthy(self, url: str) -> bool:
         try:
@@ -462,15 +490,20 @@ class BundleSupervisor:
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         if not self._acquire_lease():
-            self._log("supervisor already running; duplicate launch ignored")
+            self._request_window_reopen()
+            self._log("supervisor already running; window reopen requested")
             return 0
         self._prepare()
         self.stop_path.unlink(missing_ok=True)
         self._log("supervisor started")
         try:
-            while not self.stop_path.exists() and not self.window_closed:
+            while not self.stop_path.exists():
+                self._consume_window_reopen()
                 self._reap_dead("ollama")
                 self._reap_dead("api")
+                self._reap_dead("window")
+                if self.window_closed:
+                    break
                 self._ensure_ollama()
                 self._ensure_api()
                 self._ensure_window()

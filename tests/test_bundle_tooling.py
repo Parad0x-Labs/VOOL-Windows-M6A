@@ -283,6 +283,44 @@ def test_bundle_supervisor_lease_prevents_duplicate_instances(tmp_path) -> None:
         second._release_lease()
 
 
+def test_bundle_supervisor_duplicate_launch_requests_window_reopen(tmp_path) -> None:
+    root = tmp_path / "bundle"
+    root.mkdir()
+    home = tmp_path / "home"
+    env = {"VOOL_HOME": str(home), "LOCALAPPDATA": str(home)}
+    first = BundleSupervisor(root, env=env)
+    second = BundleSupervisor(root, env=env)
+
+    assert first._acquire_lease() is True
+    try:
+        assert second.run(once=True) == 0
+        assert second.window_reopen_path.read_text(encoding="ascii").strip()
+        log = (home / "logs" / "bundle-supervisor.log").read_text(encoding="utf-8")
+        assert "window reopen requested" in log
+    finally:
+        first._release_lease()
+
+
+def test_bundle_supervisor_consumes_window_reopen_and_rearms_window(tmp_path) -> None:
+    root = tmp_path / "bundle"
+    root.mkdir()
+    home = tmp_path / "home"
+    supervisor = BundleSupervisor(root, env={"VOOL_HOME": str(home)})
+    supervisor._prepare()
+    supervisor.window_reopen_path.write_text("request\n", encoding="ascii")
+    supervisor.window_closed = True
+    supervisor.window_started = True
+
+    with mock.patch.object(supervisor, "_stop_child") as stop_child:
+        assert supervisor._consume_window_reopen() is True
+
+    stop_child.assert_not_called()
+    assert supervisor.window_closed is False
+    assert supervisor.window_started is False
+    assert supervisor.next_attempt["window"] == 0.0
+    assert not supervisor.window_reopen_path.exists()
+
+
 def test_bundle_supervisor_startup_timeout_enters_bounded_backoff(tmp_path) -> None:
     root = tmp_path / "bundle"
     root.mkdir()
