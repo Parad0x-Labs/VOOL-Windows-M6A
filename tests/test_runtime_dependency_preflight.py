@@ -15,6 +15,7 @@ genuinely lack the dependencies.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -27,6 +28,34 @@ from core.runtime_dependency_preflight import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_conformance_child_bootstraps_embedded_python_root() -> None:
+    """The embedded Windows interpreter cannot rely on ambient PYTHONPATH."""
+    from core import runtime_dependency_preflight as preflight_module
+
+    assert "import os, sys" in preflight_module._CHILD_SCRIPT
+    assert "sys.path.insert(0, os.getcwd())" in preflight_module._CHILD_SCRIPT
+
+    probe = (
+        "import os, sys\n"
+        "sys.path[:] = []\n"
+        "sys.path.insert(0, os.getcwd())\n"
+        "import core\n"
+        "print(core.__file__)\n"
+    )
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    completed = subprocess.run(
+        [sys.executable, "-S", "-c", probe],
+        cwd=str(REPO_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+    assert str(REPO_ROOT / "core") in completed.stdout
 
 
 def test_conformance_green_on_the_development_environment() -> None:

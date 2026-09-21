@@ -38,7 +38,12 @@ from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+# The Windows embedded interpreter uses a ``python312._pth`` file and ignores
+# ambient ``PYTHONPATH``.  The conformance child must therefore bootstrap the
+# staged application root explicitly before importing the served registry.
 _CHILD_SCRIPT = (
+    "import os, sys\n"
+    "sys.path.insert(0, os.getcwd())\n"
     "from core.command_registry.registry import registry\n"
     "registry()\n"
 )
