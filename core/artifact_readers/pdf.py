@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import platform
 import re
 import sys
 from pathlib import Path
@@ -157,13 +158,20 @@ def _package_paths() -> list[str]:
         return []
 
 
+def _pdf_decoder_remediation() -> str:
+    """Do not expose a Mac-only installation instruction on Windows or other platforms."""
+    if platform.system() == "Darwin":
+        return "Install the Xcode Command Line Tools, or add the `pypdf` package to this runtime."
+    return "Use a PDF with a text layer or attach extracted text; a local PDF decoder is not provisioned in this build."
+
+
 def _text_layer_pypdf(path: Path, *, max_pages: int, scratch: Path) -> dict[str, Any]:
     """Run the fallback parser confined, and translate its typed outcome back into ours."""
     if not _pypdf_importable():
         raise ReaderUnavailable(
             "No PDF decoder is available on this machine, so the PDF was not read.",
             code="pdf_decoder_unavailable",
-            remediation="Install the Xcode Command Line Tools, or add the `pypdf` package to this runtime.",
+            remediation=_pdf_decoder_remediation(),
             fmt="pdf",
         )
     script = scratch / "pypdf_reader.py"

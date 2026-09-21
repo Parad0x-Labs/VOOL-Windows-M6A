@@ -41,6 +41,24 @@ TOOL_NAME = "vool_speech_tool"
 #: Bumped whenever the Swift source changes meaning; recorded on every transcript produced.
 TOOL_VERSION = "1.0.0"
 
+
+def unavailable_reason() -> tuple[str, str]:
+    """Return truthful operator copy for a platform without the local speech backend."""
+    if platform.system() == "Windows":
+        return (
+            "Local speech transcription is not provisioned in this Windows build, so the audio was not transcribed.",
+            "Attach a transcript as text. VOOL keeps audio local and does not send it to a cloud speech service.",
+        )
+    if platform.system() != "Darwin":
+        return (
+            "Local speech transcription is not provisioned on this platform, so the audio was not transcribed.",
+            "Attach a transcript as text. VOOL keeps audio local and does not send it to a cloud speech service.",
+        )
+    return (
+        "This machine has no Swift toolchain, so the built-in speech recogniser cannot be built.",
+        "Install the Xcode Command Line Tools (`xcode-select --install`) to enable local audio transcription and dictation.",
+    )
+
 _SWIFT_SOURCE = r"""
 import AVFoundation
 import Foundation
@@ -213,10 +231,11 @@ def _binary_path() -> Path:
 def ensure_tool() -> Path:
     """The compiled helper, built once and cached by the hash of the source above."""
     if not toolchain_available():
+        message, remediation = unavailable_reason()
         raise ReaderUnavailable(
-            "This machine has no Swift toolchain, so the built-in speech recogniser cannot be built.",
+            message,
             code="speech_toolchain_unavailable",
-            remediation="Install the Xcode Command Line Tools (`xcode-select --install`) to enable local audio transcription and dictation.",
+            remediation=remediation,
         )
     binary = _binary_path()
     if binary.exists() and os.access(binary, os.X_OK):
@@ -360,10 +379,11 @@ def speech_available(*, locale: str = DEFAULT_LOCALE, probe_if_needed: bool = Tr
 def transcribe_unavailable(locale: str = DEFAULT_LOCALE) -> ReaderUnavailable | None:
     """THE typed reason transcription cannot run here, probed without side effects. None = it can."""
     if not toolchain_available():
+        message, remediation = unavailable_reason()
         return ReaderUnavailable(
-            "This machine has no Swift toolchain, so the built-in speech recogniser cannot be built.",
+            message,
             code="speech_toolchain_unavailable",
-            remediation="Install the Xcode Command Line Tools (`xcode-select --install`) to enable local audio transcription and dictation.",
+            remediation=remediation,
             fmt="audio",
         )
     try:

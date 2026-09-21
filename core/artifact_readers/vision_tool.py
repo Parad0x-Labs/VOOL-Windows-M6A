@@ -41,6 +41,24 @@ TOOL_NAME = "vool_vision_tool"
 #: so an answer can be traced to the exact extractor that produced its evidence.
 TOOL_VERSION = "1.0.0"
 
+
+def unavailable_reason() -> tuple[str, str]:
+    """Return truthful operator copy for a platform without the local OCR backend."""
+    if platform.system() == "Windows":
+        return (
+            "Local OCR and PDF page rendering are not provisioned in this Windows build, so scanned content was not read.",
+            "Use a PDF with a text layer or attach extracted text. VOOL does not send files to a cloud OCR service.",
+        )
+    if platform.system() != "Darwin":
+        return (
+            "Local OCR and PDF page rendering are not provisioned on this platform, so scanned content was not read.",
+            "Use a PDF with a text layer or attach extracted text. VOOL does not send files to a cloud OCR service.",
+        )
+    return (
+        "This machine has no Swift toolchain, so the built-in OCR and PDF page renderer cannot be built.",
+        "Install the Xcode Command Line Tools (`xcode-select --install`) to enable OCR of scanned pages and images.",
+    )
+
 _SWIFT_SOURCE = r"""
 import AppKit
 import CoreGraphics
@@ -202,10 +220,11 @@ def _binary_path() -> Path:
 def ensure_tool() -> Path:
     """The compiled helper, built once and cached by the hash of the source above."""
     if not toolchain_available():
+        message, remediation = unavailable_reason()
         raise ReaderUnavailable(
-            "This machine has no Swift toolchain, so the built-in OCR and PDF page renderer cannot be built.",
+            message,
             code="vision_toolchain_unavailable",
-            remediation="Install the Xcode Command Line Tools (`xcode-select --install`) to enable OCR of scanned pages and images.",
+            remediation=remediation,
         )
     binary = _binary_path()
     if binary.exists() and os.access(binary, os.X_OK):
