@@ -472,16 +472,26 @@ class BundleSupervisor:
 
 
 def main() -> int:
-    # C15: the ONE bounded unattended preflight — the .app supervisor is an unattended boot.
-    from core.unattended_preflight import preflight
-
-    preflight("installer.bundle.bundle_supervisor")
     parser = argparse.ArgumentParser(prog="vool-bundle-supervisor")
     parser.add_argument("--root", default=str(Path(__file__).resolve().parent))
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--stop", action="store_true")
     args = parser.parse_args()
     root = Path(args.root).resolve()
+
+    # The installed bundle launches this script from the bundle root. Keep the
+    # application package importable without relying on the developer
+    # checkout's PYTHONPATH.
+    import sys
+
+    app_root = str(root / "app")
+    if app_root not in sys.path:
+        sys.path.insert(0, app_root)
+
+    # C15: the ONE bounded unattended preflight — the .app supervisor is an unattended boot.
+    from core.unattended_preflight import preflight
+
+    preflight("installer.bundle.bundle_supervisor")
     if args.stop:
         local_app_data = Path(os.environ.get("LOCALAPPDATA") or Path.home())
         home = Path(os.environ.get("VOOL_HOME") or local_app_data / "VOOL")
