@@ -399,9 +399,27 @@ class BundleSupervisor:
         if listener_pid is not None:
             self._log(f"API port 11435 is held by non-owned pid={listener_pid}; refusing to replace it")
             return
+        # The embedded CPython runtime is isolated by its ``python312._pth``
+        # file and ignores the ambient PYTHONPATH. Bootstrap the API with its
+        # app root explicitly so ``core`` imports work from an installed bundle.
+        api_bootstrap = (
+            "import runpy,sys; "
+            "app_root=sys.argv[1]; script=sys.argv[2]; "
+            "sys.path.insert(0,app_root); "
+            "sys.argv=[script,*sys.argv[3:]]; "
+            "runpy.run_path(script,run_name='__main__')"
+        )
         self._start(
             "api",
-            [str(self.root / "python" / "python.exe"), str(self.root / "app" / "apps" / "vool_api_server.py"), "--port", "11435"],
+            [
+                str(self.root / "python" / "python.exe"),
+                "-c",
+                api_bootstrap,
+                str(self.root / "app"),
+                str(self.root / "app" / "apps" / "vool_api_server.py"),
+                "--port",
+                "11435",
+            ],
             cwd=self.root / "app",
         )
 

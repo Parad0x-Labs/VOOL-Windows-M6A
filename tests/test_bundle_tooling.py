@@ -85,6 +85,27 @@ def test_bundle_supervisor_is_stoppable_and_persists_diagnostics() -> None:
     assert "VOOL_BUNDLE_SUPERVISOR" in supervisor and "CreateMutexW" in supervisor
 
 
+def test_bundle_supervisor_bootstraps_api_imports_for_embedded_python(tmp_path) -> None:
+    root = tmp_path / "bundle"
+    root.mkdir()
+    home = tmp_path / "home"
+    supervisor = BundleSupervisor(root, env={"VOOL_HOME": str(home)})
+    supervisor._prepare()
+
+    with (
+        mock.patch.object(supervisor, "_health_probe", return_value=False),
+        mock.patch.object(supervisor, "_api_listener_pid", return_value=None),
+        mock.patch.object(supervisor, "_start") as start,
+    ):
+        supervisor._ensure_api()
+
+    argv = start.call_args.args[1]
+    assert argv[1] == "-c"
+    assert "sys.path.insert(0,app_root)" in argv[2]
+    assert argv[3] == str(root / "app")
+    assert argv[4].endswith("app\\apps\\vool_api_server.py")
+
+
 def test_bundle_manifest_controls_model_store_for_supervisor_and_runtime(tmp_path) -> None:
     root = tmp_path / "bundle"
     root.mkdir()
