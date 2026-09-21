@@ -468,6 +468,17 @@ def test_build_bundle_copies_every_runtime_package_and_stays_lean() -> None:
     # Lean deps only; the heavy ML stack must not be pip-installed into the bundle.
     for lean in ("pydantic", "cryptography", "uvicorn", "starlette", "solders"):
         assert lean in ps1
+    # These packages are part of the served runtime import closure or its declared base
+    # requirements. They must be installed into the embedded interpreter, not assumed to
+    # exist on the user's machine.
+    for served_runtime_dep in (
+        "idna==3.18",
+        "reportlab==5.0.1",
+        "markdown-it-py==4.2.0",
+        "zstandard>=0.22.0",
+        "xxhash>=3.4.0",
+    ):
+        assert served_runtime_dep in ps1, f"embedded bundle must install {served_runtime_dep}"
     assert "pip install" in ps1 and "torch" not in ps1  # training-only stack never enters the bundle
     assert "Embedded Python pip bootstrap failed." in ps1
     assert "Embedded Python setuptools/wheel bootstrap failed." in ps1
