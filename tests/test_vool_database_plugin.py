@@ -15,7 +15,9 @@ module (the handler runs only as the executor's confined child).
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import sqlite3
 from pathlib import Path
 
@@ -55,10 +57,23 @@ ORDERS_SEED = (
 WRITE_SCOPE = ("create_files", "modify_files")
 
 
-def _run(intent: str, arguments: dict, session: str = "db", **context):
+def _run(
+    intent: str,
+    arguments: dict,
+    session: str = "db",
+    *,
+    checkpoint_id: str | None = None,
+    step_index: int = 0,
+    **context,
+):
     from core.tool_intent_executor import execute_tool_intent
 
-    return execute_tool_intent({"intent": intent, "arguments": arguments}, **executor_kwargs(session, **context))
+    return execute_tool_intent(
+        {"intent": intent, "arguments": arguments},
+        checkpoint_id=checkpoint_id,
+        step_index=step_index,
+        **executor_kwargs(session, **context),
+    )
 
 
 def _create_orders(db_world, **extra):
@@ -308,6 +323,89 @@ def test_preview_diffs_then_approved_apply_changes_the_real_database(db_world) -
     # The engine truth rides the mutation receipt.
     assert observation["engine_truth"]["ddl_transactional"] is True
     assert "never rolls back a remote" in observation["engine_truth"]["remote_rollback"]
+
+
+def test_windows_broker_receipts_bind_database_effect_and_confinement(db_world) -> None:
+    """The live Windows authority must retain truthful broker evidence at the receipt boundary."""
+
+    if os.name != "nt" or not str(os.environ.get("VOOL_WINDOWS_BROKER") or "").strip():
+        pytest.skip("requires Windows and an explicitly published VOOL Windows broker")
+
+    from core.mode_permission_policy import resolve_approval
+    from core.runtime_continuity import build_tool_receipt_key, load_tool_receipt
+
+    assert _create_orders(db_world).ok
+    read_only = _run(
+        f"{DB_PLUGIN_ID}.schema",
+        {"name": "orders"},
+        session="windows-receipt-audit",
+    )
+    assert read_only.ok
+    read_evidence = read_only.details["confinement_evidence"]
+    assert read_evidence["plugin_id"] == DB_PLUGIN_ID
+    assert read_evidence["broker_type"] == "appcontainer_job_object"
+    assert read_evidence["network_policy"] == "none"
+    assert read_evidence["result"] == "completed"
+    assert read_evidence["job_owned"] is True
+    assert {row["access"] for row in read_evidence["filesystem_grants"]} == {"read_only"}
+
+    denied_args = {
+        "name": "orders",
+        "statements": ["ALTER TABLE orders ADD COLUMN denied_note TEXT"],
+    }
+    denied = _run(f"{DB_PLUGIN_ID}.migrate.apply", denied_args)
+    assert denied.status == "pending_approval"
+    assert denied.details["executed"] is False
+    assert "confinement_evidence" not in denied.details
+    denied_resolution = resolve_approval(
+        str(denied.details["approval_request"]["approval_id"]),
+        decision="deny",
+    )
+    assert denied_resolution is not None and denied_resolution["status"] == "denied"
+    unchanged = _run(f"{DB_PLUGIN_ID}.schema", {"name": "orders"})
+    assert "denied_note" not in json.dumps(unchanged.details["observation"]["tables"])
+
+    approved_args = {
+        "name": "orders",
+        "statements": ["ALTER TABLE orders ADD COLUMN approved_note TEXT"],
+    }
+    pending = _run(f"{DB_PLUGIN_ID}.migrate.apply", approved_args)
+    token = str(pending.details["approval_request"]["approval_id"])
+    assert resolve_approval(token, decision="allow") is not None
+    checkpoint = "windows-receipt-audit-approved"
+    applied = _run(
+        f"{DB_PLUGIN_ID}.migrate.apply",
+        approved_args,
+        session="windows-receipt-audit",
+        checkpoint_id=checkpoint,
+        step_index=0,
+        mode_approval_token=token,
+    )
+    assert applied.ok, (applied.status, applied.response_text)
+    manifest = db_world / "plugins" / DB_PLUGIN_ID / ".codex-plugin" / "plugin.json"
+    manifest_digest = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    receipt_key = build_tool_receipt_key(
+        checkpoint_id=checkpoint,
+        step_index=0,
+        intent=f"{DB_PLUGIN_ID}.migrate.apply",
+        arguments=approved_args,
+    )
+    receipt = load_tool_receipt(receipt_key)
+    assert receipt is not None
+    assert receipt["tool_name"] == f"{DB_PLUGIN_ID}.migrate.apply"
+    stored = receipt["execution"]
+    assert stored["ok"] is True
+    evidence = stored["details"]["confinement_evidence"]
+    assert evidence["plugin_id"] == DB_PLUGIN_ID
+    assert evidence["plugin_version"] == "0.1.0"
+    assert evidence["plugin_digest"] == manifest_digest
+    assert evidence["broker_type"] == "appcontainer_job_object"
+    assert evidence["network_policy"] == "none"
+    grants = {row["access"] for row in evidence["filesystem_grants"]}
+    assert grants == {"read_only", "read_write"}
+    assert evidence["result"] == "completed"
+    assert evidence["exit_code"] == 0
+    assert evidence["job_owned"] is True
 
 
 def test_failed_migration_rolls_back_and_keeps_the_recovery_backup(db_world) -> None:

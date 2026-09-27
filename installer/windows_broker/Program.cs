@@ -20,6 +20,7 @@ internal static class Program
                 "support" => PrintSupport(),
                 "probe" => Probe.Run(args[1..]),
                 "run" => RunBroker(args[1..]),
+                "plugin" => RunPlugin(),
                 _ => throw new ArgumentException($"Unknown command: {args[0]}"),
             };
         }
@@ -86,6 +87,36 @@ internal static class Program
         return result.TimedOut || result.ExitCode != 0 ? 1 : 0;
     }
 
+    private static int RunPlugin()
+    {
+        try
+        {
+            var requestText = Console.In.ReadToEnd();
+            var request = JsonSerializer.Deserialize<PluginBrokerRequest>(requestText, JsonOptions)
+                ?? throw new BrokerSecurityException("The plugin broker request was empty.");
+            var result = new WindowsExecutionBroker()
+                .ExecutePluginAsync(request)
+                .GetAwaiter()
+                .GetResult();
+            Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+            return result.Ok ? 0 : 1;
+        }
+        catch (Exception exception)
+        {
+            var result = new PluginBrokerExecutionResult(
+                false,
+                "confinement_unavailable",
+                "",
+                "",
+                -1,
+                false,
+                null,
+                exception.Message);
+            Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+            return 1;
+        }
+    }
+
     private static string ReadValue(IReadOnlyList<string> args, ref int index, string option)
     {
         if (++index >= args.Count)
@@ -98,10 +129,12 @@ internal static class Program
         Console.Error.WriteLine("vool-broker support");
         Console.Error.WriteLine("vool-broker probe [--inspect|--write-scratch NAME|--file PATH|--write-file PATH|--socket HOST PORT|--spawn-child-sleeper MS]");
         Console.Error.WriteLine("vool-broker run --exe PATH [--arg VALUE ...] [--timeout-ms N]");
+        Console.Error.WriteLine("vool-broker plugin < JSON request on stdin");
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
+        PropertyNameCaseInsensitive = true,
     };
 }

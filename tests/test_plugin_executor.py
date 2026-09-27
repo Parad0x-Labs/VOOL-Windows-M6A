@@ -48,10 +48,7 @@ def test_posix_heuristic_only_remains_an_explicit_local_override(monkeypatch, tm
 
 @pytest.mark.skipif(os.name != "nt", reason="native Windows fail-closed path")
 def test_native_windows_plugin_handler_is_never_started(plugin: Path, monkeypatch) -> None:
-    def unexpected_launch(*args, **kwargs):
-        raise AssertionError("unconfined plugin handler was launched")
-
-    monkeypatch.setattr(plugin_executor.subprocess, "run", unexpected_launch)
+    monkeypatch.setattr(plugin_executor, "_windows_broker_path", lambda: None)
     result = _run(plugin)
     assert not result.ok and result.status == "confinement_unavailable"
 

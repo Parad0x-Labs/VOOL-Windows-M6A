@@ -30,6 +30,20 @@ internal static class Program
 
     private static async Task<int> Main(string[] args)
     {
+        if (args.Length > 0 && args[0].Equals("--plugin-cleanup-child", StringComparison.Ordinal))
+        {
+            if (args.Length != 2
+                || !int.TryParse(args[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var delay)
+                || delay < 0
+                || delay > 60_000)
+            {
+                return 7;
+            }
+
+            Thread.Sleep(delay);
+            return 0;
+        }
+
         try
         {
             var brokerPath = ParseBrokerPath(args);
@@ -78,6 +92,8 @@ internal static class Program
                     VerifyChildJobContainmentAsync(brokerPath)),
                 ("Broker kills a long-lived descendant before returning", () =>
                     VerifyDescendantTerminationAsync(brokerPath)),
+                ("Plugin broker removes process, ACL, scratch, and AppContainer residue", () =>
+                    VerifyPluginResidueCleanupAsync()),
             };
             if (installedImagePath is not null)
             {
@@ -662,6 +678,232 @@ internal static class Program
         Assert(ProcessHasExited(childPid), $"Descendant {childPid} survived the broker return.");
     }
 
+    private static async Task VerifyPluginResidueCleanupAsync()
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "vool-broker-plugin-cleanup-harness",
+            Guid.NewGuid().ToString("N"));
+        var pluginRoot = Path.Combine(root, "plugin");
+        var scratchRoot = Path.Combine(root, "scratch");
+        Directory.CreateDirectory(pluginRoot);
+        Directory.CreateDirectory(scratchRoot);
+        var harnessExecutable = Environment.ProcessPath
+            ?? throw new HarnessAssertionException("The test process path is unavailable.");
+        var harnessDirectory = Path.GetDirectoryName(harnessExecutable)
+            ?? throw new HarnessAssertionException("The test process directory is unavailable.");
+        CopyDirectoryContents(harnessDirectory, pluginRoot);
+        var pluginExecutable = Path.Combine(pluginRoot, Path.GetFileName(harnessExecutable));
+        var pluginAcl = DirectoryAcl(pluginRoot);
+        var scratchAcl = DirectoryAcl(scratchRoot);
+        var payloadHashes = CaptureFileHashes(pluginRoot);
+        var broker = new WindowsExecutionBroker();
+        try
+        {
+            var success = await broker.ExecutePluginAsync(
+                    BuildPluginCleanupRequest(
+                        pluginRoot,
+                        scratchRoot,
+                        pluginExecutable,
+                        operationId: "success",
+                        arguments: new[] { "--plugin-cleanup-child", "0" }))
+                .ConfigureAwait(false);
+            Assert(
+                success.Ok && success.Status == "completed",
+                $"Plugin success cleanup case failed: status={success.Status}, exit={success.ExitCode}, "
+                + $"timed_out={success.TimedOut}, stdout={success.ChildStdout}, stderr={success.ChildStderr}, error={success.Error}");
+            AssertPluginResidueRemoved(
+                success,
+                pluginRoot,
+                scratchRoot,
+                payloadHashes,
+                pluginAcl,
+                scratchAcl,
+                "success");
+
+            var denied = false;
+            try
+            {
+                await broker.ExecutePluginAsync(
+                        BuildPluginCleanupRequest(
+                            pluginRoot,
+                            scratchRoot,
+                            pluginExecutable,
+                            operationId: "denied-network",
+                            arguments: new[] { "--plugin-cleanup-child", "0" },
+                            allowNetwork: true))
+                    .ConfigureAwait(false);
+            }
+            catch (BrokerSecurityException)
+            {
+                denied = true;
+            }
+
+            Assert(denied, "Network-enabled plugin request was not refused before launch.");
+            AssertEqual(pluginAcl, DirectoryAcl(pluginRoot), "Plugin ACL after denied request");
+            AssertEqual(scratchAcl, DirectoryAcl(scratchRoot), "Scratch ACL after denied request");
+            Assert(
+                FilesMatch(pluginRoot, payloadHashes),
+                "Denied request changed plugin root.");
+            Assert(!Directory.EnumerateFileSystemEntries(scratchRoot).Any(), "Denied request changed scratch root.");
+
+            var timedOut = await broker.ExecutePluginAsync(
+                    BuildPluginCleanupRequest(
+                        pluginRoot,
+                        scratchRoot,
+                        pluginExecutable,
+                        operationId: "timeout",
+                        arguments: new[] { "--plugin-cleanup-child", "10000" },
+                        timeoutMilliseconds: 1_000))
+                .ConfigureAwait(false);
+            Assert(timedOut.TimedOut && timedOut.Status == "timeout", "Plugin timeout cleanup case did not time out.");
+            AssertPluginResidueRemoved(
+                timedOut,
+                pluginRoot,
+                scratchRoot,
+                payloadHashes,
+                pluginAcl,
+                scratchAcl,
+                "timeout");
+
+            var failed = await broker.ExecutePluginAsync(
+                    BuildPluginCleanupRequest(
+                        pluginRoot,
+                        scratchRoot,
+                        pluginExecutable,
+                        operationId: "failed",
+                        arguments: new[] { "--plugin-cleanup-child", "-1" }))
+                .ConfigureAwait(false);
+            Assert(!failed.Ok && failed.Status == "handler_failed" && failed.ExitCode != 0,
+                "Plugin nonzero-exit cleanup case did not preserve failure truth.");
+            AssertPluginResidueRemoved(
+                failed,
+                pluginRoot,
+                scratchRoot,
+                payloadHashes,
+                pluginAcl,
+                scratchAcl,
+                "failed");
+        }
+        finally
+        {
+            DeleteDirectoryTree(root);
+        }
+    }
+
+    private static void CopyDirectoryContents(string sourceDirectory, string destinationDirectory)
+    {
+        foreach (var directory in Directory.GetDirectories(sourceDirectory, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(sourceDirectory, directory);
+            Directory.CreateDirectory(Path.Combine(destinationDirectory, relative));
+        }
+
+        foreach (var file in Directory.GetFiles(sourceDirectory, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(sourceDirectory, file);
+            var destination = Path.Combine(destinationDirectory, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+            File.Copy(file, destination, overwrite: true);
+        }
+    }
+
+    private static IReadOnlyDictionary<string, string> CaptureFileHashes(string root)
+    {
+        return Directory.GetFiles(root, "*", SearchOption.AllDirectories)
+            .ToDictionary(
+                path => path,
+                path => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))),
+                StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static bool FilesMatch(string root, IReadOnlyDictionary<string, string> expected)
+    {
+        var actual = CaptureFileHashes(root);
+        return actual.Count == expected.Count
+            && actual.All(pair => expected.TryGetValue(pair.Key, out var hash) && hash == pair.Value);
+    }
+
+    private static PluginBrokerRequest BuildPluginCleanupRequest(
+        string pluginRoot,
+        string scratchRoot,
+        string executablePath,
+        string operationId,
+        IReadOnlyList<string> arguments,
+        bool allowNetwork = false,
+        int timeoutMilliseconds = 10_000)
+    {
+        return new PluginBrokerRequest
+        {
+            Schema = "vool.plugin_broker.v1",
+            PluginId = "vool-database",
+            PluginVersion = "0.1.0",
+            PluginDigest = new string('a', 64),
+            OperationId = operationId,
+            ExecutablePath = executablePath,
+            Arguments = arguments,
+            WorkingDirectory = pluginRoot,
+            PluginRoot = pluginRoot,
+            ScratchRoot = scratchRoot,
+            ReadRoots = new[] { pluginRoot, scratchRoot },
+            WritableRoots = new[] { scratchRoot },
+            AllowNetwork = allowNetwork,
+            TimeoutMilliseconds = timeoutMilliseconds,
+            EnvironmentAllowlist = Array.Empty<string>(),
+            Environment = new Dictionary<string, string>(),
+        };
+    }
+
+    private static void AssertPluginResidueRemoved(
+        PluginBrokerExecutionResult result,
+        string pluginRoot,
+        string scratchRoot,
+        IReadOnlyDictionary<string, string> payloadHashes,
+        string pluginAcl,
+        string scratchAcl,
+        string context)
+    {
+        var confinement = result.Confinement
+            ?? throw new HarnessAssertionException($"{context} returned no confinement evidence.");
+        Assert(ProcessHasExited(confinement.ProcessId), $"{context} process survived broker return.");
+        AssertEqual(pluginAcl, DirectoryAcl(pluginRoot), $"Plugin ACL after {context}");
+        AssertEqual(scratchAcl, DirectoryAcl(scratchRoot), $"Scratch ACL after {context}");
+        Assert(
+            FilesMatch(pluginRoot, payloadHashes),
+            $"{context} changed the plugin package contents.");
+        Assert(!Directory.EnumerateFileSystemEntries(scratchRoot).Any(), $"{context} changed scratch root.");
+        AssertNoAppContainerAllowRule(pluginRoot, confinement.AppContainerSid);
+        AssertNoAppContainerAllowRule(scratchRoot, confinement.AppContainerSid);
+        AssertAppContainerProfileDeleted(confinement.AppContainerName, context);
+    }
+
+    private static void DeleteDirectoryTree(string path)
+    {
+        if (Directory.Exists(path))
+            Directory.Delete(path, recursive: true);
+    }
+
+    private static string DirectoryAcl(string path) =>
+        new DirectoryInfo(path)
+            .GetAccessControl(AccessControlSections.Access)
+            .GetSecurityDescriptorSddlForm(AccessControlSections.Access);
+
+    private static void AssertAppContainerProfileDeleted(string name, string context)
+    {
+        var result = NativeMethods.CreateAppContainerProfile(
+            name,
+            "VOOL cleanup audit",
+            "Temporary profile lifecycle check.",
+            IntPtr.Zero,
+            0,
+            out var sidPointer);
+        Assert(result >= 0, $"{context} AppContainer profile still exists: HRESULT 0x{result:X8}.");
+        if (sidPointer != IntPtr.Zero)
+            NativeMethods.FreeSid(sidPointer);
+        var deleted = NativeMethods.DeleteAppContainerProfile(name);
+        Assert(deleted >= 0, $"{context} cleanup audit could not remove its verification profile: HRESULT 0x{deleted:X8}.");
+    }
+
     private static async Task<BrokerExecutionResult> RunProbeAsync(
         string brokerPath,
         TimeSpan timeout,
@@ -757,7 +999,9 @@ internal static class Program
 
     private static void AssertNoAppContainerAllowRule(string filePath, string appContainerSid)
     {
-        var security = new FileInfo(filePath).GetAccessControl(AccessControlSections.Access);
+        FileSystemSecurity security = Directory.Exists(filePath)
+            ? new DirectoryInfo(filePath).GetAccessControl(AccessControlSections.Access)
+            : new FileInfo(filePath).GetAccessControl(AccessControlSections.Access);
         var matchingRule = security
             .GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier))
             .OfType<FileSystemAccessRule>()

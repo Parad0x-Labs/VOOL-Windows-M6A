@@ -25,17 +25,20 @@ internal sealed class NativeProcessLauncher : IDisposable
         FileStream stdout,
         FileStream stderr,
         int processId,
-        TokenSecuritySnapshot tokenSecurity)
+        TokenSecuritySnapshot tokenSecurity,
+        bool jobOwned)
     {
         this.process = process;
         this.stdout = stdout;
         this.stderr = stderr;
         ProcessId = processId;
         TokenSecurity = tokenSecurity;
+        JobOwned = jobOwned;
     }
 
     internal int ProcessId { get; }
     internal TokenSecuritySnapshot TokenSecurity { get; }
+    internal bool JobOwned { get; }
 
     internal static NativeProcessLauncher Start(
         IntPtr appContainerSid,
@@ -44,7 +47,8 @@ internal sealed class NativeProcessLauncher : IDisposable
         string executablePath,
         IReadOnlyList<string> arguments,
         string workingDirectory,
-        IReadOnlyDictionary<string, string> environment)
+        IReadOnlyDictionary<string, string> environment,
+        string? standardInput = null)
     {
         var securityAttributes = new NativeMethods.SecurityAttributes
         {
@@ -53,6 +57,8 @@ internal sealed class NativeProcessLauncher : IDisposable
         };
 
         SafeNativeHandle? stdin = null;
+        SafeNativeHandle? stdinRead = null;
+        SafeNativeHandle? stdinWrite = null;
         SafeNativeHandle? stdoutRead = null;
         SafeNativeHandle? stdoutWrite = null;
         SafeNativeHandle? stderrRead = null;
@@ -66,7 +72,15 @@ internal sealed class NativeProcessLauncher : IDisposable
 
         try
         {
-            stdin = CreateInheritableNullInput();
+            if (standardInput is null)
+            {
+                stdin = CreateInheritableNullInput();
+            }
+            else
+            {
+                CreatePipe(ref securityAttributes, out stdinRead, out stdinWrite);
+                ClearInheritFlag(stdinWrite);
+            }
             CreatePipe(ref securityAttributes, out stdoutRead, out stdoutWrite);
             CreatePipe(ref securityAttributes, out stderrRead, out stderrWrite);
             ClearInheritFlag(stdoutRead);
@@ -74,7 +88,7 @@ internal sealed class NativeProcessLauncher : IDisposable
 
             var inheritedHandles = new[]
             {
-                stdin.DangerousGetHandle(),
+                (stdin ?? stdinRead!).DangerousGetHandle(),
                 stdoutWrite.DangerousGetHandle(),
                 stderrWrite.DangerousGetHandle(),
             };
@@ -156,7 +170,7 @@ internal sealed class NativeProcessLauncher : IDisposable
                     {
                         Cb = Marshal.SizeOf<NativeMethods.StartupInfoEx>(),
                         Flags = NativeMethods.StartupUseStdHandles,
-                        StandardInput = stdin.DangerousGetHandle(),
+                        StandardInput = (stdin ?? stdinRead!).DangerousGetHandle(),
                         StandardOutput = stdoutWrite.DangerousGetHandle(),
                         StandardError = stderrWrite.DangerousGetHandle(),
                     },
@@ -194,6 +208,18 @@ internal sealed class NativeProcessLauncher : IDisposable
                     throw NativeMethods.LastError("AssignProcessToJobObject");
                 }
 
+                if (!NativeMethods.IsProcessInJob(
+                        process.DangerousGetHandle(),
+                        job.Handle.DangerousGetHandle(),
+                        out var jobOwned)
+                    || !jobOwned)
+                {
+                    NativeMethods.TerminateProcess(process, 0xC0000001);
+                    NativeMethods.WaitForSingleObject(process, 5_000);
+                    throw new BrokerSecurityException(
+                        "The child was not confirmed inside the broker Job Object.");
+                }
+
                 if (!NativeMethods.OpenProcessToken(
                         process.DangerousGetHandle(),
                         NativeMethods.TokenQuery,
@@ -217,6 +243,15 @@ internal sealed class NativeProcessLauncher : IDisposable
                     throw NativeMethods.LastError("ResumeThread");
                 }
 
+                if (standardInput is not null)
+                {
+                    using var inputStream = TransferWriteHandle(stdinWrite!);
+                    stdinWrite = null;
+                    var inputBytes = Encoding.UTF8.GetBytes(standardInput);
+                    inputStream.Write(inputBytes, 0, inputBytes.Length);
+                    inputStream.Flush();
+                }
+
                 stdoutStream = TransferReadHandle(stdoutRead);
                 transferredStdoutRead = true;
                 stdoutRead = null;
@@ -228,7 +263,8 @@ internal sealed class NativeProcessLauncher : IDisposable
                     stdoutStream,
                     stderrStream,
                     processInformation.ProcessId,
-                    tokenSecurity);
+                    tokenSecurity,
+                    jobOwned);
                 process = null;
                 return launched;
             }
@@ -264,6 +300,8 @@ internal sealed class NativeProcessLauncher : IDisposable
             thread?.Dispose();
             process?.Dispose();
             stdin?.Dispose();
+            stdinRead?.Dispose();
+            stdinWrite?.Dispose();
             stdoutWrite?.Dispose();
             stderrWrite?.Dispose();
             if (!transferredStdoutRead)
@@ -404,6 +442,13 @@ internal sealed class NativeProcessLauncher : IDisposable
         var safeFileHandle = new SafeFileHandle(handle.DangerousGetHandle(), ownsHandle: true);
         handle.SetHandleAsInvalid();
         return new FileStream(safeFileHandle, FileAccess.Read, 64 * 1024, isAsync: false);
+    }
+
+    private static FileStream TransferWriteHandle(SafeNativeHandle handle)
+    {
+        var safeFileHandle = new SafeFileHandle(handle.DangerousGetHandle(), ownsHandle: true);
+        handle.SetHandleAsInvalid();
+        return new FileStream(safeFileHandle, FileAccess.Write, 64 * 1024, isAsync: false);
     }
 
     private static async Task<string> CaptureAsync(Stream stream, CancellationToken cancellationToken)

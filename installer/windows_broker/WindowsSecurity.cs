@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
+using System.Text;
 
 namespace Vool.WindowsBroker;
 
@@ -22,11 +23,24 @@ internal sealed class AppContainerSession : IDisposable
     internal IntPtr SidPointer { get; }
     internal SecurityIdentifier Sid { get; }
 
-    internal static AppContainerSession Create()
+    internal static AppContainerSession Create(
+        string pluginId = "probe",
+        string pluginVersion = "probe",
+        string pluginDigest = "probe",
+        string operationId = "probe")
     {
         NativeMethods.RequireExport("userenv.dll", "CreateAppContainerProfile");
         NativeMethods.RequireExport("userenv.dll", "DeleteAppContainerProfile");
-        var name = $"Vool.Broker.{Guid.NewGuid():N}";
+        var identity = string.Join(
+            "\0",
+            "vool-windows-broker-v1",
+            pluginId,
+            pluginVersion,
+            pluginDigest,
+            operationId);
+        var identityHash = Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(identity))).ToLowerInvariant();
+        var name = $"Vool.Broker.v1.{identityHash[..32]}";
         var result = NativeMethods.CreateAppContainerProfile(
             name,
             "VOOL native execution broker",
@@ -360,6 +374,114 @@ internal static class WindowsAcl
     }
 }
 
+internal sealed class WindowsPathGrants : IDisposable
+{
+    private sealed record AppliedGrant(string Path, FileSystemAccessRule Rule);
+
+    private readonly List<AppliedGrant> applied = [];
+    private bool disposed;
+
+    private WindowsPathGrants(IReadOnlyList<FilesystemGrantEvidence> evidence)
+    {
+        Evidence = evidence;
+    }
+
+    internal IReadOnlyList<FilesystemGrantEvidence> Evidence { get; }
+
+    internal static WindowsPathGrants Create(
+        SecurityIdentifier appContainerSid,
+        IEnumerable<(string Path, bool Writable)> requestedRoots)
+    {
+        var roots = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (path, writable) in requestedRoots)
+        {
+            var full = PathSafety.RequireLocalDirectory(path, "filesystem grant root");
+            if (roots.TryGetValue(full, out var existing))
+                roots[full] = existing || writable;
+            else
+                roots.Add(full, writable);
+        }
+
+        var grants = new WindowsPathGrants(
+            roots.Select(pair => new FilesystemGrantEvidence(
+                pair.Key,
+                pair.Value ? "read_write" : "read_only")).ToArray());
+        try
+        {
+            foreach (var pair in roots)
+                grants.Apply(pair.Key, pair.Value, appContainerSid);
+            return grants;
+        }
+        catch
+        {
+            grants.Dispose();
+            throw;
+        }
+    }
+
+    private void Apply(string path, bool writable, SecurityIdentifier appContainerSid)
+    {
+        var rights = writable
+            ? FileSystemRights.Modify
+            : FileSystemRights.ReadAndExecute;
+        var rule = new FileSystemAccessRule(
+            appContainerSid,
+            rights,
+            InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
+            PropagationFlags.None,
+            AccessControlType.Allow);
+        var directory = new DirectoryInfo(path);
+        var security = directory.GetAccessControl(AccessControlSections.Access);
+        security.AddAccessRule(rule);
+        directory.SetAccessControl(security);
+
+        var verified = directory.GetAccessControl(AccessControlSections.Access);
+        var verifiedRule = verified
+            .GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier))
+            .OfType<FileSystemAccessRule>()
+            .FirstOrDefault(candidate =>
+                candidate.AccessControlType == AccessControlType.Allow
+                && candidate.IdentityReference.Value.Equals(
+                    appContainerSid.Value,
+                    StringComparison.OrdinalIgnoreCase)
+                && (candidate.FileSystemRights & rights) == rights);
+        if (verifiedRule is null)
+            throw new BrokerSecurityException(
+                $"AppContainer filesystem grant could not be verified for {path}.");
+
+        applied.Add(new AppliedGrant(path, rule));
+    }
+
+    public void Dispose()
+    {
+        if (disposed)
+            return;
+
+        disposed = true;
+        Exception? failure = null;
+        foreach (var grant in applied.AsEnumerable().Reverse())
+        {
+            try
+            {
+                var directory = new DirectoryInfo(grant.Path);
+                var security = directory.GetAccessControl(AccessControlSections.Access);
+                security.RemoveAccessRuleSpecific(grant.Rule);
+                directory.SetAccessControl(security);
+            }
+            catch (Exception exception)
+            {
+                failure ??= new BrokerSecurityException(
+                    $"Could not remove temporary AppContainer grant from {grant.Path}.",
+                    exception);
+            }
+        }
+
+        applied.Clear();
+        if (failure is not null)
+            throw failure;
+    }
+}
+
 internal sealed class ScratchWorkspace : IDisposable
 {
     private bool disposed;
@@ -532,6 +654,55 @@ internal sealed class ScratchWorkspace : IDisposable
 
 internal static class PathSafety
 {
+    internal static string RequireLocalDirectory(string path, string label)
+    {
+        var full = RequireLocalPath(path, label);
+        if (!Directory.Exists(full))
+            throw new BrokerSecurityException($"{label} does not exist as a directory: {full}");
+        return full.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+    }
+
+    internal static string RequireLocalFile(string path, string label)
+    {
+        var full = RequireLocalPath(path, label);
+        if (!File.Exists(full))
+            throw new BrokerSecurityException($"{label} does not exist as a file: {full}");
+        return full;
+    }
+
+    internal static string RequireLocalPath(string path, string label)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path))
+            throw new BrokerSecurityException($"{label} must be an absolute path.");
+
+        var full = Path.GetFullPath(path);
+        var root = Path.GetPathRoot(full);
+        if (string.IsNullOrWhiteSpace(root)
+            || root.StartsWith(@"\\", StringComparison.Ordinal)
+            || NativeMethods.GetDriveTypeW(root) != NativeMethods.DriveTypeFixed)
+        {
+            throw new BrokerSecurityException($"{label} must be on a fixed local volume: {full}");
+        }
+
+        RejectReparseAncestors(full);
+        return full;
+    }
+
+    internal static bool IsWithin(string root, string candidate)
+    {
+        var normalizedRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        var normalizedCandidate = Path.GetFullPath(candidate);
+        return normalizedCandidate.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(
+                normalizedCandidate,
+                normalizedRoot.TrimEnd(Path.DirectorySeparatorChar),
+                StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static bool IsWithinAny(IEnumerable<string> roots, string candidate) =>
+        roots.Any(root => IsWithin(root, candidate));
+
     internal static void RejectReparseAncestors(string path)
     {
         var current = System.IO.Path.GetFullPath(path);

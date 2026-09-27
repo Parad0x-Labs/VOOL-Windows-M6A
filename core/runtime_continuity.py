@@ -241,6 +241,61 @@ def _scrub_persisted(value: Any) -> Any:
     return value
 
 
+_BROKER_RECEIPT_EVIDENCE_FIELDS = (
+    "platform",
+    "broker_type",
+    "plugin_id",
+    "plugin_version",
+    "plugin_digest",
+    "operation_id",
+    "appcontainer_name",
+    "appcontainer_sid",
+    "process_id",
+    "job_owned",
+    "executable_path",
+    "executable_sha256",
+    "argv",
+    "filesystem_grants",
+    "network_policy",
+    "timeout_ms",
+    "result",
+    "exit_code",
+    "timed_out",
+    "token",
+    "job",
+)
+
+
+def _receipt_execution(execution: dict[str, Any] | None) -> dict[str, Any]:
+    """Redact a durable execution receipt without flattening broker confinement evidence.
+
+    The general tool redactor intentionally bounds recursive detail depth. Broker evidence is a
+    host-attested, non-secret schema whose grant rows and token/job snapshots are required to
+    remain independently auditable, so project only its explicit fields and scrub their values
+    through the normal persisted-secret boundary.
+    """
+    from core.agent_runtime.orchestrator import redact_tool_arguments
+
+    safe = _scrub_persisted(redact_tool_arguments(dict(execution or {})))
+    if not isinstance(safe, dict):
+        return {}
+    raw_details = dict(execution or {}).get("details")
+    raw_evidence = raw_details.get("confinement_evidence") if isinstance(raw_details, dict) else None
+    if isinstance(raw_evidence, dict):
+        safe_details = safe.get("details")
+        if not isinstance(safe_details, dict):
+            safe_details = {}
+            safe["details"] = safe_details
+        safe_details["confinement_evidence"] = _scrub_persisted(
+            {
+                field: raw_evidence[field]
+                for field in _BROKER_RECEIPT_EVIDENCE_FIELDS
+                if field in raw_evidence
+            }
+        )
+    return safe
+
+
 def _next_session_seq(conn: Any, session_id: str, recorded_event_count: int) -> int:
     """Final Repair 2 (Mnemosyne final review, 2026-08-07): a session already damaged by the
     Repair-1-era event_count bug (event_count left permanently understating MAX(seq)) stayed
@@ -3500,7 +3555,7 @@ def store_tool_receipt(
     if not clean_receipt_key:
         raise ValueError("receipt_key is required")
     safe_arguments = _scrub_persisted(redact_tool_arguments(dict(arguments or {})))
-    safe_execution = _scrub_persisted(redact_tool_arguments(dict(execution or {})))
+    safe_execution = _receipt_execution(execution)
     if not isinstance(safe_arguments, dict):
         safe_arguments = {}
     if not isinstance(safe_execution, dict):

@@ -32,11 +32,14 @@ answer exists to inspect, a whole-disk scan has already happened. Type-valid is 
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -72,6 +75,8 @@ class PluginToolResult:
     #: How the child was confined: ``kernel:<backend>`` or ``heuristic_only`` (explicit opt-in).
     #: Empty when the child never started.
     confinement: str = ""
+    #: Non-secret evidence returned by an OS-enforced broker, when available.
+    confinement_evidence: dict[str, Any] = field(default_factory=dict)
 
     def as_details(self) -> dict[str, Any]:
         details: dict[str, Any] = {"observation": dict(self.observation)}
@@ -81,6 +86,8 @@ class PluginToolResult:
             details["error"] = self.error
         if self.confinement:
             details["confinement"] = self.confinement
+        if self.confinement_evidence:
+            details["confinement_evidence"] = dict(self.confinement_evidence)
         return details
 
 
@@ -135,7 +142,20 @@ def build_child_env(
         value = os.environ.get(key)
         if value:
             child[key] = value
-    child.setdefault("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+    if os.name == "nt":
+        system_root = str(os.environ.get("SystemRoot") or os.environ.get("WINDIR") or "").strip()
+        child.setdefault(
+            "PATH",
+            os.pathsep.join(
+                value for value in (
+                    str(Path(sys.executable).resolve().parent),
+                    str(Path(system_root) / "System32") if system_root else "",
+                    system_root,
+                ) if value
+            ),
+        )
+    else:
+        child.setdefault("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
     for key in env_allowlist:
         value = os.environ.get(str(key))
         if value:
@@ -241,6 +261,273 @@ def _backend_label(wrapped: list[str], bare: list[str]) -> str:
     if not wrapped or wrapped == bare:
         return ""
     return f"kernel:{os.path.basename(str(wrapped[0]))}"
+
+
+def _windows_broker_path() -> Path | None:
+    """Resolve only the packaged broker or an explicit test/development broker path."""
+
+    override = str(os.environ.get("VOOL_WINDOWS_BROKER") or "").strip()
+    if override:
+        candidate = Path(override)
+        if not candidate.is_absolute() or candidate.suffix.lower() != ".exe":
+            return None
+        try:
+            candidate = candidate.resolve()
+        except (OSError, RuntimeError):
+            return None
+        return candidate if candidate.is_file() else None
+
+    try:
+        executable = Path(sys.executable).resolve()
+    except (OSError, RuntimeError):
+        return None
+    # The supported bundle layout is <bundle-root>\python\python.exe and
+    # <bundle-root>\native\broker\vool-broker.exe. No arbitrary code-root fallback is used.
+    if executable.parent.name.lower() != "python":
+        return None
+    candidate = executable.parent.parent / "native" / "broker" / "vool-broker.exe"
+    return candidate if candidate.is_file() else None
+
+
+def _windows_runtime_read_roots() -> tuple[Path, ...]:
+    roots: list[Path] = []
+    for value in (sys.prefix, sys.base_prefix, str(Path(sys.executable).resolve().parent)):
+        try:
+            root = Path(value).resolve()
+        except (OSError, RuntimeError, ValueError):
+            continue
+        if root.is_dir() and root not in roots:
+            roots.append(root)
+    return tuple(roots)
+
+
+def _windows_plugin_identity(plugin_root: Path, executable: Path, plugin_id: str) -> tuple[str, str]:
+    manifest = plugin_root / ".codex-plugin" / "plugin.json"
+    try:
+        manifest_bytes = manifest.read_bytes()
+        manifest_json = json.loads(manifest_bytes.decode("utf-8"))
+        version = str(manifest_json.get("version") or "unknown")
+        digest = hashlib.sha256(manifest_bytes).hexdigest()
+        return version, digest
+    except (OSError, UnicodeError, ValueError, AttributeError):
+        # Test-only/unpackaged plugin roots still get a stable identity bound to the exact
+        # executable bytes; a missing manifest is never treated as a trusted package identity.
+        try:
+            digest = hashlib.sha256(executable.read_bytes()).hexdigest()
+        except OSError:
+            digest = hashlib.sha256(plugin_id.encode("utf-8")).hexdigest()
+        return "unmanifested", digest
+
+
+def _windows_broker_environment() -> dict[str, str]:
+    system_root = str(os.environ.get("SystemRoot") or os.environ.get("WINDIR") or "").strip()
+    values: dict[str, str] = {}
+    if system_root:
+        values["SystemRoot"] = system_root
+        values["WINDIR"] = system_root
+    values["PATH"] = os.pathsep.join(
+        value for value in (
+            str(Path(sys.executable).resolve().parent),
+            str(Path(system_root) / "System32") if system_root else "",
+            system_root,
+        ) if value
+    )
+    for name in ("TEMP", "TMP"):
+        value = str(os.environ.get(name) or "").strip()
+        if value:
+            values[name] = value
+    return values
+
+
+def _run_windows_broker(
+    *,
+    intent: str,
+    arguments: dict[str, Any],
+    handler: dict[str, Any],
+    plugin_root: Path,
+    executable: Path,
+    scratch_dir: str,
+    timeout_seconds: float,
+    allow_network: bool,
+    read_only: bool,
+    env_allowlist: tuple[str, ...],
+    secrets: dict[str, str] | None,
+    schema: dict[str, Any],
+) -> PluginToolResult:
+    broker = _windows_broker_path()
+    if broker is None:
+        return PluginToolResult(
+            ok=False,
+            status="confinement_unavailable",
+            error=(
+                "Native Windows plugin broker executable was not found; the child was not started."
+            ),
+            observation={"intent": intent},
+        )
+
+    try:
+        if not str(scratch_dir or "").strip():
+            raise ConfinementUnavailableError(
+                "Native Windows plugin execution requires an explicit isolated scratch root; the child was not started."
+            )
+        scratch = Path(scratch_dir).resolve()
+        scratch.mkdir(parents=True, exist_ok=True)
+        runtime_roots = _windows_runtime_read_roots()
+        plugin_id = intent.split(".", 1)[0] or "unknown-plugin"
+        plugin_version, plugin_digest = _windows_plugin_identity(plugin_root, executable, plugin_id)
+        child_env = build_child_env(
+            env_allowlist=env_allowlist,
+            secrets=secrets,
+            scratch_dir=str(scratch),
+        )
+        environment_allowlist = sorted(set(env_allowlist) | set(child_env))
+        # The Windows broker grants the plugin package read/execute access only. Every
+        # mutation in this bounded integration is directed to the isolated scratch root;
+        # the package itself is never a writable grant.
+        writable_roots = [] if read_only else [scratch]
+
+        script_args = [str(executable)]
+        script_args.extend(str(value) for value in (handler.get("args") or ()))
+        broker_executable = executable
+        if executable.suffix.lower() != ".exe":
+            broker_executable = Path(sys.executable).resolve()
+            if not broker_executable.is_file():
+                raise ConfinementUnavailableError(
+                    "Native Windows plugin interpreter was not found; the child was not started."
+                )
+            script_args = [str(executable), *[str(value) for value in (handler.get("args") or ())]]
+
+        read_roots = [plugin_root.resolve(), scratch, *runtime_roots]
+        request_payload = {
+            "schema": "vool.plugin_broker.v1",
+            "plugin_id": plugin_id,
+            "plugin_version": plugin_version,
+            "plugin_digest": plugin_digest,
+            "operation_id": f"{plugin_id}-{uuid.uuid4().hex}",
+            "executable_path": str(broker_executable),
+            "arguments": script_args,
+            "working_directory": str(plugin_root.resolve()),
+            "plugin_root": str(plugin_root.resolve()),
+            "scratch_root": str(scratch),
+            "read_roots": [str(root) for root in read_roots],
+            "writable_roots": [str(root) for root in writable_roots],
+            "allow_network": bool(allow_network),
+            "timeout_ms": max(1_000, int(float(timeout_seconds or DEFAULT_TIMEOUT_SECONDS) * 1_000)),
+            "environment_allowlist": environment_allowlist,
+            "environment": child_env,
+            "stdin": json.dumps(
+                {
+                    "intent": intent,
+                    "arguments": json_schema_lite.apply_defaults(arguments, schema),
+                    "context": {
+                        "scratch_dir": str(scratch),
+                        "secrets": sorted((secrets or {}).keys()),
+                    },
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+        }
+        completed = subprocess.run(
+            [str(broker), "plugin"],
+            input=json.dumps(request_payload, ensure_ascii=False),
+            capture_output=True,
+            text=True,
+            timeout=max(5.0, float(timeout_seconds or DEFAULT_TIMEOUT_SECONDS) + 10.0),
+            cwd=str(plugin_root.resolve()),
+            env=_windows_broker_environment(),
+            shell=False,
+        )
+    except subprocess.TimeoutExpired:
+        return PluginToolResult(
+            ok=False,
+            status="timeout",
+            error=f"Windows plugin broker exceeded {timeout_seconds}s",
+            observation={"intent": intent},
+            confinement="windows:appcontainer_job_object",
+        )
+    except (OSError, ValueError, RuntimeError, ConfinementUnavailableError) as exc:
+        return PluginToolResult(
+            ok=False,
+            status="confinement_unavailable",
+            error=str(exc),
+            observation={"intent": intent},
+        )
+
+    stdout = (completed.stdout or "").strip()
+    try:
+        broker_result = json.loads(stdout) if stdout else {}
+    except ValueError:
+        return PluginToolResult(
+            ok=False,
+            status="confinement_unavailable",
+            error=f"Windows plugin broker did not emit JSON: {stdout[:200]!r}",
+            observation={"intent": intent},
+        )
+    if not isinstance(broker_result, dict):
+        return PluginToolResult(
+            ok=False,
+            status="confinement_unavailable",
+            error="Windows plugin broker emitted JSON that is not an object",
+            observation={"intent": intent},
+        )
+
+    evidence = broker_result.get("confinement")
+    evidence = dict(evidence) if isinstance(evidence, dict) else {}
+    broker_error = str(broker_result.get("error") or "")
+    if not evidence:
+        return PluginToolResult(
+            ok=False,
+            status="confinement_unavailable",
+            error=broker_error or "Windows broker returned no confinement evidence.",
+            observation={"intent": intent},
+        )
+
+    child_stdout = str(broker_result.get("child_stdout") or "").strip()
+    child_stderr = str(broker_result.get("child_stderr") or "").strip()
+    exit_code = int(broker_result.get("exit_code") or 0)
+    confinement_label = "windows:appcontainer_job_object"
+    if exit_code != 0 and not child_stdout:
+        return PluginToolResult(
+            ok=False,
+            status="timeout" if bool(broker_result.get("timed_out")) else "handler_failed",
+            error=broker_error or f"exit {exit_code}: {child_stderr[:500]}",
+            observation={"intent": intent},
+            confinement=confinement_label,
+            confinement_evidence=evidence,
+        )
+    try:
+        parsed = json.loads(child_stdout) if child_stdout else {}
+    except ValueError:
+        return PluginToolResult(
+            ok=False,
+            status="handler_protocol_error",
+            error=f"handler did not emit one JSON object on stdout: {child_stdout[:200]!r}",
+            confinement=confinement_label,
+            confinement_evidence=evidence,
+        )
+    if not isinstance(parsed, dict):
+        return PluginToolResult(
+            ok=False,
+            status="handler_protocol_error",
+            error="handler emitted JSON that is not an object",
+            confinement=confinement_label,
+            confinement_evidence=evidence,
+        )
+    observation = parsed.get("observation")
+    observation = dict(observation) if isinstance(observation, dict) else {}
+    observation.setdefault("intent", intent)
+    ok = bool(parsed.get("ok", True))
+    return PluginToolResult(
+        ok=ok,
+        status=str(parsed.get("status") or ("executed" if ok else "failed")),
+        text=str(parsed.get("text") or ""),
+        observation=observation,
+        resolved_target=str(parsed.get("resolved_target") or ""),
+        error=str(parsed.get("error") or ""),
+        confinement=confinement_label,
+        confinement_evidence=evidence,
+    )
 
 
 def confined_argv(
@@ -356,6 +643,23 @@ def run_plugin_tool(
             writable.append(Path(scratch_dir).resolve())
         except OSError:
             pass
+
+    if os.name == "nt":
+        return _run_windows_broker(
+            intent=intent,
+            arguments=filled,
+            handler=handler,
+            plugin_root=root,
+            executable=executable,
+            scratch_dir=scratch_dir,
+            timeout_seconds=timeout_seconds,
+            allow_network=allow_network,
+            read_only=read_only,
+            env_allowlist=env_allowlist,
+            secrets=secrets,
+            schema=schema,
+        )
+
     bare_argv = [str(executable), *[str(a) for a in (handler.get("args") or ())]]
     try:
         argv, confinement_label = confined_argv(

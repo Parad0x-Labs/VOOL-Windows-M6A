@@ -215,7 +215,10 @@ def test_unavailable_confinement_refuses_rather_than_running_bare(plugin_world, 
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    monkeypatch.setattr(plugin_executor, "_kernel_confinement_prefix", lambda *a, **k: None)
+    if os.name == "nt":
+        monkeypatch.setattr(plugin_executor, "_windows_broker_path", lambda: None)
+    else:
+        monkeypatch.setattr(plugin_executor, "_kernel_confinement_prefix", lambda *a, **k: None)
     out = _run(f"{PLUGIN_ID}.echo", {"text": "delta"}, workspace_root=str(workspace))
     assert out.handled and not out.ok
     assert out.status == "confinement_unavailable", (out.status, out.details)

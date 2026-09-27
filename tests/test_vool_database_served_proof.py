@@ -34,7 +34,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import pytest
 
@@ -177,7 +177,7 @@ def served(tmp_path: Path):
             enable("vool-database")
             print("lifecycle: installed+verified+enabled")
             """
-        ).format(root=REPO_ROOT, plugins_root=plugins_root),
+        ).format(root=REPO_ROOT.as_posix(), plugins_root=plugins_root.as_posix()),
         env_extra={"VOOL_PLUGINS_DIR": str(plugins_root), "VOOL_PLUGIN_SCRATCH_ROOT": str(scratch)},
     )
     daemon = ServedDaemon(
@@ -209,6 +209,17 @@ def _get(daemon: ServedDaemon, path: str) -> dict[str, Any]:
         return json.loads(response.read().decode("utf-8"))
 
 
+def _post(daemon: ServedDaemon, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    request = Request(
+        f"{daemon.base_url}{path}",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urlopen(request, timeout=30) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
 def _events_for(home: Path) -> list[tuple[str, str]]:
     conn = sqlite3.connect(str(home / "data" / "vool_web0_v2.db"))
     try:
@@ -219,6 +230,76 @@ def _events_for(home: Path) -> list[tuple[str, str]]:
     finally:
         conn.close()
     return rows
+
+
+def test_served_http_lifecycle_controls_database_pack_and_persists_on_relaunch(tmp_path: Path) -> None:
+    """The normal lifecycle API is the authority for the disposable database pack."""
+
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    plugins_root = tmp_path / "pluginsroot"
+    scratch = tmp_path / "scratch"
+    workspace.mkdir()
+    plugins_root.mkdir()
+    install_pack(plugins_root)
+    env_extra = {
+        "VOOL_ALWAYS_ON_CATALOG": "1",
+        "VOOL_WORKSPACE_ROOT": str(workspace),
+        "VOOL_PLUGINS_DIR": str(plugins_root),
+        "VOOL_PLUGIN_RUNTIME_TOOLS": "1",
+        "VOOL_PLUGIN_SCRATCH_ROOT": str(scratch),
+    }
+    daemon = ServedDaemon(home, env_extra=env_extra)
+    daemon.start(timeout=240)
+    try:
+        initial = _get(daemon, "/api/plugins/lifecycle")
+        assert "vool-database" not in initial.get("available", [])
+
+        installed = _post(
+            daemon,
+            "/api/plugins/lifecycle",
+            {"action": "install", "plugin_id": "vool-database"},
+        )
+        assert installed["ok"] is True
+        assert installed["stage"] == "installed"
+        assert installed["available"] is False
+
+        verified = _post(
+            daemon,
+            "/api/plugins/lifecycle",
+            {"action": "verify", "plugin_id": "vool-database"},
+        )
+        assert verified["ok"] is True
+        assert verified["stage"] == "verified"
+        assert verified["available"] is False
+
+        enabled = _post(
+            daemon,
+            "/api/plugins/lifecycle",
+            {"action": "enable", "plugin_id": "vool-database"},
+        )
+        assert enabled["ok"] is True
+        assert enabled["stage"] == "enabled"
+        assert enabled["available"] is True
+        assert enabled["contracts_registered"] is True
+
+        catalog = _get(daemon, "/api/plugins")
+        entry = next(item for item in catalog["plugins"] if item.get("id") == "vool-database")
+        assert entry["enabled"] is True
+        assert any(skill.get("name") == "vool-database" for skill in entry.get("skills", []))
+    finally:
+        daemon.stop()
+
+    relaunched = ServedDaemon(home, env_extra=env_extra)
+    relaunched.start(timeout=240)
+    try:
+        persisted = _get(relaunched, "/api/plugins/lifecycle")
+        assert persisted["available"] == ["vool-database"]
+        catalog = _get(relaunched, "/api/plugins")
+        entry = next(item for item in catalog["plugins"] if item.get("id") == "vool-database")
+        assert entry["enabled"] is True
+    finally:
+        relaunched.stop()
 
 
 def test_served_discovery_lists_the_pack_and_its_capabilities(served: dict[str, Any]) -> None:
@@ -269,7 +350,7 @@ def test_served_chat_door_reaches_the_tool_loop_and_the_expanded_plugin_family_s
         # Point the daemon's local lane at the stub AFTER boot, through the manifest store.
         run_in_home(
             served["home"],
-            _STUB_SEED.format(root=REPO_ROOT, base_url=provider.base_url, model=MODEL),
+            _STUB_SEED.format(root=REPO_ROOT.as_posix(), base_url=provider.base_url, model=MODEL),
             env_extra={
                 "OLLAMA_HOST": provider.base_url,
                 "VOOL_OLLAMA_URL": provider.base_url,
@@ -281,7 +362,7 @@ def test_served_chat_door_reaches_the_tool_loop_and_the_expanded_plugin_family_s
             textwrap.dedent(
                 f'''
                 import sys
-                sys.path.insert(0, "{REPO_ROOT}")
+                sys.path.insert(0, "{REPO_ROOT.as_posix()}")
                 from storage.model_provider_manifest import list_provider_manifests
                 from tests._authorship_certification import certify_for_authorship
                 for m in list_provider_manifests():
@@ -405,7 +486,7 @@ print("ALL SEVEN SCENARIOS OK")
 def _scenario_script() -> str:
     return (
         _SCENARIOS
-        .replace("@ROOT@", str(REPO_ROOT))
+        .replace("@ROOT@", REPO_ROOT.as_posix())
         .replace("@DDL@", repr(ORDERS_DDL))
         .replace("@SEED@", repr(ORDERS_SEED))
         .replace("@GOOD@", repr(GOOD_MIGRATION))
