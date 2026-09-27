@@ -40,6 +40,8 @@ def _has_exact_raw_shape(contract: RawOutputContract) -> bool:
         contract.exact_text is not None
         or contract.exact_words is not None
         or contract.exact_sentences is not None
+        or contract.min_sentences is not None
+        or contract.max_sentences is not None
         or contract.exact_lines is not None
         or contract.bullet_count is not None
         or contract.delimiter is not None
@@ -53,6 +55,8 @@ def _raw_shape_name(contract: RawOutputContract) -> str:
     for name in (
         "exact_words",
         "exact_sentences",
+        "min_sentences",
+        "max_sentences",
         "exact_lines",
         "bullet_count",
         "delimiter",
@@ -127,6 +131,7 @@ def validated_exact_output_seal(user_text: str, response_text: str) -> ExactOutp
         for value in (
             constraint.exact_words,
             constraint.exact_sentences,
+            constraint.min_sentences,
             constraint.list_items,
         )
     ):
@@ -140,6 +145,8 @@ def validated_exact_output_seal(user_text: str, response_text: str) -> ExactOutp
         if constraint.exact_words is not None
         else "exact_sentences"
         if constraint.exact_sentences is not None
+        else "min_sentences"
+        if constraint.min_sentences is not None
         else "list_items"
     )
     return ExactOutputSeal("response_constraint", shape, f"sha256:{digest}")

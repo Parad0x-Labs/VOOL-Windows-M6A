@@ -37,8 +37,9 @@ internal sealed class VoolWindow : Form
         {
             try
             {
-                var profile = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VOOL", "WebView2");
+                var profile = NativePathResolver.ResolveWebView2UserDataFolder(
+                    Environment.GetEnvironmentVariable("VOOL_HOME"),
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
                 Directory.CreateDirectory(profile);
                 _environment = await CoreWebView2Environment.CreateAsync(userDataFolder: profile);
                 await ConfigureView(_view, this, "/chat");

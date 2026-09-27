@@ -36,6 +36,8 @@ class BundleSupervisor:
         self.processes: dict[str, subprocess.Popen[Any]] = {}
         self.handles: dict[str, Any] = {}
         self.started_at: dict[str, float] = {}
+        self.last_healthy_at: dict[str, float] = {}
+        self.unhealthy_since: dict[str, float] = {}
         self.failures: dict[str, int] = {"ollama": 0, "api": 0, "window": 0}
         self.restart_counts: dict[str, int] = {"ollama": 0, "api": 0, "window": 0}
         self.next_attempt: dict[str, float] = {"ollama": 0.0, "api": 0.0, "window": 0.0}
@@ -97,6 +99,12 @@ class BundleSupervisor:
         commit = str(self._manifest().get("source_commit_full") or "").strip().lower()
         if len(commit) == 40 and all(char in "0123456789abcdef" for char in commit):
             self.env["VOOL_EXPECTED_COMMIT"] = commit
+        # This installed bundle owns its local Ollama process. Never inherit a host-level
+        # endpoint override: the supervisor probes loopback, and pull, registration, probes,
+        # and the router must all use that same bundled service and per-user model store.
+        self.env["OLLAMA_HOST"] = "127.0.0.1:11434"
+        self.env["VOOL_RAW_OLLAMA_API_URL"] = "http://127.0.0.1:11434"
+        self.env["VOOL_OLLAMA_URL"] = "http://127.0.0.1:11434"
         model_store = self._model_store()
         self.env["OLLAMA_MODELS"] = str(model_store)
         model = self._model()
@@ -218,19 +226,38 @@ class BundleSupervisor:
             return False
 
     def _health_probe(self, name: str, url: str) -> bool:
-        healthy = self._owned_api_healthy() if name == "api" else self._healthy(url)
+        checked_at = time.time()
+        healthy = (
+            self._owned_api_healthy()
+            if name == "api"
+            else self._owned_ollama_healthy()
+            if name == "ollama"
+            else self._healthy(url)
+        )
         previous = self.health.get(name, {}).get("healthy")
         self.health[name] = {
             "url": url,
             "healthy": healthy,
-            "checked_at": time.time(),
+            "checked_at": checked_at,
         }
+        if healthy:
+            self.last_healthy_at[name] = checked_at
+            self.unhealthy_since.pop(name, None)
+        elif name in self.last_healthy_at:
+            self.unhealthy_since.setdefault(name, checked_at)
         if previous is None or previous != healthy:
             self._log(f"health {name}={'healthy' if healthy else 'unhealthy'} url={url}")
         return healthy
 
+    def _health_grace_active(self, name: str) -> bool:
+        now = time.time()
+        if name not in self.last_healthy_at:
+            return now - self.started_at.get(name, now) <= _STARTUP_TIMEOUT_SECONDS
+        unhealthy_since = self.unhealthy_since.get(name)
+        return unhealthy_since is None or now - unhealthy_since <= _STARTUP_TIMEOUT_SECONDS
+
     @staticmethod
-    def _api_listener_pid() -> int | None:
+    def _loopback_listener_pid(port: int) -> int | None:
         """Use the OS TCP table, not a server-supplied PID, to identify the loopback listener."""
         try:
             import psutil
@@ -240,13 +267,21 @@ class BundleSupervisor:
                 if (
                     connection.status == psutil.CONN_LISTEN
                     and address
-                    and address.port == 11435
+                    and address.port == port
                     and address.ip in {"127.0.0.1", "::1"}
                 ):
                     return connection.pid
         except (ImportError, OSError, AttributeError):
             pass
         return None
+
+    @staticmethod
+    def _api_listener_pid() -> int | None:
+        return BundleSupervisor._loopback_listener_pid(11435)
+
+    @staticmethod
+    def _ollama_listener_pid() -> int | None:
+        return BundleSupervisor._loopback_listener_pid(11434)
 
     def _owned_api_healthy(self) -> bool:
         child = self.processes.get("api")
@@ -269,6 +304,14 @@ class BundleSupervisor:
             and runtime.get("commit_full") == expected
             and runtime.get("pid") == child.pid
         )
+
+    def _owned_ollama_healthy(self) -> bool:
+        child = self.processes.get("ollama")
+        if child is None or child.poll() is not None:
+            return False
+        if self._ollama_listener_pid() != child.pid:
+            return False
+        return self._healthy("http://127.0.0.1:11434/api/tags")
 
     def _child_env(self) -> dict[str, str]:
         env = dict(self.env)
@@ -386,6 +429,8 @@ class BundleSupervisor:
             with contextlib.suppress(OSError):
                 handle.close()
         self.started_at.pop(name, None)
+        self.last_healthy_at.pop(name, None)
+        self.unhealthy_since.pop(name, None)
 
     def _reap_dead(self, name: str) -> None:
         child = self.processes.get(name)
@@ -406,10 +451,14 @@ class BundleSupervisor:
             return
         child = self.processes.get("ollama")
         if child is not None and child.poll() is None:
-            if time.time() - self.started_at.get("ollama", time.time()) <= _STARTUP_TIMEOUT_SECONDS:
+            if self._health_grace_active("ollama"):
                 return
             self._stop_child("ollama")
             self._schedule_retry("ollama", "startup timeout")
+            return
+        listener_pid = self._ollama_listener_pid()
+        if listener_pid is not None:
+            self._log(f"Ollama port 11434 is held by non-owned pid={listener_pid}; refusing to use or replace it")
             return
         self._start("ollama", [str(self.root / "ollama" / "ollama.exe"), "serve"], cwd=self.root)
 
@@ -418,7 +467,7 @@ class BundleSupervisor:
             return
         child = self.processes.get("api")
         if child is not None and child.poll() is None:
-            if time.time() - self.started_at.get("api", time.time()) <= _STARTUP_TIMEOUT_SECONDS:
+            if self._health_grace_active("api"):
                 return
             self._stop_child("api")
             self._schedule_retry("api", "startup timeout")
@@ -441,6 +490,7 @@ class BundleSupervisor:
             "api",
             [
                 str(self.root / "python" / "python.exe"),
+                "-B",
                 "-c",
                 api_bootstrap,
                 str(self.root / "app"),
@@ -459,7 +509,7 @@ class BundleSupervisor:
         argv = (
             [str(native_host)]
             if os.name == "nt" and native_host.is_file()
-            else [str(self.root / "python" / "pythonw.exe"), str(self.root / "vool_window.py")]
+            else [str(self.root / "python" / "pythonw.exe"), "-B", str(self.root / "vool_window.py")]
         )
         self._start(
             "window",
@@ -539,6 +589,14 @@ def main() -> int:
     if app_root not in sys.path:
         sys.path.insert(0, app_root)
 
+    # Preflight writes a report through core.runtime_paths. Point it at the
+    # same per-user home as the children before importing or running it.
+    supervisor = BundleSupervisor(root)
+    os.environ["VOOL_HOME"] = str(supervisor.home)
+    os.environ["VOOL_PROJECT_ROOT"] = app_root
+    os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+    supervisor.env["PYTHONDONTWRITEBYTECODE"] = "1"
+
     # C15: the ONE bounded unattended preflight — the .app supervisor is an unattended boot.
     from core.unattended_preflight import preflight
 
@@ -550,7 +608,7 @@ def main() -> int:
         run_dir.mkdir(parents=True, exist_ok=True)
         (run_dir / "stop").write_text("stop\n", encoding="utf-8")
         return 0
-    return BundleSupervisor(root).run(once=args.once)
+    return supervisor.run(once=args.once)
 
 
 if __name__ == "__main__":

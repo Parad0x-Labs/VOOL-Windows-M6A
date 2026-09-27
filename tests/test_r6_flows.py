@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 
@@ -21,6 +23,21 @@ from tests.test_quarantine_destination_isolation import _begin_classify, _point_
 from tests.test_r5_flows import _openai_chat, _store_and_descriptor
 
 R6_KEY = "nv1_r6identity-" + hashlib.sha256(b"revision-6-identity").hexdigest()[:32]
+
+
+@contextmanager
+def _vault_read_denied(monkeypatch, vault: Path):
+    """Simulate a vault read failure without relying on POSIX-only chmod semantics."""
+    read_text = Path.read_text
+
+    def denied(path, *args, **kwargs):
+        if path == vault:
+            raise PermissionError("synthetic credential-vault access denial")
+        return read_text(path, *args, **kwargs)
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(Path, "read_text", denied)
+        yield
 
 
 def _payload(body):
@@ -155,8 +172,8 @@ def test_a_vault_writer_never_replaces_a_vault_it_could_not_read(pact_rig):
     assert type(caught.value).__name__ == "CredentialReadError", repr(caught.value)
 
 
-def test_strict_reads_tell_unreadable_vault_states_from_absence(pact_rig):
-    """R4 backend-boundary control: inside strict_reads an unreadable vault file (permissions) and an
+def test_strict_reads_tell_unreadable_vault_states_from_absence(pact_rig, monkeypatch):
+    """R4 backend-boundary control: inside strict_reads an unreadable vault file and an
     entry that does not authenticate raise CredentialReadError, while a genuinely absent name in a
     readable vault reads None; outside the scope every other consumer keeps its lenient
     value-or-None contract; and a clean home still reconciles with nothing unresolved."""
@@ -173,13 +190,10 @@ def test_strict_reads_tell_unreadable_vault_states_from_absence(pact_rig):
         assert cs.get_credential("r6.boundary.one") == "boundary-value-one"
 
     vault = data_path("credentials.enc.json")
-    vault.chmod(0o000)
-    try:
+    with _vault_read_denied(monkeypatch, vault):
         assert cs.get_credential("r6.boundary.one") is None, "the lenient contract changed for other consumers"
         with cs.strict_reads(), pytest.raises(cs.CredentialReadError):
             cs.get_credential("r6.boundary.absent")
-    finally:
-        vault.chmod(0o600)
 
     raw = json.loads(vault.read_text(encoding="utf-8"))
     raw["r6.boundary.one"]["ct_b64"] = raw["r6.boundary.one"]["ct_b64"][:-4] + "AAAA"
@@ -192,8 +206,8 @@ def test_strict_reads_tell_unreadable_vault_states_from_absence(pact_rig):
 def test_replacement_save_over_unreadable_storage_refuses_before_journaling_and_the_prior_pair_survives(
     pact_rig, monkeypatch,
 ):
-    """R4 NOVEL public-save case: pair A is committed; the credential vault becomes unreadable (file
-    permissions). A verified replacement Save to B must refuse typed BEFORE it journals or writes
+    """R4 NOVEL public-save case: pair A is committed; the credential vault becomes unreadable. A
+    verified replacement Save to B must refuse typed BEFORE it journals or writes
     anything — an unreadable prior pair is not "no prior pair". Once the vault is readable again,
     pair A still resolves and the real Test door goes green at A; the replacement then commits
     cleanly and A's key never reaches B's endpoint."""
@@ -211,8 +225,7 @@ def test_replacement_save_over_unreadable_storage_refuses_before_journaling_and_
         vault_before = vault.read_bytes()
         journal_before = journal.read_bytes() if journal.exists() else b""
 
-        vault.chmod(0o000)
-        try:
+        with _vault_read_denied(monkeypatch, vault):
             with pytest.raises(StorageUnavailableError):
                 store.save_verified(descriptor, THIRD_KEY, _verified(), endpoint=b.url + "/v1")
             # the pair reader tells the unreadable store from an absent pair too: typed, never ("", "")
@@ -220,8 +233,6 @@ def test_replacement_save_over_unreadable_storage_refuses_before_journaling_and_
 
             with pytest.raises(StorageReadError):
                 resolved_custom_pair()
-        finally:
-            vault.chmod(0o600)
 
         assert store._pending_intents() == {}, "an operation was journaled over an unreadable prior pair"
         assert (journal.read_bytes() if journal.exists() else b"") == journal_before
@@ -266,11 +277,8 @@ def test_failed_save_then_reconcile_over_unreadable_storage_retains_recovery_and
         assert "llm.cloud.custom" in store._pending_intents()
 
         vault = data_path("credentials.enc.json")
-        vault.chmod(0o000)
-        try:
+        with _vault_read_denied(monkeypatch, vault):
             report = _store_and_descriptor()[0].reconcile()
-        finally:
-            vault.chmod(0o600)
         row = load_index()["custom"]
         assert row["status"] == "verified" and row.get("endpoint") == a.url + "/v1", (
             f"an unreadable read degraded the committed row: {row}")

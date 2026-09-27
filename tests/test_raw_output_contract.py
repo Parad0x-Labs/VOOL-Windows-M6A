@@ -8,6 +8,7 @@ from core.raw_output_contract import (
     RawOutputContract,
     apply_raw_output_contract,
     parse_raw_output_contract,
+    raw_output_contract_from_metadata,
 )
 
 NEW_CLEAN_UNRESTRICTED_CASES = (
@@ -220,6 +221,69 @@ def test_exact_output_contract_generalizes_beyond_reported_nouns(
     assert payload["raw_only"] is True
     for key, value in expected.items():
         assert payload[key] == value
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "Explain the result in 2-3 sentences.",
+        "Explain the result in 2\u20133 sentences.",
+    ],
+)
+def test_sentence_range_accepts_both_boundary_counts_and_rejects_outside_counts(prompt: str) -> None:
+    contract = parse_raw_output_contract(prompt)
+
+    assert contract is not None
+    assert contract.exact_sentences is None
+    assert contract.min_sentences == 2
+    assert contract.max_sentences == 3
+    assert apply_raw_output_contract("First sentence.", contract).compliant is False
+    assert apply_raw_output_contract("First sentence. Second sentence.", contract).compliant
+    assert apply_raw_output_contract(
+        "First sentence. Second sentence. Third sentence.", contract
+    ).compliant
+    assert apply_raw_output_contract(
+        "First sentence. Second sentence. Third sentence. Fourth sentence.", contract
+    ).compliant is False
+    restored = raw_output_contract_from_metadata({"raw_output_contract": contract.to_dict()})
+    assert restored == contract
+
+
+def test_exact_sentence_count_remains_exact() -> None:
+    contract = parse_raw_output_contract("Explain the result in exactly 3 sentences.")
+
+    assert contract is not None
+    assert contract.exact_sentences == 3
+    assert contract.min_sentences is None
+    assert contract.max_sentences is None
+    assert apply_raw_output_contract("First sentence. Second sentence.", contract).compliant is False
+    assert apply_raw_output_contract(
+        "First sentence. Second sentence. Third sentence.", contract
+    ).compliant
+
+
+def test_at_least_and_at_most_sentence_bounds_are_open_on_the_other_side() -> None:
+    minimum = parse_raw_output_contract("Explain the result in at least 2 sentences.")
+    maximum = parse_raw_output_contract("Explain the result in at most 3 sentences.")
+
+    assert minimum is not None
+    assert minimum.exact_sentences is None
+    assert minimum.min_sentences == 2
+    assert minimum.max_sentences is None
+    assert apply_raw_output_contract("First sentence.", minimum).compliant is False
+    assert apply_raw_output_contract("First sentence. Second sentence.", minimum).compliant
+    assert apply_raw_output_contract(
+        "First sentence. Second sentence. Third sentence. Fourth sentence.", minimum
+    ).compliant
+
+    assert maximum is not None
+    assert maximum.exact_sentences is None
+    assert maximum.min_sentences is None
+    assert maximum.max_sentences == 3
+    assert apply_raw_output_contract("First sentence. Second sentence.", maximum).compliant
+    assert apply_raw_output_contract(
+        "First sentence. Second sentence. Third sentence. Fourth sentence.", maximum
+    ).compliant is False
 
 
 @pytest.mark.parametrize("literal", ["BANANA", "TOMATO", "PINEAPPLE"])

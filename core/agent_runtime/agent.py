@@ -598,7 +598,7 @@ def _constraint_is_unit_scoped(text: str, constraint: Any) -> bool:
     # the answer cannot truncate a sibling, unlike a clause's word/sentence limit.
     if getattr(constraint, "requested_formats", ()) and not any(
         getattr(constraint, field, None)
-        for field in ("exact_words", "max_words", "exact_sentences", "max_sentences",
+        for field in ("exact_words", "max_words", "exact_sentences", "min_sentences", "max_sentences",
                       "list_items", "one_item_per_line", "per_item_sentences")
     ):
         return False

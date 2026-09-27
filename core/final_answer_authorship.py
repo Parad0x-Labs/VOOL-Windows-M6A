@@ -43,10 +43,10 @@ Two conditions must both hold before this module has anything to say:
 1. **The certification authority can actually measure this model.** That is the SAME predicate
    `run_local_model_tool_certification` enforces before it will run at all
    (`certification_applies`): an OpenAI-compatible loopback endpoint. A model the probe cannot
-   reach by construction cannot be asked to hold a probe result, so for those lanes the state
-   is ``not_applicable`` and the operator's own configuration is the attestation. This is a
-   statement about what the measurement can reach -- not about a model's size, its name, or how
-   many billions of parameters it claims.
+   reach by construction cannot be asked to hold a probe result. Non-local provider lanes may use
+   operator configuration as their attestation; an Ollama-local lane may not author unless this
+   sealed probe can measure it. This is a statement about what the measurement can reach -- not
+   about a model's size, its name, or how many billions of parameters it claims.
 
 2. **The answer rests on the model alone.** A turn whose bytes are backed by something the
    runtime minted -- a deterministic tool result, a typed observation, bound evidence -- is a
@@ -318,6 +318,21 @@ def invalidate_author_certification(manifest: Any = None) -> None:
             _CERT_CACHE.pop(key, None)
 
 
+def _is_local_ollama_manifest(manifest: Any) -> bool:
+    provider_name = str(getattr(manifest, "provider_name", "") or "").strip().lower()
+    adapter_type = str(getattr(manifest, "adapter_type", "") or "").strip().lower()
+    metadata = getattr(manifest, "metadata", None) or {}
+    try:
+        runtime_family = str(metadata.get("runtime_family") or "").strip().lower()
+    except AttributeError:
+        runtime_family = ""
+    return (
+        provider_name.startswith("ollama")
+        or adapter_type == "local_qwen_provider"
+        or runtime_family == "ollama"
+    )
+
+
 def author_certification(
     manifest: Any,
     *,
@@ -339,20 +354,34 @@ def author_certification(
             source=CERTIFICATION_SOURCE_NONE,
             detail="no manifest resolved for the answering model",
         )
+    from core.local_model_tool_certification import certification_applies, certification_status
+
+    probe_applies = certification_applies(manifest)
+    is_local_ollama = _is_local_ollama_manifest(manifest)
+    if is_local_ollama and not probe_applies:
+        return AuthorCertification(
+            certified=False,
+            state=STATE_NOT_APPLICABLE,
+            source=CERTIFICATION_SOURCE_NONE,
+            provider_id=provider_id,
+            detail="local Ollama authorship requires a verified sealed probe on a loopback endpoint",
+        )
+
     cache_key = _certification_cache_key(manifest)
-    if use_cache and provider_id:
+    # A probeable model's tag can be replaced in Ollama without changing its provider id or URL.
+    # Read its fingerprint-backed status every time; a cached success could authorize the new
+    # digest with evidence recorded for the old one. Keep the short cache only for operator-configured
+    # non-local lanes, whose attestation is their current enabled manifest.
+    cacheable = bool(use_cache and provider_id and not probe_applies)
+    if cacheable:
         with _CERT_LOCK:
             cached = _CERT_CACHE.get(cache_key)
         if cached is not None and (_now() - cached[0]) < _CERTIFICATION_CACHE_TTL_SECONDS:
             return cached[1]
 
-    from core.local_model_tool_certification import certification_applies
-
-    if not certification_applies(manifest):
-        # The probe is restricted to an OpenAI-compatible loopback endpoint by construction, so
-        # this lane can never hold a probe result. The operator configured it -- registered it,
-        # enabled it, and for a remote lane supplied their own credentials -- and that
-        # configuration is the attestation available for it.
+    if not probe_applies:
+        # The sealed local-model probe cannot measure this non-local provider. Its explicit
+        # operator configuration remains the existing attestation for cloud/remote provider lanes.
         certification = AuthorCertification(
             certified=bool(getattr(manifest, "enabled", True)),
             state=STATE_NOT_APPLICABLE,
@@ -361,8 +390,6 @@ def author_certification(
             detail="lane is outside the local tool-certification probe's reach",
         )
     else:
-        from core.local_model_tool_certification import certification_status
-
         try:
             status = certification_status(manifest, db_path=db_path)
         except Exception:
@@ -378,7 +405,7 @@ def author_certification(
             detail=str(status.get("run_id") or ""),
         )
 
-    if use_cache and provider_id:
+    if cacheable:
         with _CERT_LOCK:
             _CERT_CACHE[cache_key] = (_now(), certification)
     return certification

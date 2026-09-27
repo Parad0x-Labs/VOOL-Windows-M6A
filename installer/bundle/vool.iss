@@ -75,6 +75,7 @@ Source: "{#Stage}\native\host\*"; DestDir: "{app}\native"; Flags: recursesubdirs
 Source: "{#Stage}\native\broker\*"; DestDir: "{app}\native\broker"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "{#Stage}\bundle_manifest.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Stage}\bundle_supervisor.py"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#Stage}\migrate_install_state.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Stage}\VOOL.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Stage}\vool.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Stage}\vool_window.py"; DestDir: "{app}"; Flags: ignoreversion
@@ -85,7 +86,7 @@ Source: "{#Stage}\vool_protocol_handler.py"; DestDir: "{app}"; Flags: ignorevers
 Root: HKCU; Subkey: "Software\Classes\vool"; ValueType: string; ValueName: ""; ValueData: "URL:VOOL Protocol"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\vool"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\Classes\vool\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\python\pythonw.exe,0"; Flags: uninsdeletekeyifempty
-Root: HKCU; Subkey: "Software\Classes\vool\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\python\pythonw.exe"" ""{app}\vool_protocol_handler.py"" ""%1"""; Flags: uninsdeletekeyifempty
+Root: HKCU; Subkey: "Software\Classes\vool\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\python\pythonw.exe"" -B ""{app}\vool_protocol_handler.py"" ""%1"""; Flags: uninsdeletekeyifempty
 
 [Icons]
 ; The signed native host is the only installed user-facing entrypoint.
@@ -118,6 +119,11 @@ var
   Attempt: Integer;
 begin
   Result := '';
+  if CheckForMutexes('Local\VOOL_BUNDLE_SUPERVISOR,Local\VOOL_WINDOW_SINGLETON') then
+  begin
+    Result := 'Close VOOL completely before installing or repairing it, then retry setup.';
+    Exit;
+  end;
   if WebView2Present() then
     Exit;
   try
@@ -139,4 +145,17 @@ begin
     Sleep(500);
   end;
   Result := 'WebView2 Runtime installation did not complete. VOOL was not installed; retry setup or contact support.';
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
+begin
+  if CurStep <> ssPostInstall then
+    Exit;
+  if not Exec(ExpandConstant('{app}\python\python.exe'),
+    '-B "' + ExpandConstant('{app}\migrate_install_state.py') + '" --root "' +
+    ExpandConstant('{app}') + '" --home "' + ExpandConstant('{localappdata}\VOOL') + '"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) then
+    RaiseException('VOOL could not safely migrate legacy program-folder state. Existing data was preserved; setup cannot finish.');
 end;

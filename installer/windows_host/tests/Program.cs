@@ -8,6 +8,8 @@ static void Check(bool condition, string name)
         throw new Exception(name);
 }
 
+NativePathChecks.Run(Check);
+
 var origin = "http://127.0.0.1:11435";
 var mode = new Uri(origin + "/api/mode?source=window");
 var dispatch = new Uri(origin + "/api/commands/dispatch");

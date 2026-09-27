@@ -17,7 +17,7 @@ from core.local_inference_evidence import hydrate_capability_truth_with_benchmar
 from core.provider_env import merge_provider_env
 from core.runtime_backbone import build_provider_registry_snapshot
 from core.runtime_context import RuntimeContext, build_runtime_context
-from core.runtime_install_profiles import build_install_profile_truth, install_profile_runs_local_only
+from core.runtime_install_profiles import build_install_profile_truth
 from core.runtime_provider_defaults import default_runtime_model_tag, preferred_fast_local_model
 
 
@@ -47,7 +47,11 @@ def runtime_capability_statuses(context: RuntimeContext | None = None) -> list[R
     )
     workspace_write_state = "implemented" if runtime.feature_flags.allow_workspace_writes else "disabled_by_policy"
     sandbox_state = "implemented" if runtime.feature_flags.allow_sandbox_execution else "disabled_by_policy"
-    remote_only_state = "implemented" if runtime.feature_flags.allow_remote_only_without_backend else "disabled_by_policy"
+    remote_fallback_allowed = (
+        bool(runtime.feature_flags.allow_remote_only_without_backend)
+        and not bool(runtime.feature_flags.local_only_mode)
+    )
+    remote_only_state = "implemented" if remote_fallback_allowed else "disabled_by_policy"
 
     return [
         RuntimeCapabilityStatus(
@@ -100,7 +104,7 @@ def runtime_capability_statuses(context: RuntimeContext | None = None) -> list[R
             category="model_backend",
             reason=(
                 "Runtime may stay alive without a healthy local backend and fall back to remote-only behavior."
-                if runtime.feature_flags.allow_remote_only_without_backend
+                if remote_fallback_allowed
                 else "Runtime requires a healthy backend and will fail closed if none is available."
             ),
         ),
@@ -142,9 +146,9 @@ def runtime_capability_snapshot(context: RuntimeContext | None = None) -> dict[s
         selected_model=install_profile.selected_model,
         runtime_home=runtime.paths.runtime_home,
     )
-    effective_local_only_mode = bool(runtime.feature_flags.local_only_mode) or install_profile_runs_local_only(
-        install_profile.profile_id
-    )
+    # Recommendations describe possible setup choices; they do not change the mode that boot
+    # resolved from policy and the selected install profile.
+    effective_local_only_mode = bool(runtime.feature_flags.local_only_mode)
     statuses = runtime_capability_statuses(runtime)
     active_remote_fallback_available = (
         bool(runtime.feature_flags.allow_remote_only_without_backend)

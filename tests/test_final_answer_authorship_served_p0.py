@@ -118,6 +118,10 @@ class _Served:
             after_tool_result=after_tool_result,
             ambiguity_verdict={"ambiguous": False, "referents": [], "clarification": ""},
         )
+        # The scripted provider allocates no model weights; keep this authorship-focused served
+        # test independent of the host's extra free-RAM safety margin. The model footprint gate
+        # remains active, and the resource-governor tests cover its production default separately.
+        env["VOOL_MODEL_LOAD_FLOOR_GB"] = "0"
         self.daemon = ServedDaemon(self.home, env_extra=env)
 
     def __enter__(self) -> _Served:
@@ -127,7 +131,9 @@ class _Served:
             seed_in_home(
                 self.home,
                 _SEED.format(
-                    root=REPO_ROOT,
+                    # The path is interpolated into Python source; forward slashes avoid
+                    # interpreting `\U` in a Windows drive path as a Unicode escape.
+                    root=REPO_ROOT.as_posix(),
                     base_url=self.provider.base_url,
                     registered=list(self.registered),
                     certified=list(self.certified),

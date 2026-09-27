@@ -1909,7 +1909,7 @@ def _generation_profile_shape(
         constraint = parse_response_constraint(user_text)
         if constraint and constraint.requested_formats and not (
             constraint.max_words or constraint.exact_words
-            or constraint.max_sentences or constraint.exact_sentences
+            or constraint.min_sentences or constraint.max_sentences or constraint.exact_sentences
         ):
             # Serialized charts and diagrams need room in addition to visible prose.
             # Use the existing long-answer budget, not the short-chat brevity cap.

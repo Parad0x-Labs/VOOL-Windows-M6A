@@ -88,9 +88,66 @@ def test_run_surface_is_loopback_only_and_explicit(monkeypatch) -> None:
         workspace_root_provider=lambda: "/tmp",
         client_host="127.0.0.1",
     )
+    hostile_origin = dispatch_post(
+        path="/api/model-tool-certification/run",
+        body=body,
+        headers={"Origin": "https://evil.example"},
+        runtime=RuntimeServices(),
+        model_name="vool",
+        workspace_root_provider=lambda: "/tmp",
+        client_host="127.0.0.1",
+    )
     assert denied.status == 403
     assert allowed.status == 200
+    assert hostile_origin.status == 403
     assert calls == ["ollama-local:qwen-test:4b"]
+
+
+def test_verified_selected_local_model_refreshes_runtime_setup(monkeypatch) -> None:
+    manifest = _manifest()
+    monkeypatch.setattr("core.model_registry.ModelRegistry.get_manifest", lambda *_: manifest)
+    monkeypatch.setattr(
+        "core.local_model_tool_certification.run_local_model_tool_certification",
+        lambda *_args, **_kwargs: {"state": "verified"},
+    )
+    refreshed: list[str] = []
+    runtime = RuntimeServices(
+        runtime_model_tag="qwen-test:4b",
+        local_model_setup_refresh=lambda: refreshed.append("selected"),
+    )
+    response = dispatch_post(
+        path="/api/model-tool-certification/run",
+        body={"provider_name": "ollama-local", "model_name": "qwen-test:4b"},
+        headers={},
+        runtime=runtime,
+        model_name="vool",
+        workspace_root_provider=lambda: "/tmp",
+        client_host="127.0.0.1",
+    )
+    assert response.status == 200
+    assert refreshed == ["selected"]
+
+
+def test_certification_uses_effective_runtime_policy_before_model_call(monkeypatch) -> None:
+    monkeypatch.setenv("VOOL_LOCAL_MODELS_ENABLED", "1")
+
+    def unexpected_probe(*_args, **_kwargs):
+        raise AssertionError("probe ran while local models are disabled")
+
+    monkeypatch.setattr(
+        "core.local_model_tool_certification.run_local_model_tool_certification",
+        unexpected_probe,
+    )
+    response = dispatch_post(
+        path="/api/model-tool-certification/run",
+        body={"provider_name": "ollama-local", "model_name": "qwen-test:4b"},
+        headers={},
+        runtime=RuntimeServices(local_models_enabled_check=lambda: False),
+        model_name="vool",
+        workspace_root_provider=lambda: "/tmp",
+        client_host="127.0.0.1",
+    )
+    assert response.status == 409
 
 
 def test_adapter_exchange_refuses_remote_endpoint_before_requests(monkeypatch) -> None:

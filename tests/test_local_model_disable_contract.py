@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import unittest
 import urllib.error
+import uuid
 from pathlib import Path
 from unittest import mock
 
@@ -58,7 +59,9 @@ _LOCAL_MANIFEST = {
     "redistribution_allowed": True,
     "runtime_dependency": "openai-compatible-local-runtime",
     "capabilities": ["summarize", "structured_json"],
-    "runtime_config": {"base_url": "http://127.0.0.1:1234"},
+    # Keep this policy fixture routable on GPU hosts with smaller VRAM; it measures the
+    # LocalModelPolicy gate, not GPU placement (the real invocation is mocked).
+    "runtime_config": {"base_url": "http://127.0.0.1:1234", "num_gpu": "0"},
     "enabled": True,
     "metadata": {"orchestration_role": "drone"},
 }
@@ -492,13 +495,16 @@ class DisabledRouterContractTests(unittest.TestCase):
     def _resolve(self, source_context, task_text: str = "design swarm topology with resilient regions"):
         task = create_task_record(task_text)
         classification = classify(task.task_summary, context=self.interpretation.as_context())
+        context = dict(source_context or {})
+        context.setdefault("session_id", f"test-session-{uuid.uuid4().hex}")
+        context.setdefault("turn_id", f"test-turn-{uuid.uuid4().hex}")
         return self.router.resolve(
             task=task,
             classification=classification,
             interpretation=self.interpretation,
             context_result=self._context_result(),
             persona=self.persona,
-            source_context=source_context,
+            source_context=context,
         )
 
     def test_explicit_local_pin_refuses_typed_when_disabled(self) -> None:

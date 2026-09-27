@@ -11,6 +11,8 @@ import re
 import secrets
 import subprocess
 import threading
+import time
+import urllib.error
 import urllib.request
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field, replace
@@ -55,7 +57,11 @@ from core.provider_env import merge_provider_env
 from core.public_hive_bridge import ensure_public_hive_auth
 from core.release_channel import release_manifest_snapshot
 from core.runtime_backbone import build_provider_registry_snapshot
-from core.runtime_bootstrap import bootstrap_runtime_mode
+from core.runtime_bootstrap import (
+    bootstrap_runtime_mode,
+    effective_runtime_provider_decision,
+    runtime_provider_decision,
+)
 from core.runtime_install_profiles import (
     active_install_profile_id,
     installed_profile_selected_model,
@@ -79,6 +85,8 @@ BUILD_SOURCE_PATH = Path("config") / "build-source.json"
 # Bounds a STALLED pull between reads, not the whole download: a multi-GB model on a slow link must
 # not be killed part-way, but a dead socket must not hang the prewarm thread forever.
 _OLLAMA_PULL_READ_TIMEOUT_SECONDS = 120.0
+_OLLAMA_STARTUP_RETRY_SECONDS = 120.0
+_OLLAMA_STARTUP_RETRY_INTERVAL_SECONDS = 2.0
 _MODEL_PULL_WAIT_SECONDS = 1800.0
 _OPENCLAW_SENDER_WRAPPER_RE = re.compile(
     r"^Sender \(untrusted metadata\):\s*```json\s*\{.*?\}\s*```\s*\[[^\]]+\]\s*(.*)$",
@@ -106,14 +114,28 @@ class RuntimeServices:
     )
     runtime_started_at: str = ""
     runtime_home: str = ""
+    # This is the boot-resolved RuntimeContext policy, carried into every model request context.
+    local_only_mode: bool = False
+    # The endpoint selected from the launcher's effective provider environment. Pull,
+    # inventory, registration, certification and routing must share this value.
+    local_ollama_base_url: str = ""
     runtime_version_stamp: dict[str, Any] = field(default_factory=dict)
     public_hive_auth: dict[str, Any] = field(default_factory=dict)
     provider_capability_truth: tuple[dict[str, Any], ...] = field(default_factory=tuple)
+    provider_capability_truth_refresh: Callable[[], None] | None = field(default=None, repr=False)
+    provider_decision_refresh: Callable[[], None] | None = field(default=None, repr=False)
     # Set when bootstrap was asked to DEFER provider prewarm (run_prewarm=False): the API server
     # binds the port first, then runs this on a background thread. None when prewarm ran inline.
     deferred_prewarm: Callable[[], None] | None = None
     # Live status of the first-run model pull, which runs on its own thread while the port binds.
     model_pull: ModelPullProgress | None = None
+    # Pull completion, local-model certification, and usable chat are separate states. The mapping
+    # is shared with the public runtime stamp so progress updates stay visible while work runs.
+    local_model_setup: dict[str, Any] = field(default_factory=dict)
+    model_pull_restart: Callable[[], tuple[int, dict[str, Any]]] | None = field(default=None, repr=False)
+    local_model_setup_refresh: Callable[[], bool] | None = field(default=None, repr=False)
+    local_model_status_refresh: Callable[[], None] | None = field(default=None, repr=False)
+    local_models_enabled_check: Callable[[], bool] | None = field(default=None, repr=False)
 
     def shutdown(self) -> None:
         # Background lanes first: the idle-commons thread (and the curiosity consumer on it)
@@ -165,6 +187,14 @@ def default_agent_source_context() -> dict[str, Any]:
         # trusted-surface heuristic and lets policy_engine be the single source
         # of truth for the actual allow/deny decision.
     }
+
+
+def bind_runtime_provider_policy(
+    source_context: dict[str, Any], runtime: RuntimeServices
+) -> None:
+    """Carry the boot-resolved Local Only boundary into the request's model-call context."""
+    if bool(getattr(runtime, "local_only_mode", False)):
+        source_context["local_only_mode"] = True
 
 
 def git_output(project_root: Path, *args: str) -> str:
@@ -426,6 +456,7 @@ def candidate_aware_daily_runtime_model_tag(
     configured_model_tag: str,
     *,
     env: dict[str, str],
+    runtime_home: str | None = None,
     selection_pinned: bool = False,
     probe: Any | None = None,
 ) -> str:
@@ -447,7 +478,7 @@ def candidate_aware_daily_runtime_model_tag(
         return configured
     # The canonical LocalModelPolicy: disabled means no Ollama inventory discovery even here —
     # this alignment exists to pick between LOCAL candidates, and there are none to pick.
-    if not local_models_enabled(env=env):
+    if not local_models_enabled(env=env, runtime_home=runtime_home or None):
         return configured
     try:
         installed = tuple(
@@ -480,7 +511,12 @@ def candidate_aware_daily_runtime_model_tag(
     return installed_by_key.get(str(selected).strip().lower(), configured)
 
 
-def ollama_model_installed(model_tag: str, *, env: dict[str, str] | None = None) -> bool:
+def ollama_model_installed(
+    model_tag: str,
+    *,
+    env: dict[str, str] | None = None,
+    base_url: str | None = None,
+) -> bool:
     """Exact-tag lookup against Ollama's /api/tags inventory.
 
     A substring match on `ollama list` stdout is wrong in both directions: `qwen3:4b` also matches
@@ -492,12 +528,21 @@ def ollama_model_installed(model_tag: str, *, env: dict[str, str] | None = None)
         return False
     installed = {
         normalized_ollama_tag(name)
-        for name in installed_ollama_model_names(env=env, base_url=ollama_base_url(env), timeout_seconds=5.0)
+        for name in installed_ollama_model_names(
+            env=env,
+            base_url=str(base_url or ollama_base_url(env)),
+            timeout_seconds=5.0,
+        )
     }
     return wanted in installed
 
 
-def _stream_ollama_pull(model_tag: str, *, progress: ModelPullProgress) -> None:
+def _stream_ollama_pull(
+    model_tag: str,
+    *,
+    progress: ModelPullProgress,
+    base_url: str | None = None,
+) -> None:
     """Pull over Ollama's HTTP API, reporting real progress.
 
     HTTP rather than `ollama pull`: the CLI's output is the only progress signal and this process
@@ -506,7 +551,7 @@ def _stream_ollama_pull(model_tag: str, *, progress: ModelPullProgress) -> None:
     """
     body = json.dumps({"model": model_tag, "stream": True}).encode("utf-8")
     request = urllib.request.Request(
-        f"{ollama_base_url()}/api/pull",
+        f"{str(base_url or ollama_base_url()).rstrip('/')}/api/pull",
         data=body,
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -533,10 +578,17 @@ def _stream_ollama_pull(model_tag: str, *, progress: ModelPullProgress) -> None:
             progress.update(status="pulling", percent=percent, detail=str(event.get("status") or ""))
 
 
-def ensure_ollama_model(model_tag: str | None = None, *, progress: ModelPullProgress | None = None) -> None:
+def ensure_ollama_model(
+    model_tag: str | None = None,
+    *,
+    progress: ModelPullProgress | None = None,
+    env: dict[str, str] | None = None,
+    base_url: str | None = None,
+) -> None:
     active_model = str(model_tag or "").strip() or default_runtime_model_tag()
     tracker = progress if progress is not None else ModelPullProgress(active_model)
-    if ollama_model_installed(active_model):
+    endpoint = str(base_url or ollama_base_url(env))
+    if ollama_model_installed(active_model, env=env, base_url=endpoint):
         tracker.update(status="ready", percent=100, detail="already installed")
         return
     logger.info(
@@ -545,7 +597,25 @@ def ensure_ollama_model(model_tag: str | None = None, *, progress: ModelPullProg
     )
     tracker.update(status="pulling", percent=0, detail="starting download")
     try:
-        _stream_ollama_pull(active_model, progress=tracker)
+        startup_deadline = time.monotonic() + _OLLAMA_STARTUP_RETRY_SECONDS
+        while True:
+            try:
+                _stream_ollama_pull(active_model, progress=tracker, base_url=endpoint)
+                if not ollama_model_installed(active_model, env=env, base_url=endpoint):
+                    raise RuntimeError(
+                        f"Ollama finished the pull, but the exact model tag '{active_model}' "
+                        "is not present in its local inventory."
+                    )
+                break
+            except urllib.error.URLError as exc:
+                if not isinstance(exc.reason, ConnectionRefusedError) or time.monotonic() >= startup_deadline:
+                    raise
+                tracker.update(status="starting", percent=0, detail="waiting for local model service")
+                remaining = max(0.0, startup_deadline - time.monotonic())
+                time.sleep(min(_OLLAMA_STARTUP_RETRY_INTERVAL_SECONDS, remaining))
+                if ollama_model_installed(active_model, env=env, base_url=endpoint):
+                    tracker.update(status="ready", percent=100, detail="already installed")
+                    return
     except Exception as exc:
         tracker.update(status="failed", detail=str(exc))
         logger.warning(
@@ -554,11 +624,36 @@ def ensure_ollama_model(model_tag: str | None = None, *, progress: ModelPullProg
             exc,
         )
         return
-    tracker.update(status="ready", percent=100, detail="pull complete")
+    tracker.update(
+        status="ready",
+        percent=100,
+        detail="pull complete; exact model confirmed in local Ollama inventory",
+    )
     logger.info("Ollama model '%s' pulled successfully.", active_model)
 
 
-def start_ollama_model_pull(model_tag: str | None = None) -> ModelPullProgress:
+def _ollama_pull_is_offline(detail: str) -> bool:
+    raw_detail = str(detail or "").lower()
+    return any(
+        marker in raw_detail
+        for marker in (
+            "no such host",
+            "name or service not known",
+            "getaddrinfo failed",
+            "network is unreachable",
+            "temporary failure in name resolution",
+            "timed out",
+        )
+    )
+
+
+def start_ollama_model_pull(
+    model_tag: str | None = None,
+    *,
+    env: dict[str, str] | None = None,
+    base_url: str | None = None,
+    runtime_home: str | None = None,
+) -> ModelPullProgress:
     """Run the first-run pull on a background thread and return its live progress immediately.
 
     A pull of a multi-GB model in front of the listener is what left the first-run window showing
@@ -570,14 +665,14 @@ def start_ollama_model_pull(model_tag: str | None = None) -> ModelPullProgress:
     """
     active_model = str(model_tag or "").strip() or default_runtime_model_tag()
     progress = ModelPullProgress(active_model)
-    if not local_models_enabled():
+    if not local_models_enabled(env=env, runtime_home=runtime_home or None):
         progress.update(status="skipped", detail="local models disabled by policy")
         progress.finish()
         return progress
 
     def _worker() -> None:
         try:
-            ensure_ollama_model(active_model, progress=progress)
+            ensure_ollama_model(active_model, progress=progress, env=env, base_url=base_url)
         except Exception as exc:
             progress.update(status="failed", detail=str(exc))
             logger.warning("Background pull of Ollama model '%s' failed: %s", active_model, exc)
@@ -601,7 +696,7 @@ def ensure_default_provider(
         model_tag=model_tag,
         env=env,
         install_profile=install_profile,
-        runtime_home=runtime_home,
+        runtime_home=runtime_home or None,
     ):
         logger.info("Auto-registered default provider: %s", provider_id)
 
@@ -692,17 +787,21 @@ def startup_provider_capability_truth(
         return tuple()
     capabilities = hydrate_capability_truth_with_benchmarks(snapshot.capability_truth)
     pull_status = str(model_pull_status or "").strip().lower()
-    if pull_status in {"starting", "pulling", "failed", "error"}:
-        availability = "blocked" if pull_status in {"failed", "error"} else "degraded"
+    target_provider_id = f"ollama-local:{str(model_tag or '').strip()}" if str(model_tag or "").strip() else ""
+    if pull_status in {"starting", "pulling", "failed", "error"} and target_provider_id:
         detail = str(model_pull_detail or pull_status).strip()[:240]
         capabilities = tuple(
             replace(
                 item,
-                availability_state=availability,
-                last_error=detail or item.last_error,
+                availability_state=(
+                    "blocked"
+                    if pull_status in {"failed", "error"} or item.circuit_open
+                    else "degraded"
+                ),
+                last_error=item.last_error if item.circuit_open else detail or item.last_error,
                 measurement_source="model_pull_status",
             )
-            if str(item.provider_id or "").startswith("ollama-local:")
+            if str(item.provider_id or "") == target_provider_id
             else item
             for item in capabilities
         )
@@ -897,6 +996,7 @@ def bootstrap_runtime_services(
     runtime_model_tag = candidate_aware_daily_runtime_model_tag(
         configured_model_tag,
         env=provider_env,
+        runtime_home=runtime_home,
         selection_pinned=selection_pinned,
         probe=probe,
     )
@@ -910,7 +1010,13 @@ def bootstrap_runtime_services(
     # Background, never inline: a first-run pull downloads gigabytes, and bootstrap runs BEFORE the
     # API server binds its port. The window that opens on first run must reach a server that reports
     # this progress, not a refused connection.
-    model_pull = start_ollama_model_pull(runtime_model_tag)
+    ollama_endpoint = ollama_base_url(provider_env)
+    model_pull = start_ollama_model_pull(
+        runtime_model_tag,
+        env=provider_env,
+        base_url=ollama_endpoint,
+        runtime_home=runtime_home,
+    )
     logger.info(
         "Hardware: %s | GPU: %s | Primary local model: %s",
         probe.accelerator,
@@ -926,6 +1032,35 @@ def bootstrap_runtime_services(
     # By reference: /healthz copies the stamp per request but not this nested dict, so the pull
     # thread's updates are visible to a first-run client polling for progress.
     runtime_version_stamp["model_pull"] = model_pull.public
+    local_models_allowed = local_models_enabled(env=provider_env, runtime_home=runtime_home or None)
+    initial_pull_detail = str(model_pull.public.get("detail") or "")
+    local_model_setup: dict[str, Any] = {
+        "model": runtime_model_tag,
+        "state": (
+            "unavailable"
+            if not local_models_allowed or model_pull.status == "skipped"
+            else "downloading"
+            if model_pull.status in {"starting", "pulling"}
+            else "preparing"
+            if model_pull.status == "ready"
+            else "offline"
+            if _ollama_pull_is_offline(initial_pull_detail)
+            else "failed"
+        ),
+        "chat_ready": False,
+        "certification_state": "unknown",
+        "provider_state": "starting",
+        "detail": (
+            "Local models are disabled by this runtime's policy."
+            if not local_models_allowed or model_pull.status == "skipped"
+            else "Connect to the internet, then retry the local model download."
+            if _ollama_pull_is_offline(initial_pull_detail)
+            else "The download is complete. VOOL is preparing its local chat checks."
+            if model_pull.status == "ready"
+            else "VOOL is preparing its selected local model."
+        ),
+    }
+    runtime_version_stamp["local_model_setup"] = local_model_setup
     logger.info(
         "Runtime build: %s | branch=%s | commit=%s | dirty=%s",
         runtime_version_stamp.get("build_id") or "unknown",
@@ -953,31 +1088,281 @@ def bootstrap_runtime_services(
     )
     for warning in model_registry.startup_warnings():
         logger.warning("Model warning: %s", warning)
-    def _run_provider_prewarm() -> None:
-        # Warming loads the model into memory, so it cannot start until the model is on disk.
-        model_pull.wait(timeout=_MODEL_PULL_WAIT_SECONDS)
-        log_prewarm_results(
-            model_registry,
-            model_tag=runtime_model_tag,
-            runtime_home=runtime_home,
-            requested_profile=requested_profile,
+    runtime_ref: dict[str, RuntimeServices] = {}
+    setup_lock = threading.RLock()
+    setup_running = False
+
+    def _refresh_runtime_provider_decision() -> None:
+        active_runtime = runtime_ref.get("runtime")
+        if active_runtime is None:
+            return
+        stamp = active_runtime.runtime_version_stamp
+        boot_decision = dict(
+            stamp.get("boot_provider_decision")
+            or stamp.get("provider_decision")
+            or {}
         )
+        current_decision = effective_runtime_provider_decision(
+            boot_decision,
+            local_only=bool(active_runtime.local_only_mode),
+            local_model_setup=active_runtime.local_model_setup,
+            provider_capability_truth=active_runtime.provider_capability_truth,
+        )
+        stamp["boot_provider_decision"] = boot_decision
+        stamp["current_provider_decision"] = current_decision
+        stamp["provider_decision"] = current_decision
+
+    def _publish_local_model_setup(
+        state: str,
+        detail: str,
+        *,
+        certification_state: str = "unknown",
+        provider_state: str = "unknown",
+    ) -> None:
+        local_model_setup.update(
+            model=runtime_model_tag,
+            state=state,
+            chat_ready=state == "ready",
+            certification_state=certification_state,
+            provider_state=provider_state,
+            detail=str(detail or "")[:240],
+        )
+        runtime = runtime_ref.get("runtime")
+        if runtime is not None:
+            runtime.local_model_setup = local_model_setup
+            runtime.runtime_version_stamp["local_model_setup"] = local_model_setup
+            _refresh_runtime_provider_decision()
+
+    def _run_provider_prewarm() -> None:
+        nonlocal setup_running
+        resume_after_pull: ModelPullProgress | None = None
+        with setup_lock:
+            if setup_running:
+                return
+            setup_running = True
+        try:
+            runtime = runtime_ref.get("runtime")
+            active_pull = runtime.model_pull if runtime is not None else model_pull
+            if active_pull is None:
+                _publish_local_model_setup("failed", "Local model progress is unavailable.")
+                return
+            if not active_pull.wait(timeout=_MODEL_PULL_WAIT_SECONDS):
+                _publish_local_model_setup(
+                    "downloading",
+                    "The local model is still downloading. VOOL will continue setup when it finishes.",
+                )
+                resume_after_pull = active_pull
+                return
+            if active_pull.status == "skipped":
+                _publish_local_model_setup(
+                    "unavailable",
+                    "Local models are disabled by this runtime's policy.",
+                )
+                return
+            if active_pull.status != "ready":
+                offline = _ollama_pull_is_offline(str(active_pull.public.get("detail") or ""))
+                _publish_local_model_setup(
+                    "offline" if offline else "failed",
+                    "Connect to the internet, then retry the local model download."
+                    if offline
+                    else "VOOL could not download the selected local model. Retry from Models & Providers.",
+                )
+                return
+            if not local_models_enabled(env=provider_env, runtime_home=runtime_home or None):
+                _publish_local_model_setup(
+                    "unavailable",
+                    "Local models are disabled by this runtime's policy.",
+                )
+                return
+            if not ollama_model_installed(
+                runtime_model_tag,
+                env=provider_env,
+                base_url=ollama_endpoint,
+            ):
+                _publish_local_model_setup(
+                    "failed",
+                    "The selected model was not found in VOOL's local model store.",
+                )
+                return
+
+            _publish_local_model_setup(
+                "registering",
+                "VOOL is connecting the downloaded model to local chat.",
+            )
+            from core.runtime_provider_defaults import register_installed_local_model
+
+            manifest = register_installed_local_model(
+                model_registry,
+                model_tag=runtime_model_tag,
+                env=provider_env,
+                base_url=ollama_endpoint,
+            )
+            if manifest is None or not bool(manifest.enabled):
+                _publish_local_model_setup(
+                    "failed",
+                    "VOOL could not enable the selected model's local route.",
+                )
+                return
+
+            log_prewarm_results(
+                model_registry,
+                model_tag=runtime_model_tag,
+                runtime_home=runtime_home,
+                requested_profile=requested_profile,
+            )
+            from core.local_model_tool_certification import (
+                certification_status,
+                run_local_model_tool_certification,
+            )
+
+            certification = certification_status(manifest)
+            certification_state = str(certification.get("state") or "unknown")
+            if certification_state != "verified":
+                _publish_local_model_setup(
+                    "certifying",
+                    "VOOL is checking that this local model can safely author answers.",
+                    certification_state="probing",
+                )
+                try:
+                    certification = run_local_model_tool_certification(
+                        manifest,
+                        timeout_seconds=150.0,
+                    )
+                    certification_state = str(certification.get("state") or "unknown")
+                except Exception as exc:
+                    logger.warning(
+                        "Local model certification failed for %s: %s",
+                        runtime_model_tag,
+                        type(exc).__name__,
+                    )
+                    certification_state = "failed"
+
+            health_ok = False
+            health_error = ""
+            if certification_state == "verified":
+                try:
+                    from core.model_health import record_provider_failure, record_provider_success
+                    from core.provider_execution_boundary import invoke_provider_execution_boundary
+
+                    adapter = model_registry.build_adapter(manifest)
+                    health_result = invoke_provider_execution_boundary(adapter, "health_check")
+                    health_ok = bool(health_result.get("ok"))
+                    health_error = str(health_result.get("error") or "")[:200]
+                    if health_ok:
+                        # The sealed probe and this explicit health check have demonstrated that
+                        # this exact local endpoint is responsive. Clear only this lane's stale
+                        # circuit state; never infer success from model files or pull completion.
+                        record_provider_success(manifest.provider_id)
+                    else:
+                        record_provider_failure(
+                            manifest.provider_id,
+                            error=health_error or "health_check_failed",
+                        )
+                except Exception as exc:
+                    health_error = type(exc).__name__
+                    with contextlib.suppress(Exception):
+                        from core.model_health import record_provider_failure
+
+                        record_provider_failure(manifest.provider_id, error=health_error)
+
+            refreshed_truth = startup_provider_capability_truth(
+                model_registry,
+                model_tag=runtime_model_tag,
+                runtime_home=runtime_home,
+                requested_profile=requested_profile,
+                env=provider_env,
+                model_pull_status=active_pull.status,
+                model_pull_detail=str(active_pull.public.get("detail") or ""),
+            )
+            runtime = runtime_ref.get("runtime")
+            if runtime is not None:
+                runtime.provider_capability_truth = refreshed_truth
+            provider_truth = next(
+                (
+                    item
+                    for item in refreshed_truth
+                    if str(item.get("provider_id") or "") == f"ollama-local:{runtime_model_tag}"
+                ),
+                {},
+            )
+            provider_state = str(provider_truth.get("availability_state") or "unknown")
+            if certification_state == "verified" and health_ok and provider_state == "ready":
+                _publish_local_model_setup(
+                    "ready",
+                    f"Local chat is ready with {runtime_model_tag}.",
+                    certification_state=certification_state,
+                    provider_state=provider_state,
+                )
+            elif certification_state != "verified":
+                _publish_local_model_setup(
+                    "failed",
+                    "This model did not pass VOOL's sealed answer-authoring check. It cannot write final answers.",
+                    certification_state=certification_state,
+                    provider_state=provider_state,
+                )
+            else:
+                _publish_local_model_setup(
+                    "failed",
+                    "The model passed certification, but its local provider is not ready yet."
+                    + (f" Provider check: {health_error}." if health_error else ""),
+                    certification_state=certification_state,
+                    provider_state=provider_state,
+                )
+        except Exception as exc:
+            logger.warning("Local model setup did not complete: %s", type(exc).__name__)
+            _publish_local_model_setup(
+                "failed",
+                "VOOL could not finish setting up local chat. Retry from Models & Providers.",
+            )
+        finally:
+            with setup_lock:
+                setup_running = False
+            if resume_after_pull is not None:
+                def _resume_after_download() -> None:
+                    if resume_after_pull.wait():
+                        _run_provider_prewarm()
+
+                threading.Thread(
+                    target=_resume_after_download,
+                    name="vool-local-model-setup-after-pull",
+                    daemon=True,
+                ).start()
 
     # Provider prewarm loads models into memory and can take minutes. When run_prewarm is False the
     # API server defers it (binding the port first) and runs this closure on a background thread, so
     # 11435/healthz is reachable immediately instead of refusing connections during warmup.
-    deferred_prewarm: Callable[[], None] | None = None
-    if run_prewarm:
-        _run_provider_prewarm()
-    else:
-        deferred_prewarm = _run_provider_prewarm
-        logger.info("Provider prewarm deferred; binding the API port first and warming in the background.")
+    deferred_prewarm: Callable[[], None] | None = _run_provider_prewarm
 
     selection = boot.backend_selection
     if selection is None:
         raise RuntimeError("API bootstrap did not resolve a backend selection.")
+    boot_feature_flags = getattr(getattr(boot, "context", None), "feature_flags", None)
+    local_only_mode = bool(getattr(boot_feature_flags, "local_only_mode", False))
+    remote_fallback_allowed = bool(
+        getattr(boot_feature_flags, "allow_remote_only_without_backend", False)
+    )
+    provider_decision = runtime_provider_decision(
+        selection,
+        local_only=local_only_mode,
+        allow_remote_only=remote_fallback_allowed,
+    )
+    # Keep the pre-registration choice immutable for diagnostics. The public provider_decision
+    # key is updated later when the selected local lane is registered, certified and chat-ready.
+    runtime_version_stamp["boot_provider_decision"] = dict(provider_decision)
+    runtime_version_stamp["provider_decision"] = dict(provider_decision)
+    runtime_version_stamp["current_provider_decision"] = dict(provider_decision)
     if selection.backend_name == "remote_only":
-        logger.warning("No local backend found. Continuing in remote-only mode.")
+        logger.warning("No local backend is available; remote fallback is permitted by policy.")
+    elif provider_decision["effective_mode"] == "unavailable_no_local_backend":
+        logger.warning("Local Only is active, but no usable local backend is available; chat is not ready.")
+    logger.info(
+        "Runtime provider decision recorded.",
+        extra={
+            "event": "runtime_provider_decision",
+            "component": "runtime_bootstrap",
+            "details": provider_decision,
+        },
+    )
 
     persona = load_active_persona("default")
     display_name = get_agent_display_name()
@@ -1024,7 +1409,7 @@ def bootstrap_runtime_services(
     else:
         logger.info("Mesh daemon: disabled")
 
-    return RuntimeServices(
+    runtime = RuntimeServices(
         agent=agent,
         daemon=daemon,
         display_name=display_name,
@@ -1032,6 +1417,7 @@ def bootstrap_runtime_services(
         runtime_parameter_size=runtime_parameter_size,
         runtime_started_at=runtime_started_at,
         runtime_home=str(runtime_home or ""),
+        local_only_mode=local_only_mode,
         runtime_version_stamp=runtime_version_stamp,
         public_hive_auth=auth_snapshot,
         provider_capability_truth=startup_provider_capability_truth(
@@ -1045,7 +1431,239 @@ def bootstrap_runtime_services(
         ),
         deferred_prewarm=deferred_prewarm,
         model_pull=model_pull,
+        local_model_setup=local_model_setup,
+        local_ollama_base_url=ollama_endpoint,
     )
+    runtime_ref["runtime"] = runtime
+    runtime.provider_decision_refresh = _refresh_runtime_provider_decision
+    _refresh_runtime_provider_decision()
+
+    last_retry_at = 0.0
+    last_setup_refresh_at = 0.0
+
+    def _restart_model_pull() -> tuple[int, dict[str, Any]]:
+        nonlocal last_retry_at
+        with setup_lock:
+            if setup_running:
+                return 409, {"ok": False, "error": "local model setup is already running"}
+            current = runtime.model_pull
+            if current is not None and not current.wait(timeout=0):
+                return 409, {"ok": False, "error": "local model download is already running"}
+            if current is not None and current.status == "ready":
+                return 409, {"ok": False, "error": "the selected local model is already downloaded"}
+            if not local_models_enabled(env=provider_env, runtime_home=runtime_home or None):
+                return 409, {"ok": False, "error": "local models are disabled by policy"}
+            now = time.monotonic()
+            if now - last_retry_at < 5.0:
+                return 429, {"ok": False, "error": "wait briefly before retrying the model download"}
+            last_retry_at = now
+            progress = start_ollama_model_pull(
+                runtime_model_tag,
+                env=provider_env,
+                base_url=ollama_endpoint,
+                runtime_home=runtime_home,
+            )
+            runtime.model_pull = progress
+            runtime.runtime_version_stamp["model_pull"] = progress.public
+            _publish_local_model_setup(
+                "downloading",
+                f"VOOL is downloading {runtime_model_tag}.",
+            )
+            threading.Thread(
+                target=_run_provider_prewarm,
+                name="vool-local-model-setup-retry",
+                daemon=True,
+            ).start()
+            return 202, {
+                "ok": True,
+                "model_pull": progress.public,
+                "local_model_setup": dict(local_model_setup),
+            }
+
+    runtime.model_pull_restart = _restart_model_pull
+    runtime.local_models_enabled_check = lambda: local_models_enabled(
+        env=provider_env,
+        runtime_home=runtime_home or None,
+    )
+
+    def _refresh_local_model_setup() -> bool:
+        nonlocal last_setup_refresh_at
+        with setup_lock:
+            current = runtime.model_pull
+            if (
+                setup_running
+                or current is None
+                or not current.wait(timeout=0)
+                or current.status != "ready"
+                or not local_models_enabled(env=provider_env, runtime_home=runtime_home or None)
+            ):
+                return False
+            now = time.monotonic()
+            if now - last_setup_refresh_at < 5.0:
+                return False
+            last_setup_refresh_at = now
+            _publish_local_model_setup(
+                "preparing",
+                "VOOL is rechecking the selected local model before enabling chat.",
+            )
+            threading.Thread(
+                target=_run_provider_prewarm,
+                name="vool-local-model-setup-refresh",
+                daemon=True,
+            ).start()
+            return True
+
+    runtime.local_model_setup_refresh = _refresh_local_model_setup
+
+    def _refresh_local_model_status() -> None:
+        active_runtime = runtime_ref.get("runtime")
+        if active_runtime is None:
+            return
+        pull = active_runtime.model_pull
+        pull_status = str(pull.status if pull is not None else "").strip().lower()
+        pull_detail = str((pull.public if pull is not None else {}).get("detail") or "")
+        from core.model_health import provider_health_snapshot
+
+        selected_provider_id = f"ollama-local:{runtime_model_tag}"
+        refreshed_truth: list[dict[str, Any]] = []
+        for raw_item in tuple(active_runtime.provider_capability_truth or ()):
+            if not isinstance(raw_item, dict):
+                continue
+            item = dict(raw_item)
+            provider_id = str(item.get("provider_id") or "")
+            if provider_id.startswith("ollama-local:"):
+                if provider_id == selected_provider_id and pull_status in {"starting", "pulling", "failed", "error"}:
+                    item["availability_state"] = (
+                        "blocked"
+                        if pull_status in {"failed", "error"} or bool(item.get("circuit_open"))
+                        else "degraded"
+                    )
+                    item["last_error"] = str(item.get("last_error") or pull_detail or pull_status)[:240]
+                    item["measurement_source"] = "model_pull_status"
+                else:
+                    health = provider_health_snapshot(provider_id)
+                    item["circuit_open"] = bool(health.get("circuit_open"))
+                    item["availability_state"] = (
+                        "blocked"
+                        if bool(health.get("circuit_open"))
+                        else "degraded"
+                        if int(health.get("consecutive_failures") or 0) > 0
+                        else "ready"
+                    )
+                    item["last_error"] = health.get("last_error")
+                    if item.get("measurement_source") == "model_pull_status":
+                        item["measurement_source"] = "manifest"
+            refreshed_truth.append(item)
+        refreshed_truth_tuple = tuple(refreshed_truth)
+        active_runtime.provider_capability_truth = refreshed_truth_tuple
+
+        with setup_lock:
+            if setup_running:
+                return
+            if not local_models_enabled(env=provider_env, runtime_home=runtime_home or None):
+                _publish_local_model_setup(
+                    "unavailable",
+                    "Local models are disabled by this runtime's policy.",
+                )
+                return
+            if pull_status != "ready":
+                return
+            setup = active_runtime.local_model_setup
+            if str(setup.get("state") or "") in {"downloading", "preparing", "registering", "certifying"}:
+                return
+            lane = next(
+                (
+                    item
+                    for item in refreshed_truth_tuple
+                    if str(item.get("provider_id") or "") == f"ollama-local:{runtime_model_tag}"
+                ),
+                {},
+            )
+            provider_state = str(lane.get("availability_state") or "unknown")
+            certification_state = str(setup.get("certification_state") or "unknown")
+            if certification_state != "verified":
+                if setup.get("state") == "ready" or bool(setup.get("chat_ready")):
+                    _publish_local_model_setup(
+                        "failed",
+                        "The selected local model is not currently certified. Retry its local checks; no cloud model will be substituted.",
+                        certification_state=certification_state,
+                        provider_state=provider_state,
+                    )
+                return
+            if provider_state == "ready" and not bool(lane.get("circuit_open")):
+                already_ready = setup.get("state") == "ready" and bool(setup.get("chat_ready"))
+                manifest = model_registry.get_manifest("ollama-local", runtime_model_tag)
+                if (
+                    manifest is None
+                    or str(getattr(manifest, "provider_id", "") or "") != selected_provider_id
+                    or not bool(getattr(manifest, "enabled", False))
+                ):
+                    _publish_local_model_setup(
+                        "failed",
+                        "The selected local model route is not registered. Retry its local checks; no cloud model will be substituted.",
+                        certification_state="unknown",
+                        provider_state=provider_state,
+                    )
+                    return
+                try:
+                    from core.local_model_tool_certification import certification_status
+
+                    current_certification = certification_status(manifest)
+                    certification_state = str(current_certification.get("state") or "unknown")
+                except Exception as exc:
+                    logger.warning(
+                        "Local model certification status could not be read for %s: %s",
+                        runtime_model_tag,
+                        type(exc).__name__,
+                    )
+                    certification_state = "unknown"
+                if certification_state != "verified":
+                    _publish_local_model_setup(
+                        "failed",
+                        "The selected local model's current identity is not certified. Retry its local checks; no cloud model will be substituted.",
+                        certification_state=certification_state,
+                        provider_state=provider_state,
+                    )
+                    return
+                if not already_ready:
+                    _publish_local_model_setup(
+                        "ready",
+                        f"Local chat is ready with {runtime_model_tag}.",
+                        certification_state=certification_state,
+                        provider_state=provider_state,
+                    )
+                return
+            _publish_local_model_setup(
+                "failed",
+                "The selected local chat route is not healthy. Retry its local checks; no cloud model will be substituted.",
+                certification_state=certification_state,
+                provider_state=provider_state,
+            )
+
+    runtime.local_model_status_refresh = _refresh_local_model_status
+
+    def _refresh_provider_capability_truth() -> None:
+        active_runtime = runtime_ref.get("runtime")
+        if active_runtime is None:
+            return
+        pull = active_runtime.model_pull
+        active_runtime.provider_capability_truth = startup_provider_capability_truth(
+            ModelRegistry(),
+            model_tag=runtime_model_tag,
+            runtime_home=runtime_home,
+            requested_profile=requested_profile,
+            env=provider_env,
+            model_pull_status=str(pull.status if pull is not None else "").strip().lower(),
+            model_pull_detail=str((pull.public if pull is not None else {}).get("detail") or ""),
+        )
+        _refresh_local_model_status()
+
+    runtime.provider_capability_truth_refresh = _refresh_provider_capability_truth
+    if run_prewarm:
+        _run_provider_prewarm()
+    else:
+        logger.info("Provider prewarm deferred; binding the API port first and warming in the background.")
+    return runtime
 
 
 def _profile_fast_default_model(
@@ -1342,6 +1960,7 @@ def _run_agent_locked(
     base_context = default_agent_source_context()
     if source_context:
         base_context.update(source_context)
+    bind_runtime_provider_policy(base_context, runtime)
     default_workspace = workspace_root_provider()
     base_context.setdefault("workspace", default_workspace)
     base_context.setdefault("workspace_root", default_workspace)
@@ -1681,8 +2300,27 @@ def _run_agent_locked(
                     "retry_attempted": bool(
                         response_control.get("retry_attempted")
                     ),
+                    "retry_succeeded": bool(
+                        response_control.get("retry_succeeded")
+                    ),
                     "fallback_applied": bool(
                         response_control.get("fallback_applied")
+                    ),
+                    "validation_attempts": list(
+                        response_control.get("validation_attempts") or []
+                    ),
+                    "accepted_attempt": response_control.get("accepted_attempt"),
+                    "answer_commit_allowed": bool(
+                        response_control.get("answer_commit_allowed", True)
+                    ),
+                    "accepted_response_id": str(
+                        response_control.get("accepted_response_id") or ""
+                    ),
+                    "accepted_model_call_id": str(
+                        response_control.get("accepted_model_call_id") or ""
+                    ),
+                    "accepted_provider_manifest_id": str(
+                        response_control.get("accepted_provider_manifest_id") or ""
                     ),
                     # Whether the evidence this turn retrieved is witnessed in the answer. Projected
                     # explicitly: this list is a whitelist, so a verdict that is not named here is
@@ -1700,6 +2338,7 @@ def _run_agent_locked(
                             "exact_words",
                             "max_words",
                             "exact_sentences",
+                            "min_sentences",
                             "max_sentences",
                         )
                         if requested_constraint.get(key) is not None

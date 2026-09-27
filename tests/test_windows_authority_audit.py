@@ -15,7 +15,7 @@ def test_authority_audit_covers_pinned_candidates_and_direct_effects() -> None:
 
     assert not source_drift(pinned, current)
     assert validate(pinned) == []
-    assert len(pinned["route_candidates"]) == 337
+    assert len(pinned["route_candidates"]) == 339
     assert len(pinned["builtin_tool_candidates"]) == 136
     assert len(pinned["composed_tool_candidates"]) == 34
     assert pinned["direct_effect_candidates"]

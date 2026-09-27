@@ -1021,6 +1021,13 @@ def execute_grounded_turn(
     )
 
     visibility = execution_visibility(model_execution)
+    _model_execution_details = dict(getattr(model_execution, "details", None) or {})
+    _model_answer_commit_allowed = bool(
+        _model_execution_details.get("answer_commit_allowed", True)
+    )
+    _model_validation_fallback_text = str(
+        _model_execution_details.get("validation_fallback_text") or ""
+    )
     evidence = {
         "candidates": sorted(
             curiosity_plan_candidates + web_plan_candidates,
@@ -1041,8 +1048,18 @@ def execute_grounded_turn(
             "candidate_id": model_execution.candidate_id,
             "trust_score": model_execution.trust_score,
             "validation_state": model_execution.validation_state,
+            "answer_commit_allowed": _model_answer_commit_allowed,
+            "accepted_attempt": _model_execution_details.get("accepted_attempt"),
+            "validation_attempts": list(
+                _model_execution_details.get("validation_attempts") or []
+            ),
             "details": {
-                "model_was_attempted": bool((getattr(model_execution, "details", None) or {}).get("model_was_attempted")),
+                "model_was_attempted": bool(_model_execution_details.get("model_was_attempted")),
+                "answer_commit_allowed": _model_answer_commit_allowed,
+                "accepted_attempt": _model_execution_details.get("accepted_attempt"),
+                "validation_attempts": list(
+                    _model_execution_details.get("validation_attempts") or []
+                ),
             },
             "model_call_id": str(model_execution.details.get("model_call_id") or ""),
             "response_id": str(model_execution.details.get("response_id") or ""),
@@ -1081,6 +1098,8 @@ def execute_grounded_turn(
         if is_chat_surface
         else agent._model_final_response_text(model_execution)
     )
+    if not _model_answer_commit_allowed:
+        model_final_text = ""
     model_final_answer_hit = bool(model_final_text)
     rendered_via = "model_final_wording"
     response_reason = "grounded_model_response"
@@ -1108,7 +1127,9 @@ def execute_grounded_turn(
                     (_completion.get("final") or {}).get("incomplete")
                 )
 
-    if planner_renderer_allowed and (not is_chat_surface or bool(model_execution.used_model)):
+    if planner_renderer_allowed and _model_answer_commit_allowed and (
+        not is_chat_surface or bool(model_execution.used_model)
+    ):
         response = render_response_fn(
             plan,
             gate,
@@ -1158,6 +1179,19 @@ def execute_grounded_turn(
             source_context["response_control"] = response_control
     elif model_final_answer_hit:
         response = model_final_text
+    elif not _model_answer_commit_allowed:
+        response = _model_validation_fallback_text or agent._chat_surface_honest_degraded_response(
+            model_execution,
+            user_input=effective_input,
+            interpretation=interpreted,
+        )
+        rendered_via = (
+            "model_output_validation_fallback"
+            if _model_validation_fallback_text
+            else "honest_degraded_chat"
+        )
+        response_reason = "model_output_validation_failed"
+        model_final_answer_hit = False
     elif is_chat_surface:
         response = agent._chat_surface_honest_degraded_response(
             model_execution,
@@ -1188,7 +1222,10 @@ def execute_grounded_turn(
 
     if rendered_via in {
         "honest_degraded_chat", "internal_payload_refused", "multi_part_incomplete_refused",
-    } or response_reason == "chat_model_unavailable_degraded":
+    } or response_reason in {
+        "chat_model_unavailable_degraded",
+        "model_output_validation_failed",
+    }:
         from core.agent_runtime.response import _mark_turn_unfulfilled
 
         _mark_turn_unfulfilled(source_context, response_reason)
@@ -1434,7 +1471,9 @@ def execute_grounded_turn(
         record_claim_support(
             source_context,
             payload=evidence_binding.get("claim_support") or {},
-            model_authored=bool(model_execution.used_model),
+            model_authored=(
+                bool(model_execution.used_model) and _model_answer_commit_allowed
+            ),
         )
         # Requirement 7: a typed lane's successful observations mint support of their own.
         # `core.observation_evidence` owns the success question, so a failed lookup contributes

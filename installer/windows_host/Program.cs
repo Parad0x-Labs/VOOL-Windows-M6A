@@ -48,21 +48,25 @@ internal static class Program
             var executable = Environment.ProcessPath;
             if (string.IsNullOrWhiteSpace(executable))
                 return 1;
-            var root = Directory.GetParent(Path.GetDirectoryName(executable) ?? string.Empty)?.FullName;
-            if (string.IsNullOrWhiteSpace(root))
-                return 1;
+            var root = NativePathResolver.ResolveBundleRoot(executable);
             var python = Path.Combine(root, "python", "pythonw.exe");
             var supervisor = Path.Combine(root, "bundle_supervisor.py");
             if (!File.Exists(python) || !File.Exists(supervisor))
                 return 1;
-            Process.Start(new ProcessStartInfo
+            var start = new ProcessStartInfo
             {
                 FileName = python,
                 WorkingDirectory = root,
                 UseShellExecute = false,
                 CreateNoWindow = true,
-                ArgumentList = { supervisor, "--root", root },
-            });
+                ArgumentList = { "-B", supervisor, "--root", root },
+            };
+            start.Environment["VOOL_HOME"] = NativePathResolver.ResolveRuntimeHome(
+                Environment.GetEnvironmentVariable("VOOL_HOME"),
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+            start.Environment["VOOL_PROJECT_ROOT"] = Path.Combine(root, "app");
+            start.Environment["PYTHONDONTWRITEBYTECODE"] = "1";
+            Process.Start(start);
             return 0;
         }
         catch

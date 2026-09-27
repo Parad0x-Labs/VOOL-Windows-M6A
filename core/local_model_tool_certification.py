@@ -43,7 +43,10 @@ _STAGE_NAMES = (
 _SECRET_RE = re.compile(
     r"(?i)(bearer\s+)[a-z0-9._~+/=-]+|((?:api[_-]?key|token|secret|password)\s*[:=]\s*)\S+"
 )
-_HOME_PATH_RE = re.compile(r"(?:(?:/Users|/home)/[^/\s]+|[A-Za-z]:\\Users\\[^\\\s]+)")
+_HOME_PATH_RE = re.compile(
+    r"(?:(?:/Users|/home)/[^/\s]+|[A-Za-z]:\\{1,2}Users\\{1,2}[^\\/\s]+)",
+    re.IGNORECASE,
+)
 
 
 class CertificationBoundaryError(ValueError):
@@ -286,20 +289,26 @@ def run_local_model_tool_certification(
     # never drift into disagreeing about which lanes are measurable.
     assert certification_applies(manifest)
 
+    started = time.perf_counter()
+    deadline = time.monotonic() + max(0.0, float(timeout_seconds))
+    preflight_error: Exception | None = None
+    runtime_identity: dict[str, Any] = {}
     if exchange is None:
-        from adapters.openai_compatible_adapter import OpenAICompatibleAdapter
-        from core.model_registry import ModelRegistry
+        try:
+            from adapters.openai_compatible_adapter import OpenAICompatibleAdapter
+            from core.model_registry import ModelRegistry
 
-        adapter = ModelRegistry().build_adapter(manifest)
-        if not isinstance(adapter, OpenAICompatibleAdapter):
-            raise CertificationBoundaryError(
-                "tool certification requires an OpenAI-compatible local adapter"
-            )
-        runtime_identity = adapter.tool_certification_runtime_identity()
-        backend_version = backend_version or str(runtime_identity.get("backend_version") or "unknown")
-        exchange = adapter.tool_certification_exchange
-    else:
-        runtime_identity = {}
+            adapter = ModelRegistry().build_adapter(manifest)
+            if not isinstance(adapter, OpenAICompatibleAdapter):
+                raise CertificationBoundaryError(
+                    "tool certification requires an OpenAI-compatible local adapter"
+                )
+            runtime_identity = adapter.tool_certification_runtime_identity()
+            backend_version = backend_version or str(runtime_identity.get("backend_version") or "unknown")
+            exchange = adapter.tool_certification_exchange
+        except Exception as exc:
+            preflight_error = exc
+            runtime_identity = {}
 
     fingerprint_payload = certification_fingerprint_payload(
         manifest,
@@ -318,10 +327,46 @@ def run_local_model_tool_certification(
         db_path=db_path,
     )
 
-    started = time.perf_counter()
     stages = {name: StageOutcome(state="not_run").to_dict() for name in _STAGE_NAMES}
-    evidence: dict[str, Any] = {"exchanges": [], "synthetic_tools": [tool.intent for tool in PROBE_TOOLS]}
+    evidence: dict[str, Any] = {
+        "exchanges": [],
+        "synthetic_tools": [tool.intent for tool in PROBE_TOOLS],
+        "preflight": {
+            "state": "failed" if preflight_error is not None else "passed",
+            "failure_code": "runtime_identity_unavailable" if preflight_error is not None else "",
+            "error_type": type(preflight_error).__name__ if preflight_error is not None else "",
+        },
+    }
     try:
+        if preflight_error is not None:
+            raise _StageFailureError(
+                "transport_acceptance",
+                "runtime_identity_unavailable",
+                f"local model identity check failed ({type(preflight_error).__name__})",
+            )
+        if exchange is None:
+            raise _StageFailureError(
+                "transport_acceptance",
+                "runtime_identity_unavailable",
+                "local model exchange is unavailable",
+            )
+
+        raw_exchange = exchange
+
+        def _exchange_with_deadline(**kwargs: Any) -> dict[str, Any]:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("local model certification deadline exceeded")
+            try:
+                requested_timeout = float(kwargs.get("timeout_seconds") or remaining)
+            except (TypeError, ValueError):
+                requested_timeout = remaining
+            if requested_timeout <= 0:
+                requested_timeout = remaining
+            kwargs["timeout_seconds"] = min(requested_timeout, remaining)
+            return raw_exchange(**kwargs)
+
+        exchange = _exchange_with_deadline
         parallel_messages = [
             {
                 "role": "system",
@@ -523,8 +568,20 @@ def _run_recovery_case(
         {"ok": False, "error": "synthetic_validation_error", "required_token": "recovered"},
         dialect=str(initial.get("dialect") or ""),
     )
+    retry_messages = [
+        *messages,
+        _assistant_message(initial),
+        error_message,
+        {
+            "role": "user",
+            "content": (
+                "The synthetic tool call failed. Repair it by calling probe.echo exactly once "
+                "with token 'recovered'. Do not answer in prose."
+            ),
+        },
+    ]
     retry = exchange(
-        messages=[*messages, _assistant_message(initial), error_message],
+        messages=retry_messages,
         tools=(ECHO_TOOL,),
         tool_choice="required",
         max_output_tokens=256,

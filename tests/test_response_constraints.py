@@ -55,6 +55,45 @@ def test_short_sentence_constraint_is_parsed_without_fixed_answer_content() -> N
     assert constraint.max_sentences == 1
 
 
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "Explain the result in 2-3 sentences.",
+        "Explain the result in 2\u20133 sentences.",
+    ],
+)
+def test_sentence_range_accepts_both_boundary_counts_and_rejects_outside_counts(prompt: str) -> None:
+    constraint = parse_response_constraint(prompt)
+
+    assert constraint is not None
+    assert constraint.exact_sentences is None
+    assert constraint.min_sentences == 2
+    assert constraint.max_sentences == 3
+    assert not check_response_constraint("Only one.", constraint).compliant
+    assert check_response_constraint("First. Second.", constraint).compliant
+    assert check_response_constraint("First. Second. Third.", constraint).compliant
+    assert not check_response_constraint("First. Second. Third. Fourth.", constraint).compliant
+
+
+def test_at_least_and_at_most_sentence_constraints_leave_the_other_bound_open() -> None:
+    minimum = parse_response_constraint("Explain the result in at least 2 sentences.")
+    maximum = parse_response_constraint("Explain the result in at most 3 sentences.")
+
+    assert minimum is not None
+    assert minimum.exact_sentences is None
+    assert minimum.min_sentences == 2
+    assert minimum.max_sentences is None
+    assert not check_response_constraint("Only one.", minimum).compliant
+    assert check_response_constraint("First. Second. Third. Fourth.", minimum).compliant
+
+    assert maximum is not None
+    assert maximum.exact_sentences is None
+    assert maximum.min_sentences is None
+    assert maximum.max_sentences == 3
+    assert check_response_constraint("First. Second.", maximum).compliant
+    assert not check_response_constraint("First. Second. Third. Fourth.", maximum).compliant
+
+
 def test_low_information_one_word_open_answer_requests_grounding_retry() -> None:
     constraint = parse_response_constraint(
         "Answer with one word: how can a room feel after rearranging it?"

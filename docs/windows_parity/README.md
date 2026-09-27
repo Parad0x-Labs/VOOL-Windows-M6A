@@ -4,7 +4,7 @@ Status: internal source audit, not a release certificate. The Mac repository is 
 
 ## Automated seed and limits
 
-`tools/windows_parity_inventory.py --write` generated `source_inventory.json` from this working tree. It records **337 static route candidates** across the desktop API modules and **136 built-in tool contracts** with their declared side-effect and approval classes. Refresh preserves human classifications for unchanged candidates and resets a tool to `unreviewed` if its effect or approval declaration changes. `--check` detects added/removed candidates and changed built-in declarations. Every row is currently `unreviewed`; `--release-check` fails by design.
+`tools/windows_parity_inventory.py --write` generated `source_inventory.json` from this working tree. It records **339 static route candidates** across the desktop API modules and **136 built-in tool contracts** with their declared side-effect and approval classes. Refresh preserves human classifications for unchanged candidates and resets a tool to `unreviewed` if its effect or approval declaration changes. `--check` detects added/removed candidates and changed built-in declarations. Every row is currently `unreviewed`; `--release-check` fails by design.
 
 This is not a complete reachability map. The API uses catch-all transport routes in `core/web/api/app.py`; the actual branch dispatch lives in `core/web/api/service.py` and delegated API modules. Dynamic paths, plugins/MCP registrations, UI navigation, scheduled work, direct HTTP handlers, and effects outside `core/authorized_tool_execution.py` need separate runtime and installed-artifact review. A green `--check` proves only that this static seed did not drift.
 

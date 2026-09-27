@@ -23,6 +23,7 @@ from requests import exceptions as exceptions
 
 _MAX_BODY = 64 * 1024 * 1024
 _MAX_FRAME = 128 * 1024
+_WORKER_REAP_TIMEOUT_SECONDS = 10.0
 
 
 class _Transfer:
@@ -87,7 +88,7 @@ class _Transfer:
         with self.lock:
             if self.process.poll() is None:
                 self.process.kill()
-            self.process.wait(timeout=2.0)
+            self.process.wait(timeout=_WORKER_REAP_TIMEOUT_SECONDS)
 
     def _watch(self):
         if not self.stopped.wait(max(0, self.deadline - time.monotonic())):
@@ -152,7 +153,7 @@ class _Response(_requests.Response):
                     frame = self.owner.receive()
                     if frame["type"] == "done":
                         self._content_consumed = True
-                        return
+                        break
                     if frame["type"] != "chunk":
                         raise exceptions.ConnectionError("unexpected provider worker frame")
                     chunk = base64.b64decode(frame["data"], validate=True)
@@ -160,7 +161,13 @@ class _Response(_requests.Response):
                     if total > _MAX_BODY:
                         raise exceptions.ConnectionError("provider response exceeded the body limit")
                     yield chunk
-            finally:
+            except BaseException as stream_error:
+                try:
+                    self.close()
+                except BaseException as cleanup_error:
+                    raise stream_error from cleanup_error
+                raise
+            else:
                 self.close()
         iterator = chunks()
         return _requests.utils.stream_decode_response_unicode(iterator, self) if decode_unicode else iterator
@@ -180,8 +187,13 @@ def _request(method, url, **options):
         if not streaming:
             _ = response.content
         return response
-    except BaseException:
-        owner.close()
+    except BaseException as request_error:
+        try:
+            owner.close()
+        except BaseException as cleanup_error:
+            # Keep the provider failure as the primary error while retaining
+            # worker-cleanup failure as its explicit cause.
+            raise request_error from cleanup_error
         raise
 
 

@@ -132,6 +132,20 @@ def test_a_refused_write_is_never_reported_as_saved() -> None:
     assert "if (!same(stored, value))" in html
 
 
+def test_local_model_controls_report_chat_readiness_and_offer_in_app_retry() -> None:
+    html = render_vool_settings_html()
+    assert "mkCard('local', 'This PC'" in html
+    assert "chat_ready === true && localSetup.state === 'ready'" in html
+    assert "Retry local model download" in html
+    assert "/api/runtime/model-pull/retry" in html
+    assert "Retry local chat checks" in html
+    assert "/api/runtime/local-model/retry" in html
+    assert "pollLocalStatus" in html
+    assert all(state in html for state in ("offline", "downloading", "preparing", "registering", "certifying", "ready", "failed"))
+    assert "ollama pull qwen3:8b" not in html
+    assert "This Mac', 'Local models answer without a network.'" not in html
+
+
 def test_the_page_is_self_contained() -> None:
     """It has to work inside a packaged installer with no network: no CDN, no external font, no
     build step."""

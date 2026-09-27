@@ -2444,16 +2444,34 @@ function mpOpenRow(rowId, part) {
   location.hash = '#models/' + rowId + (part ? '/' + part : '');
 }
 async function mpReads() {
-  const [pinR, discR, limitsR] = await Promise.all([
+  const [pinR, discR, limitsR, versionR] = await Promise.all([
     getJSON('/api/cloud/model').catch(() => null),
     getJSON(USEPOD_DISCOVERY_URL).catch(() => null),
     getJSON('/api/cloud/spend-limits').catch(() => null),
+    getJSON('/api/runtime/version').catch(() => null),
   ]);
   return {
     pin: pinR && pinR.ok ? pinR : null,
     disc: discR && discR.ok !== false ? discR : null,
     spendLimits: limitsR && limitsR.limits ? limitsR : null,
+    version: versionR && versionR.ok !== false ? versionR : null,
   };
+}
+function localModelSetupText(version) {
+  const setup = (version && version.local_model_setup) || {};
+  const pull = (version && version.model_pull) || {};
+  const state = String(setup.state || pull.status || 'unknown');
+  const model = String(setup.model || pull.model || 'selected local model');
+  const percent = Math.max(0, Math.min(100, Number(pull.percent) || 0));
+  if (state === 'ready' && setup.chat_ready) return 'Ready · ' + model;
+  if (state === 'offline') return 'Offline · connect, then retry the download';
+  if (state === 'downloading' || state === 'pulling' || state === 'starting') return 'Downloading ' + model + ' · ' + percent + '%';
+  if (state === 'preparing') return 'Model downloaded · preparing local chat checks';
+  if (state === 'registering') return 'Connecting ' + model + ' to local chat';
+  if (state === 'certifying') return 'Checking ' + model + ' before it can author answers';
+  if (state === 'unavailable') return String(setup.detail || 'Local chat is disabled by policy.');
+  if (state === 'failed') return String(setup.detail || 'Local chat setup failed. Open local model controls for details.');
+  return 'Local chat status unavailable · open local model controls';
 }
 function mpUsePodState(disc) {
   const cred = (disc && disc.credential) || {};
@@ -2585,7 +2603,28 @@ function mpSheetForSetup({ pin, usepod, guided, reads, onClose }) {
 function widgetModelsOverview(stack) {
   const root = el('div', 'stack mp-root');
   stack.appendChild(root);
+  let drawGeneration = 0;
+  const pollLocalStatus = (generation, card) => {
+    setTimeout(async () => {
+      if (!root.isConnected || generation !== drawGeneration || mpView.pane !== 'overview') return;
+      let version = null;
+      try { version = await getJSON('/api/runtime/version'); } catch (e) {
+        pollLocalStatus(generation, card);
+        return;
+      }
+      if (generation !== drawGeneration || !root.isConnected || mpView.pane !== 'overview') return;
+      const setup = (version && version.local_model_setup) || {};
+      const ready = setup.chat_ready === true && setup.state === 'ready';
+      const title = card.querySelector('.mp-card-title');
+      const status = card.querySelector('.subtle');
+      if (title) title.textContent = 'This PC' + (ready ? ' · ready' : '');
+      if (status) status.textContent = localModelSetupText(version);
+      card.classList.toggle('mp-ready', ready);
+      pollLocalStatus(generation, card);
+    }, 1500);
+  };
   const draw = async () => {
+    const generation = ++drawGeneration;
     root.textContent = '';
     const reads = await mpReads();
     const st = mpUsePodState(reads.disc);
@@ -2621,7 +2660,10 @@ function widgetModelsOverview(stack) {
       card.appendChild(btn);
       return card;
     };
-    cards.appendChild(mkCard('local', 'This Mac', 'Local models answer without a network.', 'View local models', true));
+    const localSetup = (reads.version && reads.version.local_model_setup) || {};
+    const localReady = localSetup.chat_ready === true && localSetup.state === 'ready';
+    const localCard = mkCard('local', 'This PC', localModelSetupText(reads.version), 'View local models', localReady);
+    cards.appendChild(localCard);
     // A pending or allowed-but-unconfirmed consent is a RESUME state, not a fresh setup: the
     // card sends the operator to the detail with the saved approval, never through guided again
     // (a second proposal would duplicate the consent identity).
@@ -2633,6 +2675,7 @@ function widgetModelsOverview(stack) {
     root.appendChild(head); root.appendChild(cards);
     const fine = el('div', 'subtle', 'Every action here goes through the authority that already owns it — the same doors the chat uses. Nothing is approved by looking at this page.');
     root.appendChild(fine);
+    pollLocalStatus(generation, localCard);
   };
   draw();
   return stack;
@@ -2647,9 +2690,10 @@ function mpDrawDetail(root, reads, st, redraw) {
   if (mpView.provider === 'openrouter') return mpDrawOpenRouter(body, reads);
   return mpDrawLocal(body, reads);
 }
-function mpDrawLocal(body) {
+function mpDrawLocal(body, reads) {
   body.appendChild(el('div', 'row-label', 'Local models'));
-  body.appendChild(el('div', null, 'Local models answer on this machine with no network and no per-token cost. Registering and certifying stay where they always lived.'));
+  body.appendChild(el('div', null, 'Local models answer on this PC with no network and no per-token cost. VOOL reports when a model is downloaded, connected to chat, and certified.'));
+  body.appendChild(el('div', 'subtle', localModelSetupText(reads && reads.version)));
   const btn = el('button', 'btn', 'Open local model controls'); btn.type = 'button';
   btn.addEventListener('click', () => mpOpenRow('local_models'));
   body.appendChild(btn);
@@ -2877,20 +2921,59 @@ async function mpDrawGuided(body, reads, st, redraw) {
 function widgetLocalModels(stack) {
   const body = el('div', 'stack');
   stack.appendChild(body);
+  let drawGeneration = 0;
   const draw = async (note) => {
+    const generation = ++drawGeneration;
     body.textContent = '';
     body.appendChild(el('div', 'empty', 'Reading your local Ollama…'));
-    let data;
-    try { data = await getJSON('/api/models/local'); }
-    catch (e) { body.textContent = ''; body.appendChild(el('div', 'empty', 'Unavailable — ' + e.message)); return; }
+    let data, version;
+    try {
+      [data, version] = await Promise.all([
+        getJSON('/api/models/local'),
+        getJSON('/api/runtime/version').catch(() => null),
+      ]);
+    } catch (e) { body.textContent = ''; body.appendChild(el('div', 'empty', 'Unavailable — ' + e.message)); return; }
+    if (generation !== drawGeneration) return;
     body.textContent = '';
+    const pull = (version && version.model_pull) || {};
+    const setup = (version && version.local_model_setup) || {};
+    const disabled = Boolean(data.local_models_disabled);
+    const status = el('div', 'state ' + (setup.state === 'ready' && setup.chat_ready ? 'saved' : setup.state === 'failed' || setup.state === 'offline' ? 'failed' : ''), localModelSetupText(version));
+    body.appendChild(status);
+    const retrySetup = !disabled && setup.state === 'failed' && pull.status === 'ready';
+    const retryDownload = !disabled && ['offline', 'failed'].includes(String(setup.state || '')) && pull.status !== 'ready';
+    if (retrySetup || retryDownload) {
+      const endpoint = retrySetup ? '/api/runtime/local-model/retry' : '/api/runtime/model-pull/retry';
+      const label = retrySetup ? 'Retry local chat checks' : 'Retry local model download';
+      const retry = el('button', 'btn', label); retry.type = 'button';
+      retry.addEventListener('click', async () => {
+        retry.disabled = true; retry.textContent = 'Retrying…';
+        try {
+          const r = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok || j.ok === false) throw new Error((j && j.error) || ('HTTP ' + r.status));
+          status.textContent = j.detail || (retrySetup
+            ? 'Retry started · rechecking certification and the local chat route'
+            : 'Retry started · waiting for model download and certification');
+          retry.remove();
+          if (j.local_model_setup && j.local_model_setup.chat_ready === true) await draw(note);
+          else pollSetup(generation, note);
+        } catch (e) {
+          retry.disabled = false; retry.textContent = label;
+          status.textContent = 'Retry did not start — ' + (e && e.message ? e.message : e);
+          status.className = 'state failed';
+        }
+      });
+      body.appendChild(retry);
+    }
     if (data.local_models_disabled) {
       body.appendChild(el('div', 'empty', 'Local models are disabled by policy on this runtime.'));
       return;
     }
     const models = data.models || [];
     if (!models.length) {
-      body.appendChild(el('div', 'empty', 'No text models found in your local Ollama. Install one (e.g. `ollama pull qwen3:8b`) and it will appear here.'));
+      body.appendChild(el('div', 'empty', 'No text models are installed yet. VOOL will provision its selected model when connectivity is available.'));
+      if (['downloading', 'preparing', 'registering', 'certifying'].includes(String(setup.state || ''))) pollSetup(generation, note);
       return;
     }
     const certLabel = (s) => s === 'verified' ? 'certified author' : (s === 'degraded' || s === 'incompatible' || s === 'stale') ? 'probe ' + s : s === 'probing' ? 'probing…' : 'not certified';
@@ -2937,6 +3020,23 @@ function widgetLocalModels(stack) {
     }
     if (note) body.appendChild(el('div', 'state saved', note));
     body.appendChild(el('div', 'subtle', 'Certification is a sealed local probe (synthetic tools, no workspace, no credentials). A model that fails it can still route and call tools; it just cannot write a final answer.'));
+    if (['downloading', 'preparing', 'registering', 'certifying'].includes(String(setup.state || ''))) pollSetup(generation, note);
+  };
+  const pollSetup = async (generation, note) => {
+    while (body.isConnected && generation === drawGeneration) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      let version;
+      try { version = await getJSON('/api/runtime/version'); } catch (e) { return; }
+      if (generation !== drawGeneration) return;
+      const setup = (version && version.local_model_setup) || {};
+      const state = String(setup.state || 'unknown');
+      if (['ready', 'failed', 'offline', 'unavailable'].includes(state)) {
+        await draw(note);
+        return;
+      }
+      const line = body.querySelector('.state');
+      if (line) line.textContent = localModelSetupText(version);
+    }
   };
   draw();
 }

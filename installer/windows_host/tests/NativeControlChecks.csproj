@@ -12,5 +12,6 @@
     <Compile Include="../BridgeScript.cs" Link="BridgeScript.cs" />
     <Compile Include="../CompanionGeometry.cs" Link="CompanionGeometry.cs" />
     <Compile Include="../CompanionPayload.cs" Link="CompanionPayload.cs" />
+    <Compile Include="../NativePathResolver.cs" Link="NativePathResolver.cs" />
   </ItemGroup>
 </Project>

@@ -23,6 +23,7 @@ class ResponseConstraint:
     max_words: int | None = None
     exact_sentences: int | None = None
     max_sentences: int | None = None
+    min_sentences: int | None = None
     list_items: int | None = None
     one_item_per_line: bool = False
     per_item_sentences: int | None = None
@@ -47,6 +48,8 @@ class ResponseConstraint:
             payload.pop("origin", None)
         if not payload.get("presentation_formats"):
             payload.pop("presentation_formats", None)
+        if payload.get("min_sentences") is None:
+            payload.pop("min_sentences", None)
         return payload
 
     @property

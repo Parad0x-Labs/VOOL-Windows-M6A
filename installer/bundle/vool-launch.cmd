@@ -21,5 +21,5 @@ rem manifest-selected model, starts the API before any multi-GB pull completes, 
 rem external children, records diagnostics, and can be stopped with --stop.
 rem Strip the trailing slash for the quoted --root argument; otherwise Windows treats the
 rem closing quote as part of the path and the supervisor cannot read bundle_manifest.json.
-start "" /B "%VOOL_ROOT%python\pythonw.exe" "%VOOL_ROOT%bundle_supervisor.py" --root "%VOOL_ROOT:~0,-1%"
+start "" /B "%VOOL_ROOT%python\pythonw.exe" -B "%VOOL_ROOT%bundle_supervisor.py" --root "%VOOL_ROOT:~0,-1%"
 endlocal

@@ -1,4 +1,5 @@
 import json
+import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -141,3 +142,65 @@ def test_partial_thread_start_failure_reaps_the_created_worker(server, workers, 
     monkeypatch.setattr(threading.Thread, "start", fail_reader)
     with pytest.raises(RuntimeError, match="reader startup failed"):
         provider_http.post(url, json={}, timeout=3)
+
+
+def test_worker_termination_uses_bounded_reap_timeout():
+    class RunningProcess:
+        killed = False
+        wait_timeout = None
+
+        def poll(self):
+            return None
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, *, timeout):
+            self.wait_timeout = timeout
+
+    transfer = provider_http._Transfer.__new__(provider_http._Transfer)
+    transfer.process = RunningProcess()
+    transfer.lock = threading.Lock()
+
+    transfer._terminate()
+
+    assert transfer.process.killed is True
+    assert transfer.process.wait_timeout == 10.0
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_worker_cleanup_timeout_does_not_mask_provider_failure(monkeypatch, streaming):
+    class CleanupTimesOut:
+        def __init__(self, *args, **kwargs):
+            self.frames = 0
+
+        def receive(self):
+            if streaming and self.frames == 0:
+                self.frames += 1
+                return {
+                    "type": "response",
+                    "status": 200,
+                    "headers": {"Content-Type": "application/json"},
+                    "url": "http://127.0.0.1:11434/api/chat",
+                }
+            raise requests.Timeout("underlying Ollama transport timed out")
+
+        def close(self):
+            raise subprocess.TimeoutExpired(
+                ["python", "provider_http.py"],
+                timeout=provider_http._WORKER_REAP_TIMEOUT_SECONDS,
+            )
+
+    monkeypatch.setattr(provider_http, "_Transfer", CleanupTimesOut)
+
+    if streaming:
+        response = provider_http.post(
+            "http://127.0.0.1:11434/api/chat", json={}, timeout=3, stream=True
+        )
+        with pytest.raises(requests.Timeout, match="underlying Ollama transport timed out") as caught:
+            list(response.iter_content())
+    else:
+        with pytest.raises(requests.Timeout, match="underlying Ollama transport timed out") as caught:
+            provider_http.post("http://127.0.0.1:11434/api/chat", json={}, timeout=3)
+
+    assert isinstance(caught.value.__cause__, subprocess.TimeoutExpired)

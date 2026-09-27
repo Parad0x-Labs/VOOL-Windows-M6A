@@ -15,7 +15,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
-from urllib import request
+from urllib import error, request
 
 from apps.vool_api_server import (
     PROJECT_ROOT,
@@ -39,10 +39,13 @@ from core.provider_routing import ProviderCapabilityTruth
 from core.runtime_task_events import emit_runtime_event
 from core.vool_workstation_ui import VOOL_WORKSTATION_DEPLOYMENT_VERSION
 from core.web.api.runtime import (
+    ModelPullProgress,
     RuntimeServices,
+    _ollama_pull_is_offline,
     bootstrap_runtime_services,
     build_runtime_version_stamp,
     candidate_aware_daily_runtime_model_tag,
+    ensure_ollama_model,
     extract_user_message,
     log_prewarm_results,
     message_text,
@@ -52,6 +55,75 @@ from core.web.api.runtime import (
     startup_provider_capability_truth,
     strip_openclaw_turn_scaffolding,
 )
+
+
+@contextlib.contextmanager
+def _local_model_setup_mocks(*, certification_state="verified", probe_result=None):
+    manifest = SimpleNamespace(
+        enabled=True,
+        provider_id="ollama-local:qwen2.5:7b",
+        metadata={"runtime_family": "ollama"},
+    )
+
+    def complete_pull(_model_tag, *, progress, **_kwargs):
+        progress.update(status="ready", percent=100, detail="already installed")
+
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(
+            mock.patch("core.web.api.runtime.ensure_ollama_model", side_effect=complete_pull)
+        )
+        stack.enter_context(mock.patch("core.web.api.runtime.ollama_model_installed", return_value=True))
+        stack.enter_context(
+            mock.patch("core.runtime_provider_defaults.register_installed_local_model", return_value=manifest)
+        )
+        certification_status = stack.enter_context(
+            mock.patch(
+                "core.local_model_tool_certification.certification_status",
+                return_value={"state": certification_state},
+            )
+        )
+        probe = None
+        if probe_result is not None:
+            probe = stack.enter_context(
+                mock.patch(
+                    "core.local_model_tool_certification.run_local_model_tool_certification",
+                    return_value=probe_result,
+                )
+            )
+        stack.enter_context(
+            mock.patch("core.provider_execution_boundary.invoke_provider_execution_boundary", return_value={"ok": True})
+        )
+        stack.enter_context(
+            mock.patch(
+                "core.web.api.runtime.startup_provider_capability_truth",
+                return_value=({"provider_id": manifest.provider_id, "availability_state": "ready"},),
+            )
+        )
+        stack.enter_context(mock.patch("core.model_health.record_provider_success"))
+        yield manifest, probe, certification_status
+
+
+@contextlib.contextmanager
+def _ready_local_model_finalization_mocks(manifest, capability_truth):
+    with contextlib.ExitStack() as stack:
+        register_local = stack.enter_context(
+            mock.patch("core.runtime_provider_defaults.register_installed_local_model", return_value=manifest)
+        )
+        stack.enter_context(
+            mock.patch("core.web.api.runtime.ollama_model_installed", return_value=True)
+        )
+        stack.enter_context(
+            mock.patch("core.local_model_tool_certification.certification_status", return_value={"state": "verified"})
+        )
+        stack.enter_context(
+            mock.patch("core.provider_execution_boundary.invoke_provider_execution_boundary", return_value={"ok": True})
+        )
+        stack.enter_context(mock.patch("core.model_health.record_provider_success"))
+        stack.enter_context(
+            mock.patch("core.web.api.runtime.startup_provider_capability_truth", return_value=capability_truth)
+        )
+        stack.enter_context(mock.patch("core.web.api.runtime._MODEL_PULL_WAIT_SECONDS", 0.0))
+        yield register_local
 
 
 class OpenClawTurnScaffoldingTests(unittest.TestCase):
@@ -431,6 +503,62 @@ class VoolAPIServerModelMetadataTests(unittest.TestCase):
 
         self.assertEqual(truth[0]["availability_state"], "blocked")
         self.assertEqual(truth[0]["last_error"], "pull failed")
+
+    def test_model_pull_failure_only_blocks_the_selected_ollama_lane(self) -> None:
+        selected = ProviderCapabilityTruth(
+            provider_id="ollama-local:qwen2.5:7b",
+            model_id="qwen2.5:7b",
+            role_fit="queen",
+            context_window=8192,
+            tool_support=(),
+            structured_output_support=False,
+            tokens_per_second=0.0,
+            ram_budget_gb=8.0,
+            vram_budget_gb=0.0,
+            quantization="q4",
+            locality="local",
+            privacy_class="local_private",
+            queue_depth=0,
+            max_safe_concurrency=1,
+            availability_state="ready",
+        )
+        other = ProviderCapabilityTruth(
+            provider_id="ollama-local:qwen3:8b",
+            model_id="qwen3:8b",
+            role_fit="drone",
+            context_window=8192,
+            tool_support=(),
+            structured_output_support=False,
+            tokens_per_second=0.0,
+            ram_budget_gb=8.0,
+            vram_budget_gb=0.0,
+            quantization="q4",
+            locality="local",
+            privacy_class="local_private",
+            queue_depth=0,
+            max_safe_concurrency=1,
+            availability_state="ready",
+        )
+        with mock.patch(
+            "core.web.api.runtime.build_provider_registry_snapshot",
+            return_value=SimpleNamespace(capability_truth=(selected, other)),
+        ), mock.patch(
+            "core.web.api.runtime.hydrate_capability_truth_with_benchmarks",
+            return_value=(selected, other),
+        ):
+            truth = startup_provider_capability_truth(
+                mock.Mock(),
+                model_tag="qwen2.5:7b",
+                env={},
+                model_pull_status="failed",
+                model_pull_detail="download failed",
+            )
+
+        by_id = {item["provider_id"]: item for item in truth}
+        self.assertEqual(by_id["ollama-local:qwen2.5:7b"]["availability_state"], "blocked")
+        self.assertEqual(by_id["ollama-local:qwen2.5:7b"]["last_error"], "download failed")
+        self.assertEqual(by_id["ollama-local:qwen3:8b"]["availability_state"], "ready")
+        self.assertIsNone(by_id["ollama-local:qwen3:8b"]["last_error"])
 
     def test_create_app_runtime_operator_snapshot_endpoint_returns_snapshot_payload(self) -> None:
         from core.context_namespace import ensure_chat_namespace
@@ -1401,65 +1529,62 @@ class VoolAPIServerModelMetadataTests(unittest.TestCase):
         model_registry.startup_warnings.return_value = []
         runtime_home = "/tmp/runtime-home"
 
-        with mock.patch.dict(os.environ, {"VOOL_OLLAMA_MODEL": ""}, clear=False), mock.patch(
-            "core.web.api.runtime.bootstrap_runtime_mode",
-            return_value=mock.Mock(
-                backend_selection=mock.Mock(backend_name="mlx", device="mps"),
-                context=SimpleNamespace(paths=SimpleNamespace(runtime_home=runtime_home)),
-            ),
-        ), mock.patch(
-            "core.web.api.runtime.is_first_boot",
-            return_value=False,
-        ), mock.patch("core.credit_ledger.ensure_starter_credits", return_value=False), mock.patch(
-            "core.web.api.runtime.ensure_public_hive_auth",
-            return_value={"ok": True, "status": "ok"},
-        ), mock.patch(
-            "core.web.api.runtime.probe_machine",
-            return_value=mock.Mock(accelerator="mps", gpu_name="Apple GPU"),
-        ), mock.patch(
-            "core.web.api.runtime.candidate_aware_daily_runtime_model_tag",
-            return_value="qwen2.5:7b",
-        ), mock.patch(
-            "core.web.api.runtime.ensure_ollama_model",
-        ), mock.patch(
-            "core.web.api.runtime.build_runtime_version_stamp",
-            return_value={"started_at": "2026-03-28T00:00:00.000000Z", "build_id": "test", "branch": "main", "commit": "abc123", "dirty": False},
-        ) as build_stamp, mock.patch(
-            "core.web.api.runtime.ComputeModeDaemon",
-            return_value=compute_daemon,
-        ), mock.patch(
-            "core.web.api.runtime.ModelRegistry",
-            return_value=model_registry,
-        ), mock.patch(
-            "core.web.api.runtime.ensure_default_provider",
-        ), mock.patch(
-            "core.web.api.runtime.active_install_profile_id",
-            return_value="local-only",
-        ), mock.patch(
-            "core.web.api.runtime.log_prewarm_results",
-        ) as log_prewarm, mock.patch(
-            "core.web.api.runtime.load_active_persona",
-            return_value=persona,
-        ), mock.patch(
-            "core.web.api.runtime.get_agent_display_name",
-            return_value="VOOL",
-        ), mock.patch(
-            "core.web.api.runtime.ensure_openclaw_registration",
-            return_value=True,
-        ), mock.patch(
-            "core.web.api.runtime.VoolAgent",
-            return_value=agent,
-        ), mock.patch(
-            "core.web.api.runtime.resolve_local_worker_capacity",
-            return_value=(3, 3),
-        ), mock.patch(
-            "core.web.api.runtime.VoolDaemon",
-            return_value=daemon,
-        ):
-            runtime = bootstrap_runtime_services(
-                project_root=PROJECT_ROOT,
-                workstation_version="test-workstation",
-            )
+        def bootstrap_with_probe_result(probe_result):
+            with contextlib.ExitStack() as patches:
+                patches.enter_context(mock.patch.dict(os.environ, {"VOOL_OLLAMA_MODEL": ""}, clear=False))
+                patches.enter_context(
+                    mock.patch(
+                        "core.web.api.runtime.bootstrap_runtime_mode",
+                        return_value=mock.Mock(
+                            backend_selection=mock.Mock(backend_name="mlx", device="mps"),
+                            context=SimpleNamespace(paths=SimpleNamespace(runtime_home=runtime_home)),
+                        ),
+                    )
+                )
+                patches.enter_context(mock.patch("core.web.api.runtime.is_first_boot", return_value=False))
+                patches.enter_context(mock.patch("core.credit_ledger.ensure_starter_credits", return_value=False))
+                patches.enter_context(
+                    mock.patch("core.web.api.runtime.ensure_public_hive_auth", return_value={"ok": True, "status": "ok"})
+                )
+                patches.enter_context(
+                    mock.patch("core.web.api.runtime.probe_machine", return_value=mock.Mock(accelerator="mps", gpu_name="Apple GPU"))
+                )
+                patches.enter_context(
+                    mock.patch("core.web.api.runtime.candidate_aware_daily_runtime_model_tag", return_value="qwen2.5:7b")
+                )
+                patches.enter_context(mock.patch("core.web.api.runtime.ensure_ollama_model"))
+                build_stamp = patches.enter_context(
+                    mock.patch(
+                        "core.web.api.runtime.build_runtime_version_stamp",
+                        return_value={"started_at": "2026-03-28T00:00:00.000000Z", "build_id": "test", "branch": "main", "commit": "abc123", "dirty": False},
+                    )
+                )
+                patches.enter_context(mock.patch("core.web.api.runtime.ComputeModeDaemon", return_value=compute_daemon))
+                patches.enter_context(mock.patch("core.web.api.runtime.ModelRegistry", return_value=model_registry))
+                patches.enter_context(mock.patch("core.web.api.runtime.ensure_default_provider"))
+                patches.enter_context(mock.patch("core.web.api.runtime.active_install_profile_id", return_value="local-only"))
+                log_prewarm = patches.enter_context(mock.patch("core.web.api.runtime.log_prewarm_results"))
+                patches.enter_context(mock.patch("core.web.api.runtime.load_active_persona", return_value=persona))
+                patches.enter_context(mock.patch("core.web.api.runtime.get_agent_display_name", return_value="VOOL"))
+                patches.enter_context(mock.patch("core.web.api.runtime.ensure_openclaw_registration", return_value=True))
+                patches.enter_context(mock.patch("core.web.api.runtime.VoolAgent", return_value=agent))
+                patches.enter_context(mock.patch("core.web.api.runtime.resolve_local_worker_capacity", return_value=(3, 3)))
+                patches.enter_context(mock.patch("core.web.api.runtime.VoolDaemon", return_value=daemon))
+                manifest, certification_probe, _certification_status = patches.enter_context(
+                    _local_model_setup_mocks(
+                        certification_state="unknown",
+                        probe_result=probe_result,
+                    )
+                )
+                runtime = bootstrap_runtime_services(
+                    project_root=PROJECT_ROOT,
+                    workstation_version="test-workstation",
+                )
+            return runtime, build_stamp, log_prewarm, manifest, certification_probe
+
+        runtime, build_stamp, log_prewarm, manifest, certification_probe = bootstrap_with_probe_result(
+            {"state": "verified"}
+        )
 
         self.assertEqual(runtime.runtime_model_tag, "qwen2.5:7b")
         self.assertEqual(build_stamp.call_args.kwargs["runtime_model_tag"], "qwen2.5:7b")
@@ -1469,6 +1594,98 @@ class VoolAPIServerModelMetadataTests(unittest.TestCase):
             runtime_home=runtime_home,
             requested_profile="local-only",
         )
+        self.assertEqual(runtime.local_model_setup["state"], "ready")
+        certification_probe.assert_called_once_with(manifest, timeout_seconds=150.0)
+
+        failed_runtime, _, _, _, failed_probe = bootstrap_with_probe_result(
+            {"state": "failed", "detail": "probe rejected model"}
+        )
+
+        failed_probe.assert_called_once()
+        self.assertEqual(failed_runtime.local_model_setup["state"], "failed")
+        self.assertFalse(failed_runtime.local_model_setup["chat_ready"])
+        self.assertEqual(failed_runtime.local_model_setup["certification_state"], "failed")
+
+    def test_runtime_local_model_status_refresh_tracks_provider_failure_and_recovery(self) -> None:
+        from core.model_health import record_provider_failure, reset_provider_health
+
+        persona = mock.Mock(persona_id="default")
+        agent = mock.Mock()
+        registry = mock.Mock()
+        registry.startup_warnings.return_value = []
+        compute_daemon = mock.Mock()
+        daemon = mock.Mock()
+        runtime_home = "/tmp/runtime-home"
+        provider_id = "ollama-local:qwen2.5:7b"
+
+        with contextlib.ExitStack() as patches:
+            patches.enter_context(mock.patch.dict(os.environ, {"VOOL_OLLAMA_MODEL": ""}, clear=False))
+            patches.enter_context(mock.patch(
+                "core.web.api.runtime.bootstrap_runtime_mode",
+                return_value=mock.Mock(
+                    backend_selection=mock.Mock(backend_name="mlx", device="mps"),
+                    context=SimpleNamespace(paths=SimpleNamespace(runtime_home=runtime_home)),
+                ),
+            ))
+            patches.enter_context(mock.patch("core.web.api.runtime.is_first_boot", return_value=False))
+            patches.enter_context(mock.patch("core.credit_ledger.ensure_starter_credits", return_value=False))
+            patches.enter_context(mock.patch("core.web.api.runtime.ensure_public_hive_auth", return_value={"ok": True}))
+            patches.enter_context(mock.patch("core.web.api.runtime.probe_machine", return_value=mock.Mock(accelerator="mps", gpu_name="test")))
+            patches.enter_context(mock.patch("core.web.api.runtime.candidate_aware_daily_runtime_model_tag", return_value="qwen2.5:7b"))
+            patches.enter_context(mock.patch("core.web.api.runtime.build_runtime_version_stamp", return_value={"build_id": "test"}))
+            patches.enter_context(mock.patch("core.web.api.runtime.ComputeModeDaemon", return_value=compute_daemon))
+            patches.enter_context(mock.patch("core.web.api.runtime.ModelRegistry", return_value=registry))
+            patches.enter_context(mock.patch("core.web.api.runtime.ensure_default_provider"))
+            patches.enter_context(mock.patch("core.web.api.runtime.active_install_profile_id", return_value="local-only"))
+            patches.enter_context(mock.patch("core.web.api.runtime.log_prewarm_results"))
+            patches.enter_context(mock.patch("core.web.api.runtime.load_active_persona", return_value=persona))
+            patches.enter_context(mock.patch("core.web.api.runtime.get_agent_display_name", return_value="VOOL"))
+            patches.enter_context(mock.patch("core.web.api.runtime.ensure_openclaw_registration", return_value=True))
+            patches.enter_context(mock.patch("core.web.api.runtime.VoolAgent", return_value=agent))
+            patches.enter_context(mock.patch("core.web.api.runtime.resolve_local_worker_capacity", return_value=(3, 3)))
+            patches.enter_context(mock.patch("core.web.api.runtime.VoolDaemon", return_value=daemon))
+            _manifest, _probe, certification_status = patches.enter_context(_local_model_setup_mocks())
+            registry.get_manifest.return_value = _manifest
+            runtime = bootstrap_runtime_services(project_root=PROJECT_ROOT, workstation_version="test")
+
+            reset_provider_health(provider_id)
+            try:
+                record_provider_failure(provider_id, error="synthetic local failure", failure_threshold=1)
+                runtime.local_model_status_refresh()
+                self.assertEqual(runtime.local_model_setup["state"], "failed")
+                self.assertFalse(runtime.local_model_setup["chat_ready"])
+                self.assertTrue(runtime.provider_capability_truth[0]["circuit_open"])
+
+                reset_provider_health(provider_id)
+                runtime.local_model_status_refresh()
+                self.assertEqual(runtime.local_model_setup["state"], "ready")
+                self.assertTrue(runtime.local_model_setup["chat_ready"])
+                self.assertFalse(runtime.provider_capability_truth[0]["circuit_open"])
+
+                runtime.local_model_setup.update(state="ready", chat_ready=True, certification_state="verified")
+                certification_status.return_value = {"state": "stale"}
+                runtime.local_model_status_refresh()
+                self.assertEqual(runtime.local_model_setup["state"], "failed")
+                self.assertFalse(runtime.local_model_setup["chat_ready"])
+                self.assertEqual(runtime.local_model_setup["certification_state"], "stale")
+
+                retry_setup = mock.Mock(return_value=True)
+                runtime.local_model_setup_refresh = retry_setup
+                from core.web.api.service import dispatch_post
+
+                retry = dispatch_post(
+                    path="/api/runtime/local-model/retry",
+                    headers={"Content-Type": "application/json", "Origin": "http://127.0.0.1:11435"},
+                    body={},
+                    client_host="127.0.0.1",
+                    runtime=runtime,
+                    model_name="vool",
+                    workspace_root_provider=lambda: "/tmp",
+                )
+                self.assertEqual(retry.status, 202)
+                retry_setup.assert_called_once_with()
+            finally:
+                reset_provider_health(provider_id)
 
     def test_bootstrap_runtime_services_defers_prewarm_when_disabled(self) -> None:
         persona = mock.Mock(persona_id="default")
@@ -1479,61 +1696,45 @@ class VoolAPIServerModelMetadataTests(unittest.TestCase):
         model_registry.startup_warnings.return_value = []
         runtime_home = "/tmp/runtime-home"
 
-        with mock.patch.dict(os.environ, {"VOOL_OLLAMA_MODEL": ""}, clear=False), mock.patch(
-            "core.web.api.runtime.bootstrap_runtime_mode",
-            return_value=mock.Mock(
-                backend_selection=mock.Mock(backend_name="mlx", device="mps"),
-                context=SimpleNamespace(paths=SimpleNamespace(runtime_home=runtime_home)),
-            ),
-        ), mock.patch(
-            "core.web.api.runtime.is_first_boot",
-            return_value=False,
-        ), mock.patch("core.credit_ledger.ensure_starter_credits", return_value=False), mock.patch(
-            "core.web.api.runtime.ensure_public_hive_auth",
-            return_value={"ok": True, "status": "ok"},
-        ), mock.patch(
-            "core.web.api.runtime.probe_machine",
-            return_value=mock.Mock(accelerator="mps", gpu_name="Apple GPU"),
-        ), mock.patch(
-            "core.web.api.runtime.default_runtime_model_tag",
-            return_value="qwen3:8b",
-        ), mock.patch(
-            "core.web.api.runtime.ensure_ollama_model",
-        ), mock.patch(
-            "core.web.api.runtime.build_runtime_version_stamp",
-            return_value={"started_at": "2026-03-28T00:00:00.000000Z", "build_id": "test", "branch": "main", "commit": "abc123", "dirty": False},
-        ), mock.patch(
-            "core.web.api.runtime.ComputeModeDaemon",
-            return_value=compute_daemon,
-        ), mock.patch(
-            "core.web.api.runtime.ModelRegistry",
-            return_value=model_registry,
-        ), mock.patch(
-            "core.web.api.runtime.ensure_default_provider",
-        ), mock.patch(
-            "core.web.api.runtime.active_install_profile_id",
-            return_value="local-only",
-        ), mock.patch(
-            "core.web.api.runtime.log_prewarm_results",
-        ) as log_prewarm, mock.patch(
-            "core.web.api.runtime.load_active_persona",
-            return_value=persona,
-        ), mock.patch(
-            "core.web.api.runtime.get_agent_display_name",
-            return_value="VOOL",
-        ), mock.patch(
-            "core.web.api.runtime.ensure_openclaw_registration",
-            return_value=True,
-        ), mock.patch(
-            "core.web.api.runtime.VoolAgent",
-            return_value=agent,
-        ), mock.patch(
-            "core.web.api.runtime.resolve_local_worker_capacity",
-            return_value=(3, 3),
-        ), mock.patch(
-            "core.web.api.runtime.VoolDaemon",
-            return_value=daemon,
-        ):
+        with contextlib.ExitStack() as patches:
+            patches.enter_context(mock.patch.dict(os.environ, {"VOOL_OLLAMA_MODEL": ""}, clear=False))
+            patches.enter_context(
+                mock.patch(
+                    "core.web.api.runtime.bootstrap_runtime_mode",
+                    return_value=mock.Mock(
+                        backend_selection=mock.Mock(backend_name="mlx", device="mps"),
+                        context=SimpleNamespace(paths=SimpleNamespace(runtime_home=runtime_home)),
+                    ),
+                )
+            )
+            patches.enter_context(mock.patch("core.web.api.runtime.is_first_boot", return_value=False))
+            patches.enter_context(mock.patch("core.credit_ledger.ensure_starter_credits", return_value=False))
+            patches.enter_context(
+                mock.patch("core.web.api.runtime.ensure_public_hive_auth", return_value={"ok": True, "status": "ok"})
+            )
+            patches.enter_context(
+                mock.patch("core.web.api.runtime.probe_machine", return_value=mock.Mock(accelerator="mps", gpu_name="Apple GPU"))
+            )
+            patches.enter_context(mock.patch("core.web.api.runtime.default_runtime_model_tag", return_value="qwen3:8b"))
+            patches.enter_context(mock.patch("core.web.api.runtime.ensure_ollama_model"))
+            patches.enter_context(
+                mock.patch(
+                    "core.web.api.runtime.build_runtime_version_stamp",
+                    return_value={"started_at": "2026-03-28T00:00:00.000000Z", "build_id": "test", "branch": "main", "commit": "abc123", "dirty": False},
+                )
+            )
+            patches.enter_context(mock.patch("core.web.api.runtime.ComputeModeDaemon", return_value=compute_daemon))
+            patches.enter_context(mock.patch("core.web.api.runtime.ModelRegistry", return_value=model_registry))
+            patches.enter_context(mock.patch("core.web.api.runtime.ensure_default_provider"))
+            patches.enter_context(mock.patch("core.web.api.runtime.active_install_profile_id", return_value="local-only"))
+            log_prewarm = patches.enter_context(mock.patch("core.web.api.runtime.log_prewarm_results"))
+            patches.enter_context(mock.patch("core.web.api.runtime.load_active_persona", return_value=persona))
+            patches.enter_context(mock.patch("core.web.api.runtime.get_agent_display_name", return_value="VOOL"))
+            patches.enter_context(mock.patch("core.web.api.runtime.ensure_openclaw_registration", return_value=True))
+            patches.enter_context(mock.patch("core.web.api.runtime.VoolAgent", return_value=agent))
+            patches.enter_context(mock.patch("core.web.api.runtime.resolve_local_worker_capacity", return_value=(3, 3)))
+            patches.enter_context(mock.patch("core.web.api.runtime.VoolDaemon", return_value=daemon))
+            patches.enter_context(_local_model_setup_mocks())
             runtime = bootstrap_runtime_services(
                 project_root=PROJECT_ROOT,
                 workstation_version="test-workstation",
@@ -1639,7 +1840,11 @@ class VoolAPIServerModelMetadataTests(unittest.TestCase):
 
         self.assertEqual(runtime.runtime_model_tag, "qwen3:8b")
         self.assertTrue(runtime.model_pull.wait(timeout=5))
-        ensure_model.assert_called_once_with("qwen3:8b", progress=runtime.model_pull)
+        ensure_model.assert_called_once()
+        self.assertEqual(ensure_model.call_args.args, ("qwen3:8b",))
+        self.assertIs(ensure_model.call_args.kwargs["progress"], runtime.model_pull)
+        self.assertEqual(ensure_model.call_args.kwargs["base_url"], runtime.local_ollama_base_url)
+        self.assertEqual(ensure_model.call_args.kwargs["env"]["VOOL_OLLAMA_MODEL"], "qwen3:8b")
         ensure_provider.assert_called_once()
         provider_args, provider_kwargs = ensure_provider.call_args
         self.assertEqual(provider_args[:2], (model_registry, "qwen3:8b"))
@@ -1724,7 +1929,11 @@ class VoolAPIServerModelMetadataTests(unittest.TestCase):
 
         self.assertEqual(runtime.runtime_model_tag, "gemma3:4b")
         self.assertTrue(runtime.model_pull.wait(timeout=5))
-        ensure_model.assert_called_once_with("gemma3:4b", progress=runtime.model_pull)
+        ensure_model.assert_called_once()
+        self.assertEqual(ensure_model.call_args.args, ("gemma3:4b",))
+        self.assertIs(ensure_model.call_args.kwargs["progress"], runtime.model_pull)
+        self.assertEqual(ensure_model.call_args.kwargs["base_url"], runtime.local_ollama_base_url)
+        self.assertEqual(ensure_model.call_args.kwargs["env"]["VOOL_OLLAMA_MODEL"], "gemma3:4b")
         provider_args, provider_kwargs = ensure_provider.call_args
         self.assertEqual(provider_args[:2], (model_registry, "gemma3:4b"))
         self.assertEqual(provider_kwargs["env"], provider_env)
@@ -1805,7 +2014,11 @@ class VoolAPIServerModelMetadataTests(unittest.TestCase):
 
         self.assertEqual(runtime.runtime_model_tag, "gemma3:4b")
         self.assertTrue(runtime.model_pull.wait(timeout=5))
-        ensure_model.assert_called_once_with("gemma3:4b", progress=runtime.model_pull)
+        ensure_model.assert_called_once()
+        self.assertEqual(ensure_model.call_args.args, ("gemma3:4b",))
+        self.assertIs(ensure_model.call_args.kwargs["progress"], runtime.model_pull)
+        self.assertEqual(ensure_model.call_args.kwargs["base_url"], runtime.local_ollama_base_url)
+        self.assertEqual(ensure_model.call_args.kwargs["env"].get("VOOL_OLLAMA_MODEL", ""), "")
         provider_args, _provider_kwargs = ensure_provider.call_args
         self.assertEqual(provider_args[:2], (model_registry, "gemma3:4b"))
 
@@ -2870,6 +3083,11 @@ def test_vool_chat_page_is_self_contained_and_wired() -> None:
 
 
 class OllamaModelPullTests(unittest.TestCase):
+    def test_pull_failure_distinguishes_network_offline_from_local_service_refusal(self) -> None:
+        self.assertTrue(_ollama_pull_is_offline("lookup registry.ollama.ai: no such host"))
+        self.assertTrue(_ollama_pull_is_offline("network is unreachable"))
+        self.assertFalse(_ollama_pull_is_offline("connect 127.0.0.1:11434: connection refused"))
+
     """First run must reach a running server, not ERR_CONNECTION_REFUSED behind a multi-GB pull."""
 
     def test_installed_check_matches_the_exact_tag_not_a_substring(self) -> None:
@@ -2908,7 +3126,7 @@ class OllamaModelPullTests(unittest.TestCase):
         release = threading.Event()
         started = threading.Event()
 
-        def slow_pull(model_tag, *, progress=None):
+        def slow_pull(model_tag, *, progress=None, **_kwargs):
             started.set()
             progress.update(status="pulling", percent=42, detail="pulling manifest")
             release.wait(timeout=10)
@@ -2939,12 +3157,92 @@ class OllamaModelPullTests(unittest.TestCase):
         self.assertEqual(progress.status, "failed")
         self.assertIn("no such model", progress.public["detail"])
 
+    def test_pull_retries_connection_refusal_during_ollama_startup(self) -> None:
+        progress = ModelPullProgress("qwen3:4b")
+        refused = error.URLError(ConnectionRefusedError("Ollama still starting"))
+        waiting: dict[str, str] = {}
+
+        def record_wait(_seconds: float) -> None:
+            waiting.update(status=progress.status, detail=str(progress.public["detail"]))
+
+        with mock.patch("core.web.api.runtime.ollama_model_installed", side_effect=(False, False, True)), mock.patch(
+            "core.web.api.runtime._stream_ollama_pull", side_effect=(refused, None)
+        ) as pull, mock.patch("core.web.api.runtime.time.sleep", side_effect=record_wait):
+            ensure_ollama_model("qwen3:4b", progress=progress)
+
+        self.assertEqual(pull.call_count, 2)
+        self.assertEqual(waiting, {"status": "starting", "detail": "waiting for local model service"})
+        self.assertEqual(progress.status, "ready")
+
+    def test_completed_pull_is_failed_until_the_exact_tag_appears_in_inventory(self) -> None:
+        progress = ModelPullProgress("qwen3:4b")
+        with mock.patch(
+            "core.web.api.runtime.ollama_model_installed",
+            side_effect=(False, False),
+        ) as installed, mock.patch(
+            "core.web.api.runtime._stream_ollama_pull",
+            return_value=None,
+        ):
+            ensure_ollama_model("qwen3:4b", progress=progress)
+
+        self.assertEqual(installed.call_count, 2)
+        self.assertEqual(progress.status, "failed")
+        self.assertIn("exact model tag 'qwen3:4b'", progress.public["detail"])
+
+    def test_completed_pull_becomes_ready_only_after_exact_tag_verification(self) -> None:
+        progress = ModelPullProgress("qwen3:4b")
+        with mock.patch(
+            "core.web.api.runtime.ollama_model_installed",
+            side_effect=(False, True),
+        ) as installed, mock.patch(
+            "core.web.api.runtime._stream_ollama_pull",
+            return_value=None,
+        ):
+            ensure_ollama_model("qwen3:4b", progress=progress)
+
+        self.assertEqual(installed.call_count, 2)
+        self.assertEqual(progress.status, "ready")
+        self.assertIn("exact model confirmed", progress.public["detail"])
+
+    def test_pull_does_not_retry_non_service_errors(self) -> None:
+        progress = ModelPullProgress("qwen3:4b")
+        with mock.patch("core.web.api.runtime.ollama_model_installed", return_value=False), mock.patch(
+            "core.web.api.runtime._stream_ollama_pull", side_effect=error.URLError(OSError("registry offline"))
+        ) as pull:
+            ensure_ollama_model("qwen3:4b", progress=progress)
+
+        pull.assert_called_once()
+        self.assertEqual(progress.status, "failed")
+
+    def test_pull_skips_download_if_model_appears_after_ollama_startup(self) -> None:
+        progress = ModelPullProgress("qwen3:4b")
+        refused = error.URLError(ConnectionRefusedError("Ollama still starting"))
+        with mock.patch("core.web.api.runtime.ollama_model_installed", side_effect=(False, True)), mock.patch(
+            "core.web.api.runtime._stream_ollama_pull", side_effect=refused
+        ) as pull, mock.patch("core.web.api.runtime.time.sleep"):
+            ensure_ollama_model("qwen3:4b", progress=progress)
+
+        pull.assert_called_once()
+        self.assertEqual(progress.status, "ready")
+        self.assertEqual(progress.public["detail"], "already installed")
+
+    def test_pull_connection_refusal_has_a_retry_deadline(self) -> None:
+        progress = ModelPullProgress("qwen3:4b")
+        refused = error.URLError(ConnectionRefusedError("Ollama unavailable"))
+        with mock.patch("core.web.api.runtime.ollama_model_installed", return_value=False), mock.patch(
+            "core.web.api.runtime._stream_ollama_pull", side_effect=refused
+        ) as pull, mock.patch("core.web.api.runtime._OLLAMA_STARTUP_RETRY_SECONDS", 0.0):
+            ensure_ollama_model("qwen3:4b", progress=progress)
+
+        pull.assert_called_once()
+        self.assertEqual(progress.status, "failed")
+
     def test_bootstrap_binds_the_port_while_the_model_is_still_downloading(self) -> None:
         # The #30 regression: bootstrap runs BEFORE uvicorn binds, so it must not sit on the pull.
         release = threading.Event()
         pulling = threading.Event()
 
-        def slow_pull(model_tag, *, progress=None):
+        def slow_pull(model_tag, *, progress=None, **_kwargs):
             pulling.set()
             progress.update(status="pulling", percent=7, detail="pulling manifest")
             release.wait(timeout=30)
@@ -2953,6 +3251,8 @@ class OllamaModelPullTests(unittest.TestCase):
         persona = mock.Mock(persona_id="default")
         model_registry = mock.Mock()
         model_registry.startup_warnings.return_value = []
+        manifest = SimpleNamespace(enabled=True, provider_id="ollama-local:qwen3:4b")
+        refreshed_truth = ({"provider_id": manifest.provider_id, "availability_state": "ready"},)
 
         with mock.patch.dict(os.environ, {"VOOL_OLLAMA_MODEL": "qwen3:4b"}, clear=False), mock.patch(
             "core.web.api.runtime.bootstrap_runtime_mode",
@@ -2984,9 +3284,7 @@ class OllamaModelPullTests(unittest.TestCase):
             "core.web.api.runtime.resolve_local_worker_capacity", return_value=(3, 3)
         ), mock.patch(
             "core.web.api.runtime.VoolDaemon", return_value=mock.Mock(config=mock.Mock(bind_port=49152))
-        ), mock.patch(
-            "core.web.api.runtime.startup_provider_capability_truth", return_value=tuple()
-        ):
+        ), _ready_local_model_finalization_mocks(manifest, refreshed_truth) as register_local:
             began = time.monotonic()
             runtime = bootstrap_runtime_services(
                 project_root=PROJECT_ROOT,
@@ -3007,10 +3305,23 @@ class OllamaModelPullTests(unittest.TestCase):
                 self.assertEqual(served["model_pull"]["status"], "pulling")
                 self.assertEqual(served["model_pull"]["percent"], 7)
                 self.assertEqual(served["model_pull"]["model"], "qwen3:4b")
+                runtime.deferred_prewarm()
+                self.assertEqual(runtime.local_model_setup["state"], "downloading")
             finally:
                 release.set()
             self.assertTrue(runtime.model_pull.wait(timeout=10))
             self.assertEqual(dict(runtime.runtime_version_stamp)["model_pull"]["status"], "ready")
+            deadline = time.monotonic() + 5.0
+            while runtime.local_model_setup.get("state") != "ready" and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(runtime.local_model_setup["chat_ready"])
+            self.assertEqual(runtime.local_model_setup["state"], "ready")
+            register_local.assert_called_once()
+            register_args, register_kwargs = register_local.call_args
+            self.assertIs(register_args[0], model_registry)
+            self.assertEqual(register_kwargs["model_tag"], "qwen3:4b")
+            self.assertEqual(register_kwargs["env"].get("VOOL_OLLAMA_MODEL"), "qwen3:4b")
+            self.assertEqual(register_kwargs["base_url"], runtime.local_ollama_base_url)
 
 
 if __name__ == "__main__":

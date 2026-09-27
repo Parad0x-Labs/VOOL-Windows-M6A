@@ -11,6 +11,7 @@ from core.local_model_tool_certification import (
     CERTIFICATION_ROUTING_EFFECT,
     CertificationBoundaryError,
     certification_fingerprint_payload,
+    certification_history,
     certification_status,
     run_local_model_tool_certification,
 )
@@ -146,6 +147,9 @@ def test_valid_probe_verifies_parallel_translation_continuation_and_recovery(tmp
     assert "synthetic_error_recovered" in result["stages"]["result_continuation"]["checks"]
     assert len(exchange.calls) == 4
     assert all({tool.intent for tool in call.get("tools", ())} <= {"probe.echo", "probe.add", "probe.lookup_nonce"} for call in exchange.calls)
+    recovery_prompt = exchange.calls[-1]["messages"][-1]["content"]
+    assert "calling probe.echo exactly once" in recovery_prompt
+    assert "token 'recovered'" in recovery_prompt
 
 
 @pytest.mark.parametrize("first_mode", ["malformed", "duplicate"])
@@ -183,7 +187,8 @@ def test_timeout_is_typed_and_evidence_redacts_secrets_and_home_paths(tmp_path: 
     class UnsafeTimeout(ProbeExchange):
         def __call__(self, **kwargs: Any) -> dict[str, Any]:
             raise TimeoutError(
-                "request timed out Bearer super-secret token=abc123 /Users/alice/private/model.gguf"
+                "request timed out Bearer super-secret token=abc123 /Users/alice/private/model.gguf "
+                r"Command ['C:\\Users\\VOOLTEST\\AppData\\Local\\Programs\\VOOL\\python\\python.exe']"
             )
 
     result = run_local_model_tool_certification(
@@ -195,8 +200,58 @@ def test_timeout_is_typed_and_evidence_redacts_secrets_and_home_paths(tmp_path: 
     assert "super-secret" not in serialized
     assert "abc123" not in serialized
     assert "/Users/alice" not in serialized
+    assert "VOOLTEST" not in serialized
     assert "[redacted]" in serialized
     assert "[home]" in serialized
+
+
+def test_adapter_identity_failure_is_recorded_as_a_failed_attempt(tmp_path: Path, monkeypatch) -> None:
+    from adapters.openai_compatible_adapter import OpenAICompatibleAdapter
+
+    db_path = tmp_path / "identity-failure.db"
+    adapter = OpenAICompatibleAdapter(_manifest())
+
+    def fail_identity():
+        raise RuntimeError("identity details must not be persisted")
+
+    monkeypatch.setattr(adapter, "tool_certification_runtime_identity", fail_identity)
+    monkeypatch.setattr("core.model_registry.ModelRegistry.build_adapter", lambda _registry, _manifest: adapter)
+
+    result = run_local_model_tool_certification(_manifest(), db_path=db_path)
+    history = certification_history(db_path=db_path)
+
+    assert result["state"] == "degraded"
+    assert result["stages"]["transport_acceptance"]["failure_code"] == "runtime_identity_unavailable"
+    assert result["evidence"]["preflight"]["state"] == "failed"
+    assert len(history) == 1
+    assert history[0]["state"] == "degraded"
+    assert "identity details must not be persisted" not in json.dumps(history[0], sort_keys=True)
+
+
+def test_probe_exchanges_share_one_monotonic_deadline(tmp_path: Path, monkeypatch) -> None:
+    from core.local_model_tool_certification import time as certification_time
+
+    clock = {"now": 100.0}
+    monkeypatch.setattr(certification_time, "monotonic", lambda: clock["now"])
+
+    class AdvancingExchange(ProbeExchange):
+        def __call__(self, **kwargs: Any) -> dict[str, Any]:
+            response = super().__call__(**kwargs)
+            clock["now"] += 1.0
+            return response
+
+    exchange = AdvancingExchange()
+    result = run_local_model_tool_certification(
+        _manifest(),
+        exchange=exchange,
+        db_path=tmp_path / "deadline.db",
+        timeout_seconds=3.0,
+    )
+
+    assert [call["timeout_seconds"] for call in exchange.calls] == [3.0, 2.0, 1.0]
+    assert result["state"] == "degraded"
+    assert result["stages"]["result_continuation"]["failure_code"] == "timeout"
+    assert result["evidence"]["exchange_count"] == 3
 
 
 @pytest.mark.parametrize(
@@ -264,6 +319,64 @@ def test_changed_model_fingerprint_makes_old_evidence_stale(tmp_path: Path) -> N
     assert status["state"] == "stale"
     assert status["current_fingerprint"] != status["fingerprint"]
     assert status["routing_effect"] == CERTIFICATION_ROUTING_EFFECT
+
+
+def test_remote_ollama_lane_cannot_use_operator_configuration_as_authorship_certification() -> None:
+    from core.final_answer_authorship import author_certification
+
+    manifest = _manifest(
+        base_url="https://ollama.example/v1",
+        adapter_type="local_qwen_provider",
+    )
+
+    certification = author_certification(manifest, use_cache=False)
+
+    assert certification.certified is False
+    assert certification.source == "none"
+    assert "verified sealed probe" in certification.detail
+
+
+def test_local_author_certification_rechecks_digest_before_authorship(monkeypatch) -> None:
+    from core import final_answer_authorship
+
+    first = _manifest(digest="sha256:model-v1")
+    replaced = _manifest(digest="sha256:model-v2")
+    checked: list[str] = []
+
+    def current_status(manifest, *, db_path=None):
+        digest = str(manifest.metadata["model_digest"])
+        checked.append(digest)
+        return {"state": "verified" if digest == "sha256:model-v1" else "stale"}
+
+    final_answer_authorship.invalidate_author_certification()
+    monkeypatch.setattr("core.local_model_tool_certification.certification_status", current_status)
+
+    old_identity = final_answer_authorship.author_certification(first)
+    new_identity = final_answer_authorship.author_certification(replaced)
+
+    assert old_identity.certified is True
+    assert new_identity.certified is False
+    assert new_identity.state == "stale"
+    assert checked == ["sha256:model-v1", "sha256:model-v2"]
+
+
+def test_non_local_cloud_provider_keeps_its_operator_configured_attestation() -> None:
+    from core.final_answer_authorship import author_certification
+
+    manifest = ModelProviderManifest(
+        provider_name="example-cloud",
+        model_name="example-model",
+        source_type="http",
+        adapter_type="openai_compatible",
+        runtime_config={"base_url": "https://api.example/v1"},
+        metadata={"runtime_family": "openai", "deployment_class": "cloud"},
+        enabled=True,
+    )
+
+    certification = author_certification(manifest, use_cache=False)
+
+    assert certification.certified is True
+    assert certification.source == "operator_configured_lane"
 
 
 @pytest.mark.parametrize("adapter_type", ["openai_compatible", "local_qwen_provider"])

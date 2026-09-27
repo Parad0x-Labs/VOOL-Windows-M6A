@@ -156,6 +156,19 @@ _SENTENCE_COUNT_RE = re.compile(
     r"(?:\s*[- ]\s*)sentences?\b",
     re.IGNORECASE,
 )
+_SENTENCE_RANGE_RE = re.compile(
+    rf"\b(?P<minimum>{_COUNT_TOKEN})\s*[-\u2013]\s*(?P<maximum>{_COUNT_TOKEN})"
+    r"\s+sentences?\b",
+    re.IGNORECASE,
+)
+_MIN_SENTENCES_RE = re.compile(
+    rf"\b(?:at\s+least|no\s+fewer\s+than)\s+(?P<count>{_COUNT_TOKEN})\s+sentences?\b",
+    re.IGNORECASE,
+)
+_MAX_SENTENCES_RE = re.compile(
+    rf"\b(?:at\s+most|no\s+more\s+than)\s+(?P<count>{_COUNT_TOKEN})\s+sentences?\b",
+    re.IGNORECASE,
+)
 _LINE_COUNT_RE = re.compile(
     rf"\b(?:exactly\s+|just\s+|only\s+)?(?P<count>{_COUNT_TOKEN})"
     r"(?:\s*[- ]\s*)lines?\b",
@@ -434,6 +447,8 @@ _SHAPE_ONLY_VIOLATIONS = frozenset(
     {
         "exact_words",
         "exact_sentences",
+        "min_sentences",
+        "max_sentences",
         "exact_lines",
         "bullet_count",
         "bullet_marker",
@@ -503,6 +518,8 @@ class RawOutputContract:
     exact_text: str | None = None
     exact_words: int | None = None
     exact_sentences: int | None = None
+    min_sentences: int | None = None
+    max_sentences: int | None = None
     exact_lines: int | None = None
     bullet_count: int | None = None
     bullet_marker: str | None = None
@@ -516,7 +533,13 @@ class RawOutputContract:
     code_deliverable: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        # Preserve the existing wire shape for contracts without sentence bounds. The optional
+        # fields appear only when the user actually requested a lower or upper bound.
+        for key in ("min_sentences", "max_sentences"):
+            if payload.get(key) is None:
+                payload.pop(key, None)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -912,7 +935,23 @@ def parse_raw_output_contract(user_text: str) -> RawOutputContract | None:
         no_punctuation = False
         no_trailing_punctuation = True
     exact_words = _match_count(_WORD_COUNT_RE, directive_text)
-    exact_sentences = _match_count(_SENTENCE_COUNT_RE, directive_text, maximum=20)
+    sentence_range_match = _SENTENCE_RANGE_RE.search(directive_text)
+    minimum_sentences_match = _MIN_SENTENCES_RE.search(directive_text)
+    maximum_sentences_match = _MAX_SENTENCES_RE.search(directive_text)
+    min_sentences = None
+    max_sentences = None
+    if sentence_range_match:
+        min_sentences = _bounded_count(sentence_range_match.group("minimum"), maximum=20)
+        max_sentences = _bounded_count(sentence_range_match.group("maximum"), maximum=20)
+        exact_sentences = None
+    elif minimum_sentences_match:
+        min_sentences = _bounded_count(minimum_sentences_match.group("count"), maximum=20)
+        exact_sentences = None
+    elif maximum_sentences_match:
+        max_sentences = _bounded_count(maximum_sentences_match.group("count"), maximum=20)
+        exact_sentences = None
+    else:
+        exact_sentences = _match_count(_SENTENCE_COUNT_RE, directive_text, maximum=20)
     exact_lines = _match_count(_LINE_COUNT_RE, directive_text, maximum=20)
     if payload_authoritative and exact_lines is None:
         try:
@@ -959,6 +998,8 @@ def parse_raw_output_contract(user_text: str) -> RawOutputContract | None:
         # a seven-word final-response contract deletes the other two answers at the UI boundary.
         exact_words = None
         exact_sentences = None
+        min_sentences = None
+        max_sentences = None
         exact_lines = None
         bullet_count = None
         bullet_marker = None
@@ -993,6 +1034,8 @@ def parse_raw_output_contract(user_text: str) -> RawOutputContract | None:
                 for value in (
                     exact_words,
                     exact_sentences,
+                    min_sentences,
+                    max_sentences,
                     exact_lines,
                     bullet_count,
                     delimiter,
@@ -1019,6 +1062,8 @@ def parse_raw_output_contract(user_text: str) -> RawOutputContract | None:
         exact_text=exact_text,
         exact_words=exact_words,
         exact_sentences=exact_sentences,
+        min_sentences=min_sentences,
+        max_sentences=max_sentences,
         exact_lines=exact_lines,
         bullet_count=bullet_count,
         bullet_marker=bullet_marker,
@@ -1072,6 +1117,8 @@ def raw_output_contract_from_metadata(metadata: dict[str, Any] | None) -> RawOut
         exact_text=exact_text,
         exact_words=_bounded_count(payload.get("exact_words")),
         exact_sentences=_bounded_count(payload.get("exact_sentences"), maximum=20),
+        min_sentences=_bounded_count(payload.get("min_sentences"), maximum=20),
+        max_sentences=_bounded_count(payload.get("max_sentences"), maximum=20),
         exact_lines=_bounded_count(payload.get("exact_lines"), maximum=20),
         bullet_count=_bounded_count(payload.get("bullet_count"), maximum=20),
         bullet_marker=bullet_marker,
@@ -1098,6 +1145,14 @@ def raw_output_contract_guidance(contract: RawOutputContract) -> str:
         requirements.append(f"using exactly {contract.exact_words} word(s)")
     if contract.exact_sentences is not None:
         requirements.append(f"using exactly {contract.exact_sentences} sentence(s)")
+    elif contract.min_sentences is not None and contract.max_sentences is not None:
+        requirements.append(
+            f"using {contract.min_sentences}\u2013{contract.max_sentences} sentence(s)"
+        )
+    elif contract.min_sentences is not None:
+        requirements.append(f"using at least {contract.min_sentences} sentence(s)")
+    elif contract.max_sentences is not None:
+        requirements.append(f"using at most {contract.max_sentences} sentence(s)")
     if contract.exact_lines is not None:
         requirements.append(f"using exactly {contract.exact_lines} physical lines")
     if contract.bullet_count is not None:
@@ -1263,8 +1318,13 @@ def _contract_violations(text: str, contract: RawOutputContract) -> tuple[str, .
         violations.append("exact_text")
     if contract.exact_words is not None and len(_WORD_RE.findall(clean)) != contract.exact_words:
         violations.append("exact_words")
-    if contract.exact_sentences is not None and _sentence_count(clean) != contract.exact_sentences:
+    sentence_count = _sentence_count(clean)
+    if contract.exact_sentences is not None and sentence_count != contract.exact_sentences:
         violations.append("exact_sentences")
+    if contract.min_sentences is not None and sentence_count < contract.min_sentences:
+        violations.append("min_sentences")
+    if contract.max_sentences is not None and sentence_count > contract.max_sentences:
+        violations.append("max_sentences")
     if contract.exact_lines is not None and len(clean.splitlines()) != contract.exact_lines:
         violations.append("exact_lines")
     if contract.bullet_count is not None:

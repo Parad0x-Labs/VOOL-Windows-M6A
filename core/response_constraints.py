@@ -174,6 +174,21 @@ _MAX_SENTENCES_RE = re.compile(
     r")",
     re.IGNORECASE,
 )
+_SENTENCE_RANGE_RE = re.compile(
+    r"\b(?P<minimum>one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
+    r"thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|\d{1,2})"
+    r"\s*[-\u2013]\s*"
+    r"(?P<maximum>one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
+    r"thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|\d{1,2})"
+    r"\s+sentences?\b",
+    re.IGNORECASE,
+)
+_MIN_SENTENCES_RE = re.compile(
+    r"\b(?:at least|no fewer than)\s+(?P<count>one|two|three|four|five|six|seven|eight|nine|"
+    r"ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|"
+    r"twenty|\d{1,2})\s+sentences?\b",
+    re.IGNORECASE,
+)
 _SHORT_SENTENCE_SHAPE_RE = re.compile(
     r"\b(?:answer|respond|reply|say|return|give|use|write|end|confirm|explain)"
     # Identifiers such as ``MARIGOLD-8342`` are ordinary user text between the
@@ -713,39 +728,40 @@ def _parse_response_constraint(
         else None
     )
     exact_sentences_match = _EXACT_SENTENCES_RE.search(text)
-    exact_sentences = (
-        _bounded_count(
-            exact_sentences_match.group("count"),
+    sentence_range_match = _SENTENCE_RANGE_RE.search(text)
+    minimum_sentences_match = _MIN_SENTENCES_RE.search(text)
+    max_sentences_match = _MAX_SENTENCES_RE.search(text)
+    exact_sentences = None
+    min_sentences = None
+    max_sentences = None
+    if sentence_range_match:
+        min_sentences = _bounded_count(sentence_range_match.group("minimum"), maximum=20)
+        max_sentences = _bounded_count(sentence_range_match.group("maximum"), maximum=20)
+    elif minimum_sentences_match:
+        min_sentences = _bounded_count(minimum_sentences_match.group("count"), maximum=20)
+    elif max_sentences_match:
+        max_sentences = _bounded_count(
+            next(value for value in max_sentences_match.groupdict().values() if value),
             maximum=20,
         )
-        if exact_sentences_match
-        else None
-    )
+    else:
+        exact_sentences = (
+            _bounded_count(
+                exact_sentences_match.group("count"),
+                maximum=20,
+            )
+            if exact_sentences_match
+            else None
+        )
     short_sentence_match = _SHORT_SENTENCE_SHAPE_RE.search(text)
-    if short_sentence_match and exact_sentences is None:
+    if short_sentence_match and exact_sentences is None and min_sentences is None and max_sentences is None:
         exact_sentences = _short_word_count(short_sentence_match.group("count"))
     # The de-lexicalised rule. It runs after the verb-anchored one and only fills a gap it left, so
     # every phrasing the old rule caught still parses identically -- what changes is that the
     # phrasings it missed for want of a verb ("Tell me in one sentence ...") now parse too.
     sentence_budget_match = _SENTENCE_BUDGET_RE.search(text)
-    if sentence_budget_match and exact_sentences is None:
+    if sentence_budget_match and exact_sentences is None and min_sentences is None and max_sentences is None:
         exact_sentences = _short_word_count(sentence_budget_match.group("count"))
-    max_sentences_match = _MAX_SENTENCES_RE.search(text)
-    max_sentences = (
-        _bounded_count(
-            next(
-                (
-                    value
-                    for value in max_sentences_match.groupdict().values()
-                    if value
-                ),
-                None,
-            ),
-            maximum=20,
-        )
-        if max_sentences_match
-        else None
-    )
     layout_match = _LAYOUT_SHAPE_RE.search(text)
     list_items = None
     one_item_per_line = False
@@ -768,6 +784,7 @@ def _parse_response_constraint(
             exact_words,
             max_words,
             exact_sentences,
+            min_sentences,
             max_sentences,
             list_items,
         )
@@ -791,6 +808,8 @@ def _parse_response_constraint(
             followup_exact_words_match,
             max_words_match,
             exact_sentences_match,
+            sentence_range_match,
+            minimum_sentences_match,
             short_sentence_match,
             sentence_budget_match,
             max_sentences_match,
@@ -804,12 +823,13 @@ def _parse_response_constraint(
             return None
         # Formats require inclusion, not a whole-answer length. A clause-local
         # sentence/word limit must neither truncate siblings nor erase their visuals.
-        exact_words = max_words = exact_sentences = max_sentences = list_items = None
+        exact_words = max_words = exact_sentences = min_sentences = max_sentences = list_items = None
         one_item_per_line = False
     return _reconcile_shapes(
         exact_words=exact_words,
         max_words=max_words,
         exact_sentences=exact_sentences,
+        min_sentences=min_sentences,
         max_sentences=max_sentences,
         list_items=list_items,
         one_item_per_line=one_item_per_line,
@@ -878,6 +898,7 @@ def _reconcile_shapes(
     exact_words: int | None,
     max_words: int | None,
     exact_sentences: int | None,
+    min_sentences: int | None,
     max_sentences: int | None,
     list_items: int | None,
     one_item_per_line: bool,
@@ -917,6 +938,7 @@ def _reconcile_shapes(
         max_words=max_words,
         exact_sentences=exact_sentences,
         max_sentences=max_sentences,
+        min_sentences=min_sentences,
         list_items=list_items,
         one_item_per_line=one_item_per_line,
         per_item_sentences=per_item_sentences,
@@ -942,6 +964,10 @@ def response_constraint_from_metadata(
         ),
         exact_sentences=_bounded_count(
             str(payload.get("exact_sentences") or ""),
+            maximum=20,
+        ),
+        min_sentences=_bounded_count(
+            str(payload.get("min_sentences") or ""),
             maximum=20,
         ),
         max_sentences=_bounded_count(
@@ -1005,6 +1031,11 @@ def check_response_constraint(
         and len(sentences) != constraint.exact_sentences
     ):
         violations.append("exact_sentences")
+    if (
+        constraint.min_sentences is not None
+        and len(sentences) < constraint.min_sentences
+    ):
+        violations.append("min_sentences")
     if (
         constraint.max_sentences is not None
         and len(sentences) > constraint.max_sentences
@@ -1117,6 +1148,14 @@ def formatting_retry_instruction(
     if constraint.exact_sentences is not None:
         requirements.append(
             f"exactly {constraint.exact_sentences} sentence(s)"
+        )
+    elif constraint.min_sentences is not None and constraint.max_sentences is not None:
+        requirements.append(
+            f"between {constraint.min_sentences} and {constraint.max_sentences} sentence(s)"
+        )
+    elif constraint.min_sentences is not None:
+        requirements.append(
+            f"at least {constraint.min_sentences} sentence(s)"
         )
     elif constraint.max_sentences is not None:
         requirements.append(

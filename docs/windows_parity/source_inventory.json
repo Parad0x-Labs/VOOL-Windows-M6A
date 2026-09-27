@@ -1541,6 +1541,20 @@
       "classification": "unreviewed"
     },
     {
+      "path": "/api/runtime/local-model/retry",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
+      "path": "/api/runtime/model-pull/retry",
+      "sources": [
+        "core/web/api/service.py"
+      ],
+      "classification": "unreviewed"
+    },
+    {
       "path": "/api/runtime/operator-snapshot",
       "sources": [
         "core/web/api/service.py"

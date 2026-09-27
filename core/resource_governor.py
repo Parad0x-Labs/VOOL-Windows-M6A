@@ -18,12 +18,15 @@ sends ComfyUI a graceful terminate.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import signal
 import subprocess
+import time
 import urllib.request
 from dataclasses import dataclass, field
+from urllib.parse import urlparse
 
 from core import system_resources as sr
 
@@ -201,10 +204,286 @@ def reclaim_if_pressured() -> list[str]:
 # before a call that would load a non-resident model), and fix it (reclaim_model / free_up_memory).
 
 _LOAD_SAFETY_FLOOR_GB = float(os.environ.get("VOOL_MODEL_LOAD_FLOOR_GB", "1.5") or 1.5)
+_RESIDENCY_CERTIFICATE_TTL_SECONDS = max(
+    1.0,
+    min(float(os.environ.get("VOOL_RESIDENCY_CERTIFICATE_TTL_SECONDS", "120") or 120), 900.0),
+)
+_RESIDENCY_EVIDENCE_SOURCES = frozenset(
+    {
+        "successful_ollama_model_call",
+        "successful_ollama_prewarm",
+        "successful_ollama_stream",
+    }
+)
+
+
+@dataclass(frozen=True)
+class ResidencyCertificate:
+    """Short-lived evidence that this runtime actually used one exact local model."""
+
+    provider_id: str
+    model_tag: str
+    model_digest: str
+    ollama_endpoint: str
+    ollama_process: dict[str, object]
+    runtime_identity: str
+    issued_at: float
+    expires_at: float
+    evidence_source: str
+    llama_server_process: dict[str, object] | None = None
+
+
+_RESIDENCY_CERTIFICATE: ResidencyCertificate | None = None
+
+
+def _normalize_ollama_endpoint(endpoint: str | None) -> str:
+    parsed = urlparse(str(endpoint or "").strip().rstrip("/"))
+    if not parsed.scheme or not parsed.hostname:
+        return ""
+    path = str(parsed.path or "").rstrip("/")
+    if path == "/v1":
+        path = ""
+    host = str(parsed.hostname).lower()
+    port = parsed.port
+    authority = f"{host}:{port}" if port is not None else host
+    return f"{parsed.scheme.lower()}://{authority}{path}"
+
+
+def _process_identity(pid: int | None) -> dict[str, object] | None:
+    """Return a live PID plus start identity without making process control changes."""
+
+    if pid is None:
+        return None
+    try:
+        import psutil
+
+        process = psutil.Process(int(pid))
+        if not process.is_running():
+            return None
+        identity: dict[str, object] = {"pid": int(process.pid)}
+        with contextlib.suppress(psutil.Error, OSError, ValueError):
+            identity["create_time"] = float(process.create_time())
+        return identity
+    except (ImportError, OSError, ValueError):
+        return None
+
+
+def _ollama_process_identity(endpoint: str | None = None) -> dict[str, object] | None:
+    """Find the loopback listener for an Ollama endpoint and bind its process instance."""
+
+    parsed = urlparse(str(endpoint or _OLLAMA_BASE).strip())
+    port = parsed.port or 11434
+    try:
+        import psutil
+
+        candidates: list[int] = []
+        for connection in psutil.net_connections(kind="tcp"):
+            if str(getattr(connection, "status", "")).upper() != "LISTEN":
+                continue
+            address = getattr(connection, "laddr", None)
+            if not address:
+                continue
+            try:
+                address_port = int(address.port)
+            except AttributeError:
+                address_port = int(address[1]) if len(address) > 1 else 0
+            if address_port != port:
+                continue
+            candidate_pid = getattr(connection, "pid", None)
+            if candidate_pid is not None:
+                candidates.append(int(candidate_pid))
+        for candidate_pid in sorted(set(candidates)):
+            identity = _process_identity(candidate_pid)
+            if identity is not None:
+                return identity
+    except (ImportError, OSError, TypeError, ValueError, IndexError):
+        pass
+    return None
+
+
+def _owned_llama_server_identity(ollama_pid: int | None) -> dict[str, object] | None:
+    """Return an owned llama-server process identity when Ollama exposes one."""
+
+    if ollama_pid is None:
+        return None
+    try:
+        import psutil
+
+        parent = psutil.Process(int(ollama_pid))
+        children = parent.children(recursive=True)
+        for child in sorted(children, key=lambda item: int(item.pid)):
+            with contextlib.suppress(psutil.Error, OSError, ValueError):
+                command = " ".join([str(child.name() or ""), *[str(item) for item in child.cmdline()]])
+                executable = str(child.exe() or "")
+                if "llama-server" not in f"{command} {executable}".lower():
+                    continue
+                return _process_identity(int(child.pid))
+    except (ImportError, OSError, TypeError, ValueError):
+        pass
+    return None
+
+
+def current_runtime_identity() -> str:
+    """Build a non-secret identity for the current diagnostic/API runtime instance."""
+
+    explicit = str(os.environ.get("VOOL_RUNTIME_IDENTITY") or "").strip()
+    if explicit:
+        return explicit
+    identity: dict[str, object] = {"pid": os.getpid()}
+    process = _process_identity(os.getpid())
+    if process and "create_time" in process:
+        identity["create_time"] = process["create_time"]
+    manifest_path = str(os.environ.get("VOOL_BUNDLE_MANIFEST") or "").strip()
+    if manifest_path:
+        with contextlib.suppress(OSError):
+            with open(manifest_path, "rb") as manifest_file:
+                identity["bundle_manifest_sha256"] = hashlib.sha256(manifest_file.read()).hexdigest()
+    return json.dumps(identity, sort_keys=True, separators=(",", ":"))
+
+
+def current_model_digest(model_name: str, endpoint: str | None = None) -> str:
+    """Read the exact installed digest for one tag from the current Ollama instance."""
+
+    normalized_endpoint = _normalize_ollama_endpoint(endpoint or _OLLAMA_BASE)
+    if not normalized_endpoint:
+        return ""
+    with contextlib.suppress(OSError, ValueError, json.JSONDecodeError):
+        request = urllib.request.Request(
+            f"{normalized_endpoint}/api/tags",
+            headers={"Accept": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=2.0) as response:
+            payload = json.loads(response.read().decode("utf-8", "replace") or "{}")
+        wanted = str(model_name or "").strip()
+        for row in payload.get("models") or []:
+            if not isinstance(row, dict):
+                continue
+            names = {str(row.get("name") or "").strip(), str(row.get("model") or "").strip()}
+            digest = str(row.get("digest") or "").strip()
+            if wanted in names and digest:
+                return digest
+    return ""
+
+
+def clear_residency_certificate() -> None:
+    """Clear the process-local certificate; intended for shutdown and deterministic tests."""
+
+    global _RESIDENCY_CERTIFICATE
+    _RESIDENCY_CERTIFICATE = None
+
+
+def record_residency_evidence(
+    *,
+    provider_id: str,
+    model_tag: str,
+    model_digest: str,
+    endpoint: str,
+    evidence_source: str,
+    runtime_identity: str | None = None,
+    now: float | None = None,
+    ttl_seconds: float | None = None,
+    ollama_process: dict[str, object] | None = None,
+    llama_server_process: dict[str, object] | None = None,
+) -> bool:
+    """Issue a bounded certificate only for a successful, exact-model Ollama operation."""
+
+    global _RESIDENCY_CERTIFICATE
+    provider = str(provider_id or "").strip()
+    model = str(model_tag or "").strip()
+    digest = str(model_digest or "").strip()
+    normalized_endpoint = _normalize_ollama_endpoint(endpoint)
+    source = str(evidence_source or "").strip()
+    if not provider or not model or not normalized_endpoint:
+        return False
+    if source not in _RESIDENCY_EVIDENCE_SOURCES:
+        return False
+    observed_process = ollama_process or _ollama_process_identity(normalized_endpoint)
+    if not observed_process or not observed_process.get("pid"):
+        return False
+    if not digest:
+        digest = current_model_digest(model, normalized_endpoint)
+    if not digest or digest.lower() in {"unknown", "none", "null"}:
+        return False
+    runtime = str(runtime_identity or current_runtime_identity()).strip()
+    if not runtime:
+        return False
+    issued_at = float(time.time() if now is None else now)
+    ttl = (
+        _RESIDENCY_CERTIFICATE_TTL_SECONDS
+        if ttl_seconds is None
+        else max(1.0, min(float(ttl_seconds), 900.0))
+    )
+    _RESIDENCY_CERTIFICATE = ResidencyCertificate(
+        provider_id=provider,
+        model_tag=model,
+        model_digest=digest,
+        ollama_endpoint=normalized_endpoint,
+        ollama_process=dict(observed_process),
+        runtime_identity=runtime,
+        issued_at=issued_at,
+        expires_at=issued_at + ttl,
+        evidence_source=source,
+        llama_server_process=dict(
+            llama_server_process
+            or _owned_llama_server_identity(int(observed_process["pid"]))
+            or {}
+        ) or None,
+    )
+    return True
+
+
+def _same_process_instance(expected: dict[str, object], current: dict[str, object] | None) -> bool:
+    if not current or int(current.get("pid") or 0) != int(expected.get("pid") or 0):
+        return False
+    expected_start = expected.get("create_time")
+    current_start = current.get("create_time")
+    if expected_start is not None:
+        if current_start is None:
+            return False
+        return abs(float(expected_start) - float(current_start)) <= 1e-6
+    return True
+
+
+def _certificate_matches(
+    *,
+    provider_id: str,
+    model_tag: str,
+    model_digest: str,
+    endpoint: str,
+    runtime_identity: str | None,
+) -> bool:
+    certificate = _RESIDENCY_CERTIFICATE
+    if certificate is None or float(time.time()) >= certificate.expires_at:
+        return False
+    if certificate.provider_id != str(provider_id or "").strip():
+        return False
+    if certificate.model_tag != str(model_tag or "").strip():
+        return False
+    expected_digest = str(model_digest or "").strip()
+    if expected_digest and certificate.model_digest != expected_digest:
+        return False
+    normalized_endpoint = _normalize_ollama_endpoint(endpoint)
+    if not normalized_endpoint or certificate.ollama_endpoint != normalized_endpoint:
+        return False
+    expected_runtime = str(runtime_identity or current_runtime_identity()).strip()
+    if not expected_runtime or certificate.runtime_identity != expected_runtime:
+        return False
+    current_process = _ollama_process_identity(certificate.ollama_endpoint)
+    if not _same_process_instance(certificate.ollama_process, current_process):
+        return False
+    if certificate.llama_server_process:
+        current_runner = _owned_llama_server_identity(int(certificate.ollama_process["pid"]))
+        if not _same_process_instance(certificate.llama_server_process, current_runner):
+            return False
+    if not expected_digest:
+        current_digest = current_model_digest(certificate.model_tag, certificate.ollama_endpoint)
+        if not current_digest or current_digest != certificate.model_digest:
+            return False
+    return True
 
 
 def resident_models() -> list[dict]:
-    """What Ollama is holding in memory right now: [{name, size_gb}], best-effort ([] on error)."""
+    """What Ollama is holding in memory right now, including digest when reported."""
     from core.local_model_policy import local_models_enabled
 
     if not local_models_enabled():
@@ -218,7 +497,13 @@ def resident_models() -> list[dict]:
             name = str(m.get("name") or m.get("model") or "").strip()
             size = float(m.get("size_vram") or m.get("size") or 0) / (1024.0 ** 3)
             if name:
-                rows.append({"name": name, "size_gb": round(size, 1)})
+                rows.append(
+                    {
+                        "name": name,
+                        "size_gb": round(size, 1),
+                        "digest": str(m.get("digest") or "").strip(),
+                    }
+                )
     rows.sort(key=lambda r: r["size_gb"], reverse=True)
     return rows
 
@@ -271,7 +556,14 @@ def reclaim_model(model_name: str) -> bool:
     return bool(_unload_models([str(model_name or "").strip()]))
 
 
-def plan_model_load(model_name: str) -> GovernorDecision:
+def plan_model_load(
+    model_name: str,
+    *,
+    provider_id: str = "",
+    model_digest: str = "",
+    endpoint: str | None = None,
+    runtime_identity: str | None = None,
+) -> GovernorDecision:
     """Gate a chat-model load the way renders are gated: fit, reclaim, or refuse — never a freeze.
 
     * Already resident -> ok (serving a loaded model costs no new RAM; never gate it).
@@ -284,7 +576,24 @@ def plan_model_load(model_name: str) -> GovernorDecision:
     name = str(model_name or "").strip()
     snap = sr.snapshot(force=True)
     residents = resident_models()
-    if any(r["name"] == name for r in residents):
+    expected_digest = str(model_digest or "").strip()
+    if any(
+        str(r.get("name") or "") == name
+        and (
+            (bool(expected_digest) and str(r.get("digest") or "") == expected_digest)
+            or (not expected_digest and not provider_id)
+            or (not expected_digest and provider_id and bool(str(r.get("digest") or "").strip()))
+        )
+        for r in residents
+    ):
+        return GovernorDecision(ok=True, usable_before_gb=snap.available_ram_gb, usable_after_gb=snap.available_ram_gb)
+    if not residents and provider_id and _certificate_matches(
+        provider_id=provider_id,
+        model_tag=name,
+        model_digest=expected_digest,
+        endpoint=endpoint or _OLLAMA_BASE,
+        runtime_identity=runtime_identity,
+    ):
         return GovernorDecision(ok=True, usable_before_gb=snap.available_ram_gb, usable_after_gb=snap.available_ram_gb)
     need = estimated_model_gb(name)
     decision = GovernorDecision(
@@ -362,6 +671,10 @@ __all__ = [
     "RENDER_FOOTPRINT_GB",
     "RENDER_TIERS",
     "GovernorDecision",
+    "ResidencyCertificate",
+    "clear_residency_certificate",
+    "current_model_digest",
+    "current_runtime_identity",
     "ensure_headroom_for",
     "estimated_model_gb",
     "free_up_memory",
@@ -369,6 +682,7 @@ __all__ = [
     "plan_render",
     "reclaim_if_pressured",
     "reclaim_model",
+    "record_residency_evidence",
     "resident_models",
     "resource_hog_report",
     "stop_comfyui",

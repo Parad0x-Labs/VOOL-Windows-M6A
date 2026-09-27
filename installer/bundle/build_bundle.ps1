@@ -218,6 +218,7 @@ Copy-Item (Join-Path $PSScriptRoot "vool-launch.cmd") (Join-Path $Stage "VOOL.cm
 Copy-Item (Join-Path $PSScriptRoot "vool.vbs") (Join-Path $Stage "vool.vbs") -Force
 Copy-Item (Join-Path $PSScriptRoot "vool_window.py") (Join-Path $Stage "vool_window.py") -Force
 Copy-Item (Join-Path $PSScriptRoot "bundle_supervisor.py") (Join-Path $Stage "bundle_supervisor.py") -Force
+Copy-Item (Join-Path $PSScriptRoot "migrate_install_state.py") (Join-Path $Stage "migrate_install_state.py") -Force
 Copy-Item (Join-Path $PSScriptRoot "vool_protocol_handler.py") (Join-Path $Stage "vool_protocol_handler.py") -Force
 
 # Publish the native user-facing host and fail-closed execution broker into the installed payload.
@@ -225,12 +226,18 @@ $nativeDir = Join-Path $Stage "native"
 $hostDir = Join-Path $nativeDir "host"
 $brokerDir = Join-Path $nativeDir "broker"
 New-Item -ItemType Directory -Force $hostDir, $brokerDir | Out-Null
-& $DotNetExe publish (Join-Path $SourceRoot "installer\windows_host\VOOL.WindowsHost.csproj") `
-  --configuration Release --runtime win-x64 --self-contained true --output $hostDir -p:RestoreLockedMode=true
-if ($LASTEXITCODE -ne 0) { throw "Native Windows host publish failed." }
-& $DotNetExe publish (Join-Path $SourceRoot "installer\windows_broker\Vool.WindowsBroker.csproj") `
-  --configuration Release --runtime win-x64 --self-contained true --output $brokerDir
-if ($LASTEXITCODE -ne 0) { throw "Native Windows broker publish failed." }
+Push-Location $SourceRoot
+try {
+  & $DotNetExe publish (Join-Path $SourceRoot "installer\windows_host\VOOL.WindowsHost.csproj") `
+    --configuration Release --runtime win-x64 --self-contained true --output $hostDir -p:RestoreLockedMode=true
+  if ($LASTEXITCODE -ne 0) { throw "Native Windows host publish failed." }
+  & $DotNetExe publish (Join-Path $SourceRoot "installer\windows_broker\Vool.WindowsBroker.csproj") `
+    --configuration Release --runtime win-x64 --self-contained true --output $brokerDir
+  if ($LASTEXITCODE -ne 0) { throw "Native Windows broker publish failed." }
+}
+finally {
+  Pop-Location
+}
 if (-not (Test-Path -LiteralPath (Join-Path $hostDir "VOOL.exe"))) { throw "Published VOOL.exe missing." }
 if (-not (Test-Path -LiteralPath (Join-Path $brokerDir "vool-broker.exe"))) { throw "Published broker missing." }
 

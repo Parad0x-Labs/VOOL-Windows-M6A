@@ -587,6 +587,7 @@ def register_installed_local_model(
     *,
     model_tag: str,
     env: Mapping[str, str] | None = None,
+    base_url: str | None = None,
 ) -> ModelProviderManifest | None:
     """Register ONE installed Ollama model as an `ollama-local` lane, or None if it isn't.
 
@@ -616,6 +617,7 @@ def register_installed_local_model(
         model_tag=clean,
         bundle_role=role,
         env=env_map,
+        base_url=base_url,
     )
     return registry.get_manifest("ollama-local", clean)
 
@@ -628,6 +630,7 @@ def _ensure_local_ollama_provider(
     bucket: str = "",
     kv_quant: str = "fp16",
     env: Mapping[str, str] | None = None,
+    base_url: str | None = None,
 ) -> bool:
     env_map = os.environ if env is None else env
     existing = registry.get_manifest("ollama-local", model_tag)
@@ -643,6 +646,7 @@ def _ensure_local_ollama_provider(
     context_window = int(context_sizing["selected_num_ctx"])
     forced_num_gpu = _resolve_ollama_num_gpu(env_map)
     manifest_profile = manifest_profile_for_model(model_name=model_tag, bundle_role=bundle_role)
+    resolved_base_url = str(base_url or default_local_provider_base_url(env_map))
     has_license = bool(
         str(getattr(existing, "license_name", None) or "").strip()
         and str(getattr(existing, "resolved_license_reference", None) or "").strip()
@@ -680,6 +684,7 @@ def _ensure_local_ollama_provider(
         and has_num_gpu_contract
         and bool(existing_runtime_config.get("supports_json_schema", False))
     )
+    has_endpoint_contract = str(existing_runtime_config.get("base_url") or "").rstrip("/") == resolved_base_url
     expected_tps = float(manifest_profile.get("tokens_per_second") or 0.0)
     has_measurement_contract = (
         expected_tps <= 0 or float(existing_metadata.get("tokens_per_second") or 0.0) == expected_tps
@@ -691,6 +696,7 @@ def _ensure_local_ollama_provider(
         and has_license
         and expected_role == str(bundle_role or "").strip().lower()
         and has_context_contract
+        and has_endpoint_contract
         and has_measurement_contract
         and has_sizing_contract
     ):
@@ -698,7 +704,7 @@ def _ensure_local_ollama_provider(
     parameter_size = str(manifest_profile.get("parameter_count") or parameter_size_for_model(model_tag))
     license_reference = str(manifest_profile.get("license_reference") or "user-managed")
     runtime_config: dict[str, object] = {
-        "base_url": default_local_provider_base_url(),
+        "base_url": resolved_base_url,
         "health_path": "/v1/models",
         "timeout_seconds": 180,
         "health_timeout_seconds": 10,

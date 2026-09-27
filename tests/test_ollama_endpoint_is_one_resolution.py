@@ -179,6 +179,32 @@ def test_the_default_local_provider_manifest_takes_its_base_url_from_the_environ
     assert rpd.default_local_provider_base_url() == "http://127.0.0.1:9"
 
 
+def test_installed_local_registration_refreshes_the_exact_effective_endpoint(monkeypatch):
+    from core.model_registry import ModelRegistry
+    from core.runtime_provider_defaults import register_installed_local_model
+
+    monkeypatch.setenv("OLLAMA_HOST", "http://127.0.0.1:11435")
+    registry = ModelRegistry()
+    env = {"OLLAMA_HOST": "http://127.0.0.1:11435", "VOOL_OLLAMA_MODEL": "qwen2.5:7b"}
+    first = register_installed_local_model(
+        registry,
+        model_tag="qwen2.5:7b",
+        env=env,
+        base_url="http://127.0.0.1:11435",
+    )
+    assert first is not None
+    assert first.runtime_config["base_url"] == "http://127.0.0.1:11435"
+
+    updated = register_installed_local_model(
+        registry,
+        model_tag="qwen2.5:7b",
+        env=env,
+        base_url="http://127.0.0.1:11436",
+    )
+    assert updated is not None
+    assert updated.runtime_config["base_url"] == "http://127.0.0.1:11436"
+
+
 def test_the_inventory_resolves_its_endpoint_from_the_mapping_it_is_given(stub, trap, monkeypatch):
     """Found on build 56c14d3c: an isolated app with every Ollama variable at a dead port still listed the operator's
     installed models, because the inventory honoured only VOOL_RAW_OLLAMA_API_URL and otherwise fell to its literal."""

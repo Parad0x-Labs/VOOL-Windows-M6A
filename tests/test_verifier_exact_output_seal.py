@@ -41,6 +41,7 @@ FROZEN_SET5_05 = json.dumps(
         (FROZEN_SET5_05, "YES", "exact_text"),
         ("Only say obsidian please", "obsidian", "exact_text"),
         ("Explain gravity in exactly three words and nothing else", "Mass attracts matter", "exact_words"),
+        ("Explain gravity in 2\u20133 sentences.", "Gravity curves spacetime. Matter follows that curvature.", "min_sentences"),
         ("2 lines only no title", "first line\nsecond line", "exact_lines"),
         ("gimme 3 bullets w/ * only", "* red\n* green\n* blue", "bullet_count"),
         ("Return comma-separated values only: red, green, blue", "red, green, blue", "delimiter"),

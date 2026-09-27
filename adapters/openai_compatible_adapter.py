@@ -48,6 +48,18 @@ from core.tool_call_recovery import (
 logger = logging.getLogger("vool.model_adapter")
 
 
+def _manifest_model_digest(manifest: Any) -> str:
+    metadata = getattr(manifest, "metadata", None)
+    runtime_config = getattr(manifest, "runtime_config", None)
+    for source in (metadata, runtime_config):
+        if not isinstance(source, dict):
+            continue
+        digest = str(source.get("model_digest") or source.get("digest") or "").strip()
+        if digest and digest.lower() not in {"unknown", "none", "null"}:
+            return digest
+    return ""
+
+
 def _reasoning_disabled(request: Any) -> bool:
     """Whether this request declared that it must not spend its output budget reasoning.
 
@@ -252,6 +264,11 @@ class OpenAICompatibleAdapter(ModelAdapter):
             )
             response.raise_for_status()
             data = response.json()
+            self._record_successful_local_residency(
+                endpoint=_native_ollama_base_url(base_url),
+                response_payload=data,
+                evidence_source="successful_ollama_prewarm",
+            )
             return {
                 "ok": True,
                 "provider_id": self.manifest.provider_id,
@@ -542,6 +559,11 @@ class OpenAICompatibleAdapter(ModelAdapter):
         # selection, from the manifest) -- never fabricated when the field is absent.
         raw_attested_model = data.get("model")
         provider_attested_model = str(raw_attested_model) if raw_attested_model else None
+        self._record_successful_local_residency(
+            endpoint=_native_ollama_base_url(base_url),
+            response_payload=data,
+            evidence_source="successful_ollama_model_call",
+        )
         choices = list(data.get("choices") or [])
         first_choice = choices[0] if choices and isinstance(choices[0], dict) else {}
         finish_reason = str(first_choice.get("finish_reason") or "").strip()
@@ -562,7 +584,7 @@ class OpenAICompatibleAdapter(ModelAdapter):
             ),
         )
 
-    def _gate_local_model_load(self) -> None:
+    def _gate_local_model_load(self, request: ModelRequest | None = None) -> None:
         """Resource-governor gate (Phase 3): refuse a local model LOAD that cannot fit in free RAM.
 
         A model that is already resident is never gated (serving it costs no new RAM), and any
@@ -573,7 +595,24 @@ class OpenAICompatibleAdapter(ModelAdapter):
         try:
             from core.resource_governor import plan_model_load
 
-            decision = plan_model_load(str(self.manifest.model_name or ""))
+            runtime_config = getattr(self.manifest, "runtime_config", None)
+            runtime_config = runtime_config if isinstance(runtime_config, dict) else {}
+            base_url = _native_ollama_base_url(str(runtime_config.get("base_url") or "").rstrip("/"))
+            metadata = getattr(request, "metadata", None)
+            request_runtime_identity = (
+                str(metadata.get("runtime_identity") or "").strip()
+                if isinstance(metadata, dict)
+                else ""
+            )
+            from core.resource_governor import current_runtime_identity
+
+            decision = plan_model_load(
+                str(self.manifest.model_name or ""),
+                provider_id=str(getattr(self.manifest, "provider_id", "") or ""),
+                model_digest=_manifest_model_digest(self.manifest),
+                endpoint=base_url,
+                runtime_identity=request_runtime_identity or current_runtime_identity(),
+            )
         except Exception:
             return
         if decision.ok:
@@ -644,6 +683,11 @@ class OpenAICompatibleAdapter(ModelAdapter):
         if request.is_cancelled():
             raise RuntimeError("model_call_cancelled")
         data = response.json()
+        self._record_successful_local_residency(
+            endpoint=base_url,
+            response_payload=data,
+            evidence_source="successful_ollama_model_call",
+        )
         self._record_benchmark_best_effort(request=request, response_payload=data)
         # A native tool call arrives beside `content`, not inside it, so it has to be read first
         # or a model that emits a call plus a sentence of preamble looks like it only chatted.
@@ -845,6 +889,7 @@ class OpenAICompatibleAdapter(ModelAdapter):
 
         def _iter_chunks():
             stream_usage: dict[str, Any] = {}
+            completion_payload: dict[str, Any] = {}
             # Same contract as the OpenAI-compatible stream above: captured once, the first time
             # Ollama's NDJSON frame carries "model", carried on every chunk from then on.
             attested_model: str | None = None
@@ -874,6 +919,7 @@ class OpenAICompatibleAdapter(ModelAdapter):
                             finish_reason=finish_reason,
                         )
                     if bool(event.get("done")):
+                        completion_payload = dict(event)
                         self._record_benchmark_best_effort(
                             request=request,
                             response_payload=event,
@@ -893,6 +939,12 @@ class OpenAICompatibleAdapter(ModelAdapter):
                         }
                         break
                 _assert_response_timely(request, response)
+                if completion_payload and attested_model == self.manifest.model_name:
+                    self._record_successful_local_residency(
+                        endpoint=base_url,
+                        response_payload={**completion_payload, "model": attested_model},
+                        evidence_source="successful_ollama_stream",
+                    )
             finally:
                 response.close()
                 slot.__exit__(None, None, None)
@@ -905,6 +957,33 @@ class OpenAICompatibleAdapter(ModelAdapter):
             )
 
         return _iter_chunks()
+
+    def _record_successful_local_residency(
+        self,
+        *,
+        endpoint: str,
+        response_payload: dict[str, Any],
+        evidence_source: str,
+    ) -> None:
+        """Record only a provider-attested exact-model Ollama success; never readiness/cert state."""
+
+        if self._runtime_family() != "ollama":
+            return
+        attested_model = str(response_payload.get("model") or "").strip()
+        if not attested_model or attested_model != str(self.manifest.model_name or "").strip():
+            return
+        try:
+            from core.resource_governor import record_residency_evidence
+
+            record_residency_evidence(
+                provider_id=str(self.manifest.provider_id or ""),
+                model_tag=str(self.manifest.model_name or ""),
+                model_digest=_manifest_model_digest(self.manifest),
+                endpoint=endpoint,
+                evidence_source=evidence_source,
+            )
+        except Exception:
+            logger.debug("Failed to record local residency evidence", exc_info=True)
 
     def _record_benchmark_best_effort(self, *, request: ModelRequest, response_payload: dict[str, Any]) -> None:
         """Feed real tok/s from this Ollama call into the local inference benchmark

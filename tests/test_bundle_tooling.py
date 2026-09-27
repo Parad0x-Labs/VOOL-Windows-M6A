@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import tempfile
 from pathlib import Path
 from unittest import mock
@@ -34,6 +35,45 @@ def test_bundle_build_provenance_is_checkout_derived_and_fail_closed() -> None:
     assert 'dirty_state = $false' in script
     assert "Remove-Item $pyDir -Recurse" not in script
     assert "Remove-Item $appDir -Recurse" not in script
+
+
+def test_native_bundle_build_uses_the_pinned_dotnet_sdk() -> None:
+    source_root = Path(__file__).resolve().parent.parent
+    sdk = json.loads((source_root / "global.json").read_text(encoding="utf-8"))["sdk"]
+    script = (_BUNDLE / "build_bundle.ps1").read_text(encoding="utf-8")
+
+    assert sdk == {
+        "version": "10.0.401",
+        "rollForward": "disable",
+        "allowPrerelease": False,
+    }
+    assert "Push-Location $SourceRoot" in script
+    assert "& $DotNetExe publish" in script
+
+
+def test_bundle_supervisor_pins_its_ollama_endpoint_to_loopback(tmp_path) -> None:
+    root = tmp_path / "bundle"
+    root.mkdir()
+    home = tmp_path / "user-data"
+    supervisor = BundleSupervisor(
+        root,
+        env={
+            "VOOL_HOME": str(home),
+            "OLLAMA_HOST": "https://external.example:443",
+            "VOOL_RAW_OLLAMA_API_URL": "https://other.example/api",
+            "VOOL_OLLAMA_URL": "https://third.example/api",
+        },
+    )
+
+    supervisor._prepare()
+
+    expected = "http://127.0.0.1:11434"
+    assert supervisor.env["OLLAMA_HOST"] == "127.0.0.1:11434"
+    assert supervisor.env["VOOL_RAW_OLLAMA_API_URL"] == expected
+    assert supervisor.env["VOOL_OLLAMA_URL"] == expected
+    from core.ollama_endpoint import ollama_base_url
+
+    assert ollama_base_url(supervisor.env) == expected
 
 
 def test_inno_separates_internal_and_release_identity() -> None:
@@ -100,10 +140,38 @@ def test_bundle_supervisor_bootstraps_api_imports_for_embedded_python(tmp_path) 
         supervisor._ensure_api()
 
     argv = start.call_args.args[1]
-    assert argv[1] == "-c"
-    assert "sys.path.insert(0,app_root)" in argv[2]
-    assert argv[3] == str(root / "app")
-    assert argv[4].endswith("app\\apps\\vool_api_server.py")
+    assert argv[1:3] == ["-B", "-c"]
+    assert "sys.path.insert(0,app_root)" in argv[3]
+    assert argv[4] == str(root / "app")
+    assert argv[5].endswith("app\\apps\\vool_api_server.py")
+
+
+def test_supervisor_sets_per_user_home_before_preflight(tmp_path, monkeypatch) -> None:
+    import core.runtime_paths
+    from core.runtime_paths import active_vool_home
+
+    root = tmp_path / "bundle"
+    (root / "app").mkdir(parents=True)
+    home = tmp_path / "user-data"
+    monkeypatch.setenv("VOOL_HOME", str(home))
+    monkeypatch.setenv("VOOL_PROJECT_ROOT", "")
+    monkeypatch.setenv("PYTHONDONTWRITEBYTECODE", "")
+    monkeypatch.setattr(core.runtime_paths, "_VOOL_HOME_OVERRIDE", None)
+    monkeypatch.setattr("sys.argv", ["bundle_supervisor.py", "--root", str(root)])
+    observed = {}
+
+    def record_preflight(_surface):
+        observed["home"] = active_vool_home()
+        observed["project"] = os.environ.get("VOOL_PROJECT_ROOT")
+
+    with (
+        mock.patch("core.unattended_preflight.preflight", side_effect=record_preflight),
+        mock.patch.object(BundleSupervisor, "run", return_value=0),
+    ):
+        assert bundle_supervisor.main() == 0
+
+    assert observed == {"home": home.resolve(), "project": str(root / "app")}
+    assert os.environ["PYTHONDONTWRITEBYTECODE"] == "1"
 
 
 def test_bundle_manifest_controls_model_store_for_supervisor_and_runtime(tmp_path) -> None:
@@ -218,8 +286,8 @@ def test_bundle_supervisor_restarts_dead_child_with_backoff_and_logs() -> None:
         replacement.poll.return_value = None
 
         with mock.patch("installer.bundle.bundle_supervisor.subprocess.Popen", side_effect=[first, replacement]) as popen, mock.patch.object(
-            supervisor, "_healthy", return_value=False
-        ):
+            supervisor, "_health_probe", return_value=False
+        ), mock.patch.object(supervisor, "_ollama_listener_pid", return_value=None):
             supervisor._ensure_ollama()
             assert popen.call_count == 1
             first.poll.return_value = 17
@@ -349,6 +417,57 @@ def test_bundle_supervisor_startup_timeout_enters_bounded_backoff(tmp_path) -> N
     assert "startup timeout" in log
 
 
+def test_bundle_supervisor_does_not_restart_previously_healthy_service_on_one_probe_miss(tmp_path) -> None:
+    root = tmp_path / "bundle"
+    root.mkdir()
+    supervisor = BundleSupervisor(root, env={"VOOL_HOME": str(tmp_path / "home")})
+    supervisor._prepare()
+    for name, ensure in (("api", supervisor._ensure_api), ("ollama", supervisor._ensure_ollama)):
+        child = mock.Mock(pid=303)
+        child.poll.return_value = None
+        supervisor.processes[name] = child
+        supervisor.started_at[name] = 0.0
+        supervisor.last_healthy_at[name] = 100.0
+        checker = "_owned_api_healthy" if name == "api" else "_owned_ollama_healthy"
+
+        with (
+            mock.patch.object(supervisor, checker, return_value=False),
+            mock.patch("installer.bundle.bundle_supervisor.time.time", return_value=101.0),
+            mock.patch.object(supervisor, "_stop_child") as stop_child,
+        ):
+            ensure()
+
+        stop_child.assert_not_called()
+        assert supervisor.failures[name] == 0
+        assert supervisor.unhealthy_since[name] == 101.0
+
+        with (
+            mock.patch.object(supervisor, checker, return_value=True),
+            mock.patch("installer.bundle.bundle_supervisor.time.time", return_value=102.0),
+        ):
+            assert supervisor._health_probe(name, f"http://127.0.0.1/{name}") is True
+
+        assert name not in supervisor.unhealthy_since
+
+        with (
+            mock.patch.object(supervisor, checker, return_value=False),
+            mock.patch("installer.bundle.bundle_supervisor.time.time", return_value=200.0),
+        ):
+            assert supervisor._health_probe(name, f"http://127.0.0.1/{name}") is False
+        assert supervisor.unhealthy_since[name] == 200.0
+
+        with (
+            mock.patch.object(supervisor, checker, return_value=False),
+            mock.patch("installer.bundle.bundle_supervisor.time.time", return_value=261.0),
+            mock.patch.object(supervisor, "_stop_child") as stop_child,
+        ):
+            ensure()
+
+        stop_child.assert_called_once_with(name)
+        assert supervisor.failures[name] == 1
+        supervisor.processes.pop(name)
+
+
 def test_bundle_supervisor_refuses_a_foreign_api_listener(tmp_path) -> None:
     root = tmp_path / "bundle"
     root.mkdir()
@@ -390,6 +509,44 @@ def test_bundle_supervisor_accepts_only_its_own_exact_api(tmp_path) -> None:
         assert supervisor._owned_api_healthy() is False
 
 
+def test_bundle_supervisor_accepts_ollama_only_when_its_child_owns_listener(tmp_path) -> None:
+    root = tmp_path / "bundle"
+    root.mkdir()
+    supervisor = BundleSupervisor(root, env={"VOOL_HOME": str(tmp_path / "home")})
+    supervisor._prepare()
+    child = mock.Mock(pid=4321)
+    child.poll.return_value = None
+    supervisor.processes["ollama"] = child
+
+    with mock.patch.object(supervisor, "_ollama_listener_pid", return_value=4321), mock.patch.object(
+        supervisor, "_healthy", return_value=True
+    ):
+        assert supervisor._owned_ollama_healthy() is True
+
+    with mock.patch.object(supervisor, "_ollama_listener_pid", return_value=9876), mock.patch.object(
+        supervisor, "_healthy", return_value=True
+    ):
+        assert supervisor._owned_ollama_healthy() is False
+
+
+def test_bundle_supervisor_refuses_a_foreign_ollama_listener(tmp_path) -> None:
+    root = tmp_path / "bundle"
+    root.mkdir()
+    home = tmp_path / "home"
+    supervisor = BundleSupervisor(root, env={"VOOL_HOME": str(home)})
+    supervisor._prepare()
+
+    with mock.patch.object(supervisor, "_health_probe", return_value=False), mock.patch.object(
+        supervisor, "_ollama_listener_pid", return_value=1234
+    ), mock.patch.object(supervisor, "_start") as start:
+        supervisor._ensure_ollama()
+
+    start.assert_not_called()
+    assert "Ollama port 11434 is held by non-owned pid=1234" in (
+        home / "logs" / "bundle-supervisor.log"
+    ).read_text(encoding="utf-8")
+
+
 def test_bundle_supervisor_treats_http_error_as_unhealthy(tmp_path) -> None:
     root = tmp_path / "bundle"
     root.mkdir()
@@ -406,6 +563,8 @@ def test_bundle_supervisor_stop_entrypoint_writes_stoppable_marker(tmp_path, mon
     home = tmp_path / "home"
     monkeypatch.setenv("VOOL_HOME", str(home))
     monkeypatch.setenv("LOCALAPPDATA", str(home))
+    monkeypatch.setenv("VOOL_PROJECT_ROOT", "")
+    monkeypatch.setenv("PYTHONDONTWRITEBYTECODE", "")
     monkeypatch.setattr("sys.argv", ["bundle_supervisor.py", "--stop"])
 
     assert bundle_supervisor.main() == 0

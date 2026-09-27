@@ -54,6 +54,7 @@ from core.local_model_policy import (
     ungated_local_manifest_for_request,
 )
 from core.local_ollama_inventory import is_text_generation_ollama_model
+from core.model_attempt_validation import ModelAttemptValidationLedger
 from core.model_health import circuit_is_open, record_provider_failure, record_provider_success, should_probe_health
 from core.model_output_contracts import json_schema_for_mode
 from core.model_output_guard import reasoning_only_markers, scrub_foreign_markers, strip_reasoning_block
@@ -151,6 +152,41 @@ _EMPTY_RESPONSE_RETRY_POLICY = RetryPolicy(max_attempts=2)
 # CPU-only detection for the provider-fallback budget. Cached once per process: hardware does not change
 # mid-run, and probe_machine() may shell out to nvidia-smi (bounded), so it must not run on every turn.
 _NO_USABLE_GPU_CACHE: bool | None = None
+
+
+def _response_control_violation_codes(
+    *,
+    ordinary_check: Any,
+    language_check: Any,
+    provider_completion: Any,
+    raw_application: Any,
+) -> list[str]:
+    """Return the response-control failures for the currently selected attempt."""
+
+    return [
+        *tuple(getattr(ordinary_check, "reasons", ()) or ()),
+        *tuple(getattr(language_check, "violations", ()) or ()),
+        *(
+            f"provider_output_incomplete:{reason}"
+            for reason in tuple(getattr(provider_completion, "reasons", ()) or ())
+        ),
+        *(
+            f"raw_output:{violation}"
+            for violation in tuple(getattr(raw_application, "violations", ()) or ())
+        ),
+    ]
+
+
+def _raw_output_validation_record(raw_application: Any) -> dict[str, Any]:
+    if raw_application is None:
+        return {}
+    return {
+        "changed": bool(getattr(raw_application, "changed", False)),
+        "rejected": bool(getattr(raw_application, "rejected", False)),
+        "compliant": bool(getattr(raw_application, "compliant", False)),
+        "violations": list(getattr(raw_application, "violations", ()) or ()),
+        "actions": list(getattr(raw_application, "actions", ()) or ()),
+    }
 
 
 def audit_turn_metadata(source_context: dict[str, Any] | None) -> dict[str, Any]:
@@ -3288,6 +3324,8 @@ class MemoryFirstRouter:
             raw_rejected = False
             raw_actions: list[str] = []
             control_failed_draft = response.output_text
+            response_attempts = ModelAttemptValidationLedger()
+            initial_raw_output = str(response.output_text or "")
             if raw_contract is not None:
                 raw_failed_draft = response.output_text
                 raw_application = apply_raw_output_contract(
@@ -3353,22 +3391,25 @@ class MemoryFirstRouter:
             control_retry_succeeded = False
             control_retry_error = ""
             bounded_recovery_applied = False
-            control_violations = [
-                *ordinary_check.reasons,
-                *language_check.violations,
-                *(
-                    f"provider_output_incomplete:{reason}"
-                    for reason in provider_completion.reasons
-                ),
-                *(
-                    f"raw_output:{violation}"
-                    for violation in (
-                        raw_application.violations
-                        if raw_application is not None
-                        else ()
+            control_violations = _response_control_violation_codes(
+                ordinary_check=ordinary_check,
+                language_check=language_check,
+                provider_completion=provider_completion,
+                raw_application=raw_application,
+            )
+            initial_control_violations = list(control_violations)
+            selected_constraint_state = dict(
+                getattr(response, "constraint_result", {}) or {}
+            )
+            selected_constraint_valid = (
+                not response_constraint
+                or bool(
+                    selected_constraint_state.get(
+                        "final_compliant",
+                        selected_constraint_state.get("compliant", False),
                     )
-                ),
-            ]
+                )
+            )
             _paid_control_retry_permitted = False
             if reported_cost_class(manifest) == "paid_cloud":
                 # A truncated PAID answer may take the same one bounded repair, but only under a
@@ -3417,7 +3458,7 @@ class MemoryFirstRouter:
                         )
                     except Exception:
                         _paid_control_retry_permitted = False
-            if (
+            control_retry_allowed = bool(
                 control_violations
                 and bool(getattr(call_request, "allow_response_control_retry", True))
                 and (
@@ -3433,7 +3474,22 @@ class MemoryFirstRouter:
                         )
                     )
                 )
-            ):
+            )
+            response_attempts.record(
+                attempt_number=1,
+                provider_id=str(getattr(manifest, "provider_id", "") or ""),
+                model_id=str(getattr(manifest, "model_name", "") or ""),
+                model_call_id=str(getattr(response, "model_call_id", "") or model_call_id),
+                raw_output=initial_raw_output,
+                raw_output_validation=_raw_output_validation_record(raw_application),
+                ordinary_chat_output=ordinary_check.to_dict(),
+                response_language=language_check.to_dict(),
+                provider_completion=initial_provider_completion.as_dict(),
+                failure_reasons=control_violations,
+                retry_requested=control_retry_allowed,
+                accepted=not control_violations and selected_constraint_valid,
+            )
+            if control_retry_allowed:
                 control_retry_attempted = True
                 instructions: list[str] = []
                 if not ordinary_check.allowed:
@@ -3542,6 +3598,7 @@ class MemoryFirstRouter:
                 )
                 try:
                     retry_response = _call_adapter_task("run_text_task", retry_request)
+                    retry_raw_output = str(retry_response.output_text or "")
                     retry_completion_usage = dict(retry_response.usage or {})
                     retry_finish_reason = str(
                         getattr(retry_response, "finish_reason", "") or ""
@@ -3583,14 +3640,28 @@ class MemoryFirstRouter:
                         response.output_text,
                         language_policy,
                     )
-                    control_retry_succeeded = bool(
-                        ordinary_check.allowed
-                        and language_check.compliant
-                        and (
-                            raw_application is None
-                            or raw_application.compliant
-                        )
-                        and not provider_completion.incomplete
+                    control_violations = _response_control_violation_codes(
+                        ordinary_check=ordinary_check,
+                        language_check=language_check,
+                        provider_completion=provider_completion,
+                        raw_application=raw_application,
+                    )
+                    control_retry_succeeded = not control_violations
+                    response_attempts.record(
+                        attempt_number=2,
+                        provider_id=str(getattr(manifest, "provider_id", "") or ""),
+                        model_id=str(getattr(manifest, "model_name", "") or ""),
+                        model_call_id=str(
+                            getattr(retry_response, "model_call_id", "") or model_call_id
+                        ),
+                        raw_output=retry_raw_output,
+                        raw_output_validation=_raw_output_validation_record(raw_application),
+                        ordinary_chat_output=ordinary_check.to_dict(),
+                        response_language=language_check.to_dict(),
+                        provider_completion=provider_completion.as_dict(),
+                        failure_reasons=control_violations,
+                        retry_requested=False,
+                        accepted=control_retry_succeeded and selected_constraint_valid,
                     )
                     _emit_model_routing_event(
                         source_context,
@@ -3599,10 +3670,27 @@ class MemoryFirstRouter:
                         **identity,
                         provider_id=manifest.provider_id,
                         model_id=manifest.model_name,
-                        violations=control_violations,
+                        violations=initial_control_violations,
                     )
                 except Exception as exc:
                     control_retry_error = str(exc)
+                    response_attempts.record(
+                        attempt_number=2,
+                        provider_id=str(getattr(manifest, "provider_id", "") or ""),
+                        model_id=str(getattr(manifest, "model_name", "") or ""),
+                        model_call_id=model_call_id,
+                        raw_output="",
+                        raw_output_validation={},
+                        ordinary_chat_output=ordinary_check.to_dict(),
+                        response_language=language_check.to_dict(),
+                        provider_completion=provider_completion.as_dict(),
+                        failure_reasons=[
+                            *initial_control_violations,
+                            f"response_control_retry_error:{control_retry_error}",
+                        ],
+                        retry_requested=False,
+                        accepted=False,
+                    )
                     audit_logger.log(
                         "model_response_control_retry_failed",
                         target_id=manifest.provider_id,
@@ -3730,6 +3818,43 @@ class MemoryFirstRouter:
                     if action not in raw_actions
                 )
             unresolved_provider_completion = provider_completion.incomplete
+            final_control_violations = _response_control_violation_codes(
+                ordinary_check=ordinary_check,
+                language_check=language_check,
+                provider_completion=provider_completion,
+                raw_application=raw_application,
+            )
+            final_constraint_state = dict(
+                getattr(response, "constraint_result", {}) or {}
+            )
+            final_constraint_compliant = (
+                not response_constraint
+                or bool(
+                    final_constraint_state.get(
+                        "final_compliant",
+                        final_constraint_state.get("compliant", False),
+                    )
+                )
+            )
+            accepted_attempt = response_attempts.accepted_attempt
+            if (
+                accepted_attempt is None
+                or final_control_violations
+                or not final_constraint_compliant
+            ):
+                accepted_attempt = None
+            # A failed raw contract may leave the provider's text looking answer-like. It is not
+            # an answer candidate once every permitted validation attempt failed: fail closed so the
+            # finalization seam cannot publish model-authored bytes beside a failed trace.
+            if (
+                accepted_attempt is None
+                and raw_contract is not None
+                and raw_application is not None
+                and not raw_application.compliant
+            ):
+                response.output_text = ""
+                raw_application = apply_raw_output_contract(response.output_text, raw_contract)
+            answer_commit_allowed = accepted_attempt is not None
             if unresolved_provider_completion:
                 incomplete = AnswerCompleteness(
                     incomplete=True,
@@ -3792,6 +3917,13 @@ class MemoryFirstRouter:
                 "retry_attempted": control_retry_attempted,
                 "retry_succeeded": control_retry_succeeded,
                 "retry_error": control_retry_error,
+                # Append-only evidence for each response-control candidate. A retry starts a new
+                # record; it never overwrites the failed candidate's verdict or raw bytes.
+                "validation_attempts": response_attempts.as_dicts(),
+                "accepted_attempt": (
+                    accepted_attempt.attempt_number if accepted_attempt is not None else None
+                ),
+                "answer_commit_allowed": answer_commit_allowed,
                 "response_constraint": {
                     key: _constraint_stage.get(key)
                     for key in (
@@ -3827,6 +3959,7 @@ class MemoryFirstRouter:
                         and not raw_application.compliant
                     )
                     or unresolved_provider_completion
+                    or not answer_commit_allowed
                 ),
                 "constraint_violations": list(
                     dict(getattr(response, "constraint_result", {}) or {}).get(
@@ -3862,6 +3995,14 @@ class MemoryFirstRouter:
             response_id = f"response-{uuid.uuid4().hex}"
             response.model_call_id = model_call_id
             response.response_id = response_id
+            response_control["accepted_response_id"] = (
+                response_id if answer_commit_allowed else ""
+            )
+            response_control["accepted_model_call_id"] = (
+                str(getattr(response, "model_call_id", "") or "")
+                if answer_commit_allowed
+                else ""
+            )
             served_context = dict(
                 getattr(response_request, "context", None) or {}
             )
@@ -3887,6 +4028,9 @@ class MemoryFirstRouter:
                 )
                 or ""
             ).strip()
+            response_control["accepted_provider_manifest_id"] = (
+                provider_manifest_id if answer_commit_allowed else ""
+            )
             if isinstance(source_context, dict) and provider_manifest_id:
                 provider_links = source_context.setdefault(
                     "provider_manifest_links", []
@@ -4787,6 +4931,15 @@ class MemoryFirstRouter:
         # and whether or not it was streamed. Placed BEFORE the meter so an exception in metering
         # cannot leave the turn with an answer and no provenance.
         _record_model_provenance(source_context, manifest=manifest, response=response)
+        _response_control = dict(
+            dict(getattr(response, "constraint_result", {}) or {}).get(
+                "response_control"
+            )
+            or {}
+        )
+        _answer_commit_allowed = bool(
+            _response_control.get("answer_commit_allowed", True)
+        )
         # Meter a BYOK cloud burst against the daily cap at the single funnel every served
         # response passes through, so a paid lane reached by direct selection, race, mux, or
         # failover is counted once per real API response (a response here means the call
@@ -4825,7 +4978,10 @@ class MemoryFirstRouter:
                 source_context,
                 usage_summary,
                 # A tool-intent response is a tool CHOICE, not served bytes: metered, not authored.
-                authored=str(output_mode or "") != "tool_intent",
+                authored=(
+                    str(output_mode or "") != "tool_intent"
+                    and _answer_commit_allowed
+                ),
             )
         if (
             usage_summary is not None
@@ -4881,6 +5037,7 @@ class MemoryFirstRouter:
         # unscooped candidate under a phrasing-only task_hash would place this answer in a shared
         # cross-chat namespace no future scoped reader can safely distinguish.
         candidate_id: str | None = None
+        _answer_validation_ok = bool(validation.ok and _answer_commit_allowed)
         if _candidate_cache_scope(source_context):
             candidate_id = record_candidate_output(
                 task_hash=task_hash,
@@ -4896,7 +5053,7 @@ class MemoryFirstRouter:
                 structured_output=validation.structured_output,
                 confidence=float(response.confidence or 0.5),
                 trust_score=trust,
-                validation_state="valid" if validation.ok else "contract_failed",
+                validation_state="valid" if _answer_validation_ok else "contract_failed",
                 metadata={
                     "cost_class": reported_cost_class(manifest),
                     "warnings": validation.warnings,
@@ -4944,7 +5101,7 @@ class MemoryFirstRouter:
             used_model=True,
             candidate_id=candidate_id,
             failover_used=failover_used,
-            validation_state="valid" if validation.ok else "contract_failed",
+            validation_state="valid" if _answer_validation_ok else "contract_failed",
             # The single funnel for every served provider response, so this one line covers the
             # mux winner, the provider race winner and ordinary execution alike. `response.tool_calls`
             # was filled by every adapter and read by nothing until now.
@@ -4963,6 +5120,22 @@ class MemoryFirstRouter:
                 ),
                 "warnings": validation.warnings,
                 "contract_error": validation.error,
+                "answer_commit_allowed": _answer_commit_allowed,
+                "accepted_attempt": _response_control.get("accepted_attempt"),
+                "accepted_response_id": _response_control.get("accepted_response_id", ""),
+                "accepted_model_call_id": _response_control.get("accepted_model_call_id", ""),
+                "accepted_provider_manifest_id": _response_control.get(
+                    "accepted_provider_manifest_id", ""
+                ),
+                "validation_attempts": list(
+                    _response_control.get("validation_attempts") or []
+                ),
+                # A failed candidate may still have a deterministic runtime fallback (for example
+                # a response-constraint notice). It is carried separately so the turn renderer can
+                # serve that notice without treating it as model-authored prose.
+                "validation_fallback_text": (
+                    str(response.output_text or "") if not _answer_commit_allowed else ""
+                ),
                 "response_constraint": dict(
                     response.constraint_result or {}
                 ),

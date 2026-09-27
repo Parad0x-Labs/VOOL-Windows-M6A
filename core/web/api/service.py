@@ -50,6 +50,7 @@ from storage.adaptation_store import (
 
 from .runtime import (
     RuntimeServices,
+    bind_runtime_provider_policy,
     extract_user_message,
     normalize_chat_history,
     ollama_chat_response,
@@ -81,6 +82,18 @@ def json_response(status: int, payload: Any, *, headers: dict[str, str] | None =
         body=json.dumps(payload, separators=(",", ":")).encode("utf-8"),
         headers=dict(headers or {}),
     )
+
+
+def _runtime_local_models_enabled(runtime: RuntimeServices) -> bool:
+    check = runtime.local_models_enabled_check
+    if callable(check):
+        try:
+            return bool(check())
+        except Exception:
+            return False
+    from core.local_model_policy import resolve_local_model_policy
+
+    return not resolve_local_model_policy(runtime_home=runtime.runtime_home or None).local_models_disabled
 
 
 def text_response(status: int, text: str, *, headers: dict[str, str] | None = None) -> ApiResponse:
@@ -596,7 +609,58 @@ def capability_snapshot_with_runtime(
     runtime: RuntimeServices,
     capability_snapshot_provider: Callable[[], dict[str, Any]],
 ) -> dict[str, Any]:
+    refresh_local_status = runtime.local_model_status_refresh
+    if callable(refresh_local_status):
+        with contextlib.suppress(Exception):
+            refresh_local_status()
+    refresh_provider_decision = getattr(runtime, "provider_decision_refresh", None)
+    if callable(refresh_provider_decision):
+        with contextlib.suppress(Exception):
+            refresh_provider_decision()
+    else:
+        with contextlib.suppress(Exception):
+            from core.runtime_bootstrap import effective_runtime_provider_decision
+
+            stamp = runtime.runtime_version_stamp or {}
+            boot_decision = dict(
+                stamp.get("boot_provider_decision")
+                or stamp.get("provider_decision")
+                or {}
+            )
+            current_decision = effective_runtime_provider_decision(
+                boot_decision,
+                local_only=bool(runtime.local_only_mode),
+                local_model_setup=runtime.local_model_setup,
+                provider_capability_truth=runtime.provider_capability_truth,
+            )
+            stamp["boot_provider_decision"] = boot_decision
+            stamp["current_provider_decision"] = current_decision
+            stamp["provider_decision"] = current_decision
     payload = dict(capability_snapshot_provider() or {})
+    stamp = runtime.runtime_version_stamp or {}
+    boot_provider_decision = dict(
+        stamp.get("boot_provider_decision")
+        or stamp.get("provider_decision")
+        or {}
+    )
+    provider_decision = dict(
+        stamp.get("current_provider_decision")
+        or stamp.get("provider_decision")
+        or {}
+    )
+    if provider_decision:
+        payload["provider_decision"] = provider_decision
+        payload["current_provider_decision"] = dict(provider_decision)
+        payload["boot_provider_decision"] = boot_provider_decision
+        feature_flags = dict(payload.get("feature_flags") or {})
+        feature_flags["local_only_mode"] = bool(runtime.local_only_mode)
+        if runtime.local_only_mode:
+            feature_flags["allow_remote_only_without_backend"] = False
+            for item in list(payload.get("capabilities") or []):
+                if isinstance(item, dict) and str(item.get("name") or "").strip() == "remote_only_backend_fallback":
+                    item["state"] = "disabled_by_policy"
+                    item["reason"] = "Local Only is active; remote model fallback is forbidden."
+        payload["feature_flags"] = feature_flags
     public_hive_auth = dict(runtime.public_hive_auth or {})
     runtime_provider_truth = tuple(
         dict(item)
@@ -613,6 +677,8 @@ def capability_snapshot_with_runtime(
             model_lane_defaults["fast_local_installed"] = True
             model_lane_defaults["no_think_default"] = True
             payload["model_lane_defaults"] = model_lane_defaults
+    if runtime.local_model_setup:
+        payload["local_model_setup"] = dict(runtime.local_model_setup)
     capabilities = [dict(item) for item in list(payload.get("capabilities") or []) if isinstance(item, dict)]
     feature_flags = dict(payload.get("feature_flags") or {})
 
@@ -1179,6 +1245,14 @@ def dispatch_get(
         return apply_runtime_headers(json_response(200, payload), runtime)
 
     if normalized_path in {"/api/runtime/version", "/v1/runtime/version"}:
+        refresh_local_status = runtime.local_model_status_refresh
+        if callable(refresh_local_status):
+            with contextlib.suppress(Exception):
+                refresh_local_status()
+        refresh_provider_decision = getattr(runtime, "provider_decision_refresh", None)
+        if callable(refresh_provider_decision):
+            with contextlib.suppress(Exception):
+                refresh_provider_decision()
         return apply_runtime_headers(json_response(200, dict(runtime.runtime_version_stamp or {})), runtime)
 
     if normalized_path in {"/api/runtime/capabilities", "/v1/runtime/capabilities"}:
@@ -1900,17 +1974,21 @@ def dispatch_get(
         # state. Registration is curated by default (boot registers the bundle's models, not
         # everything a user happens to have in Ollama), so an installed-but-unregistered model is
         # invisible to every other surface -- this listing is what makes it addressable at all.
-        from core.local_model_policy import resolve_local_model_policy
         from core.local_model_tool_certification import certification_status
         from core.model_registry import ModelRegistry
-        from core.web.api.runtime import installed_ollama_model_inventory, is_text_generation_ollama_model
+        from core.web.api.runtime import (
+            installed_ollama_model_inventory,
+            is_text_generation_ollama_model,
+            ollama_base_url,
+        )
 
-        policy = resolve_local_model_policy()
+        local_models_allowed = _runtime_local_models_enabled(runtime)
         models: list[dict[str, Any]] = []
-        if not policy.local_models_disabled:
+        if local_models_allowed:
             registry = ModelRegistry()
+            endpoint = str(runtime.local_ollama_base_url or ollama_base_url())
             try:
-                inventory = installed_ollama_model_inventory(timeout_seconds=5.0)
+                inventory = installed_ollama_model_inventory(base_url=endpoint, timeout_seconds=5.0)
             except Exception:
                 inventory = []
             for item in inventory:
@@ -1934,7 +2012,7 @@ def dispatch_get(
                 200,
                 {
                     "models": models,
-                    "local_models_disabled": bool(policy.local_models_disabled),
+                    "local_models_disabled": not local_models_allowed,
                 },
             ),
             runtime,
@@ -4049,6 +4127,14 @@ def _dispatch_post_inner(
                 json_response(403, {"error": "model tool certification is local-session only"}),
                 runtime,
             )
+        from core.web.api.runtime import host_header_allowed
+
+        content_type = _header_value(headers, "content-type").lower()
+        if content_type and "json" not in content_type:
+            return apply_runtime_headers(json_response(415, {"error": "content-type must be application/json"}), runtime)
+        origin = _header_value(headers, "origin").strip()
+        if origin and not host_header_allowed(origin.split("://", 1)[-1]):
+            return apply_runtime_headers(json_response(403, {"error": "cross-origin request not allowed"}), runtime)
         unknown = set(body) - {"provider_name", "model_name", "timeout_seconds"}
         if unknown:
             return apply_runtime_headers(
@@ -4070,6 +4156,11 @@ def _dispatch_post_inner(
         )
         from core.model_registry import ModelRegistry
 
+        if not _runtime_local_models_enabled(runtime):
+            return apply_runtime_headers(
+                json_response(409, {"error": "local models are disabled by policy on this runtime"}),
+                runtime,
+            )
         manifest = ModelRegistry().get_manifest(provider_name, requested_model)
         if manifest is None:
             return apply_runtime_headers(json_response(404, {"error": "model provider not found"}), runtime)
@@ -4093,7 +4184,79 @@ def _dispatch_post_inner(
                 ),
                 runtime,
             )
+        refresh_setup = runtime.local_model_setup_refresh
+        if (
+            str(result.get("state") or "") == "verified"
+            and str(getattr(manifest, "provider_name", "")) == "ollama-local"
+            and str(getattr(manifest, "model_name", "")) == runtime.runtime_model_tag
+            and callable(refresh_setup)
+        ):
+            refresh_setup()
         return apply_runtime_headers(json_response(200, result), runtime)
+
+    if normalized_path == "/api/runtime/model-pull/retry":
+        # This starts one bounded, explicit retry against the selected local Ollama endpoint.
+        # Same-origin and loopback checks prevent hostile websites and remote peers from turning
+        # the local API into an outbound-download trigger.
+        from core.web.api.runtime import host_header_allowed
+
+        if not is_loopback_host(client_host):
+            return apply_runtime_headers(json_response(403, {"ok": False, "error": "owner_local_required"}), runtime)
+        content_type = _header_value(headers, "content-type").lower()
+        if content_type and "json" not in content_type:
+            return apply_runtime_headers(json_response(415, {"error": "content-type must be application/json"}), runtime)
+        origin = _header_value(headers, "origin").strip()
+        if origin and not host_header_allowed(origin.split("://", 1)[-1]):
+            return apply_runtime_headers(json_response(403, {"error": "cross-origin request not allowed"}), runtime)
+        unknown = set(body) - set()
+        if unknown:
+            return apply_runtime_headers(json_response(400, {"error": f"unknown fields: {sorted(unknown)}"}), runtime)
+        restart = runtime.model_pull_restart
+        if not callable(restart):
+            return apply_runtime_headers(json_response(503, {"ok": False, "error": "local model retry is unavailable"}), runtime)
+        status, payload = restart()
+        return apply_runtime_headers(json_response(status, payload), runtime)
+
+    if normalized_path == "/api/runtime/local-model/retry":
+        # Retry only the selected, already-downloaded model's certification/health handoff.
+        # This route cannot trigger a download or cloud request.
+        from core.web.api.runtime import host_header_allowed
+
+        if not is_loopback_host(client_host):
+            return apply_runtime_headers(json_response(403, {"ok": False, "error": "owner_local_required"}), runtime)
+        content_type = _header_value(headers, "content-type").lower()
+        if content_type and "json" not in content_type:
+            return apply_runtime_headers(json_response(415, {"error": "content-type must be application/json"}), runtime)
+        origin = _header_value(headers, "origin").strip()
+        if origin and not host_header_allowed(origin.split("://", 1)[-1]):
+            return apply_runtime_headers(json_response(403, {"error": "cross-origin request not allowed"}), runtime)
+        if body:
+            return apply_runtime_headers(json_response(400, {"error": "request body must be empty"}), runtime)
+        refresh_status = runtime.local_model_status_refresh
+        if callable(refresh_status):
+            with contextlib.suppress(Exception):
+                refresh_status()
+        pull = runtime.model_pull
+        if pull is None or str(pull.status or "").lower() != "ready":
+            return apply_runtime_headers(json_response(409, {"ok": False, "error": "the selected model download is not ready"}), runtime)
+        if not _runtime_local_models_enabled(runtime):
+            return apply_runtime_headers(json_response(409, {"ok": False, "error": "local models are disabled by policy"}), runtime)
+        if str((runtime.local_model_setup or {}).get("state") or "") == "ready" and bool((runtime.local_model_setup or {}).get("chat_ready")):
+            return apply_runtime_headers(
+                json_response(200, {"ok": True, "detail": "local chat is already ready", "local_model_setup": dict(runtime.local_model_setup)}),
+                runtime,
+            )
+        if str((runtime.local_model_setup or {}).get("state") or "") != "failed":
+            return apply_runtime_headers(json_response(409, {"ok": False, "error": "local chat checks are not in a failed state"}), runtime)
+        retry_setup = runtime.local_model_setup_refresh
+        if not callable(retry_setup):
+            return apply_runtime_headers(json_response(503, {"ok": False, "error": "local chat retry is unavailable"}), runtime)
+        if not retry_setup():
+            return apply_runtime_headers(json_response(409, {"ok": False, "error": "local chat checks are already running or briefly rate-limited"}), runtime)
+        return apply_runtime_headers(
+            json_response(202, {"ok": True, "detail": "local chat checks started", "local_model_setup": dict(runtime.local_model_setup)}),
+            runtime,
+        )
 
     if normalized_path == "/api/models/local/register":
         # The write side of the local-model door: register ONE installed Ollama model as a lane
@@ -4126,22 +4289,19 @@ def _dispatch_post_inner(
         model_name = str(body.get("model_name") or "").strip()
         if not model_name:
             return apply_runtime_headers(json_response(400, {"error": "model_name is required"}), runtime)
-        from core.local_model_policy import resolve_local_model_policy
         from core.web.api.runtime import (
             installed_ollama_model_names,
             is_text_generation_ollama_model,
             ollama_base_url,
         )
 
-        policy = resolve_local_model_policy()
-        if policy.local_models_disabled:
+        if not _runtime_local_models_enabled(runtime):
             return apply_runtime_headers(
                 json_response(409, {"error": "local models are disabled by policy on this runtime"}),
                 runtime,
             )
-        installed = set(
-            installed_ollama_model_names(base_url=ollama_base_url(), timeout_seconds=5.0)
-        )
+        endpoint = str(runtime.local_ollama_base_url or ollama_base_url())
+        installed = set(installed_ollama_model_names(base_url=endpoint, timeout_seconds=5.0))
         # Exact-tag membership, never a substring: `qwen3:4b` must not match `qwen3:4b-instruct`.
         if model_name not in installed:
             return apply_runtime_headers(
@@ -4157,12 +4317,16 @@ def _dispatch_post_inner(
         from core.runtime_provider_defaults import register_installed_local_model
 
         registry = ModelRegistry()
-        manifest = register_installed_local_model(registry, model_tag=model_name)
+        manifest = register_installed_local_model(registry, model_tag=model_name, base_url=endpoint)
         if manifest is None:
             return apply_runtime_headers(
                 json_response(500, {"error": "registration did not persist", "model_name": model_name}),
                 runtime,
             )
+        refresh_provider_truth = runtime.provider_capability_truth_refresh
+        if callable(refresh_provider_truth):
+            with contextlib.suppress(Exception):
+                refresh_provider_truth()
         return apply_runtime_headers(
             json_response(
                 200,
@@ -6976,6 +7140,7 @@ def _dispatch_post_inner(
             "workspace_binding": workspace_binding,
             "request_id": str(request_id or "").strip(),
         }
+        bind_runtime_provider_policy(source_context, runtime)
         source_context["chat_id"] = context_namespace.chat_id
         if context_namespace.project_id:
             source_context["_trusted_project_id"] = context_namespace.project_id

@@ -7,36 +7,30 @@ not hold (measured by the 2026-09-15 review probe: two concurrent saves for diff
 providers, one survivor). An in-process ``threading.Lock`` covers one process only — the
 daemon and a CLI surface are separate processes sharing the same data dir.
 
-This module is the ONE mechanism: an advisory ``flock`` on a dedicated lock file next to the
-state file (``<name>.lock``), exclusive for the whole read-modify-write. It composes with the
-existing atomic-replace writer (the replace stays the crash-atomicity mechanism; the lock is
-the concurrency mechanism). Same-thread re-entry is NOT supported — callers must not take the
-lock and then, inside it, drive another door that takes the same lock (the test rigs inject
-concurrent state changes between lock sections, never inside one).
+This module delegates to ``core.cross_process_lock.PublicationLock``, the shared OS-backed lock
+authority (``flock`` on POSIX, ``msvcrt.locking`` on Windows), on a dedicated lock file next to the
+state file (``<name>.lock``), across the whole read-modify-write. It composes with the existing
+atomic-replace writer (the replace stays the crash-atomicity mechanism; the lock is the concurrency
+mechanism). Same-thread re-entry is NOT supported — callers must not take the lock and then, inside
+it, drive another door that takes the same lock (the test rigs inject concurrent state changes
+between lock sections, never inside one).
 """
 from __future__ import annotations
 
 import contextlib
-import fcntl
-import os
 from collections.abc import Iterator
 from pathlib import Path
+
+from core.cross_process_lock import PublicationLock
 
 
 @contextlib.contextmanager
 def state_lock(state_path: Path) -> Iterator[None]:
     """Hold the exclusive lock guarding read-modify-write access to ``state_path``."""
     path = Path(state_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = path.with_name(path.name + ".lock")
-    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+    with PublicationLock(lock_path):
         yield
-    finally:
-        with contextlib.suppress(OSError):
-            fcntl.flock(fd, fcntl.LOCK_UN)
-        os.close(fd)
 
 
 def credential_state_lock():

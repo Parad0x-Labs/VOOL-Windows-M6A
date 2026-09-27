@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest import mock
 
+import pytest
+
 import core.resource_governor as gov
 from core.agent_runtime.fast_paths_governor import (
     maybe_handle_free_memory_command,
@@ -29,10 +31,199 @@ def _snap(available=10.0, total=24.0, pressure="normal", swap=1.0, comfy=False, 
 def test_resident_model_is_never_gated() -> None:
     with (
         mock.patch.object(gov.sr, "snapshot", return_value=_snap(available=0.5)),
-        mock.patch.object(gov, "resident_models", return_value=[{"name": "qwen3:8b", "size_gb": 5.2}]),
+        mock.patch.object(
+            gov,
+            "resident_models",
+            return_value=[{"name": "qwen3:8b", "size_gb": 5.2, "digest": "sha256:exact"}],
+        ),
     ):
-        decision = gov.plan_model_load("qwen3:8b")
+        decision = gov.plan_model_load("qwen3:8b", model_digest="sha256:exact")
     assert decision.ok is True  # serving a loaded model costs no new RAM
+
+
+def test_authoritative_ps_digest_is_sufficient_when_manifest_digest_is_unavailable() -> None:
+    with (
+        mock.patch.object(gov.sr, "snapshot", return_value=_snap(available=0.5)),
+        mock.patch.object(
+            gov,
+            "resident_models",
+            return_value=[{"name": "qwen3:8b", "size_gb": 5.2, "digest": "sha256:exact"}],
+        ),
+    ):
+        decision = gov.plan_model_load(
+            "qwen3:8b",
+            provider_id="ollama-local:qwen3:8b",
+            endpoint="http://127.0.0.1:11434",
+            runtime_identity="runtime-a",
+        )
+    assert decision.ok is True
+
+
+def _issue_residency_certificate(*, now: float = 100.0, digest: str = "sha256:exact") -> None:
+    assert gov.record_residency_evidence(
+        provider_id="ollama-local:qwen3:8b",
+        model_tag="qwen3:8b",
+        model_digest=digest,
+        endpoint="http://127.0.0.1:11434",
+        evidence_source="successful_ollama_model_call",
+        runtime_identity="runtime-a",
+        now=now,
+        ollama_process={"pid": 4400, "create_time": 10.0},
+        llama_server_process={"pid": 4401, "create_time": 11.0},
+    )
+
+
+def test_empty_ps_uses_fresh_exact_residency_certificate_for_same_instances() -> None:
+    gov.clear_residency_certificate()
+    try:
+        _issue_residency_certificate()
+        with (
+            mock.patch.object(gov.time, "time", return_value=101.0),
+            mock.patch.object(gov.sr, "snapshot", return_value=_snap(available=0.5)),
+            mock.patch.object(gov, "resident_models", return_value=[]),
+            mock.patch.object(
+                gov, "_ollama_process_identity", return_value={"pid": 4400, "create_time": 10.0}
+            ),
+            mock.patch.object(
+                gov,
+                "_owned_llama_server_identity",
+                return_value={"pid": 4401, "create_time": 11.0},
+            ),
+        ):
+            decision = gov.plan_model_load(
+                "qwen3:8b",
+                provider_id="ollama-local:qwen3:8b",
+                model_digest="sha256:exact",
+                endpoint="http://127.0.0.1:11434",
+                runtime_identity="runtime-a",
+            )
+        assert decision.ok is True
+    finally:
+        gov.clear_residency_certificate()
+
+
+def test_stale_residency_certificate_retains_full_load_gate() -> None:
+    gov.clear_residency_certificate()
+    try:
+        _issue_residency_certificate(now=0.0)
+        with (
+            mock.patch.object(gov.time, "time", return_value=121.0),
+            mock.patch.object(gov.sr, "snapshot", return_value=_snap(available=0.5)),
+            mock.patch.object(gov, "resident_models", return_value=[]),
+        ):
+            decision = gov.plan_model_load(
+                "qwen3:8b",
+                provider_id="ollama-local:qwen3:8b",
+                model_digest="sha256:exact",
+                endpoint="http://127.0.0.1:11434",
+                runtime_identity="runtime-a",
+            )
+        assert decision.ok is False
+    finally:
+        gov.clear_residency_certificate()
+
+
+@pytest.mark.parametrize(
+    ("model", "digest", "endpoint", "runtime"),
+    [
+        ("other:8b", "sha256:exact", "http://127.0.0.1:11434", "runtime-a"),
+        ("qwen3:8b", "sha256:wrong", "http://127.0.0.1:11434", "runtime-a"),
+        ("qwen3:8b", "sha256:exact", "http://127.0.0.1:11435", "runtime-a"),
+        ("qwen3:8b", "sha256:exact", "http://127.0.0.1:11434", "runtime-b"),
+    ],
+)
+def test_residency_certificate_identity_mismatch_retains_conservative_gate(
+    model: str, digest: str, endpoint: str, runtime: str
+) -> None:
+    gov.clear_residency_certificate()
+    try:
+        _issue_residency_certificate()
+        with (
+            mock.patch.object(gov.time, "time", return_value=101.0),
+            mock.patch.object(gov.sr, "snapshot", return_value=_snap(available=0.5)),
+            mock.patch.object(gov, "resident_models", return_value=[]),
+            mock.patch.object(
+                gov, "_ollama_process_identity", return_value={"pid": 4400, "create_time": 10.0}
+            ),
+            mock.patch.object(
+                gov,
+                "_owned_llama_server_identity",
+                return_value={"pid": 4401, "create_time": 11.0},
+            ),
+        ):
+            decision = gov.plan_model_load(
+                model,
+                provider_id="ollama-local:qwen3:8b",
+                model_digest=digest,
+                endpoint=endpoint,
+                runtime_identity=runtime,
+            )
+        assert decision.ok is False
+    finally:
+        gov.clear_residency_certificate()
+
+
+def test_restarted_ollama_process_invalidates_residency_certificate() -> None:
+    gov.clear_residency_certificate()
+    try:
+        _issue_residency_certificate()
+        with (
+            mock.patch.object(gov.time, "time", return_value=101.0),
+            mock.patch.object(gov.sr, "snapshot", return_value=_snap(available=0.5)),
+            mock.patch.object(gov, "resident_models", return_value=[]),
+            mock.patch.object(
+                gov, "_ollama_process_identity", return_value={"pid": 5500, "create_time": 20.0}
+            ),
+        ):
+            decision = gov.plan_model_load(
+                "qwen3:8b",
+                provider_id="ollama-local:qwen3:8b",
+                model_digest="sha256:exact",
+                endpoint="http://127.0.0.1:11434",
+                runtime_identity="runtime-a",
+            )
+        assert decision.ok is False
+    finally:
+        gov.clear_residency_certificate()
+
+
+def test_readiness_or_certification_alone_cannot_issue_residency_certificate() -> None:
+    gov.clear_residency_certificate()
+    try:
+        with mock.patch.object(gov, "_ollama_process_identity", return_value={"pid": 4400, "create_time": 10.0}):
+            assert not gov.record_residency_evidence(
+                provider_id="ollama-local:qwen3:8b",
+                model_tag="qwen3:8b",
+                model_digest="sha256:exact",
+                endpoint="http://127.0.0.1:11434",
+                evidence_source="chat_ready",
+                runtime_identity="runtime-a",
+            )
+        with (
+            mock.patch.object(gov.sr, "snapshot", return_value=_snap(available=0.5)),
+            mock.patch.object(gov, "resident_models", return_value=[]),
+        ):
+            assert gov.plan_model_load("qwen3:8b").ok is False
+    finally:
+        gov.clear_residency_certificate()
+
+
+def test_missing_certificate_keeps_existing_full_estimate_and_safety_floor() -> None:
+    gov.clear_residency_certificate()
+    with (
+        mock.patch.object(gov.sr, "snapshot", return_value=_snap(available=6.0)),
+        mock.patch.object(gov, "resident_models", return_value=[]),
+        mock.patch.object(gov, "estimated_model_gb", return_value=5.2),
+    ):
+        decision = gov.plan_model_load(
+            "qwen3:8b",
+            provider_id="ollama-local:qwen3:8b",
+            model_digest="sha256:exact",
+            endpoint="http://127.0.0.1:11434",
+            runtime_identity="runtime-a",
+        )
+    assert decision.ok is False
+    assert decision.footprint_gb == 5.2
 
 
 def test_load_that_fits_proceeds_without_reclaim() -> None:

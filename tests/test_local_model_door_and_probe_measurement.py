@@ -15,8 +15,8 @@ from typing import Any
 
 from adapters.openai_compatible_adapter import OpenAICompatibleAdapter
 from core.local_model_tool_certification import run_local_model_tool_certification
-from core.web.api.runtime import RuntimeServices
-from core.web.api.service import dispatch_get, dispatch_post
+from core.web.api.runtime import ModelPullProgress, RuntimeServices
+from core.web.api.service import capability_snapshot_with_runtime, dispatch_get, dispatch_post
 from storage.model_provider_manifest import ModelProviderManifest
 from tests.test_local_model_tool_certification import ProbeExchange, _manifest
 
@@ -185,10 +185,11 @@ def test_local_model_registration_door_guards_and_registers(monkeypatch) -> None
         lambda **kwargs: ["qwen3:8b", "qwen3:4b-instruct"],
     )
     registered: list[str] = []
+    refreshed: list[str] = []
     manifest = _ollama_manifest("qwen3:8b")
 
-    def fake_register(registry, *, model_tag, env=None):
-        registered.append(model_tag)
+    def fake_register(registry, *, model_tag, env=None, base_url=None):
+        registered.append((model_tag, base_url))
         return manifest
 
     monkeypatch.setattr(
@@ -197,7 +198,7 @@ def test_local_model_registration_door_guards_and_registers(monkeypatch) -> None
     base = dict(
         path="/api/models/local/register",
         headers={"Content-Type": "application/json"},
-        runtime=RuntimeServices(),
+        runtime=RuntimeServices(provider_capability_truth_refresh=lambda: refreshed.append("registered")),
         model_name="vool",
         workspace_root_provider=lambda: "/tmp",
     )
@@ -218,8 +219,129 @@ def test_local_model_registration_door_guards_and_registers(monkeypatch) -> None
 
     ok = dispatch_post(body={"model_name": "qwen3:8b"}, client_host="127.0.0.1", **base)
     assert ok.status == 200
-    assert registered == ["qwen3:8b"]
+    assert registered == [("qwen3:8b", "http://127.0.0.1:11434")]
     payload = _json(ok)
     assert payload["ok"] is True
     assert payload["provider_id"] == "ollama-local:qwen3:8b"
     assert payload["certification_url"] == "/api/model-tool-certification/run"
+    assert refreshed == ["registered"]
+
+    disabled_runtime = RuntimeServices(local_models_enabled_check=lambda: False)
+    disabled = dispatch_post(
+        body={"model_name": "qwen3:8b"},
+        path="/api/models/local/register",
+        headers={"Content-Type": "application/json"},
+        runtime=disabled_runtime,
+        model_name="vool",
+        workspace_root_provider=lambda: "/tmp",
+        client_host="127.0.0.1",
+    )
+    assert disabled.status == 409
+    assert registered == [("qwen3:8b", "http://127.0.0.1:11434")]
+
+
+def test_model_pull_retry_is_loopback_same_origin_and_body_bounded() -> None:
+    calls: list[int] = []
+    runtime = RuntimeServices(model_pull_restart=lambda: (202, {"ok": True}))
+    base = {
+        "path": "/api/runtime/model-pull/retry",
+        "headers": {"Content-Type": "application/json", "Origin": "http://127.0.0.1:11435"},
+        "runtime": runtime,
+        "model_name": "vool",
+        "workspace_root_provider": lambda: "/tmp",
+    }
+
+    remote = dispatch_post(body={}, client_host="10.0.0.4", **base)
+    assert remote.status == 403
+
+    hostile_origin = dispatch_post(
+        body={},
+        client_host="127.0.0.1",
+        **{**base, "headers": {"Content-Type": "application/json", "Origin": "https://evil.example"}},
+    )
+    assert hostile_origin.status == 403
+
+    unknown_field = dispatch_post(body={"model": "qwen2.5:7b"}, client_host="127.0.0.1", **base)
+    assert unknown_field.status == 400
+
+    runtime.model_pull_restart = lambda: (calls.append(1) or 202, {"ok": True})
+    accepted = dispatch_post(body={}, client_host="127.0.0.1", **base)
+    assert accepted.status == 202
+    assert calls == [1]
+
+
+def test_local_chat_retry_rechecks_only_a_failed_completed_local_setup() -> None:
+    pull = ModelPullProgress("qwen2.5:7b")
+    pull.update(status="ready", percent=100, detail="pull complete")
+    calls: list[str] = []
+    runtime = RuntimeServices(
+        model_pull=pull,
+        local_model_setup={"model": "qwen2.5:7b", "state": "failed", "chat_ready": False},
+        local_models_enabled_check=lambda: True,
+        local_model_setup_refresh=lambda: calls.append("retry") or True,
+    )
+    base = {
+        "path": "/api/runtime/local-model/retry",
+        "headers": {"Content-Type": "application/json", "Origin": "http://127.0.0.1:11435"},
+        "runtime": runtime,
+        "model_name": "vool",
+        "workspace_root_provider": lambda: "/tmp",
+    }
+
+    remote = dispatch_post(body={}, client_host="10.0.0.4", **base)
+    assert remote.status == 403
+    hostile_origin = dispatch_post(
+        body={},
+        client_host="127.0.0.1",
+        **{**base, "headers": {"Content-Type": "application/json", "Origin": "https://evil.example"}},
+    )
+    assert hostile_origin.status == 403
+    malformed = dispatch_post(body={"model": "qwen2.5:7b"}, client_host="127.0.0.1", **base)
+    assert malformed.status == 400
+
+    accepted = dispatch_post(body={}, client_host="127.0.0.1", **base)
+    assert accepted.status == 202
+    assert _json(accepted)["ok"] is True
+    assert calls == ["retry"]
+
+    runtime.local_model_setup["state"] = "ready"
+    runtime.local_model_setup["chat_ready"] = True
+    already_ready = dispatch_post(body={}, client_host="127.0.0.1", **base)
+    assert already_ready.status == 200
+    assert _json(already_ready)["detail"] == "local chat is already ready"
+    assert calls == ["retry"]
+
+
+def test_runtime_version_read_refreshes_live_local_model_status() -> None:
+    runtime = RuntimeServices(runtime_version_stamp={"local_model_setup": {"state": "failed", "chat_ready": False}})
+    calls: list[str] = []
+
+    def refresh() -> None:
+        calls.append("refresh")
+        runtime.runtime_version_stamp["local_model_setup"].update(state="ready", chat_ready=True)
+
+    runtime.local_model_status_refresh = refresh
+    response = dispatch_get(
+        path="/api/runtime/version",
+        query={},
+        runtime=runtime,
+        model_name="vool",
+    )
+    assert response.status == 200
+    assert _json(response)["local_model_setup"]["chat_ready"] is True
+    assert calls == ["refresh"]
+
+
+def test_runtime_capabilities_keep_pull_and_chat_readiness_separate() -> None:
+    runtime = RuntimeServices(
+        runtime_model_tag="qwen2.5:7b",
+        local_model_setup={
+            "model": "qwen2.5:7b",
+            "state": "certifying",
+            "chat_ready": False,
+            "certification_state": "probing",
+        },
+    )
+    payload = capability_snapshot_with_runtime(runtime, lambda: {})
+    assert payload["local_model_setup"]["state"] == "certifying"
+    assert payload["local_model_setup"]["chat_ready"] is False

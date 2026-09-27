@@ -58,6 +58,34 @@ def test_invoke_ollama_chat_records_live_benchmark_from_real_response_fields() -
     assert kwargs["response_payload"]["eval_count"] == 40
 
 
+def test_successful_exact_ollama_response_records_residency_evidence() -> None:
+    adapter = OpenAICompatibleAdapter(
+        SimpleNamespace(
+            provider_id="ollama-local:qwen2.5:7b",
+            model_name="qwen2.5:7b",
+            metadata={"runtime_family": "ollama", "model_digest": "sha256:exact"},
+            runtime_config={"base_url": "http://127.0.0.1:11434/v1", "timeout_seconds": 5.0},
+        )
+    )
+    response = mock.Mock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {"model": "qwen2.5:7b", "message": {"content": "exact"}}
+
+    with mock.patch.object(adapter, "_gate_local_model_load"), mock.patch(
+        "adapters.openai_compatible_adapter.requests.post", return_value=response
+    ), mock.patch("core.resource_governor.record_residency_evidence") as record_mock:
+        result = adapter.run_text_task(_request("hello"))
+
+    assert result.output_text == "exact"
+    record_mock.assert_called_once_with(
+        provider_id="ollama-local:qwen2.5:7b",
+        model_tag="qwen2.5:7b",
+        model_digest="sha256:exact",
+        endpoint="http://127.0.0.1:11434",
+        evidence_source="successful_ollama_model_call",
+    )
+
+
 def test_stream_ollama_chat_records_benchmark_on_final_done_event() -> None:
     adapter = _ollama_adapter()
     response = mock.Mock()

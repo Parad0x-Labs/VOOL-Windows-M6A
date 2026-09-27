@@ -329,7 +329,18 @@ def read_turn_provenance(
     #   4. calls with none of the above -- something was invoked and nothing claims to have answered
     #      without it. Counted as model-served, but with the lane and the id left UNREAD rather than
     #      defaulted, because a `no model` here would be the false claim in the other direction.
-    if tokens > 0:
+    execution_details = execution.get("details")
+    execution_details = dict(execution_details) if isinstance(execution_details, dict) else {}
+    answer_commit_allowed = execution.get(
+        "answer_commit_allowed",
+        execution_details.get("answer_commit_allowed"),
+    )
+    if answer_commit_allowed is False:
+        # A provider may have run and consumed a call budget without producing an accepted answer
+        # candidate. Keep that fact in model_calls, but do not mislabel the deterministic/runtime
+        # fallback as model-authored prose.
+        model_ran = False
+    elif tokens > 0:
         model_ran = True
     elif "used_model" in execution:
         model_ran = bool(execution.get("used_model"))
