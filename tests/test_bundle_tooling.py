@@ -695,6 +695,13 @@ def test_build_bundle_copies_every_runtime_package_and_stays_lean() -> None:
     assert 'Join-Path $appDir "config\\build-source.json"' in ps1
     for field in ("app_version", "source_commit", "source_dirty_state"):
         assert field in ps1
+    assert 'Where-Object { $_.Extension -in @(".pyc", ".pdb") }' in ps1
+    assert 'Remove-Item -Recurse -Force -ErrorAction SilentlyContinue' in ps1
+    launcher = (_BUNDLE / "vool-launch.cmd").read_text(encoding="utf-8")
+    assert 'pythonw.exe" -B' in launcher
+    supervisor = (_BUNDLE / "bundle_supervisor.py").read_text(encoding="utf-8")
+    assert 'os.environ["PYTHONDONTWRITEBYTECODE"] = "1"' in supervisor
+    assert 'supervisor.env["PYTHONDONTWRITEBYTECODE"] = "1"' in supervisor
     for canonical_source in (
         "README.md",
         "docs\\SYSTEM_SPINE.md",

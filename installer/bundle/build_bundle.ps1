@@ -272,5 +272,14 @@ if ($IncludeModel) {
   & $OllamaExe pull $Model
 }
 
+# Python bytecode caches and PDB symbol files are build artifacts, not runtime
+# requirements. Remove them after all staging steps so the installed payload does
+# not retain build-root paths or optional native debug symbols.
+Get-ChildItem -LiteralPath $Stage -Recurse -File -ErrorAction SilentlyContinue |
+  Where-Object { $_.Extension -in @(".pyc", ".pdb") } |
+  Remove-Item -Force -ErrorAction SilentlyContinue
+Get-ChildItem -LiteralPath $Stage -Recurse -Directory -Filter "__pycache__" -ErrorAction SilentlyContinue |
+  Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
 $sz = (Get-ChildItem $Stage -Recurse -File | Measure-Object Length -Sum).Sum
 Write-Host ("Bundle staged at {0} -- {1:N0} MB" -f $Stage, ($sz/1MB))
