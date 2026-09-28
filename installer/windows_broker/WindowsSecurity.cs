@@ -146,6 +146,34 @@ internal static class TokenInspector
             ?? throw new BrokerSecurityException("The broker process has no Windows user SID.");
     }
 
+    internal static TokenSecuritySnapshot InspectCurrentProcess()
+    {
+        if (!NativeMethods.OpenProcessToken(
+                NativeMethods.GetCurrentProcess(),
+                NativeMethods.TokenQuery,
+                out var token))
+        {
+            throw NativeMethods.LastError("OpenProcessToken(current process)");
+        }
+
+        using (token)
+            return Inspect(token);
+    }
+
+    internal static void RequireWorkerToken(TokenSecuritySnapshot snapshot, string expectedAppContainerSid)
+    {
+        if (!snapshot.IsAppContainer
+            || !snapshot.HasRestrictions
+            || snapshot.Capabilities.Count != 0
+            || snapshot.IntegrityLevelRid > NativeMethods.SecurityMandatoryLowRid)
+        {
+            throw new BrokerSecurityException(
+                "Refusing workspace write: worker is not running in a restricted low-integrity AppContainer.");
+        }
+        if (!string.Equals(snapshot.AppContainerSid, expectedAppContainerSid, StringComparison.OrdinalIgnoreCase))
+            throw new BrokerSecurityException("Refusing workspace write: worker AppContainer identity is not operation-bound.");
+    }
+
     private static bool ReadBool(SafeNativeHandle token, int informationClass)
     {
         return ReadInformation(token, informationClass, (buffer, _) => Marshal.ReadInt32(buffer) != 0);
@@ -392,24 +420,52 @@ internal sealed class WindowsPathGrants : IDisposable
         SecurityIdentifier appContainerSid,
         IEnumerable<(string Path, bool Writable)> requestedRoots)
     {
-        var roots = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-        foreach (var (path, writable) in requestedRoots)
+        return CreateWithRules(
+            appContainerSid,
+            requestedRoots.Select(pair => new WindowsPathGrantRequest(
+                pair.Path,
+                pair.Writable ? FileSystemRights.Modify : FileSystemRights.ReadAndExecute,
+                InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
+                PropagationFlags.None)));
+    }
+
+    internal static WindowsPathGrants CreateWithRules(
+        SecurityIdentifier appContainerSid,
+        IEnumerable<WindowsPathGrantRequest> requestedRoots)
+    {
+        var roots = new Dictionary<
+            (string Path, InheritanceFlags Inheritance, PropagationFlags Propagation),
+            FileSystemRights>();
+        foreach (var requestedRoot in requestedRoots)
         {
-            var full = PathSafety.RequireLocalDirectory(path, "filesystem grant root");
-            if (roots.TryGetValue(full, out var existing))
-                roots[full] = existing || writable;
+            var full = PathSafety.RequireLocalDirectory(
+                requestedRoot.Path,
+                "filesystem grant root");
+            var key = (full, requestedRoot.Inheritance, requestedRoot.Propagation);
+            if (roots.TryGetValue(key, out var existing))
+                roots[key] = existing | requestedRoot.Rights;
             else
-                roots.Add(full, writable);
+                roots.Add(key, requestedRoot.Rights);
         }
 
         var grants = new WindowsPathGrants(
             roots.Select(pair => new FilesystemGrantEvidence(
-                pair.Key,
-                pair.Value ? "read_write" : "read_only")).ToArray());
+                pair.Key.Path,
+                DescribeAccess(pair.Value),
+                (int)pair.Value,
+                pair.Key.Inheritance.ToString(),
+                pair.Key.Propagation.ToString())).ToArray());
         try
         {
             foreach (var pair in roots)
-                grants.Apply(pair.Key, pair.Value, appContainerSid);
+            {
+                grants.Apply(
+                    pair.Key.Path,
+                    pair.Value,
+                    pair.Key.Inheritance,
+                    pair.Key.Propagation,
+                    appContainerSid);
+            }
             return grants;
         }
         catch
@@ -419,16 +475,18 @@ internal sealed class WindowsPathGrants : IDisposable
         }
     }
 
-    private void Apply(string path, bool writable, SecurityIdentifier appContainerSid)
+    private void Apply(
+        string path,
+        FileSystemRights rights,
+        InheritanceFlags inheritance,
+        PropagationFlags propagation,
+        SecurityIdentifier appContainerSid)
     {
-        var rights = writable
-            ? FileSystemRights.Modify
-            : FileSystemRights.ReadAndExecute;
         var rule = new FileSystemAccessRule(
             appContainerSid,
             rights,
-            InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
-            PropagationFlags.None,
+            inheritance,
+            propagation,
             AccessControlType.Allow);
         var directory = new DirectoryInfo(path);
         var security = directory.GetAccessControl(AccessControlSections.Access);
@@ -480,7 +538,24 @@ internal sealed class WindowsPathGrants : IDisposable
         if (failure is not null)
             throw failure;
     }
+
+    private static string DescribeAccess(FileSystemRights rights)
+    {
+        if (rights == FileSystemRights.DeleteSubdirectoriesAndFiles)
+            return "delete_child";
+        if ((rights & FileSystemRights.Modify) == FileSystemRights.Modify)
+            return "read_write";
+        if ((rights & FileSystemRights.ReadAndExecute) == FileSystemRights.ReadAndExecute)
+            return "read_only";
+        return rights.ToString();
+    }
 }
+
+internal sealed record WindowsPathGrantRequest(
+    string Path,
+    FileSystemRights Rights,
+    InheritanceFlags Inheritance,
+    PropagationFlags Propagation);
 
 internal sealed class ScratchWorkspace : IDisposable
 {

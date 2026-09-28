@@ -242,12 +242,20 @@ def _scrub_persisted(value: Any) -> Any:
 
 
 _BROKER_RECEIPT_EVIDENCE_FIELDS = (
+    "schema",
     "platform",
     "broker_type",
+    "effect",
+    "tool",
     "plugin_id",
     "plugin_version",
     "plugin_digest",
     "operation_id",
+    "relative_target",
+    "prior_state",
+    "prior_sha256",
+    "content_sha256",
+    "content_length",
     "appcontainer_name",
     "appcontainer_sid",
     "process_id",
@@ -259,11 +267,54 @@ _BROKER_RECEIPT_EVIDENCE_FIELDS = (
     "network_policy",
     "timeout_ms",
     "result",
+    "verified",
     "exit_code",
     "timed_out",
+    "final_sha256",
+    "atomic_installed",
+    "broker_ok",
     "token",
     "job",
+    "token_security",
+    "job_security",
 )
+
+
+def _drop_transient_broker_receipts(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _drop_transient_broker_receipts(item)
+            for key, item in value.items()
+            if key != "broker_receipt"
+        }
+    if isinstance(value, list):
+        return [_drop_transient_broker_receipts(item) for item in value]
+    return value
+
+
+def _sanitize_workspace_confinement_evidence(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    try:
+        from core.windows_workspace_broker import sanitize_workspace_write_confinement_evidence
+
+        return sanitize_workspace_write_confinement_evidence(value)
+    except Exception:
+        return {}
+
+
+def _restore_workspace_confinement_evidence(clean: Any, raw: Any) -> None:
+    """Restore only the fixed native projection after the general redaction pass."""
+
+    if not isinstance(clean, dict) or not isinstance(raw, dict):
+        return
+    evidence = _sanitize_workspace_confinement_evidence(raw.get("confinement_evidence"))
+    if evidence:
+        clean["confinement_evidence"] = evidence
+    raw_action = raw.get("action_record")
+    clean_action = clean.get("action_record")
+    if isinstance(raw_action, dict) and isinstance(clean_action, dict):
+        _restore_workspace_confinement_evidence(clean_action, raw_action)
 
 
 def _receipt_execution(execution: dict[str, Any] | None) -> dict[str, Any]:
@@ -276,9 +327,12 @@ def _receipt_execution(execution: dict[str, Any] | None) -> dict[str, Any]:
     """
     from core.agent_runtime.orchestrator import redact_tool_arguments
 
-    safe = _scrub_persisted(redact_tool_arguments(dict(execution or {})))
+    safe = _drop_transient_broker_receipts(
+        _scrub_persisted(redact_tool_arguments(dict(execution or {})))
+    )
     if not isinstance(safe, dict):
         return {}
+    _restore_workspace_confinement_evidence(safe, dict(execution or {}))
     raw_details = dict(execution or {}).get("details")
     raw_evidence = raw_details.get("confinement_evidence") if isinstance(raw_details, dict) else None
     if isinstance(raw_evidence, dict):
@@ -286,13 +340,12 @@ def _receipt_execution(execution: dict[str, Any] | None) -> dict[str, Any]:
         if not isinstance(safe_details, dict):
             safe_details = {}
             safe["details"] = safe_details
-        safe_details["confinement_evidence"] = _scrub_persisted(
-            {
-                field: raw_evidence[field]
-                for field in _BROKER_RECEIPT_EVIDENCE_FIELDS
-                if field in raw_evidence
-            }
-        )
+        projected = _sanitize_workspace_confinement_evidence(raw_evidence)
+        safe_details["confinement_evidence"] = projected or {
+            field: raw_evidence[field]
+            for field in _BROKER_RECEIPT_EVIDENCE_FIELDS
+            if field in raw_evidence
+        }
     return safe
 
 
@@ -332,7 +385,9 @@ def append_runtime_event(
 
     if not writer_may_persist_text(clean_message):
         clean_message = ""
-    clean_details = _scrub_persisted(dict(details or {}))
+    raw_details = dict(details or {})
+    clean_details = _scrub_persisted(raw_details)
+    _restore_workspace_confinement_evidence(clean_details, raw_details)
     # A8 PASS003 (CE09): details_json is a payload-bearing surface too — the
     # same unavailable-verdict veto applies to every embedded string, not
     # just the message column.

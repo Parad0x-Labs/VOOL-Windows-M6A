@@ -177,6 +177,16 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _windows_workspace_broker_required(source_context: dict[str, Any] | None) -> bool:
+    """Require the native boundary for an identity-bound Windows runtime call.
+
+    Unbound direct library calls remain usable for platform-neutral unit tests and maintenance
+    helpers. A normal served/API turn carries the immutable execution identity; that path fails
+    closed when the packaged broker is unavailable and never falls back to an in-process write.
+    """
+    return os.name == "nt" and isinstance(source_context, dict) and bool(source_context.get("_execution_identity"))
+
+
 def _dispatch_with_mutation_activity(
     intent: str,
     *,
@@ -3361,6 +3371,7 @@ def _dispatch_runtime_tool(
                 handler=lambda: _write_file(
                     arguments,
                     workspace_root=workspace_root,
+                    source_context=source_context,
                     session_id=_runtime_session_id(source_context),
                     reviewed_destination=_approved_destination_for(source_context, intent, arguments.get("path")),
                 ),
@@ -3372,6 +3383,7 @@ def _dispatch_runtime_tool(
                     arguments,
                     workspace_root=workspace_root,
                     session_id=_runtime_session_id(source_context),
+                    source_context=source_context,
                     reviewed_destination=_approved_destination_for(source_context, intent, arguments.get("path")),
                 ),
             )
@@ -6174,6 +6186,7 @@ def _write_file(
     *,
     workspace_root: Path,
     session_id: str,
+    source_context: dict[str, Any] | None = None,
     reviewed_destination: dict[str, Any] | None = None,
 ) -> RuntimeExecutionResult:
     if not policy_engine.get("filesystem.allow_write_workspace", False):
@@ -6233,7 +6246,108 @@ def _write_file(
                 ),
             },
         )
-    if reviewed_destination is not None:
+    after_hash = content_sha256(content)
+    broker_receipt: dict[str, Any] | None = None
+    if _windows_workspace_broker_required(source_context):
+        reviewed_refusal = _reviewed_destination_refusal(
+            "workspace.write_file",
+            surface="workspace",
+            record=reviewed_destination,
+            target=target,
+            label=relative_path,
+        )
+        if reviewed_refusal is not None:
+            return reviewed_refusal
+        import hashlib
+
+        prior_state = "file" if existed and target.is_file() else "absent"
+        prior_sha256 = hashlib.sha256(target.read_bytes()).hexdigest() if prior_state == "file" else ""
+        from core.windows_workspace_broker import (
+            project_workspace_write_confinement_evidence,
+            run_workspace_write_broker,
+        )
+
+        broker_result = run_workspace_write_broker(
+            tool="workspace.write_file",
+            target=target,
+            workspace_root=workspace_root,
+            content=content,
+            source_context=source_context,
+            session_id=session_id,
+            approval_id=str((source_context or {}).get("mode_approval_token") or ""),
+            proposal_id=str((source_context or {}).get("workspace_write_proposal_id") or ""),
+            prior_state=prior_state,
+            prior_sha256=prior_sha256,
+        )
+        broker_receipt = dict(broker_result)
+        confinement_evidence = project_workspace_write_confinement_evidence(broker_receipt)
+        if not bool(broker_result.get("ok")):
+            status = str(broker_result.get("status") or "confinement_unavailable")
+            return RuntimeExecutionResult(
+                handled=True,
+                ok=False,
+                status=status,
+                response_text=(
+                    f"Workspace write for `{relative_path}` was not executed: "
+                    f"{broker_result.get('error') or 'native broker refused the exact effect.'!s}"
+                ),
+                details={
+                    "path": relative_path,
+                    "broker_receipt": broker_receipt,
+                    **({"confinement_evidence": confinement_evidence} if confinement_evidence else {}),
+                    "observation": _tool_observation(
+                        intent="workspace.write_file",
+                        tool_surface="windows_workspace_broker",
+                        ok=False,
+                        status=status,
+                        path=relative_path,
+                        **({"confinement_evidence": confinement_evidence} if confinement_evidence else {}),
+                    ),
+                },
+            )
+        if not confinement_evidence:
+            return RuntimeExecutionResult(
+                handled=True,
+                ok=False,
+                status="confinement_evidence_missing",
+                response_text=(
+                    f"Workspace write for `{relative_path}` was not accepted: the native broker "
+                    "did not return the required confinement evidence."
+                ),
+                details={
+                    "path": relative_path,
+                    "broker_receipt": broker_receipt,
+                    "observation": _tool_observation(
+                        intent="workspace.write_file",
+                        tool_surface="windows_workspace_broker",
+                        ok=False,
+                        status="confinement_evidence_missing",
+                        path=relative_path,
+                    ),
+                },
+            )
+        after_hash = str(broker_result.get("final_sha256") or "")
+        if after_hash != content_sha256(content):
+            return RuntimeExecutionResult(
+                handled=True,
+                ok=False,
+                status="verification_failed",
+                response_text=f"Workspace write for `{relative_path}` was not verified by the native broker.",
+                details={
+                    "path": relative_path,
+                    "broker_receipt": broker_receipt,
+                    **({"confinement_evidence": confinement_evidence} if confinement_evidence else {}),
+                    "observation": _tool_observation(
+                        intent="workspace.write_file",
+                        tool_surface="windows_workspace_broker",
+                        ok=False,
+                        status="verification_failed",
+                        path=relative_path,
+                        **({"confinement_evidence": confinement_evidence} if confinement_evidence else {}),
+                    ),
+                },
+            )
+    elif reviewed_destination is not None:
         # A reviewed destination is written inside its pinned parent directory, with its reviewed bytes
         # re-read there just before the rename (`pinned_atomic_write_text`).
         from core.execution.artifacts import DestinationChangedError, ReviewedBaseChangedError, pinned_atomic_write_text
@@ -6252,8 +6366,8 @@ def _write_file(
             )
     else:
         atomic_write_text(target, content)
-    force_fresh_source_timestamp(target, minimum_mtime_ns=previous_mtime_ns)
-    after_hash = content_sha256(content)
+    if not _windows_workspace_broker_required(source_context):
+        force_fresh_source_timestamp(target, minimum_mtime_ns=previous_mtime_ns)
     # `atomic_write_text` guarantees the target exists with the right mode once it returns without
     # raising -- this stat is defensive against nothing more than a test double that mocks the
     # write itself without honoring that contract; never fatal on its own account.
@@ -6302,6 +6416,8 @@ def _write_file(
             "before_mode": previous_mode,
             "after_mode": after_mode,
             "artifacts": [diff_artifact],
+            **({"broker_receipt": broker_receipt} if broker_receipt is not None else {}),
+            **({"confinement_evidence": confinement_evidence} if broker_receipt is not None and confinement_evidence else {}),
             "mutation_record": {
                 "mutation_id": str(mutation_record.get("mutation_id") or "").strip(),
                 "session_key": str(mutation_record.get("session_key") or "").strip(),
@@ -6319,6 +6435,7 @@ def _write_file(
                 before_mode=previous_mode,
                 after_mode=after_mode,
                 diff_preview=str(diff_artifact.get("diff_preview") or ""),
+                **({"confinement_evidence": confinement_evidence} if broker_receipt is not None and confinement_evidence else {}),
             ),
         },
     )
@@ -6329,6 +6446,7 @@ def _replace_in_file(
     *,
     workspace_root: Path,
     session_id: str,
+    source_context: dict[str, Any] | None = None,
     reviewed_destination: dict[str, Any] | None = None,
 ) -> RuntimeExecutionResult:
     if not policy_engine.get("filesystem.allow_write_workspace", False):
@@ -6472,7 +6590,106 @@ def _replace_in_file(
     else:
         updated = content.replace(old_text, new_text, 1)
         replaced = 1
-    if reviewed_destination is not None:
+    broker_receipt: dict[str, Any] | None = None
+    after_hash = content_sha256(updated)
+    if _windows_workspace_broker_required(source_context):
+        reviewed_refusal = _reviewed_destination_refusal(
+            "workspace.replace_in_file",
+            surface="workspace",
+            record=reviewed_destination,
+            target=target,
+            label=relative_path,
+        )
+        if reviewed_refusal is not None:
+            return reviewed_refusal
+        import hashlib
+
+        from core.windows_workspace_broker import (
+            project_workspace_write_confinement_evidence,
+            run_workspace_write_broker,
+        )
+
+        broker_result = run_workspace_write_broker(
+            tool="workspace.replace_in_file",
+            target=target,
+            workspace_root=workspace_root,
+            content=updated,
+            source_context=source_context,
+            session_id=session_id,
+            approval_id=str((source_context or {}).get("mode_approval_token") or ""),
+            proposal_id=str((source_context or {}).get("workspace_write_proposal_id") or ""),
+            prior_state="file",
+            prior_sha256=hashlib.sha256(target.read_bytes()).hexdigest(),
+        )
+        broker_receipt = dict(broker_result)
+        confinement_evidence = project_workspace_write_confinement_evidence(broker_receipt)
+        if not bool(broker_result.get("ok")):
+            status = str(broker_result.get("status") or "confinement_unavailable")
+            return RuntimeExecutionResult(
+                handled=True,
+                ok=False,
+                status=status,
+                response_text=(
+                    f"Workspace replacement for `{relative_path}` was not executed: "
+                    f"{broker_result.get('error') or 'native broker refused the exact effect.'!s}"
+                ),
+                details={
+                    "path": relative_path,
+                    "broker_receipt": broker_receipt,
+                    **({"confinement_evidence": confinement_evidence} if confinement_evidence else {}),
+                    "observation": _tool_observation(
+                        intent="workspace.replace_in_file",
+                        tool_surface="windows_workspace_broker",
+                        ok=False,
+                        status=status,
+                        path=relative_path,
+                        **({"confinement_evidence": confinement_evidence} if confinement_evidence else {}),
+                    ),
+                },
+            )
+        if not confinement_evidence:
+            return RuntimeExecutionResult(
+                handled=True,
+                ok=False,
+                status="confinement_evidence_missing",
+                response_text=(
+                    f"Workspace replacement for `{relative_path}` was not accepted: the native "
+                    "broker did not return the required confinement evidence."
+                ),
+                details={
+                    "path": relative_path,
+                    "broker_receipt": broker_receipt,
+                    "observation": _tool_observation(
+                        intent="workspace.replace_in_file",
+                        tool_surface="windows_workspace_broker",
+                        ok=False,
+                        status="confinement_evidence_missing",
+                        path=relative_path,
+                    ),
+                },
+            )
+        after_hash = str(broker_result.get("final_sha256") or "")
+        if after_hash != content_sha256(updated):
+            return RuntimeExecutionResult(
+                handled=True,
+                ok=False,
+                status="verification_failed",
+                response_text=f"Workspace replacement for `{relative_path}` was not verified by the native broker.",
+                details={
+                    "path": relative_path,
+                    "broker_receipt": broker_receipt,
+                    **({"confinement_evidence": confinement_evidence} if confinement_evidence else {}),
+                    "observation": _tool_observation(
+                        intent="workspace.replace_in_file",
+                        tool_surface="windows_workspace_broker",
+                        ok=False,
+                        status="verification_failed",
+                        path=relative_path,
+                        **({"confinement_evidence": confinement_evidence} if confinement_evidence else {}),
+                    ),
+                },
+            )
+    elif reviewed_destination is not None:
         # A reviewed destination is written inside its pinned parent directory, with its reviewed bytes
         # re-read there just before the rename (`pinned_atomic_write_text`).
         from core.execution.artifacts import DestinationChangedError, ReviewedBaseChangedError, pinned_atomic_write_text
@@ -6491,8 +6708,8 @@ def _replace_in_file(
             )
     else:
         atomic_write_text(target, updated)
-    force_fresh_source_timestamp(target, minimum_mtime_ns=previous_mtime_ns)
-    after_hash = content_sha256(updated)
+    if not _windows_workspace_broker_required(source_context):
+        force_fresh_source_timestamp(target, minimum_mtime_ns=previous_mtime_ns)
     try:
         after_mode = target.stat().st_mode & 0o7777
     except OSError:
@@ -6540,6 +6757,8 @@ def _replace_in_file(
             "before_mode": previous_mode,
             "after_mode": after_mode,
             "artifacts": [diff_artifact],
+            **({"broker_receipt": broker_receipt} if broker_receipt is not None else {}),
+            **({"confinement_evidence": confinement_evidence} if broker_receipt is not None and confinement_evidence else {}),
             "mutation_record": {
                 "mutation_id": str(mutation_record.get("mutation_id") or "").strip(),
                 "session_key": str(mutation_record.get("session_key") or "").strip(),
@@ -6556,6 +6775,7 @@ def _replace_in_file(
                 before_mode=previous_mode,
                 after_mode=after_mode,
                 diff_preview=str(diff_artifact.get("diff_preview") or ""),
+                **({"confinement_evidence": confinement_evidence} if broker_receipt is not None and confinement_evidence else {}),
             ),
         },
     )

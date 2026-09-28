@@ -150,13 +150,11 @@ def test_allow_the_whole_planned_batch_runs_all_seven_on_one_grant(tmp_path) -> 
     # Spent, not standing: the eighth write of the same shape asks.
     again = {"intent": "workspace.write_file", "arguments": {"path": "src/mod_8.py", "content": "# 8\n"}}
     assert _decide(again, resumed).effect is PermissionEffect.REQUIRE_APPROVAL
-    # A REPLAY of an approved-and-executed member is covered by the prior grant (an
-    # unchanged action the operator already reviewed must not prompt a second time -- the
-    # repeated-approval defect this lane repairs), while the new write above still asks.
-    # Coverage is idempotent over the exact call, never spent by the replay itself.
-    assert _decide(WRITES[2], resumed).effect is PermissionEffect.ALLOW
+    # A replay of an approved-and-executed member is not covered by the consumed grant. The
+    # exact workspace effect is one-shot, so a second mutation requires a fresh approval.
+    assert _decide(WRITES[2], resumed).effect is PermissionEffect.REQUIRE_APPROVAL
     for _ in range(3):
-        assert _decide(WRITES[2], resumed).effect is PermissionEffect.ALLOW
+        assert _decide(WRITES[2], resumed).effect is PermissionEffect.REQUIRE_APPROVAL
 
 
 def test_the_batch_grant_covers_writes_only_and_never_the_riskier_calls_in_the_same_reply(tmp_path) -> None:

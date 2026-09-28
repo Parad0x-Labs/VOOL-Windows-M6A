@@ -1846,6 +1846,11 @@ class ResearchToolLoopFacadeMixin:
                 approval_requirement=execution_details.get("approval_requirement"),
                 approval_state=execution_details.get("approval_state"),
                 approved_by=execution_details.get("approved_by"),
+                **(
+                    {"broker_receipt": execution_details.get("broker_receipt")}
+                    if isinstance(execution_details.get("broker_receipt"), dict)
+                    else {}
+                ),
             )
             loop_source_context = self._append_tool_result_to_source_context(
                 loop_source_context,
@@ -1934,6 +1939,11 @@ class ResearchToolLoopFacadeMixin:
                     ok=bool(member_execution.ok),
                     tool_args=summarize_tool_arguments(member_payload.get("arguments")),
                     arguments=redact_tool_argument_data(member_payload.get("arguments")),
+                    **(
+                        {"broker_receipt": dict(member_execution.details or {}).get("broker_receipt")}
+                        if isinstance(dict(member_execution.details or {}).get("broker_receipt"), dict)
+                        else {}
+                    ),
                 )
                 loop_source_context = self._append_tool_result_to_source_context(
                     loop_source_context,

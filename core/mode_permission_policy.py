@@ -2268,6 +2268,11 @@ _WRITE_CONTENT_ARG_KEYS: dict[str, tuple[str, ...]] = {
     "workspace.apply_unified_diff": ("patch",),
 }
 
+_WORKSPACE_WRITE_INTENTS = frozenset({
+    "workspace.write_file",
+    "workspace.replace_in_file",
+})
+
 
 def _write_content_signature(intent: str, arguments: dict[str, Any]) -> str:
     """Hash of the fields that determine what a write-type call actually puts on disk."""
@@ -2277,6 +2282,68 @@ def _write_content_signature(intent: str, arguments: dict[str, Any]) -> str:
     payload = {key: arguments.get(key) for key in keys} if keys is not None else dict(arguments)
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _workspace_write_content_sha256(intent: str, arguments: dict[str, Any], *, targets: list[str]) -> str:
+    """Hash the exact UTF-8 bytes the native workspace broker will install.
+
+    The general permission fingerprint intentionally hashes logical write arguments. The bounded
+    native effect additionally needs the byte-level hash that its worker verifies. Replacement
+    content is reconstructed from the current file using the same bounded semantics as the
+    runtime writer; ambiguity or an unreadable target fails closed by returning no usable hash.
+    """
+    normalized_intent = str(intent or "").strip().lower()
+    if normalized_intent not in _WORKSPACE_WRITE_INTENTS or len(targets) != 1:
+        return ""
+    try:
+        target = Path(targets[0])
+        if normalized_intent == "workspace.write_file":
+            content = str(arguments.get("content") or "")
+        else:
+            if not target.is_file() or target.is_symlink():
+                return ""
+            content = target.read_text(encoding="utf-8", errors="replace")
+            old_text = str(arguments.get("old_text") or "")
+            new_text = str(arguments.get("new_text") or "")
+            if not old_text:
+                return ""
+            occurrences = content.count(old_text)
+            replace_all = bool(arguments.get("replace_all", False))
+            if occurrences <= 0 or (occurrences > 1 and not replace_all):
+                return ""
+            content = content.replace(old_text, new_text) if replace_all else content.replace(old_text, new_text, 1)
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
+    except (OSError, UnicodeError, RuntimeError, ValueError):
+        return ""
+
+
+def _workspace_write_prior_signature(
+    arguments: dict[str, Any],
+    *,
+    targets: list[str],
+) -> dict[str, str]:
+    """Capture the exact prior state a workspace-file approval is allowed to replace.
+
+    This is deliberately read-only. It does not create the target or its parent, and an
+    unreadable/non-file target is represented as unverifiable so the later writer/broker can fail
+    closed rather than treating it as an absent file.
+    """
+    if len(targets) != 1:
+        return {"prior_state": "unverifiable", "prior_sha256": ""}
+    target = Path(targets[0])
+    try:
+        if target.exists():
+            if not target.is_file() or target.is_symlink():
+                return {"prior_state": "unverifiable", "prior_sha256": ""}
+            return {
+                "prior_state": "file",
+                "prior_sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+            }
+        if target.is_symlink() or target.parent is None:
+            return {"prior_state": "unverifiable", "prior_sha256": ""}
+        return {"prior_state": "absent", "prior_sha256": ""}
+    except (OSError, RuntimeError, ValueError):
+        return {"prior_state": "unverifiable", "prior_sha256": ""}
 
 
 def _resolved_action_identity(
@@ -2309,6 +2376,20 @@ def _resolved_action_identity(
     write_only = bool(actions) and set(actions) <= _WRITE_ACTIONS
     if write_only and targets:
         identity["content_hash"] = _write_content_signature(intent, arguments)
+        normalized_intent = str(intent or "").strip().lower()
+        if normalized_intent in _WORKSPACE_WRITE_INTENTS:
+            identity["workspace_root"] = str(Path(_trusted_write_root(source_context)).resolve())
+            identity["content_sha256"] = _workspace_write_content_sha256(
+                normalized_intent,
+                arguments,
+                targets=targets,
+            )
+            identity.update(
+                _workspace_write_prior_signature(
+                    arguments,
+                    targets=targets,
+                )
+            )
     else:
         identity["arguments"] = arguments
     return identity
@@ -2751,54 +2832,6 @@ def _edit_preview(intent: str, arguments: dict[str, Any], source_context: dict[s
     return preview if len(preview) <= 6000 else preview[:5999] + "…"
 
 
-def _prior_allow_covers_locked(
-    fingerprint: str,
-    *,
-    session_id: str,
-    task_id: str,
-) -> bool:
-    """Whether THIS exact call was already granted by the operator in this task -- even
-    after its token was consumed. CALLER MUST HOLD ``_LOCK``.
-
-    The resume loop re-plans the whole turn after every approval pause, so a write the
-    operator already reviewed and approved can be re-emitted byte-identically. Asking
-    again for an action already covered is the repeated-prompt defect this closes: the
-    operator answered this exact question; the answer stands for its exact call.
-
-    Narrow by construction:
-    * same ``session_id`` AND same ``task_id`` (the logical client turn id, stable across
-      the pause and resume) -- never another chat's or turn's grant;
-    * an ALLOW lineage only: ``approved`` or ``consumed`` (consumed implies it was
-      approved, then spent). A ``denied`` or ``expired`` entry never covers anything;
-    * the EXACT fingerprint -- and, only when the operator resolved the ask with the
-      REQUEST scope ("allow all planned changes"), membership in that granted batch. A
-      ``once`` resolution of a batch-offered ask deliberately refused the wider set, so
-      its recorded ``batch_fingerprints`` cover nothing beyond the head's own exact call;
-    * unexpired. Nothing is spent here: a consumed grant's re-emission is idempotent
-      coverage of the one call it already authorized.
-    """
-
-    now = time.time()
-    for approval in _APPROVALS.values():
-        if str(approval.get("session_id") or "") != session_id:
-            continue
-        if str(approval.get("task_id") or "") != task_id:
-            continue
-        if str(approval.get("status") or "") not in {"approved", "consumed"}:
-            continue
-        if float(approval.get("expires_at") or 0) <= now:
-            continue
-        if str(approval.get("fingerprint") or "") == fingerprint:
-            return True
-        if str(approval.get("scope") or "") == "request":
-            batch = tuple(approval.get("batch_fingerprints") or ()) + tuple(
-                approval.get("remaining_batch") or ()
-            )
-            if fingerprint in batch:
-                return True
-    return False
-
-
 def _consume_matching_approval(
     source_context: dict[str, Any],
     *,
@@ -2808,18 +2841,16 @@ def _consume_matching_approval(
 ) -> bool:
     token = str(source_context.get("mode_approval_token") or "").strip()
     if not token:
-        # No live token in hand, but the operator may already have granted this EXACT call
-        # in this task (its token was consumed when the approved action ran). A resumed
-        # turn re-emitting the identical call rides that prior grant instead of asking a
-        # second time for the same reviewed bytes.
-        _ensure_approvals_restored()
-        with _LOCK:
-            return _prior_allow_covers_locked(fingerprint, session_id=session_id, task_id=task_id)
+        # One-time approvals are explicit bearer capabilities. A caller that omits the live
+        # token has not presented authority for this effect, even if an earlier approval in the
+        # same task happened to match. This prevents a consumed approval from silently authorizing
+        # a second mutation during a re-plan.
+        return False
     _ensure_approvals_restored()
     with _LOCK:
         approval = _APPROVALS.get(token)
         if not approval:
-            return _prior_allow_covers_locked(fingerprint, session_id=session_id, task_id=task_id)
+            return False
         bound = bool(
             approval.get("status") == "approved"
             and approval.get("session_id") == session_id
@@ -2827,10 +2858,9 @@ def _consume_matching_approval(
             and float(approval.get("expires_at") or 0) > time.time()
         )
         if not bound:
-            # The token in hand does not cover THIS call (it was spent, or was for a
-            # different action) -- but an earlier grant in this task may. The re-emitted
-            # identical call must not re-prompt.
-            return _prior_allow_covers_locked(fingerprint, session_id=session_id, task_id=task_id)
+            # A spent, expired, denied, or differently bound token never falls back to an
+            # earlier approval lineage. The caller must obtain a fresh approval for a new effect.
+            return False
         # A request-scope grant covers the CONCRETE set of writes the operator saw listed, each one
         # exactly once. It is not a wider permission than a once grant, only a longer one: the same
         # exact-call fingerprints, spent one at a time, and the token is consumed when the last of
@@ -2868,14 +2898,12 @@ def _matching_approval_covers(
     """
     token = str(source_context.get("mode_approval_token") or "").strip()
     if not token:
-        _ensure_approvals_restored()
-        with _LOCK:
-            return _prior_allow_covers_locked(fingerprint, session_id=session_id, task_id=task_id)
+        return False
     _ensure_approvals_restored()
     with _LOCK:
         approval = _APPROVALS.get(token)
         if not approval:
-            return _prior_allow_covers_locked(fingerprint, session_id=session_id, task_id=task_id)
+            return False
         bound = bool(
             approval.get("status") == "approved"
             and approval.get("session_id") == session_id
@@ -2883,7 +2911,7 @@ def _matching_approval_covers(
             and float(approval.get("expires_at") or 0) > time.time()
         )
         if not bound:
-            return _prior_allow_covers_locked(fingerprint, session_id=session_id, task_id=task_id)
+            return False
         if approval.get("scope") == "request":
             return fingerprint in [str(item) for item in list(approval.get("remaining_batch") or [])]
         return approval.get("fingerprint") == fingerprint
@@ -3075,6 +3103,7 @@ def _new_approval_request(
     mode_revision: int,
     source_context: dict[str, Any],
     fingerprint: str,
+    resolved_identity: dict[str, Any] | None = None,
     project_scope_eligible: bool = False,
     project_id: str = "",
     batch_fingerprints: tuple[str, ...] = (),
@@ -3082,7 +3111,10 @@ def _new_approval_request(
     excluded_actions: tuple[dict[str, str], ...] = (),
 ) -> dict[str, Any]:
     token = secrets.token_urlsafe(32)
+    issued_at = time.time()
+    expires_at = issued_at + 86400
     edit_batch = any(action in _WRITE_ACTIONS for action in actions)
+    normalized_intent = str(intent or "").strip().lower()
     scope_options = ["once"] if edit_batch else ["once", "task"]
     # One bounded batch approval for the writes this request has ALREADY planned. Offered only when
     # the controller could enumerate them, so the operator is choosing a listed set of files, never
@@ -3112,7 +3144,8 @@ def _new_approval_request(
         "one_time": True,
         "edit_batch": edit_batch,
         "diff_preview": _edit_preview(display_intent, display_arguments, display_context) if edit_batch else "",
-        "expires_at": time.time() + 86400,
+        "issued_at": issued_at,
+        "expires_at": expires_at,
         # What the "allow all planned changes" button would actually cover, named file by file, so
         # the operator approves a visible list rather than a count.
         "planned_actions": [dict(item) for item in planned_actions],
@@ -3125,10 +3158,27 @@ def _new_approval_request(
         # browser never has to classify anything to phrase the grant it is offering.
         "planned_action_label": _planned_batch_label(planned_actions),
     }
+    if normalized_intent in _WORKSPACE_WRITE_INTENTS:
+        identity = dict(resolved_identity or {})
+        request["effect"] = "workspace_write_v1"
+        request["proposal_id"] = token
+        request["operation_id"] = token
+        request["effect_binding"] = {
+            "tool": normalized_intent,
+            "operation_id": token,
+            "workspace_root": str(identity.get("workspace_root") or ""),
+            "target": str((identity.get("targets") or [""])[0]),
+            "prior_state": str(identity.get("prior_state") or ""),
+            "prior_sha256": str(identity.get("prior_sha256") or ""),
+            "content_sha256": str(identity.get("content_sha256") or ""),
+            "issued_at": issued_at,
+            "expires_at": expires_at,
+        }
     with _LOCK:
         _APPROVALS[token] = {
             **request,
             "fingerprint": fingerprint,
+            "effect_binding": dict(request.get("effect_binding") or {}),
             "session_id": session_id,
             "mode": mode.value,
             "mode_revision": mode_revision,
@@ -3407,6 +3457,7 @@ def _decide_tool_call(
             mode_revision=revision,
             source_context=context,
             fingerprint=fingerprint,
+            resolved_identity=identity,
             project_scope_eligible=project_eligible,
             project_id=grant_project_id,
             batch_fingerprints=batch_fingerprints,

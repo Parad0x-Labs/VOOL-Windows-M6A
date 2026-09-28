@@ -21,6 +21,8 @@ internal static class Program
                 "probe" => Probe.Run(args[1..]),
                 "run" => RunBroker(args[1..]),
                 "plugin" => RunPlugin(),
+                "workspace" => RunWorkspace(),
+                "workspace-write-worker" => RunWorkspaceWorker(),
                 _ => throw new ArgumentException($"Unknown command: {args[0]}"),
             };
         }
@@ -117,6 +119,65 @@ internal static class Program
         }
     }
 
+    private static int RunWorkspace()
+    {
+        try
+        {
+            var requestText = Console.In.ReadToEnd();
+            var request = JsonSerializer.Deserialize<WorkspaceWriteRequest>(requestText, JsonOptions)
+                ?? throw new BrokerSecurityException("The workspace write request was empty.");
+            var result = new WindowsExecutionBroker()
+                .ExecuteWorkspaceWriteAsync(request)
+                .GetAwaiter()
+                .GetResult();
+            Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+            return result.Ok ? 0 : 1;
+        }
+        catch (Exception exception)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new
+            {
+                ok = false,
+                status = "confinement_unavailable",
+                error = exception.Message,
+            }, JsonOptions));
+            return 1;
+        }
+    }
+
+    private static int RunWorkspaceWorker()
+    {
+        try
+        {
+            if (!string.Equals(
+                    Environment.GetEnvironmentVariable("VOOL_WORKSPACE_WRITE_WORKER"),
+                    "1",
+                    StringComparison.Ordinal))
+            {
+                throw new BrokerSecurityException("Workspace write worker mode is broker-only.");
+            }
+            var requestText = Console.In.ReadToEnd();
+            var request = JsonSerializer.Deserialize<WorkspaceWriteRequest>(requestText, JsonOptions)
+                ?? throw new BrokerSecurityException("The workspace write worker request was empty.");
+            var result = WorkspaceWriteBroker.RunWorker(request);
+            Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
+            return result.Ok ? 0 : 1;
+        }
+        catch (Exception exception)
+        {
+            Console.WriteLine(JsonSerializer.Serialize(new WorkspaceWriteWorkerResult(
+                false,
+                "refused",
+                "",
+                "",
+                "",
+                0,
+                false,
+                exception.Message), JsonOptions));
+            return 1;
+        }
+    }
+
     private static string ReadValue(IReadOnlyList<string> args, ref int index, string option)
     {
         if (++index >= args.Count)
@@ -130,6 +191,7 @@ internal static class Program
         Console.Error.WriteLine("vool-broker probe [--inspect|--write-scratch NAME|--file PATH|--write-file PATH|--socket HOST PORT|--spawn-child-sleeper MS]");
         Console.Error.WriteLine("vool-broker run --exe PATH [--arg VALUE ...] [--timeout-ms N]");
         Console.Error.WriteLine("vool-broker plugin < JSON request on stdin");
+        Console.Error.WriteLine("vool-broker workspace < JSON request on stdin");
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()

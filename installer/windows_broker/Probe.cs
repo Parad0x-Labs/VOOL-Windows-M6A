@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Net.Sockets;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 
@@ -15,6 +17,8 @@ internal static class Probe
             ["probe"] = true,
         };
         var returnCode = 0;
+        var authorityResults = new List<Dictionary<string, object?>>();
+        TokenSecuritySnapshot? tokenSecurity = null;
 
         try
         {
@@ -28,7 +32,8 @@ internal static class Probe
 
             using var token = OpenCurrentToken();
             result["inJob"] = inJob;
-            result["token"] = TokenInspector.Inspect(token);
+            tokenSecurity = TokenInspector.Inspect(token);
+            result["token"] = tokenSecurity;
         }
         catch (Exception exception)
         {
@@ -36,6 +41,8 @@ internal static class Probe
             returnCode = 2;
         }
 
+        var authorityToken = tokenSecurity
+            ?? throw new BrokerSecurityException("Probe token inspection did not complete.");
         for (var index = 0; index < arguments.Count; index++)
         {
             switch (arguments[index])
@@ -139,13 +146,196 @@ internal static class Probe
                     result["echoValue"] = ReadValue(arguments, ref index, "--echo-value");
                     break;
 
+                case "--workspace-authority-read":
+                    RequireAuthorityProbeToken(authorityToken);
+                    RunAuthorityOperation(arguments, ref index, "read", authorityResults, authorityToken.AppContainerSid);
+                    break;
+
+                case "--workspace-authority-overwrite":
+                    RequireAuthorityProbeToken(authorityToken);
+                    RunAuthorityOperation(arguments, ref index, "overwrite", authorityResults, authorityToken.AppContainerSid);
+                    break;
+
+                case "--workspace-authority-append":
+                    RequireAuthorityProbeToken(authorityToken);
+                    RunAuthorityOperation(arguments, ref index, "append", authorityResults, authorityToken.AppContainerSid);
+                    break;
+
+                case "--workspace-authority-delete":
+                    RequireAuthorityProbeToken(authorityToken);
+                    RunAuthorityOperation(arguments, ref index, "delete", authorityResults, authorityToken.AppContainerSid);
+                    break;
+
+                case "--workspace-authority-rename":
+                    RequireAuthorityProbeToken(authorityToken);
+                    RunAuthorityOperation(arguments, ref index, "rename", authorityResults, authorityToken.AppContainerSid, requiresSecondaryPath: true);
+                    break;
+
+                case "--workspace-authority-replace":
+                    RequireAuthorityProbeToken(authorityToken);
+                    RunAuthorityOperation(arguments, ref index, "replace", authorityResults, authorityToken.AppContainerSid, requiresSecondaryPath: true);
+                    break;
+
+                case "--workspace-authority-truncate":
+                    RequireAuthorityProbeToken(authorityToken);
+                    RunAuthorityOperation(arguments, ref index, "truncate", authorityResults, authorityToken.AppContainerSid);
+                    break;
+
+                case "--workspace-authority-attributes":
+                    RequireAuthorityProbeToken(authorityToken);
+                    RunAuthorityOperation(arguments, ref index, "attributes", authorityResults, authorityToken.AppContainerSid);
+                    break;
+
+                case "--workspace-authority-security":
+                    RequireAuthorityProbeToken(authorityToken);
+                    RunAuthorityOperation(arguments, ref index, "security", authorityResults, authorityToken.AppContainerSid);
+                    break;
+
                 default:
                     throw new ArgumentException($"Unknown probe argument: {arguments[index]}");
             }
         }
 
+        if (authorityResults.Count != 0)
+            result["workspaceAuthority"] = authorityResults;
         Console.WriteLine(JsonSerializer.Serialize(result, JsonOptions));
         return returnCode;
+    }
+
+    private static void RequireAuthorityProbeToken(TokenSecuritySnapshot snapshot)
+    {
+        if (!string.Equals(
+                Environment.GetEnvironmentVariable("VOOL_WORKSPACE_AUTHORITY_PROBE"),
+                "1",
+                StringComparison.Ordinal)
+            || !snapshot.IsAppContainer
+            || !snapshot.HasRestrictions
+            || snapshot.Capabilities.Count != 0
+            || snapshot.IntegrityLevelRid > NativeMethods.SecurityMandatoryLowRid
+            || string.IsNullOrWhiteSpace(snapshot.AppContainerSid))
+        {
+            throw new BrokerSecurityException(
+                "Workspace authority probes require the broker-created restricted AppContainer token.");
+        }
+    }
+
+    private static void RunAuthorityOperation(
+        IReadOnlyList<string> arguments,
+        ref int index,
+        string operation,
+        ICollection<Dictionary<string, object?>> results,
+        string appContainerSid,
+        bool requiresSecondaryPath = false)
+    {
+        var targetPath = ReadValue(arguments, ref index, $"--workspace-authority-{operation} target");
+        var secondaryPath = requiresSecondaryPath
+            ? ReadValue(arguments, ref index, $"--workspace-authority-{operation} secondary target")
+            : null;
+        results.Add(ExecuteAuthorityOperation(operation, targetPath, secondaryPath, appContainerSid));
+    }
+
+    private static Dictionary<string, object?> ExecuteAuthorityOperation(
+        string operation,
+        string targetPath,
+        string? secondaryPath,
+        string appContainerSid)
+    {
+        var result = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["operation"] = operation,
+            ["target"] = targetPath,
+            ["secondary"] = secondaryPath,
+        };
+        try
+        {
+            switch (operation)
+            {
+                case "read":
+                    _ = File.ReadAllBytes(targetPath);
+                    break;
+                case "overwrite":
+                    using (var stream = new FileStream(
+                               targetPath,
+                               FileMode.Open,
+                               FileAccess.Write,
+                               FileShare.ReadWrite | FileShare.Delete))
+                    {
+                        stream.Position = 0;
+                        stream.WriteByte(0x58);
+                        stream.Flush(flushToDisk: true);
+                    }
+                    break;
+                case "append":
+                    using (var stream = new FileStream(
+                               targetPath,
+                               FileMode.Open,
+                               FileAccess.Write,
+                               FileShare.ReadWrite | FileShare.Delete))
+                    {
+                        stream.Seek(0, SeekOrigin.End);
+                        stream.WriteByte(0x41);
+                        stream.Flush(flushToDisk: true);
+                    }
+                    break;
+                case "delete":
+                    File.Delete(targetPath);
+                    if (File.Exists(targetPath))
+                        throw new IOException("Delete returned without removing the target.");
+                    break;
+                case "rename":
+                    File.Move(targetPath, secondaryPath!, overwrite: true);
+                    break;
+                case "replace":
+                    File.Replace(targetPath, secondaryPath!, destinationBackupFileName: null, ignoreMetadataErrors: true);
+                    break;
+                case "truncate":
+                    using (var stream = new FileStream(
+                               targetPath,
+                               FileMode.Open,
+                               FileAccess.Write,
+                               FileShare.ReadWrite | FileShare.Delete))
+                    {
+                        stream.SetLength(0);
+                        stream.Flush(flushToDisk: true);
+                    }
+                    break;
+                case "attributes":
+                    File.SetAttributes(targetPath, File.GetAttributes(targetPath) | FileAttributes.Hidden);
+                    break;
+                case "security":
+                    var fileInfo = new FileInfo(targetPath);
+                    var security = fileInfo.GetAccessControl(AccessControlSections.Access);
+                    security.AddAccessRule(new FileSystemAccessRule(
+                        new SecurityIdentifier(appContainerSid),
+                        FileSystemRights.Read,
+                        InheritanceFlags.None,
+                        PropagationFlags.None,
+                        AccessControlType.Allow));
+                    fileInfo.SetAccessControl(security);
+                    break;
+                default:
+                    throw new ArgumentException($"Unknown authority operation: {operation}");
+            }
+
+            result["outcome"] = "allowed";
+        }
+        catch (Exception exception) when (
+            exception is UnauthorizedAccessException
+            or IOException
+            or System.Security.SecurityException)
+        {
+            result["outcome"] = "denied";
+            result["error"] = exception.GetType().Name;
+            result["message"] = exception.Message;
+        }
+        catch (Exception exception)
+        {
+            result["outcome"] = "error";
+            result["error"] = exception.GetType().Name;
+            result["message"] = exception.Message;
+        }
+
+        return result;
     }
 
     private static SafeNativeHandle OpenCurrentToken()

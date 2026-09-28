@@ -140,6 +140,13 @@ public sealed class WindowsExecutionBroker
             evidence);
     }
 
+    public Task<WorkspaceWriteExecutionResult> ExecuteWorkspaceWriteAsync(
+        WorkspaceWriteRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        return WorkspaceWriteBroker.ExecuteAsync(request, cancellationToken);
+    }
+
     private static void EnsureSupported()
     {
         var support = GetSupportReport();

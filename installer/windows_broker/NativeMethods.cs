@@ -36,6 +36,9 @@ internal static class NativeMethods
     internal const uint HandleFlagInherit = 0x00000001;
 
     internal const uint GenericRead = 0x80000000;
+    internal const uint GenericWrite = 0x40000000;
+    internal const uint ReadControl = 0x00020000;
+    internal const uint WriteDac = 0x00040000;
     internal const uint FileShareRead = 0x00000001;
     internal const uint FileShareWrite = 0x00000002;
     internal const uint FileShareDelete = 0x00000004;
@@ -44,6 +47,7 @@ internal static class NativeMethods
     internal const uint FileTypeDisk = 1;
     internal const uint DriveTypeFixed = 3;
     internal const uint DriveTypeRemote = 4;
+    internal const int FileIdInfoClass = 18;
 
     internal const uint WaitObject0 = 0;
     internal const uint WaitTimeout = 0x00000102;
@@ -195,6 +199,15 @@ internal static class NativeMethods
         internal uint TotalTerminatedProcesses;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct FileIdInfo
+    {
+        internal ulong VolumeSerialNumber;
+
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 16)]
+        internal byte[] FileId;
+    }
+
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool CloseHandle(IntPtr handle);
@@ -209,6 +222,16 @@ internal static class NativeMethods
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     internal static extern IntPtr CreateFileW(
+        string fileName,
+        uint desiredAccess,
+        uint shareMode,
+        IntPtr securityAttributes,
+        uint creationDisposition,
+        uint flagsAndAttributes,
+        IntPtr templateFile);
+
+    [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern SafeFileHandle CreateFileForSecurityW(
         string fileName,
         uint desiredAccess,
         uint shareMode,
@@ -440,6 +463,14 @@ internal static class NativeMethods
 
     [DllImport("kernel32.dll", SetLastError = true)]
     internal static extern uint GetFileType(IntPtr fileHandle);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetFileInformationByHandleEx(
+        SafeFileHandle fileHandle,
+        int fileInformationClass,
+        out FileIdInfo fileInformation,
+        uint bufferSize);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     internal static extern uint GetFinalPathNameByHandleW(

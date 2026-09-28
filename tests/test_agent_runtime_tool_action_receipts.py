@@ -340,3 +340,211 @@ def test_existing_tool_receipt_ledger_redacts_all_persisted_fields(
     finally:
         reset_runtime_event_state()
         configure_runtime_event_store(None)
+
+
+def _workspace_broker_receipt(*, ok: bool = True) -> dict[str, Any]:
+    return {
+        "ok": ok,
+        "status": "executed" if ok else "security_cleanup_failed",
+        "final_sha256": "f" * 64,
+        "atomic_installed": ok,
+        "environment": {"UNPERSISTED_TEST_TOKEN": "not-for-receipts"},
+        "confinement": {
+            "platform": "windows",
+            "broker_type": "appcontainer_job_object",
+            "effect": "workspace_write_v1",
+            "tool": "workspace.write_file",
+            "operation_id": "operation-receipt-test",
+            "relative_target": "approved.txt",
+            "target_path": "C:/machine-local-workspace/approved.txt",
+            "workspace_root": "C:/machine-local-workspace",
+            "prior_state": "file",
+            "prior_sha256": "e" * 64,
+            "content_sha256": "f" * 64,
+            "content_length": 7,
+            "appcontainer_name": "Vool.Broker.v1.test",
+            "appcontainer_sid": "S-1-15-2-TEST",
+            "process_id": 4321,
+            "job_owned": True,
+            "executable_path": "C:/machine-local-broker/vool-broker.exe",
+            "executable_sha256": "a" * 64,
+            "argv": ["workspace-write-worker"],
+            "filesystem_grants": [
+                {
+                    "path": "C:/machine-local-staging",
+                    "access": "allow",
+                    "rights": 2032127,
+                    "inheritance": "ContainerInherit,ObjectInherit",
+                    "propagation": "None",
+                }
+            ],
+            "network_policy": "none",
+            "timeout_ms": 30000,
+            "result": "executed" if ok else "security_cleanup_failed",
+            "verified": ok,
+            "exit_code": 0 if ok else 1,
+            "timed_out": False,
+            "token": {
+                "IsAppContainer": True,
+                "HasRestrictions": True,
+                "IntegrityLevelRid": 4096,
+                "IntegrityLevel": "low",
+                "UserSid": "S-1-5-21-not-persisted",
+                "AppContainerSid": "S-1-15-2-TEST",
+                "RestrictedSidCount": 1,
+                "Capabilities": [],
+            },
+            "job": {
+                "LimitFlags": 1,
+                "ActiveProcessLimit": 16,
+                "ProcessMemoryLimitBytes": 268435456,
+                "JobMemoryLimitBytes": 536870912,
+                "PerProcessUserTimeLimit100Ns": 300000000,
+                "CpuControlFlags": 1,
+                "CpuRate": 5000,
+            },
+        },
+    }
+
+
+def _emit_workspace_broker_event(*, raw_receipt: dict[str, Any], event_type: str = "tool_executed") -> dict[str, Any]:
+    record = orchestrator.emit_runtime_event(
+        _RuntimeAgent(),
+        {
+            "runtime_session_id": "runtime-workspace-receipt",
+            "chat_id": "chat-workspace-receipt",
+            "project_id": "project-workspace-receipt",
+            "turn_id": "turn-workspace-receipt",
+        },
+        event_type=event_type,
+        message="Workspace write completed.",
+        emit_runtime_event_fn=emit_runtime_event,
+        tool_name="workspace.write_file",
+        status="executed" if event_type == "tool_executed" else "security_cleanup_failed",
+        mode=event_type,
+        ok=event_type == "tool_executed" and bool(raw_receipt.get("ok")),
+        summary="Workspace write completed.",
+        arguments={"path": "approved.txt", "content": "updated"},
+        broker_receipt=raw_receipt,
+    )
+    assert record is not None
+    return record
+
+
+def test_workspace_broker_confinement_evidence_survives_durable_action_receipt() -> None:
+    raw = _workspace_broker_receipt()
+    record = _emit_workspace_broker_event(raw_receipt=raw)
+
+    assert record["result"] == {
+        "outcome": "succeeded",
+        "ok": True,
+        "status": "executed",
+        "mode": "tool_executed",
+        "summary": "Workspace write completed.",
+    }
+    evidence = record["confinement_evidence"]
+    assert evidence["schema"] == "vool.workspace_write_confinement_evidence_v1"
+    assert evidence["operation_id"] == "operation-receipt-test"
+    assert evidence["network_policy"] == "none"
+    assert evidence["token_security"]["is_app_container"] is True
+    assert evidence["token_security"]["capabilities"] == []
+    assert evidence["job_security"]["active_process_limit"] == 16
+    assert evidence["filesystem_grants"] == [
+        {
+            "access": "allow",
+            "rights": 2032127,
+            "inheritance": "ContainerInherit,ObjectInherit",
+            "propagation": "None",
+        }
+    ]
+    serialized = json.dumps(record, sort_keys=True)
+    assert "machine-local-workspace" not in serialized
+    assert "machine-local-staging" not in serialized
+    assert "UNPERSISTED_TEST_TOKEN" not in serialized
+    assert "not-for-receipts" not in serialized
+    expected_hash = orchestrator._stable_json_hash(
+        {key: value for key, value in record.items() if key != "occurred_at" and key != "record_hash"}
+    )
+    assert record["record_hash"] == expected_hash
+    durable = load_tool_receipt(record["receipt_id"])
+    assert durable is not None
+    assert durable["execution"]["action_record"] == record
+    event = list_runtime_session_events("runtime-workspace-receipt", after_seq=0, limit=10)[-1]
+    assert event["action_record"] == record
+
+
+def test_confinement_evidence_is_persisted_by_the_execution_receipt_without_raw_broker_data() -> None:
+    raw = _workspace_broker_receipt()
+    from core.windows_workspace_broker import project_workspace_write_confinement_evidence
+
+    store_tool_receipt(
+        receipt_key="workspace-confinement-receipt",
+        session_id="chat-workspace-receipt",
+        checkpoint_id="checkpoint-workspace-receipt",
+        tool_name="workspace.write_file",
+        idempotency_key="action-workspace-receipt",
+        arguments={"path": "approved.txt"},
+        execution={
+            "details": {
+                "broker_receipt": raw,
+                "confinement_evidence": project_workspace_write_confinement_evidence(raw),
+            }
+        },
+    )
+
+    loaded = load_tool_receipt("workspace-confinement-receipt")
+    assert loaded is not None
+    details = loaded["execution"]["details"]
+    assert details["confinement_evidence"]["schema"] == "vool.workspace_write_confinement_evidence_v1"
+    assert "broker_receipt" not in json.dumps(loaded, sort_keys=True)
+    assert "machine-local-staging" not in json.dumps(loaded, sort_keys=True)
+
+
+def test_confinement_evidence_is_covered_by_the_action_record_hash() -> None:
+    record = _emit_workspace_broker_event(raw_receipt=_workspace_broker_receipt())
+    tampered = json.loads(json.dumps(record))
+    tampered["confinement_evidence"]["network_policy"] = "network"
+    recomputed = orchestrator._stable_json_hash(
+        {key: value for key, value in tampered.items() if key != "occurred_at" and key != "record_hash"}
+    )
+    assert recomputed != record["record_hash"]
+
+
+def test_missing_confinement_evidence_cannot_be_recorded_as_success() -> None:
+    raw = _workspace_broker_receipt()
+    raw["confinement"] = {}
+    record = _emit_workspace_broker_event(raw_receipt=raw)
+
+    assert record["action_type"] == "tool_failed"
+    assert record["result"]["outcome"] == "failed"
+    assert record["result"]["ok"] is False
+    assert record["result"]["status"] == "confinement_evidence_missing"
+    assert record["failure"] == {"failed": True, "reason": "confinement_evidence_missing"}
+    assert "confinement_evidence" not in record
+
+
+def test_denied_and_failed_broker_operations_never_claim_success() -> None:
+    denied = orchestrator.build_tool_action_record(
+        {"chat_id": "chat-denied"},
+        event_type="tool_failed",
+        message="The native broker refused the operation.",
+        details={
+            "tool_name": "workspace.write_file",
+            "status": "permission_denied",
+            "mode": "tool_failed",
+            "ok": False,
+            "arguments": {"path": "approved.txt"},
+        },
+    )
+    failed = _emit_workspace_broker_event(
+        raw_receipt=_workspace_broker_receipt(ok=False),
+        event_type="tool_failed",
+    )
+
+    assert denied is not None
+    assert denied["result"]["outcome"] == "failed"
+    assert "confinement_evidence" not in denied
+    assert failed["action_type"] == "tool_failed"
+    assert failed["result"]["outcome"] == "failed"
+    assert failed["result"]["ok"] is False
+    assert failed["confinement_evidence"]["broker_ok"] is False

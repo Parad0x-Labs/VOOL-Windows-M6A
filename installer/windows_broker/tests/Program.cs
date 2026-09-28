@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
+using System.Text;
 using System.Text.Json;
 using Vool.WindowsBroker;
 
@@ -94,6 +95,10 @@ internal static class Program
                     VerifyDescendantTerminationAsync(brokerPath)),
                 ("Plugin broker removes process, ACL, scratch, and AppContainer residue", () =>
                     VerifyPluginResidueCleanupAsync()),
+                ("Workspace parent grant cannot mutate unrelated same-parent canaries", () =>
+                    VerifyWorkspaceAuthorityAsync(brokerPath)),
+                ("Workspace write broker enforces exact effect and cleans confinement", () =>
+                    VerifyWorkspaceWriteAsync(brokerPath)),
             };
             if (installedImagePath is not null)
             {
@@ -791,6 +796,557 @@ internal static class Program
         }
     }
 
+    private static async Task VerifyWorkspaceWriteAsync(string brokerPath)
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "vool-broker-workspace-write-harness",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var target = Path.Combine(root, "approved.txt");
+        var replaceTarget = Path.Combine(root, "replace.txt");
+        var createTarget = Path.Combine(root, "create.txt");
+        var maskTarget = Path.Combine(root, "mask.txt");
+        var disposableParent = Path.GetDirectoryName(root)
+            ?? throw new HarnessAssertionException("Workspace harness root has no parent.");
+        var outsideFile = Path.Combine(disposableParent, $"{Path.GetFileName(root)}-outside.txt");
+        var outsideDirectory = Path.Combine(disposableParent, $"{Path.GetFileName(root)}-outside-dir");
+        File.WriteAllText(target, "before\n", Encoding.UTF8);
+        File.WriteAllText(replaceTarget, "old\n", Encoding.UTF8);
+        var rootAcl = DirectoryAcl(root);
+        var targetAcl = FileAcl(target);
+        var replaceTargetAcl = FileAcl(replaceTarget);
+        try
+        {
+            var request = BuildWorkspaceWriteRequest(
+                root,
+                target,
+                "after\n",
+                approvalId: "workspace-approval-1",
+                proposalId: "workspace-proposal-1",
+                operationId: "workspace-operation-1",
+                runtimeId: "workspace-runtime-1");
+            var result = await WorkspaceWriteBroker.ExecuteAsync(
+                    request,
+                    workerExecutablePath: brokerPath)
+                .ConfigureAwait(false);
+            var evidence = result.Confinement
+                ?? throw new HarnessAssertionException("Workspace write returned no confinement evidence.");
+            Assert(result.Ok && result.Status == "executed", $"Workspace write failed: {result.Error}");
+            AssertEqual("after\n", File.ReadAllText(target, Encoding.UTF8), "Workspace write content");
+            AssertEqual(result.ContentSha256, result.FinalSha256, "Workspace write final hash");
+            AssertEqual("workspace_write_v1", evidence.Effect, "Workspace write effect");
+            AssertEqual("workspace.write_file", evidence.Tool, "Workspace write tool");
+            AssertEqual("consumed", evidence.ApprovalStatus, "Workspace approval status");
+            AssertEqual("none", evidence.NetworkPolicy, "Workspace network policy");
+            Assert(evidence.Verified, "Workspace write receipt did not record post-write verification.");
+            Assert(evidence.JobOwned, "Workspace worker was not owned by its Job Object.");
+            Assert(evidence.Token.IsAppContainer, "Workspace worker was not AppContainer-confined.");
+            Assert(evidence.Token.Capabilities.Count == 0, "Workspace worker unexpectedly had capabilities.");
+            Assert(ProcessHasExited(evidence.ProcessId), "Workspace worker survived broker return.");
+            AssertNoWorkspaceStagingResidue(root, "Workspace write");
+            var stagingGrants = evidence.FilesystemGrants
+                .Where(grant => grant.Rights == (int)WorkspaceWriteBroker.WorkspaceParentStagingRights
+                    && Path.GetDirectoryName(Path.GetFullPath(grant.Path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)) is { } parent
+                    && string.Equals(
+                        parent.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                        Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                        StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            AssertEqual(1, stagingGrants.Length, "Workspace staging grant count");
+            var stagingGrant = stagingGrants.Single();
+            AssertEqual(
+                (int)WorkspaceWriteBroker.WorkspaceParentStagingRights,
+                stagingGrant.Rights,
+                "Workspace staging access mask");
+            AssertEqual("ContainerInherit, ObjectInherit", stagingGrant.Inheritance,
+                "Workspace staging inheritance");
+            Assert(
+                evidence.FilesystemGrants.All(grant => !string.Equals(
+                    Path.GetFullPath(grant.Path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                    Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                    StringComparison.OrdinalIgnoreCase)),
+                "Workspace write retained an AppContainer grant on the target parent.");
+            AssertNoAppContainerAllowRule(target, evidence.AppContainerSid);
+            AssertEqual(targetAcl, FileAcl(target), "Workspace target ACL after success");
+            AssertEqual(rootAcl, DirectoryAcl(root), "Workspace target-parent ACL after success");
+            AssertAppContainerProfileDeleted(evidence.AppContainerName, "workspace success");
+
+            var cleanupFailureTarget = Path.Combine(root, "cleanup-failure.txt");
+            File.WriteAllText(cleanupFailureTarget, "cleanup-before\n", Encoding.UTF8);
+            var cleanupFailureAcl = FileAcl(cleanupFailureTarget);
+            var cleanupFailureRequest = BuildWorkspaceWriteRequest(
+                root,
+                cleanupFailureTarget,
+                "cleanup-after\n",
+                approvalId: "workspace-approval-cleanup-failure",
+                proposalId: "workspace-proposal-cleanup-failure",
+                operationId: "workspace-operation-cleanup-failure",
+                runtimeId: "workspace-runtime-1");
+            var cleanupFailure = await WorkspaceWriteBroker.ExecuteAsync(
+                    cleanupFailureRequest,
+                    workerExecutablePath: brokerPath,
+                    beforeTargetAclVerificationTestHook: () =>
+                        throw new BrokerSecurityException("injected cleanup verification failure"))
+                .ConfigureAwait(false);
+            var cleanupFailureEvidence = cleanupFailure.Confinement
+                ?? throw new HarnessAssertionException("Cleanup-failure case returned no confinement evidence.");
+            Assert(!cleanupFailure.Ok && cleanupFailure.Status == "security_cleanup_failed",
+                "A cleanup verification failure was reported as ordinary success.");
+            Assert(cleanupFailure.Error.Contains("Mutation occurred", StringComparison.OrdinalIgnoreCase),
+                "Cleanup-failure result did not distinguish mutation from remediation failure.");
+            AssertEqual("cleanup-after\n", File.ReadAllText(cleanupFailureTarget, Encoding.UTF8),
+                "Cleanup-failure target content");
+            AssertEqual(cleanupFailureAcl, FileAcl(cleanupFailureTarget),
+                "Cleanup-failure target ACL after remediation failure");
+            Assert(ProcessHasExited(cleanupFailureEvidence.ProcessId),
+                "Cleanup-failure worker survived broker return.");
+            AssertNoWorkspaceStagingResidue(root, "Cleanup-failure case");
+            AssertEqual(rootAcl, DirectoryAcl(root),
+                "Workspace target-parent ACL after cleanup-failure case");
+            AssertAppContainerProfileDeleted(cleanupFailureEvidence.AppContainerName, "workspace cleanup failure");
+
+            var createRequest = BuildWorkspaceWriteRequest(
+                root,
+                createTarget,
+                "created\n",
+                approvalId: "workspace-approval-create",
+                proposalId: "workspace-proposal-create",
+                operationId: "workspace-operation-create",
+                runtimeId: "workspace-runtime-1");
+            var created = await WorkspaceWriteBroker.ExecuteAsync(
+                    createRequest,
+                    workerExecutablePath: brokerPath)
+                .ConfigureAwait(false);
+            var createdEvidence = created.Confinement
+                ?? throw new HarnessAssertionException("Workspace create returned no confinement evidence.");
+            Assert(created.Ok && created.Status == "executed", $"Workspace create failed: {created.Error}");
+            AssertEqual("created\n", File.ReadAllText(createTarget, Encoding.UTF8), "Workspace create content");
+            AssertEqual(createRequest.ContentSha256, created.FinalSha256, "Workspace create final hash");
+            Assert(ProcessHasExited(createdEvidence.ProcessId), "Workspace create worker survived broker return.");
+            AssertNoAppContainerAllowRule(createTarget, createdEvidence.AppContainerSid);
+            AssertNoWorkspaceStagingResidue(root, "Workspace create");
+            AssertEqual(rootAcl, DirectoryAcl(root), "Workspace target-parent ACL after create");
+            AssertAppContainerProfileDeleted(createdEvidence.AppContainerName, "workspace create");
+
+            File.WriteAllText(maskTarget, "mask-before\n", Encoding.UTF8);
+            var maskAcl = FileAcl(maskTarget);
+            var missingReplacementRight = BuildWorkspaceWriteRequest(
+                root,
+                maskTarget,
+                "mask-after\n",
+                approvalId: "workspace-approval-mask",
+                proposalId: "workspace-proposal-mask",
+                operationId: "workspace-operation-mask",
+                runtimeId: "workspace-runtime-1");
+            var missingRightResult = await WorkspaceWriteBroker.ExecuteAsync(
+                    missingReplacementRight,
+                    workerExecutablePath: brokerPath,
+                    workspaceParentRightsOverride:
+                        FileSystemRights.ReadAndExecute)
+                .ConfigureAwait(false);
+            var missingRightEvidence = missingRightResult.Confinement
+                ?? throw new HarnessAssertionException("Missing access-mask case returned no confinement evidence.");
+            Assert(!missingRightResult.Ok && missingRightResult.Status == "refused",
+                "Workspace replacement silently broadened a missing parent access mask.");
+            AssertEqual("mask-before\n", File.ReadAllText(maskTarget, Encoding.UTF8),
+                "Missing access-mask target");
+            AssertEqual(maskAcl, FileAcl(maskTarget), "Missing access-mask target ACL");
+            Assert(ProcessHasExited(missingRightEvidence.ProcessId),
+                "Missing access-mask worker survived broker return.");
+            var missingRightStagingGrants = missingRightEvidence.FilesystemGrants
+                .Where(grant => grant.Rights == (int)FileSystemRights.ReadAndExecute
+                    && Path.GetDirectoryName(Path.GetFullPath(grant.Path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)) is { } parent
+                    && string.Equals(
+                        parent.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                        Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                        StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            AssertEqual(1, missingRightStagingGrants.Length, "Missing access-mask grant count");
+            AssertEqual(
+                (int)FileSystemRights.ReadAndExecute,
+                missingRightStagingGrants[0].Rights,
+                "Missing access-mask grant rights");
+            AssertEqual(rootAcl, DirectoryAcl(root), "Workspace target-parent ACL after missing access-mask case");
+            AssertAppContainerProfileDeleted(missingRightEvidence.AppContainerName, "missing access-mask case");
+
+            var beforeGrantIdentityTarget = Path.Combine(root, "identity-before-grant.txt");
+            File.WriteAllText(beforeGrantIdentityTarget, "before\n", Encoding.UTF8);
+            var beforeGrantIdentityAcl = FileAcl(beforeGrantIdentityTarget);
+            var beforeGrantIdentityRequest = BuildWorkspaceWriteRequest(
+                root,
+                beforeGrantIdentityTarget,
+                "after\n",
+                approvalId: "workspace-approval-identity-before",
+                proposalId: "workspace-proposal-identity-before",
+                operationId: "workspace-operation-identity-before",
+                runtimeId: "workspace-runtime-1");
+            Exception? beforeGrantIdentityFailure = null;
+            try
+            {
+                await WorkspaceWriteBroker.ExecuteAsync(
+                        beforeGrantIdentityRequest,
+                        workerExecutablePath: brokerPath,
+                        beforeParentGrantTestHook: () => ReplaceWithSameContent(beforeGrantIdentityTarget))
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                beforeGrantIdentityFailure = exception;
+            }
+            Assert(beforeGrantIdentityFailure is BrokerSecurityException,
+                "A target identity change before parent grant was not refused.");
+            AssertEqual("before\n", File.ReadAllText(beforeGrantIdentityTarget, Encoding.UTF8),
+                "Pre-grant identity-change target");
+            AssertEqual(beforeGrantIdentityAcl, FileAcl(beforeGrantIdentityTarget),
+                "Pre-grant identity-change target ACL");
+            AssertEqual(rootAcl, DirectoryAcl(root), "Parent ACL after pre-grant identity refusal");
+            AssertNoWorkspaceStagingResidue(root, "Pre-grant identity refusal");
+
+            var beforeReplacementIdentityTarget = Path.Combine(root, "identity-before-replacement.txt");
+            File.WriteAllText(beforeReplacementIdentityTarget, "before\n", Encoding.UTF8);
+            var beforeReplacementIdentityAcl = FileAcl(beforeReplacementIdentityTarget);
+            var beforeReplacementIdentityRequest = BuildWorkspaceWriteRequest(
+                root,
+                beforeReplacementIdentityTarget,
+                "after\n",
+                approvalId: "workspace-approval-identity-replacement",
+                proposalId: "workspace-proposal-identity-replacement",
+                operationId: "workspace-operation-identity-replacement",
+                runtimeId: "workspace-runtime-1");
+            Exception? beforeReplacementIdentityFailure = null;
+            try
+            {
+                await WorkspaceWriteBroker.ExecuteAsync(
+                        beforeReplacementIdentityRequest,
+                        workerExecutablePath: brokerPath,
+                        afterParentGrantTestHook: () => ReplaceWithSameContent(beforeReplacementIdentityTarget))
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                beforeReplacementIdentityFailure = exception;
+            }
+            Assert(beforeReplacementIdentityFailure is BrokerSecurityException,
+                "A target identity change before worker replacement was not refused.");
+            AssertEqual("before\n", File.ReadAllText(beforeReplacementIdentityTarget, Encoding.UTF8),
+                "Pre-replacement identity-change target");
+            AssertEqual(beforeReplacementIdentityAcl, FileAcl(beforeReplacementIdentityTarget),
+                "Pre-replacement identity-change target ACL");
+            AssertEqual(rootAcl, DirectoryAcl(root), "Parent ACL after pre-replacement identity refusal");
+            AssertNoWorkspaceStagingResidue(root, "Pre-replacement identity refusal");
+
+            var swappedContent = BuildWorkspaceWriteRequest(
+                root,
+                target,
+                "swapped\n",
+                approvalId: "workspace-approval-1",
+                proposalId: "workspace-proposal-1",
+                operationId: "workspace-operation-1",
+                runtimeId: "workspace-runtime-1",
+                approvedEffectIdentityOverride: request.ApprovedEffectIdentity);
+            await AssertWorkspaceRefusedAsync(swappedContent, brokerPath, "swapped content");
+
+            var sibling = Path.Combine(root, "sibling.txt");
+            var swappedTarget = BuildWorkspaceWriteRequest(
+                root,
+                sibling,
+                "sibling\n",
+                approvalId: "workspace-approval-1",
+                proposalId: "workspace-proposal-1",
+                operationId: "workspace-operation-1",
+                runtimeId: "workspace-runtime-1",
+                approvedEffectIdentityOverride: request.ApprovedEffectIdentity);
+            await AssertWorkspaceRefusedAsync(swappedTarget, brokerPath, "swapped target");
+
+            Exception? replay = null;
+            try
+            {
+                await WorkspaceWriteBroker.ExecuteAsync(request, workerExecutablePath: brokerPath)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                replay = exception;
+            }
+            Assert(replay is BrokerSecurityException, "The exact workspace write replay was not refused.");
+            AssertEqual("after\n", File.ReadAllText(target, Encoding.UTF8), "Workspace replay target");
+
+            var mustBeAbsent = Path.Combine(root, "must-be-absent.txt");
+            var absentRequest = BuildWorkspaceWriteRequest(
+                root,
+                mustBeAbsent,
+                "absent\n",
+                approvalId: "workspace-approval-absent",
+                proposalId: "workspace-proposal-absent",
+                operationId: "workspace-operation-absent",
+                runtimeId: "workspace-runtime-1");
+            File.WriteAllText(mustBeAbsent, "unexpected\n", Encoding.UTF8);
+            await AssertWorkspaceRefusedAsync(absentRequest, brokerPath, "unexpected target creation");
+            AssertEqual("unexpected\n", File.ReadAllText(mustBeAbsent, Encoding.UTF8), "Absent-target refusal");
+
+            var replacement = BuildWorkspaceWriteRequest(
+                root,
+                replaceTarget,
+                "new\n",
+                tool: "workspace.replace_in_file",
+                approvalId: "workspace-approval-2",
+                proposalId: "workspace-proposal-2",
+                operationId: "workspace-operation-2",
+                runtimeId: "workspace-runtime-1");
+            var replaced = await WorkspaceWriteBroker.ExecuteAsync(
+                    replacement,
+                    workerExecutablePath: brokerPath)
+                .ConfigureAwait(false);
+            var replacementEvidence = replaced.Confinement
+                ?? throw new HarnessAssertionException("Workspace replacement returned no confinement evidence.");
+            Assert(replaced.Ok, $"Workspace replacement failed: {replaced.Error}");
+            AssertEqual("new\n", File.ReadAllText(replaceTarget, Encoding.UTF8), "Workspace replacement content");
+            AssertEqual(replacement.ContentSha256, replaced.FinalSha256, "Workspace replacement final hash");
+            Assert(ProcessHasExited(replacementEvidence.ProcessId),
+                "Workspace replacement worker survived broker return.");
+            AssertNoAppContainerAllowRule(replaceTarget, replacementEvidence.AppContainerSid);
+            AssertEqual(replaceTargetAcl, FileAcl(replaceTarget), "Workspace replacement target ACL");
+            AssertEqual(rootAcl, DirectoryAcl(root), "Workspace target-parent ACL after replacement");
+            AssertAppContainerProfileDeleted(replacementEvidence.AppContainerName, "workspace replacement");
+
+            var outside = outsideFile;
+            var outsideRequest = BuildWorkspaceWriteRequest(
+                root,
+                outside,
+                "outside",
+                approvalId: "workspace-approval-outside",
+                proposalId: "workspace-proposal-outside",
+                operationId: "workspace-operation-outside",
+                runtimeId: "workspace-runtime-1");
+            await AssertWorkspaceRefusedAsync(outsideRequest, brokerPath, "outside workspace target");
+
+            var reparseTarget = Path.Combine(root, "reparse", "escape.txt");
+            Directory.CreateDirectory(outsideDirectory);
+            Directory.CreateSymbolicLink(Path.Combine(root, "reparse"), outsideDirectory);
+            try
+            {
+                var reparseRequest = BuildWorkspaceWriteRequest(
+                    root,
+                    reparseTarget,
+                    "reparse",
+                    approvalId: "workspace-approval-reparse",
+                    proposalId: "workspace-proposal-reparse",
+                    operationId: "workspace-operation-reparse",
+                    runtimeId: "workspace-runtime-1");
+                await AssertWorkspaceRefusedAsync(reparseRequest, brokerPath, "reparse target");
+                Assert(!File.Exists(Path.Combine(outsideDirectory, "escape.txt")),
+                    "Reparse refusal wrote through to the outside canary.");
+            }
+            finally
+            {
+                Directory.Delete(Path.Combine(root, "reparse"));
+                Directory.Delete(outsideDirectory, recursive: true);
+            }
+
+            AssertEqual(rootAcl, DirectoryAcl(root), "Workspace target-parent ACL after all cases");
+        }
+        finally
+        {
+            DeleteDirectoryTree(root);
+            if (File.Exists(outsideFile))
+                File.Delete(outsideFile);
+            DeleteDirectoryTree(outsideDirectory);
+        }
+    }
+
+    private static async Task VerifyWorkspaceAuthorityAsync(string brokerPath)
+    {
+        var root = Path.Combine(
+            Path.GetTempPath(),
+            "vool-broker-workspace-authority-harness",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var nested = Path.Combine(root, "nested");
+        Directory.CreateDirectory(nested);
+        var target = Path.Combine(root, "approved-target.txt");
+        var sibling = Path.Combine(root, "sibling.txt");
+        var overwrite = Path.Combine(root, "overwrite-canary.txt");
+        var append = Path.Combine(root, "append-canary.txt");
+        var delete = Path.Combine(root, "delete-canary.txt");
+        var renameSource = Path.Combine(root, "rename-source.txt");
+        var renameDestination = Path.Combine(root, "rename-destination.txt");
+        var replaceSource = Path.Combine(root, "replace-source.txt");
+        var replaceDestination = Path.Combine(root, "replace-destination.txt");
+        var truncate = Path.Combine(root, "truncate-canary.txt");
+        var attributes = Path.Combine(root, "attributes-canary.txt");
+        var security = Path.Combine(root, "security-canary.txt");
+        var nestedCanary = Path.Combine(nested, "nested-canary.txt");
+        foreach (var path in new[]
+                 {
+                     target,
+                     sibling,
+                     overwrite,
+                     append,
+                     delete,
+                     renameSource,
+                     renameDestination,
+                     replaceSource,
+                     replaceDestination,
+                     truncate,
+                     attributes,
+                     security,
+                     nestedCanary,
+                 })
+        {
+            File.WriteAllText(path, $"fixture:{Path.GetFileName(path)}\n", Encoding.UTF8);
+        }
+
+        var expectedHashes = CaptureFileHashes(root);
+        var rootAcl = DirectoryAcl(root);
+        var securityAcl = FileAcl(security);
+        var attributeState = File.GetAttributes(attributes);
+        try
+        {
+            var request = BuildWorkspaceWriteRequest(
+                root,
+                target,
+                "approved-after\n",
+                approvalId: "workspace-approval-authority",
+                proposalId: "workspace-proposal-authority",
+                operationId: "workspace-operation-authority",
+                runtimeId: "workspace-runtime-authority");
+            var operations = new[]
+            {
+                new WorkspaceAuthorityProbeOperation("read", sibling),
+                new WorkspaceAuthorityProbeOperation("overwrite", overwrite),
+                new WorkspaceAuthorityProbeOperation("append", append),
+                new WorkspaceAuthorityProbeOperation("delete", delete),
+                new WorkspaceAuthorityProbeOperation("rename", renameSource, renameDestination),
+                new WorkspaceAuthorityProbeOperation("replace", replaceSource, replaceDestination),
+                new WorkspaceAuthorityProbeOperation("truncate", truncate),
+                new WorkspaceAuthorityProbeOperation("attributes", attributes),
+                new WorkspaceAuthorityProbeOperation("security", security),
+                new WorkspaceAuthorityProbeOperation("overwrite", nestedCanary),
+            };
+            var execution = await WorkspaceWriteBroker.ProbeParentAuthorityAsync(
+                    request,
+                    brokerPath,
+                    operations)
+                .ConfigureAwait(false);
+            Console.WriteLine($"[AUTHORITY] {execution.ProcessResult.Stdout.Trim()}");
+            Assert(!execution.ProcessResult.TimedOut,
+                "Workspace authority probe timed out.");
+            AssertEqual(0, execution.ProcessResult.ExitCode,
+                $"Workspace authority probe exit code. stderr={execution.ProcessResult.Stderr}");
+            Assert(execution.JobOwned, "Workspace authority probe was not Job-owned.");
+            Assert(execution.TokenSecurity.IsAppContainer,
+                "Workspace authority probe was not AppContainer-confined.");
+            AssertEqual(0, execution.TokenSecurity.Capabilities.Count,
+                "Workspace authority probe unexpectedly had capabilities.");
+
+            using var document = JsonDocument.Parse(execution.ProcessResult.Stdout);
+            var authority = document.RootElement.GetProperty("workspaceAuthority");
+            AssertEqual(operations.Length, authority.GetArrayLength(),
+                "Workspace authority operation count");
+            for (var index = 0; index < authority.GetArrayLength(); index++)
+            {
+                var operation = authority[index];
+                AssertEqual(
+                    "denied",
+                    operation.GetProperty("outcome").GetString(),
+                    $"Unrelated authority operation {index} result");
+            }
+
+            Assert(FilesMatch(root, expectedHashes),
+                "An unrelated same-parent authority probe changed a canary.");
+            AssertEqual(securityAcl, FileAcl(security),
+                "Unrelated security canary ACL");
+            AssertEqual(attributeState, File.GetAttributes(attributes),
+                "Unrelated attributes canary state");
+            AssertEqual(rootAcl, DirectoryAcl(root),
+                "Workspace authority parent ACL after probe");
+            AssertAppContainerProfileDeleted(execution.AppContainerName, "workspace authority probe");
+        }
+        finally
+        {
+            DeleteDirectoryTree(root);
+        }
+    }
+
+    private static WorkspaceWriteRequest BuildWorkspaceWriteRequest(
+        string workspaceRoot,
+        string targetPath,
+        string content,
+        string tool = "workspace.write_file",
+        string approvalId = "workspace-approval",
+        string proposalId = "workspace-proposal",
+        string operationId = "workspace-operation",
+        string runtimeId = "workspace-runtime",
+        string? approvedEffectIdentityOverride = null)
+    {
+        var root = Path.GetFullPath(workspaceRoot).TrimEnd(Path.DirectorySeparatorChar);
+        var target = Path.GetFullPath(targetPath);
+        var relative = Path.GetRelativePath(root, target).Replace('\\', '/');
+        var contentBytes = Encoding.UTF8.GetBytes(content);
+        var priorState = File.Exists(target) ? "file" : "absent";
+        var priorHash = priorState == "file"
+            ? Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(target))).ToLowerInvariant()
+            : "";
+        var contentHash = Convert.ToHexString(SHA256.HashData(contentBytes)).ToLowerInvariant();
+        var identity = string.Join(
+            "\n",
+            "vool.workspace_write.v1",
+            "workspace_write_v1",
+            tool,
+            approvalId,
+            proposalId,
+            operationId,
+            runtimeId,
+            root,
+            relative,
+            priorState,
+            priorHash,
+            contentHash,
+            contentBytes.LongLength.ToString(CultureInfo.InvariantCulture));
+        return new WorkspaceWriteRequest
+        {
+            Schema = "vool.workspace_write.v1",
+            Effect = "workspace_write_v1",
+            Tool = tool,
+            ApprovalId = approvalId,
+            ApprovalStatus = "consumed",
+            ProposalId = proposalId,
+            OperationId = operationId,
+            RuntimeId = runtimeId,
+            WorkspaceRoot = root,
+            RelativeTarget = relative,
+            TargetPath = target,
+            PriorState = priorState,
+            PriorSha256 = priorHash,
+            ContentSha256 = contentHash,
+            ContentLength = contentBytes.LongLength,
+            ContentBase64 = Convert.ToBase64String(contentBytes),
+            ApprovedEffectIdentity = approvedEffectIdentityOverride
+                ?? Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity))).ToLowerInvariant(),
+            TimeoutMilliseconds = 10_000,
+        };
+    }
+
+    private static async Task AssertWorkspaceRefusedAsync(
+        WorkspaceWriteRequest request,
+        string brokerPath,
+        string label)
+    {
+        Exception? observed = null;
+        try
+        {
+            await WorkspaceWriteBroker.ExecuteAsync(request, workerExecutablePath: brokerPath)
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            observed = exception;
+        }
+
+        Assert(observed is BrokerSecurityException, $"{label} was not refused: {observed}");
+    }
+
     private static void CopyDirectoryContents(string sourceDirectory, string destinationDirectory)
     {
         foreach (var directory in Directory.GetDirectories(sourceDirectory, "*", SearchOption.AllDirectories))
@@ -822,6 +1378,21 @@ internal static class Program
         var actual = CaptureFileHashes(root);
         return actual.Count == expected.Count
             && actual.All(pair => expected.TryGetValue(pair.Key, out var hash) && hash == pair.Value);
+    }
+
+    private static void AssertNoWorkspaceStagingResidue(string root, string context)
+    {
+        var residue = Directory.EnumerateFileSystemEntries(
+                root,
+                "*.vool-write-*",
+                SearchOption.TopDirectoryOnly)
+            .Concat(Directory.EnumerateFiles(
+                root,
+                "*.vool-write-*.tmp",
+                SearchOption.AllDirectories))
+            .ToArray();
+        Assert(residue.Length == 0,
+            $"{context} left workspace staging residue: {string.Join(", ", residue)}");
     }
 
     private static PluginBrokerRequest BuildPluginCleanupRequest(
@@ -883,8 +1454,28 @@ internal static class Program
             Directory.Delete(path, recursive: true);
     }
 
+    private static void ReplaceWithSameContent(string target)
+    {
+        var temporary = $"{target}.identity-swap-{Guid.NewGuid():N}.tmp";
+        File.Copy(target, temporary, overwrite: false);
+        try
+        {
+            File.Replace(temporary, target, destinationBackupFileName: null, ignoreMetadataErrors: true);
+        }
+        finally
+        {
+            if (File.Exists(temporary))
+                File.Delete(temporary);
+        }
+    }
+
     private static string DirectoryAcl(string path) =>
         new DirectoryInfo(path)
+            .GetAccessControl(AccessControlSections.Access)
+            .GetSecurityDescriptorSddlForm(AccessControlSections.Access);
+
+    private static string FileAcl(string path) =>
+        new FileInfo(path)
             .GetAccessControl(AccessControlSections.Access)
             .GetSecurityDescriptorSddlForm(AccessControlSections.Access);
 

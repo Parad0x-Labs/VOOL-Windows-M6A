@@ -101,9 +101,79 @@ public sealed class PluginBrokerRequest
     public string Stdin { get; init; } = "";
 }
 
+public sealed class WorkspaceWriteRequest
+{
+    [JsonPropertyName("schema")]
+    public string Schema { get; init; } = "";
+
+    [JsonPropertyName("effect")]
+    public string Effect { get; init; } = "";
+
+    [JsonPropertyName("tool")]
+    public string Tool { get; init; } = "";
+
+    [JsonPropertyName("approval_id")]
+    public string ApprovalId { get; init; } = "";
+
+    [JsonPropertyName("approval_status")]
+    public string ApprovalStatus { get; init; } = "";
+
+    [JsonPropertyName("proposal_id")]
+    public string ProposalId { get; init; } = "";
+
+    [JsonPropertyName("operation_id")]
+    public string OperationId { get; init; } = "";
+
+    [JsonPropertyName("runtime_id")]
+    public string RuntimeId { get; init; } = "";
+
+    [JsonPropertyName("workspace_root")]
+    public string WorkspaceRoot { get; init; } = "";
+
+    [JsonPropertyName("relative_target")]
+    public string RelativeTarget { get; init; } = "";
+
+    [JsonPropertyName("target_path")]
+    public string TargetPath { get; init; } = "";
+
+    [JsonPropertyName("prior_state")]
+    public string PriorState { get; init; } = "";
+
+    [JsonPropertyName("prior_sha256")]
+    public string PriorSha256 { get; init; } = "";
+
+    [JsonPropertyName("content_sha256")]
+    public string ContentSha256 { get; init; } = "";
+
+    [JsonPropertyName("content_length")]
+    public long ContentLength { get; init; }
+
+    [JsonPropertyName("content_base64")]
+    public string ContentBase64 { get; init; } = "";
+
+    [JsonPropertyName("approved_effect_identity")]
+    public string ApprovedEffectIdentity { get; init; } = "";
+
+    [JsonPropertyName("timeout_ms")]
+    public int TimeoutMilliseconds { get; init; } = 30_000;
+}
+
+public sealed record WorkspaceWriteWorkerResult(
+    [property: JsonPropertyName("ok")] bool Ok,
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("prior_state")] string PriorState,
+    [property: JsonPropertyName("prior_sha256")] string PriorSha256,
+    [property: JsonPropertyName("final_sha256")] string FinalSha256,
+    [property: JsonPropertyName("content_length")] long ContentLength,
+    [property: JsonPropertyName("atomic_installed")] bool AtomicInstalled,
+    [property: JsonPropertyName("error")] string Error = "");
+
 public sealed record FilesystemGrantEvidence(
     [property: JsonPropertyName("path")] string Path,
-    [property: JsonPropertyName("access")] string Access);
+    [property: JsonPropertyName("access")] string Access,
+    [property: JsonPropertyName("rights")] int Rights,
+    [property: JsonPropertyName("inheritance")] string Inheritance,
+    [property: JsonPropertyName("propagation")] string Propagation);
 
 public sealed record BrokerConfinementEvidence(
     [property: JsonPropertyName("platform")] string Platform,
@@ -137,6 +207,49 @@ public sealed record PluginBrokerExecutionResult(
     [property: JsonPropertyName("timed_out")] bool TimedOut,
     [property: JsonPropertyName("confinement")] BrokerConfinementEvidence? Confinement,
     [property: JsonPropertyName("error")] string Error = "");
+
+public sealed record WorkspaceWriteConfinementEvidence(
+    [property: JsonPropertyName("platform")] string Platform,
+    [property: JsonPropertyName("broker_type")] string BrokerType,
+    [property: JsonPropertyName("effect")] string Effect,
+    [property: JsonPropertyName("tool")] string Tool,
+    [property: JsonPropertyName("approval_id")] string ApprovalId,
+    [property: JsonPropertyName("approval_status")] string ApprovalStatus,
+    [property: JsonPropertyName("proposal_id")] string ProposalId,
+    [property: JsonPropertyName("operation_id")] string OperationId,
+    [property: JsonPropertyName("runtime_id")] string RuntimeId,
+    [property: JsonPropertyName("workspace_root")] string WorkspaceRoot,
+    [property: JsonPropertyName("relative_target")] string RelativeTarget,
+    [property: JsonPropertyName("target_path")] string TargetPath,
+    [property: JsonPropertyName("prior_state")] string PriorState,
+    [property: JsonPropertyName("prior_sha256")] string PriorSha256,
+    [property: JsonPropertyName("content_sha256")] string ContentSha256,
+    [property: JsonPropertyName("content_length")] long ContentLength,
+    [property: JsonPropertyName("appcontainer_name")] string AppContainerName,
+    [property: JsonPropertyName("appcontainer_sid")] string AppContainerSid,
+    [property: JsonPropertyName("process_id")] int ProcessId,
+    [property: JsonPropertyName("job_owned")] bool JobOwned,
+    [property: JsonPropertyName("filesystem_grants")] IReadOnlyList<FilesystemGrantEvidence> FilesystemGrants,
+    [property: JsonPropertyName("network_policy")] string NetworkPolicy,
+    [property: JsonPropertyName("timeout_ms")] int TimeoutMilliseconds,
+    [property: JsonPropertyName("result")] string Result,
+    [property: JsonPropertyName("verified")] bool Verified,
+    [property: JsonPropertyName("exit_code")] int ExitCode,
+    [property: JsonPropertyName("timed_out")] bool TimedOut,
+    [property: JsonPropertyName("token")] TokenSecuritySnapshot Token,
+    [property: JsonPropertyName("job")] JobSecuritySnapshot Job);
+
+public sealed record WorkspaceWriteExecutionResult(
+    [property: JsonPropertyName("ok")] bool Ok,
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("prior_state")] string PriorState,
+    [property: JsonPropertyName("prior_sha256")] string PriorSha256,
+    [property: JsonPropertyName("final_sha256")] string FinalSha256,
+    [property: JsonPropertyName("content_sha256")] string ContentSha256,
+    [property: JsonPropertyName("content_length")] long ContentLength,
+    [property: JsonPropertyName("atomic_installed")] bool AtomicInstalled,
+    [property: JsonPropertyName("error")] string Error,
+    [property: JsonPropertyName("confinement")] WorkspaceWriteConfinementEvidence? Confinement);
 
 public sealed record BrokerSupportReport(
     bool Supported,

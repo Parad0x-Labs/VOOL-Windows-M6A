@@ -436,6 +436,28 @@ def _tool_approval_metadata(details: dict[str, Any], *, event_type: str, status:
     return approval
 
 
+def _workspace_confinement_evidence(details: dict[str, Any]) -> dict[str, Any]:
+    """Return only the native workspace-write confinement projection for a tool receipt."""
+
+    raw_receipt = details.get("broker_receipt")
+    if isinstance(raw_receipt, dict):
+        try:
+            from core.windows_workspace_broker import project_workspace_write_confinement_evidence
+
+            return project_workspace_write_confinement_evidence(raw_receipt)
+        except Exception:
+            return {}
+    projected = details.get("confinement_evidence")
+    if not isinstance(projected, dict):
+        return {}
+    try:
+        from core.windows_workspace_broker import sanitize_workspace_write_confinement_evidence
+
+        return sanitize_workspace_write_confinement_evidence(projected)
+    except Exception:
+        return {}
+
+
 def build_tool_action_record(
     source_context: dict[str, Any] | None,
     *,
@@ -470,6 +492,18 @@ def build_tool_action_record(
         parameters = {}
     status = str(details.get("status") or normalized_event).strip() or normalized_event
     mode = str(details.get("mode") or normalized_event).strip() or normalized_event
+    confinement_evidence = _workspace_confinement_evidence(details)
+    confinement_required = bool(details.get("_confinement_evidence_required"))
+    raw_broker_receipt = details.get("broker_receipt")
+    if isinstance(raw_broker_receipt, dict) and bool(raw_broker_receipt.get("ok")):
+        confinement_required = True
+    action_type = normalized_event
+    if confinement_required and not confinement_evidence:
+        # A native broker must not be represented as a successful durable action when its
+        # host-attested confinement evidence was lost or malformed in transit.
+        action_type = "tool_failed"
+        status = "confinement_evidence_missing"
+        mode = "tool_failed"
     summary = runtime_preview(redact_secrets(str(details.get("summary") or message or status)), limit=220)
     chat_id = _safe_identifier(
         context.get("chat_id")
@@ -508,11 +542,11 @@ def build_tool_action_record(
     if not receipt_id:
         receipt_id = f"tool-receipt-{_stable_json_hash({'action_id': action_id})}"
 
-    failed = normalized_event == "tool_failed" or mode == "tool_failed"
-    outcome = "failed" if failed else "pending_approval" if normalized_event == "tool_preview" else "succeeded"
+    failed = action_type == "tool_failed" or mode == "tool_failed"
+    outcome = "failed" if failed else "pending_approval" if action_type == "tool_preview" else "succeeded"
     result = {
         "outcome": outcome,
-        "ok": bool(details.get("ok", not failed and outcome == "succeeded")),
+        "ok": bool(details.get("ok", not failed and outcome == "succeeded")) and not failed,
         "status": status,
         "mode": mode,
         "summary": summary,
@@ -522,7 +556,7 @@ def build_tool_action_record(
         "schema": "tool_action_receipt_v1",
         "receipt_id": receipt_id,
         "action_id": action_id,
-        "action_type": normalized_event,
+        "action_type": action_type,
         "occurred_at": datetime.now(timezone.utc).isoformat(),
         "actor": actor,
         "target": _safe_tool_target(parameters, details),
@@ -543,6 +577,8 @@ def build_tool_action_record(
         "origin": {"chat_id": chat_id, "project_id": project_id},
         "approval": _tool_approval_metadata(details, event_type=normalized_event, status=status, mode=mode),
     }
+    if confinement_evidence:
+        record["confinement_evidence"] = confinement_evidence
     record["record_hash"] = _stable_json_hash({key: value for key, value in record.items() if key != "occurred_at"})
     return record
 
@@ -570,8 +606,22 @@ def emit_runtime_event(
     normalized_event_type = str(event_type or "status").strip() or "status"
     action_record: dict[str, Any] | None = None
     if normalized_event_type.startswith("tool_"):
+        raw_broker_receipt = payload.get("broker_receipt")
+        projected_confinement_evidence: dict[str, Any] = {}
+        if isinstance(raw_broker_receipt, dict):
+            projected_confinement_evidence = _workspace_confinement_evidence(payload)
+            payload["confinement_evidence"] = projected_confinement_evidence
+            payload["_confinement_evidence_required"] = bool(raw_broker_receipt.get("ok"))
+            # The full native receipt is transient execution detail. Never put its paths, raw
+            # grant rows, or any future broker fields onto the generic runtime event surface.
+            payload.pop("broker_receipt", None)
         safe_payload = redact_tool_arguments(payload)
         payload = safe_payload if isinstance(safe_payload, dict) else {}
+        if projected_confinement_evidence:
+            # This projection is produced by the schema-controlled native receipt projector; the
+            # generic argument redactor mistakes SHA-256 values and the word "token" for secrets.
+            # Restore only that fixed projection, never the raw broker receipt.
+            payload["confinement_evidence"] = projected_confinement_evidence
         message = redact_secrets(str(message or ""))
     if normalized_event_type in _TERMINAL_TOOL_EVENT_TYPES:
         action_record = build_tool_action_record(
@@ -580,6 +630,7 @@ def emit_runtime_event(
             message=message,
             details=payload,
         )
+        payload.pop("_confinement_evidence_required", None)
         if action_record:
             payload["action_record"] = action_record
             payload["receipt_id"] = action_record["receipt_id"]

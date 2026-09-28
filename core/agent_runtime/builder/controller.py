@@ -597,6 +597,11 @@ def run_bounded_builder_loop(
             approval_requirement=execution_details.get("approval_requirement"),
             approval_state=execution_details.get("approval_state"),
             approved_by=execution_details.get("approved_by"),
+            **(
+                {"broker_receipt": execution_details.get("broker_receipt")}
+                if isinstance(execution_details.get("broker_receipt"), dict)
+                else {}
+            ),
             # WHY a tool step failed, not just that it did. The executor already records the cause
             # on `execution.details` (`error` = str(exc), `exception_class` = its type, and a
             # `capability_gap.gap_kind` for a tool that is present but unusable), and none of it
