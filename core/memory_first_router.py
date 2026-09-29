@@ -11,6 +11,7 @@ import threading
 import time
 import uuid
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from types import SimpleNamespace
 from typing import Any
@@ -50,6 +51,7 @@ from core.local_inference_evidence import hydrate_capability_truth_with_benchmar
 from core.local_model_bundles import model_parameter_billions, model_total_parameter_billions
 from core.local_model_policy import (
     LOCAL_MODELS_DISABLED_REASON,
+    manifest_is_local,
     resolve_local_model_policy,
     ungated_local_manifest_for_request,
 )
@@ -1168,9 +1170,15 @@ def _inject_free_cloud_requirements(
 
 
 class MemoryFirstRouter:
-    def __init__(self, registry: ModelRegistry | None = None, cloud_broker: Any | None = None) -> None:
+    def __init__(
+        self,
+        registry: ModelRegistry | None = None,
+        cloud_broker: Any | None = None,
+        local_chat_eligibility_provider: Callable[..., Any] | None = None,
+    ) -> None:
         self.registry = registry or ModelRegistry()
         self._cloud_broker = cloud_broker
+        self._local_chat_eligibility_provider = local_chat_eligibility_provider
         self._broker_injected = cloud_broker is not None  # an injected broker is never auto-rebuilt
         self._cloud_broker_epoch = -1  # forces a build on first use (unless one was injected)
 
@@ -5388,6 +5396,45 @@ class MemoryFirstRouter:
             enforce_hardware_fit=True,
             local_only=turn_is_local_only(source_context),
         )
+        local_chat_rejections: list[dict[str, str]] = []
+        if self._local_chat_eligibility_provider is not None:
+            eligible_manifests: list[Any] = []
+            for manifest in ranked_manifests:
+                if not manifest_is_local(manifest):
+                    eligible_manifests.append(manifest)
+                    continue
+                try:
+                    eligibility = self._local_chat_eligibility_provider(manifest, source_context)
+                    if eligibility is None:
+                        # The runtime callback may scope canonical setup truth to its selected
+                        # primary local model. Other explicitly registered local lanes retain their
+                        # existing certification/health gates.
+                        eligible_manifests.append(manifest)
+                        continue
+                    eligible = bool(getattr(eligibility, "eligible", False))
+                    reason = str(getattr(eligibility, "reason", "") or "")
+                    state = str(getattr(eligibility, "state", "") or "unknown")
+                    if isinstance(eligibility, dict):
+                        eligible = bool(eligibility.get("eligible"))
+                        reason = str(eligibility.get("reason") or "")
+                        state = str(eligibility.get("state") or "unknown")
+                except Exception as exc:
+                    eligible = False
+                    state = "eligibility_error"
+                    reason = type(exc).__name__
+                if eligible:
+                    eligible_manifests.append(manifest)
+                else:
+                    local_chat_rejections.append(
+                        {
+                            "provider_id": str(getattr(manifest, "provider_id", "") or ""),
+                            "state": state,
+                            "reason": reason[:240],
+                        }
+                    )
+            ranked_manifests = eligible_manifests
+            if local_chat_rejections:
+                source_context["local_chat_rejections"] = list(local_chat_rejections)
         ranked_manifests = [
             manifest
             for manifest in ranked_manifests

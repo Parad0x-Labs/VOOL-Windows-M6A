@@ -99,6 +99,13 @@ def _local_model_setup_mocks(*, certification_state="verified", probe_result=Non
                 return_value=({"provider_id": manifest.provider_id, "availability_state": "ready"},),
             )
         )
+        stack.enter_context(
+            mock.patch(
+                "core.local_chat_eligibility.plan_model_load",
+                return_value=SimpleNamespace(ok=True, footprint_gb=0.0, usable_before_gb=16.0, usable_after_gb=16.0, actions=[]),
+            )
+        )
+        stack.enter_context(mock.patch("core.local_chat_eligibility.resident_models", return_value=[]))
         stack.enter_context(mock.patch("core.model_health.record_provider_success"))
         yield manifest, probe, certification_status
 
@@ -122,6 +129,13 @@ def _ready_local_model_finalization_mocks(manifest, capability_truth):
         stack.enter_context(
             mock.patch("core.web.api.runtime.startup_provider_capability_truth", return_value=capability_truth)
         )
+        stack.enter_context(
+            mock.patch(
+                "core.local_chat_eligibility.plan_model_load",
+                return_value=SimpleNamespace(ok=True, footprint_gb=0.0, usable_before_gb=16.0, usable_after_gb=16.0, actions=[]),
+            )
+        )
+        stack.enter_context(mock.patch("core.local_chat_eligibility.resident_models", return_value=[]))
         stack.enter_context(mock.patch("core.web.api.runtime._MODEL_PULL_WAIT_SECONDS", 0.0))
         yield register_local
 

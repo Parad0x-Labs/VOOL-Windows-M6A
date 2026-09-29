@@ -30,6 +30,7 @@ from core.daemon import DaemonConfig
 from core.error_surface import safe_error_text
 from core.hardware_tier import probe_machine
 from core.identity_manager import load_active_persona
+from core.local_chat_eligibility import evaluate_local_chat_eligibility
 from core.local_inference_autopilot import select_daily_residency_model_tag
 from core.local_inference_evidence import hydrate_capability_truth_with_benchmarks
 from core.local_model_policy import local_models_enabled
@@ -62,6 +63,7 @@ from core.runtime_bootstrap import (
     effective_runtime_provider_decision,
     runtime_provider_decision,
 )
+from core.runtime_context import current_local_only_mode
 from core.runtime_install_profiles import (
     active_install_profile_id,
     installed_profile_selected_model,
@@ -192,8 +194,18 @@ def default_agent_source_context() -> dict[str, Any]:
 def bind_runtime_provider_policy(
     source_context: dict[str, Any], runtime: RuntimeServices
 ) -> None:
-    """Carry the boot-resolved Local Only boundary into the request's model-call context."""
-    if bool(getattr(runtime, "local_only_mode", False)):
+    """Carry the current Local Only boundary into the request's model-call context."""
+    runtime_home = getattr(runtime, "runtime_home", None) or None
+    current = current_local_only_mode(
+        runtime_home=runtime_home,
+        env=merge_provider_env(runtime_home),
+    )
+    if runtime_home is None and bool(getattr(runtime, "local_only_mode", False)):
+        # Direct/unit callers may provide an already-resolved policy without a runtime home. Real
+        # runtimes always carry a home, so this compatibility path cannot stale-mask a live reload.
+        current = True
+    runtime.local_only_mode = current
+    if current:
         source_context["local_only_mode"] = True
 
 
@@ -1050,6 +1062,12 @@ def bootstrap_runtime_services(
         "chat_ready": False,
         "certification_state": "unknown",
         "provider_state": "starting",
+        "inventory_state": "unknown",
+        "eligibility_state": "unknown",
+        "eligibility_reason": "local chat setup has not completed",
+        "resident": False,
+        "load_required": True,
+        "load_admission": "unknown",
         "detail": (
             "Local models are disabled by this runtime's policy."
             if not local_models_allowed or model_pull.status == "skipped"
@@ -1092,10 +1110,35 @@ def bootstrap_runtime_services(
     setup_lock = threading.RLock()
     setup_running = False
 
+    def _local_chat_eligibility_provider(
+        manifest: Any,
+        _source_context: dict[str, Any] | None = None,
+    ) -> Any:
+        provider_id = str(getattr(manifest, "provider_id", "") or "")
+        if provider_id != f"ollama-local:{runtime_model_tag}":
+            return None
+        active_runtime = runtime_ref.get("runtime")
+        setup = dict(active_runtime.local_model_setup if active_runtime is not None else local_model_setup)
+        provider_truth = tuple(active_runtime.provider_capability_truth or ()) if active_runtime else ()
+        return evaluate_local_chat_eligibility(
+            model_registry,
+            model_tag=str(getattr(manifest, "model_name", "") or runtime_model_tag),
+            manifest=manifest,
+            setup=setup,
+            provider_capability_truth=provider_truth,
+            endpoint=str((getattr(manifest, "runtime_config", {}) or {}).get("base_url") or ollama_endpoint),
+            runtime_home=str(runtime_home or "") or None,
+            env=provider_env,
+        )
+
     def _refresh_runtime_provider_decision() -> None:
         active_runtime = runtime_ref.get("runtime")
         if active_runtime is None:
             return
+        active_runtime.local_only_mode = current_local_only_mode(
+            runtime_home=active_runtime.runtime_home or None,
+            env=provider_env,
+        )
         stamp = active_runtime.runtime_version_stamp
         boot_decision = dict(
             stamp.get("boot_provider_decision")
@@ -1118,15 +1161,64 @@ def bootstrap_runtime_services(
         *,
         certification_state: str = "unknown",
         provider_state: str = "unknown",
+        manifest: Any | None = None,
     ) -> None:
+        published_state = str(state or "unknown")
+        published_detail = str(detail or "")[:240]
+        eligibility = None
+        if published_state == "ready":
+            active_runtime = runtime_ref.get("runtime")
+            provider_truth = tuple(active_runtime.provider_capability_truth or ()) if active_runtime else ()
+            try:
+                eligibility = evaluate_local_chat_eligibility(
+                    model_registry,
+                    model_tag=runtime_model_tag,
+                    manifest=manifest,
+                    setup={
+                        **local_model_setup,
+                        "model": runtime_model_tag,
+                        "certification_state": certification_state,
+                        "provider_state": provider_state,
+                    },
+                    provider_capability_truth=provider_truth,
+                    endpoint=ollama_endpoint,
+                    runtime_home=str(runtime_home or "") or None,
+                    env=provider_env,
+                )
+            except Exception as exc:
+                logger.warning("Local chat eligibility could not be evaluated: %s", type(exc).__name__)
+                eligibility = None
+            if eligibility is None or not eligibility.eligible:
+                published_state = "failed"
+                published_detail = (
+                    eligibility.reason
+                    if eligibility is not None and eligibility.reason
+                    else "The selected local chat route could not be proven eligible."
+                )[:240]
         local_model_setup.update(
             model=runtime_model_tag,
-            state=state,
-            chat_ready=state == "ready",
+            state=published_state,
+            chat_ready=published_state == "ready" and bool(eligibility and eligibility.eligible),
             certification_state=certification_state,
             provider_state=provider_state,
-            detail=str(detail or "")[:240],
+            detail=published_detail,
         )
+        if eligibility is not None:
+            eligibility_payload = eligibility.to_dict()
+            local_model_setup.update(
+                eligibility_state=eligibility_payload["state"],
+                eligibility_reason=eligibility_payload["reason"],
+                model_digest=eligibility_payload["model_digest"],
+                ollama_endpoint=eligibility_payload["endpoint"],
+                installed=eligibility_payload["installed"],
+                registered=eligibility_payload["registered"],
+                enabled=eligibility_payload["enabled"],
+                certified=eligibility_payload["certified"],
+                resident=eligibility_payload["resident"],
+                load_required=eligibility_payload["load_required"],
+                load_admission=eligibility_payload["load_admission"],
+                resource_decision=eligibility_payload["resource_decision"],
+            )
         runtime = runtime_ref.get("runtime")
         if runtime is not None:
             runtime.local_model_setup = local_model_setup
@@ -1184,6 +1276,7 @@ def bootstrap_runtime_services(
                     "The selected model was not found in VOOL's local model store.",
                 )
                 return
+            local_model_setup["inventory_state"] = "present"
 
             _publish_local_model_setup(
                 "registering",
@@ -1292,6 +1385,7 @@ def bootstrap_runtime_services(
                     f"Local chat is ready with {runtime_model_tag}.",
                     certification_state=certification_state,
                     provider_state=provider_state,
+                    manifest=manifest,
                 )
             elif certification_state != "verified":
                 _publish_local_model_setup(
@@ -1375,6 +1469,8 @@ def bootstrap_runtime_services(
         backend_name=selection.backend_name,
         device=selection.device,
         persona_id=persona.persona_id,
+        registry=model_registry,
+        local_chat_eligibility_provider=_local_chat_eligibility_provider,
     )
     agent.start()
 
@@ -1417,7 +1513,7 @@ def bootstrap_runtime_services(
         runtime_parameter_size=runtime_parameter_size,
         runtime_started_at=runtime_started_at,
         runtime_home=str(runtime_home or ""),
-        local_only_mode=local_only_mode,
+        local_only_mode=current_local_only_mode(runtime_home=runtime_home, env=provider_env),
         runtime_version_stamp=runtime_version_stamp,
         public_hive_auth=auth_snapshot,
         provider_capability_truth=startup_provider_capability_truth(
@@ -1631,6 +1727,7 @@ def bootstrap_runtime_services(
                         f"Local chat is ready with {runtime_model_tag}.",
                         certification_state=certification_state,
                         provider_state=provider_state,
+                        manifest=manifest,
                     )
                 return
             _publish_local_model_setup(
@@ -1648,7 +1745,7 @@ def bootstrap_runtime_services(
             return
         pull = active_runtime.model_pull
         active_runtime.provider_capability_truth = startup_provider_capability_truth(
-            ModelRegistry(),
+            model_registry,
             model_tag=runtime_model_tag,
             runtime_home=runtime_home,
             requested_profile=requested_profile,

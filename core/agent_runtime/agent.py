@@ -22,6 +22,7 @@ import sys as _bootstrap_sys
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -88,6 +89,7 @@ from core.logging_config import setup_logging
 from core.media_analysis_pipeline import MediaAnalysisPipeline
 from core.media_ingestion import build_media_context_snippets, ingest_media_evidence
 from core.memory_first_router import MemoryFirstRouter
+from core.model_registry import ModelRegistry
 from core.onboarding import get_agent_display_name
 from core.parent_orchestrator import orchestrate_parent_task
 from core.persistent_memory import (
@@ -1333,13 +1335,24 @@ class VoolAgent(
     GateDecision = GateDecision
     ChatTurnResult = ChatTurnResult
 
-    def __init__(self, backend_name: str, device: str, persona_id: str = "default"):
+    def __init__(
+        self,
+        backend_name: str,
+        device: str,
+        persona_id: str = "default",
+        *,
+        registry: ModelRegistry | None = None,
+        local_chat_eligibility_provider: Callable[..., Any] | None = None,
+    ):
         self.backend_name = backend_name
         self.device = device
         self.persona_id = persona_id
         self.swarm_enabled = True
         self.context_loader = TieredContextLoader()
-        self.memory_router = MemoryFirstRouter()
+        self.memory_router = MemoryFirstRouter(
+            registry=registry,
+            local_chat_eligibility_provider=local_chat_eligibility_provider,
+        )
         self.curiosity = CuriosityRoamer()
         self.media_pipeline = MediaAnalysisPipeline()
         self.public_hive_bridge = PublicHiveBridge()

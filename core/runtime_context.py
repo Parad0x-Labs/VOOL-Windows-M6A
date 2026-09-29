@@ -115,6 +115,18 @@ def build_runtime_context(
     )
 
 
+def current_local_only_mode(
+    *,
+    runtime_home: str | Path | None = None,
+    env: Mapping[str, str] | None = None,
+) -> bool:
+    """Read the current Local Only policy/profile state, not a boot-time snapshot."""
+
+    env_map = os.environ if env is None else env
+    active_profile = active_install_profile_id(runtime_home=runtime_home, env=env_map)
+    return bool(policy_engine.local_only_mode()) or install_profile_runs_local_only(active_profile)
+
+
 def apply_runtime_context(context: RuntimeContext) -> RuntimeContext:
     configure_runtime_home(context.paths.runtime_home)
     configure_default_db_path(context.paths.db_path)

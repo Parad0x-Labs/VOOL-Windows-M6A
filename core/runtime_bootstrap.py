@@ -92,11 +92,35 @@ def effective_runtime_provider_decision(
 
     decision = dict(boot_decision or {})
     setup = dict(local_model_setup or {})
+    local_only_active = bool(local_only)
+    if local_only_active:
+        # Boot evidence is immutable, but the current policy fence must be reflected even while
+        # local setup is still starting or has failed. A stale automatic/remote decision must not
+        # be published as current Local Only truth.
+        decision.update(
+            requested_mode="local_only",
+            remote_fallback_allowed=False,
+            remote_request_eligible=False,
+        )
     if (
         str(setup.get("state") or "").strip().lower() != "ready"
         or not bool(setup.get("chat_ready"))
         or str(setup.get("certification_state") or "").strip().lower() != "verified"
     ):
+        return decision
+
+    eligibility_state = str(setup.get("eligibility_state") or "").strip().lower()
+    if eligibility_state and eligibility_state != "eligible":
+        decision.update(
+            effective_mode="unavailable_no_local_backend",
+            selected_provider=None,
+            selected_lane=None,
+            local_backend_available=False,
+            unavailable_reason=str(
+                setup.get("eligibility_reason") or eligibility_state
+            ),
+            chat_ready=False,
+        )
         return decision
 
     model_tag = str(setup.get("model") or "").strip()
@@ -116,7 +140,6 @@ def effective_runtime_provider_decision(
     if not provider_id or provider_state != "ready":
         return decision
 
-    local_only_active = bool(local_only)
     return {
         **decision,
         "requested_mode": "local_only" if local_only_active else str(
