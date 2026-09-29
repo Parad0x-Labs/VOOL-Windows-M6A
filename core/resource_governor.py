@@ -532,6 +532,33 @@ def estimated_model_gb(model_name: str) -> float:
     return 0.0
 
 
+def cold_model_load_admission(
+    model_name: str,
+    *,
+    snapshot: sr.ResourceSnapshot | None = None,
+) -> GovernorDecision:
+    """Evaluate a model's unchanged cold-load gate without reclaiming or probing Ollama.
+
+    Provisioning selection runs before a candidate is downloaded or registered, so it cannot
+    use ``plan_model_load`` directly: that function is allowed to unload other resident models
+    as part of an ordinary execution admission. This helper is the same estimate plus the same
+    1.5 GiB safety floor, applied read-only to the supplied live snapshot. Runtime execution
+    continues through ``plan_model_load``; both paths therefore share one admission formula.
+    """
+    active_snapshot = snapshot or sr.snapshot(force=True)
+    need = estimated_model_gb(model_name)
+    decision = GovernorDecision(
+        ok=True,
+        footprint_gb=need,
+        usable_before_gb=active_snapshot.available_ram_gb,
+        usable_after_gb=active_snapshot.available_ram_gb,
+    )
+    if need <= 0:
+        return decision
+    decision.ok = active_snapshot.available_ram_gb >= need + _LOAD_SAFETY_FLOOR_GB
+    return decision
+
+
 def _unload_models(names: list[str]) -> list[str]:
     """Ask Ollama to unload specific models (keep_alive=0). Returns the names that were signaled."""
     from core.local_model_policy import local_models_enabled
@@ -595,14 +622,8 @@ def plan_model_load(
         runtime_identity=runtime_identity,
     ):
         return GovernorDecision(ok=True, usable_before_gb=snap.available_ram_gb, usable_after_gb=snap.available_ram_gb)
-    need = estimated_model_gb(name)
-    decision = GovernorDecision(
-        ok=True, footprint_gb=need,
-        usable_before_gb=snap.available_ram_gb, usable_after_gb=snap.available_ram_gb,
-    )
-    if need <= 0:
-        return decision
-    if snap.available_ram_gb >= need + _LOAD_SAFETY_FLOOR_GB:
+    decision = cold_model_load_admission(name, snapshot=snap)
+    if decision.ok:
         return decision
     others = [r["name"] for r in residents if r["name"] != name]
     if others:
@@ -613,7 +634,7 @@ def plan_model_load(
             )
             snap = sr.snapshot(force=True)
     decision.usable_after_gb = snap.available_ram_gb
-    decision.ok = snap.available_ram_gb >= need + _LOAD_SAFETY_FLOOR_GB
+    decision.ok = cold_model_load_admission(name, snapshot=snap).ok
     return decision
 
 
@@ -673,6 +694,7 @@ __all__ = [
     "GovernorDecision",
     "ResidencyCertificate",
     "clear_residency_certificate",
+    "cold_model_load_admission",
     "current_model_digest",
     "current_runtime_identity",
     "ensure_headroom_for",

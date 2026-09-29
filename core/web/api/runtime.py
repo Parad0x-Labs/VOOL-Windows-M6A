@@ -34,6 +34,12 @@ from core.local_chat_eligibility import evaluate_local_chat_eligibility
 from core.local_inference_autopilot import select_daily_residency_model_tag
 from core.local_inference_evidence import hydrate_capability_truth_with_benchmarks
 from core.local_model_policy import local_models_enabled
+from core.local_model_selection import (
+    EXPLICIT_SELECTION_MODE,
+    free_disk_gb_for_path,
+    resolve_model_selection_mode,
+    select_local_model_for_provisioning,
+)
 from core.local_ollama_inventory import (
     installed_ollama_model_inventory,
     installed_ollama_model_names,
@@ -66,6 +72,7 @@ from core.runtime_bootstrap import (
 from core.runtime_context import current_local_only_mode
 from core.runtime_install_profiles import (
     active_install_profile_id,
+    default_ollama_models_path,
     installed_profile_selected_model,
     required_ollama_models_for_profile,
 )
@@ -989,22 +996,12 @@ def bootstrap_runtime_services(
         or profile_default_model
         or default_runtime_model_tag(env=provider_env)
     )
-    # The generated launcher exports its install-time recommendation as VOOL_OLLAMA_MODEL, so
-    # presence alone cannot mean "operator pin". A FORCE value is always a pin. A process value
-    # that differs from the persisted install record is also an explicit override; the matching
-    # value is the launcher's inherited default and remains eligible for installed daily-policy
-    # alignment. This preserves direct user overrides without freezing stale installer choices.
-    process_model_tag = str(os.environ.get("VOOL_OLLAMA_MODEL") or "").strip()
-    selection_pinned = bool(
-        forced_model_tag
-        or (
-            process_model_tag
-            and (
-                not persisted_selected_model
-                or process_model_tag.lower() != persisted_selected_model.lower()
-            )
-        )
+    selection_mode = resolve_model_selection_mode(
+        provider_env=provider_env,
+        process_env=os.environ,
+        persisted_model=persisted_selected_model,
     )
+    selection_pinned = selection_mode == EXPLICIT_SELECTION_MODE
     runtime_model_tag = candidate_aware_daily_runtime_model_tag(
         configured_model_tag,
         env=provider_env,
@@ -1018,17 +1015,51 @@ def bootstrap_runtime_services(
             configured_model_tag,
             runtime_model_tag,
         )
+    model_store_path = str(
+        provider_env.get("OLLAMA_MODELS")
+        or default_ollama_models_path(provider_env)
+    ).strip()
+    ollama_endpoint = ollama_base_url(provider_env)
+    local_models_allowed = local_models_enabled(env=provider_env, runtime_home=runtime_home or None)
+    preferred_model_installed = False
+    if local_models_allowed:
+        try:
+            preferred_model_installed = bool(
+                ollama_model_installed(
+                    runtime_model_tag,
+                    env=provider_env,
+                    base_url=ollama_endpoint,
+                )
+            )
+        except Exception:
+            preferred_model_installed = False
+    model_selection = select_local_model_for_provisioning(
+        selection_mode=selection_mode,
+        requested_model=runtime_model_tag,
+        probe=probe,
+        free_disk_gb=free_disk_gb_for_path(model_store_path),
+        env=provider_env,
+        runtime_home=runtime_home,
+        already_installed=preferred_model_installed and selection_mode != EXPLICIT_SELECTION_MODE,
+    )
+    selected_model = str(model_selection.selected_model or "").strip()
+    if selected_model:
+        runtime_model_tag = selected_model
     runtime_parameter_size = parameter_size_for_model(runtime_model_tag)
     # Background, never inline: a first-run pull downloads gigabytes, and bootstrap runs BEFORE the
     # API server binds its port. The window that opens on first run must reach a server that reports
     # this progress, not a refused connection.
-    ollama_endpoint = ollama_base_url(provider_env)
-    model_pull = start_ollama_model_pull(
-        runtime_model_tag,
-        env=provider_env,
-        base_url=ollama_endpoint,
-        runtime_home=runtime_home,
-    )
+    if not local_models_allowed or selected_model or preferred_model_installed:
+        model_pull = start_ollama_model_pull(
+            runtime_model_tag,
+            env=provider_env,
+            base_url=ollama_endpoint,
+            runtime_home=runtime_home,
+        )
+    else:
+        model_pull = ModelPullProgress(runtime_model_tag)
+        model_pull.update(status="blocked", detail=model_selection.reason)
+        model_pull.finish()
     logger.info(
         "Hardware: %s | GPU: %s | Primary local model: %s",
         probe.accelerator,
@@ -1044,13 +1075,20 @@ def bootstrap_runtime_services(
     # By reference: /healthz copies the stamp per request but not this nested dict, so the pull
     # thread's updates are visible to a first-run client polling for progress.
     runtime_version_stamp["model_pull"] = model_pull.public
-    local_models_allowed = local_models_enabled(env=provider_env, runtime_home=runtime_home or None)
+    runtime_version_stamp["model_selection"] = model_selection.to_dict()
     initial_pull_detail = str(model_pull.public.get("detail") or "")
+    selection_blocked = model_pull.status == "blocked"
     local_model_setup: dict[str, Any] = {
         "model": runtime_model_tag,
+        "selection_mode": model_selection.selection_mode,
+        "selection_result": model_selection.result,
+        "selection_reason": model_selection.reason,
+        "model_selection": model_selection.to_dict(),
         "state": (
             "unavailable"
             if not local_models_allowed or model_pull.status == "skipped"
+            else "failed"
+            if selection_blocked
             else "downloading"
             if model_pull.status in {"starting", "pulling"}
             else "preparing"
@@ -1071,6 +1109,8 @@ def bootstrap_runtime_services(
         "detail": (
             "Local models are disabled by this runtime's policy."
             if not local_models_allowed or model_pull.status == "skipped"
+            else model_selection.reason
+            if selection_blocked
             else "Connect to the internet, then retry the local model download."
             if _ollama_pull_is_offline(initial_pull_detail)
             else "The download is complete. VOOL is preparing its local chat checks."
@@ -1097,13 +1137,19 @@ def bootstrap_runtime_services(
         compute_daemon.start()
 
     model_registry = ModelRegistry()
-    ensure_default_provider(
-        model_registry,
-        runtime_model_tag,
-        env=provider_env,
-        install_profile=requested_profile,
-        runtime_home=runtime_home,
-    )
+    if not local_models_allowed or selected_model or preferred_model_installed:
+        ensure_default_provider(
+            model_registry,
+            runtime_model_tag,
+            env=provider_env,
+            install_profile=requested_profile,
+            runtime_home=runtime_home,
+        )
+    else:
+        logger.warning(
+            "Local model provisioning blocked before provider registration: %s",
+            model_selection.result,
+        )
     for warning in model_registry.startup_warnings():
         logger.warning("Model warning: %s", warning)
     runtime_ref: dict[str, RuntimeServices] = {}
@@ -1549,6 +1595,13 @@ def bootstrap_runtime_services(
                 return 409, {"ok": False, "error": "the selected local model is already downloaded"}
             if not local_models_enabled(env=provider_env, runtime_home=runtime_home or None):
                 return 409, {"ok": False, "error": "local models are disabled by policy"}
+            if not model_selection.selected:
+                return 409, {
+                    "ok": False,
+                    "error": model_selection.result,
+                    "detail": model_selection.reason,
+                    "model_selection": model_selection.to_dict(),
+                }
             now = time.monotonic()
             if now - last_retry_at < 5.0:
                 return 429, {"ok": False, "error": "wait briefly before retrying the model download"}
