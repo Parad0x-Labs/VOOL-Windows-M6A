@@ -5,7 +5,7 @@
 > **Status: internal development and qualification.** This repository does not claim a public signed Windows release.
 
 <p align="center">
-  <img src="./docs/assets/github-header-vool-local.png" alt="VOOL for Windows" width="100%" />
+  <img src="./docs/assets/github-header-vool-windows.png" alt="VOOL for Windows" width="100%" />
 </p>
 
 ## **What this repository is**
