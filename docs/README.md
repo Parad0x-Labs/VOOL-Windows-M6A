@@ -10,6 +10,17 @@ it runs on your machine, uses memory and tools, and can optionally reach further
 - [STATUS.md](STATUS.md) — what is real, what is weak, what is still beta
 - [UPGRADE_NULLA_TO_VOOL.md](UPGRADE_NULLA_TO_VOOL.md) — upgrading from a NULLA install
 
+## **Windows port**
+
+- [WINDOWS_PORT_OVERVIEW.md](WINDOWS_PORT_OVERVIEW.md) — runtime shape, current source boundary, and starting points.
+- [WINDOWS_BUILD_AND_TEST.md](WINDOWS_BUILD_AND_TEST.md) — supported stage-only build, isolated preflight, launcher, and validation commands.
+- [WINDOWS_QUALIFICATION_STATUS.md](WINDOWS_QUALIFICATION_STATUS.md) — accepted evidence, open gates, and release limitations.
+- [WINDOWS_SECURITY_BOUNDARIES.md](WINDOWS_SECURITY_BOUNDARIES.md) — provider, path, process, model, firewall, and broker boundaries.
+- [WINDOWS_CAPABILITY_MATRIX.md](WINDOWS_CAPABILITY_MATRIX.md) — historical/source capability matrix; read status dates carefully.
+- [WINDOWS_ONE_CLICK_READINESS.md](WINDOWS_ONE_CLICK_READINESS.md) — release-readiness boundary and remaining packaging work.
+
+> **Reading note:** The Windows pages above are a current, sanitized guide to the port. The older capability and readiness matrices retain historical evidence and should not be used to infer that an unqualified row is release-ready.
+
 ## Understanding the system
 
 - [RUNTIME_ARCHITECTURE_CONTRACT.md](RUNTIME_ARCHITECTURE_CONTRACT.md) — request flow, model selection, tools, permissions, money boundaries, storage, receipts
