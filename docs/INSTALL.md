@@ -1,8 +1,8 @@
 # VOOL Install
 
-This is the canonical install and quickstart doc.
+This is the legacy source-bootstrap install and quickstart reference. It is not the native Windows installer qualification path; use [Windows Build and Test](WINDOWS_BUILD_AND_TEST.md) for that path.
 
-`main` is the current alpha trunk. Use the default `main` installer path unless you are deliberately reproducing an older checkpoint.
+The source-bootstrap commands below reference the cross-platform alpha trunk. They do not install or certify this repository's exact Windows qualification artifact.
 
 ## Fast Path
 

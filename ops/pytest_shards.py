@@ -199,6 +199,13 @@ def collect_test_manifest(
     rc = int(completed.returncode)
     if rc != 0:
         print(f"!! pytest collection failed (exit {rc})", flush=True)
+        # A warnings-heavy tail can hide the only collection traceback.
+        try:
+            for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                if line.startswith(("ERROR ", "E   ")):
+                    print(line, flush=True)
+        except OSError as exc:
+            print(f"!! could not read collection traceback: {exc}", flush=True)
         _print_log_tail(log_path, tail_lines=tail_lines)
         return 1, None
     try:
@@ -495,6 +502,12 @@ def run_shards(
                     f"!! shard deadline exceeded after {timeout_seconds:g}s; pending: {shard_ids}",
                     flush=True,
                 )
+                for assignment, _, log_path in pending:
+                    print(f"==> pending shard {assignment.index}: {log_path}", flush=True)
+                    progress_path = execution_paths[assignment.index].with_suffix(".progress.json")
+                    if progress_path.exists():
+                        _print_log_tail(progress_path, tail_lines=1)
+                    _print_log_tail(log_path, tail_lines=tail_lines)
                 return 1
             if not made_progress:
                 sleeper(0.1)

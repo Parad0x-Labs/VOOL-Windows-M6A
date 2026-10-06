@@ -4,7 +4,9 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
+from ops.pytest_execution import _ExecutionPlugin
 from ops.pytest_shards import (
     GATE_ENV_VAR,
     REQUIRED_EXECUTED_FILES,
@@ -109,6 +111,21 @@ def test_collection_timeout_is_red(tmp_path: Path) -> None:
 
     assert rc == 1
     assert manifest is None
+
+
+def test_collection_traceback_is_visible_before_warning_tail(tmp_path: Path, capsys) -> None:
+    def failed_collection(*_args, **kwargs):
+        kwargs["stdout"].write("E   UnicodeEncodeError: surrogate\nERROR test_broken.py\n")
+        kwargs["stdout"].write("warning noise\n" * 20)
+        return SimpleNamespace(returncode=2)
+
+    rc, manifest = collect_test_manifest(
+        repo_root=tmp_path, run_root=tmp_path, runner=failed_collection, tail_lines=2,
+    )
+    output = capsys.readouterr().out
+    assert rc == 1 and manifest is None
+    assert "E   UnicodeEncodeError: surrogate" in output
+    assert "ERROR test_broken.py" in output
 
 
 def test_partition_is_complete_and_unrelated_files_do_not_reshuffle(tmp_path: Path) -> None:
@@ -359,7 +376,9 @@ def test_child_launch_failure_is_red(tmp_path: Path) -> None:
     assert run_shards(_assignments(), repo_root=tmp_path, launcher=broken_launcher) == 1
 
 
-def test_hung_child_has_a_bounded_red_result_and_is_reaped(tmp_path: Path) -> None:
+def test_hung_child_has_a_bounded_red_result_and_is_reaped(
+    tmp_path: Path, capsys, monkeypatch,
+) -> None:
     process = _FakeProc(None)
     now = [0.0]
 
@@ -369,17 +388,54 @@ def test_hung_child_has_a_bounded_red_result_and_is_reaped(tmp_path: Path) -> No
     def advance(seconds: float) -> None:
         now[0] += seconds
 
+    def launch(*_args, **kwargs):
+        kwargs["stdout"].write("last pending shard output\n")
+        kwargs["stdout"].flush()
+        (tmp_path / "logs" / "shard-1-execution.progress.json").write_text("current phase\n")
+        return process
+
+    original_read = Path.read_text
+
+    def read_with_denied_progress(path, *args, **kwargs):
+        if path.suffixes == [".progress", ".json"]:
+            raise PermissionError("injected progress read denial")
+        return original_read(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_with_denied_progress)
+
     rc = run_shards(
         (_assignments()[0],),
         repo_root=tmp_path,
-        launcher=lambda *_args, **_kwargs: process,
+        launcher=launch,
         timeout_seconds=0.2,
         monotonic=clock,
         sleeper=advance,
+        run_root=tmp_path,
     )
 
     assert rc == 1
     assert process.terminated is True
+    output = capsys.readouterr().out
+    assert "last pending shard output" in output
+    assert "injected progress read denial" in output
+
+
+def test_progress_snapshot_preserves_current_phase_without_claiming_completion(tmp_path: Path) -> None:
+    output = tmp_path / "execution.json"
+    plugin = _ExecutionPlugin(output_path=output)
+    nodeid = "tests/test_probe.py::test_probe"
+    item = SimpleNamespace(nodeid=nodeid)
+    progress = output.with_suffix(".progress.json")
+    plugin.pytest_runtest_logstart(nodeid, None)
+    assert json.loads(progress.read_text())["phase"] == "setup"
+    plugin.pytest_runtest_call(item)
+    assert json.loads(progress.read_text())["phase"] == "call"
+    plugin.pytest_runtest_teardown(item)
+    assert json.loads(progress.read_text()) == {
+        "nodeid": nodeid, "phase": "teardown", "started_total": 1,
+    }
+    assert not output.exists()
+    assert not progress.with_suffix(".tmp").exists()
 
 
 def test_shard_node_inventory_must_match_canonical_collection(

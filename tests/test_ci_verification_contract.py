@@ -24,7 +24,9 @@ EXPECTED_GATE_COMMAND = (
     "4",
     "--pytest-arg=--tb=short",
     "--log-dir=.verification-logs",
-    "--tail-lines=200",
+    "--tail-lines=2000",
+    "--timeout-seconds",
+    "7200",
 )
 
 
@@ -67,6 +69,8 @@ def _assert_authoritative_contract(workflow: dict[str, Any]) -> None:
     upload = _named_step(verify, "Upload complete verification logs")
     assert upload["if"] == "always()"
     assert upload["with"]["path"] == ".verification-logs/"
+    assert upload["with"]["include-hidden-files"] is True
+    assert upload["with"]["if-no-files-found"] == "error"
     assert workflow["jobs"]["build"]["needs"] == ["verify"]
 
     for job in workflow["jobs"].values():
@@ -110,4 +114,64 @@ def test_verification_dependencies_are_exactly_pinned() -> None:
     dev = set(project["project"]["optional-dependencies"]["dev"])
 
     assert "pytest==9.1.0" in dev
-    assert "ruff==0.15.16" in dev
+    assert "ruff==0.16.7" in dev
+
+
+def test_compatibility_keeps_complete_evidence_and_authoritative_deadline() -> None:
+    job = _load_workflow()["jobs"]["compatibility"]
+    run = _named_step(job, "Run compatibility collection and shards")["run"]
+    assert "--timeout-seconds 7200" in run
+    assert "--artifact-root=.compatibility-logs" in run
+    upload = _named_step(job, "Upload complete compatibility logs")
+    assert upload["if"] == "always()"
+    assert upload["with"]["path"] == ".compatibility-logs/"
+    assert upload["with"]["include-hidden-files"] is True
+    assert upload["with"]["if-no-files-found"] == "error"
+
+
+def test_llm_lanes_install_shared_fixture_and_browser_dependencies() -> None:
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github/workflows/llm_acceptance.yml").read_text(encoding="utf-8")
+    )
+    for job in workflow["jobs"].values():
+        install = _named_step(job, "Install dependencies")["run"]
+        assert '.[dev,browser,companion]' in install
+        browser = _named_step(job, "Provision browser test dependencies")
+        assert browser["run"] == "python -m playwright install --with-deps chromium"
+
+
+def test_security_audits_both_run_and_preserve_failure_evidence() -> None:
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github/workflows/security-audit.yml").read_text(encoding="utf-8")
+    )
+    job = workflow["jobs"]["audit"]
+    first = _named_step(job, "pip-audit (requirements)")
+    second = _named_step(job, "pip-audit (runtime requirements)")
+    assert "-r requirements.txt" in first["run"]
+    assert "-r requirements-runtime.txt" in second["run"]
+    assert second["if"] == "always()"
+    for audit in (first, second):
+        assert not audit.get("continue-on-error", False)
+        assert "||" not in audit["run"]
+        assert "--format=json -o .security-audit/" in audit["run"]
+    upload = _named_step(job, "Upload Python audit evidence")
+    assert upload["if"] == "always()"
+    assert upload["with"]["include-hidden-files"] is True
+    assert upload["with"]["if-no-files-found"] == "error"
+
+
+def test_native_broker_transcript_preserves_exit_codes_and_is_uploaded_on_failure() -> None:
+    workflow = yaml.safe_load(
+        (REPO_ROOT / ".github/workflows/windows-release-gauntlet.yml").read_text(encoding="utf-8")
+    )
+    job = workflow["jobs"]["gauntlet"]
+    run = _named_step(job, "Build and exercise native execution broker")["run"]
+    assert "Start-Transcript -Path .windows-broker-logs/native-broker.log" in run
+    assert "} finally {\n  Stop-Transcript" in run
+    assert "& $tests $broker\n  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }" in run
+    assert "continue-on-error" not in run and "Tee-Object" not in run
+    upload = _named_step(job, "Upload native broker evidence")
+    assert upload["if"] == "always()"
+    assert upload["with"]["path"] == ".windows-broker-logs/"
+    assert upload["with"]["include-hidden-files"] is True
+    assert upload["with"]["if-no-files-found"] == "error"

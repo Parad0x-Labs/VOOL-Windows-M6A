@@ -54,6 +54,8 @@ internal static class Program
             var support = WindowsExecutionBroker.GetSupportReport();
             Console.WriteLine($"Broker: {brokerPath}");
             Console.WriteLine($"Support: {JsonSerializer.Serialize(support)}");
+            using (var currentProcess = Process.GetCurrentProcess())
+                Console.WriteLine($"Launch context: session={currentProcess.SessionId}; userInteractive={Environment.UserInteractive}");
 
             if (!support.Supported)
             {
@@ -1597,7 +1599,10 @@ internal static class Program
             !result.TimedOut,
             $"{context} unexpectedly timed out. Stdout: {result.Stdout}; Stderr: {result.Stderr}");
         Assert(result.ProcessId > 0, $"{context} returned an invalid process ID.");
-        Assert(!string.IsNullOrWhiteSpace(result.Stdout), $"{context} produced no probe JSON.");
+        Assert(!string.IsNullOrWhiteSpace(result.Stdout),
+            $"{context} produced no probe JSON. Exit={result.ExitCode} (0x{unchecked((uint)result.ExitCode):X8}); "
+            + $"restricted={result.Token.HasRestrictions}; adminEnabled={result.Token.AdministratorsGroupEnabled}; "
+            + $"Stderr: {result.Stderr}");
 
         JsonElement probe;
         try

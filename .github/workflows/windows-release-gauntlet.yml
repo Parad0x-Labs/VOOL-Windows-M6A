@@ -151,18 +151,32 @@ jobs:
       - name: Build and exercise native execution broker
         shell: pwsh
         run: |
-          dotnet restore installer/windows_broker/Vool.WindowsBroker.csproj
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          dotnet publish installer/windows_broker/Vool.WindowsBroker.csproj --configuration Release --no-restore -warnaserror
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          dotnet restore installer/windows_broker/tests/Vool.WindowsBroker.Tests.csproj
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          dotnet build installer/windows_broker/tests/Vool.WindowsBroker.Tests.csproj --configuration Release --no-restore -warnaserror
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $broker = (Resolve-Path installer/windows_broker/bin/Release/net10.0-windows10.0.17763.0/win-x64/publish/vool-broker.exe).Path
-          $tests = (Resolve-Path installer/windows_broker/tests/bin/Release/net10.0-windows10.0.17763.0/win-x64/vool-broker-tests.exe).Path
-          & $tests $broker
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Path .windows-broker-logs -Force | Out-Null
+          Start-Transcript -Path .windows-broker-logs/native-broker.log
+          try {
+            dotnet restore installer/windows_broker/Vool.WindowsBroker.csproj
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            dotnet publish installer/windows_broker/Vool.WindowsBroker.csproj --configuration Release --no-restore -warnaserror
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            dotnet restore installer/windows_broker/tests/Vool.WindowsBroker.Tests.csproj
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            dotnet build installer/windows_broker/tests/Vool.WindowsBroker.Tests.csproj --configuration Release --no-restore -warnaserror
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $broker = (Resolve-Path installer/windows_broker/bin/Release/net10.0-windows10.0.17763.0/win-x64/publish/vool-broker.exe).Path
+            $tests = (Resolve-Path installer/windows_broker/tests/bin/Release/net10.0-windows10.0.17763.0/win-x64/vool-broker-tests.exe).Path
+            & $tests $broker
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            Stop-Transcript
+          }
+      - name: Upload native broker evidence
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: vool-windows-native-broker
+          path: .windows-broker-logs/
+          include-hidden-files: true
+          if-no-files-found: error
       - name: Check Windows trust and source inventory
         shell: pwsh
         run: |

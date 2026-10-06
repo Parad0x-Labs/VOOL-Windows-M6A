@@ -45,6 +45,25 @@ class _ExecutionPlugin:
     def pytest_runtest_logstart(self, nodeid: str, location: Any) -> None:
         del location
         self._started.append(str(nodeid))
+        self._write_progress(nodeid, "setup")
+
+    def pytest_runtest_call(self, item: Any) -> None:
+        self._write_progress(str(item.nodeid), "call")
+
+    def pytest_runtest_teardown(self, item: Any) -> None:
+        self._write_progress(str(item.nodeid), "teardown")
+
+    def _write_progress(self, nodeid: str, phase: str) -> None:
+        # This bounded snapshot is diagnostic only, never a completion receipt.
+        path = self._output_path.with_suffix(".progress.json")
+        temporary = path.with_suffix(".tmp")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary.write_text(
+            json.dumps({"nodeid": nodeid, "phase": phase, "started_total": len(self._started)})
+            + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(path)
 
     def pytest_runtest_logreport(self, report: Any) -> None:
         outcome = _outcome_of(report)

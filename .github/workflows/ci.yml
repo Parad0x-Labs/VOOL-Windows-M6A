@@ -45,6 +45,8 @@ jobs:
         with:
           name: verification-logs-py3.12.13
           path: .verification-logs/
+          include-hidden-files: true
+          if-no-files-found: error
 
   compatibility:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -70,7 +72,16 @@ jobs:
       - name: Run compatibility collection and shards
         run: >-
           python ops/pytest_shards.py --workers 4 --pytest-arg=--tb=short
-          --tail-lines=200
+          --tail-lines=2000 --timeout-seconds 7200
+          --artifact-root=.compatibility-logs
+      - name: Upload complete compatibility logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: compatibility-logs-py${{ matrix.python-version }}
+          path: .compatibility-logs/
+          include-hidden-files: true
+          if-no-files-found: error
 
   build:
     runs-on: ubuntu-latest

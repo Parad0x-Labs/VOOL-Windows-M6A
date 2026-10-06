@@ -177,7 +177,7 @@ if ($LASTEXITCODE -ne 0) { throw "Embedded Python pip bootstrap failed." }
 if ($LASTEXITCODE -ne 0) { throw "Embedded Python setuptools/wheel bootstrap failed." }
 & $py -m pip install --no-build-isolation --no-warn-script-location -q `
     "idna==3.18" pydantic cryptography requests pynacl keyring psutil pyyaml `
-    "pypdf==6.16.2" "reportlab==5.0.1" "markdown-it-py==4.2.0" `
+    "pypdf==6.19.0" "reportlab==5.0.1" "markdown-it-py==4.2.0" `
     "starlette>=0.37,<2.0" "uvicorn>=0.30,<1.0" solders `
     "zstandard>=0.22.0" "xxhash>=3.4.0" `
     pywebview pythonnet "xlrd==2.0.1"

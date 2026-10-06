@@ -106,7 +106,7 @@ def test_an_unknown_representation_is_refused_rather_than_served_under_the_defau
 
 
 def test_a_lone_surrogate_is_a_typed_refusal_not_a_codec_error() -> None:
-    """`"\ud800"` is a valid `str` and invalid UTF-8. It used to escape as a raw UnicodeEncodeError
+    r"""`"\ud800"` is a valid `str` and invalid UTF-8. It used to escape as a raw UnicodeEncodeError
     from inside the digest -- a hostile input producing a codec error three frames down instead of a
     typed refusal from this module."""
     for hostile in ("\ud800", "abc\udfff", "\ud83d"):  # lone high, trailing low, truncated pair

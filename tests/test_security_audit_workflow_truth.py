@@ -66,9 +66,11 @@ def test_the_pip_auditor_runs_against_both_pinned_requirement_files() -> None:
     pip_steps = [
         step for step in _steps(document) if "pip_audit" in str(step.get("run") or "")
     ]
-    assert len(pip_steps) == 1, "exactly one pip-audit step expected"
-    run = str(pip_steps[0]["run"])
-    for requirements in ("requirements.txt", "requirements-runtime.txt"):
+    assert len(pip_steps) == 2, "each requirements file needs an independent audit step"
+    for step, requirements in zip(pip_steps, ("requirements.txt", "requirements-runtime.txt"), strict=True):
+        run = str(step["run"])
         assert f"-r {requirements}" in run, (
             f"the auditor must audit the pinned {requirements}, not a sample of it"
         )
+        assert not step.get("continue-on-error", False)
+    assert pip_steps[1]["if"] == "always()", "the first finding must not suppress the second audit"
