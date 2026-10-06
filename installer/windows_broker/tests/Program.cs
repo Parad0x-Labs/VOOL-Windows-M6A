@@ -56,6 +56,7 @@ internal static class Program
             Console.WriteLine($"Support: {JsonSerializer.Serialize(support)}");
             using (var currentProcess = Process.GetCurrentProcess())
                 Console.WriteLine($"Launch context: session={currentProcess.SessionId}; userInteractive={Environment.UserInteractive}");
+            ReportLaunchObjects();
 
             if (!support.Supported)
             {
@@ -1799,6 +1800,80 @@ internal static class Program
         {
         }
     }
+
+    // Borrowed USER handles: query only; never close, switch, or grant access to them.
+    // This identifies inherited launch context, not effective access for the child token.
+    private static void ReportLaunchObjects()
+    {
+        ReportUserObject("windowStation", GetProcessWindowStation());
+        ReportUserObject("desktop", GetThreadDesktop(GetCurrentThreadId()));
+        if (!NativeMethods.IsProcessInJob(NativeMethods.GetCurrentProcess(), IntPtr.Zero, out var inJob))
+        {
+            Console.WriteLine($"Launch job: queryError={Marshal.GetLastWin32Error()}");
+            return;
+        }
+        if (!inJob)
+        {
+            Console.WriteLine("Launch job: inJob=False");
+            return;
+        }
+        if (QueryInformationJobObject(IntPtr.Zero, 4, out var uiRestrictions, sizeof(uint), out _))
+            Console.WriteLine($"Launch job: inJob=True; uiRestrictions=0x{uiRestrictions:X8}");
+        else
+            Console.WriteLine($"Launch job: inJob=True; uiQueryError={Marshal.GetLastWin32Error()}");
+    }
+
+    private static void ReportUserObject(string label, IntPtr handle)
+    {
+        if (handle == IntPtr.Zero)
+        {
+            Console.WriteLine($"Launch {label}: handleError={Marshal.GetLastWin32Error()}");
+            return;
+        }
+        var name = new StringBuilder(256);
+        var named = GetUserObjectInformationW(handle, 2, name, name.Capacity * sizeof(char), out _);
+        var nameFact = named ? name.ToString() : $"unknown(error={Marshal.GetLastWin32Error()})";
+        uint information = 1 | 2 | 4; // Owner, group and DACL only; no SACL privilege request.
+        GetUserObjectSecurity(handle, ref information, null, 0, out var required);
+        var sizeError = Marshal.GetLastWin32Error();
+        if (required == 0 || required > 65536 || sizeError != NativeMethods.ErrorInsufficientBuffer)
+        {
+            Console.WriteLine($"Launch {label}: name={nameFact}; securitySizeError={sizeError}; bytes={required}");
+            return;
+        }
+        var descriptor = new byte[checked((int)required)];
+        if (!GetUserObjectSecurity(handle, ref information, descriptor, required, out _))
+        {
+            Console.WriteLine($"Launch {label}: name={nameFact}; securityReadError={Marshal.GetLastWin32Error()}");
+            return;
+        }
+        var security = new RawSecurityDescriptor(descriptor, 0);
+        Console.WriteLine($"Launch {label}: name={nameFact}; sddl={security.GetSddlForm(AccessControlSections.Owner | AccessControlSections.Group | AccessControlSections.Access)}");
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr GetProcessWindowStation();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr GetThreadDesktop(uint threadId);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetUserObjectInformationW(
+        IntPtr handle, int index, StringBuilder information, int length, out int needed);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetUserObjectSecurity(
+        IntPtr handle, ref uint information, [Out] byte[]? descriptor, uint length, out uint needed);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryInformationJobObject(
+        IntPtr job, int informationClass, out uint information, uint length, out uint needed);
 
     private const uint HandleFlagInherit = 1;
 
