@@ -28,6 +28,82 @@ param(
   [switch]$IncludeModel
 )
 $ErrorActionPreference = "Stop"
+
+# Internal builds include approved edits to tracked files, never ambient checkout residue.
+# Keep these helpers free of build/runtime side effects so staging can be tested separately.
+function Copy-InternalBundleSource {
+  param([string]$RepoRoot, [string]$AppDir, [string[]]$Paths)
+  if (Test-Path -LiteralPath $AppDir) {
+    if (Get-ChildItem -LiteralPath $AppDir -Force | Select-Object -First 1) {
+      throw "Internal app stage must be empty; existing files will not be overwritten."
+    }
+  }
+  $files = @(& git -C $RepoRoot -c core.quotePath=false ls-files -- $Paths)
+  if ($LASTEXITCODE -ne 0 -or -not $files.Count) { throw "Tracked bundle source inventory failed." }
+  foreach ($relativePath in $files) {
+    $src = Join-Path $RepoRoot $relativePath
+    if (-not (Test-Path -LiteralPath $src -PathType Leaf)) {
+      throw "Tracked bundle source missing: $relativePath"
+    }
+    # Do not follow tracked symlinks or directory junctions outside the source inventory.
+    $item = Get-Item -LiteralPath $src -Force
+    while ($item.FullName -ne $RepoRoot) {
+      if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        throw "Reparse point in tracked bundle source: $relativePath"
+      }
+      $item = Get-Item -LiteralPath (Split-Path -Parent $item.FullName) -Force
+    }
+    $dest = Join-Path $AppDir $relativePath
+    New-Item -ItemType Directory -Force (Split-Path -Parent $dest) | Out-Null
+    Copy-Item -LiteralPath $src -Destination $dest
+  }
+  return $files
+}
+
+function Assert-InternalBundlePayload {
+  param([string]$RepoRoot, [string]$AppDir, [string[]]$SourceFiles)
+  $allowed = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+  foreach ($relativePath in $SourceFiles) { [void]$allowed.Add($relativePath.Replace('\', '/')) }
+  foreach ($item in Get-ChildItem -LiteralPath $AppDir -Recurse -Force) {
+    if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+      throw "Reparse point in app payload: $($item.FullName)"
+    }
+    if ($item.PSIsContainer) { continue }
+    $relativePath = [System.IO.Path]::GetRelativePath($AppDir, $item.FullName).Replace('\', '/')
+    if ($relativePath -eq 'config/build-source.json') { continue } # explicitly generated below
+    if (-not $allowed.Contains($relativePath)) { throw "Unexpected app payload file: $relativePath" }
+    if ((Get-FileHash -LiteralPath $item.FullName).Hash -ne
+        (Get-FileHash -LiteralPath (Join-Path $RepoRoot $relativePath)).Hash) {
+      throw "App payload differs from source: $relativePath"
+    }
+  }
+  foreach ($relativePath in $allowed) {
+    if (-not (Test-Path -LiteralPath (Join-Path $AppDir $relativePath) -PathType Leaf)) {
+      throw "Missing app payload file: $relativePath"
+    }
+  }
+}
+
+function Write-PythonUpgradeInputs {
+  param([string]$Stage, [string]$PythonDir, [string]$PythonExe, [string]$Helper)
+  # Create the stdlib-only verifier BEFORE inventory: an embedded _pth import-site
+  # directive can override -S. Never run the verifier in candidate site-packages.
+  $bootstrap = Join-Path $Stage "python-upgrade-bootstrap"
+  New-Item -ItemType Directory $bootstrap | Out-Null
+  Get-ChildItem -LiteralPath $PythonDir -File | Where-Object { $_.Extension -ne "._pth" } |
+    Copy-Item -Destination $bootstrap
+  $stdlibZip = @(Get-ChildItem -LiteralPath $PythonDir -File -Filter "python*.zip")
+  $pathFile = @(Get-ChildItem -LiteralPath $PythonDir -File -Filter "python*._pth")
+  if ($stdlibZip.Count -ne 1 -or $pathFile.Count -ne 1) { throw "Ambiguous Python upgrade bootstrap layout." }
+  # DLL-named _pth takes precedence over the executable's; explicitly omit import site.
+  @($stdlibZip[0].Name, ".") | Set-Content -LiteralPath (Join-Path $bootstrap $pathFile[0].Name) -Encoding ascii
+  Copy-Item -LiteralPath $Helper -Destination $bootstrap
+  $verifier = Join-Path $bootstrap ([System.IO.Path]::GetFileName($PythonExe))
+  & $verifier -I -S -B (Join-Path $bootstrap "upgrade_python_payload.py") inventory `
+    --root $Stage --manifest (Join-Path $Stage "python_payload.json")
+  if ($LASTEXITCODE -ne 0) { throw "Python payload ownership inventory failed." }
+}
+
 # `Resolve-Path`.Path can be provider-qualified when the checkout is reached through a WSL UNC
 # path (for example, a PowerShell provider prefix before a UNC path). Embedded Python and the
 # Windows file APIs need the provider path itself, so normalize through Convert-Path.
@@ -115,13 +191,19 @@ $appDir = Join-Path $Stage "app"
 New-Item -ItemType Directory -Force $appDir | Out-Null
 # All top-level runtime packages the server imports (verified by running the staged bundle),
 # plus config data. Excludes tests and dev-only trees to keep the bundle lean.
-foreach ($d in @("apps", "core", "adapters", "storage", "network", "relay", "retrieval", "sandbox", "tools", "channels", "ops", "installer", "config")) {
-  $src = Join-Path $SourceRoot $d
-  if (Test-Path $src) { Copy-Item $src (Join-Path $appDir $d) -Recurse -Force }
+$runtimeRoots = @("apps", "core", "adapters", "storage", "network", "relay", "retrieval", "sandbox", "tools", "channels", "ops", "installer", "config")
+$groundingSources = @("README.md", "docs\SYSTEM_SPINE.md", "docs\STATUS.md", "docs\VOOL_DESKTOP_BLUEPRINT.md")
+if ($BuildMode -eq "Internal") {
+  $internalSourceFiles = @(Copy-InternalBundleSource -RepoRoot $RepoRoot -AppDir $appDir -Paths ($runtimeRoots + $groundingSources))
+} else {
+  foreach ($d in $runtimeRoots) {
+    $src = Join-Path $SourceRoot $d
+    if (Test-Path $src) { Copy-Item $src (Join-Path $appDir $d) -Recurse -Force }
+  }
 }
 # Canonical project grounding reads only this small allowlist. Ship the same sources in the
 # installed bundle so a release build has the grounding that a source checkout has.
-foreach ($relativePath in @("README.md", "docs\SYSTEM_SPINE.md", "docs\STATUS.md", "docs\VOOL_DESKTOP_BLUEPRINT.md")) {
+foreach ($relativePath in $groundingSources) {
   $src = Join-Path $SourceRoot $relativePath
   if (-not (Test-Path -LiteralPath $src -PathType Leaf)) {
     throw "Canonical grounding source missing: $relativePath"
@@ -176,6 +258,9 @@ if ([string]$buildSource.source_kind -ne "git" -or [string]$buildSource.commit_f
 }
 if ($BuildMode -eq "Release" -and [bool]$buildSource.dirty_state) {
   throw "Bundle source checkout is dirty. Commit or remove local changes before building."
+}
+if ($BuildMode -eq "Internal") {
+  Assert-InternalBundlePayload -RepoRoot $RepoRoot -AppDir $appDir -SourceFiles $internalSourceFiles
 }
 $appVersion = (& $py -c "import sys; sys.path.insert(0, r'$appDir'); from core.app_version import VOOL_VERSION; print(VOOL_VERSION)").Trim()
 if (-not $appVersion) { throw "Failed to resolve the staged VOOL version." }
@@ -281,5 +366,11 @@ Get-ChildItem -LiteralPath $Stage -Recurse -File -ErrorAction SilentlyContinue |
 Get-ChildItem -LiteralPath $Stage -Recurse -Directory -Filter "__pycache__" -ErrorAction SilentlyContinue |
   Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
+if ($BuildMode -eq "Internal") {
+  Assert-InternalBundlePayload -RepoRoot $RepoRoot -AppDir $appDir -SourceFiles $internalSourceFiles
+}
+# Hash after final bytecode/symbol removal, then create the installer-only bootstrap.
+Write-PythonUpgradeInputs -Stage $Stage -PythonDir $pyDir -PythonExe $py `
+  -Helper (Join-Path $PSScriptRoot "upgrade_python_payload.py")
 $sz = (Get-ChildItem $Stage -Recurse -File | Measure-Object Length -Sum).Sum
 Write-Host ("Bundle staged at {0} -- {1:N0} MB" -f $Stage, ($sz/1MB))

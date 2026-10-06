@@ -413,11 +413,19 @@ def active_install_profile_id(
     env: Mapping[str, str] | None = None,
     allow_auto: bool = False,
 ) -> str:
-    env_map = os.environ if env is None else env
+    env_map = merge_provider_env(runtime_home, env=os.environ if env is None else env)
     requested = normalize_install_profile_id(env_map.get("VOOL_INSTALL_PROFILE"), allow_auto=allow_auto)
     if requested:
         return requested
-    return normalize_install_profile_id(_installed_profile_id(runtime_home), allow_auto=allow_auto)
+    installed = normalize_install_profile_id(_installed_profile_id(runtime_home), allow_auto=allow_auto)
+    if installed:
+        return installed
+    # Native Windows bundles must have an actual local-only boundary on first run,
+    # not merely an auto recommendation. Explicit/saved choices still take precedence;
+    # resolving the default never writes a profile or freezes later owner choices.
+    if str(env_map.get("VOOL_WINDOWS_BUNDLE") or "").strip() == "1":
+        return "local-only"
+    return ""
 
 
 def install_profile_runs_local_only(profile_id: str | None) -> bool:

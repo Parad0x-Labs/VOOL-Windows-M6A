@@ -1043,7 +1043,7 @@ body:not(.panel-open) #xpanel { display:none; }
       <div class="pop-note" data-i18n="header.model_connect_note">Connect a provider key in Settings to choose an exact cloud model or configure Auto&rsquo;s verified-free fallback.</div>
     </div>
   </div>
-  <button type="button" id="cloudPill" title="OpenRouter cloud connection — click for Settings" aria-label="Cloud connection status" data-i18n-title="header.cloud_title" data-i18n-aria-label="header.cloud_aria"><span class="dot"></span><span class="cp-txt" data-i18n="header.cloud_local_only">Local only</span></button>
+  <button type="button" id="cloudPill" title="OpenRouter cloud connection — click for Settings" aria-label="Cloud connection status" data-i18n-title="header.cloud_title" data-i18n-aria-label="header.cloud_aria"><span class="dot"></span><span class="cp-txt" data-i18n="header.cloud_no_key">No cloud key</span></button>
   <span class="spacer"></span>
   <button id="pinBtn" type="button" title="Pinned messages in this chat" aria-label="Pinned messages" data-i18n-title="header.pins_title" data-i18n-aria-label="header.pins_aria"><span class="pin-i">&#128204;</span><span class="pin-n"></span></button>
   <button id="searchBtn" type="button" aria-pressed="false" title="Search this chat (Cmd/Ctrl+F)" aria-label="Search this chat" data-i18n="header.search" data-i18n-title="header.search_title" data-i18n-aria-label="header.search_aria">Search</button>
@@ -8360,11 +8360,11 @@ function syncProviderUi() {
 // The header pill reflects the REAL auth state from /api/cloud/status; each state maps to a
 // class the CSS colours (ok=green, failed=red, untested=amber, no_key=gray). The text never
 // contains the key.
-const CLOUD_PILL_TEXT = { ok: 'Cloud connected', failed: 'Cloud error', untested: 'Cloud untested', no_key: 'Local only' };
+const CLOUD_PILL_TEXT = { ok: 'Cloud connected', failed: 'Cloud error', untested: 'Cloud untested', no_key: 'No cloud key' };
 function paintCloudPill() { refreshCloudStatus(true); }   // re-fetch the live multi-connection state
 
 // The header pill now shows a dot per REAL connection (cloud provider + fal.ai), each with its own
-// hover tooltip; no key -> a single "Local only" dot. paintCloudPill stays as a thin wrapper so the
+// hover tooltip; no key -> a single "No cloud key" dot, not a policy claim. paintCloudPill stays as a thin wrapper so the
 // existing callers (after a connection test) just re-fetch the live state.
 function _connStateClass(s) { return s === 'ok' ? 'ok' : (s === 'failed' ? 'bad' : (s === 'untested' ? 'warn' : '')); }
 function _connStateWord(s) { return s === 'ok' ? 'connected' : (s === 'failed' ? 'error' : (s === 'untested' ? 'not verified yet' : 'connected')); }
@@ -8406,8 +8406,8 @@ function renderConnections(conns) {
   }
   if (!conns || !conns.length) {
     const d = document.createElement('span'); d.className = 'dot'; cloudPillEl.appendChild(d);
-    const t = document.createElement('span'); t.className = 'cp-txt'; t.textContent = pageT('header.cloud_local_only', 'Local only'); cloudPillEl.appendChild(t);
-    cloudPillEl.title = 'No cloud key — running fully local. Click for Settings.';
+    const t = document.createElement('span'); t.className = 'cp-txt'; t.textContent = pageT('header.cloud_no_key', 'No cloud key'); cloudPillEl.appendChild(t);
+    cloudPillEl.title = 'No cloud key is configured. This does not establish Local Only policy. Click for Settings.';
     return;
   }
   if (route.kind === 'auto') {

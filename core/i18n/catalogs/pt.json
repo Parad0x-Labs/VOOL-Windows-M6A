@@ -370,7 +370,7 @@
     "update.up_to_date": "Em dia",
     "update.verifying": "Verificando…"
   },
-  "source_catalog_sha256": "7b123d0c9ec27125462cb997d6a14c6a9dd01a70129ebd1c5ac6fa34c8fbbd19",
+  "source_catalog_sha256": "6122a9465b3d07a43608c893357708775165366086348466a2d356068c9c3503",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

@@ -22,7 +22,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from core.i18n.catalog import format_message
+import pytest
+
+from core.i18n import catalog as catalog_module
+from core.i18n.catalog import MessageCatalog, format_message
 from core.i18n.locales import get_locale, response_supported_tags
 from core.response_language_policy import LANGUAGE_NAMES
 
@@ -62,3 +65,35 @@ def test_format_message_plural_and_escape() -> None:
 
 def test_unknown_params_key_left_verbatim() -> None:
     assert format_message("plain message") == "plain message"
+
+
+@pytest.mark.parametrize("locale", [path.stem for path in sorted(CATALOGS.glob("*.json")) if path.stem != "en"])
+def test_shipped_translations_survive_additive_english_fallback(locale: str) -> None:
+    data = json.loads((CATALOGS / f"{locale}.json").read_text(encoding="utf-8"))
+    catalog = MessageCatalog(locale)
+    assert not catalog.diagnostic.stale_source
+    assert not catalog.diagnostic.corrupt_file
+    assert not catalog.diagnostic.rejected_keys
+    bundle = catalog.client_bundle()
+    for key, value in data["messages"].items():
+        assert catalog.text(key) == value, (locale, key)
+        assert bundle["messages"][key] == value, (locale, key)
+    assert catalog.text("header.cloud_no_key") == data["messages"].get("header.cloud_no_key", "No cloud key")
+    assert bundle["messages"]["header.cloud_no_key"] == catalog.text("header.cloud_no_key")
+    assert bundle["english"]["composer.send"] == "Send"
+
+
+def test_stale_catalog_binding_still_rejects_translations(monkeypatch: pytest.MonkeyPatch) -> None:
+    original_loader = catalog_module.load_catalog_data
+
+    def stale_loader(locale: str) -> dict:
+        data = original_loader(locale)
+        if locale == "lt":
+            data = {**data, "source_catalog_sha256": "0" * 64}
+        return data
+
+    monkeypatch.setattr(catalog_module, "load_catalog_data", stale_loader)
+    catalog = MessageCatalog("lt")
+    assert catalog.diagnostic.stale_source
+    assert catalog.text("composer.send") == "Send"
+    assert catalog.text("header.cloud_no_key") == "No cloud key"

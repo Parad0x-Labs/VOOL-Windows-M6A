@@ -61,24 +61,28 @@ def test_intake_classify_and_preview_make_ZERO_network_requests(pact_rig, monkey
 def test_intake_verify_is_explicit_and_bounded_and_never_sends_on_a_refused_door(pact_rig, monkeypatch):
     """The verify door is refused in this hermetic run — the outcome is typed, never silent,
     and the fake key NEVER reaches the wire (no real provider is contacted from tests)."""
-    import pytest as _pytest
+    from core import remote_fetch_policy
 
-    import core.credential_intelligence.verification as verification
+    calls = []
 
     def _sealed(*args, **kwargs):
-        raise verification.RemoteFetchRefusedError("remote fetch is not permitted for this turn")
+        calls.append(kwargs["provider_id"])
+        raise remote_fetch_policy.RemoteFetchRefusedError("remote fetch is not permitted for this turn")
 
-    monkeypatch.setattr(verification, "open_remote_url", _sealed)
+    # Verification resolves the guarded transport at call time, not from a cached import.
+    monkeypatch.setattr(remote_fetch_policy, "open_remote_url", _sealed)
+    monkeypatch.setattr(remote_fetch_policy, "open_remote", _sealed)
 
     status, payload = pact_rig.post("/api/intake/begin", {})
     session_id = payload["session_id"]
     pact_rig.post("/api/intake/classify", {"session_id": session_id, "value": "sk-or-v1-abcdef0123456789"})
     status, payload = pact_rig.post("/api/intake/verify", {"session_id": session_id, "provider_id": "openrouter"})
     assert status == 200
-    assert payload["outcome"] in {"network_unavailable", "refused", "unexpected"}
+    assert payload["outcome"] == "refused"
+    assert calls == ["openrouter"]
     # nothing was stored either way
     status, payload = pact_rig.post("/api/intake/complete", {"session_id": session_id})
-    assert status in {200, 409}
+    assert status == 409
 
 
 def test_intake_complete_without_a_session_is_a_typed_410(pact_rig):

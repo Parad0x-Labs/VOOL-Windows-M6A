@@ -271,6 +271,7 @@
     "header.cloud_auto": "Auto",
     "header.cloud_local": "Local",
     "header.cloud_local_only": "Local only",
+    "header.cloud_no_key": "No cloud key",
     "header.cloud_title": "OpenRouter cloud connection — click for Settings",
     "header.council": "Council",
     "header.council_title": "Council — evidence, review and finality. Model output is not final truth.",

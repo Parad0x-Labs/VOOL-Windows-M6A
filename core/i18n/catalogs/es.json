@@ -646,7 +646,7 @@
     "wallet.testnet_badge": "fondos de testnet, no dinero real",
     "wallet.watch_only_hint": "solo observación: esta propuesta se puede aprobar en un monedero externo, no firmar aquí"
   },
-  "source_catalog_sha256": "7b123d0c9ec27125462cb997d6a14c6a9dd01a70129ebd1c5ac6fa34c8fbbd19",
+  "source_catalog_sha256": "6122a9465b3d07a43608c893357708775165366086348466a2d356068c9c3503",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

@@ -3,9 +3,42 @@ goes through the tested /api/cloud/model endpoint — with the static popover un
 fail-soft path when the catalog cannot be fetched."""
 from __future__ import annotations
 
+import json
+
+import pytest
+
 from core.vool_chat_page import render_vool_chat_html
+from tests.chat_page_js_harness import DOM, run_node, script
 
 HTML = render_vool_chat_html()
+
+
+def _switch_probe(*, code: str, accept: bool = False) -> dict:
+    """Drive the real page's switch path; no browser or provider connection."""
+    return run_node(DOM + "\n" + script() + "\n" + """
+    (async () => {
+      const code = CODE;
+      const posts = [], notices = [], reviews = [];
+      const before = modelForChat(displayedChat);
+      toast = (message) => notices.push(message);
+      window.VoolPriceGate = { review: async (request) => {
+        reviews.push(request); return ACCEPT;
+      }};
+      modelSelectionPost = async (body) => {
+        posts.push(body);
+        if (body.confirm_paid === true) {
+          return { r: { ok: true, status: 200 },
+                   j: { ok: true, model: body.model, provider: 'openrouter' } };
+        }
+        return { r: { ok: false, status: code === 'failed' ? 500 : 409 },
+                 j: code === 'failed' ? {} : { code } };
+      };
+      const switched = await switchCloudModel('vendor/test', 'Test', null, 'openrouter');
+      out({ switched, before,
+        after: modelForChat(displayedChat), posts, notices, reviews });
+      process.exit(0);
+    })().catch((error) => { console.error(error); process.exit(1); });
+    """.replace("CODE", json.dumps(code)).replace("ACCEPT", json.dumps(accept)))
 
 
 def test_dropdown_pulls_the_live_catalog():
@@ -37,7 +70,13 @@ def test_switch_goes_through_the_guarded_endpoint():
     assert "'/api/cloud/model'" in HTML
     # only a real ok response updates the selection
     assert "if (r.ok && j.ok)" in HTML
-    assert "could not switch" in HTML  # a failed switch is shown, never silently claimed
+    result = _switch_probe(code="failed")
+    assert result["errors"] == []
+    assert result["switched"] is False
+    assert result["after"] == result["before"]
+    assert result["notices"] == ["Could not select this model. Try again."]
+    assert len(result["posts"]) == 1
+    assert "confirm_paid" not in result["posts"][0]
 
 
 def test_static_popover_is_untouched_and_failsoft():
@@ -65,7 +104,10 @@ def test_removing_the_key_reverts_a_cloud_model_selection():
 
 
 def test_no_banned_language_in_the_touched_region():
-    for banned in ("stay honest", "honestly", "brutal", "moonshot", "goblin"):
+    # Moonshot is a supported provider, not prohibited editorial copy. Its identifier
+    # also belongs in routing expressions, so a whole-page word ban is invalid.
+    assert "moonshot: 'Moonshot'" in HTML
+    for banned in ("stay honest", "honestly", "brutal", "goblin"):
         assert banned not in HTML, banned
 
 
@@ -78,7 +120,23 @@ def test_auto_fallback_is_separate_from_explicit_model_pins():
     assert "paid · exact pin" in HTML
 
 
-def test_paid_pin_is_explicit_and_project_memory_does_not_silently_reset_it():
-    assert "Use this paid model?" in HTML
+@pytest.mark.parametrize("code", [
+    "paid_model_confirm_required", "MODEL_COST_UNKNOWN", "PAID_STATUS_UNKNOWN", "price_above_accepted",
+])
+@pytest.mark.parametrize("accept", [False, True])
+def test_paid_pin_is_explicit_and_project_memory_does_not_silently_reset_it(code, accept):
+    result = _switch_probe(code=code, accept=accept)
+    assert result["errors"] == []
+    assert result["switched"] is accept
+    assert len(result["reviews"]) == 1
+    assert result["reviews"][0]["code"] == code
+    assert "confirm_paid" not in result["posts"][0]
+    if accept:
+        assert len(result["posts"]) == 2
+        assert result["posts"][1]["confirm_paid"] is True
+        assert result["after"] == "vendor/test"
+    else:
+        assert len(result["posts"]) == 1
+        assert result["after"] == result["before"]
     assert "setModelValue(remembered)" in HTML
     assert "switched to local free" not in HTML

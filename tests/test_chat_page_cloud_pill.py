@@ -3,6 +3,7 @@ both wired to the real /api/cloud/status and /api/cloud/test endpoints."""
 from __future__ import annotations
 
 from core.vool_chat_page import render_vool_chat_html
+from tests.chat_page_js_harness import run_node, slice_source
 
 HTML = render_vool_chat_html()
 
@@ -43,3 +44,36 @@ def test_pill_never_prints_a_key():
     # A real key would be sk-or- followed by many chars; the bare prefixes above are the only ones left.
     import re as _re
     assert not _re.search(r"sk-or-[A-Za-z0-9]{10,}", stripped)
+
+
+def test_no_cloud_key_does_not_claim_a_local_only_policy():
+    rendering = slice_source(HTML, "function renderConnections(conns)", "function setCloudWorking(on)")
+    result = run_node(
+        """
+let lastConnectionRows = [];
+let route = {kind: 'auto', provider: ''};
+function chatRoute() { return route; }
+function pageT(key, fallback) { return fallback; }
+const cloudPillEl = {
+  children: [], title: '', classList: {remove() {}},
+  set innerHTML(value) { this.children = []; },
+  appendChild(child) { this.children.push(child); },
+};
+const document = {createElement() { return {textContent: '', className: ''}; }};
+"""
+        + rendering
+        + """
+renderConnections([]);
+const noKey = {text: cloudPillEl.children.map(c => c.textContent).join(''), title: cloudPillEl.title};
+route = {kind: 'local-only', provider: ''};
+renderConnections([]);
+const local = {text: cloudPillEl.children.map(c => c.textContent).join(''), title: cloudPillEl.title};
+console.log(JSON.stringify({noKey, local}));
+"""
+    )
+    assert result['noKey']['text'] == 'No cloud key'
+    assert 'running fully local' not in result['noKey']['title']
+    assert 'does not establish Local Only policy' in result['noKey']['title']
+    assert result['local']['text'] == 'Local'
+    assert 'cloud blocked' in result['local']['title']
+    assert 'data-i18n="header.cloud_local_only"' not in HTML.split('id="cloudPill"', 1)[1].split('</button>', 1)[0]

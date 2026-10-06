@@ -53,6 +53,7 @@ PrivilegesRequired=lowest
 ; The app's named mutex makes setup/uninstall ask the user to close VOOL first.
 ; Never terminate an arbitrary process merely because it owns a port or has a matching command line.
 AppMutex=Local\VOOL_BUNDLE_SUPERVISOR,Local\VOOL_WINDOW_SINGLETON
+SetupMutex=Local\VOOL_PYTHON_PAYLOAD_UPGRADE
 RestartApplications=no
 CloseApplications=no
 SetupIconFile={#SourcePath}\..\assets\vool.ico
@@ -64,6 +65,10 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 [Files]
 ; Included in the one-download installer and extracted only when WebView2 is absent.
 Source: "{#Stage}\webview2\MicrosoftEdgeWebView2RuntimeInstallerX64.exe"; Flags: dontcopy noencryption
+; Setup-owned Python bootstrap has stdlib only and no import site. Never use old Python
+; to authorize retirement, and never overwrite its ownership evidence during extraction.
+Source: "{#Stage}\python-upgrade-bootstrap\*"; DestDir: "{tmp}\python-upgrade-bootstrap"; Flags: dontcopy noencryption
+Source: "{#Stage}\python_payload.json"; Flags: dontcopy noencryption
 ; Enumerate the intended payload explicitly so compiler output and scratch directories under Stage
 ; cannot be copied into the installed bundle.
 Source: "{#Stage}\app\*"; DestDir: "{app}\app"; Flags: recursesubdirs createallsubdirs ignoreversion
@@ -95,13 +100,38 @@ Name: "{group}\Uninstall VOOL"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\VOOL"; Filename: "{app}\native\VOOL.exe"; IconFilename: "{#SourcePath}\..\assets\vool.ico"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\native\VOOL.exe"; Description: "Launch VOOL now"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\native\VOOL.exe"; Description: "Launch VOOL now"; Flags: nowait postinstall skipifsilent; Check: PythonUpgradeReady
 
 ; No [UninstallDelete] for the data dir: uninstall removes ONLY the program files. The user's
 ; models, wallet, keys, memory and receipts in {localappdata}\VOOL are preserved (a reinstall
 ; reuses them, no multi-GB re-download and no lost wallet). A full reset stays a manual choice.
+; Python ownership/recovery archives intentionally remain for review after uninstall;
+; only a verified closed archive may coexist with a subsequent reinstall. No automatic deletion.
 
 [Code]
+var
+  PythonBootstrapReady: Boolean;
+  PythonTransactionStarted: Boolean;
+  PythonTransactionFinished: Boolean;
+
+function PythonUpgradeReady(): Boolean;
+begin
+  Result := PythonTransactionFinished;
+end;
+
+function PythonPayloadAction(Action: String): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := Exec(ExpandConstant('{tmp}\python-upgrade-bootstrap\python.exe'),
+    '-I -S -B "' + ExpandConstant('{tmp}\python-upgrade-bootstrap\upgrade_python_payload.py') +
+    '" ' + Action + ' --root "' + ExpandConstant('{app}') +
+    '" --programs "' + ExpandConstant('{autopf}') +
+    '" --home "' + ExpandConstant('{localappdata}\VOOL') +
+    '" --manifest "' + ExpandConstant('{tmp}\python_payload.json') + '"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
+end;
+
 function WebView2Present(): Boolean;
 var
   Version: String;
@@ -122,6 +152,19 @@ begin
   if CheckForMutexes('Local\VOOL_BUNDLE_SUPERVISOR,Local\VOOL_WINDOW_SINGLETON') then
   begin
     Result := 'Close VOOL completely before installing or repairing it, then retry setup.';
+    Exit;
+  end;
+  try
+    ExtractTemporaryFiles('{tmp}\python-upgrade-bootstrap\*');
+    ExtractTemporaryFile('python_payload.json');
+    PythonBootstrapReady := True;
+  except
+    Result := 'VOOL could not extract its Python upgrade verifier. No program payload was changed.';
+    Exit;
+  end;
+  if not PythonPayloadAction('recover') or not PythonPayloadAction('check') then
+  begin
+    Result := 'Python ownership/recovery verification failed. Existing files are preserved; legacy or modified installs require review. No automatic cleanup is permitted.';
     Exit;
   end;
   if WebView2Present() then
@@ -151,11 +194,32 @@ procedure CurStepChanged(CurStep: TSetupStep);
 var
   ResultCode: Integer;
 begin
+  if CurStep = ssInstall then
+  begin
+    PythonTransactionStarted := True;
+    if not PythonPayloadAction('begin') then
+      RaiseException('Python payload retirement failed safely. Setup cannot proceed.');
+    Exit;
+  end;
   if CurStep <> ssPostInstall then
     Exit;
+  if not PythonPayloadAction('verify') then
+    RaiseException('Extracted Python payload failed verification. Setup cannot finish or launch VOOL.');
   if not Exec(ExpandConstant('{app}\python\python.exe'),
     '-B "' + ExpandConstant('{app}\migrate_install_state.py') + '" --root "' +
     ExpandConstant('{app}') + '" --home "' + ExpandConstant('{localappdata}\VOOL') + '"',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) then
     RaiseException('VOOL could not safely migrate legacy program-folder state. Existing data was preserved; setup cannot finish.');
+  if not PythonPayloadAction('finish') then
+    RaiseException('Python payload finalization failed. Setup cannot finish or launch VOOL.');
+  PythonTransactionFinished := True;
+end;
+
+procedure DeinitializeSetup();
+begin
+  // Attempt recovery at teardown. Actual cancellation ordering requires live qualification.
+  // An interruption that prevents this callback leaves a journal for the next setup.
+  if PythonBootstrapReady and PythonTransactionStarted and not PythonTransactionFinished then
+    if not PythonPayloadAction('recover') then
+      MsgBox('Python recovery could not be verified. Recovery material is preserved; do not launch VOOL until reviewed.', mbError, MB_OK);
 end;

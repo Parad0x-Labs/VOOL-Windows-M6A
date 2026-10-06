@@ -17,7 +17,7 @@ def _manifest(*, local: bool) -> ModelProviderManifest:
         provider_name="constraint-test",
         model_name="test-model",
         source_type="http",
-        adapter_type="local_qwen_provider",
+        adapter_type="local_qwen_provider" if local else "openai_compatible",
         license_name="test",
         license_reference="test",
         weight_location="external",
@@ -754,6 +754,28 @@ def test_unknown_cost_lane_is_never_retried_and_is_bounded_locally() -> None:
     assert adapter.run_text_task.call_count == 1
 
 
+def test_remote_endpoint_with_local_adapter_is_refused_before_generation() -> None:
+    manifest = _manifest(local=False)
+    manifest.adapter_type = "local_qwen_provider"
+    adapter = mock.Mock()
+    router = MemoryFirstRouter(registry=mock.Mock())
+    router.registry.build_adapter.return_value = adapter
+    with (
+        mock.patch("core.memory_first_router.should_probe_health", return_value=False),
+        mock.patch("core.memory_first_router.circuit_is_open", return_value=False),
+    ):
+        _, response, error = router._invoke_manifest(
+            manifest=manifest,
+            request=_request(),
+            output_mode="plain_text",
+            task=SimpleNamespace(task_id="remote-local-adapter-refused"),
+            source_context=None,
+        )
+    assert error == "author_not_certified_for_final_answer"
+    assert response is None
+    adapter.run_text_task.assert_not_called()
+
+
 def test_ordinary_chat_image_prompt_gets_one_bounded_local_repair() -> None:
     adapter = mock.Mock()
     adapter.run_text_task.side_effect = [
@@ -861,7 +883,8 @@ def test_ordinary_chat_confirmation_retries_to_preserve_requested_identifier() -
     assert response.constraint_result["response_control"]["retry_attempted"] is True
 
 
-def test_ordinary_chat_budget_retries_then_bounds_the_visible_model_text() -> None:
+@pytest.mark.parametrize("output_mode", ["text", "plain_text"])
+def test_ordinary_chat_brevity_is_advisory_without_extra_generation(output_mode: str) -> None:
     long_reply = " ".join(["useful"] * 125) + "."
     adapter = mock.Mock()
     adapter.run_text_task.side_effect = [
@@ -884,15 +907,17 @@ def test_ordinary_chat_budget_retries_then_bounds_the_visible_model_text() -> No
         _, response, error = router._invoke_manifest(
             manifest=_certified_manifest(local=True),
             request=request,
-            output_mode="text",
+            output_mode=output_mode,
             task=SimpleNamespace(task_id="ordinary-budget"),
             source_context={},
         )
 
     assert error is None
     assert response is not None
-    assert len(response.output_text.split()) <= 110
-    assert adapter.run_text_task.call_count == 2
+    # Automatic brevity cannot discard an answer or authorize another generation.
+    # Explicit response constraints remain enforced by the other cases in this suite.
+    assert response.output_text == long_reply
+    assert adapter.run_text_task.call_count == 1
 
 
 def test_unexpected_language_gets_one_bounded_local_repair() -> None:
