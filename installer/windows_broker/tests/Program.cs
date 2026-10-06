@@ -106,6 +106,10 @@ internal static class Program
                     VerifyReparseRejectionAsync(brokerPath)),
                 ("Staged executable rename and write are blocked before launch", () =>
                     VerifyStagedExecutableLockedAsync(brokerPath)),
+                ("Scratch cleanup waits for a released sharing lock", () =>
+                    VerifyScratchSharingCleanupAsync(releaseLock: true)),
+                ("Scratch cleanup refuses a persistent sharing lock", () =>
+                    VerifyScratchSharingCleanupAsync(releaseLock: false)),
                 ("System32 image launches directly without scratch staging", () =>
                     VerifySystemImageLaunchAsync()),
                 ("Child process remains contained by the Job Object", () =>
@@ -743,6 +747,52 @@ internal static class Program
         using var stagedAfter = File.OpenRead(stagedPath);
         Assert(originalHash.SequenceEqual(SHA256.HashData(stagedAfter)), "Staged payload bytes changed during the swap test.");
         return Task.CompletedTask;
+    }
+
+    private static async Task VerifyScratchSharingCleanupAsync(bool releaseLock)
+    {
+        using var appContainer = AppContainerSession.Create();
+        using var scratch = ScratchWorkspace.Create(appContainer.Sid, TokenInspector.CurrentUserSid());
+        var path = Path.Combine(scratch.PayloadPath, "sharing-lock.txt");
+        File.WriteAllText(path, "owned cleanup fixture");
+        using var held = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        var release = releaseLock ? Task.Run(async () =>
+        {
+            await Task.Delay(200).ConfigureAwait(false);
+            held.Dispose();
+        }) : Task.CompletedTask;
+        try
+        {
+            var refused = false;
+            try
+            {
+                scratch.Dispose();
+            }
+            catch (IOException exception) when ((exception.HResult & 0xFFFF) == 32)
+            {
+                refused = true;
+            }
+            if (releaseLock)
+            {
+                Assert(!refused && !Directory.Exists(scratch.Path),
+                    "Released sharing lock must allow complete scratch cleanup.");
+            }
+            else
+            {
+                Assert(refused && File.Exists(path),
+                    "Persistent sharing lock must report failure and preserve the locked file.");
+            }
+        }
+        finally
+        {
+            await release.ConfigureAwait(false);
+            held.Dispose();
+            // Only this fixture's known file and newly created empty directories.
+            PathSafety.RejectReparseAncestors(scratch.Path);
+            if (File.Exists(path)) File.Delete(path);
+            if (Directory.Exists(scratch.PayloadPath)) Directory.Delete(scratch.PayloadPath);
+            if (Directory.Exists(scratch.Path)) Directory.Delete(scratch.Path);
+        }
     }
 
     private static async Task VerifySystemImageLaunchAsync()

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
@@ -443,41 +444,48 @@ internal static class Probe
         if (string.IsNullOrWhiteSpace(processPath))
             return null;
 
-        var startInfo = new ProcessStartInfo(processPath)
+        var startupInfo = new NativeMethods.StartupInfoEx
         {
-            UseShellExecute = false,
-            CreateNoWindow = true,
+            StartupInfo = new NativeMethods.StartupInfo
+            {
+                Cb = Marshal.SizeOf<NativeMethods.StartupInfo>(),
+            },
         };
-        startInfo.ArgumentList.Add("probe");
-        startInfo.ArgumentList.Add("--job-child-report");
-        startInfo.ArgumentList.Add(reportPath);
-        Process? started;
-        try { started = Process.Start(startInfo); }
-        catch (System.ComponentModel.Win32Exception exception)
+        var commandLine = Marshal.StringToHGlobalUni(WindowsCommandLine.Build(
+            processPath, ["probe", "--job-child-report", reportPath]));
+        NativeMethods.ProcessInformation processInformation;
+        try
         {
-            // Preserve the native code and the .NET creation stack: redirected
-            // pipe setup and image creation are distinct possible failures.
-            throw new System.ComponentModel.Win32Exception(exception.NativeErrorCode,
-                $"Child job-report Process.Start failed: {exception}");
+            // Inherit the current restricted token and job, but no handles or
+            // console. This fixed self-probe needs neither a shell nor stdio pipes.
+            if (!NativeMethods.CreateProcessW(
+                    processPath, commandLine, IntPtr.Zero, IntPtr.Zero,
+                    inheritHandles: false, NativeMethods.DetachedProcess,
+                    IntPtr.Zero, Environment.CurrentDirectory,
+                    ref startupInfo, out processInformation))
+                throw NativeMethods.LastError("CreateProcessW(detached job-report child)");
         }
-        using var child = started;
-        if (child is null)
-            return null;
-        if (!child.WaitForExit(5_000))
+        finally
         {
-            try
-            {
-                child.Kill(entireProcessTree: true);
-            }
-            catch (InvalidOperationException)
-            {
-                // The job remains the authoritative cleanup boundary.
-            }
+            Marshal.FreeHGlobal(commandLine);
+        }
+        using var child = new SafeNativeHandle(processInformation.Process, ownsHandle: true);
+        using var thread = new SafeNativeHandle(processInformation.Thread, ownsHandle: true);
+        if (child.IsInvalid || thread.IsInvalid)
+            throw new BrokerSecurityException("Job-report child returned invalid native handles.");
+        var wait = NativeMethods.WaitForSingleObject(child, 5_000);
+        if (wait == NativeMethods.WaitTimeout)
+        {
+            // The enclosing broker's job remains the authoritative cleanup boundary.
             return null;
         }
+        if (wait != NativeMethods.WaitObject0)
+            throw NativeMethods.LastError("WaitForSingleObject(job-report child)");
+        if (!NativeMethods.GetExitCodeProcess(child, out var exitCode))
+            throw NativeMethods.LastError("GetExitCodeProcess(job-report child)");
 
-        if (child.ExitCode != 0)
-            throw new BrokerSecurityException($"Child job-report exited {child.ExitCode}.");
+        if (exitCode != 0)
+            throw new BrokerSecurityException($"Child job-report exited {unchecked((int)exitCode)} (0x{exitCode:X8}).");
         var inJob = false;
         if (File.Exists(reportPath))
         {
@@ -492,7 +500,7 @@ internal static class Probe
             if (childToken.UserSid != expected.UserSid)
                 throw new BrokerSecurityException("Child job-report user SID does not match its parent.");
         }
-        return (child.ExitCode, inJob);
+        return (unchecked((int)exitCode), inJob);
     }
 
     private static int SpawnSleeper(int milliseconds)

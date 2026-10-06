@@ -881,6 +881,12 @@ internal sealed class ScratchWorkspace : IDisposable
                 // Windows can release an exited process's mapped EXE after its Job count reaches zero.
                 Thread.Sleep(50);
             }
+            catch (IOException exception) when ((exception.HResult & 0xFFFF) == 32 && attempt < 39)
+            {
+                // An image-release sharing lock has the same bounded retry window.
+                // Persistent locks and every other I/O error remain cleanup failures.
+                Thread.Sleep(50);
+            }
         }
     }
 }
