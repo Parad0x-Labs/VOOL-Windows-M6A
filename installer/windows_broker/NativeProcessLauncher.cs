@@ -2,6 +2,7 @@ using System.Buffers;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Security.Principal;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 
@@ -65,6 +66,7 @@ internal sealed class NativeProcessLauncher : IDisposable
         SafeNativeHandle? stderrWrite = null;
         SafeNativeHandle? process = null;
         SafeNativeHandle? thread = null;
+        SafeNativeHandle? restrictedToken = null;
         FileStream? stdoutStream = null;
         FileStream? stderrStream = null;
         var transferredStdoutRead = false;
@@ -177,11 +179,13 @@ internal sealed class NativeProcessLauncher : IDisposable
                     AttributeList = attributeList,
                 };
 
+                restrictedToken = CreateRestrictedPrimaryToken();
                 var creationFlags = NativeMethods.CreateSuspended
                     | NativeMethods.CreateUnicodeEnvironment
                     | NativeMethods.CreateNoWindow
                     | NativeMethods.ExtendedStartupInfoPresent;
-                if (!NativeMethods.CreateProcessW(
+                if (!NativeMethods.CreateProcessAsUserW(
+                        restrictedToken,
                         executablePath,
                         commandLine,
                         IntPtr.Zero,
@@ -193,7 +197,7 @@ internal sealed class NativeProcessLauncher : IDisposable
                         ref startupInfo,
                         out var processInformation))
                 {
-                    throw NativeMethods.LastError("CreateProcessW(AppContainer)");
+                    throw NativeMethods.LastError("CreateProcessAsUserW(restricted AppContainer)");
                 }
 
                 process = new SafeNativeHandle(processInformation.Process, ownsHandle: true);
@@ -299,6 +303,7 @@ internal sealed class NativeProcessLauncher : IDisposable
         {
             thread?.Dispose();
             process?.Dispose();
+            restrictedToken?.Dispose();
             stdin?.Dispose();
             stdinRead?.Dispose();
             stdinWrite?.Dispose();
@@ -387,6 +392,66 @@ internal sealed class NativeProcessLauncher : IDisposable
         stdout.Dispose();
         stderr.Dispose();
         process.Dispose();
+    }
+
+    // The child token must not inherit whatever the launching session happens to carry
+    // (a UAC-filtered admin, a full elevated admin, or an unfiltered standard user).
+    // The broker creates the restriction itself so the marker and privilege/group checks
+    // in TokenInspector.RequireUntrustedExecutionToken hold in every supported session.
+    private static SafeNativeHandle CreateRestrictedPrimaryToken()
+    {
+        if (!NativeMethods.OpenProcessToken(
+                NativeMethods.GetCurrentProcess(),
+                NativeMethods.TokenAssignPrimary
+                    | NativeMethods.TokenDuplicate
+                    | NativeMethods.TokenQuery
+                    | NativeMethods.TokenAdjustDefault
+                    | NativeMethods.TokenAdjustSessionId,
+                out var processToken))
+        {
+            throw NativeMethods.LastError("OpenProcessToken(restricted launch)");
+        }
+
+        using (processToken)
+        {
+            var administrators = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+            var sidBytes = new byte[administrators.BinaryLength];
+            administrators.GetBinaryForm(sidBytes, 0);
+            var sidHandle = GCHandle.Alloc(sidBytes, GCHandleType.Pinned);
+            var sidsToDisable = Marshal.AllocHGlobal(Marshal.SizeOf<NativeMethods.SidAndAttributes>());
+            try
+            {
+                Marshal.StructureToPtr(
+                    new NativeMethods.SidAndAttributes
+                    {
+                        Sid = sidHandle.AddrOfPinnedObject(),
+                        Attributes = 0,
+                    },
+                    sidsToDisable,
+                    false);
+                if (!NativeMethods.CreateRestrictedToken(
+                        processToken,
+                        NativeMethods.DisableMaxPrivilege,
+                        1,
+                        sidsToDisable,
+                        0,
+                        IntPtr.Zero,
+                        0,
+                        IntPtr.Zero,
+                        out var restricted))
+                {
+                    throw NativeMethods.LastError("CreateRestrictedToken");
+                }
+                if (restricted.IsInvalid)
+                    throw new BrokerSecurityException("CreateRestrictedToken returned an invalid token handle.");
+                return restricted;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(sidsToDisable);
+                sidHandle.Free();
+            }
+        }
     }
 
     private static SafeNativeHandle CreateInheritableNullInput()

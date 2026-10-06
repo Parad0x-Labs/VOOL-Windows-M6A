@@ -106,6 +106,8 @@ internal static class TokenInspector
             : string.Empty;
         var restrictedSidCount = ReadSidCount(token, NativeMethods.TokenRestrictedSids);
         var capabilities = ReadSids(token, NativeMethods.TokenCapabilities);
+        var enabledPrivilegeLuids = ReadEnabledPrivilegeLuids(token);
+        var administratorsGroupEnabled = ReadAdministratorsGroupEnabled(token);
 
         return new TokenSecuritySnapshot(
             isAppContainer,
@@ -115,7 +117,9 @@ internal static class TokenInspector
             userSid,
             appContainerSid,
             restrictedSidCount,
-            capabilities);
+            capabilities,
+            enabledPrivilegeLuids,
+            administratorsGroupEnabled);
     }
 
     internal static void RequireUntrustedExecutionToken(
@@ -131,6 +135,15 @@ internal static class TokenInspector
             throw new BrokerSecurityException("Refusing execution: token has the wrong AppContainer SID.");
         if (!snapshot.HasRestrictions)
             throw new BrokerSecurityException("Refusing execution: token has no restricted-token marker.");
+        if (snapshot.AdministratorsGroupEnabled)
+            throw new BrokerSecurityException(
+                "Refusing execution: token has BUILTIN\\Administrators enabled.");
+        foreach (var luid in snapshot.EnabledPrivilegeLuids)
+        {
+            if (luid != NativeMethods.SeChangeNotifyPrivilegeLuid)
+                throw new BrokerSecurityException(
+                    $"Refusing execution: token has an enabled privilege beyond SeChangeNotifyPrivilege (LUID {luid}).");
+        }
         if (snapshot.Capabilities.Count != 0)
             throw new BrokerSecurityException(
                 "Refusing execution: the AppContainer token unexpectedly has capabilities.");
@@ -230,6 +243,62 @@ internal static class TokenInspector
             }
 
             return values;
+        });
+    }
+
+    private static IReadOnlyList<long> ReadEnabledPrivilegeLuids(SafeNativeHandle token)
+    {
+        return ReadInformation<IReadOnlyList<long>>(token, NativeMethods.TokenPrivileges, (buffer, size) =>
+        {
+            if (buffer == IntPtr.Zero || size < sizeof(uint))
+                throw new BrokerSecurityException("Token privilege list is missing.");
+
+            var count = Marshal.ReadInt32(buffer);
+            var stride = Marshal.SizeOf<NativeMethods.LuidAndAttributes>();
+            if (count < 0 || sizeof(uint) + (long)count * stride > size)
+                throw new BrokerSecurityException("Token privilege list is truncated.");
+
+            var values = new List<long>();
+            for (var index = 0; index < count; index++)
+            {
+                var entry = Marshal.PtrToStructure<NativeMethods.LuidAndAttributes>(
+                    IntPtr.Add(buffer, sizeof(uint) + index * stride));
+                if ((entry.Attributes & NativeMethods.SePrivilegeEnabled) != 0)
+                    values.Add(((long)entry.HighPart << 32) | entry.LowPart);
+            }
+
+            return values;
+        });
+    }
+
+    private static bool ReadAdministratorsGroupEnabled(SafeNativeHandle token)
+    {
+        return ReadInformation(token, NativeMethods.TokenGroups, (buffer, size) =>
+        {
+            if (buffer == IntPtr.Zero || size < sizeof(uint))
+                throw new BrokerSecurityException("Token group list is missing.");
+
+            var count = Marshal.ReadInt32(buffer);
+            var offset = IntPtr.Size == 8 ? 8 : 4;
+            var stride = Marshal.SizeOf<NativeMethods.SidAndAttributes>();
+            if (count < 0 || offset + (long)count * stride > size)
+                throw new BrokerSecurityException("Token group list is truncated.");
+
+            for (var index = 0; index < count; index++)
+            {
+                var entry = Marshal.PtrToStructure<NativeMethods.SidAndAttributes>(
+                    IntPtr.Add(buffer, offset + index * stride));
+                if ((entry.Attributes & NativeMethods.SeGroupEnabled) != 0
+                    && string.Equals(
+                        NativeMethods.SidToString(entry.Sid),
+                        NativeMethods.BuiltinAdministratorsSid,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         });
     }
 
