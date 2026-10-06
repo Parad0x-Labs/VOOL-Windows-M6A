@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import copy
+import os
 import shlex
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -168,10 +171,32 @@ def test_native_broker_transcript_preserves_exit_codes_and_is_uploaded_on_failur
     run = _named_step(job, "Build and exercise native execution broker")["run"]
     assert "Start-Transcript -Path .windows-broker-logs/native-broker.log" in run
     assert "} finally {\n  Stop-Transcript" in run
-    assert "& $tests $broker\n  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }" in run
-    assert "continue-on-error" not in run and "Tee-Object" not in run
+    assert "& $tests $broker 2>&1 | Tee-Object -FilePath .windows-broker-logs/broker-output.log" in run
+    assert "$brokerExit = $LASTEXITCODE\n  if ($brokerExit -ne 0) { exit $brokerExit }" in run
+    assert "continue-on-error" not in run
     upload = _named_step(job, "Upload native broker evidence")
     assert upload["if"] == "always()"
     assert upload["with"]["path"] == ".windows-broker-logs/"
     assert upload["with"]["include-hidden-files"] is True
     assert upload["with"]["if-no-files-found"] == "error"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows native PowerShell capture")
+def test_native_output_capture_retains_stdout_stderr_and_nonzero_exit(tmp_path: Path) -> None:
+    pwsh = shutil.which("pwsh")
+    assert pwsh, "Windows CI requires PowerShell to exercise native capture"
+    script = (
+        "$ErrorActionPreference = 'Stop'; Start-Transcript -Path transcript.log; try { "
+        '& cmd /c "echo broker-stdout & echo broker-stderr 1>&2 & exit 7" '
+        "2>&1 | Tee-Object -FilePath broker-output.log; "
+        "$brokerExit = $LASTEXITCODE; if ($brokerExit -ne 0) { exit $brokerExit } "
+        "} finally { Stop-Transcript }"
+    )
+    result = subprocess.run(
+        [pwsh, "-NoProfile", "-Command", script], cwd=tmp_path,
+        capture_output=True, text=True, timeout=30, check=False,
+    )
+    assert result.returncode == 7
+    output = (tmp_path / "broker-output.log").read_text(encoding="utf-8")
+    assert "broker-stdout" in output and "broker-stderr" in output
+    assert "PowerShell transcript end" in (tmp_path / "transcript.log").read_text(encoding="utf-8")

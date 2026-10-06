@@ -138,7 +138,7 @@ jobs:
           python -m pip install -e ".[dev,companion]"
       - name: Check native bundle contracts
         shell: pwsh
-        run: python -m pytest -q tests/test_bundle_tooling.py tests/test_native_runtime_supervisor.py tests/test_windows_inno_compile.py
+        run: python -m pytest -q tests/test_bundle_tooling.py tests/test_native_runtime_supervisor.py tests/test_windows_inno_compile.py tests/test_ci_verification_contract.py
       - name: Compile native approval host from locked dependencies
         shell: pwsh
         run: |
@@ -164,8 +164,9 @@ jobs:
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             $broker = (Resolve-Path installer/windows_broker/bin/Release/net10.0-windows10.0.17763.0/win-x64/publish/vool-broker.exe).Path
             $tests = (Resolve-Path installer/windows_broker/tests/bin/Release/net10.0-windows10.0.17763.0/win-x64/vool-broker-tests.exe).Path
-            & $tests $broker
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            & $tests $broker 2>&1 | Tee-Object -FilePath .windows-broker-logs/broker-output.log
+            $brokerExit = $LASTEXITCODE
+            if ($brokerExit -ne 0) { exit $brokerExit }
           } finally {
             Stop-Transcript
           }
