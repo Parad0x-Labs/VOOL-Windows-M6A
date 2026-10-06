@@ -773,7 +773,10 @@ internal static class WorkspaceWriteBroker
         }
         if (removed != 1 || descriptor.Owner?.Value != staging.TemplateOwner
             || !WindowsDacl.EquivalentTransition(descriptor, new RawSecurityDescriptor(staging.TemplateAcl)))
-            throw new BrokerSecurityException("Staged file ACL does not match its approved template and operation grant.");
+            throw new BrokerSecurityException("Staged file ACL does not match its approved template and operation grant. "
+                + $"Path={staged.Path}; operation_grants={removed}; expected_owner={staging.TemplateOwner}; "
+                + $"observed_owner={descriptor.Owner?.Value}; expected_DACL={staging.TemplateAcl}; "
+                + $"observed_DACL_without_operation={descriptor.GetSddlForm(AccessControlSections.Access)}");
     }
 
     private static void VerifyTargetAcl(string targetPath, string originalAcl)

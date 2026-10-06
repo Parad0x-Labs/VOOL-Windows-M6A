@@ -140,10 +140,14 @@ internal static class Probe
                     break;
 
                 case "--job-child-report":
+                    if (arguments.Count != 2 || index != 0)
+                        throw new ArgumentException("--job-child-report requires exactly one report path.");
                     var reportPath = ReadValue(arguments, ref index, "--job-child-report");
                     WriteJobChildReport(reportPath);
-                    result["jobChildReport"] = true;
-                    break;
+                    // This child reports through the existing operation-owned
+                    // file, not stdout. Do not mix a second JSON object into the
+                    // parent's broker pipe or create pipes inside the sandbox.
+                    return 0;
 
                 case "--inspect":
                     break;
@@ -442,8 +446,6 @@ internal static class Probe
         var startInfo = new ProcessStartInfo(processPath)
         {
             UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
             CreateNoWindow = true,
         };
         startInfo.ArgumentList.Add("probe");
@@ -456,7 +458,7 @@ internal static class Probe
             // Preserve the native code and the .NET creation stack: redirected
             // pipe setup and image creation are distinct possible failures.
             throw new System.ComponentModel.Win32Exception(exception.NativeErrorCode,
-                $"Child job-report Process.Start with redirected streams failed: {exception}");
+                $"Child job-report Process.Start failed: {exception}");
         }
         using var child = started;
         if (child is null)
@@ -474,16 +476,21 @@ internal static class Probe
             return null;
         }
 
-        var stdout = child.StandardOutput.ReadToEnd();
-        var stderr = child.StandardError.ReadToEnd();
         if (child.ExitCode != 0)
-            throw new BrokerSecurityException($"Child job-report exited {child.ExitCode}; stdout={stdout}; stderr={stderr}");
+            throw new BrokerSecurityException($"Child job-report exited {child.ExitCode}.");
         var inJob = false;
         if (File.Exists(reportPath))
         {
             using var document = JsonDocument.Parse(File.ReadAllText(reportPath));
             inJob = document.RootElement.TryGetProperty("inJob", out var property)
                 && property.ValueKind == JsonValueKind.True;
+            var childToken = document.RootElement.GetProperty("token").Deserialize<TokenSecuritySnapshot>(JsonOptions)
+                ?? throw new BrokerSecurityException("Child job-report has no token evidence.");
+            using var parentToken = OpenCurrentToken();
+            var expected = TokenInspector.Inspect(parentToken);
+            TokenInspector.RequireUntrustedExecutionToken(childToken, expected.AppContainerSid);
+            if (childToken.UserSid != expected.UserSid)
+                throw new BrokerSecurityException("Child job-report user SID does not match its parent.");
         }
         return (child.ExitCode, inJob);
     }
