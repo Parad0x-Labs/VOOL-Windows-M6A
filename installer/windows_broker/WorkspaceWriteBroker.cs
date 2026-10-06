@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Win32.SafeHandles;
@@ -21,15 +22,21 @@ internal static class WorkspaceWriteBroker
         FileSystemRights? workspaceParentRightsOverride = null,
         Action? beforeParentGrantTestHook = null,
         Action? afterParentGrantTestHook = null,
-        Action? beforeTargetAclVerificationTestHook = null)
+        Action? beforeTargetAclVerificationTestHook = null,
+        Action? beforeTargetAclRestorationTestHook = null)
     {
         EnsureSupported();
         var paths = ValidateRequest(request);
         var before = ReadTarget(paths.TargetPath);
         EnsurePriorState(request, before);
-        var originalTargetAcl = request.PriorState == "file"
-            ? ReadTargetAcl(paths.TargetPath)
-            : null;
+        using var priorAcl = request.PriorState == "file" ? WindowsDacl.Capture(paths.TargetPath) : null;
+        if (priorAcl is not null && priorAcl.Identity != before.Identity)
+            throw new BrokerSecurityException("The workspace target changed before ACL capture.");
+        var originalTargetAcl = priorAcl?.OriginalAcl;
+        var originalTargetOwner = priorAcl?.Original.Owner?.Value;
+        if (priorAcl is not null && !priorAcl.HasUnambiguousFileEncoding())
+            return Failure(request, before, "refused",
+                "The workspace target has an ambiguous legacy DACL encoding; refused before mutation.");
 
         var workerPath = workerExecutablePath ?? Environment.ProcessPath;
         if (string.IsNullOrWhiteSpace(workerPath)
@@ -51,7 +58,10 @@ internal static class WorkspaceWriteBroker
         var staging = CreateStagingContext(paths.TargetParent, paths.TargetPath, request.OperationId);
         var stagingPath = staging.FilePath;
         if (request.PriorState == "absent")
+        {
             originalTargetAcl = staging.TemplateAcl;
+            originalTargetOwner = staging.TemplateOwner;
+        }
 
         try
         {
@@ -117,6 +127,7 @@ internal static class WorkspaceWriteBroker
 
         var after = ReadTarget(paths.TargetPath);
         var hostInstalled = false;
+        string? expectedInstalledAcl = null;
         string? hostInstallError = null;
         if (workerResult.Ok
             && !processResult.TimedOut
@@ -127,6 +138,32 @@ internal static class WorkspaceWriteBroker
                 EnsurePriorState(request, after);
                 EnsureTargetIdentity(paths.TargetPath, before.Identity);
                 VerifyStagedContent(stagingPath, request.ContentSha256);
+                if (priorAcl is not null)
+                {
+                    priorAcl.RequireBoundPath();
+                    var live = priorAcl.Read();
+                    if (live.GetSddlForm(AccessControlSections.Access) != priorAcl.OriginalAcl
+                        || live.Owner?.Value != priorAcl.Original.Owner?.Value)
+                        throw new BrokerSecurityException("Foreign target ACL drift before installation.");
+                }
+                using var stagedAcl = WindowsDacl.Capture(stagingPath);
+                ValidateStagedAcl(stagedAcl, staging, appContainer.Sid, stagingRights);
+                if (stagedAcl.Original.Owner?.Value != originalTargetOwner)
+                    throw new BrokerSecurityException("The staged owner does not match the approved target owner.");
+                if (originalTargetAcl is null)
+                    throw new BrokerSecurityException("The approved target has no captured DACL.");
+                // Worker authority ends before the host commits. Removing a
+                // file ACE alone is insufficient while its parent still grants
+                // it: filesystem inheritance/ReplaceFile can reintroduce it.
+                grants.Dispose();
+                stagedAcl.RequireBoundPath();
+                var grantFree = stagedAcl.Read();
+                if (grantFree.Owner?.Value != staging.TemplateOwner
+                    || !WindowsDacl.EquivalentTransition(grantFree, new RawSecurityDescriptor(staging.TemplateAcl)))
+                    throw new BrokerSecurityException("Grant-free staged ACL does not match its approved template.");
+                stagedAcl.Restore(originalTargetAcl, originalTargetOwner,
+                    grantFree.GetSddlForm(AccessControlSections.Access));
+                expectedInstalledAcl = originalTargetAcl;
                 if (request.PriorState == "absent")
                     File.Move(stagingPath, paths.TargetPath, overwrite: false);
                 else
@@ -144,7 +181,7 @@ internal static class WorkspaceWriteBroker
                     $"The approved absent target could not be installed atomically: {exception.Message}";
             }
         }
-        var verified = workerResult.Ok
+        var verified = hostInstalled && workerResult.Ok
             && !processResult.TimedOut
             && processResult.ExitCode == 0
             && after.State == "file"
@@ -152,7 +189,7 @@ internal static class WorkspaceWriteBroker
         if (hostInstallError is not null)
             verified = false;
         string? cleanupError = null;
-        if (originalTargetAcl is not null
+        if (hostInstalled && originalTargetAcl is not null
             && after.State == "file"
             && string.Equals(after.Sha256, request.ContentSha256, StringComparison.OrdinalIgnoreCase))
         {
@@ -160,7 +197,9 @@ internal static class WorkspaceWriteBroker
             {
                 if (after.Identity is null)
                     throw new BrokerSecurityException("The final target had no verifiable file identity.");
-                RestoreTargetAcl(paths.TargetPath, after.Identity, originalTargetAcl);
+                beforeTargetAclRestorationTestHook?.Invoke();
+                RestoreTargetAcl(paths.TargetPath, after.Identity, originalTargetAcl,
+                    originalTargetOwner, expectedInstalledAcl);
                 after = ReadTarget(paths.TargetPath);
                 verified = verified
                     && string.Equals(after.Sha256, request.ContentSha256, StringComparison.OrdinalIgnoreCase);
@@ -701,37 +740,40 @@ internal static class WorkspaceWriteBroker
     private static void RestoreTargetAcl(
         string targetPath,
         string expectedIdentity,
-        string originalAcl)
+        string originalAcl,
+        string? expectedOwner,
+        string? expectedInstalledAcl)
     {
-        using var targetHandle = NativeMethods.CreateFileForSecurityW(
-            targetPath,
-            NativeMethods.GenericRead
-                | NativeMethods.GenericWrite
-                | NativeMethods.ReadControl
-                | NativeMethods.WriteDac,
-            NativeMethods.FileShareRead
-                | NativeMethods.FileShareWrite
-                | NativeMethods.FileShareDelete,
-            IntPtr.Zero,
-            NativeMethods.OpenExisting,
-            NativeMethods.FileAttributeNormal,
-            IntPtr.Zero);
-        if (targetHandle.IsInvalid)
-            throw NativeMethods.LastError("CreateFileW for target ACL restoration");
-        using var target = new FileStream(targetHandle, FileAccess.ReadWrite, 1);
-        var actualIdentity = GetFileIdentity(target.SafeFileHandle);
-        if (!string.Equals(actualIdentity, expectedIdentity, StringComparison.Ordinal))
+        using var target = WindowsDacl.Capture(targetPath);
+        if (!string.Equals(target.Identity, expectedIdentity, StringComparison.Ordinal))
         {
             throw new BrokerSecurityException("The workspace write target identity changed during ACL restoration.");
         }
-        var security = new FileSecurity();
-        security.SetSecurityDescriptorSddlForm(originalAcl, AccessControlSections.Access);
-        target.SetAccessControl(security);
-        var restoredIdentity = GetFileIdentity(target.SafeFileHandle);
-        if (!string.Equals(restoredIdentity, expectedIdentity, StringComparison.Ordinal))
+        target.Restore(originalAcl, expectedOwner, expectedInstalledAcl);
+    }
+
+    private static void ValidateStagedAcl(WindowsDacl staged, WorkspaceStagingContext staging,
+        SecurityIdentifier sid, FileSystemRights rights)
+    {
+        staged.RequireBoundPath();
+        var descriptor = staged.Read();
+        var allowedMask = (int)new FileSystemAccessRule(sid, rights, AccessControlType.Allow).FileSystemRights;
+        var acl = descriptor.DiscretionaryAcl
+            ?? throw new BrokerSecurityException("Staged file has no DACL.");
+        var removed = 0;
+        for (var index = acl.Count - 1; index >= 0; index--)
         {
-            throw new BrokerSecurityException("The workspace write target identity changed during ACL restoration.");
+            if (acl[index] is not CommonAce ace || ace.SecurityIdentifier != sid)
+                continue;
+            if (ace.AceQualifier != AceQualifier.AccessAllowed || ace.AceFlags != AceFlags.Inherited
+                || ace.AccessMask != allowedMask)
+                throw new BrokerSecurityException("Staged file has an unexpected operation grant.");
+            acl.RemoveAce(index);
+            removed++;
         }
+        if (removed != 1 || descriptor.Owner?.Value != staging.TemplateOwner
+            || !WindowsDacl.EquivalentTransition(descriptor, new RawSecurityDescriptor(staging.TemplateAcl)))
+            throw new BrokerSecurityException("Staged file ACL does not match its approved template and operation grant.");
     }
 
     private static void VerifyTargetAcl(string targetPath, string originalAcl)
@@ -799,12 +841,21 @@ internal static class WorkspaceWriteBroker
         try
         {
             PathSafety.RejectReparseAncestors(directoryPath);
+            // This directory is newly created and operation-owned. Preserve all
+            // entries but stop later parent inheritance from changing its template.
+            var directory = new DirectoryInfo(directoryPath);
+            var directoryAcl = directory.GetAccessControl(AccessControlSections.Access);
+            directoryAcl.SetAccessRuleProtection(isProtected: true, preserveInheritance: true);
+            directory.SetAccessControl(directoryAcl);
             var templatePath = Path.Combine(directoryPath, ".acl-template");
             File.WriteAllBytes(templatePath, Array.Empty<byte>());
             var templateAcl = ReadTargetAcl(templatePath);
+            var templateOwner = new FileInfo(templatePath).GetAccessControl(AccessControlSections.Owner)
+                .GetOwner(typeof(SecurityIdentifier))?.Value
+                ?? throw new BrokerSecurityException("The staging template has no verifiable owner.");
             File.Delete(templatePath);
             var filePath = GetStagingPath(directoryPath, targetPath, operationId);
-            return new WorkspaceStagingContext(directoryPath, filePath, templateAcl);
+            return new WorkspaceStagingContext(directoryPath, filePath, templateAcl, templateOwner);
         }
         catch
         {
@@ -984,7 +1035,8 @@ internal static class WorkspaceWriteBroker
     private sealed record WorkspaceStagingContext(
         string DirectoryPath,
         string FilePath,
-        string TemplateAcl);
+        string TemplateAcl,
+        string TemplateOwner);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
