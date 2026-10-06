@@ -16,7 +16,9 @@ public sealed record TokenSecuritySnapshot(
     string UserSid,
     string AppContainerSid,
     int RestrictedSidCount,
-    IReadOnlyList<string> Capabilities);
+    IReadOnlyList<string> Capabilities,
+    IReadOnlyList<long> EnabledPrivilegeLuids,
+    bool AdministratorsGroupEnabled);
 
 public sealed record JobSecuritySnapshot(
     uint LimitFlags,

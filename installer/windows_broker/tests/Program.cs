@@ -13,6 +13,8 @@ using Vool.WindowsBroker;
 internal static class Program
 {
     private const int SecurityMandatoryLowRid = 0x1000;
+    private const long SeChangeNotifyPrivilegeLuid = 23;
+    private const int RepeatedLaunchCount = 20;
     private const uint ExpectedJobLimitFlags =
         0x00000008u // JOB_OBJECT_LIMIT_ACTIVE_PROCESS
         | 0x00000002u // JOB_OBJECT_LIMIT_PROCESS_TIME
@@ -63,6 +65,13 @@ internal static class Program
             {
                 ("AppContainer token has no capabilities and low integrity", () =>
                     VerifyAppContainerTokenAsync(brokerPath)),
+                ("Execution gate refuses unrestricted, admin-enabled or privileged tokens", () =>
+                {
+                    VerifyGateRejectsUnrestrictedSnapshots();
+                    return Task.CompletedTask;
+                }),
+                ("Restricted-token gate holds across repeated launches", () =>
+                    VerifyRestrictedTokenStableAcrossLaunchesAsync(brokerPath)),
                 ("Job Object limits match the exact policy", () =>
                     VerifyJobLimitsAsync(brokerPath)),
                 ("AppContainer can write the broker scratch directory", () =>
@@ -197,6 +206,67 @@ internal static class Program
         AssertEqual(SecurityMandatoryLowRid, result.Token.IntegrityLevelRid, "AppContainer integrity RID");
         AssertEqual("Low", result.Token.IntegrityLevel, "AppContainer integrity name");
         Assert(!string.IsNullOrWhiteSpace(result.Token.AppContainerSid), "AppContainer SID is empty.");
+        Assert(!result.Token.AdministratorsGroupEnabled, "The child token has BUILTIN\\Administrators enabled.");
+        Assert(
+            result.Token.EnabledPrivilegeLuids.All(luid => luid == SeChangeNotifyPrivilegeLuid),
+            "The child token has an enabled privilege beyond SeChangeNotifyPrivilege: "
+            + string.Join(",", result.Token.EnabledPrivilegeLuids));
+    }
+
+    // CI runs 3 and 4 refused the same --inspect launch intermittently (some cases passed,
+    // others failed, with identical arguments). One pass per case cannot prove the marker
+    // is stable, so repeat the launch and require every child to satisfy the full gate.
+    private static async Task VerifyRestrictedTokenStableAcrossLaunchesAsync(string brokerPath)
+    {
+        for (var attempt = 1; attempt <= RepeatedLaunchCount; attempt++)
+        {
+            var result = await RunProbeAsync(brokerPath, TimeSpan.FromSeconds(10), "--inspect")
+                .ConfigureAwait(false);
+            _ = RequireSuccessfulProbe(result, $"Repeated restricted launch {attempt}");
+            Assert(result.Token.HasRestrictions, $"Launch {attempt} child token has no restricted-token marker.");
+            Assert(!result.Token.AdministratorsGroupEnabled, $"Launch {attempt} child token has Administrators enabled.");
+            Assert(
+                result.Token.EnabledPrivilegeLuids.All(luid => luid == SeChangeNotifyPrivilegeLuid),
+                $"Launch {attempt} child token has an extra enabled privilege.");
+        }
+    }
+
+    private static void VerifyGateRejectsUnrestrictedSnapshots()
+    {
+        var valid = new TokenSecuritySnapshot(
+            IsAppContainer: true,
+            HasRestrictions: true,
+            IntegrityLevelRid: (int)SecurityMandatoryLowRid,
+            IntegrityLevel: "Low",
+            UserSid: "S-1-5-21-1-1-1-1001",
+            AppContainerSid: "S-1-15-2-1",
+            RestrictedSidCount: 0,
+            Capabilities: Array.Empty<string>(),
+            EnabledPrivilegeLuids: new[] { SeChangeNotifyPrivilegeLuid },
+            AdministratorsGroupEnabled: false);
+        TokenInspector.RequireUntrustedExecutionToken(valid, valid.AppContainerSid);
+
+        AssertGateRefuses(valid with { HasRestrictions = false }, "restricted-token marker");
+        AssertGateRefuses(valid with { AdministratorsGroupEnabled = true }, "Administrators");
+        AssertGateRefuses(
+            valid with { EnabledPrivilegeLuids = new[] { SeChangeNotifyPrivilegeLuid, 20L } },
+            "enabled privilege");
+    }
+
+    private static void AssertGateRefuses(TokenSecuritySnapshot snapshot, string expectedReason)
+    {
+        try
+        {
+            TokenInspector.RequireUntrustedExecutionToken(snapshot, snapshot.AppContainerSid);
+        }
+        catch (BrokerSecurityException exception) when (exception.Message.Contains(
+            expectedReason,
+            StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        throw new HarnessAssertionException($"The execution gate accepted a token lacking: {expectedReason}.");
     }
 
     private static async Task VerifyJobLimitsAsync(string brokerPath)

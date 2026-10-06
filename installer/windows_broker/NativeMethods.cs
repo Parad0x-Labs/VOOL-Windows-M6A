@@ -23,8 +23,11 @@ internal static class NativeMethods
 {
     internal const int ErrorInsufficientBuffer = 122;
     internal const int ErrorAlreadyExists = 183;
+    internal const uint TokenAssignPrimary = 0x0001;
     internal const uint TokenDuplicate = 0x0002;
     internal const uint TokenQuery = 0x0008;
+    internal const uint TokenAdjustDefault = 0x0080;
+    internal const uint TokenAdjustSessionId = 0x0100;
     internal const uint DisableMaxPrivilege = 0x00000001;
 
     internal const uint CreateSuspended = 0x00000004;
@@ -69,6 +72,8 @@ internal static class NativeMethods
     internal const int ProcThreadAttributeSecurityCapabilities = 0x00020009;
 
     internal const int TokenUser = 1;
+    internal const int TokenGroups = 2;
+    internal const int TokenPrivileges = 3;
     internal const int TokenRestrictedSids = 11;
     internal const int TokenIntegrityLevel = 25;
     internal const int TokenIsAppContainer = 29;
@@ -77,6 +82,10 @@ internal static class NativeMethods
     internal const int TokenHasRestrictions = 21;
 
     internal const uint SecurityMandatoryLowRid = 0x1000;
+    internal const uint SeGroupEnabled = 0x00000004;
+    internal const uint SePrivilegeEnabled = 0x00000002;
+    internal const long SeChangeNotifyPrivilegeLuid = 23;
+    internal const string BuiltinAdministratorsSid = "S-1-5-32-544";
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct SecurityAttributes
@@ -131,6 +140,14 @@ internal static class NativeMethods
     internal struct SidAndAttributes
     {
         internal IntPtr Sid;
+        internal uint Attributes;
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 4)]
+    internal struct LuidAndAttributes
+    {
+        internal uint LowPart;
+        internal int HighPart;
         internal uint Attributes;
     }
 
