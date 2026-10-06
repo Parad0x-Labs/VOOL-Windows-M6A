@@ -47,6 +47,7 @@ internal static class Program
             return 0;
         }
 
+        string? brokerFixtureRoot = null;
         try
         {
             var brokerPath = ParseBrokerPath(args);
@@ -63,6 +64,10 @@ internal static class Program
                 Console.Error.WriteLine($"[FAIL] WindowsExecutionBroker is unsupported: {support.Reason}");
                 return 2;
             }
+
+            brokerFixtureRoot = Path.Combine(Path.GetTempPath(), "vool-broker-controlled-worker", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(brokerFixtureRoot);
+            var workspaceBrokerPath = CreateControlledBrokerFixture(brokerPath, brokerFixtureRoot);
 
             var tests = new List<(string Name, Func<Task> Run)>
             {
@@ -110,13 +115,13 @@ internal static class Program
                 ("Plugin broker removes process, ACL, scratch, and AppContainer residue", () =>
                     VerifyPluginResidueCleanupAsync()),
                 ("Workspace parent grant cannot mutate unrelated same-parent canaries", () =>
-                    VerifyWorkspaceAuthorityAsync(brokerPath)),
+                    VerifyWorkspaceAuthorityAsync(workspaceBrokerPath)),
                 ("Workspace write broker enforces exact effect and cleans confinement", () =>
-                    VerifyWorkspaceWriteAsync(brokerPath)),
+                    VerifyWorkspaceWriteAsync(workspaceBrokerPath)),
                 ("Plugin cleanup preserves legacy DACL control metadata", () =>
                     VerifyPluginResidueCleanupAsync(legacyDacl: true)),
                 ("Workspace cleanup preserves legacy DACL control metadata", () =>
-                    VerifyWorkspaceWriteAsync(brokerPath, legacyDacl: true)),
+                    VerifyWorkspaceWriteAsync(workspaceBrokerPath, legacyDacl: true)),
                 ("Native DACL primitive preserves legacy metadata and handle binding", () =>
                 {
                     VerifyNativeDaclPrimitive();
@@ -147,15 +152,20 @@ internal static class Program
                     VerifyDaclReadContract();
                     return Task.CompletedTask;
                 }),
+                ("Unprotected explicit legacy grants refuse before mutation", () =>
+                {
+                    VerifyLegacyExplicitGrantRefusal();
+                    return Task.CompletedTask;
+                }),
                 ("Native DACL writer refuses a handle without WRITE_DAC", () =>
                 {
                     VerifyDaclWriterAccessDenied();
                     return Task.CompletedTask;
                 }),
                 ("Workspace refuses foreign target ACL drift before commit", () =>
-                    VerifyWorkspaceAclDriftAsync(brokerPath, afterCommit: false)),
+                    VerifyWorkspaceAclDriftAsync(workspaceBrokerPath, afterCommit: false)),
                 ("Workspace preserves foreign target ACL drift after commit", () =>
-                    VerifyWorkspaceAclDriftAsync(brokerPath, afterCommit: true)),
+                    VerifyWorkspaceAclDriftAsync(workspaceBrokerPath, afterCommit: true)),
             };
             if (installedImagePath is not null)
             {
@@ -193,6 +203,58 @@ internal static class Program
             Console.Error.WriteLine("Usage: vool-broker-tests.exe <published-self-contained-vool-broker.exe> [--store-winget <installed-winget.exe>]");
             return 2;
         }
+        finally
+        {
+            if (brokerFixtureRoot is not null) DeleteDirectoryTree(brokerFixtureRoot);
+        }
+    }
+
+    private static string CreateControlledBrokerFixture(string sourcePath, string root)
+    {
+        PrepareControlledDirectory(root);
+        PathSafety.RejectReparseAncestors(sourcePath);
+        var destination = Path.Combine(root, "vool-broker.exe");
+        byte[] sourceHash;
+        using (var source = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            sourceHash = SHA256.HashData(source);
+            source.Position = 0;
+            // Create new bytes under this fixture's DACL; do not copy a source
+            // security descriptor or change the checkout/publish directory.
+            using (var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                source.CopyTo(output);
+            source.Position = 0;
+            Assert(sourceHash.SequenceEqual(SHA256.HashData(source)), "Broker source bytes changed during fixture preparation.");
+        }
+        using (var copy = File.OpenRead(destination))
+            Assert(sourceHash.SequenceEqual(SHA256.HashData(copy)), "Controlled broker fixture is not byte-identical.");
+        using var held = WindowsDacl.Capture(destination);
+        ReportDaclContext("controlled-worker", held);
+        Assert(held.HasUnambiguousFileEncoding(), "Controlled worker DACL encoding is ambiguous.");
+        Console.WriteLine($"[WORKER-FIXTURE] source={sourcePath}; copy={destination}; sha256={Convert.ToHexString(sourceHash)}");
+        return destination;
+    }
+
+    private static void PrepareControlledDirectory(string root)
+    {
+        PathSafety.RejectReparseAncestors(root);
+        Assert(!Directory.EnumerateFileSystemEntries(root).Any(), "Controlled ACL setup requires an empty disposable directory.");
+        using var before = WindowsDacl.Capture(root);
+        var expected = new RawSecurityDescriptor(before.OriginalAcl);
+        foreach (GenericAce ace in expected.DiscretionaryAcl!) ace.AceFlags &= ~AceFlags.Inherited;
+        var directory = new DirectoryInfo(root);
+        var security = directory.GetAccessControl(AccessControlSections.Access);
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: true);
+        directory.SetAccessControl(security);
+        before.RequireBoundPath();
+        var observed = before.Read();
+        Assert((observed.ControlFlags & ControlFlags.DiscretionaryAclProtected) != 0,
+            "Controlled directory did not retain inheritance protection.");
+        expected.SetFlags(observed.ControlFlags);
+        AssertEqual(expected.GetSddlForm(AccessControlSections.Access), observed.GetSddlForm(AccessControlSections.Access),
+            "Controlled fixture retained ACE rights and order");
+        AssertEqual(before.Original.Owner?.Value, observed.Owner?.Value, "Controlled fixture owner");
+        ReportDaclContext("controlled-directory", before);
     }
 
     private static string ParseBrokerPath(IReadOnlyList<string> args)
@@ -688,7 +750,12 @@ internal static class Program
         var imagePath = Path.Combine(Environment.SystemDirectory, "whoami.exe");
         Assert(File.Exists(imagePath), $"System32 test image is missing: {imagePath}");
 
+        var help = await RunDirectImageAsync(imagePath, "/?").ConfigureAwait(false);
+        Console.WriteLine($"[SYSTEM32-CONTROL] {JsonSerializer.Serialize(help)}");
         var result = await RunDirectImageAsync(imagePath, "/user").ConfigureAwait(false);
+        Console.WriteLine($"[SYSTEM32-IDENTITY] {JsonSerializer.Serialize(result)}");
+        Assert(!help.TimedOut && help.ExitCode == 0 && !string.IsNullOrWhiteSpace(help.Stdout),
+            $"Direct System32 help control failed: {help.ExitCode}; {help.Stdout}; {help.Stderr}");
         Assert(!result.TimedOut && result.ExitCode == 0,
             $"Direct System32 launch failed: {result.ExitCode}; {result.Stdout}; {result.Stderr}");
         Assert(!string.IsNullOrWhiteSpace(result.Stdout),
@@ -763,6 +830,8 @@ internal static class Program
 
         Assert(process.TokenSecurity.IsAppContainer,
             "Direct child lost its AppContainer token.");
+        Console.WriteLine($"[DIRECT-IMAGE] image={imagePath}; args={JsonSerializer.Serialize(arguments)}; "
+            + $"pid={process.ProcessId}; jobOwned={process.JobOwned}; token={JsonSerializer.Serialize(process.TokenSecurity)}");
         return result;
     }
 
@@ -937,6 +1006,7 @@ internal static class Program
             "vool-broker-workspace-write-harness",
             Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
+        if (!legacyDacl) PrepareControlledDirectory(root);
         var target = Path.Combine(root, "approved.txt");
         var replaceTarget = Path.Combine(root, "replace.txt");
         var createTarget = Path.Combine(root, "create.txt");
@@ -973,7 +1043,7 @@ internal static class Program
                         Console.WriteLine($"[ACL] workspace legacy={legacyDacl}; before={targetAcl}; after={FileAcl(target)}"))
                 .ConfigureAwait(false);
             var evidence = result.Confinement
-                ?? throw new HarnessAssertionException("Workspace write returned no confinement evidence.");
+                ?? throw new HarnessAssertionException($"Workspace write returned no confinement evidence: status={result.Status}; error={result.Error}");
             Assert(result.Ok && result.Status == "executed", $"Workspace write failed: {result.Error}");
             AssertEqual("after\n", File.ReadAllText(target, Encoding.UTF8), "Workspace write content");
             AssertEqual(result.ContentSha256, result.FinalSha256, "Workspace write final hash");
@@ -1361,6 +1431,7 @@ internal static class Program
             "vool-broker-workspace-authority-harness",
             Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
+        PrepareControlledDirectory(root);
         var nested = Path.Combine(root, "nested");
         Directory.CreateDirectory(nested);
         var target = Path.Combine(root, "approved-target.txt");
@@ -2214,6 +2285,7 @@ internal static class Program
         Directory.CreateDirectory(root);
         try
         {
+            PrepareControlledDirectory(root);
             var target = Path.Combine(root, "target.txt");
             File.WriteAllText(target, "before\n", Encoding.UTF8);
             var rootAcl = DirectoryAcl(root);
@@ -2232,7 +2304,7 @@ internal static class Program
             var result = await WorkspaceWriteBroker.ExecuteAsync(request, workerExecutablePath: brokerPath,
                 afterParentGrantTestHook: afterCommit ? null : AddForeignAcl,
                 beforeTargetAclRestorationTestHook: afterCommit ? AddForeignAcl : null).ConfigureAwait(false);
-            var evidence = result.Confinement ?? throw new HarnessAssertionException("ACL drift returned no confinement evidence.");
+            var evidence = result.Confinement ?? throw new HarnessAssertionException($"ACL drift returned no confinement evidence: status={result.Status}; error={result.Error}");
             Assert(!result.Ok && !evidence.Verified, "Foreign target ACL drift was accepted.");
             Assert(foreignAcl is not null, "Foreign ACL test hook did not execute.");
             AssertEqual(foreignAcl, FileAcl(target), "Foreign target ACL preservation");
@@ -2255,15 +2327,22 @@ internal static class Program
         Directory.CreateDirectory(root);
         try
         {
-            var modern = Path.Combine(root, "modern-child.txt");
+            var modernParent = Path.Combine(root, "modern-parent");
+            Directory.CreateDirectory(modernParent);
+            PrepareControlledDirectory(modernParent);
+            var modern = Path.Combine(modernParent, "modern-child.txt");
             File.WriteAllText(modern, "modern canary\n", Encoding.UTF8);
             using (var modernHeld = WindowsDacl.Capture(modern))
+            {
+                ReportDaclContext("controlled-modern-parent", modernHeld);
                 Assert(modernHeld.HasUnambiguousFileEncoding(), "Modern DACL encoding was refused.");
+            }
             SetLegacyFixtureDacl(root, root, directory: true);
             var file = Path.Combine(root, "new-child.txt");
             File.WriteAllText(file, "read-contract canary\n", Encoding.UTF8);
             var named = FileAcl(file);
             using var held = WindowsDacl.Capture(file);
+            ReportDaclContext("legacy-parent", held);
             Console.WriteLine($"[ACL-READ] named={named}; held={held.OriginalAcl}; named-after={FileAcl(file)}");
             AssertEqual(named, held.OriginalAcl, "Named versus held file DACL");
             Assert(!held.HasUnambiguousFileEncoding(), "Ambiguous legacy encoding was admitted.");
@@ -2275,6 +2354,87 @@ internal static class Program
             }
             AssertEqual(named, FileAcl(file), "Named DACL after held read");
             AssertEqual("read-contract canary\n", File.ReadAllText(file, Encoding.UTF8), "Read-contract content");
+        }
+        finally { DeleteDirectoryTree(root); }
+    }
+
+    private static void ReportDaclContext(string label, WindowsDacl held)
+    {
+        var sections = AccessControlSections.Owner | AccessControlSections.Access;
+        Console.WriteLine($"[ACL-CONTEXT] {label}; path={held.Path}; identity={held.Identity}; "
+            + $"filesystem={held.Read().GetSddlForm(sections)}; stored={held.ReadStored().GetSddlForm(sections)}");
+    }
+
+    private static void VerifyLegacyExplicitGrantRefusal()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "vool-broker-legacy-explicit-refusal", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var descriptor = new RawSecurityDescriptor(DirectoryAcl(root));
+            // A distinct non-inheriting ACE remains explicit in the filesystem
+            // projection. It adds no effective right: the current owner already
+            // has full control in this newly created disposable fixture.
+            using var current = WindowsIdentity.GetCurrent();
+            var sid = current.User ?? throw new HarnessAssertionException("Fixture user SID is unavailable.");
+            descriptor.DiscretionaryAcl!.InsertAce(0, new CommonAce(AceFlags.None,
+                AceQualifier.AccessAllowed, (int)FileSystemRights.ReadAttributes, sid, false, null));
+            descriptor.SetFlags(descriptor.ControlFlags & ~(ControlFlags.DiscretionaryAclAutoInherited
+                | ControlFlags.DiscretionaryAclAutoInheritRequired | ControlFlags.DiscretionaryAclProtected));
+            var bytes = new byte[descriptor.BinaryLength];
+            descriptor.GetBinaryForm(bytes, 0);
+            if (!SetFileSecurityW(root, 4, bytes))
+                throw NativeMethods.LastError("SetFileSecurityW for unprotected explicit refusal fixture");
+            AssertEqual(descriptor.GetSddlForm(AccessControlSections.Access), DirectoryAcl(root),
+                "Unprotected explicit refusal precondition");
+            var child = Path.Combine(root, "canary.txt");
+            File.WriteAllText(child, "unchanged\n", Encoding.UTF8);
+            using var before = WindowsDacl.Capture(root);
+            var childAcl = FileAcl(child);
+            var childOwner = FixtureOwner(child, directory: false);
+            ReportDaclContext("unprotected-explicit", before);
+            using var container = AppContainerSession.Create("acl-test", "v1", "legacy-explicit-refusal", Guid.NewGuid().ToString("N"));
+            var refused = false;
+            var wrote = false;
+            try
+            {
+                using var grants = WindowsPathGrants.CreateWithRules(container.Sid,
+                    new[] { new WindowsPathGrantRequest(root, FileSystemRights.ReadAndExecute,
+                        InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None) },
+                    afterGrantWriteTestHook: () => wrote = true);
+            }
+            catch (BrokerSecurityException exception)
+            {
+                refused = exception.Message.Contains("grant refused before mutation", StringComparison.Ordinal);
+                Console.WriteLine($"[LEGACY-REFUSAL] {exception.Message}");
+                Assert((exception.Message.Contains($"Path={root};", StringComparison.Ordinal)
+                        || exception.Message.Contains($"Path={root}{Path.DirectorySeparatorChar};", StringComparison.Ordinal))
+                    && exception.Message.Contains($"identity={before.Identity};", StringComparison.Ordinal)
+                    && exception.Message.Contains($"DACL={before.OriginalAcl}", StringComparison.Ordinal),
+                    "Legacy refusal omitted its exact rejected path or DACL.");
+            }
+            Assert(refused && !wrote, "Unprotected explicit grant did not refuse before its first write.");
+            before.RequireBoundPath();
+            AssertEqual(before.OriginalAcl, DirectoryAcl(root), "Refused root ACL");
+            AssertEqual(before.Original.GetSddlForm(AccessControlSections.Owner), FixtureOwner(root, directory: true), "Refused root owner");
+            AssertEqual(childAcl, FileAcl(child), "Refused child ACL");
+            AssertEqual(childOwner, FixtureOwner(child, directory: false), "Refused child owner");
+            AssertEqual("unchanged\n", File.ReadAllText(child, Encoding.UTF8), "Refused child contents");
+            AssertNoAppContainerAllowRule(root, container.Sid.Value);
+            AssertNoAppContainerAllowRule(child, container.Sid.Value);
+            // Qualify the success-fixture setup under the reproduced legacy
+            // parent, rather than assuming the host TEMP inheritance is modern.
+            // Only this new empty child is configured; the refused root stays old.
+            var controlled = Path.Combine(root, "controlled-child");
+            Directory.CreateDirectory(controlled);
+            PrepareControlledDirectory(controlled);
+            var modernChild = Path.Combine(controlled, "modern.txt");
+            File.WriteAllText(modernChild, "controlled canary\n", Encoding.UTF8);
+            using var modernHeld = WindowsDacl.Capture(modernChild);
+            ReportDaclContext("controlled-under-legacy", modernHeld);
+            Assert(modernHeld.HasUnambiguousFileEncoding(), "Controlled setup under a legacy parent remained ambiguous.");
+            AssertEqual(before.OriginalAcl, DirectoryAcl(root), "Legacy parent after controlled child setup");
+            AssertEqual(childAcl, FileAcl(child), "Legacy canary after controlled child setup");
         }
         finally { DeleteDirectoryTree(root); }
     }

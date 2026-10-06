@@ -620,7 +620,8 @@ internal sealed class WindowsPathGrants : IDisposable
         var flags = captured.Original.ControlFlags;
         if ((flags & (ControlFlags.DiscretionaryAclAutoInherited | ControlFlags.DiscretionaryAclProtected)) == 0
             && captured.Original.DiscretionaryAcl!.Cast<GenericAce>().Any(ace => !ace.IsInherited))
-            throw new BrokerSecurityException("Unprotected legacy explicit DACL requires a separately reviewed inheritance migration; grant refused before mutation.");
+            throw new BrokerSecurityException("Unprotected legacy explicit DACL requires a separately reviewed inheritance migration; grant refused before mutation. "
+                + $"Path={captured.Path}; identity={captured.Identity}; owner={captured.Original.Owner?.Value}; DACL={captured.OriginalAcl}");
         if (!descendants || !Directory.Exists(path))
             return;
         foreach (var child in Directory.EnumerateFileSystemEntries(path))

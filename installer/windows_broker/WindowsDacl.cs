@@ -98,6 +98,18 @@ internal sealed class WindowsDacl : IDisposable
         // A legacy child can project inherited ACEs through SE_FILE_OBJECT while
         // storing explicit ACEs. ReplaceFile merges that encoding; do not mutate
         // a target whose exact original permissions cannot be preserved.
+        var stored = ReadStored();
+        RequireBoundPath();
+        var final = Read();
+        if (final.GetSddlForm(AccessControlSections.Access) != OriginalAcl
+            || final.Owner?.Value != Original.Owner?.Value)
+            throw new BrokerSecurityException("Foreign DACL or owner drift during replacement admission.");
+        return stored.GetSddlForm(AccessControlSections.Access) == OriginalAcl
+            && stored.Owner?.Value == Original.Owner?.Value;
+    }
+
+    internal RawSecurityDescriptor ReadStored()
+    {
         if (GetKernelObjectSecurity(handle, OwnerAndDaclInformation, null, 0, out var length))
             throw new BrokerSecurityException("The stored DACL size query unexpectedly succeeded.");
         var error = Marshal.GetLastWin32Error();
@@ -110,14 +122,7 @@ internal sealed class WindowsDacl : IDisposable
             throw NativeMethods.LastError("GetKernelObjectSecurity bound file DACL");
         if (written is < 20 || written > length)
             throw new BrokerSecurityException("The stored DACL query returned an invalid length.");
-        var stored = new RawSecurityDescriptor(bytes, 0);
-        RequireBoundPath();
-        var final = Read();
-        if (final.GetSddlForm(AccessControlSections.Access) != OriginalAcl
-            || final.Owner?.Value != Original.Owner?.Value)
-            throw new BrokerSecurityException("Foreign DACL or owner drift during replacement admission.");
-        return stored.GetSddlForm(AccessControlSections.Access) == OriginalAcl
-            && stored.Owner?.Value == Original.Owner?.Value;
+        return new RawSecurityDescriptor(bytes, 0);
     }
 
     internal void WritePropagating(string acl, string expectedLiveAcl, string? expectedOwner)

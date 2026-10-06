@@ -449,7 +449,16 @@ internal static class Probe
         startInfo.ArgumentList.Add("probe");
         startInfo.ArgumentList.Add("--job-child-report");
         startInfo.ArgumentList.Add(reportPath);
-        using var child = Process.Start(startInfo);
+        Process? started;
+        try { started = Process.Start(startInfo); }
+        catch (System.ComponentModel.Win32Exception exception)
+        {
+            // Preserve the native code and the .NET creation stack: redirected
+            // pipe setup and image creation are distinct possible failures.
+            throw new System.ComponentModel.Win32Exception(exception.NativeErrorCode,
+                $"Child job-report Process.Start with redirected streams failed: {exception}");
+        }
+        using var child = started;
         if (child is null)
             return null;
         if (!child.WaitForExit(5_000))
@@ -465,8 +474,10 @@ internal static class Probe
             return null;
         }
 
-        _ = child.StandardOutput.ReadToEnd();
-        _ = child.StandardError.ReadToEnd();
+        var stdout = child.StandardOutput.ReadToEnd();
+        var stderr = child.StandardError.ReadToEnd();
+        if (child.ExitCode != 0)
+            throw new BrokerSecurityException($"Child job-report exited {child.ExitCode}; stdout={stdout}; stderr={stderr}");
         var inJob = false;
         if (File.Exists(reportPath))
         {
@@ -496,10 +507,11 @@ internal static class Probe
 
     private static void WriteJobChildReport(string reportPath)
     {
-        var inJob = NativeMethods.IsProcessInJob(
+        if (!NativeMethods.IsProcessInJob(
             NativeMethods.GetCurrentProcess(),
             IntPtr.Zero,
-            out var isInJob) && isInJob;
+            out var inJob))
+            throw NativeMethods.LastError("IsProcessInJob(job-report child)");
         using var token = OpenCurrentToken();
         var payload = new
         {
