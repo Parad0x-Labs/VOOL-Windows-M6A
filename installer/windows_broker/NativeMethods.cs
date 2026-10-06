@@ -32,7 +32,7 @@ internal static class NativeMethods
 
     internal const uint CreateSuspended = 0x00000004;
     internal const uint CreateUnicodeEnvironment = 0x00000400;
-    internal const uint CreateNoWindow = 0x08000000;
+    internal const uint DetachedProcess = 0x00000008;
     internal const uint ExtendedStartupInfoPresent = 0x00080000;
 
     internal const uint StartupUseStdHandles = 0x00000100;

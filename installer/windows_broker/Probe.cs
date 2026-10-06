@@ -55,6 +55,12 @@ internal static class Probe
                     result["sleptMs"] = sleepMilliseconds;
                     break;
 
+                case "--inspect-console":
+                    result["consoleCodePage"] = GetConsoleCP();
+                    result["stdoutType"] = NativeMethods.GetFileType(GetStdHandle(-11));
+                    result["stderrType"] = NativeMethods.GetFileType(GetStdHandle(-12));
+                    break;
+
                 case "--write-scratch":
                     var scratchName = ReadValue(arguments, ref index, "--write-scratch");
                     var scratchPath = ScratchPath(scratchName);
@@ -517,6 +523,12 @@ internal static class Probe
             throw new ArgumentException($"Invalid integer for {option}.");
         return parsed;
     }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern uint GetConsoleCP();
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern IntPtr GetStdHandle(int standardHandle);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

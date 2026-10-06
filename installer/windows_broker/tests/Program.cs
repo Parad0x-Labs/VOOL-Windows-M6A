@@ -68,6 +68,8 @@ internal static class Program
             {
                 ("AppContainer token has no capabilities and low integrity", () =>
                     VerifyAppContainerTokenAsync(brokerPath)),
+                ("Worker is console-detached with piped stdout and stderr", () =>
+                    VerifyDetachedConsoleAsync(brokerPath)),
                 ("Execution gate refuses unrestricted, admin-enabled or privileged tokens", () =>
                 {
                     VerifyGateRejectsUnrestrictedSnapshots();
@@ -214,6 +216,17 @@ internal static class Program
             result.Token.EnabledPrivilegeLuids.All(luid => luid == SeChangeNotifyPrivilegeLuid),
             "The child token has an enabled privilege beyond SeChangeNotifyPrivilege: "
             + string.Join(",", result.Token.EnabledPrivilegeLuids));
+    }
+
+    private static async Task VerifyDetachedConsoleAsync(string brokerPath)
+    {
+        var result = await RunProbeAsync(brokerPath, TimeSpan.FromSeconds(10), "--inspect-console")
+            .ConfigureAwait(false);
+        var probe = RequireSuccessfulProbe(result, "detached console");
+        AssertEqual(0u, probe.GetProperty("consoleCodePage").GetUInt32(), "Child console code page");
+        AssertEqual(3u, probe.GetProperty("stdoutType").GetUInt32(), "Child stdout FILE_TYPE_PIPE");
+        AssertEqual(3u, probe.GetProperty("stderrType").GetUInt32(), "Child stderr FILE_TYPE_PIPE");
+        TokenInspector.RequireUntrustedExecutionToken(result.Token, result.Token.AppContainerSid);
     }
 
     // CI runs 3 and 4 refused the same --inspect launch intermittently (some cases passed,

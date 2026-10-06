@@ -182,7 +182,8 @@ internal sealed class NativeProcessLauncher : IDisposable
                 restrictedToken = CreateRestrictedPrimaryToken();
                 var creationFlags = NativeMethods.CreateSuspended
                     | NativeMethods.CreateUnicodeEnvironment
-                    | NativeMethods.CreateNoWindow
+                    // Use only the explicit stdio pipes, without a hidden console host.
+                    | NativeMethods.DetachedProcess
                     | NativeMethods.ExtendedStartupInfoPresent;
                 if (!NativeMethods.CreateProcessAsUserW(
                         restrictedToken,
