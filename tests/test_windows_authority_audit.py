@@ -109,6 +109,28 @@ def test_native_and_release_trust_changes_invalidate_authority_reviews(tmp_path,
     workflow.parent.mkdir(parents=True)
     workflow.write_text("on: push\n", encoding="utf-8")
     assert audit_tool._source_fingerprint() != baseline
+    baseline = audit_tool._source_fingerprint()
+    ci_entry = tmp_path / "ops" / "windows_native_ci_user.ps1"
+    ci_entry.parent.mkdir()
+    ci_entry.write_text("fixed-test-entry", encoding="utf-8")
+    assert audit_tool._source_fingerprint() != baseline
+
+
+def test_source_ledger_normalizes_checkout_eol_not_content(tmp_path, monkeypatch) -> None:
+    tools_dir = tmp_path / "tools"
+    tools_dir.mkdir()
+    (tools_dir / "windows_authority_audit.py").write_bytes(b"audit\n")
+    (tools_dir / "windows_parity_inventory.py").write_bytes(b"inventory\n")
+    broker = tmp_path / "installer" / "windows_broker" / "Broker.cs"
+    broker.parent.mkdir(parents=True)
+    broker.write_bytes(b"line one\r\nline two\r\n")
+    monkeypatch.setattr(audit_tool, "ROOT", tmp_path)
+    monkeypatch.setattr(audit_tool, "EFFECT_ROOTS", ())
+    baseline = audit_tool._source_fingerprint()
+    broker.write_bytes(b"line one\nline two\n")
+    assert audit_tool._source_fingerprint() == baseline
+    broker.write_bytes(b"line one\nchanged line two\n")
+    assert audit_tool._source_fingerprint() != baseline
 
 
 def test_ledger_does_not_promote_loopback_or_declared_approval_to_authentication() -> None:
