@@ -188,7 +188,10 @@ def test_native_standard_user_route_keeps_security_and_capture_guards() -> None:
         "Assert-HostedRunner # Before any account", "RUNNER_ENVIRONMENT -ne 'github-hosted'",
         "New-LocalUser -Name $name -Password $secret", "'S-1-5-32-545'",
         "Users-only membership refused", "Marshal.ZeroFreeGlobalAllocUnicode(secret)",
-        "CreateProcessWithLogonW(username, \".\", secret, 1, image, command, 0xC",
+        "const uint ProfileProcessCreationFlags = 0x4",
+        "CreateProcessWithLogonW(username, \".\", secret, 1, image, command, ProfileProcessCreationFlags",
+        "Startup start=new Startup(); start.cb=(uint)Marshal.SizeOf(typeof(Startup))",
+        "start.flags=1; start.show=0",
         "IntPtr.Zero, root, ref start, out info)",
         "AssignProcessToJobObject(job, info.process)", "uint previous=ResumeThread(info.thread)",
         "WaitForSingleObject(info.process, 600000)", "GetProcessTimes(info.process",
@@ -209,6 +212,7 @@ def test_native_standard_user_route_keeps_security_and_capture_guards() -> None:
     ):
         assert prohibited not in source
     assert source.count("[VoolCiEntry]::Run(") == 1
+    assert source.count("Require(CreateProcessWithLogonW(") == 1
     workflow = yaml.safe_load(
         (REPO_ROOT / ".github/workflows/windows-release-gauntlet.yml").read_text(encoding="utf-8")
     )
@@ -275,6 +279,39 @@ def test_ci_job_setup_observes_exact_kill_on_close_policy(tmp_path: Path, framew
         result = _run_entry_fixture(script, tmp_path)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "8192"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows x64 profile-launch ABI without account or logon")
+@pytest.mark.parametrize("framework", (False, True))
+def test_ci_profile_launch_flags_and_abi_without_logon(tmp_path: Path, framework: bool) -> None:
+    script = (
+        "Initialize-NativeEntry; $entry = [VoolCiEntry]; "
+        "$startup = $entry.GetNestedType('Startup', [Reflection.BindingFlags]::NonPublic); "
+        "$process = $entry.GetNestedType('ProcessInfo', [Reflection.BindingFlags]::NonPublic); "
+        "$sizeOf = [Runtime.InteropServices.Marshal].GetMethod('SizeOf', [type[]]@([type])); "
+        "@{ creationFlags = $entry.GetField('ProfileProcessCreationFlags', "
+        "[Reflection.BindingFlags]'NonPublic,Static').GetRawConstantValue(); "
+        "startupBytes = $sizeOf.Invoke($null, @($startup)); "
+        "processBytes = $sizeOf.Invoke($null, @($process)); "
+        "flagsOffset = [Runtime.InteropServices.Marshal]::OffsetOf($startup, 'flags').ToInt32(); "
+        "stdoutOffset = [Runtime.InteropServices.Marshal]::OffsetOf($startup, 'stdout').ToInt32() "
+        "} | ConvertTo-Json -Compress"
+    )
+    if framework:
+        entry = REPO_ROOT / "ops/windows_native_ci_user.ps1"
+        powershell = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+        result = subprocess.run(
+            [str(powershell), "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+             f". '{entry}'; {script}"],
+            cwd=tmp_path, capture_output=True, text=True, timeout=30, check=False,
+        )
+    else:
+        result = _run_entry_fixture(script, tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "creationFlags": 4, "startupBytes": 104, "processBytes": 24,
+        "flagsOffset": 60, "stdoutOffset": 88,
+    }
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows private test credential generation")

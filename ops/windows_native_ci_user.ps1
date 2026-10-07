@@ -96,6 +96,8 @@ public sealed class VoolCiResult {
 }
 
 public static class VoolCiEntry {
+    // CreateProcessWithLogonW enables a new console; DETACHED_PROCESS conflicts with it.
+    const uint ProfileProcessCreationFlags = 0x4; // CREATE_SUSPENDED; startup hides the window.
     [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] struct Startup {
         public uint cb; public string reserved, desktop, title;
         public uint x,y,xsize,ysize,xchars,ychars,fill,flags;
@@ -210,8 +212,8 @@ public static class VoolCiEntry {
             secret=Marshal.SecureStringToGlobalAllocUnicode(password);
             result.Stage="create-profile-process";
             try {
-                Require(CreateProcessWithLogonW(username, ".", secret, 1, image, command, 0xC,
-                    IntPtr.Zero, root, ref start, out info), result.Stage); // SUSPENDED | DETACHED
+                Require(CreateProcessWithLogonW(username, ".", secret, 1, image, command, ProfileProcessCreationFlags,
+                    IntPtr.Zero, root, ref start, out info), result.Stage);
             } finally { Marshal.ZeroFreeGlobalAllocUnicode(secret); secret=IntPtr.Zero; }
             result.CleanupObserved=false; result.ProcessId=info.pid;
             long exit,kernel,user;
