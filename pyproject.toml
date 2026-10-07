@@ -34,7 +34,7 @@ dependencies = [
     "pypdf==6.16.2",  # Confined PDF text fallback; keep installer/bundle projections in sync.
     "reportlab==5.0.1",
     "markdown-it-py==4.2.0",
-    "xlrd==2.0.1",  # Legacy XLS reader (pure Python, no native parts); keep installer/bundle projections in sync.
+    "xlrd==2.0.2",  # Legacy XLS reader (pure Python, no native parts); keep installer/bundle projections in sync.
     "starlette>=0.37,<2.0",
     "uvicorn>=0.30,<1.0",
     # Required for correct .null PDA derivation (find_program_address) and x402 signing;
