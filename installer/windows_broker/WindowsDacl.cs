@@ -33,8 +33,7 @@ internal sealed class WindowsDacl : IDisposable
 
     internal static WindowsDacl Capture(string path)
     {
-        var full = System.IO.Path.GetFullPath(path);
-        PathSafety.RejectReparseAncestors(full);
+        var full = PathSafety.RequireLocalPath(path, "DACL custody path");
         var handle = Open(full, NativeMethods.ReadControl | NativeMethods.WriteDac);
         try
         {
@@ -208,7 +207,10 @@ internal sealed class WindowsDacl : IDisposable
 
     private static SafeFileHandle Open(string path, uint access)
     {
-        var result = NativeMethods.CreateFileForSecurityW(path, access | 0x80, // FILE_READ_ATTRIBUTES.
+        // Callers retain the canonical local path. Only the native open receives
+        // an extended-length prefix; caller-supplied device/UNC paths stay refused.
+        var nativePath = @"\\?\" + path;
+        var result = NativeMethods.CreateFileForSecurityW(nativePath, access | 0x80, // FILE_READ_ATTRIBUTES.
             NativeMethods.FileShareRead | NativeMethods.FileShareWrite | NativeMethods.FileShareDelete,
             IntPtr.Zero, NativeMethods.OpenExisting, NoFollowDirectoryFlags, IntPtr.Zero);
         if (!result.IsInvalid)

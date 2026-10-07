@@ -129,6 +129,32 @@ internal static class Program
                     VerifyWorkspaceWriteAsync(workspaceBrokerPath, legacyDacl: true)),
                 ("Workspace write holds with a clean user-owned fixture DACL", () =>
                     VerifyWorkspaceWriteAsync(workspaceBrokerPath, cleanUserAcl: true)),
+                ("Workspace write supports staging beyond MAX_PATH with unchanged confinement", () =>
+                    VerifyWorkspaceWriteAsync(workspaceBrokerPath, longPath: true)),
+                ("Deep workspace cleanup preserves legacy DACL control metadata", () =>
+                    VerifyWorkspaceWriteAsync(workspaceBrokerPath, legacyDacl: true, longPath: true)),
+                ("Deep workspace write holds with a clean user-owned fixture DACL", () =>
+                    VerifyWorkspaceWriteAsync(workspaceBrokerPath, cleanUserAcl: true, longPath: true)),
+                ("Deep bound DACL open preserves native denial and exact fixture metadata", () =>
+                {
+                    VerifyDaclOpenFailureDiagnostics(longPath: true);
+                    return Task.CompletedTask;
+                }),
+                ("Deep bound DACL restoration refuses replacement-path identity drift", () =>
+                {
+                    VerifyBoundDaclReplacementRefusal(longPath: true);
+                    return Task.CompletedTask;
+                }),
+                ("Deep temporary grant cleanup preserves unrelated ACL edits", () =>
+                {
+                    VerifyGrantCleanupPreservesForeignAcl(longPath: true);
+                    return Task.CompletedTask;
+                }),
+                ("Bound DACL custody rejects caller namespaces and reparse paths", () =>
+                {
+                    VerifyDaclPathAdmission();
+                    return Task.CompletedTask;
+                }),
                 ("Native DACL primitive preserves legacy metadata and handle binding", () =>
                 {
                     VerifyNativeDaclPrimitive();
@@ -1057,12 +1083,22 @@ internal static class Program
         }
     }
 
-    private static async Task VerifyWorkspaceWriteAsync(string brokerPath, bool legacyDacl = false, bool cleanUserAcl = false)
+    private static async Task VerifyWorkspaceWriteAsync(string brokerPath, bool legacyDacl = false, bool cleanUserAcl = false,
+        bool longPath = false)
     {
         var root = Path.Combine(
             Path.GetTempPath(),
             "vool-broker-workspace-write-harness",
             Guid.NewGuid().ToString("N"));
+        if (longPath)
+        {
+            // Keep the root itself short; the broker's two staging components cross MAX_PATH.
+            root += new string('x', Math.Max(0, 180 - root.Length));
+            var stagingName = ".approved.txt.vool-write-" + new string('a', 24);
+            var staged = Path.Combine(root, stagingName, stagingName + ".tmp");
+            Assert(staged.Length >= 268, "Deep fixture does not reach the hosted staging-path length.");
+            Console.WriteLine($"[LONG-PATH] stagedLength={staged.Length}; root={root}");
+        }
         Directory.CreateDirectory(root);
         if (cleanUserAcl)
         {
@@ -2250,9 +2286,10 @@ internal static class Program
     private static extern int NtSetSecurityObject(
         Microsoft.Win32.SafeHandles.SafeFileHandle handle, uint information, byte[] descriptor);
 
-    private static void VerifyGrantCleanupPreservesForeignAcl()
+    private static void VerifyGrantCleanupPreservesForeignAcl(bool longPath = false)
     {
-        var root = Path.Combine(Path.GetTempPath(), "vool-broker-grant-drift", Guid.NewGuid().ToString("N"));
+        var fixtureRoot = Path.Combine(Path.GetTempPath(), "vool-broker-grant-drift", Guid.NewGuid().ToString("N"));
+        var root = longPath ? Path.Combine(fixtureRoot, new string('x', 200)) : fixtureRoot;
         Directory.CreateDirectory(root);
         try
         {
@@ -2278,7 +2315,7 @@ internal static class Program
         }
         finally
         {
-            DeleteDirectoryTree(root);
+            DeleteDirectoryTree(fixtureRoot);
         }
     }
 
@@ -2358,18 +2395,19 @@ internal static class Program
         finally { DeleteDirectoryTree(root); }
     }
 
-    private static void VerifyDaclOpenFailureDiagnostics()
+    private static void VerifyDaclOpenFailureDiagnostics(bool longPath = false)
     {
         var root = Path.Combine(Path.GetTempPath(), "vool-broker-dacl-open-denial", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         try
         {
             PrepareControlledDirectory(root);
-            var file = Path.Combine(root, "canary.txt");
+            var file = Path.Combine(root, (longPath ? new string('x', 200) : "") + "canary.txt");
+            if (longPath) Assert(file.Length > 268, "Deep denial fixture remains below MAX_PATH.");
             File.WriteAllText(file, "open denial canary\n", Encoding.UTF8);
             var original = FileAcl(file);
             var owner = FixtureOwner(file, directory: false);
-            using var handle = NativeMethods.CreateFileForSecurityW(file, NativeMethods.ReadControl | NativeMethods.WriteDac,
+            using var handle = NativeMethods.CreateFileForSecurityW(@"\\?\" + file, NativeMethods.ReadControl | NativeMethods.WriteDac,
                 NativeMethods.FileShareRead | NativeMethods.FileShareWrite | NativeMethods.FileShareDelete,
                 IntPtr.Zero, NativeMethods.OpenExisting, 0x00200000, IntPtr.Zero);
             if (handle.IsInvalid) throw NativeMethods.LastError("CreateFileW for disposable denial custody");
@@ -2583,9 +2621,10 @@ internal static class Program
         finally { DeleteDirectoryTree(root); }
     }
 
-    private static void VerifyBoundDaclReplacementRefusal()
+    private static void VerifyBoundDaclReplacementRefusal(bool longPath = false)
     {
-        var root = Path.Combine(Path.GetTempPath(), "vool-broker-dacl-replacement", Guid.NewGuid().ToString("N"));
+        var fixtureRoot = Path.Combine(Path.GetTempPath(), "vool-broker-dacl-replacement", Guid.NewGuid().ToString("N"));
+        var root = longPath ? Path.Combine(fixtureRoot, new string('x', 200)) : fixtureRoot;
         Directory.CreateDirectory(root);
         try
         {
@@ -2608,6 +2647,43 @@ internal static class Program
             try { custody.Read(); }
             catch (ObjectDisposedException) { released = true; }
             Assert(released, "Disposed DACL custody remained usable.");
+        }
+        finally { DeleteDirectoryTree(fixtureRoot); }
+    }
+
+    private static void VerifyDaclPathAdmission()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "vool-broker-dacl-path-admission", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var file = Path.Combine(root, "canary.txt");
+            File.WriteAllText(file, "path admission canary\n", Encoding.UTF8);
+            var original = FileAcl(file);
+            var owner = FixtureOwner(file, directory: false);
+            using var held = WindowsDacl.Capture(file);
+            var normalized = Path.Combine(root, "unused", "..", "canary.txt").Replace('\\', '/');
+            using (var same = WindowsDacl.Capture(normalized))
+            {
+                AssertEqual(file, same.Path, "Canonical ordinary DACL path");
+                AssertEqual(held.Identity, same.Identity, "Canonical DACL identity");
+                same.RequireBoundPath();
+                same.RestoreMetadata();
+            }
+            var link = Path.Combine(root, "link.txt");
+            File.CreateSymbolicLink(link, file);
+            foreach (var rejected in new[] { @"\\?\" + file, @"\\.\" + file,
+                         @"\\localhost\C$\" + file[3..], Path.GetRelativePath(Environment.CurrentDirectory, file), link })
+            {
+                var refused = false;
+                try { using var unexpected = WindowsDacl.Capture(rejected); }
+                catch (BrokerSecurityException) { refused = true; }
+                Assert(refused, $"DACL custody admitted a caller namespace, relative or reparse path: {rejected}");
+            }
+            held.RequireBoundPath();
+            AssertEqual(original, FileAcl(file), "Path refusal DACL preservation");
+            AssertEqual(owner, FixtureOwner(file, directory: false), "Path refusal owner preservation");
+            AssertEqual("path admission canary\n", File.ReadAllText(file, Encoding.UTF8), "Path refusal content preservation");
         }
         finally { DeleteDirectoryTree(root); }
     }
