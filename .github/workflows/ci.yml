@@ -27,6 +27,25 @@ jobs:
         with:
           # Push/PR verification is intentionally exact. ops/verify.py rejects any mismatch.
           python-version: "3.12.13"
+      - name: Provision Linux confinement (Bubblewrap)
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          mkdir -p .verification-logs
+          set +e
+          (
+            set -e
+            sudo apt-get update
+            sudo apt-get install --no-install-recommends -y bubblewrap
+            dpkg-query -W bubblewrap
+            bwrap --version
+          ) >.verification-logs/confinement-provision.log 2>&1
+          status=$?
+          cat .verification-logs/confinement-provision.log
+          exit "$status"
+      - name: Verify Linux confinement
+        timeout-minutes: 5
+        run: python ops/check_linux_confinement.py --report .verification-logs/confinement.json
       - name: Install verification dependencies
         run: |
           python -m pip install --upgrade pip
@@ -62,6 +81,25 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Provision Linux confinement (Bubblewrap)
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          mkdir -p .compatibility-logs
+          set +e
+          (
+            set -e
+            sudo apt-get update
+            sudo apt-get install --no-install-recommends -y bubblewrap
+            dpkg-query -W bubblewrap
+            bwrap --version
+          ) >.compatibility-logs/confinement-provision.log 2>&1
+          status=$?
+          cat .compatibility-logs/confinement-provision.log
+          exit "$status"
+      - name: Verify Linux confinement
+        timeout-minutes: 5
+        run: python ops/check_linux_confinement.py --report .compatibility-logs/confinement.json
       - name: Install compatibility dependencies
         run: |
           python -m pip install --upgrade pip

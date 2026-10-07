@@ -134,6 +134,54 @@ def test_compatibility_keeps_complete_evidence_and_authoritative_deadline() -> N
     assert upload["with"]["if-no-files-found"] == "error"
 
 
+def _assert_linux_confinement_contract(job: dict[str, Any], log_root: str, gate_name: str) -> None:
+    provision = _named_step(job, "Provision Linux confinement (Bubblewrap)")
+    probe = _named_step(job, "Verify Linux confinement")
+    gate = _named_step(job, gate_name)
+    assert job["steps"].index(provision) < job["steps"].index(probe) < job["steps"].index(gate)
+    for step in (provision, probe):
+        assert "if" not in step
+        assert not step.get("continue-on-error", False)
+        assert step["timeout-minutes"] == 5
+    assert provision["shell"] == "bash"
+    setup = provision["run"]
+    assert "sudo apt-get install --no-install-recommends -y bubblewrap" in setup
+    assert "dpkg-query -W" in setup and "bwrap --version" in setup
+    assert f">{log_root}/confinement-provision.log 2>&1" in setup
+    assert 'status=$?\ncat ' in setup and 'exit "$status"' in setup
+    for forbidden in ("sysctl", "apparmor_parser", "chmod", "sudo python", "|| true"):
+        assert forbidden not in setup
+    assert tuple(shlex.split(probe["run"])) == (
+        "python", "ops/check_linux_confinement.py", "--report", f"{log_root}/confinement.json",
+    )
+
+
+@pytest.mark.parametrize(
+    ("job_name", "log_root", "gate_name"),
+    (("verify", ".verification-logs", "Run authoritative verification"),
+     ("compatibility", ".compatibility-logs", "Run compatibility collection and shards")),
+)
+def test_linux_ci_provisions_and_checks_confinement_before_tests(job_name, log_root, gate_name) -> None:
+    _assert_linux_confinement_contract(_load_workflow()["jobs"][job_name], log_root, gate_name)
+
+
+@pytest.mark.parametrize("mutation", ("disabled", "ignored_failure", "root_probe", "late_probe"))
+def test_linux_confinement_contract_rejects_bypasses(mutation: str) -> None:
+    job = copy.deepcopy(_load_workflow()["jobs"]["verify"])
+    probe = _named_step(job, "Verify Linux confinement")
+    if mutation == "disabled":
+        probe["if"] = False
+    elif mutation == "ignored_failure":
+        probe["continue-on-error"] = True
+    elif mutation == "root_probe":
+        probe["run"] = "sudo " + probe["run"]
+    else:
+        job["steps"].remove(probe)
+        job["steps"].append(probe)
+    with pytest.raises(AssertionError):
+        _assert_linux_confinement_contract(job, ".verification-logs", "Run authoritative verification")
+
+
 def test_llm_lanes_install_shared_fixture_and_browser_dependencies() -> None:
     workflow = yaml.safe_load(
         (REPO_ROOT / ".github/workflows/llm_acceptance.yml").read_text(encoding="utf-8")
