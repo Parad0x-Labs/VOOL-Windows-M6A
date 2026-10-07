@@ -192,6 +192,7 @@ def test_native_standard_user_route_keeps_security_and_capture_guards() -> None:
         "IntPtr.Zero, root, ref start, out info)",
         "AssignProcessToJobObject(job, info.process)", "uint previous=ResumeThread(info.thread)",
         "WaitForSingleObject(info.process, 600000)", "GetProcessTimes(info.process",
+        "Marshal.WriteInt32(limits, 16, 0x2000)", "ConfigureOwnedJob(job)",
         "TerminateJobObject(job, 0xC000013A)", "WaitForSingleObject(info.process, 10000)",
         "if (!EmptyJob(job))", "Assert-NativeCompletion $native",
         "$launchAttempted = $true", "$null -ne $native -and $native.CleanupObserved",
@@ -256,6 +257,24 @@ def test_ci_entry_compiles_on_the_fixed_framework_powershell(tmp_path: Path) -> 
     )
     assert result.returncode == 0, result.stderr
     assert "compiled" in result.stdout
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Real Windows empty-job setup without account or logon")
+@pytest.mark.parametrize("framework", (False, True))
+def test_ci_job_setup_observes_exact_kill_on_close_policy(tmp_path: Path, framework: bool) -> None:
+    script = "Initialize-NativeEntry; [VoolCiEntry]::ProbeEmptyJobPolicy()"
+    if framework:
+        entry = REPO_ROOT / "ops/windows_native_ci_user.ps1"
+        powershell = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+        result = subprocess.run(
+            [str(powershell), "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+             f". '{entry}'; {script}"],
+            cwd=tmp_path, capture_output=True, text=True, timeout=30, check=False,
+        )
+    else:
+        result = _run_entry_fixture(script, tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "8192"
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows private test credential generation")

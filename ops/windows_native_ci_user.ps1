@@ -124,6 +124,8 @@ public static class VoolCiEntry {
     static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
     [DllImport("kernel32.dll", SetLastError=true)]
     static extern bool QueryInformationJobObject(IntPtr job, int kind, out Accounting info, uint size, IntPtr needed);
+    [DllImport("kernel32.dll", EntryPoint="QueryInformationJobObject", SetLastError=true)]
+    static extern bool QueryJobLimits(IntPtr job, int kind, IntPtr info, uint size, IntPtr needed);
     [DllImport("kernel32.dll", SetLastError=true)]
     static extern bool TerminateJobObject(IntPtr job, uint code);
     [DllImport("kernel32.dll", SetLastError=true)]
@@ -147,6 +149,32 @@ public static class VoolCiEntry {
         }
         return false;
     }
+    static void ConfigureOwnedJob(IntPtr job) {
+        // win-x64 JOBOBJECT_EXTENDED_LIMIT_INFORMATION: 144 bytes; flags at offset 16.
+        IntPtr limits=Marshal.AllocHGlobal(144);
+        try {
+            Marshal.Copy(new byte[144], 0, limits, 144);
+            Marshal.WriteInt32(limits, 16, 0x2000); // KILL_ON_JOB_CLOSE, no breakaway permission.
+            Require(SetInformationJobObject(job, 9, limits, 144), "set-job-limits");
+        } finally { Marshal.FreeHGlobal(limits); }
+    }
+    // Native fixture only: exercise the SAME setup and query/close an owned EMPTY job.
+    // No process, token, account, credential or logon is created by this fixture.
+    public static uint ProbeEmptyJobPolicy() {
+        if (IntPtr.Size!=8) throw new InvalidOperationException("win-x64 required.");
+        IntPtr job=CreateJobObjectW(IntPtr.Zero, null);
+        Require(job!=IntPtr.Zero, "fixture-create-job");
+        try {
+            ConfigureOwnedJob(job);
+            IntPtr limits=Marshal.AllocHGlobal(144);
+            try {
+                Require(QueryJobLimits(job, 9, limits, 144, IntPtr.Zero), "fixture-query-limits");
+                uint flags=unchecked((uint)Marshal.ReadInt32(limits, 16));
+                if (flags!=0x2000 || !EmptyJob(job)) throw new InvalidOperationException("Empty-job policy differs.");
+                return flags;
+            } finally { Marshal.FreeHGlobal(limits); }
+        } finally { Require(CloseHandle(job), "fixture-close-job"); }
+    }
     public static string Integrity(IntPtr token) {
         uint needed;
         bool probe = GetTokenInformation(token, 25, IntPtr.Zero, 0, out needed);
@@ -163,7 +191,7 @@ public static class VoolCiEntry {
     public static VoolCiResult Run(string root, string username, string sid, SecureString password) {
         VoolCiResult result = new VoolCiResult();
         ProcessInfo info = new ProcessInfo();
-        IntPtr job = IntPtr.Zero, secret = IntPtr.Zero, limits = IntPtr.Zero, token = IntPtr.Zero;
+        IntPtr job = IntPtr.Zero, secret = IntPtr.Zero, token = IntPtr.Zero;
         bool assigned = false;
         try {
             if (Environment.GetEnvironmentVariable("GITHUB_ACTIONS")!="true" ||
@@ -173,10 +201,7 @@ public static class VoolCiEntry {
             if (IntPtr.Size!=8) throw new InvalidOperationException("win-x64 required.");
             result.Stage="create-job";
             job=CreateJobObjectW(IntPtr.Zero, null); Require(job!=IntPtr.Zero, result.Stage);
-            // win-x64 JOBOBJECT_EXTENDED_LIMIT_INFORMATION: 144 bytes; flags at offset 16.
-            limits=Marshal.AllocHGlobal(144); Marshal.Copy(new byte[144], 0, limits, 144);
-            Marshal.WriteInt32(limits, 16, 0x200); // KILL_ON_JOB_CLOSE, no breakaway permission.
-            Require(SetInformationJobObject(job, 9, limits, 144), "set-job-limits");
+            ConfigureOwnedJob(job);
             string image=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");
             string script=Path.Combine(root, "payload", "entry", "windows_native_ci_user.ps1");
             StringBuilder command=new StringBuilder("\""+image+"\" -NoLogo -NoProfile -NonInteractive -File \""+script+"\" -Mode Child -Root \""+root+"\" -ExpectedSid "+sid);
@@ -223,7 +248,6 @@ public static class VoolCiEntry {
         } catch (Exception e) { result.Stage=result.Stage+": "+e.GetType().Name;
         } finally {
             if (secret!=IntPtr.Zero) Marshal.ZeroFreeGlobalAllocUnicode(secret);
-            if (limits!=IntPtr.Zero) Marshal.FreeHGlobal(limits);
             if (info.process!=IntPtr.Zero && !result.CleanupObserved) {
                 try {
                     Require(assigned ? TerminateJobObject(job, 0xC000013A) : TerminateProcess(info.process, 0xC000013A), "terminate-owned-child");
