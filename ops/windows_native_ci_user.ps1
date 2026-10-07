@@ -317,7 +317,10 @@ function Invoke-ChildSuite {
         if ((Get-Acl -LiteralPath $env:TEMP).GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $ExpectedSid) {
             throw 'New test TEMP owner refused.'
         }
-        $manifest = @(Get-Content -LiteralPath (Join-Path $Root 'input-manifest.json') -Raw | ConvertFrom-Json)
+        $report.stage = 'load-input-manifest'
+        # Framework ConvertFrom-Json emits the whole array; enumerate it like PowerShell 7.
+        $manifest = @(Get-Content -LiteralPath (Join-Path $Root 'input-manifest.json') -Raw | ConvertFrom-Json | ForEach-Object { $_ })
+        $report.stage = 'verify-input-manifest'
         Assert-InputManifest (Join-Path $Root 'payload') $manifest
         $report.stage = 'native-suite'
         $tests = Join-Path $Root 'payload\tests\vool-broker-tests.exe'
@@ -331,6 +334,7 @@ function Invoke-ChildSuite {
             $code = $LASTEXITCODE
         } finally { $ErrorActionPreference = $nativePreference }
         $report.exitCode = $code
+        $report.stage = 'verify-final-input-manifest'
         Assert-InputManifest (Join-Path $Root 'payload') $manifest
         $report.stage = 'completed'
     } catch {

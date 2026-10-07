@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import shlex
@@ -470,6 +471,88 @@ def test_ci_payload_guards_reject_missing_changed_and_extra_inputs(tmp_path: Pat
     }[fault]
     result = _run_entry_fixture(script + "Assert-InputManifest payload $manifest", tmp_path)
     assert (result.returncode == 0) == (fault == "none"), result.stderr
+
+
+def test_ci_child_manifest_stages_bind_actual_loader_and_both_guard_calls() -> None:
+    source = (REPO_ROOT / "ops/windows_native_ci_user.ps1").read_text(encoding="utf-8")
+    child = source.split("function Invoke-ChildSuite {", 1)[1].split("function Invoke-HostedSuite {", 1)[0]
+    loader = "$manifest = @(Get-Content -LiteralPath (Join-Path $Root 'input-manifest.json') -Raw | ConvertFrom-Json | ForEach-Object { $_ })"
+    guard = "Assert-InputManifest (Join-Path $Root 'payload') $manifest"
+    assert child.count(loader) == 1
+    assert child.count(guard) == 2
+    precheck = child.index(guard)
+    native = child.index("$report.stage = 'native-suite'")
+    postcheck = child.index(guard, precheck + len(guard))
+    assert (
+        child.index("$report.stage = 'load-input-manifest'")
+        < child.index(loader)
+        < child.index("$report.stage = 'verify-input-manifest'")
+        < precheck < native
+        < child.index("$report.exitCode = $code")
+        < child.index("$report.stage = 'verify-final-input-manifest'")
+        < postcheck < child.index("$report.stage = 'completed'")
+    )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Real child JSON loading and payload guards in both Windows shells")
+@pytest.mark.parametrize("framework", (False, True))
+@pytest.mark.parametrize("entry_count", (1, 201))
+@pytest.mark.parametrize("fault", ("missing", "changed", "extra", "path_escape", "none"))
+def test_ci_child_json_manifest_roundtrip_preserves_guards(
+    tmp_path: Path, framework: bool, entry_count: int, fault: str,
+) -> None:
+    payload = tmp_path / "payload" / "tests"
+    payload.mkdir(parents=True)
+    manifest = []
+    for index in range(entry_count):
+        content = f"reviewed fixture {index}"
+        name = f"fixture{index}.txt"
+        (payload / name).write_text(content, encoding="utf-8")
+        manifest.append({"path": f"tests/{name}", "sha256": hashlib.sha256(content.encode()).hexdigest()})
+    if fault == "missing":
+        (payload / "fixture0.txt").unlink()
+    elif fault == "changed":
+        (payload / "fixture0.txt").write_text("changed", encoding="utf-8")
+    elif fault == "extra":
+        (payload / "extra.txt").write_text("extra", encoding="utf-8")
+    elif fault == "path_escape":
+        manifest[0]["path"] = "tests/../fixture0.txt"
+    (tmp_path / "input-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    source = (REPO_ROOT / "ops/windows_native_ci_user.ps1").read_text(encoding="utf-8")
+    loaders = [line.strip() for line in source.splitlines() if line.strip().startswith("$manifest = @(Get-Content")]
+    assert len(loaders) == 1
+    # Execute the actual child statement, not an independently implemented test parser.
+    script = (
+        "$Root = (Get-Location).Path; " + loaders[0] + "; "
+        "Assert-InputManifest (Join-Path $Root 'payload') $manifest; "
+        f"if ($manifest.Count -ne {entry_count}) {{ throw 'Manifest shape differs' }}; 'verified'"
+    )
+    if framework:
+        entry = REPO_ROOT / "ops/windows_native_ci_user.ps1"
+        powershell = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+        # Python inherits Core's module path; the profile-loaded child does not.
+        environment = os.environ.copy()
+        environment["PSMODULEPATH"] = str(powershell.parent / "Modules")
+        result = subprocess.run(
+            [str(powershell), "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+             f". '{entry}'; {script}"],
+            cwd=tmp_path, env=environment, capture_output=True, text=True, timeout=30, check=False,
+        )
+    else:
+        result = _run_entry_fixture(script, tmp_path)
+    if fault == "none":
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "verified"
+        assert result.stderr == ""
+    else:
+        assert result.returncode != 0
+        expected = {
+            "missing": "Payload inventory differs.",
+            "extra": "Payload inventory differs.",
+            "changed": "Payload hash or regular-file check failed:",
+            "path_escape": "Unexpected payload path.",
+        }[fault]
+        assert expected in result.stderr, result.stderr
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell bootstrap guards")
