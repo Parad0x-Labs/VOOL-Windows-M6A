@@ -69,6 +69,24 @@ class _ExecutionPlugin:
         outcome = _outcome_of(report)
         if outcome is None:
             return
+        if outcome in {"failed", "errors"}:
+            # A deadline can kill the shard before sessionfinish. Retain each failure now;
+            # this journal is diagnostic evidence, never a completed execution receipt.
+            failure_path = self._output_path.with_suffix(".failures.jsonl")
+            failure_path.parent.mkdir(parents=True, exist_ok=True)
+            failure = {
+                "schema": "vool.pytest-failure.v1",
+                "nodeid": str(report.nodeid),
+                "when": str(report.when),
+                "outcome": outcome,
+                "longrepr": str(getattr(report, "longreprtext", "")),
+                "sections": [
+                    {"name": str(name), "content": str(content)}
+                    for name, content in getattr(report, "sections", ())
+                ],
+            }
+            with failure_path.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps(failure, ensure_ascii=True) + "\n")
         path = str(report.nodeid).split("::", 1)[0]
         self._totals[outcome] = self._totals.get(outcome, 0) + 1
         per_file = self._by_file.setdefault(path, {})

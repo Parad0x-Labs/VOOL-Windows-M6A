@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
+from ops.process_tree import process_group_kwargs, stop_process_tree
 from ops.pytest_execution import _ExecutionPlugin
 from ops.pytest_shards import (
     GATE_ENV_VAR,
@@ -192,6 +195,10 @@ def test_build_shard_command_keeps_pytest_q_and_targets() -> None:
         "-m",
         "pytest",
         "-q",
+        "-o",
+        "faulthandler_timeout=60",
+        "-o",
+        "faulthandler_exit_on_timeout=false",
         "tests/test_alpha.py",
         "tests/test_beta.py",
         "--tb=short",
@@ -436,6 +443,116 @@ def test_progress_snapshot_preserves_current_phase_without_claiming_completion(t
     }
     assert not output.exists()
     assert not progress.with_suffix(".tmp").exists()
+
+
+def test_failure_evidence_is_written_before_session_completion(tmp_path: Path) -> None:
+    output = tmp_path / "execution.json"
+    plugin = _ExecutionPlugin(output_path=output)
+    for phase in ("setup", "call", "teardown"):
+        plugin.pytest_runtest_logreport(SimpleNamespace(
+            nodeid="tests/test_probe.py::test_probe", when=phase,
+            passed=False, failed=True, skipped=False,
+            longreprtext=f"failure in {phase}",
+            sections=[("Captured stdout", f"checkpoint {phase}")],
+        ))
+    records = [json.loads(line) for line in output.with_suffix(".failures.jsonl").read_text().splitlines()]
+    assert [row["when"] for row in records] == ["setup", "call", "teardown"]
+    assert [row["outcome"] for row in records] == ["errors", "failed", "errors"]
+    assert all(row["schema"] == "vool.pytest-failure.v1" for row in records)
+    assert all(row["nodeid"] == "tests/test_probe.py::test_probe" for row in records)
+    assert records[1]["longrepr"] == "failure in call"
+    assert records[1]["sections"] == [{"name": "Captured stdout", "content": "checkpoint call"}]
+    assert not output.exists()
+
+
+def test_pass_and_skip_do_not_create_failure_evidence(tmp_path: Path) -> None:
+    output = tmp_path / "execution.json"
+    plugin = _ExecutionPlugin(output_path=output)
+    for passed in (True, False):
+        plugin.pytest_runtest_logreport(SimpleNamespace(
+            nodeid="tests/test_probe.py::test_probe", when="call",
+            passed=passed, failed=False, skipped=not passed,
+            longrepr=("test_probe.py", 1, "Skipped: unavailable"),
+        ))
+    assert not output.with_suffix(".failures.jsonl").exists()
+
+
+def test_failure_evidence_write_refusal_is_not_hidden(tmp_path: Path, monkeypatch) -> None:
+    output = tmp_path / "execution.json"
+    plugin = _ExecutionPlugin(output_path=output)
+    original_open = Path.open
+
+    def refuse_journal(path, *args, **kwargs):
+        if path == output.with_suffix(".failures.jsonl"):
+            raise PermissionError("injected failure evidence write denial")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", refuse_journal)
+    try:
+        plugin.pytest_runtest_logreport(SimpleNamespace(
+            nodeid="tests/test_probe.py::test_probe", when="call",
+            passed=False, failed=True, skipped=False, longreprtext="failure", sections=[],
+        ))
+    except PermissionError as exc:
+        assert "injected failure evidence write denial" in str(exc)
+    else:
+        raise AssertionError("a failed evidence write must not be ignored")
+    assert not output.exists()
+
+
+def test_shards_dump_stalls_without_exiting_or_reducing_scope() -> None:
+    assignment = ShardAssignment(index=1, targets=("tests/test_one.py", "tests/test_two.py"), estimated_weight=1)
+    for output in (None, Path("execution.json")):
+        command = build_shard_command(assignment, execution_manifest_path=output)
+        assert "faulthandler_timeout=60" in command
+        assert "faulthandler_exit_on_timeout=false" in command
+        assert all(target in command for target in assignment.targets)
+
+
+def test_killed_worker_preserves_failure_and_stall_evidence(tmp_path: Path) -> None:
+    target = tmp_path / "test_interrupted.py"
+    target.write_text(
+        "import time\n"
+        "def test_a_failure():\n    assert False, 'retained-first-failure'\n"
+        "def test_b_wait():\n    time.sleep(300)\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "execution.json"
+    command = build_shard_command(
+        ShardAssignment(index=1, targets=(str(target),), estimated_weight=1),
+        execution_manifest_path=output,
+    )
+    command = tuple("faulthandler_timeout=0.1" if arg == "faulthandler_timeout=60" else arg for arg in command)
+    journal = output.with_suffix(".failures.jsonl")
+    log = tmp_path / "worker.log"
+    with log.open("w", encoding="utf-8") as stream:
+        process = subprocess.Popen(
+            command, cwd=tmp_path, stdout=stream, stderr=subprocess.STDOUT,
+            env={key: value for key, value in os.environ.items() if key not in (
+                "PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+            )},
+            **process_group_kwargs(),
+        )
+        try:
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                if journal.exists() and "test_b_wait" in log.read_text(encoding="utf-8"):
+                    break
+                assert process.poll() is None, log.read_text(encoding="utf-8")
+                time.sleep(0.05)
+            else:
+                raise AssertionError(log.read_text(encoding="utf-8"))
+            assert process.poll() is None
+        finally:
+            stop_process_tree(process)
+    records = [json.loads(line) for line in journal.read_text().splitlines()]
+    assert len(records) == 1
+    assert records[0]["when"] == "call"
+    assert records[0]["outcome"] == "failed"
+    assert "retained-first-failure" in records[0]["longrepr"]
+    assert "Timeout" in log.read_text(encoding="utf-8")
+    assert not output.exists()
+    assert process.poll() is not None
 
 
 def test_shard_node_inventory_must_match_canonical_collection(

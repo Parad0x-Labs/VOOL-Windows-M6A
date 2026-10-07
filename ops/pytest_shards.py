@@ -320,6 +320,10 @@ def build_shard_command(
             str(execution_manifest_path),
             "--",
             "-q",
+            "-o",
+            "faulthandler_timeout=60",
+            "-o",
+            "faulthandler_exit_on_timeout=false",
             *assignment.targets,
             *tuple(str(item) for item in pytest_args),
         )
@@ -328,6 +332,10 @@ def build_shard_command(
         "-m",
         "pytest",
         "-q",
+        "-o",
+        "faulthandler_timeout=60",
+        "-o",
+        "faulthandler_exit_on_timeout=false",
         *assignment.targets,
         *tuple(str(item) for item in pytest_args),
     )
