@@ -215,7 +215,8 @@ internal sealed class WindowsDacl : IDisposable
             return result;
         var error = Marshal.GetLastWin32Error();
         result.Dispose();
-        throw new Win32Exception(error, "CreateFileW for bound DACL");
+        throw new Win32Exception(error,
+            $"CreateFileW for bound DACL: native_error={error}; path={path}; access=0x{access | 0x80:X8}");
     }
 
     public void Dispose() => handle.Dispose();

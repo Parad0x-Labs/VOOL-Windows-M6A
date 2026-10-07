@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Globalization;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
@@ -133,20 +134,26 @@ internal static class WorkspaceWriteBroker
             && !processResult.TimedOut
             && processResult.ExitCode == 0)
         {
+            var installationStage = "verify-prior-state";
             try
             {
                 EnsurePriorState(request, after);
+                installationStage = "verify-target-identity";
                 EnsureTargetIdentity(paths.TargetPath, before.Identity);
+                installationStage = "verify-staged-content";
                 VerifyStagedContent(stagingPath, request.ContentSha256);
                 if (priorAcl is not null)
                 {
+                    installationStage = "verify-prior-dacl";
                     priorAcl.RequireBoundPath();
                     var live = priorAcl.Read();
                     if (live.GetSddlForm(AccessControlSections.Access) != priorAcl.OriginalAcl
                         || live.Owner?.Value != priorAcl.Original.Owner?.Value)
                         throw new BrokerSecurityException("Foreign target ACL drift before installation.");
                 }
+                installationStage = "capture-staged-dacl";
                 using var stagedAcl = WindowsDacl.Capture(stagingPath);
+                installationStage = "validate-staged-dacl";
                 ValidateStagedAcl(stagedAcl, staging, appContainer.Sid, stagingRights);
                 if (stagedAcl.Original.Owner?.Value != originalTargetOwner)
                     throw new BrokerSecurityException("The staged owner does not match the approved target owner.");
@@ -155,15 +162,19 @@ internal static class WorkspaceWriteBroker
                 // Worker authority ends before the host commits. Removing a
                 // file ACE alone is insufficient while its parent still grants
                 // it: filesystem inheritance/ReplaceFile can reintroduce it.
+                installationStage = "remove-worker-grants";
                 grants.Dispose();
+                installationStage = "verify-grant-free-staged-dacl";
                 stagedAcl.RequireBoundPath();
                 var grantFree = stagedAcl.Read();
                 if (grantFree.Owner?.Value != staging.TemplateOwner
                     || !WindowsDacl.EquivalentTransition(grantFree, new RawSecurityDescriptor(staging.TemplateAcl)))
                     throw new BrokerSecurityException("Grant-free staged ACL does not match its approved template.");
+                installationStage = "restore-staged-dacl";
                 stagedAcl.Restore(originalTargetAcl, originalTargetOwner,
                     grantFree.GetSddlForm(AccessControlSections.Access));
                 expectedInstalledAcl = originalTargetAcl;
+                installationStage = "commit-target";
                 if (request.PriorState == "absent")
                     File.Move(stagingPath, paths.TargetPath, overwrite: false);
                 else
@@ -173,12 +184,16 @@ internal static class WorkspaceWriteBroker
                         destinationBackupFileName: null,
                         ignoreMetadataErrors: true);
                 hostInstalled = true;
+                installationStage = "verify-installed-target";
                 after = ReadTarget(paths.TargetPath);
             }
             catch (Exception exception)
             {
+                var nativeError = exception is Win32Exception native
+                    ? native.NativeErrorCode.ToString(CultureInfo.InvariantCulture)
+                    : "none";
                 hostInstallError =
-                    $"The approved absent target could not be installed atomically: {exception.Message}";
+                    $"Approved target installation failed (stage={installationStage}; native_error={nativeError}): {exception.Message}";
             }
         }
         var verified = hostInstalled && workerResult.Ok
