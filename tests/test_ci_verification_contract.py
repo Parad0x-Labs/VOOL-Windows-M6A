@@ -135,6 +135,7 @@ def test_compatibility_keeps_complete_evidence_and_authoritative_deadline() -> N
 
 
 def _assert_linux_confinement_contract(job: dict[str, Any], log_root: str, gate_name: str) -> None:
+    assert job["runs-on"] == "ubuntu-22.04"
     provision = _named_step(job, "Provision Linux confinement (Bubblewrap)")
     probe = _named_step(job, "Verify Linux confinement")
     gate = _named_step(job, gate_name)
@@ -165,7 +166,9 @@ def test_linux_ci_provisions_and_checks_confinement_before_tests(job_name, log_r
     _assert_linux_confinement_contract(_load_workflow()["jobs"][job_name], log_root, gate_name)
 
 
-@pytest.mark.parametrize("mutation", ("disabled", "ignored_failure", "root_probe", "late_probe"))
+@pytest.mark.parametrize("mutation", (
+    "disabled", "ignored_failure", "root_probe", "late_probe", "floating_runner", "restricted_runner",
+))
 def test_linux_confinement_contract_rejects_bypasses(mutation: str) -> None:
     job = copy.deepcopy(_load_workflow()["jobs"]["verify"])
     probe = _named_step(job, "Verify Linux confinement")
@@ -175,6 +178,10 @@ def test_linux_confinement_contract_rejects_bypasses(mutation: str) -> None:
         probe["continue-on-error"] = True
     elif mutation == "root_probe":
         probe["run"] = "sudo " + probe["run"]
+    elif mutation == "floating_runner":
+        job["runs-on"] = "ubuntu-latest"
+    elif mutation == "restricted_runner":
+        job["runs-on"] = "ubuntu-24.04"
     else:
         job["steps"].remove(probe)
         job["steps"].append(probe)

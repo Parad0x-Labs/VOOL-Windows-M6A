@@ -17,7 +17,9 @@ jobs:
   verify:
     # 35.9k tests on a 2-core hosted runner need far more than the default 30-minute shard deadline.
     timeout-minutes: 360
-    runs-on: ubuntu-latest
+    # Bounded CI bridge: keep real non-root bwrap probes; never disable host security.
+    # Migrate before this hosted image retires on 2027-04-17.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -69,7 +71,8 @@ jobs:
 
   compatibility:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    # Match the authoritative confinement environment; same migration deadline above.
+    runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
