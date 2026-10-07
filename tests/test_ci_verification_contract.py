@@ -189,6 +189,8 @@ def test_native_standard_user_route_keeps_security_and_capture_guards() -> None:
         "New-LocalUser -Name $name -Password $secret", "'S-1-5-32-545'",
         "Users-only membership refused", "Marshal.ZeroFreeGlobalAllocUnicode(secret)",
         "const uint ProfileProcessCreationFlags = 0x4",
+        "const uint ChildTokenAccess = 0xA",
+        "OpenProcessToken(info.process, ChildTokenAccess, out token)",
         "CreateProcessWithLogonW(username, \".\", secret, 1, image, command, ProfileProcessCreationFlags",
         "Startup start=new Startup(); start.cb=(uint)Marshal.SizeOf(typeof(Startup))",
         "start.flags=1; start.show=0",
@@ -219,6 +221,31 @@ def test_native_standard_user_route_keeps_security_and_capture_guards() -> None:
     triggers = workflow.get("on", workflow.get(True))
     for event in ("push", "pull_request"):
         assert "ops/windows_native_ci_user.ps1" in triggers[event]["paths"]
+
+
+def test_ci_child_admission_stages_precede_checks_and_single_resume() -> None:
+    source = (REPO_ROOT / "ops/windows_native_ci_user.ps1").read_text(encoding="utf-8")
+    checkpoints = (
+        ('creation-identity', 'Require(GetProcessTimes(info.process'),
+        ('child-token', 'Require(OpenProcessToken(info.process, ChildTokenAccess, out token)'),
+        ('child-session', 'Require(GetTokenInformation(token, 12,'),
+        ('child-identity', 'using (WindowsIdentity identity=new WindowsIdentity(token))'),
+        ('child-user', 'if (identity.User.Value!=sid)'),
+        ('child-owner', 'if (identity.Owner.Value!=sid)'),
+        ('child-admin-role', 'if (new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))'),
+        ('child-integrity', 'if (Integrity(token)!="S-1-16-8192")'),
+        ('assign-job', 'Require(AssignProcessToJobObject(job, info.process)'),
+        ('resume', 'uint previous=ResumeThread(info.thread)'),
+    )
+    previous = source.index('result.Stage="create-profile-process"')
+    for stage, operation in checkpoints:
+        current = source.index(f'result.Stage="{stage}";', previous)
+        checked = source.index(operation, current)
+        assert previous < current < checked
+        previous = checked
+    assert source.count('throw new InvalidOperationException("Created child token refused.")') == 4
+    assert 'if (result.Session!=parent.SessionId)' in source
+    assert 'OpenProcessToken(info.process, 8, out token)' not in source
 
 
 def _run_entry_fixture(script: str, tmp_path: Path) -> subprocess.CompletedProcess[str]:
@@ -312,6 +339,102 @@ def test_ci_profile_launch_flags_and_abi_without_logon(tmp_path: Path, framework
         "creationFlags": 4, "startupBytes": 104, "processBytes": 24,
         "flagsOffset": 60, "stdoutOffset": 88,
     }
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Real current-process token inspection without account or logon")
+@pytest.mark.parametrize("framework", (False, True))
+@pytest.mark.parametrize("duplicate", (False, True))
+def test_ci_primary_token_role_access_and_cleanup(
+    tmp_path: Path, framework: bool, duplicate: bool,
+) -> None:
+    access = (
+        "[VoolCiEntry].GetField('ChildTokenAccess', "
+        "[Reflection.BindingFlags]'NonPublic,Static').GetRawConstantValue()"
+        if duplicate else "8"
+    )
+    script = r"""
+Initialize-NativeEntry
+$access = [uint32](ACCESS_VALUE)
+$binding = [Reflection.BindingFlags]'NonPublic,Static'
+$open = [VoolCiEntry].GetMethod('OpenProcessToken', $binding)
+$close = [VoolCiEntry].GetMethod('CloseHandle', $binding)
+$process = [Diagnostics.Process]::GetCurrentProcess()
+$baseline = $null; $identity = $null; $managedToken = $null
+$token = [IntPtr]::Zero; $closed = $false; $managedClosed = $false
+$role = $null; $errorType = $null; $stage = 'open-token'
+try {
+    $threadIdentity = [Security.Principal.WindowsIdentity]::GetCurrent($true)
+    if ($null -ne $threadIdentity) {
+        $threadIdentity.Dispose(); throw 'Impersonated fixture context refused'
+    }
+    $baseline = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $expectedRole = ([Security.Principal.WindowsPrincipal]::new($baseline)).IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator)
+    $arguments = [object[]]@($process.Handle, $access, [IntPtr]::Zero)
+    if (-not $open.Invoke($null, $arguments)) { throw 'Token open refused' }
+    $token = [IntPtr]$arguments[2]
+    $stage = 'identity'
+    $identity = [Security.Principal.WindowsIdentity]::new($token)
+    $managedToken = $identity.AccessToken
+    $identityMatches = $identity.User.Value -eq $baseline.User.Value -and
+        $identity.Owner.Value -eq $baseline.Owner.Value
+    $primary = $identity.ImpersonationLevel.ToString() -eq 'None'
+    $stage = 'admin-role'
+    try {
+        $role = ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole(
+            [Security.Principal.WindowsBuiltInRole]::Administrator)
+    } catch {
+        $errorType = $_.Exception.GetBaseException().GetType().FullName
+    }
+} finally {
+    try {
+        if ($null -ne $identity) {
+            $identity.Dispose(); $managedClosed = $managedToken.IsClosed
+        }
+    } finally {
+        try {
+            if ($token -ne [IntPtr]::Zero) {
+                $closed = $close.Invoke($null, [object[]]@($token))
+                if (-not $closed) { throw 'Original token close refused' }
+            }
+        } finally {
+            if ($null -ne $baseline) { $baseline.Dispose() }
+            $process.Dispose()
+        }
+    }
+}
+$threadIdentity = [Security.Principal.WindowsIdentity]::GetCurrent($true)
+$noImpersonation = $null -eq $threadIdentity
+if ($null -ne $threadIdentity) { $threadIdentity.Dispose() }
+@{ access=$access; stage=$stage; errorType=$errorType; role=$role;
+   expectedRole=$expectedRole; identityMatches=$identityMatches; primary=$primary;
+   noImpersonation=$noImpersonation; originalClosed=$closed; managedClosed=$managedClosed
+} | ConvertTo-Json -Compress
+""".replace("ACCESS_VALUE", access)
+    if framework:
+        entry = REPO_ROOT / "ops/windows_native_ci_user.ps1"
+        powershell = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+        result = subprocess.run(
+            [str(powershell), "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+             f". '{entry}'; {script}"],
+            cwd=tmp_path, capture_output=True, text=True, timeout=30, check=False,
+        )
+    else:
+        result = _run_entry_fixture(script, tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert result.stderr == ""
+    observed = json.loads(result.stdout)
+    assert observed["access"] == (10 if duplicate else 8)
+    assert observed["stage"] == "admin-role"
+    for fact in ("identityMatches", "primary", "noImpersonation", "originalClosed", "managedClosed"):
+        assert observed[fact] is True, observed
+    assert isinstance(observed["expectedRole"], bool)
+    if duplicate:
+        assert observed["errorType"] is None, observed
+        assert observed["role"] == observed["expectedRole"]
+    else:
+        assert observed["errorType"] == "System.Security.SecurityException", observed
+        assert observed["role"] is None
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows private test credential generation")

@@ -98,6 +98,7 @@ public sealed class VoolCiResult {
 public static class VoolCiEntry {
     // CreateProcessWithLogonW enables a new console; DETACHED_PROCESS conflicts with it.
     const uint ProfileProcessCreationFlags = 0x4; // CREATE_SUSPENDED; startup hides the window.
+    const uint ChildTokenAccess = 0xA; // TOKEN_QUERY | TOKEN_DUPLICATE for IsInRole on a primary token.
     [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] struct Startup {
         public uint cb; public string reserved, desktop, title;
         public uint x,y,xsize,ysize,xchars,ychars,fill,flags;
@@ -217,8 +218,11 @@ public static class VoolCiEntry {
             } finally { Marshal.ZeroFreeGlobalAllocUnicode(secret); secret=IntPtr.Zero; }
             result.CleanupObserved=false; result.ProcessId=info.pid;
             long exit,kernel,user;
+            result.Stage="creation-identity";
             Require(GetProcessTimes(info.process, out result.CreationTime, out exit, out kernel, out user), "creation-identity");
-            Require(OpenProcessToken(info.process, 8, out token), "child-token");
+            result.Stage="child-token";
+            Require(OpenProcessToken(info.process, ChildTokenAccess, out token), "child-token");
+            result.Stage="child-session";
             uint sessionBytes;
             IntPtr sessionBuffer=Marshal.AllocHGlobal(4);
             try {
@@ -229,11 +233,22 @@ public static class VoolCiEntry {
                     if (result.Session!=parent.SessionId) throw new InvalidOperationException("Child session binding refused.");
                 }
             } finally { Marshal.FreeHGlobal(sessionBuffer); }
+            result.Stage="child-identity";
             using (WindowsIdentity identity=new WindowsIdentity(token)) {
-                if (identity.User.Value!=sid || identity.Owner.Value!=sid ||
-                    new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator) || Integrity(token)!="S-1-16-8192")
+                result.Stage="child-user";
+                if (identity.User.Value!=sid)
+                    throw new InvalidOperationException("Created child token refused.");
+                result.Stage="child-owner";
+                if (identity.Owner.Value!=sid)
+                    throw new InvalidOperationException("Created child token refused.");
+                result.Stage="child-admin-role";
+                if (new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
+                    throw new InvalidOperationException("Created child token refused.");
+                result.Stage="child-integrity";
+                if (Integrity(token)!="S-1-16-8192")
                     throw new InvalidOperationException("Created child token refused.");
             }
+            result.Stage="assign-job";
             Require(AssignProcessToJobObject(job, info.process), "assign-job"); assigned=true;
             result.Stage="resume";
             uint previous=ResumeThread(info.thread);
