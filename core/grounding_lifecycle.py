@@ -100,6 +100,7 @@ EXIT_PARTIAL = "partial"
 ORIGIN_TYPED_OBSERVATION = "typed_observation"
 ORIGIN_BOUND_EVIDENCE = "bound_evidence"
 ORIGIN_COMPUTED_VALUE = "computed_value"
+ORIGIN_MEMORY_RECORD = "memory_record"
 
 _MAX_TRACKED_TURNS = 256
 
@@ -254,6 +255,12 @@ class GroundingLifecycle:
     #: `bound` above do not read this field. It exists so the publication gate can support a
     #: computed claim in a mixed turn whose SIBLING clause needed current information.
     computed_values: tuple[dict[str, Any], ...] = ()
+    #: This chat's own memory records the reader was given for this turn (the admitted capsule
+    #: evidence, `core.bootstrap_context.admitted_capsule_evidence_text`). Not observations: a
+    #: record is what was said in this chat, not a reading of the world now, so `retrieved` and
+    #: `bound` do not read this field. The publication gate offers the lines as support rows, so
+    #: a claim the records state publishes and a claim they do not state is withheld as before.
+    memory_records: tuple[dict[str, Any], ...] = ()
     #: Stable-knowledge renders this turn's plan produced (an OPEN-authority knowledge node's
     #: rendered line). NOT support of any kind -- `_support_rows` never offers it, because the
     #: text was written by a model and the model's own output may not certify itself. The
@@ -409,6 +416,7 @@ class GroundingLifecycle:
             "synthesis_calls": [call.as_dict() for call in self.synthesis_calls],
             "typed_observation_count": len(self.typed_observations),
             "computed_value_count": len(self.computed_values),
+            "memory_record_count": len(self.memory_records),
             "model_authored": self.generated,
             "rejected_binding_count": len(self.rejected_bindings),
             "children": [dict(child) for child in self.children],
@@ -443,7 +451,7 @@ def _identity_from(source_context: Any, *, task_id: str = "") -> TurnIdentity:
         bound_request_id=bound_request_id,
         turn_id=str(context.get("cancel_turn_id") or context.get("turn_id") or "").strip(),
         task_id=str(task_id or context.get("task_id") or "").strip(),
-        session_id=str(context.get("session_id") or context.get("runtime_session_id") or "").strip(),
+        session_id=str(context.get("session_id") or context.get("runtime_session_id") or context.get("chat_id") or "").strip(),
         execution_id=str(fence.get("execution_id") or "").strip(),
         generation=str(fence.get("generation") or "").strip(),
         runtime_epoch=str(fence.get("runtime_epoch") or "").strip(),
@@ -505,9 +513,22 @@ def _record_for(source_context: Any) -> GroundingLifecycle | None:
     if not lifecycle_id:
         return None
     record = _RECORDS.get(lifecycle_id)
+    if record is not None and not _lifecycle_identity_matches(record.identity, _identity_from(source_context)):
+        return None
     if record is not None:
         _RECORDS.move_to_end(lifecycle_id)
     return record
+
+
+def _lifecycle_identity_matches(owner: TurnIdentity, seen: TurnIdentity) -> bool:
+    """Copied stamps and indexed aliases may widen an owner, never contradict it."""
+    if any(getattr(owner, field) and getattr(seen, field)
+           and getattr(owner, field) != getattr(seen, field) for field in ("turn_id", "session_id")):
+        return False
+    # Finalization can present the same turn after its execution scope exits.
+    # Ordinary retained support keeps that established path; a new absence
+    # decision requires the live fence at its dedicated writer below.
+    return owner.same_generation_as(seen)
 
 
 # ------------------------------------------------------------------------------- writers
@@ -544,7 +565,7 @@ def register_required(
             # the turn arrives first.
             for token in seen.tokens:
                 candidate = _RECORDS.get(_INDEX.get(token, ""))
-                if candidate is not None and candidate.identity.same_generation_as(seen):
+                if candidate is not None and _lifecycle_identity_matches(candidate.identity, seen):
                     existing = candidate
                     break
         if existing is not None:
@@ -566,7 +587,7 @@ def register_required(
         # prevent. The first writer wins and the second adopts it.
         for token in seen.tokens:
             candidate = _RECORDS.get(_INDEX.get(token, ""))
-            if candidate is not None and candidate.identity.same_generation_as(seen):
+            if candidate is not None and _lifecycle_identity_matches(candidate.identity, seen):
                 candidate.identity = _merge_identity(candidate.identity, seen)
                 _index_unlocked(candidate)
                 source_context[LIFECYCLE_ID_KEY] = candidate.lifecycle_id
@@ -870,6 +891,94 @@ def record_computed_values(
         return len(added)
 
 
+def record_memory_records(
+    source_context: dict[str, Any] | None,
+    *,
+    entries: Any,
+) -> int:
+    """This chat's own memory records mint support of their own kind for this turn's lifecycle.
+
+    Mirrors `record_computed_values`: its own channel, idempotent, and `retrieved`/`bound` never
+    read it. Entries are published by `core.memory_grounding.publish_memory_records_for_turn`
+    from the admitted capsule evidence the reader saw.
+    """
+
+    if entries is None:
+        return 0
+    if isinstance(entries, dict):
+        entries = [entries]
+    try:
+        items = [dict(entry) for entry in list(entries) if isinstance(entry, dict)]
+    except TypeError:
+        return 0
+    from core.grounding_publication import _RECORDS_ABSENCE_MARKER
+
+    # Text support cannot manufacture a runtime decision, even when an
+    # admitted source quotes the marker on a line of its own.
+    usable = [entry for entry in items if str(entry.get("summary") or "").strip()
+              and str(entry.get("summary") or "").strip() != _RECORDS_ABSENCE_MARKER]
+    if not usable:
+        return 0
+    with _LOCK:
+        record = _record_for(source_context)
+        if record is None:
+            return 0
+        known = {repr(sorted(entry.items(), key=lambda kv: str(kv[0]))) for entry in record.memory_records}
+        added = [
+            entry
+            for entry in usable
+            if repr(sorted(entry.items(), key=lambda kv: str(kv[0]))) not in known
+        ]
+        record.memory_records = (*record.memory_records, *added)
+        return len(added)
+
+
+def record_records_absence(
+    source_context: dict[str, Any], *, delivery_identity: TurnIdentity | None, session_id: str,
+) -> bool:
+    """Accept the memory producer's decision only for the lifecycle owning this delivery.
+
+    A copied stamp is a lookup hint, not ownership. Turn and session conflicts
+    are refused, as is any changed execution generation; the check and write
+    occur under the ledger lock so no earlier owner's row can be mutated.
+    """
+    if delivery_identity is None:
+        return False
+    seen = _identity_from(source_context)
+    fields = ("turn_id", "request_id", "bound_request_id", "session_id",
+              "execution_id", "generation", "runtime_epoch")
+
+    def agrees(owner: TurnIdentity, current: TurnIdentity) -> bool:
+        return all(not (getattr(owner, field) and getattr(current, field))
+                   or getattr(owner, field) == getattr(current, field) for field in fields)
+
+    if not agrees(delivery_identity, seen):
+        return False
+    fence_fields = ("execution_id", "generation", "runtime_epoch")
+    if any(getattr(delivery_identity, field) != getattr(seen, field) for field in fence_fields):
+        return False
+    if str(source_context.get("chat_id") or session_id) != session_id:
+        return False
+    if seen.session_id and seen.session_id != session_id:
+        return False
+    with _LOCK:
+        record = _record_for(source_context)
+        if record is None or not agrees(record.identity, seen):
+            return False
+        if any(getattr(record.identity, field) != getattr(seen, field) for field in fence_fields):
+            return False
+        if record.identity.session_id and record.identity.session_id != session_id:
+            return False
+        if not set(record.identity.tokens).intersection(seen.tokens):
+            return False
+        from core.grounding_publication import _RECORDS_ABSENCE_MARKER
+
+        entry = {"summary": _RECORDS_ABSENCE_MARKER, "source": "memory_record"}
+        if entry not in record.memory_records:
+            record.memory_records = (*record.memory_records, entry)
+        return True
+
+
 def record_stable_knowledge(
     source_context: dict[str, Any] | None,
     *,
@@ -1142,6 +1251,13 @@ def harvest_execution_records(source_context: dict[str, Any] | None) -> int:
     The record is reshaped, not reinterpreted: its ``items`` are the result rows the tool
     returned and its ``citations`` are where they came from, and they are placed in the note
     fields `core.claim_support` already reads. No new extraction and no new judgement.
+
+    A record's ``result_text`` -- the content the tool observed, from its typed payload -- is one more row. Item names
+    alone carry no content, so a file read or a text search left a correct answer with nothing
+    to be matched against and the gate refused it (measured on the served daemon: a workspace
+    search found "The launch date is 14 March", the answer said so, and the turn was refused as
+    "no usable rows"). Only a registered tool that observes something outside the runtime
+    contributes it: `_tool_result_is_evidence`.
     """
 
     identity = _identity_from(source_context)
@@ -1155,6 +1271,22 @@ def harvest_execution_records(source_context: dict[str, Any] | None) -> int:
     for entry in execution_records.records_for_turn(identity.session_id, identity.turn_id):
         if not entry.ok:
             continue
+        result_text = str(getattr(entry, "result_text", "") or "").strip()
+        if result_text and _tool_result_is_evidence(entry.intent):
+            rows.append(
+                {
+                    "summary": result_text,
+                    "result_url": "",
+                    # The label a claim map shows for this row is what the tool acted on (a path, a URL), never
+                    # the tool's own name: a tool intent is not a source, and labelling a row "web.search"
+                    # put a tool name where a source should be (test_served_evidence_binding_p0, invariant 3).
+                    # A row with no resolved target stays unlabelled rather than mislabelled.
+                    "origin_domain": entry.resolved_target or "",
+                    "source_type": "tool_receipt",
+                    "intent": entry.intent,
+                    "ok": True,
+                }
+            )
         for index, item in enumerate(entry.items):
             text = str(item or "").strip()
             if not text:
@@ -1180,6 +1312,28 @@ def harvest_execution_records(source_context: dict[str, Any] | None) -> int:
         if not record.retrieval_outcome:
             record.retrieval_outcome = "tool_receipt"
     return record_typed_observations(source_context, entries=rows)
+
+
+def _tool_result_is_evidence(intent: str) -> bool:
+    """May this tool's rendered result support a claim? Only a registered, world-observing tool.
+
+    Fail closed in both directions that matter. An intent with no registered contract
+    contributes nothing: its text has no declared provenance. And the runtime's own plumbing --
+    `capability_id` under ``runtime.`` (`respond.direct`, `capability.expand_family`) -- observes
+    nothing outside the runtime: the first carries the model's own words, which may never certify
+    themselves, and the second is an offer receipt ("Seated the workspace family ...").
+    """
+
+    try:
+        from core.tool_registry import tool_for_intent
+
+        contract = tool_for_intent(str(intent or ""))
+    except Exception:
+        return False
+    if contract is None:
+        return False
+    capability = str(getattr(contract, "capability_id", "") or "").strip()
+    return bool(capability) and not capability.startswith("runtime.")
 
 
 def record_model_authorship(source_context: dict[str, Any] | None) -> bool:
@@ -1466,7 +1620,7 @@ def adopt_lifecycle_id(source_context: dict[str, Any] | None) -> str:
     with _LOCK:
         for token in seen.tokens:
             record = _RECORDS.get(_INDEX.get(token, ""))
-            if record is not None and record.identity.same_generation_as(seen):
+            if record is not None and _lifecycle_identity_matches(record.identity, seen):
                 source_context[LIFECYCLE_ID_KEY] = record.lifecycle_id
                 return record.lifecycle_id
     return ""

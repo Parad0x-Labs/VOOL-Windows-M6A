@@ -414,7 +414,44 @@ def _solicits_wallet_secret(text: str) -> bool:
     return False
 
 
-def completion_claim_kind(text: str) -> str:
+#: Verbs whose REQUESTED form asks this turn to write, change, remove, move or run something. Read
+#: through `requested_action_clauses`, so a recall question ("how many times did I save ..."), a
+#: past description or quoted text never counts as a request.
+_REQUESTED_ACTION_VERB_RE = re.compile(
+    r"(?:delete|remove|erase|wipe|clear|clean|purge|send|transfer|move|pay|create|make|write|save|"
+    r"store|record|note|log|remember|add|put|edit|change|modify|update|rename|run|execute|install|"
+    r"build|generate|copy|export|set\s+up)\b",
+    re.IGNORECASE,
+)
+
+#: A stored-record noun followed by a bare storage participle, with no auxiliary: "the only note
+#: saved", "the only file written to your log". Destructive and creative participles (deleted,
+#: wiped, created, edited, ...) report an event even in this position and are never matched here.
+_RECORD_STATE_PHRASE_RE = re.compile(r"(?:notes?|files?)\s+(?:saved|written)", re.IGNORECASE)
+
+#: The participle phrase is the subject of a present-tense copula: "... note saved [to your log] is
+#: the seed list". That is a description of what the record holds now, not a report of this turn.
+_RECORD_STATE_PREDICATE_RE = re.compile(r"(?:\s+[A-Za-z'’-]+){0,6}?\s+(?:is|are)\b", re.IGNORECASE)
+
+
+def request_asks_for_action(request_text: str) -> bool:
+    """Whether the turn's request asks for something to be written, changed, removed or run."""
+
+    from core.instructional_request import requested_action_clauses
+
+    return bool(requested_action_clauses(str(request_text or ""), _REQUESTED_ACTION_VERB_RE))
+
+
+def _describes_a_stored_record(sentence: str, match: re.Match[str]) -> bool:
+    """The match is a noun phrase naming a stored record, the subject of a present copula."""
+
+    return bool(
+        _RECORD_STATE_PHRASE_RE.fullmatch(match.group(0))
+        and _RECORD_STATE_PREDICATE_RE.match(sentence, match.end())
+    )
+
+
+def completion_claim_kind(text: str, *, request_text: str | None = None) -> str:
     """What kind of finished work a reply claims: ``""``, ``"mutation"``, ``"build"`` or ``"persistence"``.
 
     One predicate for both consumers. The blocker uses it to decide whether a claim needs a
@@ -423,6 +460,14 @@ def completion_claim_kind(text: str) -> str:
 
     ``"mutation"`` wins ties: it is the older, narrower vocabulary (delete / wipe / send funds) and
     it carries the response the existing callers already expect.
+
+    ``request_text`` is the turn's request. When it is given and asks for no action, a sentence
+    that only DESCRIBES a stored record ("the only note saved is the seed list") is a memory answer,
+    not a report that this turn saved anything. Measured on the original comparison: a correct
+    "no record of that" recall answer was replaced by the no-execution notice because of exactly
+    that phrase. Without ``request_text`` (or on any turn that requests an action) the law is
+    unchanged, and a finite claim ("the files were deleted") is a claim on every turn -- the
+    follow-up turn included.
     """
 
     body = str(text or "")
@@ -433,8 +478,11 @@ def completion_claim_kind(text: str) -> str:
         # because `emit_turn_honesty_receipt` calls this predicate directly and would otherwise
         # sign an honest denial as a claim needing a receipt.
         return ""
+    describes_records = request_text is not None and not request_asks_for_action(request_text)
     for sentence in _split_sentences(body):
         mutation = _FALSE_ACTION_CLAIM_RE.search(sentence)
+        while describes_records and mutation is not None and _describes_a_stored_record(sentence, mutation):
+            mutation = _FALSE_ACTION_CLAIM_RE.search(sentence, mutation.end())
         if mutation is None:
             continue
         # A past participle can describe an object's state rather than report an action by this
@@ -557,10 +605,55 @@ def _truthy_execution_status(value: object) -> bool:
     return status in {"ok", "success", "succeeded", "executed", "completed", "tool_executed"}
 
 
-def _receipt_shows_execution(receipt: dict[str, Any]) -> bool:
+def _receipt_shows_execution(
+    receipt: dict[str, Any],
+    *,
+    session_id: str = "",
+    source_context: dict[str, object] | None = None,
+) -> bool:
     execution = receipt.get("execution")
     if not isinstance(execution, dict):
         execution = {}
+    if "action_record" in execution:
+        # The terminal-event producer stores the typed record in this wrapper.
+        # Its success fields are authoritative only after the existing durable
+        # receipt verifier has checked hashes and chat/project scope. An invalid
+        # typed record must never fall back to a legacy success flag.
+        context = source_context or {}
+        clean_session = str(session_id or "").strip()
+        record = execution.get("action_record")
+        if (
+            not clean_session
+            or not isinstance(record, dict)
+            or str(receipt.get("session_id") or "").strip() != clean_session
+            or str(context.get("runtime_session_id") or context.get("session_id") or clean_session).strip()
+            != clean_session
+            or execution.get("executed") is False
+        ):
+            return False
+        try:
+            from core.active_context_capsule import _verified_action_record
+
+            verified = _verified_action_record(
+                str(receipt.get("receipt_key") or "").strip(),
+                chat_id=str(context.get("chat_id") or clean_session).strip(),
+                project_id=str(context.get("_trusted_project_id") or context.get("project_id") or "").strip(),
+                runtime_session_id=clean_session,
+            )
+        except Exception:
+            return False
+        if verified is None or verified != record:
+            return False
+        result = verified["result"]
+        failure = verified.get("failure")
+        return (
+            verified["action_type"] == "tool_executed"
+            and result.get("outcome") == "succeeded"
+            and result.get("ok") is True
+            and result.get("executed") is not False
+            and isinstance(failure, dict)
+            and failure.get("failed") is False
+        )
     if execution.get("executed") is True or execution.get("ok") is True:
         return True
     if _truthy_execution_status(execution.get("status") or execution.get("mode") or execution.get("outcome")):
@@ -617,15 +710,22 @@ def _claimed_inspection_targets(response: str, user_input: str) -> list[str]:
     the one whose absence was the bug.
     """
 
-    found: list[str] = []
-    for text in (response, user_input):
+    def _files(text: str) -> list[str]:
+        found: list[str] = []
         for candidate in iter_claimed_file_candidates(str(text or "")):
             stem, _, extension = candidate.rpartition(".")
             if not stem or extension.lower() not in _REAL_FILE_EXTENSIONS:
                 continue
             if candidate not in found:
                 found.append(candidate)
-    return found
+        return found
+
+    # A reply that names its own files claims exactly those: a file the user listed and the reply never
+    # mentions is not claimed to have been inspected (measured on the live agent-team comparison, 2026-10-07:
+    # a reply reporting on orders.py was replaced by "I did not actually open `pricing.py`" because the user
+    # had named three files). A reply that names none ("the audit ran -- it inspected the whole workspace")
+    # claims the files the user named.
+    return _files(response) or _files(user_input)
 
 
 def _enforce_inspection_claims(
@@ -698,6 +798,50 @@ def _current_turn_has_executed_receipt(
     # Share the turn-scoped authority used by the signed honesty receipt. A
     # previous turn's receipt must not authorize this turn's completion claim.
     return bool(_collect_executed_tools(session_id, source_context))
+
+
+def _location_answer_has_verified_past_receipt(
+    output: dict[str, Any],
+    *,
+    session_id: str | None,
+    source_context: dict[str, object] | None,
+) -> bool:
+    """Whether an answer about where an EARLIER write went is backed by that write's verified record.
+
+    "Where did that file go?" is answered from the record of a write an earlier turn made, so this
+    turn's own receipts never hold it, and the turn-scoped check blocked a true answer with "I did
+    not create those files". Two shapes may read past turns: the receipt-location render itself, or
+    an answer that names the very file a verified record wrote. Only typed action records that the
+    durable verifier accepts count (hashes, chat and project scope); legacy success flags from earlier
+    turns still authorize nothing, and an answer naming no recorded file is judged on this turn alone.
+    """
+    clean_session = str(session_id or "").strip()
+    if not clean_session:
+        return False
+    route = " ".join(str(output.get(key) or "") for key in ("route", "route_reason", "reason"))
+    response = str(output.get("response") or "")
+    try:
+        from core.runtime_continuity import list_runtime_tool_receipts
+
+        verified = [
+            receipt
+            for receipt in list_runtime_tool_receipts(clean_session, limit=8)
+            if isinstance(receipt, dict)
+            and isinstance(dict(receipt.get("execution") or {}).get("action_record"), dict)
+            and _receipt_shows_execution(receipt, session_id=clean_session, source_context=source_context)
+        ]
+    except Exception:
+        return False
+    if not verified:
+        return False
+    if "action_receipt_location" in route:
+        return True
+    for receipt in verified:
+        written = str(dict(receipt.get("arguments") or {}).get("path") or "").strip()
+        name = written.replace("\\", "/").rsplit("/", 1)[-1]
+        if name and name in response:
+            return True
+    return False
 
 
 def _active_mission_forbidden_terms(session_id: str | None) -> list[str]:
@@ -999,6 +1143,39 @@ def enforce_final_action_honesty(
     source_context: dict[str, object] | None = None,
 ) -> dict[str, Any]:
     output = dict(result or {})
+    from core.memory.command_result import requires_forget_outcome, verified_forget_outcome
+
+    command_outcome = verified_forget_outcome(
+        output, user_input=user_input, effective_input=effective_input,
+        session_id=session_id, source_context=source_context,
+    )
+    if command_outcome is not None:
+        original = str(output.get("response") or "")
+        output["response"] = command_outcome.response
+        output["_memory_command_outcome"] = command_outcome.outcome
+        if original != command_outcome.response:
+            output["action_honesty_validator"] = {
+                "applied": True,
+                "reason": "forget_reply_differed_from_execution",
+                "claim_kind": "forget",
+                "original_response_excerpt": original[:240],
+            }
+        return output
+    if requires_forget_outcome(
+        output, user_input=user_input, effective_input=effective_input,
+        source_context=source_context,
+    ):
+        output["response"] = (
+            "Forget could not be verified on this turn. Please retry the forget."
+        )
+        output["action_honesty_validator"] = {
+            "applied": True,
+            "reason": "forget_execution_outcome_missing",
+            "claim_kind": "forget",
+            "original_response_excerpt": str(result.get("response") or "")[:240],
+        }
+        output["route_reason"] = "false_action_claim_blocked"
+        return output
     # Handle a leaked OpenClaw `NO_REPLY` silence token before any other finalization. If the whole
     # reply is just the token (bare, or trailed by an emoji/punctuation), replace it with an honest
     # fallback — OpenClaw does not reliably suppress it, so the user would otherwise see the raw token.
@@ -1026,12 +1203,14 @@ def enforce_final_action_honesty(
     )
     output = _verify_audit_claims_against_evidence(output, source_context=source_context)
     response = str(output.get("response") or "").strip()
+    claim_kind = _final_claim_kind(
+        output, user_input=user_input, effective_input=effective_input,
+        session_id=session_id, source_context=source_context,
+    )
     # A short fabricated "in progress / one moment" reply with no task actually running this turn
     # (the "audit underway after it already completed" failure). Answer from runtime state, not prose.
     if (
-        response
-        and len(response) < 220
-        and _FALSE_PROGRESS_CLAIM_RE.search(response)
+        claim_kind == "progress"
         and str(output.get("mode") or output.get("mode_override") or "").strip().lower() != "tool_executed"
         and not _current_turn_has_executed_receipt(session_id=session_id, source_context=source_context)
     ):
@@ -1045,9 +1224,6 @@ def enforce_final_action_honesty(
         output["route"] = str(output.get("route") or "action_honesty_final_validator")
         output["route_reason"] = "fabricated_progress_blocked"
         return output
-    if _HONEST_DENIAL_RE.search(response):
-        return output
-    claim_kind = completion_claim_kind(response)
     if not claim_kind:
         return output
     # NOT gated on this turn's prompt. Whether "the files were deleted" is TRUE depends on whether a
@@ -1059,6 +1235,8 @@ def enforce_final_action_honesty(
     if str(output.get("mode") or output.get("mode_override") or "").strip().lower() == "tool_executed":
         return output
     if _current_turn_has_executed_receipt(session_id=session_id, source_context=source_context):
+        return output
+    if _location_answer_has_verified_past_receipt(output, session_id=session_id, source_context=source_context):
         return output
 
     output["response"] = {
@@ -1076,6 +1254,32 @@ def enforce_final_action_honesty(
     output["route_reason"] = "false_action_claim_blocked"
     output["web_calls"] = int(output.get("web_calls") or 0)
     return output
+
+
+def _final_claim_kind(
+    result: dict[str, Any], *, user_input: str, effective_input: str | None = None,
+    session_id: str | None = None, source_context: dict[str, object] | None = None,
+) -> str:
+    """Classify the exact delivered result identically for the guard and signed receipt."""
+    from core.memory.command_result import requires_forget_outcome, verified_forget_outcome
+
+    outcome = verified_forget_outcome(
+        result, user_input=user_input, effective_input=effective_input,
+        session_id=session_id, source_context=source_context,
+    )
+    if outcome is not None and str(result.get("response") or "") == outcome.response:
+        return ""
+    if requires_forget_outcome(
+        result, user_input=user_input, effective_input=effective_input,
+        source_context=source_context,
+    ):
+        return "forget"
+    response = str(result.get("response") or "").strip()
+    if response and len(response) < 220 and _FALSE_PROGRESS_CLAIM_RE.search(response):
+        return "progress"
+    if _HONEST_DENIAL_RE.search(response):
+        return ""
+    return completion_claim_kind(response, request_text=f"{user_input or ''}\n{effective_input or ''}")
 
 
 _URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
@@ -1158,7 +1362,9 @@ def _collect_executed_tools(
     out: list[dict[str, Any]] = []
 
     def _add(receipt: object) -> None:
-        if not isinstance(receipt, dict) or not _receipt_shows_execution(receipt):
+        if not isinstance(receipt, dict) or not _receipt_shows_execution(
+            receipt, session_id=str(session_id or "").strip(), source_context=source_context
+        ):
             return
         tool = str(receipt.get("tool_name") or receipt.get("tool") or receipt.get("intent") or "")
         key = str(receipt.get("receipt_id") or receipt.get("receipt_key") or "")
@@ -1190,15 +1396,17 @@ def emit_turn_honesty_receipt(
     output: dict[str, Any],
     *,
     user_input: str = "",
+    effective_input: str | None = None,
     session_id: str | None = None,
     source_context: dict[str, object] | None = None,
 ) -> dict[str, Any]:
     """Record a signed, offline-verifiable honesty receipt for a finalized turn.
 
     Binds the model's action claim, the ground-truth tool executions, and the honesty verdict
-    into a hash-chained, Ed25519-signed receipt (see core.honesty_receipt). Best-effort and
-    never raises; disabled by setting VOOL_HONESTY_RECEIPTS=0. Attaches a small telemetry stub
-    to the returned result so a UI can surface + verify it.
+    into a hash-chained, Ed25519-signed receipt (see core.honesty_receipt). A failed
+    write retries once and immediately reconstructs the same issued receipt.
+    Never raises or changes the reply; disabled by VOOL_HONESTY_RECEIPTS=0.
+    A telemetry stub is attached only after durable persistence is verified.
     """
     result = dict(output or {})
     if str(os.environ.get("VOOL_HONESTY_RECEIPTS", "1")).strip() == "0":
@@ -1213,6 +1421,7 @@ def emit_turn_honesty_receipt(
             issue_honesty_receipt,
             latest_receipt_hash,
             list_honesty_receipts,
+            rebuild_honesty_receipt,
             record_honesty_receipt,
         )
 
@@ -1225,7 +1434,17 @@ def emit_turn_honesty_receipt(
         # Same predicate the blocker used. When these two disagree the ledger is worse than
         # useless: the fabricated build of 2026-07-29 was signed `no_action_claimed` because this
         # line asked a narrower question than the claim it was recording.
-        claimed = bool(completion_claim_kind(response))
+        claim_kind = _final_claim_kind(
+            result, user_input=user_input, effective_input=effective_input,
+            session_id=session_id, source_context=source_context,
+        )
+        claimed = bool(claim_kind)
+        from core.memory.command_result import verified_forget_outcome
+
+        command_outcome = verified_forget_outcome(
+            result, user_input=user_input, effective_input=effective_input,
+            session_id=session_id, source_context=source_context,
+        )
         mode_executed = str(result.get("mode") or result.get("mode_override") or "").strip().lower() == "tool_executed"
         if contradicted:
             # Ranked above `blocked` on purpose. A contradiction is a claim the trace DISPROVES,
@@ -1242,6 +1461,16 @@ def emit_turn_honesty_receipt(
             detail = "answer contradicted the durable execution trace; repaired to evidence-backed wording"
         elif blocked:
             verdict, claimed_actions, detail = VERDICT_BLOCKED, ["side_effecting_action"], "fabricated action claim blocked; no execution receipt"
+        elif claim_kind == "forget":
+            verdict, claimed_actions, detail = (
+                VERDICT_UNBACKED, ["memory_forget"],
+                "forget reply has no verified outcome from this turn's memory executor",
+            )
+        elif command_outcome is not None:
+            changed = command_outcome.status in {"applied", "partial"}
+            verdict = VERDICT_CLEAN if changed else VERDICT_NO_CLAIM
+            claimed_actions = ["memory_forget"] if changed else []
+            detail = "verified memory forget outcome: " + command_outcome.status
         elif claimed and (executed or mode_executed):
             verdict, claimed_actions, detail = VERDICT_CLEAN, ["side_effecting_action"], "action claim backed by an executed tool receipt"
         elif claimed:
@@ -1262,16 +1491,37 @@ def emit_turn_honesty_receipt(
             verdict_detail=detail,
             prev_hash=latest_receipt_hash(session),
         )
-        record_honesty_receipt(receipt)
-        result["honesty_receipt"] = {
-            "receipt_id": receipt.receipt_id,
-            "content_hash": receipt.content_hash,
-            "verdict": receipt.verdict,
-            "signed": bool(receipt.signature),
-            "signer_peer_id": receipt.signer_peer_id,
-        }
-    except Exception:
-        pass
+        prior_pending = bool(result.get("receipt_pending"))
+        result.pop("honesty_receipt", None)
+        written = record_honesty_receipt(receipt)
+        if written.status == "failed":
+            result.setdefault("index_failures", []).append("honesty_receipt_write_error")
+            result["receipt_pending"] = True
+            written = record_honesty_receipt(receipt)
+            result["receipt_rebuild_attempted"] = True
+            rebuilt = rebuild_honesty_receipt(receipt)
+            # A successful retry also receives a final durable re-read in rebuild.
+            written = rebuilt
+        result["receipt_write_status"] = written.status
+        result["receipt_pending"] = prior_pending or written.status == "failed"
+        if written.status in {"written", "already_exists"} and written.receipt is not None:
+            result["honesty_receipt"] = {
+                "receipt_id": receipt.receipt_id,
+                "content_hash": receipt.content_hash,
+                "verdict": receipt.verdict,
+                "signed": bool(receipt.signature),
+                "signer_peer_id": receipt.signer_peer_id,
+            }
+            if command_outcome is not None:
+                result["honesty_receipt"]["memory_command_status"] = command_outcome.status
+        else:
+            result["receipt_pending_id"] = receipt.receipt_id
+            result["receipt_failure_reason"] = written.reason
+    except Exception as exc:
+        result.pop("honesty_receipt", None)
+        result["receipt_write_status"] = "failed"
+        result["receipt_pending"] = True
+        result["receipt_failure_reason"] = type(exc).__name__
     return result
 
 

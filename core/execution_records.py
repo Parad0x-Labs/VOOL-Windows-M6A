@@ -33,6 +33,10 @@ _MAX_RECORDS_PER_SESSION = 64
 _MAX_SESSIONS = 32
 # A single tool can return thousands of filenames; the binder only needs them for membership.
 _MAX_ITEMS_PER_RECORD = 2000
+# The tool's own rendered result, kept so the grounding gate can match claims against what the
+# tool actually returned. Bounded like the tool loop's inline observation window: enough for a
+# listing, a search hit set or a short file, not a whole log.
+_MAX_RESULT_TEXT_CHARS = 6000
 
 
 @dataclass(frozen=True)
@@ -46,6 +50,15 @@ class ExecutionRecord:
     ``generation`` separates retry attempts within one turn (a failed first attempt and the
     successful re-run are different facts about the same turn), and ``sequence`` is a monotonic
     per-session counter so chronology survives even when neither of the other two is known.
+
+    ``result_text`` is the content the tool OBSERVED, read from its typed payload: the matched
+    lines of a text search (``details["matches"]``) and the lines a file read returned
+    (``details["lines"]``), secret-redacted and bounded. ``items`` holds only the NAMES a tool
+    declares, so a file read or a text search -- whose evidence is content, not names -- left
+    nothing a claim could be matched against, and the grounding gate refused a correct answer built
+    from a tool that really ran. The rendered reply is never kept: it echoes the query back, so a
+    search that found nothing ('No text matches for "The launch date is 14 March." ...') would
+    ground the very fact it searched for (Pack 2b re-audit, 2026-10-07).
 
     An empty ``turn_id`` means UNATTRIBUTED, never "the current turn": a record whose turn nobody
     stamped cannot confirm a claim about this turn, and its presence is why a negative about this
@@ -63,6 +76,7 @@ class ExecutionRecord:
     turn_id: str = ""
     generation: int = 0
     sequence: int = 0
+    result_text: str = ""
 
     @property
     def has_target(self) -> bool:
@@ -116,7 +130,11 @@ def record(
     `core.runtime_task_events.emit_runtime_event` stamps on every Activity event
     (``cancel_turn_id``), so a record and the durable Activity row for the same call agree on which
     turn they belong to. Explicit ``turn_id``/``generation`` win over the context for callers that
-    already resolved them.
+    already resolved them. The context is read as ``cancel_turn_id`` then ``turn_id`` -- the same
+    order every reader of these records resolves the turn in (`core.grounding_lifecycle`,
+    `core.unsourced_current_claim`). Reading ``cancel_turn_id`` alone stamped every tool-loop record
+    as unattributed (that loop's context carries only ``turn_id``), so the readers could never find
+    this turn's own tool calls and the grounding gate refused answers built from them.
     """
 
     observation = dict(observation or {})
@@ -127,8 +145,9 @@ def record(
     resolved = _resolved_target(observation, details, arguments, claim)
     items = _items(observation, details, claim)
     citations = _citations(observation, details, claim)
-    bound_turn = str(turn_id or context.get("cancel_turn_id") or "").strip()
+    bound_turn = str(turn_id or context.get("cancel_turn_id") or context.get("turn_id") or "").strip()
     bound_generation = int(generation or _generation_from(context, session_id))
+    bound_text = _bounded_result_text(_observed_content(details))
 
     with _lock:
         key = _session_key(session_id)
@@ -146,9 +165,53 @@ def record(
             turn_id=bound_turn,
             generation=bound_generation,
             sequence=sequence,
+            result_text=bound_text,
         )
         _bucket(session_id).append(entry)
     return entry
+
+
+def _observed_content(details: Mapping[str, Any]) -> str:
+    """The content a tool observed, from its typed payload only; "" when it observed none.
+
+    A search contributes its matched lines, a read the lines it returned. A no-results search, an
+    empty slice and every other tool contribute nothing here: their evidence, if any, is the names
+    and citations read through the tool's declared claim.
+    """
+
+    rows: list[str] = []
+    matches = details.get("matches")
+    if isinstance(matches, list):
+        for match in matches:
+            if isinstance(match, Mapping) and isinstance(match.get("snippet"), str) and match["snippet"].strip():
+                where = str(match.get("path") or "").strip()
+                line = match.get("line")
+                prefix = f"{where}:{line} " if where and isinstance(line, int) else (f"{where} " if where else "")
+                rows.append(prefix + match["snippet"].strip())
+    lines = details.get("lines")
+    if isinstance(lines, list):
+        for row in lines:
+            if isinstance(row, Mapping) and isinstance(row.get("text"), str) and row["text"].strip():
+                rows.append(row["text"].rstrip())
+    return "\n".join(rows)
+
+
+def _bounded_result_text(text: Any) -> str:
+    """The tool's rendered result, secret-redacted and capped, or "" when there is none."""
+
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    try:
+        from core.secret_redaction import redact_secrets
+
+        raw = redact_secrets(raw)
+    except Exception:
+        # Fail closed: content that could not be scrubbed is not kept at all.
+        return ""
+    if len(raw) > _MAX_RESULT_TEXT_CHARS:
+        raw = raw[:_MAX_RESULT_TEXT_CHARS].rstrip() + "\n… [truncated]"
+    return raw
 
 
 def _generation_from(context: Mapping[str, Any], session_id: str) -> int:
@@ -372,6 +435,9 @@ def verify_claim(session_id: str, *, target: str = "") -> dict[str, Any]:
             "executed": executed,
         }
 
+    # A real action on the target wins wherever it sits in the session. The scan used to stop at the first
+    # listing that named the file, so a file listed BEFORE it was read was reported as never opened (live
+    # agent-team comparison, 2026-10-07: "I did not actually open `pricing.py`" after the audit had read it).
     for entry in entries:
         if entry.has_target and _target_matches(wanted, entry.resolved_target):
             return {
@@ -381,6 +447,7 @@ def verify_claim(session_id: str, *, target: str = "") -> dict[str, Any]:
                 "matched_intent": entry.intent,
                 "executed": executed,
             }
+    for entry in entries:
         # A listing that returned the file counts as having seen it, but not as having read it.
         if any(_target_matches(wanted, name) for name in entry.items):
             return {

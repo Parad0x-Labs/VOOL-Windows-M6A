@@ -6934,9 +6934,14 @@ def _dispatch_post_inner(
             admit_semantic_result(dict(null_result or {}))
             from core.finalization import finalize_answer
 
+            # Imported under its own name here: the late import of the same alias further down
+            # this function made the name local to the whole function, so this earlier use raised
+            # UnboundLocalError on every NULL-protocol local fallback.
+            from core.response_provenance import strip_provenance_footer as _strip_null_footer
+
             null_commit = finalize_answer(
                 turn_id=str(null_req.session_id or ""),
-                canonical_content=strip_provenance_footer_str(str(null_result.get("response") or "")),
+                canonical_content=_strip_null_footer(str(null_result.get("response") or "")),
                 source_context={"surface": "null_protocol"},
                 display_metadata={"route": "null_protocol_local"},
             )
@@ -7135,10 +7140,24 @@ def _dispatch_post_inner(
             "workspace_binding": workspace_binding,
             "request_id": str(request_id or "").strip(),
         }
+        # Who wrote this message: an agent team's agent session declares "agent", and its brief must
+        # never become the owner's memory (core.request_trust.turn_is_owner_authored).
+        from core.request_trust import TURN_AUTHOR_KEY, turn_author_from_request
+
+        source_context[TURN_AUTHOR_KEY] = turn_author_from_request(body, inbound_source_context)
         source_context["chat_id"] = context_namespace.chat_id
         if context_namespace.project_id:
             source_context["_trusted_project_id"] = context_namespace.project_id
         requested_model = str(model or "").strip()
+        # Cloud-only machines: an owner-local Auto turn takes the cloud model the owner saved in
+        # setup, but only while no local model is reachable (core.cloud_only_default).
+        from core.cloud_only_default import resolve_auto_turn_model
+
+        requested_model, cloud_only_default_applied = resolve_auto_turn_model(
+            requested_model,
+            auto_aliases={"", str(model_name or "").strip(), f"{str(model_name or '').strip()}:latest"},
+            owner_local=owner_local,
+        )
         if requested_model and requested_model not in {str(model_name or "").strip(), f"{str(model_name or '').strip()}:latest"}:
             source_context["requested_model"] = requested_model
             # Advisory only, and only ever loosening: "sticky" tells the router this concrete id
@@ -7148,6 +7167,10 @@ def _dispatch_post_inner(
             model_selection = str(body.get("model_selection") or "").strip().lower()
             if model_selection in {"sticky", "pin", "auto"}:
                 source_context["model_selection"] = model_selection
+            if cloud_only_default_applied:
+                # The owner named this model in setup: it is a pin, not Auto's guess.
+                source_context["model_selection"] = "pin"
+                source_context["cloud_only_default_applied"] = True
         # Bind the Auto lane for this turn BEFORE any routing runs. The flag is stamped into
         # `source_context`, which is what survives the shallow copies and the thread-pool hops the
         # provider calls take — see `core.auto_local_only_mode`. Stamped server-side from the

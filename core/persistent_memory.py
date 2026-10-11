@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 import threading
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from core.context_scope import ContextAccessPolicy
+from core.memory.revocation import fenced_writer
 
 # Serializes the per-turn memory write sequence (conversation-log append + trim, and every
 # downstream load-modify-rewrite: facts, heuristics, session summary, dialogue). The daemon
@@ -17,6 +20,7 @@ _MEMORY_WRITE_LOCK = threading.RLock()
 
 from core.memory import entries as memory_entries
 from core.memory import learning as memory_learning
+from core.memory.command_result import _ForgetOutcomeRegistry
 from core.memory.files import (
     MAX_CONVERSATION_LOG_BYTES as _MAX_CONVERSATION_LOG_BYTES,
 )
@@ -57,6 +61,7 @@ from storage.dialogue_memory import (
 )
 
 LOGGER = logging.getLogger(__name__)
+_forget_outcomes = _ForgetOutcomeRegistry()
 
 add_memory_fact = memory_entries.add_memory_fact
 forget_memory = memory_entries.forget_memory
@@ -155,11 +160,49 @@ __all__ = [
 
 _REMEMBER_RE = re.compile(r"^(?:remember(?: that)?|note(?: that)?|store(?: this)?)\s+(.+)$", re.IGNORECASE)
 _MEMORY_CAPTURE_RE = re.compile(
-    r"^(?:(?:this is|in this)\b[^.!?]*(?:[.!?]\s*|,\s*))?"
+    # The lead-in's words ("This is important," / "In this chat,") stay on one line: crossing a line break they took
+    # a comma inside quoted material for their end and read the material's verb as the command's.
+    r"^(?:(?:this is|in this)\b[^.!?\n]*(?:[.!?]\s*|,\s*))?"
     r"(?:please\s+)?(?P<verb>remember(?: that)?|note(?: that)?|store(?: this)?|keep|retain|save)\s+"
     r"(?P<fact>.+)$",
     re.IGNORECASE,
 )
+
+
+@dataclass(frozen=True)
+class _MaterialCapture:
+    """A capture command on its first line with the material under it: the verb and the fact's opening are read from
+    that line alone, so nothing inside the material can be taken for the command; the material follows the fact."""
+
+    verb: str
+    fact: str
+
+    def group(self, name: str) -> str:
+        return {"verb": self.verb, "fact": self.fact}[name]
+
+
+def _memory_capture_match(text: str) -> re.Match[str] | _MaterialCapture | None:
+    """The capture command, on one line -- or on its first line followed only by the material it names.
+
+    "Remember this template:" with a fenced or quoted block under it is one command: the block is what to remember
+    (and admission keeps it source material, never the owner's profile). Any other later line is a separate turn
+    for the model, so a multi-line message is only a capture when everything after its first line is material.
+    """
+    match = _MEMORY_CAPTURE_RE.match(text)
+    if match is not None or "\n" not in text:
+        return match
+    first, rest = text.split("\n", 1)
+    head = _MEMORY_CAPTURE_RE.match(first.strip())
+    if head is None or not rest.strip():
+        return None
+    from core.memory.admission import classify_user_text
+
+    origin = classify_user_text(rest)
+    if not origin.has_source_material or origin.authored_text.strip():
+        return None
+    return _MaterialCapture(verb=head.group("verb"), fact=head.group("fact") + "\n" + rest)
+
+
 _MEMORY_CAPTURE_TRAILER_RE = re.compile(
     r"\s+reply\s+with\s+(?:only\s+)?stored\.?$",
     re.IGNORECASE,
@@ -428,7 +471,9 @@ def _split_explicit_memory_facts(raw_fact: str) -> list[str]:
     parts = _MEMORY_CONTINUATION_RE.split(str(raw_fact or "").strip())
     facts: list[str] = []
     for index, part in enumerate(parts[:4]):
-        clean = " ".join(str(part or "").split()).strip()
+        # Spaces are normalized within each line; line breaks stay, because a fence or a quote block is only
+        # recognisable by its lines and admission must still see it as source material, not the owner's words.
+        clean = "\n".join(" ".join(line.split()) for line in str(part or "").splitlines() if line.strip()).strip()
         if index:
             clean = _MEMORY_CONTINUATION_PREFIX_RE.sub("", clean).strip()
         if clean:
@@ -436,15 +481,62 @@ def _split_explicit_memory_facts(raw_fact: str) -> list[str]:
     return facts
 
 
+#: A reason the user appends to a forget ("..., it is wrong", "... it was a typo", "...? its wrong", "... lol") is not
+#: part of the named target: left on, it made the whole sentence the keyword, nothing matched, and the reply still
+#: said "Forget applied" (served check 2026-10-07).
+#: A reason or courtesy the user appends to a forget is not part of the named target (review 2026-10-07, twice):
+#: a courtesy word counts only at the very end of the text; a clause word counts only after punctuation or a dash,
+#: or after a head of two or more content words; and a head that keeps no content word is no target at all
+#: (measured: "Forget my Thanks Giving plans" stripped to "my" and the keyword path removed every entry with "my").
+_FORGET_COURTESY_TAIL_RE = re.compile(r"^(?P<head>.+?)[\s,;:!?.]*\b(?:thanks|thank\s+you|please|pls|lol)[\s.!?]*$", re.IGNORECASE)
+_FORGET_CLAUSE_WORDS = (r"(?:it(?:'s|\s+is|\s+was)|that(?:'s|\s+is|\s+was)|this\s+(?:is|was)|which\s+(?:is|was)|its|because|since"
+                        r"|as\s+it)")
+_FORGET_CLAUSE_AFTER_PUNCT_RE = re.compile(r"^(?P<head>.+?)(?:\s*[,;:?!]+\s*|\s+[-\u2013\u2014]\s*)" + _FORGET_CLAUSE_WORDS + r"\b.*$",
+                                           re.IGNORECASE)
+_FORGET_CLAUSE_AFTER_WORDS_RE = re.compile(r"^(?P<head>.+?)\s+" + _FORGET_CLAUSE_WORDS + r"\b.*$", re.IGNORECASE)
+_FORGET_TARGET_STOPWORDS = frozenset({
+    "my", "our", "your", "his", "her", "their", "its", "the", "a", "an", "this", "that", "these", "those", "old",
+    "new", "previous", "exact", "current", "of", "for", "to", "in", "on", "at", "and", "or", "about", "from", "with",
+    "i", "you", "we", "it", "is", "was", "be", "gave", "told",
+})
+
+
+def _forget_content_words(text: str) -> list[str]:
+    return [w for w in re.findall(r"[A-Za-z0-9][\w'\-]*", str(text or "")) if w.lower() not in _FORGET_TARGET_STOPWORDS]
+
+
+def _without_forget_reason_tail(target: str) -> str:
+    """The target before an appended courtesy or reason clause; the target itself when the strip would leave no
+    content word or would shorten the target's own first content word."""
+    original_words = _forget_content_words(target)
+    candidate = target
+    courtesy = _FORGET_COURTESY_TAIL_RE.match(candidate)
+    if courtesy is not None:
+        candidate = courtesy.group("head")
+    clause = _FORGET_CLAUSE_AFTER_PUNCT_RE.match(candidate)
+    if clause is None:
+        clause = _FORGET_CLAUSE_AFTER_WORDS_RE.match(candidate)
+        if clause is not None and len(_forget_content_words(clause.group("head"))) < 2:
+            clause = None
+    if clause is not None:
+        candidate = clause.group("head")
+    head = candidate.strip(" .,!?;:-")
+    head_words = _forget_content_words(head)
+    if not head_words or (original_words and head_words[0].lower() != original_words[0].lower()):
+        return target
+    return head
+
+
 def _forget_target_without_preservation_clause(raw_target: str) -> str:
-    """Remove a trailing keep-clause without changing the named forget target."""
+    """Remove a trailing keep-clause or reason clause without changing the named forget target."""
     target = " ".join(str(raw_target or "").strip().strip(".!?").split())
-    return re.sub(
+    target = re.sub(
         r",?\s+but\s+keep\b.*$",
         "",
         target,
         flags=re.IGNORECASE,
     ).strip()
+    return _without_forget_reason_tail(target).strip(" .,!?;:")
 
 
 def _normalize_forget_target(raw_target: str) -> str:
@@ -475,7 +567,8 @@ def _referential_forget_token(
     subject = str(match.group("subject") or "").casefold()
     rows = [
         row
-        for row in list_memory_entries(access_policy=access_policy, limit=20)
+        for row in memory_entries._load_erasure_rows(memory_entries_path())
+        if memory_entries._memory_command_row_allowed(row, access_policy=access_policy)
         if subject in str(row.get("fact_key") or "").casefold()
         or subject in str(row.get("text") or "").casefold()
         or subject
@@ -484,6 +577,10 @@ def _referential_forget_token(
             for token in row.get("keywords") or []
         }
     ]
+    if not rows:
+        # Nothing stored under that name: the referential reading resolves nothing, so the keyword
+        # path decides (and says so when it removes nothing). "More than one" was never true here.
+        return False, ""
     if len(rows) != 1:
         return True, ""
     return True, _memory_recall_value(str(rows[0].get("text") or ""))
@@ -658,6 +755,8 @@ def _memory_persistence_suppressed(source_context: dict[str, Any] | None) -> boo
     import os
 
     ctx = source_context or {}
+    if _forget_outcomes.turn_not_started(ctx):
+        return True
     scope = str(ctx.get("memory_scope") or "").strip().lower()
     if scope in {"ephemeral", "audit", "test", "probe", "none"}:
         return True
@@ -940,6 +1039,41 @@ def _write_conversation_event(
     # (facts, heuristics, session summary, dialogue), so a pasted password never persists anywhere.
     redacted_user = redact_secrets(str(user_input or ""))
     redacted_assistant = redact_secrets(assistant_text)
+    # Source retention belongs to the selected runtime owner. A refused
+    # profile log or summary must not discard the turn's retraction control.
+    is_image_turn = False
+    try:
+        from core.execution.constants import image_generation_intent
+
+        is_image_turn = bool(image_generation_intent(redacted_user))
+    except Exception:
+        is_image_turn = False
+    # Every finalized turn retains its attributed source, including an
+    # image brief. A fictional render subject remains evidence of an ask;
+    # it is neither mined above nor indexed as a standing user assertion.
+    try:
+        from core.context_retrieval import store_turn
+
+        semantic_result = store_turn(
+            session_id,
+            redacted_user,
+            redacted_assistant,
+            access_policy=resolved_policy,
+            source_context=source_context,
+            index_user_statements=not is_image_turn,
+        )
+        if semantic_result.get("status") == "failed":
+            LOGGER.warning(
+                "semantic memory write rejected for chat %s: %s",
+                session_id,
+                semantic_result.get("reason", "unknown"),
+            )
+    except Exception as exc:
+        LOGGER.warning(
+            "semantic memory write unavailable for chat %s: %s",
+            session_id,
+            type(exc).__name__,
+        )
     payload = {
         "ts": _utcnow(),
         "session_id": session_id,
@@ -972,7 +1106,20 @@ def _write_conversation_event(
         payload.update(extra_fields)
     # Serialize the whole write sequence: the append+trim and every downstream load-modify-rewrite
     # touch process-global shared files, so concurrent turns must not interleave.
-    with _MEMORY_WRITE_LOCK:
+    from contextlib import ExitStack
+
+    from core.memory.revocation import writing
+
+    fence = ExitStack()
+    try:
+        # The serialized writer row defines the carriers. Live routing objects
+        # in source_context are not transcript fields and cannot veto a write.
+        fence.enter_context(writing(payload, session_id))
+    except Exception as exc:
+        fence.close()
+        LOGGER.warning("conversation persistence refused: %s", type(exc).__name__)
+        return
+    with fence, _MEMORY_WRITE_LOCK:
         path = conversation_log_path()
         append_sequenced_jsonl(path, payload)
         _trim_jsonl_file(path, max_bytes=_MAX_CONVERSATION_LOG_BYTES)
@@ -990,13 +1137,6 @@ def _write_conversation_event(
         # as a fact/preference/"recent ask" is what let an image prompt ("Rick and Morty ... 4K")
         # bleed into the operator profile and make the model confabulate the user's name. Log the
         # turn (above) but never mine a render prompt for standing user facts.
-        is_image_turn = False
-        try:
-            from core.execution.constants import image_generation_intent
-
-            is_image_turn = bool(image_generation_intent(redacted_user))
-        except Exception:
-            is_image_turn = False
         if not is_image_turn:
             _auto_capture_memory(
                 session_id=session_id,
@@ -1036,37 +1176,7 @@ def _write_conversation_event(
                 session_id,
                 type(exc).__name__,
             )
-        if not is_image_turn:
-            # This is the single finalized-turn seam for every route, including
-            # fast paths.  Keeping semantic persistence here prevents the
-            # model-wording chat surface from becoming an accidental special
-            # case and carries the same server-resolved policy/runtime home to
-            # both write and later retrieval.
-            try:
-                from core.context_retrieval import store_turn
 
-                semantic_result = store_turn(
-                    session_id,
-                    redacted_user,
-                    redacted_assistant,
-                    access_policy=resolved_policy,
-                    source_context=source_context,
-                )
-                if semantic_result.get("status") == "failed":
-                    LOGGER.warning(
-                        "semantic memory write rejected for chat %s: %s",
-                        session_id,
-                        semantic_result.get("reason", "unknown"),
-                    )
-            except Exception as exc:
-                # Semantic memory is fail-soft for the response path, but the
-                # failure must be visible to diagnostics rather than silently
-                # making the round trip appear successful.
-                LOGGER.warning(
-                    "semantic memory write unavailable for chat %s: %s",
-                    session_id,
-                    type(exc).__name__,
-                )
 
 
 #: Assistant-authored artifacts that belong in a chat's TRANSCRIPT but in none of the
@@ -1075,6 +1185,7 @@ def _write_conversation_event(
 ARTIFACT_KIND_COUNCIL_SUMMARY = "council_summary"
 
 
+@fenced_writer
 def append_assistant_artifact_event(
     *,
     session_id: str,
@@ -1269,6 +1380,15 @@ def augment_history_from_session_log(
     limit: int = 6,
 ) -> list[dict[str, str]]:
     normalized_history = [dict(item) for item in list(history or []) if isinstance(item, dict)]
+    from core.memory.revocation import authorize_payload
+
+    current = normalized_history[-1:] if normalized_history and (
+        normalized_history[-1].get("role") == "user"
+        and str(normalized_history[-1].get("content") or "").strip() == str(user_text or "").strip()
+    ) else []
+    historical = normalized_history[:-1] if current else normalized_history
+    if historical and not authorize_payload(historical, session_id):
+        return current
     if len(normalized_history) > 1:
         # A9/A8: client-held transcripts must clear the same erasure gate as hydrated
         # session-log events. An ERASED payload that survives only in the caller's copy
@@ -1543,6 +1663,122 @@ def _capture_object_is_another_lanes_effect(verb: str, text: str) -> bool:
     return intent is not None and intent.kind not in READ_ONLY_OPERATOR_KINDS
 
 
+def _forget_start_failure(user_text, *, session_id, source_context, started):
+    reply = ("Forget could not be verified as fully applied: independent revocation authority is unavailable. Please retry the forget."
+             if started else
+             "Nothing was forgotten. The forget did not start because its revocation barrier could not be verified. Please try again.")
+    parsed = _FORGET_RE.match(user_text)
+    return True, _forget_outcomes.record(
+        reply, request=user_text, session=session_id or "", source_context=source_context,
+        argument=parsed.group(1) if parsed else user_text, status="failed" if started else "not_started",
+        stores={"independent_revocation": {"status": "incomplete", "started": bool(started)}},
+    )
+
+
+def _preadmit_forget_turn(user_text, *, session_id, source_context):
+    """Persist admission before turn adaptation, checkpoints or profile effects."""
+    from contextlib import ExitStack
+    from hashlib import sha256
+    from pathlib import Path
+
+    from core.memory import revocation
+    from core.memory.command_result import _owner_identity, forget_demand_targets, requires_forget_outcome
+    from core.runtime_paths import active_vool_home
+    from core.within_turn_retraction import intake_request_text
+
+    live_text = intake_request_text(user_text)
+    if not requires_forget_outcome({}, user_input=live_text, source_context=source_context):
+        return False, None
+    owner = dict(request=user_text, session=session_id, source_context=source_context)
+    if _forget_outcomes.admission(**owner) is not None:
+        return True, None
+    identity = _owner_identity(user_text, session_id, source_context)
+    if not identity:
+        return True, _forget_start_failure(user_text, session_id=session_id, source_context=source_context, started=False)[1]
+    runtime_home = str((source_context or {}).get("runtime_home") or "").strip()
+    homes = {active_vool_home(), Path(runtime_home).resolve() if runtime_home else active_vool_home()}
+    operations = []
+    marker = sha256(repr((session_id, sorted(forget_demand_targets(user_text)))).encode("utf-8")).hexdigest()
+    try:
+        with ExitStack() as locks:
+            for home in sorted(homes):
+                locks.enter_context(revocation.serialized(home))
+            operations = revocation.begin_group(session_id, marker, homes, _kind="admission")
+            _forget_outcomes.admit(operations, **owner)
+    except Exception as exc:
+        if operations:
+            _forget_outcomes.admit(operations, **owner)
+        return True, _forget_start_failure(
+            user_text, session_id=session_id, source_context=source_context,
+            started=bool(operations) or getattr(exc, "started", False),
+        )[1]
+    return True, None
+
+
+def _finish_forget_turn_admission(result, *, user_text, session_id, source_context):
+    """Only the canonical terminal with executor-owned completion retires admission."""
+    from contextlib import ExitStack
+
+    from core.memory import revocation
+    from core.memory.command_result import verified_forget_outcome
+
+    if (source_context or {}).get("planned_subturn"):
+        return result
+    owner = dict(request=user_text, session=session_id, source_context=source_context)
+    operations = _forget_outcomes.admission(**owner)
+    if operations is None:
+        return result
+    execution = verified_forget_outcome(
+        result, user_input=user_text, session_id=session_id, source_context=source_context,
+    )
+    if execution is None or not _forget_outcomes.admission_ready(**owner):
+        return result
+    try:
+        with ExitStack() as locks:
+            for home, _ in sorted(operations):
+                locks.enter_context(revocation.serialized(home))
+            for home, operation in operations:
+                revocation.complete(operation, home)
+            _forget_outcomes.release_admission(**owner)
+    except Exception:
+        _, failure = _forget_start_failure(user_text, session_id=session_id, source_context=source_context, started=True)
+        return {**result, "response": failure, "_memory_command_outcome": failure}
+    return result
+
+
+def _command_erasure_fence(fn):
+    import functools
+    @functools.wraps(fn)
+    def wrapped(user_text, **kwargs):
+        if not _FORGET_RE.match(str(user_text or "").strip()):
+            return fn(user_text, **kwargs)
+        from core.memory.revocation import poison, serialized
+        context = kwargs.get("source_context") or {}
+        home = context.get("runtime_home")
+        entered = False
+        try:
+            from contextlib import ExitStack
+            from pathlib import Path
+
+            from core.runtime_paths import active_vool_home
+            homes = {active_vool_home(), Path(home).resolve() if home else active_vool_home()}
+            with ExitStack() as stack:
+                for selected_home in sorted(homes):
+                    stack.enter_context(serialized(selected_home))
+                entered = True
+                return fn(user_text, **kwargs)
+        except Exception as exc:
+            started = entered and getattr(exc, "started", True)
+            if started:
+                poison(home)
+            return _forget_start_failure(
+                user_text, session_id=kwargs.get("session_id"),
+                source_context=kwargs.get("source_context"), started=started,
+            )
+    return wrapped
+
+
+@_command_erasure_fence
 def maybe_handle_memory_command(
     user_text: str,
     *,
@@ -1558,13 +1794,13 @@ def maybe_handle_memory_command(
     if not (
         scope_command is not None
         or lowered in {"/memory", "what do you remember", "show memory"}
-        or _MEMORY_CAPTURE_RE.match(text)
+        or _memory_capture_match(text)
         or _CORRECTION_RE.match(text)
         or _FORGET_RE.match(text)
         or _is_memory_recall_question(text)
     ):
         return False, ""
-    capture_match = _MEMORY_CAPTURE_RE.match(text)
+    capture_match = _memory_capture_match(text)
     if capture_match and _ANSWER_REQUEST_RE.search(capture_match.group("fact")):
         return False, ""
     if capture_match:
@@ -1580,6 +1816,27 @@ def maybe_handle_memory_command(
             return False, ""
         if _capture_object_is_another_lanes_effect(capture_match.group("verb"), text):
             return False, ""
+    independent_operations = []
+    parsed_forget = _FORGET_RE.match(text)
+    if parsed_forget:
+        from pathlib import Path
+
+        from core.memory import revocation
+        from core.runtime_paths import active_vool_home
+        runtime_home = str((source_context or {}).get("runtime_home") or "").strip() or None
+        barrier_chat = str(getattr(access_policy, "chat_id", None) or session_id or (source_context or {}).get("chat_id") or "")
+        homes = {active_vool_home(), Path(runtime_home).resolve() if runtime_home else active_vool_home()}
+        try:
+            # Durable before even policy resolution can open an owner database.
+            independent_operations = revocation.begin_group(
+                barrier_chat, _normalize_forget_target(parsed_forget.group(1)), homes,
+            )
+        except Exception as exc:
+            return _forget_start_failure(
+                user_text, session_id=barrier_chat, source_context=source_context,
+                started=(bool(independent_operations) or getattr(exc, "started", True)
+                         or _forget_outcomes.admission(request=user_text, session=barrier_chat, source_context=source_context) is not None),
+            )
     try:
         resolved_policy = memory_entries.resolve_memory_access_policy(
             access_policy=access_policy,
@@ -1734,49 +1991,117 @@ def maybe_handle_memory_command(
         facts = _split_explicit_memory_facts(fact)
         added_count = 0
         for memory_fact in facts:
-            memory_scope = _memory_scope_for_user_fact(
+            for eligible_fact, eligible_scope, eligible_source in _admitted_remember_facts(
                 memory_fact,
                 policy=resolved_policy,
-            )
-            added_count += int(
-                add_memory_fact(
-                    memory_fact,
-                    session_id=resolved_session,
-                    scope=memory_scope,
-                    authority="confirmed_memory",
-                    access_policy=resolved_policy,
+            ):
+                added_count += int(
+                    add_memory_fact(
+                        " ".join(eligible_fact.split()),
+                        session_id=resolved_session,
+                        scope=eligible_scope,
+                        authority="confirmed_memory",
+                        source=eligible_source,
+                        access_policy=resolved_policy,
+                    )
                 )
-            )
         if added_count:
             return True, "Locked in. I’ll remember that."
         return True, "I already had that in memory."
 
     forget = _FORGET_RE.match(text)
     if forget:
+        erasures: dict[str, Any] = {}
+
+        def outcome(reply: str, status: str) -> tuple[bool, str]:
+            return True, _forget_outcomes.record(
+                reply, request=user_text, session=resolved_session,
+                source_context=source_context, argument=forget.group(1), status=status,
+                stores=erasures.get("stores", {}),
+            )
+
         referential, token = _referential_forget_token(
             forget.group(1),
             access_policy=resolved_policy,
         )
         if referential and not token:
-            return True, "Forget command needs the exact value because more than one matching memory is active."
+            return outcome("Forget command needs the exact value because more than one matching memory is active.", "needs_target")
         if not referential:
             token = _normalize_forget_target(forget.group(1))
+        if referential and token:
+            for home, _op in list(independent_operations):
+                independent_operations.append((home, revocation.begin(resolved_session, token, home)))
         if len(token) < 2:
-            return True, "Forget command skipped: provide a clearer keyword."
+            return outcome("Forget command skipped: provide a clearer keyword.", "needs_target")
+        # Already forgotten (review 2026-10-07, crash-heal path): the canonical row is a tombstone, so the forget
+        # removes 0, but the mirror may still carry the plaintext and is healed by this very forget. That outcome
+        # is confirmed as "already forgotten", never reported as a no-match and never as "Forget applied".
+        from core.memory.entries import _record_erasure_store, _text_is_erased
+        from core.memory.files import memory_path
+
+        def _mirror_text() -> str:
+            try:
+                return memory_path().read_text(encoding="utf-8")
+            except FileNotFoundError:
+                return ""
+
+        operation_stores: list[tuple[str, Any, str]] = []
+        owner_stores: dict[str, Any] = {}
         try:
+            from core.context_retrieval import _open_memory, _open_memory_for_runtime
+
+            runtime_home = str((source_context or {}).get("runtime_home") or "").strip() or None
+            by_database: dict[str, Any] = {}
+            for owner, opener in (
+                ("semantic", lambda: _open_memory_for_runtime(runtime_home)),
+                ("structured", _open_memory),
+            ):
+                operation_store = opener()
+                if operation_store is None:
+                    raise RuntimeError("erasure operation store is unavailable")
+                database = str(operation_store.db_path.resolve())
+                if database in by_database:
+                    if operation_store is not by_database[database]:
+                        operation_store.close()
+                    owner_stores[owner] = by_database[database]
+                    continue
+                by_database[database] = operation_store
+                owner_stores[owner] = operation_store
+                operation_stores.append((owner, operation_store, ""))
+                operation_id = operation_store.begin_erasure(resolved_session, token)
+                operation_stores[-1] = (owner, operation_store, operation_id)
+        except Exception as exc:
+            LOGGER.warning("erasure operation could not start: %s", type(exc).__name__)
+            _record_erasure_store(erasures, "erasure_operations", "incomplete")
+            for owner, operation_store, _operation_id in operation_stores:
+                _record_erasure_store(erasures, f"{owner}_erasure_operations", "incomplete")
+                try:
+                    operation_store.close()
+                except Exception as close_exc:
+                    LOGGER.warning("erasure connection close failed: %s", type(close_exc).__name__)
+            return outcome("Forget could not be verified as fully applied: erasure operations could not be recorded. Please retry the forget.", "failed")
+
+        removed = 0
+        mirror_before = ""
+        mirror_after = ""
+        already_erased = False
+        try:
+            mirror_before = _mirror_text().lower()
+            already_erased = _text_is_erased(token) or _text_is_erased(token.rstrip(".!?") + ".")
             removed = forget_memory(
                 token,
                 access_policy=resolved_policy,
+                erasures=erasures,
             )
-        except memory_entries.MemoryErasureError:
-            # P0 success-after-verification law: an erasure that could not be
-            # verified absent from every model-visible memory path is never
-            # acknowledged as applied. The durable tombstone has landed; the
-            # retry heals whatever path failed verification.
-            return True, (
-                "Forget could not be verified as fully applied — the entry was not confirmed "
-                "erased on every memory path. Please retry the forget."
-            )
+        except Exception as exc:
+            if not any(key.endswith("_failures") for key in erasures):
+                _record_erasure_store(erasures, "structured_entries", "incomplete")
+            LOGGER.warning("structured memory erasure failed: %s", type(exc).__name__)
+        try:
+            mirror_after = _mirror_text().lower()
+        except Exception as exc:
+            _record_erasure_store(erasures, "memory_mirror", "incomplete")
+            LOGGER.warning("memory mirror verification failed: %s", type(exc).__name__)
         semantic_removed = 0
         try:
             from core.context_retrieval import forget_session_memory
@@ -1786,13 +2111,273 @@ def maybe_handle_memory_command(
                 token,
                 access_policy=resolved_policy,
                 source_context=source_context,
+                store_status=erasures,
             )
         except Exception as exc:
             LOGGER.warning("semantic memory forget unavailable: %s", type(exc).__name__)
-        total_removed = max(int(removed), int(semantic_removed))
-        return True, f"Forget applied. Removed {total_removed} memory entr{'y' if total_removed == 1 else 'ies'}."
+            _record_erasure_store(erasures, "semantic_nodes", "incomplete")
+        memory_entries.forget_profile_derivatives(token, access_policy=resolved_policy, erasures=erasures)
+        _forget_persisted_copies(token, chat_id=resolved_session, erasures=erasures)
+        try:
+            from storage.swarm_memory import _forget_sniffed_copies
+
+            _forget_sniffed_copies(token, resolved_session, erasures)
+        except Exception as exc:
+            LOGGER.warning("swarm dataset erasure failed: %s", type(exc).__name__)
+            from core.memory.entries import _record_erasure_store
+
+            _record_erasure_store(erasures, "swarm_sniffed_context", "incomplete")
+        from core.turn_context import forget_chat_context_pages
+
+        forget_chat_context_pages(chat_id=resolved_session, token=token, erasures=erasures)
+        for owner, operation_store in owner_stores.items():
+            block_status: dict[str, Any] = {}
+            try:
+                block_removed = operation_store._erase_forget_blocks(token)
+                operation_store.verify_forget_blocks(token, erasures=block_status)
+                _record_erasure_store(block_status, "memory_blocks", "verified", block_removed)
+            except Exception as exc:
+                LOGGER.warning("prompt block verification failed: %s", type(exc).__name__)
+            result = block_status.get("stores", {}).get("memory_blocks", {"status": "incomplete"})
+            _record_erasure_store(erasures, f"{owner}_memory_blocks", result["status"], int(result.get("removed") or 0))
+        required_stores = (
+            "structured_entries", "structured_summaries", "memory_mirror", "semantic_nodes",
+            "source_occurrences", "memory_receipts", "conversation_log", "revocation_ledger",
+            "dialogue_derivatives", "session_summaries", "context_capsule_versions",
+            "memory_fts", "source_fts", "source_embeddings",
+            "user_heuristics", "operator_dense_profile", "persisted_packet_cache_copies", "packet_receipt_ledgers",
+            "context_pages", "chat_session_metadata", "swarm_sniffed_context",
+        )
+        for store in required_stores:
+            if store not in erasures.get("stores", {}):
+                _record_erasure_store(erasures, store, "incomplete")
+        for owner, operation_store in owner_stores.items():
+            try:
+                if erasures.get("stores", {}).get("revocation_ledger", {}).get("status") != "verified":
+                    _record_erasure_store(erasures, f"{owner}_revocation_ledger", "incomplete")
+                    continue
+                operation_store.record_revocation(token, chat_id=resolved_session)
+                from core.context_retrieval import _normalize_forget_token as normalize_revocation
+
+                if normalize_revocation(token) not in operation_store.revoked_tokens(resolved_session, strict=True):
+                    raise RuntimeError("owner revocation write could not be verified")
+                _record_erasure_store(erasures, f"{owner}_revocation_ledger", "verified")
+            except Exception as exc:
+                _record_erasure_store(erasures, f"{owner}_revocation_ledger", "incomplete")
+                LOGGER.warning("erasure owner revocation failed: %s", type(exc).__name__)
+        from core.memory.carriers import verify_forget_stores
+        verify_forget_stores(resolved_session, token, owner_memories=owner_stores, erasures=erasures)
+        completed_stores = []
+        try:
+            if not any(key.endswith("_failures") and value for key, value in erasures.items()):
+                for _owner, operation_store, operation_id in operation_stores:
+                    operation_store.complete_erasure(operation_id)
+                    completed_stores.append(operation_store)
+                for home, operation_id in independent_operations:
+                    revocation.complete(operation_id, home)
+                _record_erasure_store(erasures, "independent_revocation", "verified")
+                for owner in owner_stores:
+                    _record_erasure_store(erasures, f"{owner}_erasure_operations", "verified")
+                _record_erasure_store(erasures, "erasure_operations", "verified")
+            else:
+                for owner in owner_stores:
+                    _record_erasure_store(erasures, f"{owner}_erasure_operations", "incomplete")
+                _record_erasure_store(erasures, "erasure_operations", "incomplete")
+        except Exception as exc:
+            LOGGER.warning("erasure completion could not be verified: %s", type(exc).__name__)
+            for operation_store in completed_stores:
+                try:
+                    operation_store.begin_erasure(resolved_session, token)
+                except Exception as restore_exc:
+                    LOGGER.warning("erasure owner barrier restore failed: %s", type(restore_exc).__name__)
+            for owner in owner_stores:
+                _record_erasure_store(erasures, f"{owner}_erasure_operations", "incomplete")
+            _record_erasure_store(erasures, "erasure_operations", "incomplete")
+        finally:
+            for owner, operation_store, _operation_id in operation_stores:
+                try:
+                    operation_store.close()
+                except Exception as exc:
+                    LOGGER.warning("verified erasure connection close failed: %s", type(exc).__name__)
+                    _record_erasure_store(erasures, f"{owner}_connection_close", "incomplete")
+                    try:
+                        from core.vool_memory import VoolMemory
+
+                        barrier = VoolMemory(db_path=operation_store.db_path)
+                        try:
+                            barrier.begin_erasure(resolved_session, token)
+                        finally:
+                            barrier.close()
+                    except Exception as barrier_exc:
+                        LOGGER.warning("close failure barrier restore failed: %s", type(barrier_exc).__name__)
+                        _record_erasure_store(erasures, f"{owner}_erasure_operations", "incomplete")
+        total_removed = max(int(removed), int(semantic_removed),
+                            *(int(erasures.get(key) or 0) for key in ("structured_entries", "semantic_nodes", "source_occurrences")))
+        if total_removed <= 0:
+            total_removed = sum(int(erasures.get(key) or 0) for key in (
+                "structured_summaries", "session_summaries", "memory_receipts", "conversation_log", "dialogue_derivatives",
+                "memory_fts", "source_fts",
+                "user_heuristics", "operator_dense_profile", "context_pages", "chat_session_metadata",
+            ))
+            total_removed += sum(int(result.get("removed") or 0)
+                                 for name, result in erasures.get("stores", {}).items()
+                                 if name.startswith("persisted_") or name.endswith("_memory_blocks"))
+        failed_stores = [store.replace("_", " ") for store, result in erasures.get("stores", {}).items()
+                         if result["status"] == "incomplete"]
+        if failed_stores:
+            # A failed or unopened memory store is not an empty one: the value may still be held and recalled, so the
+            # reply never says nothing matched (review 2026-10-08: a denied read answered "found no memory").
+            return outcome("Forget could not be verified as fully applied: "
+                          + ", ".join(failed_stores) + " could not be erased and verified on this turn"
+                          + (f", after {total_removed} entr{'y' if total_removed == 1 else 'ies'} were removed" if total_removed > 0 else "")
+                          + ". Please retry the forget.", "partial" if total_removed > 0 else "failed")
+        if total_removed <= 0:
+            healed = bool(token.lower() in mirror_before and token.lower() not in mirror_after)
+            if already_erased or healed:
+                return outcome("That was already forgotten; a stale copy of it has now been cleared as well."
+                               if healed else "That was already forgotten.", "already_erased")
+            # Never "Forget applied" over nothing removed (served check 2026-10-07: "Forget the storage
+            # unit code I gave you, it is wrong." answered "Removed 0" and 5906 was still served). The
+            # command is answered with the truth; the turn is still recorded by the fast path, so the
+            # capsule's temporal law withdraws the record it names on the next recall.
+            # worded without a storage verb beside "memory": the final claim check reads "no stored memory" as a
+            # claim that something was stored, and replaced the forget reply (main's test_a_product_word_in_a_sentence_is_not_a_command.py)
+            return outcome(f'Nothing was removed. Forget found no memory in this chat that matched "{token}".', "no_match")
+        return outcome(f"Forget applied. Removed {total_removed} memory entr{'y' if total_removed == 1 else 'ies'}.", "applied")
 
     return False, ""
+
+
+def _forget_persisted_copies(token: str, *, chat_id: str, erasures: dict[str, Any]) -> None:
+    """Inspect persisted packet/cache copies; unattributed copies make erasure incomplete."""
+    from core.memory.entries import _load_erasure_rows, _record_erasure_store
+    from core.vool_memory import text_carries_forget_token
+    from storage.db import get_connection
+
+    def quoted(name: str) -> str:
+        return '"' + name.replace('"', '""') + '"'
+
+    conn = None
+    try:
+        conn = get_connection()
+        names = [str(row[0]) for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+        ).fetchall()]
+        targets = [name for name in names if any(part in name.lower() for part in ("packet", "cache", "snapshot"))]
+        for table in targets:
+            store = "persisted_" + table
+            try:
+                schema = conn.execute(f"PRAGMA table_info({quoted(table)})").fetchall()
+                columns = [str(row[1]) for row in schema]
+                identity = [str(row[1]) for row in schema if int(row[5])]
+                scope_column = next((column for column in ("chat_id", "chat_scope", "session_id", "origin_session_id") if column in columns), None)
+                payload_columns = [column for column in columns if column != scope_column]
+                json_columns = frozenset(str(row[1]) for row in schema
+                                         if "JSON" in str(row[2]).upper() or str(row[1]).lower().endswith("_json"))
+
+                def carries(row: Any, selected_columns: tuple[str, ...] = tuple(payload_columns),
+                            structured_columns: frozenset[str] = json_columns) -> bool:
+                    matched = False
+                    for column in selected_columns:
+                        value = row[column]
+                        if column in structured_columns:
+                            if value is None:
+                                continue
+                            decoded = json.loads(value) if isinstance(value, (str, bytes, bytearray)) else value
+                            value = json.dumps(decoded, ensure_ascii=False)
+                        if isinstance(value, bytes) and value:
+                            # Opaque persisted payloads have no text-erasure proof.
+                            raise RuntimeError("persisted payload has an opaque representation")
+                        if not isinstance(value, str):
+                            continue
+                        fingerprint = column in {"memo_key", "nonce"} or column.endswith(("_sha256", "_hash", "_digest"))
+                        if fingerprint and re.fullmatch(r"(?:k1:)?[0-9a-f]{32,128}", value):
+                            continue
+                        if text_carries_forget_token(value, token):
+                            matched = True
+                    return matched
+
+                suffix = f" WHERE {quoted(scope_column)} = ?" if scope_column else ""
+                params = (chat_id,) if scope_column else ()
+                rows = conn.execute(f"SELECT * FROM {quoted(table)}{suffix}", params).fetchall()
+                matched = [row for row in rows if carries(row)]
+                if matched and (not scope_column or not identity):
+                    _record_erasure_store(erasures, store, "incomplete")
+                    continue
+                for row in matched:
+                    where = " AND ".join(f"{quoted(column)} = ?" for column in identity)
+                    conn.execute(f"DELETE FROM {quoted(table)} WHERE {where}", tuple(row[column] for column in identity))
+                conn.commit()
+                retained = conn.execute(f"SELECT * FROM {quoted(table)}{suffix}", params).fetchall()
+                if any(carries(row) for row in retained):
+                    raise RuntimeError("persisted copy could not be erased and verified")
+                _record_erasure_store(erasures, store, "verified", len(matched))
+            except Exception:
+                conn.rollback()
+                _record_erasure_store(erasures, store, "incomplete")
+        _record_erasure_store(erasures, "persisted_packet_cache_copies", "incomplete" if any(
+            name.startswith("persisted_") and result["status"] == "incomplete"
+            for name, result in erasures.get("stores", {}).items()) else "verified")
+    except Exception:
+        _record_erasure_store(erasures, "persisted_packet_cache_copies", "incomplete")
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                _record_erasure_store(erasures, "persisted_packet_cache_connection", "incomplete")
+
+    try:
+        from core.evidence_kernel.receipts import _ledger_dir, _receipt_payload_for_erasure, _sha256
+
+        root = _ledger_dir()
+        try:
+            kinds = list(root.iterdir())
+        except FileNotFoundError:
+            kinds = []
+        retained = False
+        for kind in kinds:
+            if not kind.is_dir():
+                continue
+            rows = _load_erasure_rows(kind / (_sha256(chat_id)[:24] + ".jsonl"))
+            # The chain is immutable. Payload-bearing metadata must be named as
+            # retained; references and keyed digests are not plaintext copies.
+            retained = retained or any(text_carries_forget_token(
+                json.dumps(_receipt_payload_for_erasure(row), ensure_ascii=False), token,
+            ) for row in rows)
+        _record_erasure_store(erasures, "packet_receipt_ledgers", "incomplete" if retained else "verified")
+    except Exception:
+        _record_erasure_store(erasures, "packet_receipt_ledgers", "incomplete")
+
+    import os
+    from pathlib import Path
+
+    from core.runtime_paths import data_path
+
+    roots = [("bootstrap_snapshots", data_path("bootstrap")), ("relay_mirror_snapshots", Path("relay_mirror"))]
+    configured = str(os.environ.get("VOOL_MIRROR_DATA_DIR") or "").strip()
+    if configured:
+        roots.append(("configured_mirror_snapshots", Path(configured)))
+    for store, root in roots:
+        try:
+            try:
+                paths = list(root.iterdir())
+            except FileNotFoundError:
+                _record_erasure_store(erasures, store, "not_applicable")
+                continue
+            retained = False
+            for path in paths:
+                if path.suffix.lower() != ".json":
+                    continue
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                retained = retained or text_carries_forget_token(json.dumps(payload, ensure_ascii=False), token)
+            # Snapshot membership alone gives no authority to remove another
+            # chat's or peer's copy. Readers withhold retained payloads.
+            _record_erasure_store(erasures, store, "incomplete" if retained else "verified")
+        except Exception:
+            _record_erasure_store(erasures, store, "incomplete")
+    _record_erasure_store(erasures, "remote_mirror_copies", "incomplete" if str(
+        os.environ.get("VOOL_MIRROR_URL") or "").strip() else "not_applicable")
 
 
 def _memory_scope_for_user_fact(
@@ -1806,8 +2391,84 @@ def _memory_scope_for_user_fact(
     not make every user-authored fact a profile preference.  Only explicit
     preference/identity language is eligible for profile scope; all other
     captures stay bound to their originating chat.
+
+    Eligibility is decided on the fact's AUTHORED portion only: an explicitly
+    remembered quotation ("Remember this article excerpt: \"My name is Petra.
+    …\"") is retained in the chat as source material, and its embedded
+    identity/preference markers never promote the quoted speaker into the
+    user's profile.  A direct authored declaration ("my preferred name is …")
+    keeps its existing profile eligibility.
     """
     if not policy.allow_user_profile_context:
         return "chat"
-    lowered = " ".join(str(fact or "").casefold().split())
+    from core.memory.admission import classify_user_text
+
+    authored = classify_user_text(fact).authored_text
+    if not authored:
+        # The entire fact is quoted/fenced source material.
+        return "chat"
+    lowered = " ".join(authored.casefold().split())
     return "user_profile" if any(marker in lowered for marker in _PROFILE_MEMORY_MARKERS) else "chat"
+
+
+#: Trailing connective framing that introduces quoted/pasted source material
+#: inside an otherwise personal declaration ("…, and this article excerpt:").
+#: Stripped only when the authored remainder is an attributable declaration and
+#: the quote is stored separately; never used to delete content outright.
+_REMEMBERED_SOURCE_FRAMING_TAIL_RE = re.compile(
+    r"[,;:]?\s*(?:and\s+|also\s+|plus\s+|with\s+|alongside\s+)?"
+    r"(?:this|that|these|those|the\s+(?:following|attached|pasted))?\s*"
+    r"(?:[a-z-]+\s+from\s+(?:the|this|that)\s+[a-z-]+"
+    r"|article|excerpt|quote|quotation|passage|snippet|post|note|text|"
+    r"template|bit|words|lines|phrases|fragments)\b[^a-z0-9]*:?\s*(?:and\s+)?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _attributable_declaration(text: str) -> bool:
+    """Whether authored text itself asserts a personal declaration/instruction."""
+    lowered = " ".join(str(text or "").casefold().split())
+    if not lowered:
+        return False
+    if any(marker in lowered for marker in _PROFILE_MEMORY_MARKERS):
+        return True
+    from core.memory.learning import extract_memory_candidates
+
+    return bool(extract_memory_candidates(text))
+
+
+def _admitted_remember_facts(
+    fact: str,
+    *,
+    policy: ContextAccessPolicy,
+) -> list[tuple[str, str, str]]:
+    """Split one explicitly remembered fact into admissible (content, scope, source).
+
+    The persisted content and its scope must agree: a genuine personal marker
+    in the authored portion never authorizes storing the third-party material
+    quoted beside it at profile scope.  When the authored portion is an
+    unambiguous personal declaration, the declaration is stored through the
+    normal scope decision and the quoted source material is retained
+    chat-scoped as source.  Mixed content without an attributable declaration
+    stays whole and chat-scoped.  Nothing is discarded.
+    """
+    from core.memory.admission import classify_user_text
+
+    origin = classify_user_text(fact)
+    if not origin.has_source_material:
+        return [(fact, _memory_scope_for_user_fact(fact, policy=policy), "manual")]
+    authored = " ".join(origin.authored_text.split())
+    source_material = " ".join(origin.source_text.split())
+    if not _attributable_declaration(authored):
+        return [(fact, "chat", "manual")]
+    attributable = _REMEMBERED_SOURCE_FRAMING_TAIL_RE.sub("", authored).strip() or authored
+    pairs = [
+        (
+            attributable,
+            _memory_scope_for_user_fact(attributable, policy=policy),
+            "manual",
+        )
+    ]
+    if source_material:
+        pairs.append((source_material, "chat", "remembered_source_material"))
+    return pairs

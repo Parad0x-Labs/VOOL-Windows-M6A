@@ -21,7 +21,11 @@ from core.context_history_authority import select_history_policy
 from core.context_manifest import build_context_manifest
 from core.context_namespace import load_chat_namespace
 from core.context_relevance_ranker import rank_context_items, retrieval_confidence
-from core.context_retrieval import exact_recall_requires_current_session
+from core.context_retrieval import (
+    exact_recall_requires_current_session,
+    revoked_tokens_for_chat,
+    text_carries_revoked_token,
+)
 from core.context_scope import (
     ContextScopePolicy,
     CurrentTurnCorrection,
@@ -88,17 +92,20 @@ class TieredContextResult:
 
     def assembled_context(self, *, prompt_profile: str = "default") -> str:
         sections: list[str] = []
+        capsule_profile = prompt_profile in _CAPSULE_PROFILES
         bootstrap_items = _filter_context_items_for_prompt_profile(self.bootstrap_items, prompt_profile=prompt_profile)
-        if prompt_profile == "chat_capsule":
+        if capsule_profile:
             bootstrap_items = [item for item in bootstrap_items if item.source_type != "active_mission"]
+        if prompt_profile == MEMORY_QA_PROFILE:
+            bootstrap_items = _memory_qa_view(bootstrap_items)
         relevant_items = (
             []
-            if prompt_profile == "chat_capsule"
+            if capsule_profile
             else _filter_context_items_for_prompt_profile(self.relevant_items, prompt_profile=prompt_profile)
         )
         cold_items = (
             []
-            if prompt_profile == "chat_capsule"
+            if capsule_profile
             else _filter_context_items_for_prompt_profile(self.cold_items, prompt_profile=prompt_profile)
         )
         bootstrap_sections = _render_context_sections("Bootstrap Context", bootstrap_items)
@@ -228,6 +235,63 @@ def empty_tiered_context_result(
         retrieval_confidence_score=0.0,
         cold_decision=ColdContextDecision(False, str(reason or "context_not_loaded")),
     )
+
+
+#: A turn answered from a retrieved memory capsule. Like ``chat_capsule`` (the capsule replaces
+#: competing retrieval), and in addition the bootstrap is cut to what bears on answering a question
+#: about the user's own past -- see `_memory_qa_view`. Chosen by the prompt normalizer only for a
+#: first-person recall question on the minimal chat profile that carries a capsule.
+MEMORY_QA_PROFILE = "chat_memory_qa"
+_CAPSULE_PROFILES = frozenset({"chat_capsule", MEMORY_QA_PROFILE})
+
+
+def _memory_qa_view(items: list[ContextItem]) -> list[ContextItem]:
+    """The bootstrap a memory-QA turn carries.
+
+    An item marked ``memory_qa_omit`` is left out (the vault-sharing policy, the tool doctrine).
+    An item with ``memory_qa_strip`` loses exactly those spans (the name anchors of the continuity
+    item, the task summary that restates the user's message); an item left empty is dropped.
+    Nothing else changes: persona, safety, conversation policy and every unmarked item stay as
+    built. Item order is preserved.
+    """
+    kept: list[ContextItem] = []
+    for item in items:
+        metadata = dict(item.metadata or {})
+        if metadata.get("memory_qa_omit"):
+            continue
+        strip = [str(span) for span in list(metadata.get("memory_qa_strip") or []) if str(span or "")]
+        if not strip:
+            kept.append(item)
+            continue
+        content = str(item.content or "")
+        for span in strip:
+            content = content.replace(span, " ")
+        content = " ".join(content.split())
+        if not content:
+            continue
+        # The seal describes the bytes the provider receives: a stripped item gets the hash of its stripped
+        # content, never the original's (and never none, which fails the turn on every provider).
+        stripped_hash = hashlib.sha256(content.encode()).hexdigest()
+        metadata["content_hash"] = stripped_hash
+        provenance = dict(item.provenance or {})
+        if "content_hash" in provenance:
+            provenance["content_hash"] = stripped_hash
+        kept.append(
+            ContextItem(
+                item_id=item.item_id,
+                layer=item.layer,
+                source_type=item.source_type,
+                title=item.title,
+                content=content,
+                priority=item.priority,
+                confidence=item.confidence,
+                must_keep=item.must_keep,
+                include_reason=item.include_reason,
+                metadata=metadata,
+                provenance=provenance,
+            )
+        )
+    return kept
 
 
 def _filter_context_items_for_prompt_profile(
@@ -399,6 +463,7 @@ def _local_candidate_items(
             "source": source_type,
             "status": "active",
             "origin_chat_id": origin_chat_id,
+            "memory_origin_chat_id": str(candidate.get("origin_session_id") or origin_chat_id).strip(),
             "origin_project_id": "",
         }
         if citation:
@@ -427,26 +492,63 @@ def _local_candidate_items(
     return items, ranked
 
 
-def _dialogue_items(session_id: str) -> list[ContextItem]:
+def _dialogue_items(session_id: str, *, query_text: str = "") -> list[ContextItem]:
     items: list[ContextItem] = []
+    # Forget law (F14-01): dialogue context items are a second carrier of
+    # stored turns into prompts; they clear the same durable revocation
+    # ledger as canonical transcript assembly.
+    try:
+        revoked = revoked_tokens_for_chat(session_id)
+    except Exception:
+        return []
+    # Current-observation contract (sealed acceptance F15-02): a NOW-anchored
+    # question must not receive a past-tense report of a measured value as
+    # "Recent dialogue turn" context — the stale record re-enters the prompt
+    # through this leg even after every retrieval leg excluded it. Same
+    # authority and same conjunction as the retrieval eligibility law;
+    # mixed now-and-then questions keep both halves.
+    current_ask = False
+    if str(query_text or "").strip():
+        try:
+            from core.temporal_question_scope import question_time_scope
+
+            scope = question_time_scope(query_text)
+            current_ask = bool(scope.asks_current and not scope.asks_past)
+        except Exception:
+            current_ask = False
+    if current_ask:
+        from core.temporal_selection import is_stale_observation_for_current_ask
+    else:
+        is_stale_observation_for_current_ask = None
     for turn in recent_dialogue_turns(session_id, limit=6):
+        content = str(turn.get("normalized_input") or turn.get("raw_input") or turn.get("reconstructed_input") or "")
+        if text_carries_revoked_token(content, revoked):
+            continue
+        if (
+            is_stale_observation_for_current_ask is not None
+            and is_stale_observation_for_current_ask(content)
+        ):
+            continue
+        content = content[:260]
         items.append(
             ContextItem(
                 item_id=f"dialogue-{turn['turn_id']}",
                 layer="relevant",
                 source_type="dialogue_turn",
                 title="Recent dialogue turn",
-                content=str(turn.get("normalized_input") or turn.get("raw_input") or turn.get("reconstructed_input") or "")[:260],
+                content=content,
                 confidence=float(turn.get("understanding_confidence") or 0.0),
                 include_reason="recent_dialogue_memory",
                 metadata={
+                    # A selected item without a content_hash fails the turn on every provider.
+                    "content_hash": hashlib.sha256(content.encode()).hexdigest(),
                     "created_at": turn.get("created_at"),
                     "topic_hints": list(turn.get("topic_hints") or []),
                     "session_id": session_id,
                 },
             )
         )
-    return items
+    return _forget_safe_context_items(items)[0]
 
 
 def _current_chat_corrections(
@@ -1109,6 +1211,70 @@ def _report_exclusions(report: PromptAssemblyReport, layer: BudgetedLayer) -> No
             report.items_excluded.append(item.to_record(included=False, reason=reason))
 
 
+_MEMORY_DELIVERY_SOURCE_TYPES = frozenset({
+    "active_mission", "dialogue_continuity", "dialogue_turn", "recent_dialogue", "session_summary",
+    "runtime_memory", "memory_conflict", "user_heuristic", "user_preferences", "owner_identity",
+    "privacy_pact", "execution_preferences", "shorthand", "cold_archive", "local_shard",
+    "remote_shard_cache", "swarm_context", "swarm_remote_context", "swarm_metadata", "turn_context_page",
+})
+
+
+# These carriers are built from runtime policy or this turn, without stored memory.
+_NON_MEMORY_DELIVERY_SOURCE_TYPES = frozenset({
+    "persona", "session_state", "turn_frame", "task_constraints", "policy",
+    "conversation_policy", "context_understanding", "self_knowledge",
+    "operating_doctrine", "session_policy", "input_quality", "tool_observation",
+})
+
+
+def _forget_safe_context_items(items: list[ContextItem]) -> tuple[list[ContextItem], list[tuple[ContextItem, str]]]:
+    """Read each source chat's durable erasure state after context construction, before delivery."""
+    kept: list[ContextItem] = []
+    excluded: list[tuple[ContextItem, str]] = []
+    scopes: dict[str, tuple[str, ...] | None] = {}
+    for item in items:
+        if item.source_type in _NON_MEMORY_DELIVERY_SOURCE_TYPES:
+            kept.append(item)
+            continue
+        if item.source_type not in _MEMORY_DELIVERY_SOURCE_TYPES:
+            excluded.append((item, "forget_source_type_unrecognized"))
+            continue
+        metadata = dict(item.metadata or {})
+        if "memory_origin_chat_id" in metadata:
+            origin = str(metadata.get("memory_origin_chat_id") or "").strip()
+        else:
+            origin = str(metadata.get("origin_chat_id") or metadata.get("session_id")
+                         or metadata.get("chat_id") or "").strip()
+        if not origin:
+            excluded.append((item, "forget_origin_unavailable"))
+            continue
+        if origin not in scopes:
+            try:
+                scopes[origin] = revoked_tokens_for_chat(origin)
+            except Exception:
+                scopes[origin] = None
+        revoked = scopes[origin]
+        if revoked is None:
+            excluded.append((item, "forget_state_unavailable"))
+        elif text_carries_revoked_token(item.content, revoked):
+            excluded.append((item, "forget_revoked_source"))
+        else:
+            kept.append(item)
+    return kept, excluded
+
+
+def _delivered_layer(layer: BudgetedLayer, kept_ids: set[int],
+                     excluded: list[tuple[ContextItem, str]]) -> BudgetedLayer:
+    included = [item for item in layer.included if id(item) in kept_ids]
+    layer_ids = {id(item) for item in layer.included}
+    return BudgetedLayer(
+        included=included,
+        excluded=layer.excluded + [(item, reason) for item, reason in excluded if id(item) in layer_ids],
+        used_tokens=sum(item.token_count for item in included),
+        used_chars=sum(item.char_count for item in included),
+    )
+
+
 _SHADOW_CAPSULE_VERSION_RE = re.compile(r"^capsule-[0-9a-f]{32}$")
 _SHADOW_CAPSULE_CLAIM_SOURCES = frozenset(
     {"transcript_user", "verified_action", "receipt"}
@@ -1346,6 +1512,13 @@ def _turn_context_items(
     items: list[ContextItem] = []
     for selection in compilation.items:
         content_hash = hashlib.sha256(selection.content.encode("utf-8")).hexdigest()
+        try:
+            from core.turn_context import _admission_row
+
+            source = _admission_row(selection.admission_id, compilation.principal)
+            origin_chat = str(source.get("session_id") or "") if source and source.get("status") == "active" else ""
+        except Exception:
+            origin_chat = ""
         items.append(
             ContextItem(
                 item_id=f"turn-context:{selection.admission_id}",
@@ -1360,6 +1533,7 @@ def _turn_context_items(
                 metadata={
                     "scope": "chat",
                     "origin_chat_id": session_id,
+                    "memory_origin_chat_id": origin_chat,
                     "origin_project_id": project_id,
                     "page_hash": selection.page_hash,
                     "admission_id": selection.admission_id,
@@ -1546,7 +1720,8 @@ class TieredContextLoader:
                     )
                 )
             if history_selection.expands_beyond_adjacency:
-                relevant_candidates.extend(_dialogue_items(session_id))
+                relevant_candidates.extend(
+                    _dialogue_items(session_id, query_text=query_text))
             persistent_items = (
                 _persistent_memory_items(
                     query_text,
@@ -1670,6 +1845,36 @@ class TieredContextLoader:
             max_items=budget.max_cold_items,
         )
 
+        # The ranked copies and planning payloads were built before this point. Recheck their owning chats now;
+        # a forget or an incomplete-erasure marker written during construction must win over those copies.
+        local_delivery = [ContextItem(
+            item_id=f"delivery-local-{index}", layer="relevant", source_type="local_shard",
+            title="Local planning candidate", content=json.dumps(candidate, default=str, sort_keys=True),
+            metadata={"content_hash": hashlib.sha256(json.dumps(candidate, default=str, sort_keys=True).encode()).hexdigest(),
+                      "origin_chat_id": str(candidate.get("origin_session_id") or
+                      ("shared:swarm" if candidate.get("share_scope") != "local_only" else ""))},
+        ) for index, candidate in enumerate(local_candidates)]
+        swarm_delivery = [ContextItem(
+            item_id=f"delivery-swarm-{index}", layer="relevant", source_type="swarm_metadata",
+            title="Shared planning metadata", content=json.dumps(entry, default=str, sort_keys=True),
+            metadata={"content_hash": hashlib.sha256(json.dumps(entry, default=str, sort_keys=True).encode()).hexdigest(),
+                      "origin_chat_id": str(entry.get("origin_chat_id") or entry.get("origin_session_id")
+                      or "shared:swarm")},
+        ) for index, entry in enumerate(swarm_metadata)]
+        delivered, delivery_excluded = _forget_safe_context_items(
+            bootstrap_layer.included + relevant_layer.included + cold_layer.included
+            + local_delivery + swarm_delivery
+        )
+        delivered_ids = {id(item) for item in delivered}
+        bootstrap_layer = _delivered_layer(bootstrap_layer, delivered_ids, delivery_excluded)
+        relevant_layer = _delivered_layer(relevant_layer, delivered_ids, delivery_excluded)
+        cold_layer = _delivered_layer(cold_layer, delivered_ids, delivery_excluded)
+        local_candidates = [candidate for candidate, item in zip(local_candidates, local_delivery, strict=False)
+                            if id(item) in delivered_ids]
+        swarm_metadata = [entry for entry, item in zip(swarm_metadata, swarm_delivery, strict=False)
+                          if id(item) in delivered_ids]
+        confidence_label, confidence_score = retrieval_confidence(relevant_layer.included)
+
         candidate_items = [
             item.to_record(included=False, reason="retrieval_candidate")
             for item in (
@@ -1735,6 +1940,7 @@ class TieredContextLoader:
             + scope_excluded
             + correction_excluded
             + cold_correction_excluded
+            + [(item, reason) for item, reason in delivery_excluded if item in local_delivery + swarm_delivery]
         ):
             report.items_excluded.append(item.to_record(included=False, reason=reason))
         # C09 receipt: the authority's explicit truncations and its honest

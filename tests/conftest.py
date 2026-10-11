@@ -121,6 +121,7 @@ RUNTIME_TABLES = (
     "contribution_ledger",
     "dialogue_sessions",
     "dialogue_turns",
+    "tool_memo_cache",
     "curiosity_runs",
     "curiosity_topics",
     "dna_wallet_ledger",
@@ -222,6 +223,48 @@ def memory_hit_decision(*, output_text: str = "", trust_score: float = 0.82) -> 
         used_model=False,
         validation_state="not_run",
     )
+
+
+@pytest.fixture(autouse=True)
+def product_runtime_defaults_stay_in_their_test():
+    """Undo, after every test, the product defaults an in-process entry point wrote into the environment.
+
+    Every entry point (`vool_cli.main`, the API server, the chat app, the agent, the daemon) calls
+    `apply_product_runtime_defaults()`, which sets the memory switches in `os.environ` for the process it
+    starts. A test that calls such a `main` in-process (tests/test_bug_report_api.py runs `vool_cli.main`)
+    left those switches on for every later test in the session, so memory tests passed alone and failed in a
+    sweep. The process-wide default must end with the test that applied it.
+    """
+    from core.runtime_provider_defaults import _PRODUCT_RUNTIME_ENV_DEFAULTS
+
+    names = [name for name, _value in _PRODUCT_RUNTIME_ENV_DEFAULTS]
+    before = {name: os.environ.get(name) for name in names}
+    yield
+    for name, value in before.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
+
+
+@pytest.fixture(autouse=True)
+def profile_home_env_stays_in_its_test():
+    """Undo, after every test, a VOOL_HOME / VOOL_WORKSPACE_ROOT a test helper wrote into the environment.
+
+    `tests/test_question_date_time_leg_20261002.py::_profile` (imported by some twenty memory test modules)
+    sets both with `os.environ.update` and never restored them, so every later test in the shard ran with
+    its workspace root pointing at a removed tmp profile: `machine.find_largest` then treated the checkout
+    as another project's folder and hid every result (tests/test_machine_tool_contract.py failed only
+    after tests/test_capsule_session_order.py in CI shard 0).
+    """
+    names = ("VOOL_HOME", "VOOL_WORKSPACE_ROOT")
+    before = {name: os.environ.get(name) for name in names}
+    yield
+    for name, value in before.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
 
 
 @pytest.fixture(autouse=True)

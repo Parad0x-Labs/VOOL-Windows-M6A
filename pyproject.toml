@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vool"
-version = "0.6.0"
+version = "0.7.0"
 description = "VOOL — local-first AI agent runtime with memory, tools, optional helpers, and visible proof"
 readme = "README.md"
 license = "MIT"
@@ -73,13 +73,15 @@ pay = [
     "solana-pay-kit==0.10.0; python_version >= '3.11'",
 ]
 models = [
-    "sentence-transformers>=2.2",
+    # PyTorch publishes no Intel-macOS wheel since 2.3: torch and the packages that require it
+    # are skipped there, and local LoRA training reports itself unavailable.
+    "sentence-transformers>=2.2; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "openai>=1.0",
     "anthropic>=0.18",
-    "torch>=2.13.0",
+    "torch>=2.13.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "transformers>=4.48",
-    "peft>=0.14",
-    "accelerate>=1.2",
+    "peft>=0.14; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "accelerate>=1.2; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "aiohttp>=3.14.3",  # Security floor for model/data download clients.
     "datasets>=3.2",
     "huggingface_hub>=0.28",
@@ -92,19 +94,27 @@ companion = [
     "xxhash>=3.4.0",
 ]
 runtime = [
-    "sentence-transformers>=2.2",
+    # PyTorch publishes no Intel-macOS wheel since 2.3: torch and the packages that require it
+    # are skipped there, and local LoRA training reports itself unavailable.
+    "sentence-transformers>=2.2; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "openai>=1.0",
     "anthropic>=0.18",
-    "torch>=2.13.0",
+    "torch>=2.13.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "transformers>=4.48",
-    "peft>=0.14",
-    "accelerate>=1.2",
+    "peft>=0.14; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "accelerate>=1.2; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "aiohttp>=3.14.3",  # Security floor for model/data download clients.
     "datasets>=3.2",
     "huggingface_hub>=0.28",
     "playwright>=1.52,<2.0",
     "zstandard>=0.22.0",
     "xxhash>=3.4.0",
+]
+# The native desktop window (installer/bundle/vool_window.py). Pinned: unpinned, the bundle's
+# wheel-only resolve fell back to pywebview 3.4 (2021) because every later release needs the
+# sdist-only proxy-tools, whose wheel the bundle now supplies through built_wheels.json.
+desktop = [
+    "pywebview==6.2.1",
 ]
 proof = [
     "pytest>=7.0",

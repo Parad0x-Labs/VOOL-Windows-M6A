@@ -30,6 +30,8 @@ The MUST-KEEP corpora were written before the fixes, from what each lane exists 
 """
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
 # =================================================================================================
@@ -434,7 +436,7 @@ def _memory_lane(text: str, chat_id: str) -> tuple[bool, str]:
 def stocked_chat():
     """A chat whose memory store is NOT empty -- the condition the old guard could not see past."""
 
-    chat_id = "ctxmem-memory-stocked"
+    chat_id = "ctxmem-memory-stocked-" + uuid.uuid4().hex
     ensure_chat_namespace(chat_id)
     ensure_memory_files()
     claimed, _ = _memory_lane(
@@ -678,18 +680,6 @@ def test_the_context_summary_is_the_only_carrier_for_anything_older() -> None:
     )
 
 
-@pytest.mark.xfail(
-    reason=(
-        "DEFERRED defect B. The compacted stand-in for the whole dropped middle carries no "
-        "retention priority, so when it is larger than the char budget enforce_history_budget "
-        "removes it FIRST -- it is the oldest unit. Everything before the last four exchanges is "
-        "then gone with no trace. core/prompt_budget.py already sheds <context_summary> LAST at "
-        "the token layer; core/context_history_authority.py does not agree with it. Fixing this "
-        "changes which turns survive on every chat turn on every model, so it is not being landed "
-        "inside a routing fix."
-    ),
-    strict=True,
-)
 def test_the_summary_outranks_verbatim_history_in_the_envelope() -> None:
     original_pick = conversation_summarizer_module._pick_model_uncached
     conversation_summarizer_module._pick_model_uncached = lambda: ""  # force the shipped fallback

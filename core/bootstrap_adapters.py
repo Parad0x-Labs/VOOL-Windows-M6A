@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
+from core.memory.revocation import fenced_writer
 from core.runtime_paths import data_path
 
 
@@ -31,6 +32,7 @@ class FileTopicAdapter(BootstrapMirrorAdapter):
         safe = "".join(ch for ch in topic_name if ch.isalnum() or ch in {"_", "-"}).strip() or "topic"
         return self.base_dir / f"{safe}.json"
 
+    @fenced_writer
     def publish_snapshot(self, topic_name: str, snapshot: dict[str, Any]) -> bool:
         path = self._topic_path(topic_name)
         path.write_text(json.dumps(snapshot, sort_keys=True, indent=2), encoding="utf-8")
@@ -41,7 +43,10 @@ class FileTopicAdapter(BootstrapMirrorAdapter):
         if not path.exists():
             return None
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            from core.vool_memory import memory_payload_is_current
+
+            return payload if memory_payload_is_current(json.dumps(payload, ensure_ascii=False)) else None
         except Exception:
             return None
 
@@ -60,6 +65,7 @@ class HttpJsonMirrorAdapter(BootstrapMirrorAdapter):
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
 
+    @fenced_writer
     def publish_snapshot(self, topic_name: str, snapshot: dict[str, Any]) -> bool:
         url = f"{self.base_url}/publish/{urllib.parse.quote(topic_name)}"
         data = json.dumps(snapshot, sort_keys=True).encode("utf-8")
@@ -83,6 +89,9 @@ class HttpJsonMirrorAdapter(BootstrapMirrorAdapter):
                 if resp.status < 200 or resp.status >= 300:
                     return None
                 data = resp.read().decode("utf-8")
-                return json.loads(data)
+                payload = json.loads(data)
+                from core.vool_memory import memory_payload_is_current
+
+                return payload if memory_payload_is_current(json.dumps(payload, ensure_ascii=False)) else None
         except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError):
             return None

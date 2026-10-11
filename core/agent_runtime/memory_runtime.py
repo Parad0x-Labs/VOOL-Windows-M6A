@@ -20,7 +20,8 @@ def maybe_handle_memory_fast_path(
         source_context=source_context,
     )
     if handled:
-        return agent._fast_path_result(
+        response = _gate_memory_response(response, session_id, source_context)
+        result = agent._fast_path_result(
             session_id=session_id,
             user_input=user_input,
             response=response,
@@ -28,19 +29,47 @@ def maybe_handle_memory_fast_path(
             source_context=source_context,
             reason="memory_command",
         )
-    return agent._maybe_handle_companion_memory_fast_path(
+        from core.memory.command_result import ForgetOutcome
+
+        if isinstance(response, ForgetOutcome):
+            result["_memory_command_outcome"] = response
+        return result
+    result = agent._maybe_handle_companion_memory_fast_path(
         user_input,
         session_id=session_id,
         source_context=source_context,
     )
+    if isinstance(result, dict) and "response" in result:
+        return {**result, "response": _gate_memory_response(result["response"], session_id, source_context)}
+    return result
+
+
+def _gate_memory_response(response, session_id, source_context):
+    from core.memory.command_result import ForgetOutcome
+    from core.memory.revocation import authorize_payload
+
+    # The executor's control outcome must still block the turn when the memory
+    # authority is unavailable. It is not a served memory payload.
+    if isinstance(response, ForgetOutcome):
+        return response
+    if authorize_payload(response, session_id, (source_context or {}).get("runtime_home")):
+        return response
+    return "Memory is withheld because its erasure authority could not authorize this read."
 
 
 def model_final_response_text(model_execution: Any) -> str:
+    # Only this answer-bearing decision is read here; auxiliary decomposition verdicts do
+    # not enter this function or grant action authority.
+    if str(getattr(model_execution, "validation_state", "") or "").lower() == "contract_failed":
+        return ""
     final_text = str(getattr(model_execution, "output_text", "") or "").strip()
     if final_text:
         return final_text
     structured = getattr(model_execution, "structured_output", None)
     if isinstance(structured, dict):
+        if isinstance(structured.get("steps"), list) and isinstance(structured.get("summary"), str):
+            from core.model_output_contracts import _normalize_payload
+            return _normalize_payload("action_plan", structured).strip()
         return str(structured.get("summary") or structured.get("message") or "").strip()
     return ""
 
@@ -175,6 +204,11 @@ def chat_surface_honest_degraded_response(
         )
 
     if source == "no_provider_available":
+        from core.cloud_only_default import no_route_hint
+
+        hint = no_route_hint()
+        if hint:
+            return f"I couldn't get a live model response in this run: {hint}"
         return (
             "I couldn't get a live model response in this run, so I'm not going to recycle cached or remembered "
             "text as if it were fresh."

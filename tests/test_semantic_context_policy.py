@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 import core.context_retrieval as context_retrieval
@@ -11,6 +13,7 @@ from core.context_namespace import (
 )
 from core.memory.entries import resolve_memory_access_policy
 from storage.dialogue_memory import record_dialogue_turn
+from tests._real_revocation_backend import RealRevocationBackend
 
 
 class _Node:
@@ -23,7 +26,7 @@ class _Node:
         )
 
 
-class _Memory:
+class _Memory(RealRevocationBackend):
     def __init__(self, hits=None):
         self.hits = list(hits or [])
         self.search_sessions: list[str] = []
@@ -50,7 +53,10 @@ class _Memory:
         tags,
         context_description,
         embedding,
+        embedding_backend="",
         lineage_request_id="",
+        source_occurrence_id="",
+        importance=None,
     ):
         del keywords, embedding
         self.stored.append(str(content))
@@ -61,6 +67,29 @@ class _Memory:
                 "context_description": str(context_description),
             }
         )
+
+    def occurrence_store(
+        self,
+        *,
+        chat_scope,
+        role,
+        body,
+        authority,
+        **_kwargs,
+    ):
+        # Layer-1 retention seam (CONTRACT mr29/1): record what was said for
+        # both roles so store_turn's evidence duty is exercisable by this fake.
+        del chat_scope, authority
+        if not hasattr(self, "occurrences"):
+            self.occurrences = []
+        occurrence = SimpleNamespace(
+            occurrence_id=f"occ-{role}-{len(self.occurrences)}",
+            role=role,
+            body=str(body),
+            status="active",
+        )
+        self.occurrences.append(occurrence)
+        return occurrence
 
     def close(self):
         return None
@@ -284,7 +313,7 @@ def test_canonical_transcript_reads_only_the_persisted_policy_chat(
     monkeypatch.setattr(
         context_retrieval,
         "_open_memory",
-        lambda: None,
+        lambda: _Memory(),
     )
 
     transcript, source = canonical_runtime_transcript(

@@ -30,6 +30,7 @@ from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from core.memory.revocation import fenced_writer
 from storage.db import get_connection
 
 _log = logging.getLogger(__name__)
@@ -223,15 +224,25 @@ def lookup(name: str, key: str, *, now: datetime | None = None) -> tuple[Any, bo
             return None
         if row["expires_at"] and str(row["expires_at"]) <= stamp:
             return None
+        try:
+            result = json.loads(row["result_json"])
+            gate_payload = json.dumps(result, ensure_ascii=False)
+        except (TypeError, ValueError, RecursionError):
+            return None
+        from core.vool_memory import memory_payload_is_current
+
+        if not memory_payload_is_current(gate_payload):
+            return None
         conn.execute(
             "UPDATE tool_memo_cache SET hits = hits + 1 WHERE memo_key = ?", (key,)
         )
         conn.commit()
-        return json.loads(row["result_json"]), True
+        return result, True
     finally:
         conn.close()
 
 
+@fenced_writer(on_refused=None)
 def record(
     name: str,
     key: str,
