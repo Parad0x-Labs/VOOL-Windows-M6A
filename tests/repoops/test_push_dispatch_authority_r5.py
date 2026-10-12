@@ -56,11 +56,13 @@ def _drive(root: Path, forge, ctx: dict, *, notes: str | None, pull_request: str
     door("repo.inspect", {"repo_session_id": sid}, ctx)
     assert door("repo.bind", {"repo_session_id": sid}, ctx).ok
     red = door("repo.step", {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}}, ctx)
-    assert red.details.get("returncode") not in (None, 0, "0"), red.response_text or red.details
+    red_code = (red.details.get("tool_result") or {}).get("returncode")
+    assert red_code not in (None, 0, "0"), red.response_text or red.details
     door("repo.diagnose", {"repo_session_id": sid, "path": "calc.py", "reason": "add subtracts", "evidence_step_id": "red"}, ctx)
     door("repo.step", {"repo_session_id": sid, "step_id": "fix", "intent": "workspace.write_file", "arguments": {"path": "calc.py", "content": FIXED}}, ctx)
     green = door("repo.step", {"repo_session_id": sid, "step_id": "green", "intent": "workspace.run_tests", "arguments": {}}, ctx)
-    assert green.details.get("returncode") in (0, "0"), green.response_text or green.details
+    green_code = (green.details.get("tool_result") or {}).get("returncode")
+    assert green_code in (0, "0"), green.response_text or green.details
     door("repo.review", {"repo_session_id": sid, "verdict": "approve"}, ctx)
     door("repo.git", {"repo_session_id": sid, "operation": "commit", "message": "repair"}, ctx)
     planned = door("repo.push.request", {"repo_session_id": sid, "ref": ref}, ctx)
