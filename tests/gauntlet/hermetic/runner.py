@@ -33,11 +33,12 @@ DEFAULT_TIMEOUT_S = 120.0
 # on a shared box does not turn a measured ~55s child into a false infra failure, while a
 # genuine hang still dies at 240s and `_hang_forever` continues to pin the mechanism at 15s.
 #
-# `harness_control` joins it by the same rule: measured 149.9 s (rc 0, full evidence) once the
-# ambiguity probe's standing scripted verdict let every plain knowledge control turn run its
-# FULL answering path -- generation, composition, publication gates -- instead of the probe's
-# fast clarification short-circuit the original 120 s budget was calibrated for.
-GROUP_TIMEOUTS: dict[str, float] = {"g1_continuation": 240.0, "harness_control": 240.0}
+# `harness_control` joins it by the same rule: measured 188.8 s locally and over 240 s in the
+# authoritative four-shard CI run. The ambiguity probe's standing scripted verdict lets every
+# plain knowledge control turn run its FULL answering path -- generation, composition,
+# publication gates -- instead of the probe's fast clarification short-circuit. The 360 s budget
+# keeps that measured scenario bounded while allowing the observed shared-runner contention.
+GROUP_TIMEOUTS: dict[str, float] = {"g1_continuation": 240.0, "harness_control": 360.0}
 
 # Environment the child must NOT inherit from whoever invoked pytest, or the run stops being
 # deterministic and starts depending on the developer's shell.
