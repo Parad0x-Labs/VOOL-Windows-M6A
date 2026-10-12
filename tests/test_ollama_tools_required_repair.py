@@ -28,15 +28,18 @@ from adapters.openai_compatible_adapter import OpenAICompatibleAdapter
 from core import runtime_flags
 from core.cloud_tool_call_contract import MalformedToolArgumentsError, build_cloud_tool_definitions
 from core.normalized_provider_result import ProviderErrorClass, classify_error_class
+from tests._ollama_metadata_server import OllamaMetadataHandler
 
 
-class _FixtureHandler(http.server.BaseHTTPRequestHandler):
+class _FixtureHandler(OllamaMetadataHandler):
     body: bytes = b"{}"
 
     def log_message(self, fmt, *args):
         pass
 
     def do_POST(self):
+        if self.serve_model_metadata():
+            return
         length = int(self.headers.get("Content-Length", 0))
         self.rfile.read(length)
         cls = type(self)

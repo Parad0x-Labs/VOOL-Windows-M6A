@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 import core.cloud_escalation_policy as cep
+from tests.test_openai_compatible_adapter import local_metadata_for_payload_and_usage_tests
 
 
 @pytest.fixture(autouse=True)
@@ -420,23 +421,54 @@ def test_openrouter_attribution_headers_reach_the_outbound_request(monkeypatch):
     from adapters.openai_compatible_adapter import OpenAICompatibleAdapter
     from core.runtime_provider_defaults import _ensure_openrouter_byok_provider
 
-    monkeypatch.setattr("core.credential_store.has_credential", lambda name: False)
+    monkeypatch.setattr("core.credential_store.has_credential", lambda name: name == "llm.cloud.openrouter")
     reg = _FakeRegistry()
-    _ensure_openrouter_byok_provider(reg, env={"OPENROUTER_API_KEY": "sk-or-test"})
+    _ensure_openrouter_byok_provider(reg, env={})
     adapter = OpenAICompatibleAdapter(reg.registered[0])
 
     response = mock.Mock()
     response.raise_for_status.return_value = None
     response.json.return_value = {"choices": [{"message": {"content": "ok"}}], "usage": {}}
     req = ModelRequest(task_kind="chat", prompt="hi", messages=[{"role": "user", "content": "hi"}])
-    with mock.patch("adapters.openai_compatible_adapter.requests.post", return_value=response) as post:
+    with mock.patch("core.credential_store.get_credential", return_value="synthetic-attribution-key") as credential, mock.patch(
+        "adapters.openai_compatible_adapter.requests.post", return_value=response
+    ) as post:
         adapter.run_text_task(req)
 
+    credential.assert_called_once_with("llm.cloud.openrouter")
+    post.assert_called_once()
     sent = post.call_args.kwargs["headers"]
+    assert sent["Authorization"] == "Bearer synthetic-attribution-key"
     assert sent["HTTP-Referer"] == "https://vool.dev"
     assert sent["X-OpenRouter-Title"] == "VOOL"
     assert sent["X-OpenRouter-Categories"] == "personal-agent,programming-app"
     assert "openrouter.ai" in post.call_args.args[0]  # and it went to OpenRouter
+
+
+@pytest.mark.parametrize("unreadable", [False, True], ids=["missing", "unreadable"])
+def test_openrouter_attribution_never_bypasses_dispatch_credentials(monkeypatch, unreadable):
+    from unittest import mock
+
+    from adapters.base_adapter import ModelRequest
+    from adapters.openai_compatible_adapter import OpenAICompatibleAdapter, ProviderCredentialUnavailableError
+    from core.credential_store import CredentialReadError
+    from core.runtime_provider_defaults import _ensure_openrouter_byok_provider
+
+    # Registration saw a saved key; dispatch must fail closed if it has since disappeared
+    # or cannot be read. No real vault access or credential writes are needed.
+    monkeypatch.setattr("core.credential_store.has_credential", lambda name: name == "llm.cloud.openrouter")
+    reg = _FakeRegistry()
+    _ensure_openrouter_byok_provider(reg, env={})
+    adapter = OpenAICompatibleAdapter(reg.registered[0])
+    with mock.patch(
+        "core.credential_store.get_credential",
+        return_value=None,
+        side_effect=CredentialReadError("synthetic read failure") if unreadable else None,
+    ) as credential, mock.patch("adapters.openai_compatible_adapter.requests.post") as post:
+        with pytest.raises(ProviderCredentialUnavailableError):
+            adapter.run_text_task(ModelRequest(task_kind="chat", prompt="hi"))
+    credential.assert_called_once_with("llm.cloud.openrouter")
+    post.assert_not_called()
 
 
 def test_local_lane_never_carries_openrouter_attribution(monkeypatch):

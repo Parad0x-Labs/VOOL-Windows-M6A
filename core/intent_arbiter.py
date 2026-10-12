@@ -316,6 +316,9 @@ def arbitrate(
         # seam: entering the call is what counts, and a timeout below still counts.
         from core.turn_model_call_ledger import record_provider_call
 
+        # The one-use permit can still refuse here (revoked/released budget or changed payload).
+        # Such a refusal never enters transport and must not mint an invocation receipt.
+        authorized_payload = permit.consume()
         # Identity is known exactly here and is not a guess: this lane posts to `_ollama_chat_url()`, so
         # the provider is `ollama` and the lane is free-local whatever the router is doing elsewhere.
         call_id = record_provider_call(
@@ -323,10 +326,11 @@ def arbitrate(
             provider_id="ollama",
             model_id=str(model or ""),
             cost_class="free_local",
+            call_role="intent_arbiter",
         )
         response = requests.post(
             _ollama_chat_url(),
-            json=permit.consume(),
+            json=authorized_payload,
             timeout=(1.5, _TIMEOUT_S),
         )
         response.raise_for_status()

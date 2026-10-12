@@ -325,6 +325,7 @@ def record_provider_call_outcome(
                     call_id=call.call_id, request_id=str((source_context or {}).get("request_id") or ""),
                     requested_model=str((source_context or {}).get("requested_model") or call.model_id),
                     selected_model=call.model_id, provider_id=call.provider_id, outcome=outcome,
+                    call_role=call.call_role,
                 )
                 call.usage_details = dict(usage_details) if usage_details else None
                 call.outcome = outcome
@@ -349,7 +350,8 @@ def _emit_verification_receipt(source_context, call):
         emit_runtime_event(source_context, event_type="model_verification_receipt",
                            message="Model identity receipt: " + receipt["verification"]["status"],
                            details={"verification_receipt": receipt, "provider_id": call.provider_id,
-                                    "model_id": call.model_id, "model_call_id": call.model_call_id})
+                                    "model_id": call.model_id, "model_call_id": call.model_call_id,
+                                    "call_role": call.call_role})
     except Exception:
         pass
 
@@ -382,6 +384,7 @@ def fail_pending_provider_calls(
                     call_id=call.call_id, request_id=str((source_context or {}).get("request_id") or ""),
                     requested_model=str((source_context or {}).get("requested_model") or call.model_id),
                     selected_model=call.model_id, provider_id=call.provider_id, outcome="failed",
+                    call_role=call.call_role,
                 )
                 receipt_calls.append(call)
                 call.outcome = "failed"

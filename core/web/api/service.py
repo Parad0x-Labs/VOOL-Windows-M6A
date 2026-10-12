@@ -608,34 +608,37 @@ def runtime_version_response(text: str, runtime: RuntimeServices) -> dict[str, A
 def capability_snapshot_with_runtime(
     runtime: RuntimeServices,
     capability_snapshot_provider: Callable[[], dict[str, Any]],
+    *,
+    refresh_status: bool = True,
 ) -> dict[str, Any]:
-    refresh_local_status = runtime.local_model_status_refresh
-    if callable(refresh_local_status):
-        with contextlib.suppress(Exception):
-            refresh_local_status()
-    refresh_provider_decision = getattr(runtime, "provider_decision_refresh", None)
-    if callable(refresh_provider_decision):
-        with contextlib.suppress(Exception):
-            refresh_provider_decision()
-    else:
-        with contextlib.suppress(Exception):
-            from core.runtime_bootstrap import effective_runtime_provider_decision
+    if refresh_status:
+        refresh_local_status = runtime.local_model_status_refresh
+        if callable(refresh_local_status):
+            with contextlib.suppress(Exception):
+                refresh_local_status()
+        refresh_provider_decision = getattr(runtime, "provider_decision_refresh", None)
+        if callable(refresh_provider_decision):
+            with contextlib.suppress(Exception):
+                refresh_provider_decision()
+        else:
+            with contextlib.suppress(Exception):
+                from core.runtime_bootstrap import effective_runtime_provider_decision
 
-            stamp = runtime.runtime_version_stamp or {}
-            boot_decision = dict(
-                stamp.get("boot_provider_decision")
-                or stamp.get("provider_decision")
-                or {}
-            )
-            current_decision = effective_runtime_provider_decision(
-                boot_decision,
-                local_only=bool(runtime.local_only_mode),
-                local_model_setup=runtime.local_model_setup,
-                provider_capability_truth=runtime.provider_capability_truth,
-            )
-            stamp["boot_provider_decision"] = boot_decision
-            stamp["current_provider_decision"] = current_decision
-            stamp["provider_decision"] = current_decision
+                stamp = runtime.runtime_version_stamp or {}
+                boot_decision = dict(
+                    stamp.get("boot_provider_decision")
+                    or stamp.get("provider_decision")
+                    or {}
+                )
+                current_decision = effective_runtime_provider_decision(
+                    boot_decision,
+                    local_only=bool(runtime.local_only_mode),
+                    local_model_setup=runtime.local_model_setup,
+                    provider_capability_truth=runtime.provider_capability_truth,
+                )
+                stamp["boot_provider_decision"] = boot_decision
+                stamp["current_provider_decision"] = current_decision
+                stamp["provider_decision"] = current_decision
     payload = dict(capability_snapshot_provider() or {})
     stamp = runtime.runtime_version_stamp or {}
     boot_provider_decision = dict(
@@ -731,9 +734,12 @@ def _health_capability_snapshot(
     runtime: RuntimeServices,
     capability_snapshot_provider: Callable[[], dict[str, Any]],
 ) -> dict[str, Any]:
+    # Liveness reads the published status only. Refreshing model certification
+    # performs backend I/O and can exceed the supervisor's 1.5-second probe cap,
+    # causing it to terminate a healthy API during an active turn.
     if capability_snapshot_provider is runtime_capability_snapshot:
-        return capability_snapshot_with_runtime(runtime, lambda: {})
-    return capability_snapshot_with_runtime(runtime, capability_snapshot_provider)
+        return capability_snapshot_with_runtime(runtime, lambda: {}, refresh_status=False)
+    return capability_snapshot_with_runtime(runtime, capability_snapshot_provider, refresh_status=False)
 
 
 def _augment_history_from_session_log(
@@ -3114,11 +3120,28 @@ def dispatch_post(
         _raw_digest = "sha256:" + _hashlib.sha256(
             json.dumps(body, sort_keys=True, ensure_ascii=True, default=str).encode("utf-8")
         ).hexdigest()
+        # Freeze the same server-derived chat owner that execution will use.
+        # Stateless handles are random, so derive once and carry the result.
+        _chat_session_id = ""
+        if normalized_path in {"/api/chat", "/v1/chat/completions"}:
+            _chat_context = strip_reserved_trust_keys(_inbound_source_context(body))
+            _chat_surface = (
+                str(_chat_context.get("surface") or body.get("surface") or "api").strip()
+                or "api"
+            )
+            _chat_session_id = stable_openclaw_session_id_provider(
+                body=body,
+                history=normalize_chat_history_provider(list(body.get("messages", []) or [])),
+                headers=headers,
+                # Canonical handles may resume the desktop namespace only
+                # from the real local peer, never a remote/channel surface.
+                allow_canonical_resume=is_loopback_host(client_host) and _chat_surface != "channel",
+            )
         _accepted = accept_invocation(
             external_kind="http",
             external_value=_r2_request_id,
             principal=_principal,
-            session_binding="",
+            session_binding=_chat_session_id,
             privacy_local_only=True,
             raw_digest=_raw_digest,
         )
@@ -3214,7 +3237,7 @@ def dispatch_post(
             workspace_root_provider=workspace_root_provider,
             normalize_chat_history_provider=normalize_chat_history_provider,
             extract_user_message_provider=extract_user_message_provider,
-            stable_openclaw_session_id_provider=stable_openclaw_session_id_provider,
+            chat_session_id=_chat_session_id,
             run_agent_provider=run_agent_provider,
             stream_agent_with_events_provider=stream_agent_with_events_provider,
             resolve_null_domain_provider=resolve_null_domain_provider,
@@ -4075,7 +4098,7 @@ def _dispatch_post_inner(
     workspace_root_provider,
     normalize_chat_history_provider: Callable[[list[dict[str, Any]]], list[dict[str, str]]] = normalize_chat_history,
     extract_user_message_provider: Callable[[list[dict[str, Any]]], str] = extract_user_message,
-    stable_openclaw_session_id_provider: Callable[..., str] = stable_openclaw_session_id,
+    chat_session_id: str,
     run_agent_provider: Callable[..., dict[str, Any]] = run_agent,
     stream_agent_with_events_provider: Callable[..., Iterable[bytes]] = stream_agent_with_events,
     resolve_null_domain_provider: Callable[[str], Any] | None = None,
@@ -4626,10 +4649,18 @@ def _dispatch_post_inner(
                     "scope": str(body.get("scope") or "once"),
                 },
             )
-            if not isinstance(approval, dict) or _ra_status != 200:
-                return apply_runtime_headers(json_response(409, {"error": "approval is missing, stale, or already resolved"}), runtime)
-            if approval is None:
-                return apply_runtime_headers(json_response(409, {"error": "approval is missing, stale, or already resolved"}), runtime)
+            if (not isinstance(approval, dict) or _ra_status != 200
+                    or approval.get("status") not in {"approved", "denied"}):
+                from core.secret_redaction import redact_secrets
+
+                fault = approval.get("fault") if isinstance(approval, dict) else None
+                summary = approval.get("summary") if isinstance(approval, dict) else None
+                # The registry owns the failure. A reconciliation or fence failure is not
+                # a missing token, and malformed success data must never emit a denial.
+                return apply_runtime_headers(json_response(_ra_status if _ra_status != 200 else 500, {
+                    "error": redact_secrets(str(summary or "approval resolution failed")),
+                    "fault_code": str(fault.get("code") or "internal") if isinstance(fault, dict) else "internal",
+                }), runtime)
             allowed = str(approval.get("status") or "") == "approved"
             emit_runtime_event(
                 event_context,
@@ -7031,15 +7062,7 @@ def _dispatch_post_inner(
             is_loopback_host(client_host)
             and resolved_surface != "channel"
         )
-        session_id = stable_openclaw_session_id_provider(
-            body=body,
-            history=client_history,
-            headers=headers,
-            # Canonical chat ids are local resume handles. A remotely reachable
-            # API may create/reuse its own hashed id, but cannot select an
-            # existing desktop namespace by presenting a guessed canonical id.
-            allow_canonical_resume=owner_local,
-        )
+        session_id = chat_session_id
         history = _augment_history_from_session_log(
             client_history,
             session_id=session_id,

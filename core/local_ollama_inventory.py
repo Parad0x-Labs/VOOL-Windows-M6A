@@ -15,6 +15,23 @@ class InstalledOllamaModel:
     size_bytes: int = 0
 
 
+def ollama_reasoning_support(model_info: Any) -> str:
+    """Known weight-level modes from GGUF metadata, never from a mutable model tag.
+
+    Qwen3's 2507 Thinking and Instruct releases are single-mode models, unlike the
+    earlier hybrid release. Missing or unrecognised metadata stays unknown; a
+    template's think prefix is not proof that the weights support both modes.
+    """
+    if not isinstance(model_info, Mapping):
+        return "unknown"
+    architecture = str(model_info.get("general.architecture") or "").strip().lower()
+    version = str(model_info.get("general.version") or "").strip()
+    if architecture not in {"qwen3", "qwen3moe"} or version != "2507":
+        return "unknown"
+    finetune = str(model_info.get("general.finetune") or "").strip().lower()
+    return {"thinking": "thinking_only", "instruct": "non_thinking_only"}.get(finetune, "unknown")
+
+
 def env_flag_enabled(env: Mapping[str, str], name: str, *, default: bool = False) -> bool:
     raw = str(env.get(name) or "").strip().lower()
     if not raw:
@@ -185,4 +202,5 @@ __all__ = [
     "installed_ollama_model_names",
     "is_text_generation_ollama_model",
     "loaded_ollama_model_names",
+    "ollama_reasoning_support",
 ]

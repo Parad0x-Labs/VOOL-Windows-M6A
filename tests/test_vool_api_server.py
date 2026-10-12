@@ -1796,6 +1796,13 @@ class VoolAPIServerModelMetadataTests(unittest.TestCase):
         model_registry.startup_warnings.return_value = []
 
         with mock.patch.dict(os.environ, {"VOOL_OLLAMA_MODEL": "qwen3:8b"}, clear=False), mock.patch(
+            # This happy-path machine must not borrow live host RAM or disk pressure.
+            "core.system_resources.snapshot",
+            return_value=SimpleNamespace(available_ram_gb=32.0),
+        ), mock.patch(
+            "core.web.api.runtime.free_disk_gb_for_path",
+            return_value=128.0,
+        ), mock.patch(
             "core.web.api.runtime.bootstrap_runtime_mode",
             return_value=mock.Mock(backend_selection=mock.Mock(backend_name="mlx", device="mps")),
         ), mock.patch(
@@ -1865,7 +1872,9 @@ class VoolAPIServerModelMetadataTests(unittest.TestCase):
         self.assertIn("env", provider_kwargs)
         self.assertIn("runtime_home", provider_kwargs)
 
-    def test_bootstrap_runtime_services_uses_persisted_provider_env_selected_model(self) -> None:
+    @mock.patch("core.system_resources.snapshot", return_value=SimpleNamespace(available_ram_gb=32.0))
+    @mock.patch("core.web.api.runtime.free_disk_gb_for_path", return_value=128.0)
+    def test_bootstrap_runtime_services_uses_persisted_provider_env_selected_model(self, _disk, _resources) -> None:
         persona = mock.Mock(persona_id="default")
         agent = mock.Mock()
         daemon = mock.Mock(config=mock.Mock(bind_port=49152))
@@ -1968,6 +1977,8 @@ class VoolAPIServerModelMetadataTests(unittest.TestCase):
 
         with contextlib.ExitStack() as stack:
             stack.enter_context(mock.patch.dict(os.environ, {"VOOL_OLLAMA_MODEL": ""}, clear=False))
+            stack.enter_context(mock.patch("core.system_resources.snapshot", return_value=SimpleNamespace(available_ram_gb=32.0)))
+            stack.enter_context(mock.patch("core.web.api.runtime.free_disk_gb_for_path", return_value=128.0))
             stack.enter_context(
                 mock.patch(
                     "core.web.api.runtime.bootstrap_runtime_mode",

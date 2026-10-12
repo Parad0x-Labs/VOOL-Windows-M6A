@@ -1893,7 +1893,7 @@ def demand_records(
         refusal = refusal_by_index.get(index)
         if outcome is None and refusal is not None:
             attempted, state = True, DEMAND_REFUSED
-        elif outcome is None:
+        elif outcome is None or str(getattr(outcome, "outcome_kind", "") or "") == "not_attempted":
             attempted, state = False, DEMAND_NOT_ATTEMPTED
         elif str(getattr(outcome, "outcome_kind", "") or "") == "refused":
             attempted, state = True, DEMAND_REFUSED

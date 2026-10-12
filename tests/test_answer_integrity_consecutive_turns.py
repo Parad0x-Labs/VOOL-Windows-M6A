@@ -423,6 +423,10 @@ class _RecordingProvider:
                 self.wfile.write(body)
 
             def do_GET(self) -> None:
+                if self.path == "/api/tags":
+                    return self._send({"models": [{"name": "stub-chat:2b", "digest": "sha256:stub"}]})
+                if self.path == "/api/version":
+                    return self._send({"version": "0.0.0-stub"})
                 return self._send({"ok": True})
 
             def do_POST(self) -> None:
@@ -434,6 +438,10 @@ class _RecordingProvider:
                     body = json.loads(raw.decode("utf-8"))
                 except Exception:
                     body = {}
+                if self.path == "/api/show":
+                    if body.get("model") != "stub-chat:2b":
+                        return self._send({"error": "unknown fixture model"}, 404)
+                    return self._send({"model_info": {"general.architecture": "synthetic-legacy"}})
                 with rig._lock:
                     rig.calls.append(body)
                 messages = [m for m in (body.get("messages") or []) if isinstance(m, dict)]

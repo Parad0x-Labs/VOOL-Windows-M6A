@@ -24845,5 +24845,5 @@
   ],
   "schema": "vool.windows_authority_audit.v1",
   "scope": "Current Windows source; static discovery and command census, not installed-artifact evidence.",
-  "source_fingerprint": "57d152263971dfb36d865abdb7652853569ed983a0cc4200011e9ace09012253"
+  "source_fingerprint": "982d1c456d6f3308c16db6cca1fdd90377c3d3fe424116715343d8923550226a"
 }

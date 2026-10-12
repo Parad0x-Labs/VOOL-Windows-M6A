@@ -2603,6 +2603,7 @@ class MemoryFirstRouter:
                     requested_model=str((source_context or {}).get("requested_model") or manifest.model_name),
                     selected_model=manifest.model_name, provider_id=manifest.provider_id,
                     response=response, outcome=outcome,
+                    call_role=str((source_context or {}).get("model_call_role") or ""),
                 )
 
             def _call_adapter_task(method_name: str, task_request: ModelRequest) -> ModelResponse:

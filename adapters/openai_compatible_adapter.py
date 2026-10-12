@@ -146,6 +146,24 @@ class ProviderCredentialUnavailableError(RuntimeError):
     code = "provider_credential_unavailable"
 
 
+class UnsupportedLocalReasoningPolicyError(RuntimeError):
+    """Measured local weights cannot honour the selected reasoning mode."""
+
+    code = "unsupported_reasoning_policy"
+
+
+class LocalModelMetadataUnavailableError(RuntimeError):
+    """Current loopback model metadata could not be measured before serving."""
+
+    code = "local_model_metadata_unavailable"
+
+
+class LocalModelIdentityChangedError(RuntimeError):
+    """The local model tag no longer identifies the selected manifest's weights."""
+
+    code = "local_model_identity_changed"
+
+
 def _credential_unavailable(credential_key: str, state: str, cause: str = "") -> ProviderCredentialUnavailableError:
     detail = f" ({cause})" if cause else ""
     return ProviderCredentialUnavailableError(
@@ -233,18 +251,24 @@ class OpenAICompatibleAdapter(ModelAdapter):
                 "strategy": strategy,
             }
 
-        endpoint, payload = self._ollama_prewarm_request(
-            base_url=base_url,
-            strategy=strategy,
-            prewarm_config=prewarm_config,
-        )
-
         timeout_seconds = float(
             prewarm_config.get("timeout_seconds")
             or self.manifest.runtime_config.get("health_timeout_seconds")
             or 15.0
         )
         try:
+            from core import runtime_active_clock
+            from core.provider_call_deadline import PROVIDER_DEADLINE_KEY, effective_timeout_seconds
+
+            prewarm_request = ModelRequest(
+                task_kind="prewarm", prompt="",
+                metadata={PROVIDER_DEADLINE_KEY: runtime_active_clock.monotonic() + timeout_seconds},
+            )
+            self._prepare_ollama_reasoning(prewarm_request)
+            endpoint, payload = self._ollama_prewarm_request(
+                base_url=base_url, strategy=strategy, prewarm_config=prewarm_config,
+            )
+            generation_timeout_seconds = effective_timeout_seconds(prewarm_request, timeout_seconds)
             headers = self._headers()
             permit = seal_direct_provider_invocation(
                 provider_id=self.manifest.provider_id,
@@ -260,7 +284,7 @@ class OpenAICompatibleAdapter(ModelAdapter):
                 endpoint,
                 json=permit.consume(),
                 headers=headers,
-                timeout=timeout_seconds,
+                timeout=generation_timeout_seconds,
             )
             response.raise_for_status()
             data = response.json()
@@ -370,6 +394,7 @@ class OpenAICompatibleAdapter(ModelAdapter):
 
     def stream_text_task(self, request: ModelRequest):
         self._assert_local_only_allows(request)
+        self._prepare_ollama_reasoning(request)
         if self._uses_native_ollama_chat():
             return self._stream_ollama_chat(request)
         return self._stream_openai_compatible(request)
@@ -380,6 +405,7 @@ class OpenAICompatibleAdapter(ModelAdapter):
 
     def _invoke_http(self, request: ModelRequest, *, force_json: bool) -> ModelResponse:
         self._assert_local_only_allows(request)
+        self._prepare_ollama_reasoning(request)
         if self._uses_native_ollama_chat():
             return self._invoke_ollama_chat(request, force_json=force_json)
         return self._invoke_openai_compatible(request, force_json=force_json)
@@ -1012,6 +1038,8 @@ class OpenAICompatibleAdapter(ModelAdapter):
             if generation_profile.get("max_output_tokens") is not None
             else 0
         )
+        ollama_reasoning = self._ollama_openai_reasoning_options(max_output_tokens, request=request)
+        max_output_tokens = int(ollama_reasoning.get("max_tokens", max_output_tokens))
         messages = _request_messages_with_memory(
             request,
             context_window=context_window,
@@ -1051,6 +1079,7 @@ class OpenAICompatibleAdapter(ModelAdapter):
         max_output_tokens = self._cloud_tool_output_budget(request, max_output_tokens)
         if max_output_tokens > 0:
             payload["max_tokens"] = max_output_tokens
+        payload.update(ollama_reasoning)
         # The cloud twin of the `think: false` stamp (c556820), now driven by the request's typed
         # `reasoning_mode` rather than a task name. Measured 2026-08-01 on the stepped audit's
         # bounded nominate call: `nemotron-3-ultra-550b-a55b:free` spent EXACTLY its whole widened
@@ -1230,6 +1259,25 @@ class OpenAICompatibleAdapter(ModelAdapter):
     def _runtime_family(self) -> str:
         return str(self.manifest.metadata.get("runtime_family") or "").strip().lower()
 
+    def _ollama_openai_reasoning_options(
+        self, requested: int, *, request: ModelRequest | None = None
+    ) -> dict[str, Any]:
+        """Project the same saved/typed thinking policy onto Ollama's OpenAI door."""
+        if self._runtime_family() != "ollama" or self._uses_native_ollama_chat():
+            return {}
+        thinking = self._ollama_think_flag(request)
+        if not self._is_thinking_capable_model():
+            return {}
+        options: dict[str, Any] = {"reasoning_effort": "high" if thinking else "none"}
+        if requested > 0:
+            options["max_tokens"] = (
+                self._thinking_aware_output_budget(
+                    requested, context_window=self._ollama_context_window(request), request=request
+                )
+                if thinking else requested
+            )
+        return options
+
     def _ollama_runner_options(self, request: ModelRequest | None = None) -> dict[str, Any]:
         """The option keys that decide WHICH runner Ollama serves this model on.
 
@@ -1287,22 +1335,48 @@ class OpenAICompatibleAdapter(ModelAdapter):
         Non-thinking models must omit the key entirely: qwen2.5:7b answers HTTP 400 when it is
         present at all.
         """
-        if self._is_thinking_capable_model():
-            from core.model_request_policy import REASONING_REQUIRED, request_reasoning_mode
+        from core.model_request_policy import REASONING_REQUIRED, request_reasoning_mode
 
-            reasoning_mode = request_reasoning_mode(request)
-            if _reasoning_disabled(request):
-                return False
+        reasoning_mode = request_reasoning_mode(request)
+        support = self._measured_ollama_reasoning_support()
+        if support == "non_thinking_only":
             if reasoning_mode == REASONING_REQUIRED:
-                return True
-            configured = self.manifest.runtime_config.get("think")
-            if configured is not None:
-                return bool(configured)
-            from core.reasoning_mode import deep_reasoning_enabled
+                raise UnsupportedLocalReasoningPolicyError(
+                    f"{self.manifest.model_name} has non-thinking-only weights; required reasoning is unsupported."
+                )
+            return None
+        if self._is_thinking_capable_model():
+            if _reasoning_disabled(request):
+                thinking = False
+            elif reasoning_mode == REASONING_REQUIRED:
+                thinking = True
+            else:
+                configured = self.manifest.runtime_config.get("think")
+                if configured is not None:
+                    thinking = bool(configured)
+                else:
+                    from core.reasoning_mode import deep_reasoning_enabled
 
-            return deep_reasoning_enabled()
+                    thinking = deep_reasoning_enabled()
+            if support == "thinking_only" and not thinking:
+                raise UnsupportedLocalReasoningPolicyError(
+                    f"{self.manifest.model_name} has thinking-only weights; thinking cannot be disabled. "
+                    "Choose a separately identified non-thinking model for this mode."
+                )
+            return thinking
         configured = self.manifest.runtime_config.get("think")
         return bool(configured) if configured is not None else None
+
+    def _measured_ollama_reasoning_support(self) -> str:
+        # Adapter-local evidence from the explicit metadata read, not a persisted tag guess.
+        # A renamed model or changed endpoint must not inherit another model's observation.
+        binding = (
+            self.manifest.model_name, str(self.manifest.runtime_config.get("base_url") or ""),
+            _manifest_model_digest(self.manifest),
+        )
+        if self._runtime_family() != "ollama" or getattr(self, "_ollama_reasoning_binding", None) != binding:
+            return "unknown"
+        return getattr(self, "_ollama_reasoning_support", "unknown")
 
     def _is_thinking_capable_model(self) -> bool:
         """Models that emit reasoning before the answer, and so need budget for both.
@@ -1322,6 +1396,9 @@ class OpenAICompatibleAdapter(ModelAdapter):
 
         from core.output_budget_policy import manifest_declares_reasoning
 
+        support = self._measured_ollama_reasoning_support()
+        if support != "unknown":
+            return support == "thinking_only"
         return manifest_declares_reasoning(self.manifest)
 
     def _declares_reasoning_support(self) -> bool:
@@ -1677,8 +1754,43 @@ class OpenAICompatibleAdapter(ModelAdapter):
         boundary. Failure is represented as ``unknown`` rather than guessed identity.
         """
 
+        return self._read_ollama_runtime_identity()
+
+    def _prepare_ollama_reasoning(self, request: ModelRequest) -> None:
+        # Payload construction remains pure. Every public serving entrypoint measures current
+        # local weights first; neither a previous certification nor an alias is a capability.
+        if self._runtime_family() != "ollama":
+            return
+        base_url = str(self.manifest.runtime_config.get("base_url") or "")
+        if not _strict_tool_certification_loopback(base_url):
+            return  # Do not introduce metadata requests to remote/provider-authenticated lanes.
+        self._read_ollama_runtime_identity(request=request)
+        binding = (
+            self.manifest.model_name, str(self.manifest.runtime_config.get("base_url") or ""),
+            _manifest_model_digest(self.manifest),
+        )
+        if self._ollama_reasoning_binding != binding:
+            self._ollama_reasoning_support = "unknown"
+            raise LocalModelIdentityChangedError("Local model binding changed during metadata discovery.")
+        self._ollama_think_flag(request)  # Refuse unsupported policy before admission/generation.
+
+    def _read_ollama_runtime_identity(self, *, request: ModelRequest | None = None) -> dict[str, str]:
+        from core.provider_call_deadline import ProviderCallDeadlineExceededError, effective_timeout_seconds
+
+        def timeout(seconds: float) -> tuple[float, float]:
+            if request is not None and request.is_cancelled():
+                raise RuntimeError("model_call_cancelled")
+            # Metadata shares the turn's absolute deadline; retry overrides must not widen it.
+            return _request_timeout(min(seconds, effective_timeout_seconds(request, seconds)))
+
+        # Refreshes invalidate previous observations even if the new read fails.
+        self._ollama_reasoning_support = "unknown"
+        self._ollama_reasoning_binding = (
+            self.manifest.model_name, str(self.manifest.runtime_config.get("base_url") or ""),
+            _manifest_model_digest(self.manifest),
+        )
         identity = {
-            "backend_version": self.tool_certification_backend_version(),
+            "backend_version": self.tool_certification_backend_version() if request is None else "unknown",
             "model_digest": str(
                 self.manifest.metadata.get("model_digest")
                 or self.manifest.metadata.get("digest")
@@ -1700,12 +1812,21 @@ class OpenAICompatibleAdapter(ModelAdapter):
         base_url = str(self.manifest.runtime_config.get("base_url") or "").strip().rstrip("/")
         if not _strict_tool_certification_loopback(base_url) or self._runtime_family() != "ollama":
             return identity
+        identity["reasoning_support"] = "unknown"
+        configured = self.manifest.runtime_config.get("think")
+        if configured is None:
+            from core.reasoning_mode import deep_reasoning_enabled
+
+            configured = deep_reasoning_enabled()
+        identity["thinking_policy"] = "enabled" if configured else "disabled"
         native_base = _native_ollama_base_url(base_url)
+        observed_digest = ""
         try:
+            read_timeout = timeout(5.0)
             tags_response = requests.get(
                 f"{native_base}/api/tags",
                 headers=self._headers(),
-                timeout=_request_timeout(5.0),
+                timeout=read_timeout,
             )
             if tags_response.ok:
                 models = list(dict(tags_response.json() or {}).get("models") or [])
@@ -1715,23 +1836,61 @@ class OpenAICompatibleAdapter(ModelAdapter):
                     names = {str(row.get("name") or ""), str(row.get("model") or "")}
                     if self.manifest.model_name not in names:
                         continue
+                    observed_digest = str(row.get("digest") or "").strip()
                     identity["model_digest"] = str(row.get("digest") or identity["model_digest"])
                     details = dict(row.get("details") or {})
                     identity["quantization"] = str(
                         details.get("quantization_level") or identity["quantization"]
                     )
                     break
+            if request is not None:
+                if not observed_digest or observed_digest.lower() in {"unknown", "none", "null"}:
+                    raise LocalModelMetadataUnavailableError("No current digest for the selected local model.")
+                expected_digest = _manifest_model_digest(self.manifest)
+                if expected_digest and observed_digest != expected_digest:
+                    raise LocalModelIdentityChangedError("Local model digest differs from the selected manifest.")
+        except (ProviderCallDeadlineExceededError, LocalModelIdentityChangedError):
+            raise
         except Exception:
-            pass
+            if request is not None:
+                timeout(0.001)  # Cancellation/deadline expiry retains its existing typed outcome.
+                raise LocalModelMetadataUnavailableError("local_model_metadata_unavailable: digest read failed") from None
         try:
+            read_timeout = timeout(8.0)
             show_response = requests.post(
                 f"{native_base}/api/show",
                 json={"model": self.manifest.model_name},
                 headers=self._headers(),
-                timeout=_request_timeout(8.0),
+                timeout=read_timeout,
             )
+            if not show_response.ok and request is not None:
+                raise LocalModelMetadataUnavailableError("Local model metadata read was refused.")
             if show_response.ok:
                 show = dict(show_response.json() or {})
+                from core.local_ollama_inventory import ollama_reasoning_support
+
+                support = ollama_reasoning_support(show.get("model_info"))
+                if request is not None:
+                    if not isinstance(show.get("model_info"), dict) or not show["model_info"]:
+                        raise LocalModelMetadataUnavailableError("Local model metadata is missing.")
+                    # A tag can be replaced while /show is in flight. Never bind the old digest
+                    # to a new variant's policy; sample it again before accepting the observation.
+                    read_timeout = timeout(5.0)
+                    current = requests.get(
+                        f"{native_base}/api/tags", headers=self._headers(), timeout=read_timeout,
+                    )
+                    if not current.ok:
+                        raise LocalModelMetadataUnavailableError("Local model digest recheck failed.")
+                    rows = dict(current.json() or {}).get("models") or []
+                    digests = {
+                        str(row.get("digest") or "").strip() for row in rows if isinstance(row, dict)
+                        and self.manifest.model_name in {row.get("name"), row.get("model")}
+                    }
+                    if digests != {observed_digest}:
+                        raise LocalModelIdentityChangedError("Local model digest changed during metadata discovery.")
+                    timeout(0.001)
+                self._ollama_reasoning_support = support
+                identity["reasoning_support"] = support
                 template = str(show.get("template") or "")
                 if template:
                     identity["template_hash"] = hashlib.sha256(template.encode()).hexdigest()
@@ -1739,8 +1898,14 @@ class OpenAICompatibleAdapter(ModelAdapter):
                 identity["quantization"] = str(
                     details.get("quantization_level") or identity["quantization"]
                 )
+        except (ProviderCallDeadlineExceededError, LocalModelIdentityChangedError):
+            self._ollama_reasoning_support = "unknown"
+            raise
         except Exception:
-            pass
+            self._ollama_reasoning_support = "unknown"
+            if request is not None:
+                timeout(0.001)
+                raise LocalModelMetadataUnavailableError("local_model_metadata_unavailable: weight metadata read failed") from None
         return identity
 
     def tool_certification_exchange(
@@ -1817,6 +1982,7 @@ class OpenAICompatibleAdapter(ModelAdapter):
                 "temperature": 0,
                 "max_tokens": max_tokens,
             }
+            payload.update(self._ollama_openai_reasoning_options(max_tokens))
             if tools:
                 payload["tools"] = [openai_tool_payload(tool) for tool in tools]
                 if tool_choice:
@@ -1827,7 +1993,9 @@ class OpenAICompatibleAdapter(ModelAdapter):
             operation="local_tool_certification",
             payload=payload,
             request_id=f"tool-certification-{os.urandom(8).hex()}",
-            max_output_tokens=max_tokens,
+            max_output_tokens=int(
+                payload.get("max_tokens") or dict(payload.get("options") or {}).get("num_predict") or max_tokens
+            ),
             header_names=tuple(headers),
         )
         started = time.perf_counter()
@@ -1847,6 +2015,10 @@ class OpenAICompatibleAdapter(ModelAdapter):
             "body": body if isinstance(body, dict) else {"error": "non_object_response"},
             "latency_ms": latency_ms,
             "dialect": dialect,
+            "effective_max_output_tokens": int(
+                payload.get("max_tokens") or dict(payload.get("options") or {}).get("num_predict") or max_tokens
+            ),
+            "reasoning_effort": str(payload.get("reasoning_effort") or ""),
         }
 
     def _native_tools(self, request: ModelRequest) -> tuple[CloudToolDefinition, ...]:

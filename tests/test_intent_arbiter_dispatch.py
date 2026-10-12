@@ -69,7 +69,11 @@ def test_ambiguous_pick_executes_the_real_tool_and_logs() -> None:
         result = _gate(AMBIGUOUS_MSG)
     assert result == wrapped
     tool.assert_called_once_with(
-        "machine.find_folder", {"name": "token hunter"}, source_context={}, trusted_local_only=False
+        "machine.find_folder", {"name": "token hunter"},
+        source_context={"_blackbox_permission": {
+            "effect": "allow", "mode": "manual", "actions": ["list_directories"],
+            "reason": "Manual mode allows this bounded action.", "route": "authorized_execution_boundary",
+        }}, trusted_local_only=False
     )
     rows = rdl.recent_decisions()
     assert rows and rows[-1]["family"] == "intent_arbiter"

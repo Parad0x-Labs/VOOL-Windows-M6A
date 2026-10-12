@@ -2990,6 +2990,21 @@ def register_external_approval(request: dict[str, Any]) -> str:
 
 
 def resolve_approval(token: str, *, decision: str, scope: str = "once") -> dict[str, Any] | None:
+    resolved = _resolve_approval_decision(token, decision=decision, scope=scope)
+    # A denied grant remains denied even if bookkeeping fails. A repeated Deny may
+    # finish that bookkeeping, but retains the existing stale-decision response.
+    denied = resolved
+    if denied is None and str(decision or "").strip().lower() == "deny":
+        with _LOCK:
+            denied = dict(_APPROVALS.get(str(token or "").strip()) or {})
+    if denied and denied.get("status") == "denied":
+        from core.runtime_continuity import reconcile_denied_approval
+
+        reconcile_denied_approval(denied)
+    return resolved
+
+
+def _resolve_approval_decision(token: str, *, decision: str, scope: str = "once") -> dict[str, Any] | None:
     _ensure_approvals_restored()
     clean_token = str(token or "").strip()
     normalized = str(decision or "").strip().lower()
@@ -3189,6 +3204,22 @@ def _new_approval_request(
             "remaining_batch": (),
             "status": "pending",
         }
+        # Capture only the turn door's bound identity, never a caller-supplied
+        # source_context or the newer request handling the operator's click.
+        from core.semantic.semantic_admissions import current_execution_identity, current_request_id
+
+        identity = current_execution_identity()
+        if identity and current_request_id():
+            from core.conductor import obligation_ledger
+
+            _APPROVALS[token]["runtime_binding"] = {
+                "request_id": current_request_id(),
+                "attempt_id": str(identity.get("attempt_id") or ""),
+                "execution_id": str(identity.get("execution_id") or ""),
+                "generation": int(identity.get("generation") or 0),
+                "runtime_epoch": str(identity.get("runtime_epoch") or ""),
+                "obligation_set": obligation_ledger.active_set(),
+            }
         # Mirror the pending prompt durably so a restart cannot silently erase it.
         _persist_pending_approvals_locked()
     _record_approval_event(

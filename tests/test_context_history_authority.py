@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -864,7 +865,17 @@ def _api_to_internal_request(current: str):
 )
 def test_api_normalization_to_provider_boundary_keeps_one_current_turn_and_adjacency(
     current: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Compare equivalent inputs: these two independent builds must not straddle a minute.
+    fixed_time = datetime(2030, 1, 2, 12, 34).astimezone()
+
+    class FixedClock:
+        @staticmethod
+        def now() -> datetime:
+            return fixed_time
+
+    monkeypatch.setattr("core.prompt_normalizer.datetime", FixedClock)
     internal, provider_request, interpretation = _api_to_internal_request(current)
     internal_messages = internal.as_openai_messages()
 

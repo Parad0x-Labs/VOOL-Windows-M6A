@@ -50,6 +50,7 @@ class _Memory:
         tags,
         context_description,
         embedding,
+        lineage_request_id=None,
     ):
         del keywords, embedding
         self.stored.append(str(content))
@@ -58,6 +59,7 @@ class _Memory:
                 "content": str(content),
                 "tags": list(tags),
                 "context_description": str(context_description),
+                "lineage_request_id": lineage_request_id,
             }
         )
 
@@ -204,7 +206,7 @@ def test_store_turn_reloads_active_policy_and_persists_its_project(
         lambda _text: [0.1, 0.2],
     )
 
-    context_retrieval.store_turn(
+    result = context_retrieval.store_turn(
         chat_id,
         "Please remember active marker ACTIVE-5834 for later.",
         "Noted.",
@@ -216,6 +218,7 @@ def test_store_turn_reloads_active_policy_and_persists_its_project(
         },
     )
 
+    assert result == {"status": "stored", "stored_count": 1, "reason": "eligible_user_content"}
     assert memory.stored == [
         "Please remember active marker ACTIVE-5834 for later."
     ]

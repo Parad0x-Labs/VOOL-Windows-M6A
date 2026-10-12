@@ -30,6 +30,7 @@ dependencies = [
     "pynacl>=1.5",
     "keyring>=24.0",  # OS-keystore key protection (Windows DPAPI / macOS Keychain / Linux Secret Service)
     "psutil>=5.9",
+    "tzdata==2026.5",  # Windows has no system IANA timezone database for clocks/reminders.
     "pyyaml>=6.0",
     "pypdf==6.19.0",  # Confined PDF text fallback; keep installer/bundle projections in sync.
     "reportlab==5.0.1",

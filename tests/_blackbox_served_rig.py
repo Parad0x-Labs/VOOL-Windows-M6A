@@ -351,8 +351,7 @@ def run_in_home(home: Path, script: str, *, env_extra: dict[str, str] | None = N
 
 
 SEED_MANIFEST = '''
-import sys
-sys.path.insert(0, "{root}")
+# run_in_home supplies this checkout through PYTHONPATH, not Python source literals.
 from storage.db import get_connection
 from storage.migrations import run_migrations
 from storage.model_provider_manifest import ModelProviderManifest, list_provider_manifests, upsert_provider_manifest

@@ -534,6 +534,8 @@ def _certify_entrance_turn(
     result = (outcome or {}).get("result") if isinstance(outcome, dict) else None
     if not isinstance(result, dict):
         return
+    if result.get("task_outcome") == "pending_approval":
+        return  # A resumable permission pause cannot occupy immutable answer finality.
     if isinstance(result.get("vool_response_commit"), dict):
         return
     # Certify only a result a LANE actually served. A served answer names how it was produced —
@@ -2982,6 +2984,7 @@ class VoolAgent(
                 # model produced read timeouts (measured 2026-08-05, see
                 # `_maybe_answer_planned_turn`).
                 max_workers=1,
+                stop_on_approval=True,
             )
         except Exception:
             # A pool-level fault after units began dispatching is terminal, not a
@@ -3045,6 +3048,36 @@ class VoolAgent(
             self._record_demand_discharge(source_context, _demand_ledger, outcomes)
         except Exception:
             pass
+
+        pending = next((outcome for outcome in outcomes if outcome.needs_approval), None)
+        if pending is not None:
+            # Children suppress live events and durable conversation writes. The parent owns
+            # the approval card and checkpoint; keep the original payload, not a merged failure.
+            pending_result = dict(pending.pending_result or {})
+            details = dict(pending_result.get("details") or {})
+            pending_context = {**dict(source_context or {}), "persist_memory": False}
+            approval_request = dict(details.get("approval_request") or {})
+            if approval_request:
+                self._emit_runtime_event(
+                    pending_context, event_type="tool_preview",
+                    message=pending.pending_message or "Waiting for approval for the proposed action.",
+                    tool_name=str(pending_result.get("tool_name") or ""),
+                    status="pending_approval", approval_request=approval_request,
+                )
+            from core.turn_contract import TURN_REQUEST_KEY
+
+            parent_request = pending_context.get(TURN_REQUEST_KEY)
+            result = self._action_fast_path_result(
+                task_id=str(getattr(parent_request, "turn_id", "") or pending_result.get("task_id") or ""),
+                session_id=session_id, user_input=effective_input,
+                response=pending.pending_message or "Waiting for approval for the proposed action.",
+                confidence=0.95, source_context=pending_context,
+                reason="demand_owned_mixed_turn_pending_approval", success=False,
+                details=details, mode_override="tool_preview", task_outcome="pending_approval",
+            )
+            result["task_outcome"] = "pending_approval"
+            result["tool_name"] = str(pending_result.get("tool_name") or "")
+            return result
 
         # P0 MIXED-DEMAND TERMINAL CLOSURE — the authorship publication gate
         # reads this turn's record, and everything on it predates the first

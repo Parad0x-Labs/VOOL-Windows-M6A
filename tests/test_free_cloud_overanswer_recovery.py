@@ -222,8 +222,34 @@ def test_explicit_long_detailed_output_is_preserved_without_retry_or_trimming() 
     assert response.output_text == long_answer
 
 
-def test_openrouter_wire_preserves_complete_answer_and_original_request() -> None:
+@pytest.mark.parametrize("catalog_state,expected", [
+    ("absent", 760 + 2048),
+    ("free", 1800 + 2048),
+])
+def test_openrouter_wire_preserves_complete_answer_and_original_request(monkeypatch, catalog_state, expected) -> None:
+    from copy import deepcopy
+
+    from core.model_selection_policy import is_verified_free_cloud_manifest
+    from core.openrouter_catalog import OpenRouterModel
+    from core.output_budget_policy import lane_resolved_output_tokens
+    from core.provider_invocation_gateway import load_provider_manifest
+
     manifest = _manifest()
+    row = OpenRouterModel(
+        model_id=LIGHTNING, name=LIGHTNING, context_length=131072,
+        prompt_usd_per_token=0.0,
+        completion_usd_per_token=0.0,
+        request_usd=0.0, supported_parameters=("reasoning", "tools"),
+        input_modalities=("text",), output_modalities=("text",),
+        fetched_at="2026-10-09T09:00:48+00:00", max_output_tokens=16384,
+    )
+    monkeypatch.setattr("core.openrouter_catalog.cached_catalog_row", lambda model_id: row if catalog_state != "absent" else None)
+    monkeypatch.setattr("core.openrouter_catalog.safe_all_models", lambda allow_network=True: ((row,) if catalog_state != "absent" else (), 0.0))
+    assert is_verified_free_cloud_manifest(manifest) is (catalog_state == "free")
+    request = _request()
+    original_messages = deepcopy(request.messages)
+    assert lane_resolved_output_tokens(manifest, base_tokens=440) == expected
+    context = {}
     adapter = OpenAICompatibleAdapter(manifest)
     long_http = mock.Mock()
     long_http.raise_for_status.return_value = None
@@ -251,8 +277,10 @@ def test_openrouter_wire_preserves_complete_answer_and_original_request() -> Non
     with (
         mock.patch("core.memory_first_router.should_probe_health", return_value=False),
         mock.patch("core.memory_first_router.circuit_is_open", return_value=False),
+        # This response-control test starts after paid admission, as in _invoke above.
+        # The real adapter still resolves its budget from the declared lane and catalog.
         mock.patch("core.memory_first_router.provider_cost_class", return_value="free_local"),
-        mock.patch("core.memory_first_router.reported_cost_class", return_value="free_cloud"),
+        mock.patch("core.memory_first_router.reported_cost_class", return_value="free_cloud" if catalog_state == "free" else "paid_cloud"),
         mock.patch(
             "adapters.openai_compatible_adapter.requests.post",
             side_effect=[long_http, repaired_http],
@@ -260,15 +288,22 @@ def test_openrouter_wire_preserves_complete_answer_and_original_request() -> Non
     ):
         _, response, error = router._invoke_manifest(
             manifest=manifest,
-            request=_request(),
+            request=request,
             output_mode="plain_text",
             task=SimpleNamespace(task_id="lightning-wire-reproduction"),
-            source_context={},
+            source_context=context,
         )
     assert error is None and response is not None
     assert post.call_count == 1
     assert [call.kwargs["json"]["model"] for call in post.call_args_list] == [LIGHTNING]
-    assert [call.kwargs["json"]["max_tokens"] for call in post.call_args_list] == [2488]
+    assert [call.kwargs["json"]["max_tokens"] for call in post.call_args_list] == [expected]
+    assert response.effective_max_output_tokens == expected
+    assert request.max_output_tokens == 440
+    assert request.prompt == SET5_01
+    assert request.messages == original_messages
+    assert len(context["provider_manifest_links"]) == 1
+    sealed = load_provider_manifest(context["provider_manifest_links"][0]["provider_manifest_id"])
+    assert sealed["reserved_output_tokens"] == expected
     assert response.output_text == _overanswer()
     assert response.provider_attested_model == LIGHTNING
     assert response.model_name == LIGHTNING

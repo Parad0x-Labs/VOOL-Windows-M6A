@@ -21,6 +21,7 @@ from adapters.openrouter_cloud_provider import OpenRouterCloudProvider
 from core.cloud_provider_contract import CloudModelRequest
 from core.cloud_tool_call_contract import build_cloud_tool_definitions
 from core.execution_requirements import RequiredToolsNotOfferedError, assert_envelope_carries_tools
+from tests.test_openai_compatible_adapter import local_metadata_for_payload_and_usage_tests
 
 TOOLS = build_cloud_tool_definitions(
     [{"intent": "sandbox.run_command", "description": "Run a bounded command.", "arguments": {"command": "string", "cwd": "string optional"}}]

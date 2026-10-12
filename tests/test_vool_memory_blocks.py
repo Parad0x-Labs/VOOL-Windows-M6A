@@ -15,6 +15,7 @@ from core.request_trust import OWNER_LOCAL_KEY
 from core.tiered_context_loader import _source_allows_private_context
 from core.vool_memory import VoolMemory
 from core.web.api.runtime import RuntimeServices, _memory_recall_response, schedule_memory_extraction
+from tests.test_openai_compatible_adapter import local_metadata_for_payload_and_usage_tests
 
 
 def _owner_name(name: str) -> None:

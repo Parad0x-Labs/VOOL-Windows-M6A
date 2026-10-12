@@ -120,6 +120,7 @@ _EXECUTION_EVENT_RULES: dict[str, EventRule] = {
     "tool_executed": EventRule(KIND_TOOL, True),
     "tool_failed": EventRule(KIND_TOOL, False),
     "model_lane_proof": EventRule(KIND_MODEL, None),
+    "model_verification_receipt": EventRule(KIND_MODEL, None),
     "web_retrieval_completed": EventRule(KIND_RETRIEVAL, None),
     "web_retrieval_failed": EventRule(KIND_RETRIEVAL, None),
     "fx_retrieval_completed": EventRule(KIND_RETRIEVAL, True),
@@ -409,13 +410,33 @@ def classify_runtime_event(event_type: str, details: dict[str, Any] | None) -> l
         ]
 
     if rule.kind == KIND_MODEL:
+        if kind_name == "model_verification_receipt":
+            receipt = detail.get("verification_receipt")
+            if not isinstance(receipt, dict) or receipt.get("schema") != "vool.provider-verification.v1":
+                return []
+            call_id = _text(receipt.get("call_id"))
+            provider = _text(receipt.get("gateway_provider_id"))
+            model = _text(receipt.get("selected_model"))
+            outcome = _text(receipt.get("outcome"))
+            if (not call_id or not provider or not model or outcome not in {"completed", "failed"}
+                    or provider != _text(detail.get("provider_id")) or model != _text(detail.get("model_id"))):
+                return []
+            # Count the ledger's unique invocation, not an outer call's start/terminal pair or
+            # a provider's returned identity claim. Failed and direct calls are still attempts.
+            return [ExecutionSpec(
+                kind=KIND_MODEL, categories=(KIND_MODEL,), name=f"{provider}:{model}",
+                ok=outcome == "completed", status=outcome, dedupe=call_id,
+                detail={"provider_call_id": call_id, **_detail_subset(detail, ("model_call_id",)),
+                        **_detail_subset(receipt, ("call_role", "requested_model", "selected_model",
+                                                  "gateway_provider_id", "binding_sha256"))},
+            )]
         # A completed lane proof from a real provider is a model call. The fast path emits the same
         # event type with `runtime-fast-path` as the provider to record that NO model ran, so the
         # provider is what separates the two -- not the message text, which is prose and drifts.
         if _text(detail.get("phase")) != "completed":
             return []
         provider = _text(detail.get("actual_adapter_provider_id")) or _text(detail.get("provider_id"))
-        if not provider or provider == "runtime-fast-path":
+        if not provider or provider in {"runtime-fast-path", "runtime-action"}:
             return []
         model = _text(detail.get("actual_adapter_model_id")) or _text(detail.get("model_id"))
         return [
@@ -620,7 +641,12 @@ def facts_for_turn(turn_key: str, *, session_id: str = "", limit: int = 200) -> 
                 conn.close()
     except Exception:
         return []
-    return [_fact_from_row(row) for row in rows]
+    facts = [_fact_from_row(row) for row in rows]
+    # Keep legacy-only turns readable. A lane proof is an aggregate view, not another invocation
+    # when exact receipts for that same provider/model exist, irrespective of emission order.
+    invoked = {fact.name for fact in facts if fact.kind == KIND_MODEL and fact.detail.get("provider_call_id")}
+    return [fact for fact in facts if fact.kind != KIND_MODEL
+            or fact.name not in invoked or fact.detail.get("provider_call_id")]
 
 
 def recent_session_facts(session_id: str, *, name_prefix: str = "", limit: int = 64) -> list[ExecutionFact]:
@@ -776,8 +802,8 @@ def turn_execution_summary(turn_key: str, *, session_id: str = "") -> dict[str, 
 # --------------------------------------------------------------------------------------------
 
 
-def witnessed_executions(turn_key: str, session_id: str) -> list[tuple[str, str]]:
-    """What an INDEPENDENT witness saw this turn execute: (kind, name).
+def _witnessed_execution_specs(turn_key: str, session_id: str) -> list[ExecutionSpec]:
+    """What an INDEPENDENT witness saw this turn execute, including invocation identities.
 
     The witness is the raw runtime event stream, written by `append_runtime_event` on a different
     code path for a different purpose (driving the live Activity feed). It is deliberately NOT
@@ -795,7 +821,7 @@ def witnessed_executions(turn_key: str, session_id: str) -> list[tuple[str, str]
         events = list_runtime_session_events(session, limit=400)
     except Exception:
         return []
-    seen: list[tuple[str, str]] = []
+    seen: list[ExecutionSpec] = []
     for event in events:
         kind_name = _text(event.get("event_type"))
         if kind_name not in _EXECUTION_EVENT_RULES:
@@ -806,8 +832,15 @@ def witnessed_executions(turn_key: str, session_id: str) -> list[tuple[str, str]
         # two cannot hold different opinions of what counts as an execution -- the only thing the
         # gate is allowed to catch is a record that never happened, not a vocabulary drift.
         for spec in classify_runtime_event(kind_name, dict(event)):
-            seen.append((spec.kind, spec.name))
-    return seen
+            seen.append(spec)
+    invoked = {spec.name for spec in seen if spec.kind == KIND_MODEL and spec.detail.get("provider_call_id")}
+    return [spec for spec in seen if spec.kind != KIND_MODEL
+            or spec.name not in invoked or spec.detail.get("provider_call_id")]
+
+
+def witnessed_executions(turn_key: str, session_id: str) -> list[tuple[str, str]]:
+    """Compatibility projection of the independently witnessed execution specs."""
+    return [(spec.kind, spec.name) for spec in _witnessed_execution_specs(turn_key, session_id)]
 
 
 def _file_evidence_corruption_fault(
@@ -855,12 +888,14 @@ def verify_execution_truth(turn_key: str, *, session_id: str = "") -> TruthVerdi
     if not turn:
         return TruthVerdict(True, "", 0, 0, (), "no turn identity to verify")
     facts = facts_for_turn(turn, session_id=session_id)
-    recorded = {(fact.kind, fact.name) for fact in facts}
-    witnessed = witnessed_executions(turn, session_id)
+    recorded = {(fact.kind, fact.name, _text(fact.detail.get("provider_call_id"))) for fact in facts}
+    witnessed = [(spec.kind, spec.name, _text(spec.detail.get("provider_call_id")))
+                 for spec in _witnessed_execution_specs(turn, session_id)]
     missing_pairs = sorted({pair for pair in witnessed if pair not in recorded})
     if missing_pairs:
-        missing = tuple(sorted({name for _, name in missing_pairs}))
-        qualified = tuple(f"{kind}:{name}" for kind, name in missing_pairs)
+        missing = tuple(sorted({name for _, name, _ in missing_pairs}))
+        qualified = tuple(f"{kind}:{name}" + (f":{call_id}" if call_id else "")
+                          for kind, name, call_id in missing_pairs)
         _file_evidence_corruption_fault(turn, _text(session_id), qualified)
         return TruthVerdict(
             consistent=False,

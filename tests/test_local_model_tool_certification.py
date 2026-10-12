@@ -295,6 +295,8 @@ def test_non_openai_compatible_local_adapter_is_still_refused(tmp_path: Path) ->
 
 
 def test_fingerprint_covers_every_required_identity_component() -> None:
+    from core.reasoning_mode import deep_reasoning_enabled
+
     payload = certification_fingerprint_payload(_manifest(), backend_version="0.21.2")
     assert payload == {
         "adapter_type": "openai_compatible",
@@ -307,6 +309,8 @@ def test_fingerprint_covers_every_required_identity_component() -> None:
         "quantization": "q4_K_M",
         "schema_version": "vool.local-tool-certification.schema.v1",
         "probe_version": "vool.local-tool-certification.v1",
+        "reasoning_support": "unknown",
+        "thinking_policy": "enabled" if deep_reasoning_enabled() else "disabled",
     }
 
 

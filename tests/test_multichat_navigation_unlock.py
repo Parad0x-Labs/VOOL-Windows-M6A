@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import re
 
+import pytest
+
 from tests.chat_page_js_harness import DOM, run_node, script
 
 A = "openclaw:" + "a" * 20
@@ -693,6 +695,26 @@ def test_every_mutation_turns_its_named_guard_red() -> None:
 # --------------------------------------------------------------------------------------------- #
 # The guards really are gone
 # --------------------------------------------------------------------------------------------- #
+def _has_global_busy_identifier(line):
+    code = line.replace("'aria-busy'", "''").replace('"aria-busy"', '""')
+    return bool(re.search(r"(?<![.\w])busy(?![\w])", code))
+
+
+@pytest.mark.parametrize("line,found", [
+    ("it.setAttribute('aria-busy', 'true');", False),
+    ("it.setAttribute('aria-busy', 'false');", False),
+    ('it.setAttribute("aria-busy", "true");', False),
+    ("if (busy) return;", True),
+    ("let busy = false;", True),
+    ("busy = true;", True),
+    ("const remaining = busy-counter;", True),
+    ("if (owner.busy) return;", False),
+    ("const count = busyChatIds().length;", False),
+])
+def test_the_global_busy_guard_distinguishes_accessibility_attributes_from_variables(line, found):
+    assert _has_global_busy_identifier(line) is found
+
+
 def test_no_navigation_path_consults_a_running_turn() -> None:
     source = script()
     for fn in ("async function openSession(id) {", "function newChat() {", "async function newChatInProject(pid) {"):
@@ -704,7 +726,7 @@ def test_no_navigation_path_consults_a_running_turn() -> None:
     # And no process-global busy flag survives anywhere.
     offenders = [
         line.strip() for line in source.splitlines()
-        if re.search(r"(?<![.\w])busy(?![\w])", line)
+        if _has_global_busy_identifier(line)
         and not line.strip().startswith("//")
         and "isChatBusy" not in line and "busyChatIds" not in line and "ledgerBusy" not in line
     ]

@@ -10,6 +10,7 @@ from adapters.base_adapter import ModelRequest
 from adapters.openai_compatible_adapter import OpenAICompatibleAdapter
 from core.compute_mode import ComputeBudget, set_active_compute_budget
 from core.prompt_normalizer import normalize_prompt
+from tests.test_openai_compatible_adapter import local_metadata_for_payload_and_usage_tests
 
 
 def _context_result() -> SimpleNamespace:
@@ -233,7 +234,8 @@ def test_openai_adapter_forwards_different_payloads_for_chat_and_tool_extraction
     assert tool_payload["response_format"] == {"type": "json_object"}
 
 
-def test_openai_adapter_prewarm_uses_native_ollama_chat_endpoint() -> None:
+def test_openai_adapter_prewarm_uses_native_ollama_chat_endpoint(monkeypatch) -> None:
+    monkeypatch.setattr("adapters.openai_compatible_adapter.get_active_compute_budget", lambda: SimpleNamespace(cpu_threads=3))
     adapter = OpenAICompatibleAdapter(
         SimpleNamespace(
             provider_id="ollama-local:qwen2.5:14b",
@@ -267,7 +269,7 @@ def test_openai_adapter_prewarm_uses_native_ollama_chat_endpoint() -> None:
         "messages": [{"role": "user", "content": " "}],
         "stream": False,
         "keep_alive": "15m",
-        "options": {"num_predict": 1},
+        "options": {"num_predict": 1, "num_thread": 3},
         "think": False,
     }
 

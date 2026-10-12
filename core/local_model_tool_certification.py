@@ -171,9 +171,14 @@ def certification_fingerprint_payload(
         template = metadata.get("chat_template") or runtime.get("chat_template")
         if template:
             template_hash = hashlib.sha256(str(template).encode("utf-8")).hexdigest()
-    return {
+    payload = {
         "adapter_type": str(manifest.adapter_type or "openai_compatible"),
-        "adapter_version": ADAPTER_CONTRACT_VERSION,
+        "adapter_version": (
+            ADAPTER_CONTRACT_VERSION + ".ollama-openai-reasoning.v1"
+            if str(metadata.get("runtime_family") or "").strip().lower() == "ollama"
+            and str(runtime.get("api_path") or "").strip()
+            else ADAPTER_CONTRACT_VERSION
+        ),
         "backend_version": str(
             backend_version
             or measured.get("backend_version")
@@ -200,6 +205,14 @@ def certification_fingerprint_payload(
         "schema_version": PROBE_SCHEMA_VERSION,
         "probe_version": PROBE_VERSION,
     }
+    if str(metadata.get("runtime_family") or "").strip().lower() == "ollama":
+        from core.reasoning_mode import deep_reasoning_enabled
+
+        configured = runtime.get("think")
+        thinking = deep_reasoning_enabled() if configured is None else bool(configured)
+        payload["reasoning_support"] = str(measured.get("reasoning_support") or "unknown")
+        payload["thinking_policy"] = str(measured.get("thinking_policy") or ("enabled" if thinking else "disabled"))
+    return payload
 
 
 def certification_fingerprint(payload: dict[str, Any]) -> str:
@@ -292,6 +305,7 @@ def run_local_model_tool_certification(
     started = time.perf_counter()
     deadline = time.monotonic() + max(0.0, float(timeout_seconds))
     preflight_error: Exception | None = None
+    preflight_code = "runtime_identity_unavailable"
     runtime_identity: dict[str, Any] = {}
     if exchange is None:
         try:
@@ -305,6 +319,14 @@ def run_local_model_tool_certification(
                 )
             runtime_identity = adapter.tool_certification_runtime_identity()
             backend_version = backend_version or str(runtime_identity.get("backend_version") or "unknown")
+            if str(manifest.metadata.get("runtime_family") or "").strip().lower() == "ollama":
+                from adapters.openai_compatible_adapter import UnsupportedLocalReasoningPolicyError
+
+                try:
+                    adapter._ollama_think_flag()
+                except UnsupportedLocalReasoningPolicyError as exc:
+                    preflight_error = exc
+                    preflight_code = exc.code
             exchange = adapter.tool_certification_exchange
         except Exception as exc:
             preflight_error = exc
@@ -333,7 +355,7 @@ def run_local_model_tool_certification(
         "synthetic_tools": [tool.intent for tool in PROBE_TOOLS],
         "preflight": {
             "state": "failed" if preflight_error is not None else "passed",
-            "failure_code": "runtime_identity_unavailable" if preflight_error is not None else "",
+            "failure_code": preflight_code if preflight_error is not None else "",
             "error_type": type(preflight_error).__name__ if preflight_error is not None else "",
         },
     }
@@ -341,8 +363,9 @@ def run_local_model_tool_certification(
         if preflight_error is not None:
             raise _StageFailureError(
                 "transport_acceptance",
-                "runtime_identity_unavailable",
-                f"local model identity check failed ({type(preflight_error).__name__})",
+                preflight_code,
+                str(preflight_error) if preflight_code == "unsupported_reasoning_policy"
+                else f"local model identity check failed ({type(preflight_error).__name__})",
             )
         if exchange is None:
             raise _StageFailureError(
@@ -730,6 +753,14 @@ def _bounded_exchange_evidence(label: str, response: dict[str, Any]) -> dict[str
         "body_hash": body_hash,
         "finish_reason": _redact_text(finish_reason)[:64],
         "raw_body_persisted": False,
+        "effective_max_output_tokens": (
+            max(0, int(response["effective_max_output_tokens"]))
+            if response.get("effective_max_output_tokens") is not None else None
+        ),
+        "reasoning_effort": (
+            str(response.get("reasoning_effort"))
+            if response.get("reasoning_effort") in ("none", "high") else ""
+        ),
     }
 
 

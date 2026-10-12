@@ -118,6 +118,14 @@ def _first_manifest():
 def main(argv: list[str]) -> int:
     group = argv[1] if len(argv) > 1 else ""
     try:
+        from tests import _network_seal
+
+        def refuse_live_network(_kind, _address):
+            raise OSError("hermetic gauntlet refuses live network")
+
+        # Parent pytest policies do not cross a process boundary. Install the existing union
+        # seal before bootstrap; all allowed model/weather transport is supplied by the harness.
+        _network_seal.push("hermetic-gauntlet:no-live-network", refuse_live_network)
         from tests.gauntlet import harness as H  # noqa: N812  (reads as the module name at every call site)
         from tests.gauntlet.hermetic.groups import GROUPS
 

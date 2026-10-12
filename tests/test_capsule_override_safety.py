@@ -3,6 +3,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest import mock
 
+import pytest
+
 from core.context_retrieval import (
     _session_scope_key,
     reset_retrieval_telemetry,
@@ -14,8 +16,9 @@ from core.web.api.runtime import RuntimeServices, run_agent
 class _FakeAgent:
     ResponseClass = SimpleNamespace(GENERIC_CONVERSATION="generic_conversation")
 
-    def __init__(self, *, session_id: str, sanitized_response: str | None = None) -> None:
+    def __init__(self, *, session_id: str, response: str = "model answer", sanitized_response: str | None = None) -> None:
         self.session_id = session_id
+        self.response = response
         self.sanitized_response = sanitized_response
         self.sanitized_inputs: list[str] = []
 
@@ -26,41 +29,39 @@ class _FakeAgent:
             source_session_ids=[_session_scope_key(self.session_id)],
             model_calls=1,
         )
-        return {"response": "model answer", "confidence": 0.8}
+        return {"response": self.response, "confidence": 0.8}
 
     def _sanitize_user_chat_text(self, text: str, *, response_class):
         self.sanitized_inputs.append(text)
         return self.sanitized_response if self.sanitized_response is not None else text
 
 
-def test_run_agent_revalidates_capsule_override_after_chat_sanitizer(monkeypatch, tmp_path) -> None:
+def test_run_agent_refuses_post_admission_capsule_replacement(monkeypatch, tmp_path) -> None:
     session_id = "runtime-vet-session"
     agent = _FakeAgent(session_id=session_id)
     runtime = RuntimeServices(agent=agent, runtime_home=str(tmp_path))
     monkeypatch.setattr("core.web.api.runtime._memory_recall_response", lambda *args, **kwargs: None)
     monkeypatch.setattr("core.web.api.runtime.schedule_memory_extraction", lambda *args, **kwargs: None)
 
-    result = run_agent(
-        runtime,
-        "what is the exact receipt code?",
-        session_id=session_id,
-        source_context={"surface": "api", "platform": "api", "allow_remote_fetch": False},
-        workspace_root_provider=lambda: str(tmp_path),
-    )
-
-    assert agent.sanitized_inputs == ["RCPT-9182"]
-    assert result["response"] == "RCPT-9182"
-    assert result["response_control"]["mode"] == "capsule_exact"
-    assert result["response_control"]["original_response_excerpt"] == "model answer"
+    with pytest.raises(RuntimeError, match="K-08 violation: capsule transform would mutate post-admission bytes"):
+        run_agent(
+            runtime,
+            "what is the exact receipt code?",
+            session_id=session_id,
+            source_context={"surface": "api", "platform": "api", "allow_remote_fetch": False},
+            workspace_root_provider=lambda: str(tmp_path),
+        )
+    assert agent.sanitized_inputs == []
 
 
-def test_run_agent_keeps_model_answer_when_sanitized_override_fails_final_validator(
+def test_run_agent_preserves_prepared_capsule_bytes_without_post_admission_sanitizing(
     monkeypatch,
     tmp_path,
 ) -> None:
     session_id = "runtime-reject-session"
     agent = _FakeAgent(
         session_id=session_id,
+        response="RCPT-9182",
         sanitized_response="According to https://example.com, RCPT-9182",
     )
     runtime = RuntimeServices(agent=agent, runtime_home=str(tmp_path))
@@ -75,9 +76,8 @@ def test_run_agent_keeps_model_answer_when_sanitized_override_fails_final_valida
         workspace_root_provider=lambda: str(tmp_path),
     )
 
-    assert agent.sanitized_inputs == ["RCPT-9182"]
-    assert result["response"] == "model answer"
-    assert "response_control" not in result
+    assert agent.sanitized_inputs == []
+    assert result["response"] == "RCPT-9182"
 
 
 def test_grounded_turn_returns_session_authorized_exact_capsule_before_model(

@@ -43,6 +43,13 @@ class ToolOutcome:
     ok: bool
     response_text: str = ""
     details: dict[str, Any] = field(default_factory=dict)
+    mode: str = ""
+    status: str = ""
+    tool_name: str = ""
+
+
+def _needs_approval(outcome: ToolOutcome) -> bool:
+    return getattr(outcome, "mode", "") == "tool_preview" or getattr(outcome, "status", "") == "pending_approval"
 
 
 @dataclass
@@ -86,6 +93,7 @@ class AppBuildReport:
     authorized_paths: tuple[str, ...] = ()
     paths_refused: list[str] = field(default_factory=list)
     commands_refused: list[str] = field(default_factory=list)
+    pending_approval: ToolOutcome | None = None
 
 
 def _confine_relative_path(raw: str, *, target_dir: str, workspace_root: str = "") -> str | None:
@@ -651,14 +659,21 @@ def build_app_from_spec(
             ]
         )
     for directory in directories:
-        run_tool_fn("workspace.ensure_directory", {"path": directory})
+        outcome = run_tool_fn("workspace.ensure_directory", {"path": directory})
+        if _needs_approval(outcome):
+            report.pending_approval = outcome
+            return report
     # No second authority check here, deliberately. `file_map` is built only from `safe_paths`, and
     # `safe_paths` is what the gate above filters -- so a check in this loop can never fire. A guard
     # the code cannot reach reads as a layered defence and is not one; the single reachable gate is
     # the one that must hold, and it is driven adversarially in
     # tests/test_mutation_scope_authority.py::test_a_target_outside_the_authority_is_refused_and_recorded.
     for path, content in file_map.items():
-        if run_tool_fn("workspace.write_file", {"path": path, "content": content}).ok:
+        outcome = run_tool_fn("workspace.write_file", {"path": path, "content": content})
+        if _needs_approval(outcome):
+            report.pending_approval = outcome
+            return report
+        if outcome.ok:
             report.files_written.append(path)
             # Kept so the reply can state SIZE, not just names. A bare bullet list of paths gives
             # the operator no way to tell a real file from an empty one.
@@ -683,7 +698,6 @@ def build_app_from_spec(
     # -- the exact inverse of "prove the bug before you fix it".
     proving_a_bug = report.expected_test_outcome == "fail"
     if test_command:
-        report.tests_ran = True
         report.test_command = test_command
         for round_index in range(MAX_FIX_ROUNDS + 1):
             outcome = run_tool_fn(
@@ -691,6 +705,10 @@ def build_app_from_spec(
                 {"command": test_command, "cwd": target_rel},
                 trusted_local_only=True,
             )
+            if _needs_approval(outcome):
+                report.pending_approval = outcome
+                return report
+            report.tests_ran = True
             report.test_output = str(outcome.response_text or "")
             # The runner reports "executed" even for a failing suite, which is why the verdict was
             # scraped from stdout. The real code is in the outcome details and simply went unread;
@@ -741,7 +759,11 @@ def build_app_from_spec(
                     )
                 )
                 if fixed and fixed != file_map[path] and len(fixed.encode("utf-8", "ignore")) <= MAX_FILE_BYTES:
-                    if run_tool_fn("workspace.write_file", {"path": path, "content": fixed}).ok:
+                    outcome = run_tool_fn("workspace.write_file", {"path": path, "content": fixed})
+                    if _needs_approval(outcome):
+                        report.pending_approval = outcome
+                        return report
+                    if outcome.ok:
                         file_map[path] = fixed
                         if path not in report.files_written:
                             report.files_written.append(path)

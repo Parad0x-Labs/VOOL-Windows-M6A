@@ -306,6 +306,38 @@ def test_capsule_exact_recall_query_gate_excludes_advisory_requests() -> None:
     assert not cr.is_capsule_exact_recall_query("How much SOL should I budget?")
 
 
+@pytest.mark.parametrize("query", [
+    "Explain the architecture, how permissions should work, and what state should be shared.",
+    "Describe how admission control works.",
+    "Summarize the current transmission protocol.",
+    "What commission should the marketplace charge?",
+])
+def test_words_containing_mission_do_not_replace_new_requests_with_old_mission(query) -> None:
+    session_id = "mission-substring-control"
+    telemetry = {
+        "capsule_mode": "distilled",
+        "selected_facts": ["- active mission: previous project"],
+        "source_session_ids": [cr._session_scope_key(session_id)],
+    }
+    assert cr.capsule_exact_response(query, telemetry, session_id=session_id, active_mission_slots=[]) == ""
+    assert not cr.validate_capsule_exact_response(
+        "Current mission: previous project.", query, session_id=session_id, active_mission_slots=[],
+    )
+
+
+@pytest.mark.parametrize("query", ["Summarize the active mission.", "What is my current mission?"])
+def test_whole_word_mission_recall_still_uses_the_session_capsule(query) -> None:
+    session_id = "mission-word-control"
+    telemetry = {
+        "capsule_mode": "distilled",
+        "selected_facts": ["- active mission: current project"],
+        "source_session_ids": [cr._session_scope_key(session_id)],
+    }
+    assert cr.capsule_exact_response(query, telemetry, session_id=session_id, active_mission_slots=[]) == (
+        "Current mission: current project."
+    )
+
+
 def test_cross_session_capsule_cap_cannot_override_current_session_mission() -> None:
     suffix = uuid.uuid4().hex
     session_a = f"A-{suffix}"

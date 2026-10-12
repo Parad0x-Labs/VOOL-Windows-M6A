@@ -205,7 +205,19 @@ def test_provider_call_outcome_is_single_assignment_after_turn_terminalization()
     }
 
 
-def test_blocking_local_subprocess_is_terminated_at_enclosing_provider_deadline() -> None:
+def test_blocking_local_subprocess_is_terminated_at_enclosing_provider_deadline(monkeypatch) -> None:
+    from adapters import local_subprocess_adapter
+
+    terminate = local_subprocess_adapter._terminate_process_tree
+    terminated: list[tuple[subprocess.Popen, bool, float]] = []
+
+    def measured_termination(process):
+        was_running = process.poll() is None
+        started = time.monotonic()
+        terminate(process)
+        terminated.append((process, was_running, time.monotonic() - started))
+
+    monkeypatch.setattr(local_subprocess_adapter, "_terminate_process_tree", measured_termination)
     context = bind_provider_deadline(
         {},
         turn_deadline_monotonic=time.monotonic() + 0.45,
@@ -230,10 +242,22 @@ def test_blocking_local_subprocess_is_terminated_at_enclosing_provider_deadline(
     )
 
     started = time.monotonic()
-    with pytest.raises(subprocess.TimeoutExpired):
+    with pytest.raises(subprocess.TimeoutExpired) as expired:
         adapter.run_text_task(request)
 
-    assert time.monotonic() - started < 0.70
+    elapsed = time.monotonic() - started
+    assert 0.001 <= expired.value.timeout <= 0.25
+    assert len(terminated) == 1
+    process, was_running, cleanup_seconds = terminated[0]
+    assert was_running, "the timeout must stop an actual blocked child"
+    assert process.poll() is not None, "the adapter returned with its child still running"
+    # Windows taskkill is a separate process: its scheduling/cleanup cost is not provider
+    # execution. Keep the original execution-window limit, measure cleanup independently,
+    # and require actual termination rather than inferring it from one total stopwatch.
+    assert elapsed - cleanup_seconds < 0.70, (
+        f"provider execution took {elapsed - cleanup_seconds:.3f}s before "
+        f"{cleanup_seconds:.3f}s of process-tree cleanup"
+    )
 
 
 def test_frontdoor_emits_call_failure_before_terminal_trace_and_overrides_stale_zero() -> None:

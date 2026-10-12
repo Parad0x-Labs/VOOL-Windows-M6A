@@ -146,7 +146,7 @@ asyncio.create_subprocess_shell = _blocked_async_process
 asyncio.BaseEventLoop.subprocess_exec = _blocked_async_process
 asyncio.BaseEventLoop.subprocess_shell = _blocked_async_process
 
-sys.path.insert(0, "__TREE__")
+sys.path.insert(0, __TREE__)
 os.chdir(tempfile.mkdtemp(prefix="vool_tripwire_cwd_"))
 
 from unittest.mock import Mock
@@ -276,7 +276,7 @@ def _run_phase(flag: str) -> _ModelLayerLog:
     import tempfile
     from pathlib import Path
 
-    tree = Path(__file__).resolve().parents[2]
+    tree = _REPO_ROOT
     with tempfile.TemporaryDirectory(prefix=f"vool_tripwire_home_{flag}_") as home:
         env = {
             "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
@@ -290,8 +290,13 @@ def _run_phase(flag: str) -> _ModelLayerLog:
             "PYTHONDONTWRITEBYTECODE": "1",
             "VOOL_SEMANTIC_REACH": flag,
         }
+        # Winsock needs the Windows installation path even when network I/O is denied.
+        # Keep the rest of the child environment isolated from the operator's settings.
+        for name in ("SystemRoot", "WINDIR"):
+            if name in os.environ:
+                env[name] = os.environ[name]
         script = (
-            _PHASE_DRIVER.replace("__TREE__", str(tree))
+            _PHASE_DRIVER.replace("__TREE__", repr(str(tree)))
             .replace("__ENTRIES__", repr(list(_MODEL_LAYER_ENTRY_POINTS)))
             .replace("__TURNS__", repr(list(PROBE_TURNS)))
         )

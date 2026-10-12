@@ -29,9 +29,10 @@ from core.cloud_tool_call_contract import (
     build_cloud_tool_definitions,
 )
 from core.normalized_provider_result import ProviderErrorClass, classify_error_class
+from tests._ollama_metadata_server import OllamaMetadataHandler
 
 
-class _FixtureHandler(http.server.BaseHTTPRequestHandler):
+class _FixtureHandler(OllamaMetadataHandler):
     payload_openai: dict = {}
     payload_ollama: dict = {}
 
@@ -39,6 +40,8 @@ class _FixtureHandler(http.server.BaseHTTPRequestHandler):
         pass
 
     def do_POST(self):
+        if self.serve_model_metadata():
+            return
         length = int(self.headers.get("Content-Length", 0))
         self.rfile.read(length)
         cls = type(self)
