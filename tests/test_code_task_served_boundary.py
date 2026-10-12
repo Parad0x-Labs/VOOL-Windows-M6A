@@ -349,7 +349,7 @@ class GuidedProvider(ScriptedProvider):
         super().__init__({MODEL: "ok"})
         self.policy = policy
 
-    def reply_for(self, model: str, *, has_tool_result: bool) -> Any:
+    def reply_for(self, model: str, *, has_tool_result: bool, body: dict[str, Any] | None = None) -> Any:
         with self._lock:
             last = self.calls[-1] if self.calls else None
         if last is None or not last.get("tools"):
@@ -417,12 +417,19 @@ def _boot(served_factory, workspace_files: dict[str, str], policy: GuidedRepair)
     _stub_models_are_resident(provider)
     provider.__enter__()
     try:
+        run_in_home(rig["home"], SEED_MANIFEST.format(root=REPO_ROOT, base_url=provider.base_url, registered=[MODEL]))
+        run_in_home(
+            rig["home"],
+            "from storage.model_provider_manifest import list_provider_manifests\n"
+            "from tests._authorship_certification import certify_for_authorship\n"
+            "for manifest in list_provider_manifests():\n"
+            "    certify_for_authorship(manifest)\n",
+        )
+        provider.reset()
         daemon.start(timeout=240)
     except Exception as exc:  # pragma: no cover - environment, not the runtime
         provider.__exit__(None, None, None)
         pytest.skip(f"served daemon could not boot here: {exc}")
-    run_in_home(rig["home"], SEED_MANIFEST.format(root=REPO_ROOT, base_url=provider.base_url, registered=[MODEL]))
-    provider.reset()
     rig.update(daemon=daemon, provider=provider)
     rig["made"].append((daemon, provider))
     return rig

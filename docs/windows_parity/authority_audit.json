@@ -4796,7 +4796,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_a8_digest_key",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 1750,
+      "line": 1992,
       "source": "core/finalization.py"
     },
     {
@@ -4805,7 +4805,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_a8_digest_key",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 1752,
+      "line": 1994,
       "source": "core/finalization.py"
     },
     {
@@ -4814,7 +4814,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_sweep_step_pins",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 3369,
+      "line": 3611,
       "source": "core/finalization.py"
     },
     {
@@ -4823,7 +4823,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_sweep_step_liquefy_vault",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 3397,
+      "line": 3639,
       "source": "core/finalization.py"
     },
     {
@@ -4832,7 +4832,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_sweep_step_liquefy_vault",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 3410,
+      "line": 3652,
       "source": "core/finalization.py"
     },
     {
@@ -4841,7 +4841,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_sweep_step_liquefy_vault",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 3423,
+      "line": 3665,
       "source": "core/finalization.py"
     },
     {
@@ -4850,7 +4850,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_sweep_step_adaptation_corpora",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 3484,
+      "line": 3726,
       "source": "core/finalization.py"
     },
     {
@@ -4859,7 +4859,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_sweep_step_mirror_snapshots",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 3543,
+      "line": 3785,
       "source": "core/finalization.py"
     },
     {
@@ -4868,7 +4868,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_sweep_step_mirror_snapshots",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 3548,
+      "line": 3790,
       "source": "core/finalization.py"
     },
     {
@@ -4877,7 +4877,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_sweep_step_honesty_receipts",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 3646,
+      "line": 3888,
       "source": "core/finalization.py"
     },
     {
@@ -5066,7 +5066,7 @@
       "effect_kind": "network_send",
       "function": "arbitrate",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 327,
+      "line": 331,
       "source": "core/intent_arbiter.py"
     },
     {
@@ -5075,7 +5075,7 @@
       "effect_kind": "network_send",
       "function": "_warm",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 439,
+      "line": 443,
       "source": "core/intent_arbiter.py"
     },
     {
@@ -5849,7 +5849,7 @@
       "effect_kind": "network_send",
       "function": "_ollama_models_payload",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 137,
+      "line": 154,
       "source": "core/local_ollama_inventory.py"
     },
     {
@@ -6308,7 +6308,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "reset_mode_permission_state",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 3503,
+      "line": 3534,
       "source": "core/mode_permission_policy.py"
     },
     {
@@ -8864,7 +8864,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "dispatch_upload",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 3415,
+      "line": 3438,
       "source": "core/web/api/service.py"
     },
     {
@@ -8873,7 +8873,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "dispatch_upload",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 3418,
+      "line": 3441,
       "source": "core/web/api/service.py"
     },
     {
@@ -10968,7 +10968,7 @@
         {
           "branch_calls": [],
           "function": "_final_task_event",
-          "line": 3454,
+          "line": 3460,
           "selected_by_if": null,
           "source": "core/web/api/runtime.py"
         },
@@ -10982,14 +10982,14 @@
         {
           "branch_calls": [],
           "function": "dispatch_get",
-          "line": 890,
+          "line": 896,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "dispatch_get",
-          "line": 890,
+          "line": 896,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
@@ -10999,84 +10999,84 @@
             "text_response"
           ],
           "function": "dispatch_get",
-          "line": 1219,
-          "selected_by_if": 1219,
+          "line": 1225,
+          "selected_by_if": 1225,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "dispatch_post",
-          "line": 2934,
+          "line": 2940,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "dispatch_post",
-          "line": 2934,
+          "line": 2940,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "is_raw_upload_path",
-          "line": 3336,
+          "line": 3359,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "is_raw_upload_path",
-          "line": 3336,
+          "line": 3359,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "raw_upload_body_ceiling",
-          "line": 3342,
-          "selected_by_if": 3342,
+          "line": 3365,
+          "selected_by_if": 3365,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "raw_upload_body_ceiling",
-          "line": 3342,
-          "selected_by_if": 3342,
+          "line": 3365,
+          "selected_by_if": 3365,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "is_raw_dictation_path",
-          "line": 3527,
+          "line": 3550,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "is_raw_dictation_path",
-          "line": 3527,
+          "line": 3550,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 4705,
+          "line": 4736,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 5300,
+          "line": 5331,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 5317,
+          "line": 5348,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
@@ -11144,8 +11144,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2883,
-          "selected_by_if": 2883,
+          "line": 2889,
+          "selected_by_if": 2889,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11183,8 +11183,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2869,
-          "selected_by_if": 2869,
+          "line": 2875,
+          "selected_by_if": 2875,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11219,8 +11219,8 @@
             "min"
           ],
           "function": "dispatch_get",
-          "line": 2865,
-          "selected_by_if": 2865,
+          "line": 2871,
+          "selected_by_if": 2871,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11252,8 +11252,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 2862,
-          "selected_by_if": 2862,
+          "line": 2868,
+          "selected_by_if": 2868,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11285,8 +11285,8 @@
             "schedule_adaptation_autopilot_tick"
           ],
           "function": "_dispatch_post_inner",
-          "line": 7697,
-          "selected_by_if": 7697,
+          "line": 7720,
+          "selected_by_if": 7720,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11318,8 +11318,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 2862,
-          "selected_by_if": 2862,
+          "line": 2868,
+          "selected_by_if": 2868,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11347,14 +11347,14 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4690,
-          "selected_by_if": 4690,
+          "line": 4721,
+          "selected_by_if": 4721,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 4705,
+          "line": 4736,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         }
@@ -11390,8 +11390,8 @@
             "_submit_condition"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5598,
-          "selected_by_if": 5598,
+          "line": 5629,
+          "selected_by_if": 5629,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11438,8 +11438,8 @@
             "sorted"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5720,
-          "selected_by_if": 5720,
+          "line": 5751,
+          "selected_by_if": 5751,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11479,8 +11479,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2679,
-          "selected_by_if": 2679,
+          "line": 2685,
+          "selected_by_if": 2685,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11517,8 +11517,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2698,
-          "selected_by_if": 2698,
+          "line": 2704,
+          "selected_by_if": 2704,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11564,8 +11564,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5641,
-          "selected_by_if": 5641,
+          "line": 5672,
+          "selected_by_if": 5672,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11607,8 +11607,8 @@
             "sorted"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5791,
-          "selected_by_if": 5791,
+          "line": 5822,
+          "selected_by_if": 5822,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11653,8 +11653,8 @@
             "sorted"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5698,
-          "selected_by_if": 5698,
+          "line": 5729,
+          "selected_by_if": 5729,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11690,8 +11690,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 2718,
-          "selected_by_if": 2718,
+          "line": 2724,
+          "selected_by_if": 2724,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11732,8 +11732,8 @@
             "sorted"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5811,
-          "selected_by_if": 5811,
+          "line": 5842,
+          "selected_by_if": 5842,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11774,8 +11774,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2665,
-          "selected_by_if": 2665,
+          "line": 2671,
+          "selected_by_if": 2671,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11821,8 +11821,8 @@
             "sorted"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5746,
-          "selected_by_if": 5746,
+          "line": 5777,
+          "selected_by_if": 5777,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11864,8 +11864,8 @@
             "updated_draft.to_dict"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5673,
-          "selected_by_if": 5673,
+          "line": 5704,
+          "selected_by_if": 5704,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11902,8 +11902,8 @@
             "type"
           ],
           "function": "dispatch_get",
-          "line": 951,
-          "selected_by_if": 951,
+          "line": 957,
+          "selected_by_if": 957,
           "source": "core/web/api/service.py"
         },
         {
@@ -11911,8 +11911,8 @@
             "calendar_accounts.settings_view"
           ],
           "function": "dispatch_get",
-          "line": 955,
-          "selected_by_if": 955,
+          "line": 961,
+          "selected_by_if": 961,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11963,8 +11963,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2967,
-          "selected_by_if": 2964,
+          "line": 2973,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         },
         {
@@ -11979,8 +11979,8 @@
             "str"
           ],
           "function": "dispatch_post",
-          "line": 2990,
-          "selected_by_if": 2990,
+          "line": 2996,
+          "selected_by_if": 2996,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12031,8 +12031,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2968,
-          "selected_by_if": 2964,
+          "line": 2974,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         },
         {
@@ -12043,8 +12043,8 @@
             "result.get"
           ],
           "function": "dispatch_post",
-          "line": 3012,
-          "selected_by_if": 3012,
+          "line": 3018,
+          "selected_by_if": 3018,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12095,8 +12095,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2967,
-          "selected_by_if": 2964,
+          "line": 2973,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         },
         {
@@ -12107,8 +12107,8 @@
             "result.get"
           ],
           "function": "dispatch_post",
-          "line": 2997,
-          "selected_by_if": 2997,
+          "line": 3003,
+          "selected_by_if": 3003,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12159,8 +12159,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2968,
-          "selected_by_if": 2964,
+          "line": 2974,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         },
         {
@@ -12173,8 +12173,8 @@
             "result.get"
           ],
           "function": "dispatch_post",
-          "line": 3006,
-          "selected_by_if": 3006,
+          "line": 3012,
+          "selected_by_if": 3012,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12225,8 +12225,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2969,
-          "selected_by_if": 2964,
+          "line": 2975,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         },
         {
@@ -12238,8 +12238,8 @@
             "result.get"
           ],
           "function": "dispatch_post",
-          "line": 3015,
-          "selected_by_if": 3015,
+          "line": 3021,
+          "selected_by_if": 3021,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12290,8 +12290,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2968,
-          "selected_by_if": 2964,
+          "line": 2974,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         },
         {
@@ -12306,8 +12306,8 @@
             "str"
           ],
           "function": "dispatch_post",
-          "line": 3000,
-          "selected_by_if": 3000,
+          "line": 3006,
+          "selected_by_if": 3006,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12344,8 +12344,8 @@
             "type"
           ],
           "function": "dispatch_get",
-          "line": 980,
-          "selected_by_if": 980,
+          "line": 986,
+          "selected_by_if": 986,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12397,8 +12397,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2965,
-          "selected_by_if": 2964,
+          "line": 2971,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         },
         {
@@ -12412,8 +12412,8 @@
             "str"
           ],
           "function": "dispatch_post",
-          "line": 3031,
-          "selected_by_if": 3031,
+          "line": 3037,
+          "selected_by_if": 3037,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12464,8 +12464,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2965,
-          "selected_by_if": 2964,
+          "line": 2971,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12511,8 +12511,26 @@
             "pin_lock.admit_chat_turn"
           ],
           "function": "dispatch_post",
-          "line": 3086,
-          "selected_by_if": 3086,
+          "line": 3092,
+          "selected_by_if": 3092,
+          "source": "core/web/api/service.py"
+        },
+        {
+          "branch_calls": [
+            ".strip",
+            "_chat_context.get",
+            "_inbound_source_context",
+            "body.get",
+            "is_loopback_host",
+            "list",
+            "normalize_chat_history_provider",
+            "stable_openclaw_session_id_provider",
+            "str",
+            "strip_reserved_trust_keys"
+          ],
+          "function": "dispatch_post",
+          "line": 3126,
+          "selected_by_if": 3126,
           "source": "core/web/api/service.py"
         },
         {
@@ -12539,8 +12557,8 @@
             "_human_size"
           ],
           "function": "_dispatch_post_inner",
-          "line": 7000,
-          "selected_by_if": 7000,
+          "line": 7031,
+          "selected_by_if": 7031,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12577,8 +12595,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1350,
-          "selected_by_if": 1350,
+          "line": 1356,
+          "selected_by_if": 1356,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12617,8 +12635,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1363,
-          "selected_by_if": 1363,
+          "line": 1369,
+          "selected_by_if": 1369,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12655,8 +12673,8 @@
             "limits_payload"
           ],
           "function": "dispatch_get",
-          "line": 1344,
-          "selected_by_if": 1344,
+          "line": 1350,
+          "selected_by_if": 1350,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12700,8 +12718,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1376,
-          "selected_by_if": 1376,
+          "line": 1382,
+          "selected_by_if": 1382,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12753,8 +12771,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6056,
-          "selected_by_if": 6056,
+          "line": 6087,
+          "selected_by_if": 6087,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12768,7 +12786,7 @@
         {
           "branch_calls": [],
           "function": "<module>",
-          "line": 3329,
+          "line": 3352,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         }
@@ -12818,8 +12836,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6134,
-          "selected_by_if": 6134,
+          "line": 6165,
+          "selected_by_if": 6165,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12868,7 +12886,7 @@
         {
           "branch_calls": [],
           "function": "<module>",
-          "line": 3505,
+          "line": 3528,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         }
@@ -12902,8 +12920,8 @@
             "handle_chat_export_get"
           ],
           "function": "dispatch_get",
-          "line": 1416,
-          "selected_by_if": 1416,
+          "line": 1422,
+          "selected_by_if": 1422,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12962,8 +12980,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1436,
-          "selected_by_if": 1436,
+          "line": 1442,
+          "selected_by_if": 1442,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13014,8 +13032,8 @@
             "pin_id.strip"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6167,
-          "selected_by_if": 6167,
+          "line": 6198,
+          "selected_by_if": 6198,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13050,8 +13068,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1610,
-          "selected_by_if": 1610,
+          "line": 1616,
+          "selected_by_if": 1616,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13090,8 +13108,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1582,
-          "selected_by_if": 1582,
+          "line": 1588,
+          "selected_by_if": 1588,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13150,8 +13168,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2652,
-          "selected_by_if": 2652,
+          "line": 2658,
+          "selected_by_if": 2658,
           "source": "core/web/api/service.py"
         },
         {
@@ -13178,8 +13196,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4775,
-          "selected_by_if": 4775,
+          "line": 4806,
+          "selected_by_if": 4806,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13233,8 +13251,8 @@
             "isinstance"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6317,
-          "selected_by_if": 6317,
+          "line": 6348,
+          "selected_by_if": 6348,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13276,8 +13294,8 @@
             "sum"
           ],
           "function": "dispatch_get",
-          "line": 1309,
-          "selected_by_if": 1309,
+          "line": 1315,
+          "selected_by_if": 1315,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13312,8 +13330,8 @@
             "list_acceptances"
           ],
           "function": "dispatch_get",
-          "line": 2310,
-          "selected_by_if": 2310,
+          "line": 2316,
+          "selected_by_if": 2316,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13364,8 +13382,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5446,
-          "selected_by_if": 5446,
+          "line": 5477,
+          "selected_by_if": 5477,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13398,8 +13416,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1924,
-          "selected_by_if": 1924,
+          "line": 1930,
+          "selected_by_if": 1930,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13440,8 +13458,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1905,
-          "selected_by_if": 1905,
+          "line": 1911,
+          "selected_by_if": 1911,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13481,8 +13499,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2166,
-          "selected_by_if": 2166,
+          "line": 2172,
+          "selected_by_if": 2172,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13547,8 +13565,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2324,
-          "selected_by_if": 2324,
+          "line": 2330,
+          "selected_by_if": 2330,
           "source": "core/web/api/service.py"
         },
         {
@@ -13559,8 +13577,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5481,
-          "selected_by_if": 5481,
+          "line": 5512,
+          "selected_by_if": 5512,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13614,8 +13632,8 @@
             "curated_models"
           ],
           "function": "dispatch_get",
-          "line": 2395,
-          "selected_by_if": 2395,
+          "line": 2401,
+          "selected_by_if": 2401,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13653,8 +13671,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2183,
-          "selected_by_if": 2183,
+          "line": 2189,
+          "selected_by_if": 2189,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13690,8 +13708,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1792,
-          "selected_by_if": 1792,
+          "line": 1798,
+          "selected_by_if": 1798,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13725,8 +13743,8 @@
             "spend_limits"
           ],
           "function": "dispatch_get",
-          "line": 2370,
-          "selected_by_if": 2370,
+          "line": 2376,
+          "selected_by_if": 2376,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13766,8 +13784,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2076,
-          "selected_by_if": 2076,
+          "line": 2082,
+          "selected_by_if": 2082,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13819,8 +13837,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4904,
-          "selected_by_if": 4904,
+          "line": 4935,
+          "selected_by_if": 4935,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13839,8 +13857,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4895,
-          "selected_by_if": 4895,
+          "line": 4926,
+          "selected_by_if": 4926,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13867,8 +13885,8 @@
             "str"
           ],
           "function": "_usepod_owner_action",
-          "line": 3857,
-          "selected_by_if": 3857,
+          "line": 3880,
+          "selected_by_if": 3880,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13891,8 +13909,8 @@
             "str"
           ],
           "function": "_usepod_owner_action",
-          "line": 3830,
-          "selected_by_if": 3830,
+          "line": 3853,
+          "selected_by_if": 3853,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13933,8 +13951,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1804,
-          "selected_by_if": 1804,
+          "line": 1810,
+          "selected_by_if": 1810,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13961,8 +13979,8 @@
             "str"
           ],
           "function": "_usepod_owner_action",
-          "line": 3857,
-          "selected_by_if": 3857,
+          "line": 3880,
+          "selected_by_if": 3880,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13987,8 +14005,8 @@
             "usepod_discovery.save_accountless_origin"
           ],
           "function": "_usepod_owner_action",
-          "line": 3922,
-          "selected_by_if": 3922,
+          "line": 3945,
+          "selected_by_if": 3945,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14010,8 +14028,8 @@
             "str"
           ],
           "function": "_usepod_owner_action",
-          "line": 3814,
-          "selected_by_if": 3814,
+          "line": 3837,
+          "selected_by_if": 3837,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14028,8 +14046,8 @@
             "sorted"
           ],
           "function": "_usepod_owner_action",
-          "line": 3826,
-          "selected_by_if": 3826,
+          "line": 3849,
+          "selected_by_if": 3849,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14049,8 +14067,8 @@
             "str"
           ],
           "function": "_usepod_owner_action",
-          "line": 3851,
-          "selected_by_if": 3851,
+          "line": 3874,
+          "selected_by_if": 3874,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14077,8 +14095,8 @@
             "str"
           ],
           "function": "_usepod_owner_action",
-          "line": 3885,
-          "selected_by_if": 3885,
+          "line": 3908,
+          "selected_by_if": 3908,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14105,8 +14123,8 @@
             "str"
           ],
           "function": "_usepod_owner_action",
-          "line": 3885,
-          "selected_by_if": 3885,
+          "line": 3908,
+          "selected_by_if": 3908,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14133,8 +14151,8 @@
             "str"
           ],
           "function": "_usepod_owner_action",
-          "line": 3885,
-          "selected_by_if": 3885,
+          "line": 3908,
+          "selected_by_if": 3908,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14159,8 +14177,8 @@
             "str"
           ],
           "function": "_usepod_owner_action",
-          "line": 3942,
-          "selected_by_if": 3942,
+          "line": 3965,
+          "selected_by_if": 3965,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14195,8 +14213,8 @@
             "unresolved_x402_operations"
           ],
           "function": "dispatch_get",
-          "line": 1820,
-          "selected_by_if": 1820,
+          "line": 1826,
+          "selected_by_if": 1826,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14233,8 +14251,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 929,
-          "selected_by_if": 929,
+          "line": 935,
+          "selected_by_if": 935,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14252,8 +14270,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 929,
-          "selected_by_if": 929,
+          "line": 935,
+          "selected_by_if": 935,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14290,8 +14308,8 @@
             "json_response"
           ],
           "function": "dispatch_post",
-          "line": 2942,
-          "selected_by_if": 2942,
+          "line": 2948,
+          "selected_by_if": 2948,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14334,8 +14352,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2031,
-          "selected_by_if": 2031,
+          "line": 2037,
+          "selected_by_if": 2037,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14374,8 +14392,8 @@
             "query.get"
           ],
           "function": "dispatch_get",
-          "line": 1685,
-          "selected_by_if": 1685,
+          "line": 1691,
+          "selected_by_if": 1691,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14411,8 +14429,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5933,
-          "selected_by_if": 5933,
+          "line": 5964,
+          "selected_by_if": 5964,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14445,8 +14463,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1783,
-          "selected_by_if": 1783,
+          "line": 1789,
+          "selected_by_if": 1789,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14479,8 +14497,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6042,
-          "selected_by_if": 6042,
+          "line": 6073,
+          "selected_by_if": 6073,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14515,8 +14533,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6035,
-          "selected_by_if": 6035,
+          "line": 6066,
+          "selected_by_if": 6066,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14549,8 +14567,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6049,
-          "selected_by_if": 6049,
+          "line": 6080,
+          "selected_by_if": 6080,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14585,8 +14603,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5948,
-          "selected_by_if": 5948,
+          "line": 5979,
+          "selected_by_if": 5979,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14623,8 +14641,8 @@
             "query.get"
           ],
           "function": "dispatch_get",
-          "line": 1695,
-          "selected_by_if": 1695,
+          "line": 1701,
+          "selected_by_if": 1701,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14659,8 +14677,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6000,
-          "selected_by_if": 6000,
+          "line": 6031,
+          "selected_by_if": 6031,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14695,8 +14713,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5986,
-          "selected_by_if": 5986,
+          "line": 6017,
+          "selected_by_if": 6017,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14731,8 +14749,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5993,
-          "selected_by_if": 5993,
+          "line": 6024,
+          "selected_by_if": 6024,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14767,8 +14785,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6007,
-          "selected_by_if": 6007,
+          "line": 6038,
+          "selected_by_if": 6038,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14803,8 +14821,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1755,
-          "selected_by_if": 1755,
+          "line": 1761,
+          "selected_by_if": 1761,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14837,8 +14855,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1765,
-          "selected_by_if": 1765,
+          "line": 1771,
+          "selected_by_if": 1771,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14871,8 +14889,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6028,
-          "selected_by_if": 6028,
+          "line": 6059,
+          "selected_by_if": 6059,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14905,8 +14923,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6021,
-          "selected_by_if": 6021,
+          "line": 6052,
+          "selected_by_if": 6052,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14942,8 +14960,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6014,
-          "selected_by_if": 6014,
+          "line": 6045,
+          "selected_by_if": 6045,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14979,8 +14997,8 @@
             "query.get"
           ],
           "function": "dispatch_get",
-          "line": 1774,
-          "selected_by_if": 1774,
+          "line": 1780,
+          "selected_by_if": 1780,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15015,8 +15033,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1714,
-          "selected_by_if": 1714,
+          "line": 1720,
+          "selected_by_if": 1720,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15050,8 +15068,8 @@
             "query.get"
           ],
           "function": "dispatch_get",
-          "line": 1704,
-          "selected_by_if": 1704,
+          "line": 1710,
+          "selected_by_if": 1710,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15087,8 +15105,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1746,
-          "selected_by_if": 1746,
+          "line": 1752,
+          "selected_by_if": 1752,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15123,8 +15141,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5972,
-          "selected_by_if": 5972,
+          "line": 6003,
+          "selected_by_if": 6003,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15159,8 +15177,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5979,
-          "selected_by_if": 5979,
+          "line": 6010,
+          "selected_by_if": 6010,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15197,8 +15215,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5941,
-          "selected_by_if": 5941,
+          "line": 5972,
+          "selected_by_if": 5972,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15245,8 +15263,8 @@
             "handle_context_pages_get"
           ],
           "function": "dispatch_get",
-          "line": 1426,
-          "selected_by_if": 1426,
+          "line": 1432,
+          "selected_by_if": 1432,
           "source": "core/web/api/service.py"
         },
         {
@@ -15254,8 +15272,8 @@
             "handle_context_pages_post"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5557,
-          "selected_by_if": 5557,
+          "line": 5588,
+          "selected_by_if": 5588,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15306,8 +15324,8 @@
             "workspace_root_provider"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5491,
-          "selected_by_if": 5490,
+          "line": 5522,
+          "selected_by_if": 5521,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15348,8 +15366,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2241,
-          "selected_by_if": 2240,
+          "line": 2247,
+          "selected_by_if": 2246,
           "source": "core/web/api/service.py"
         },
         {
@@ -15359,8 +15377,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2283,
-          "selected_by_if": 2283,
+          "line": 2289,
+          "selected_by_if": 2289,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15401,8 +15419,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2242,
-          "selected_by_if": 2240,
+          "line": 2248,
+          "selected_by_if": 2246,
           "source": "core/web/api/service.py"
         },
         {
@@ -15410,8 +15428,8 @@
             "_cr_forward"
           ],
           "function": "dispatch_get",
-          "line": 2270,
-          "selected_by_if": 2270,
+          "line": 2276,
+          "selected_by_if": 2276,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15460,8 +15478,8 @@
             "workspace_root_provider"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5492,
-          "selected_by_if": 5490,
+          "line": 5523,
+          "selected_by_if": 5521,
           "source": "core/web/api/service.py"
         },
         {
@@ -15478,8 +15496,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5536,
-          "selected_by_if": 5536,
+          "line": 5567,
+          "selected_by_if": 5567,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15520,8 +15538,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2241,
-          "selected_by_if": 2240,
+          "line": 2247,
+          "selected_by_if": 2246,
           "source": "core/web/api/service.py"
         },
         {
@@ -15529,8 +15547,8 @@
             "_cr_forward"
           ],
           "function": "dispatch_get",
-          "line": 2279,
-          "selected_by_if": 2279,
+          "line": 2285,
+          "selected_by_if": 2285,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15570,8 +15588,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2242,
-          "selected_by_if": 2240,
+          "line": 2248,
+          "selected_by_if": 2246,
           "source": "core/web/api/service.py"
         },
         {
@@ -15584,8 +15602,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2255,
-          "selected_by_if": 2255,
+          "line": 2261,
+          "selected_by_if": 2261,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15634,8 +15652,8 @@
             "workspace_root_provider"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5492,
-          "selected_by_if": 5490,
+          "line": 5523,
+          "selected_by_if": 5521,
           "source": "core/web/api/service.py"
         },
         {
@@ -15650,8 +15668,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5522,
-          "selected_by_if": 5522,
+          "line": 5553,
+          "selected_by_if": 5553,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15692,8 +15710,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2241,
-          "selected_by_if": 2240,
+          "line": 2247,
+          "selected_by_if": 2246,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15744,8 +15762,8 @@
             "workspace_root_provider"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5491,
-          "selected_by_if": 5490,
+          "line": 5522,
+          "selected_by_if": 5521,
           "source": "core/web/api/service.py"
         },
         {
@@ -15760,8 +15778,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5516,
-          "selected_by_if": 5516,
+          "line": 5547,
+          "selected_by_if": 5547,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15799,8 +15817,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2897,
-          "selected_by_if": 2897,
+          "line": 2903,
+          "selected_by_if": 2903,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15835,8 +15853,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 7700,
-          "selected_by_if": 7700,
+          "line": 7723,
+          "selected_by_if": 7723,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15870,8 +15888,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1836,
-          "selected_by_if": 1836,
+          "line": 1842,
+          "selected_by_if": 1842,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15922,8 +15940,8 @@
             "sorted"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4938,
-          "selected_by_if": 4938,
+          "line": 4969,
+          "selected_by_if": 4969,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15959,8 +15977,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1724,
-          "selected_by_if": 1724,
+          "line": 1730,
+          "selected_by_if": 1730,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15995,8 +16013,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1734,
-          "selected_by_if": 1734,
+          "line": 1740,
+          "selected_by_if": 1740,
           "source": "core/web/api/service.py"
         }
       ]
@@ -16031,8 +16049,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5956,
-          "selected_by_if": 5956,
+          "line": 5987,
+          "selected_by_if": 5987,
           "source": "core/web/api/service.py"
         }
       ]
@@ -16067,8 +16085,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5964,
-          "selected_by_if": 5964,
+          "line": 5995,
+          "selected_by_if": 5995,
           "source": "core/web/api/service.py"
         }
       ]
@@ -16102,8 +16120,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1898,
-          "selected_by_if": 1898,
+          "line": 1904,
+          "selected_by_if": 1904,
           "source": "core/web/api/service.py"
         }
       ]
@@ -16154,8 +16172,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5209,
-          "selected_by_if": 5209,
+          "line": 5240,
+          "selected_by_if": 5240,
           "source": "core/web/api/service.py"
         }
       ]
@@ -16194,8 +16212,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2061,
-          "selected_by_if": 2061,
+          "line": 2067,
+          "selected_by_if": 2067,
           "source": "core/web/api/service.py"
         }
       ]
@@ -16248,8 +16266,8 @@
             "safe_error_text"
           ],
           "function": "_dispatch_post_inner",
-          "line": 7613,
-          "selected_by_if": 7613,
+          "line": 7636,
+          "selected_by_if": 7636,
           "source": "core/web/api/service.py"
         }
       ]
@@ -16274,8 +16292,8 @@
             "_first_run_api.handle_pact_post"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5838,
-          "selected_by_if": 5838,
+          "line": 5869,
+          "selected_by_if": 5869,
           "source": "core/web/api/service.py"
         }
       ]
@@ -16398,8 +16416,8 @@
             "_first_run_api.handle_provider_get"
           ],
           "function": "dispatch_get",
-          "line": 1622,
-          "selected_by_if": 1622,
+          "line": 1628,
+          "selected_by_if": 1628,
           "source": "core/web/api/service.py"
         }
       ]
@@ -16474,8 +16492,8 @@
             "list_procedure_records"
           ],
           "function": "dispatch_get",
-          "line": 1854,
-          "selected_by_if": 1854,
+          "line": 1860,
+          "selected_by_if": 1860,
           "source": "core/web/api/service.py"
         },
         {
@@ -16489,8 +16507,8 @@
             "valid_procedure_id"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5309,
-          "selected_by_if": 5309,
+          "line": 5340,
+          "selected_by_if": 5340,
           "source": "core/web/api/service.py"
         }
       ]
@@ -16514,14 +16532,14 @@
             "valid_procedure_id"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5290,
-          "selected_by_if": 5290,
+          "line": 5321,
+          "selected_by_if": 5321,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 5300,
+          "line": 5331,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
@@ -16536,14 +16554,14 @@
             "valid_procedure_id"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5309,
-          "selected_by_if": 5309,
+          "line": 5340,
+          "selected_by_if": 5340,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 5317,
+          "line": 5348,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         }
@@ -16594,8 +16612,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2106,
-          "selected_by_if": 2106,
+          "line": 2112,
+          "selected_by_if": 2112,
           "source": "core/web/api/service.py"
         }
       ]
@@ -16643,8 +16661,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5567,
-          "selected_by_if": 5567,
+          "line": 5598,
+          "selected_by_if": 5598,
           "source": "core/web/api/service.py"
         }
       ]
@@ -16667,8 +16685,8 @@
             "handle_mobile_companion_get"
           ],
           "function": "dispatch_get",
-          "line": 1044,
-          "selected_by_if": 1044,
+          "line": 1050,
+          "selected_by_if": 1050,
           "source": "core/web/api/service.py"
         },
         {
@@ -16676,8 +16694,8 @@
             "handle_mobile_companion_post"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4111,
-          "selected_by_if": 4111,
+          "line": 4134,
+          "selected_by_if": 4134,
           "source": "core/web/api/service.py"
         }
       ]
@@ -17099,8 +17117,8 @@
           "proof": [
             "tests/command_registry/test_convergence_adapters.py",
             "tests/first_run_pact_rig.py",
-            "tests/test_bundle_tooling.py",
-            "tests/test_chat_composer_controls.py"
+            "tests/test_approval_resolution_transport.py",
+            "tests/test_bundle_tooling.py"
           ],
           "transport": "http"
         }
@@ -17124,15 +17142,15 @@
             "body.get",
             "bool",
             "emit_runtime_event",
+            "fault.get",
             "grant.get",
             "grant_chat_workspace_authority",
             "int",
-            "is_loopback_host",
-            "isinstance"
+            "is_loopback_host"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4362,
-          "selected_by_if": 4362,
+          "line": 4385,
+          "selected_by_if": 4385,
           "source": "core/web/api/service.py"
         }
       ]
@@ -17184,8 +17202,8 @@
             "model_radar_service.try_once"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6226,
-          "selected_by_if": 6226,
+          "line": 6257,
+          "selected_by_if": 6257,
           "source": "core/web/api/service.py"
         },
         {
@@ -17201,8 +17219,8 @@
             "sorted"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6264,
-          "selected_by_if": 6264,
+          "line": 6295,
+          "selected_by_if": 6295,
           "source": "core/web/api/service.py"
         }
       ]
@@ -17248,8 +17266,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2197,
-          "selected_by_if": 2197,
+          "line": 2203,
+          "selected_by_if": 2203,
           "source": "core/web/api/service.py"
         }
       ]
@@ -17302,8 +17320,8 @@
             "model_radar_service.get_preferences"
           ],
           "function": "dispatch_get",
-          "line": 2229,
-          "selected_by_if": 2229,
+          "line": 2235,
+          "selected_by_if": 2235,
           "source": "core/web/api/service.py"
         },
         {
@@ -17330,8 +17348,8 @@
             "model_radar_service.try_once"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6226,
-          "selected_by_if": 6226,
+          "line": 6257,
+          "selected_by_if": 6257,
           "source": "core/web/api/service.py"
         },
         {
@@ -17346,8 +17364,8 @@
             "stored.to_dict"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6286,
-          "selected_by_if": 6286,
+          "line": 6317,
+          "selected_by_if": 6317,
           "source": "core/web/api/service.py"
         }
       ]
@@ -17399,8 +17417,8 @@
             "model_radar_service.try_once"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6226,
-          "selected_by_if": 6226,
+          "line": 6257,
+          "selected_by_if": 6257,
           "source": "core/web/api/service.py"
         }
       ]
@@ -17452,8 +17470,8 @@
             "model_radar_service.try_once"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6226,
-          "selected_by_if": 6226,
+          "line": 6257,
+          "selected_by_if": 6257,
           "source": "core/web/api/service.py"
         },
         {
@@ -17469,8 +17487,8 @@
             "sorted"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6276,
-          "selected_by_if": 6276,
+          "line": 6307,
+          "selected_by_if": 6307,
           "source": "core/web/api/service.py"
         }
       ]
@@ -17510,8 +17528,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1935,
-          "selected_by_if": 1935,
+          "line": 1941,
+          "selected_by_if": 1941,
           "source": "core/web/api/service.py"
         }
       ]
@@ -17565,14 +17583,14 @@
             "run_local_model_tool_certification"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4124,
-          "selected_by_if": 4124,
+          "line": 4147,
+          "selected_by_if": 4147,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 4340,
+          "line": 4363,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         }
@@ -17593,6 +17611,7 @@
           "path": "/api/models/local",
           "permission": "",
           "proof": [
+            "tests/test_chat_registered_local_models.py",
             "tests/test_local_model_door_and_probe_measurement.py"
           ],
           "transport": "http"
@@ -17621,8 +17640,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1971,
-          "selected_by_if": 1971,
+          "line": 1977,
+          "selected_by_if": 1977,
           "source": "core/web/api/service.py"
         }
       ]
@@ -17673,8 +17692,8 @@
             "refresh_provider_truth"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4261,
-          "selected_by_if": 4261,
+          "line": 4284,
+          "selected_by_if": 4284,
           "source": "core/web/api/service.py"
         }
       ]
@@ -17698,8 +17717,8 @@
             "handle_money_get"
           ],
           "function": "dispatch_get",
-          "line": 1028,
-          "selected_by_if": 1028,
+          "line": 1034,
+          "selected_by_if": 1034,
           "source": "core/web/api/service.py"
         },
         {
@@ -17708,8 +17727,8 @@
             "handle_money_post"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4095,
-          "selected_by_if": 4095,
+          "line": 4118,
+          "selected_by_if": 4118,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18111,8 +18130,8 @@
             "type"
           ],
           "function": "dispatch_get",
-          "line": 936,
-          "selected_by_if": 936,
+          "line": 942,
+          "selected_by_if": 942,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18163,8 +18182,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2965,
-          "selected_by_if": 2964,
+          "line": 2971,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         },
         {
@@ -18179,8 +18198,8 @@
             "str"
           ],
           "function": "dispatch_post",
-          "line": 3021,
-          "selected_by_if": 3021,
+          "line": 3027,
+          "selected_by_if": 3027,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18233,8 +18252,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2967,
-          "selected_by_if": 2964,
+          "line": 2973,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         },
         {
@@ -18244,8 +18263,8 @@
             "native_notifications.request_authorization"
           ],
           "function": "dispatch_post",
-          "line": 2986,
-          "selected_by_if": 2986,
+          "line": 2992,
+          "selected_by_if": 2992,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18297,8 +18316,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2966,
-          "selected_by_if": 2964,
+          "line": 2972,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         },
         {
@@ -18310,8 +18329,8 @@
             "str"
           ],
           "function": "dispatch_post",
-          "line": 2976,
-          "selected_by_if": 2976,
+          "line": 2982,
+          "selected_by_if": 2982,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18363,8 +18382,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2966,
-          "selected_by_if": 2964,
+          "line": 2972,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         },
         {
@@ -18377,8 +18396,8 @@
             "str"
           ],
           "function": "dispatch_post",
-          "line": 2979,
-          "selected_by_if": 2979,
+          "line": 2985,
+          "selected_by_if": 2985,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18416,8 +18435,8 @@
             "type"
           ],
           "function": "dispatch_get",
-          "line": 968,
-          "selected_by_if": 968,
+          "line": 974,
+          "selected_by_if": 974,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18470,8 +18489,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2966,
-          "selected_by_if": 2964,
+          "line": 2972,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         },
         {
@@ -18484,8 +18503,8 @@
             "result.pop"
           ],
           "function": "dispatch_post",
-          "line": 2982,
-          "selected_by_if": 2982,
+          "line": 2988,
+          "selected_by_if": 2988,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18541,8 +18560,8 @@
             "type"
           ],
           "function": "dispatch_get",
-          "line": 951,
-          "selected_by_if": 951,
+          "line": 957,
+          "selected_by_if": 957,
           "source": "core/web/api/service.py"
         },
         {
@@ -18569,8 +18588,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2965,
-          "selected_by_if": 2964,
+          "line": 2971,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         },
         {
@@ -18583,8 +18602,8 @@
             "result.get"
           ],
           "function": "dispatch_post",
-          "line": 3027,
-          "selected_by_if": 3027,
+          "line": 3033,
+          "selected_by_if": 3033,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18637,8 +18656,8 @@
             "resolve_null_request"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6830,
-          "selected_by_if": 6830,
+          "line": 6861,
+          "selected_by_if": 6861,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18671,8 +18690,8 @@
             "oauth_callback.callback_status"
           ],
           "function": "dispatch_get",
-          "line": 2021,
-          "selected_by_if": 2021,
+          "line": 2027,
+          "selected_by_if": 2027,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18688,8 +18707,8 @@
             "_first_run_api.handle_pact_post"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5838,
-          "selected_by_if": 5838,
+          "line": 5869,
+          "selected_by_if": 5869,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18747,8 +18766,8 @@
             "_first_run_api.handle_provider_get"
           ],
           "function": "dispatch_get",
-          "line": 1622,
-          "selected_by_if": 1622,
+          "line": 1628,
+          "selected_by_if": 1628,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18984,8 +19003,8 @@
             "_first_run_api.handle_provider_get"
           ],
           "function": "dispatch_get",
-          "line": 1622,
-          "selected_by_if": 1622,
+          "line": 1628,
+          "selected_by_if": 1628,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19019,8 +19038,8 @@
             "read_plugin_catalog"
           ],
           "function": "dispatch_get",
-          "line": 1874,
-          "selected_by_if": 1874,
+          "line": 1880,
+          "selected_by_if": 1880,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19068,8 +19087,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5365,
-          "selected_by_if": 5365,
+          "line": 5396,
+          "selected_by_if": 5396,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19120,8 +19139,8 @@
             "lifecycle_snapshot"
           ],
           "function": "dispatch_get",
-          "line": 1846,
-          "selected_by_if": 1846,
+          "line": 1852,
+          "selected_by_if": 1852,
           "source": "core/web/api/service.py"
         },
         {
@@ -19135,8 +19154,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5325,
-          "selected_by_if": 5325,
+          "line": 5356,
+          "selected_by_if": 5356,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19171,8 +19190,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5340,
-          "selected_by_if": 5340,
+          "line": 5371,
+          "selected_by_if": 5371,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19221,8 +19240,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1630,
-          "selected_by_if": 1630,
+          "line": 1636,
+          "selected_by_if": 1636,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19257,14 +19276,14 @@
             "_str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5843,
-          "selected_by_if": 5843,
+          "line": 5874,
+          "selected_by_if": 5874,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 5866,
+          "line": 5897,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         }
@@ -19312,8 +19331,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1630,
-          "selected_by_if": 1630,
+          "line": 1636,
+          "selected_by_if": 1636,
           "source": "core/web/api/service.py"
         },
         {
@@ -19323,8 +19342,8 @@
             "operator_profile.export_profile"
           ],
           "function": "dispatch_get",
-          "line": 1641,
-          "selected_by_if": 1641,
+          "line": 1647,
+          "selected_by_if": 1647,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19379,8 +19398,8 @@
             "project_store.list_projects"
           ],
           "function": "dispatch_get",
-          "line": 1891,
-          "selected_by_if": 1891,
+          "line": 1897,
+          "selected_by_if": 1897,
           "source": "core/web/api/service.py"
         },
         {
@@ -19407,8 +19426,8 @@
             "list_chat_namespaces"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5066,
-          "selected_by_if": 5066,
+          "line": 5097,
+          "selected_by_if": 5097,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19461,8 +19480,8 @@
             "list_chat_namespaces"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5066,
-          "selected_by_if": 5066,
+          "line": 5097,
+          "selected_by_if": 5097,
           "source": "core/web/api/service.py"
         },
         {
@@ -19488,8 +19507,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5141,
-          "selected_by_if": 5141,
+          "line": 5172,
+          "selected_by_if": 5172,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19538,8 +19557,8 @@
             "list_chat_namespaces"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5066,
-          "selected_by_if": 5066,
+          "line": 5097,
+          "selected_by_if": 5097,
           "source": "core/web/api/service.py"
         },
         {
@@ -19559,8 +19578,8 @@
             "sorted"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5113,
-          "selected_by_if": 5113,
+          "line": 5144,
+          "selected_by_if": 5144,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19611,8 +19630,8 @@
             "list_chat_namespaces"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5066,
-          "selected_by_if": 5066,
+          "line": 5097,
+          "selected_by_if": 5097,
           "source": "core/web/api/service.py"
         },
         {
@@ -19630,8 +19649,8 @@
             "sorted"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5095,
-          "selected_by_if": 5095,
+          "line": 5126,
+          "selected_by_if": 5126,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19684,8 +19703,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 994,
-          "selected_by_if": 994,
+          "line": 1000,
+          "selected_by_if": 1000,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19722,8 +19741,8 @@
             "workspace_root_provider"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5270,
-          "selected_by_if": 5270,
+          "line": 5301,
+          "selected_by_if": 5301,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19763,8 +19782,8 @@
             "workspace_root_provider"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5250,
-          "selected_by_if": 5250,
+          "line": 5281,
+          "selected_by_if": 5281,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19801,8 +19820,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1867,
-          "selected_by_if": 1867,
+          "line": 1873,
+          "selected_by_if": 1873,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19836,8 +19855,8 @@
             "repo_sessions_payload"
           ],
           "function": "dispatch_get",
-          "line": 1862,
-          "selected_by_if": 1862,
+          "line": 1868,
+          "selected_by_if": 1868,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19873,8 +19892,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1258,
-          "selected_by_if": 1258,
+          "line": 1264,
+          "selected_by_if": 1264,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19914,8 +19933,8 @@
             "validate_workspace_change_session_id"
           ],
           "function": "dispatch_get",
-          "line": 2629,
-          "selected_by_if": 2629,
+          "line": 2635,
+          "selected_by_if": 2635,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19949,8 +19968,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 2813,
-          "selected_by_if": 2813,
+          "line": 2819,
+          "selected_by_if": 2819,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19995,8 +20014,8 @@
             "turn_execution_summary"
           ],
           "function": "dispatch_get",
-          "line": 2587,
-          "selected_by_if": 2587,
+          "line": 2593,
+          "selected_by_if": 2593,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20046,8 +20065,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4220,
-          "selected_by_if": 4220,
+          "line": 4243,
+          "selected_by_if": 4243,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20091,8 +20110,8 @@
             "sorted"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4197,
-          "selected_by_if": 4197,
+          "line": 4220,
+          "selected_by_if": 4220,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20134,8 +20153,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2816,
-          "selected_by_if": 2816,
+          "line": 2822,
+          "selected_by_if": 2822,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20182,8 +20201,8 @@
             "verify_honesty_chain"
           ],
           "function": "dispatch_get",
-          "line": 2725,
-          "selected_by_if": 2725,
+          "line": 2731,
+          "selected_by_if": 2731,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20223,8 +20242,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1262,
-          "selected_by_if": 1262,
+          "line": 1268,
+          "selected_by_if": 1268,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20264,8 +20283,8 @@
             "safe_error_text"
           ],
           "function": "dispatch_get",
-          "line": 1267,
-          "selected_by_if": 1267,
+          "line": 1273,
+          "selected_by_if": 1273,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20314,8 +20333,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4715,
-          "selected_by_if": 4715,
+          "line": 4746,
+          "selected_by_if": 4746,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20357,8 +20376,8 @@
             "usage_meter.usage_summary"
           ],
           "function": "dispatch_get",
-          "line": 2549,
-          "selected_by_if": 2549,
+          "line": 2555,
+          "selected_by_if": 2555,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20399,8 +20418,8 @@
             "refresh_provider_decision"
           ],
           "function": "dispatch_get",
-          "line": 1247,
-          "selected_by_if": 1247,
+          "line": 1253,
+          "selected_by_if": 1253,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20450,8 +20469,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5019,
-          "selected_by_if": 5019,
+          "line": 5050,
+          "selected_by_if": 5050,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20485,8 +20504,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1827,
-          "selected_by_if": 1827,
+          "line": 1833,
+          "selected_by_if": 1833,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20537,8 +20556,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4981,
-          "selected_by_if": 4981,
+          "line": 5012,
+          "selected_by_if": 5012,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20581,8 +20600,8 @@
             "unquote"
           ],
           "function": "dispatch_get",
-          "line": 1062,
-          "selected_by_if": 1062,
+          "line": 1068,
+          "selected_by_if": 1068,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20634,8 +20653,8 @@
             "sp_origin.split"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6086,
-          "selected_by_if": 6086,
+          "line": 6117,
+          "selected_by_if": 6117,
           "source": "core/web/api/service.py"
         },
         {
@@ -20650,8 +20669,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6115,
-          "selected_by_if": 6115,
+          "line": 6146,
+          "selected_by_if": 6146,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20703,8 +20722,8 @@
             "sp_origin.split"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6086,
-          "selected_by_if": 6086,
+          "line": 6117,
+          "selected_by_if": 6117,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20755,8 +20774,8 @@
             "sp_origin.split"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6086,
-          "selected_by_if": 6086,
+          "line": 6117,
+          "selected_by_if": 6117,
           "source": "core/web/api/service.py"
         },
         {
@@ -20767,8 +20786,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6111,
-          "selected_by_if": 6111,
+          "line": 6142,
+          "selected_by_if": 6142,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20819,8 +20838,8 @@
             "sp_origin.split"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6086,
-          "selected_by_if": 6086,
+          "line": 6117,
+          "selected_by_if": 6117,
           "source": "core/web/api/service.py"
         },
         {
@@ -20831,8 +20850,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6109,
-          "selected_by_if": 6109,
+          "line": 6140,
+          "selected_by_if": 6140,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20862,7 +20881,7 @@
         {
           "branch_calls": [],
           "function": "<module>",
-          "line": 3330,
+          "line": 3353,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
@@ -20886,8 +20905,8 @@
             "str"
           ],
           "function": "dispatch_upload",
-          "line": 3395,
-          "selected_by_if": 3395,
+          "line": 3418,
+          "selected_by_if": 3418,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20942,8 +20961,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1676,
-          "selected_by_if": 1676,
+          "line": 1682,
+          "selected_by_if": 1682,
           "source": "core/web/api/service.py"
         },
         {
@@ -20957,8 +20976,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4881,
-          "selected_by_if": 4881,
+          "line": 4912,
+          "selected_by_if": 4912,
           "source": "core/web/api/service.py"
         }
       ]
@@ -21013,8 +21032,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1667,
-          "selected_by_if": 1667,
+          "line": 1673,
+          "selected_by_if": 1673,
           "source": "core/web/api/service.py"
         },
         {
@@ -21025,8 +21044,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5923,
-          "selected_by_if": 5923,
+          "line": 5954,
+          "selected_by_if": 5954,
           "source": "core/web/api/service.py"
         }
       ]
@@ -21063,8 +21082,8 @@
             "setup_progress.snapshot"
           ],
           "function": "dispatch_get",
-          "line": 1183,
-          "selected_by_if": 1183,
+          "line": 1189,
+          "selected_by_if": 1189,
           "source": "core/web/api/service.py"
         }
       ]
@@ -21084,8 +21103,10 @@
           "path": "/api/show",
           "permission": "",
           "proof": [
-            "tests/wallet/_rig_provider.py",
-            "tests/wallet/_rig_queue_provider.py"
+            "tests/_authorship_served_rig.py",
+            "tests/_blackbox_served_rig.py",
+            "tests/_ollama_metadata_server.py",
+            "tests/test_answer_integrity_consecutive_turns.py"
           ],
           "transport": "http"
         }
@@ -21104,8 +21125,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 7671,
-          "selected_by_if": 7671,
+          "line": 7694,
+          "selected_by_if": 7694,
           "source": "core/web/api/service.py"
         }
       ]
@@ -21140,8 +21161,8 @@
             "skill_inventory"
           ],
           "function": "dispatch_get",
-          "line": 1882,
-          "selected_by_if": 1882,
+          "line": 1888,
+          "selected_by_if": 1888,
           "source": "core/web/api/service.py"
         }
       ]
@@ -21193,8 +21214,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5403,
-          "selected_by_if": 5403,
+          "line": 5434,
+          "selected_by_if": 5434,
           "source": "core/web/api/service.py"
         }
       ]
@@ -21216,8 +21237,8 @@
           "proof": [
             "tests/_authorship_served_rig.py",
             "tests/_blackbox_served_rig.py",
-            "tests/_reader_served_rig.py",
-            "tests/_served_sufficiency_provider.py"
+            "tests/_ollama_metadata_server.py",
+            "tests/_reader_served_rig.py"
           ],
           "transport": "http"
         }
@@ -21232,8 +21253,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1222,
-          "selected_by_if": 1222,
+          "line": 1228,
+          "selected_by_if": 1228,
           "source": "core/web/api/service.py"
         }
       ]
@@ -21272,8 +21293,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4346,
-          "selected_by_if": 4346,
+          "line": 4369,
+          "selected_by_if": 4369,
           "source": "core/web/api/service.py"
         }
       ]
@@ -21313,8 +21334,8 @@
             "payload.setdefault"
           ],
           "function": "dispatch_post",
-          "line": 2948,
-          "selected_by_if": 2948,
+          "line": 2954,
+          "selected_by_if": 2954,
           "source": "core/web/api/service.py"
         }
       ]
@@ -21357,14 +21378,14 @@
             "str"
           ],
           "function": "dispatch_post",
-          "line": 3041,
-          "selected_by_if": 3041,
+          "line": 3047,
+          "selected_by_if": 3047,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "dispatch_post",
-          "line": 3049,
+          "line": 3055,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         }
@@ -21408,8 +21429,8 @@
             "str"
           ],
           "function": "dispatch_post",
-          "line": 3041,
-          "selected_by_if": 3041,
+          "line": 3047,
+          "selected_by_if": 3047,
           "source": "core/web/api/service.py"
         }
       ]
@@ -21445,8 +21466,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 2096,
-          "selected_by_if": 2096,
+          "line": 2102,
+          "selected_by_if": 2102,
           "source": "core/web/api/service.py"
         }
       ]
@@ -21465,8 +21486,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1033,
-          "selected_by_if": 1033,
+          "line": 1039,
+          "selected_by_if": 1039,
           "source": "core/web/api/service.py"
         },
         {
@@ -21477,8 +21498,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4100,
-          "selected_by_if": 4100,
+          "line": 4123,
+          "selected_by_if": 4123,
           "source": "core/web/api/service.py"
         },
         {
@@ -23229,8 +23250,8 @@
             "apply_runtime_headers"
           ],
           "function": "dispatch_get",
-          "line": 1213,
-          "selected_by_if": 1213,
+          "line": 1219,
+          "selected_by_if": 1219,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23273,14 +23294,14 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4690,
-          "selected_by_if": 4690,
+          "line": 4721,
+          "selected_by_if": 4721,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 4705,
+          "line": 4736,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         }
@@ -23316,8 +23337,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1114,
-          "selected_by_if": 1114,
+          "line": 1120,
+          "selected_by_if": 1120,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23349,8 +23370,8 @@
             "handle_chat_asset_get"
           ],
           "function": "dispatch_get",
-          "line": 918,
-          "selected_by_if": 918,
+          "line": 924,
+          "selected_by_if": 924,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23368,8 +23389,8 @@
             "str"
           ],
           "function": "_usepod_owner_action",
-          "line": 3819,
-          "selected_by_if": 3819,
+          "line": 3842,
+          "selected_by_if": 3842,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23403,8 +23424,8 @@
             "render_desktop_companion_html"
           ],
           "function": "dispatch_get",
-          "line": 1094,
-          "selected_by_if": 1094,
+          "line": 1100,
+          "selected_by_if": 1100,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23439,8 +23460,8 @@
             "routing.forget_approved_bound"
           ],
           "function": "_usepod_owner_action",
-          "line": 3864,
-          "selected_by_if": 3864,
+          "line": 3887,
+          "selected_by_if": 3887,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23487,8 +23508,8 @@
             "web0_gate_key_store"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6983,
-          "selected_by_if": 6983,
+          "line": 7014,
+          "selected_by_if": 7014,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23536,8 +23557,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1232,
-          "selected_by_if": 1232,
+          "line": 1238,
+          "selected_by_if": 1238,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23561,14 +23582,14 @@
             "valid_procedure_id"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5290,
-          "selected_by_if": 5290,
+          "line": 5321,
+          "selected_by_if": 5321,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 5300,
+          "line": 5331,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
@@ -23583,8 +23604,8 @@
             "valid_procedure_id"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5309,
-          "selected_by_if": 5309,
+          "line": 5340,
+          "selected_by_if": 5340,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23651,8 +23672,8 @@
             "handle_media_editor_get"
           ],
           "function": "dispatch_get",
-          "line": 923,
-          "selected_by_if": 923,
+          "line": 929,
+          "selected_by_if": 929,
           "source": "core/web/api/service.py"
         },
         {
@@ -23660,8 +23681,8 @@
             "handle_media_editor_get"
           ],
           "function": "dispatch_get",
-          "line": 2303,
-          "selected_by_if": 2303,
+          "line": 2309,
+          "selected_by_if": 2309,
           "source": "core/web/api/service.py"
         },
         {
@@ -23669,8 +23690,8 @@
             "handle_media_editor_post"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4086,
-          "selected_by_if": 4086,
+          "line": 4109,
+          "selected_by_if": 4109,
           "source": "core/web/api/service.py"
         },
         {
@@ -23678,8 +23699,8 @@
             "handle_media_editor_post"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5552,
-          "selected_by_if": 5552,
+          "line": 5583,
+          "selected_by_if": 5583,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23695,8 +23716,8 @@
             "handle_media_editor_get"
           ],
           "function": "dispatch_get",
-          "line": 923,
-          "selected_by_if": 923,
+          "line": 929,
+          "selected_by_if": 929,
           "source": "core/web/api/service.py"
         },
         {
@@ -23704,8 +23725,8 @@
             "handle_media_editor_get"
           ],
           "function": "dispatch_get",
-          "line": 2303,
-          "selected_by_if": 2303,
+          "line": 2309,
+          "selected_by_if": 2309,
           "source": "core/web/api/service.py"
         },
         {
@@ -23713,8 +23734,8 @@
             "handle_media_editor_post"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4086,
-          "selected_by_if": 4086,
+          "line": 4109,
+          "selected_by_if": 4109,
           "source": "core/web/api/service.py"
         },
         {
@@ -23722,8 +23743,8 @@
             "handle_media_editor_post"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5552,
-          "selected_by_if": 5552,
+          "line": 5583,
+          "selected_by_if": 5583,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23867,8 +23888,8 @@
             "render_null_browser_html"
           ],
           "function": "dispatch_get",
-          "line": 1194,
-          "selected_by_if": 1194,
+          "line": 1200,
+          "selected_by_if": 1200,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23884,8 +23905,8 @@
             "price_wait_sessions"
           ],
           "function": "_usepod_owner_action",
-          "line": 3821,
-          "selected_by_if": 3821,
+          "line": 3844,
+          "selected_by_if": 3844,
           "source": "core/web/api/service.py"
         },
         {
@@ -23894,8 +23915,8 @@
             "spend_approval.pending_spend_approval"
           ],
           "function": "_usepod_owner_action",
-          "line": 3893,
-          "selected_by_if": 3893,
+          "line": 3916,
+          "selected_by_if": 3916,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23917,8 +23938,8 @@
             "str"
           ],
           "function": "_usepod_owner_action",
-          "line": 3897,
-          "selected_by_if": 3897,
+          "line": 3920,
+          "selected_by_if": 3920,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23950,8 +23971,8 @@
             "price_wait.save_target"
           ],
           "function": "_usepod_owner_action",
-          "line": 3817,
-          "selected_by_if": 3817,
+          "line": 3840,
+          "selected_by_if": 3840,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23981,8 +24002,8 @@
             "handle_school_get"
           ],
           "function": "dispatch_get",
-          "line": 1020,
-          "selected_by_if": 1020,
+          "line": 1026,
+          "selected_by_if": 1026,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23998,8 +24019,8 @@
             "handle_school_api_post"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4091,
-          "selected_by_if": 4091,
+          "line": 4114,
+          "selected_by_if": 4114,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24029,8 +24050,8 @@
             "handle_school_api_get"
           ],
           "function": "dispatch_get",
-          "line": 1024,
-          "selected_by_if": 1024,
+          "line": 1030,
+          "selected_by_if": 1030,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24060,8 +24081,8 @@
             "handle_school_get"
           ],
           "function": "dispatch_get",
-          "line": 1020,
-          "selected_by_if": 1020,
+          "line": 1026,
+          "selected_by_if": 1026,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24096,8 +24117,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1135,
-          "selected_by_if": 1135,
+          "line": 1141,
+          "selected_by_if": 1141,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24132,8 +24153,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1160,
-          "selected_by_if": 1160,
+          "line": 1166,
+          "selected_by_if": 1166,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24184,8 +24205,8 @@
             "render_runtime_task_rail_html"
           ],
           "function": "dispatch_get",
-          "line": 1049,
-          "selected_by_if": 1049,
+          "line": 1055,
+          "selected_by_if": 1055,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24217,8 +24238,8 @@
             "render_runtime_task_rail_html"
           ],
           "function": "dispatch_get",
-          "line": 1049,
-          "selected_by_if": 1049,
+          "line": 1055,
+          "selected_by_if": 1055,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24232,33 +24253,14 @@
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 7013,
+          "line": 7044,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 7016,
-          "selected_by_if": null,
-          "source": "core/web/api/service.py"
-        },
-        {
-          "branch_calls": [
-            "apply_runtime_headers",
-            "openai_sse_stream_from_ollama_chunks",
-            "str",
-            "stream_response"
-          ],
-          "function": "_dispatch_post_inner",
-          "line": 7320,
-          "selected_by_if": 7320,
-          "source": "core/web/api/service.py"
-        },
-        {
-          "branch_calls": [],
-          "function": "_dispatch_post_inner",
-          "line": 7334,
+          "line": 7047,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
@@ -24270,14 +24272,14 @@
             "stream_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 7412,
-          "selected_by_if": 7412,
+          "line": 7343,
+          "selected_by_if": 7343,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 7426,
+          "line": 7357,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
@@ -24289,14 +24291,33 @@
             "stream_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 7485,
-          "selected_by_if": 7485,
+          "line": 7435,
+          "selected_by_if": 7435,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 7580,
+          "line": 7449,
+          "selected_by_if": null,
+          "source": "core/web/api/service.py"
+        },
+        {
+          "branch_calls": [
+            "apply_runtime_headers",
+            "openai_sse_stream_from_ollama_chunks",
+            "str",
+            "stream_response"
+          ],
+          "function": "_dispatch_post_inner",
+          "line": 7508,
+          "selected_by_if": 7508,
+          "source": "core/web/api/service.py"
+        },
+        {
+          "branch_calls": [],
+          "function": "_dispatch_post_inner",
+          "line": 7603,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         }
@@ -24336,8 +24357,26 @@
             "pin_lock.admit_chat_turn"
           ],
           "function": "dispatch_post",
-          "line": 3086,
-          "selected_by_if": 3086,
+          "line": 3092,
+          "selected_by_if": 3092,
+          "source": "core/web/api/service.py"
+        },
+        {
+          "branch_calls": [
+            ".strip",
+            "_chat_context.get",
+            "_inbound_source_context",
+            "body.get",
+            "is_loopback_host",
+            "list",
+            "normalize_chat_history_provider",
+            "stable_openclaw_session_id_provider",
+            "str",
+            "strip_reserved_trust_keys"
+          ],
+          "function": "dispatch_post",
+          "line": 3126,
+          "selected_by_if": 3126,
           "source": "core/web/api/service.py"
         },
         {
@@ -24364,8 +24403,8 @@
             "_human_size"
           ],
           "function": "_dispatch_post_inner",
-          "line": 7000,
-          "selected_by_if": 7000,
+          "line": 7031,
+          "selected_by_if": 7031,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24405,8 +24444,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2897,
-          "selected_by_if": 2897,
+          "line": 2903,
+          "selected_by_if": 2903,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24443,8 +24482,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 7700,
-          "selected_by_if": 7700,
+          "line": 7723,
+          "selected_by_if": 7723,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24465,6 +24504,7 @@
           "permission": "",
           "proof": [
             "tests/test_daemon_survives_concurrent_load.py",
+            "tests/test_health_snapshot_no_backend_refresh.py",
             "tests/test_install_surface_contracts.py"
           ],
           "transport": "http"
@@ -24488,8 +24528,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1232,
-          "selected_by_if": 1232,
+          "line": 1238,
+          "selected_by_if": 1238,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24527,8 +24567,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1227,
-          "selected_by_if": 1227,
+          "line": 1233,
+          "selected_by_if": 1233,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24579,8 +24619,8 @@
             "resolve_null_request"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6830,
-          "selected_by_if": 6830,
+          "line": 6861,
+          "selected_by_if": 6861,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24612,8 +24652,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1258,
-          "selected_by_if": 1258,
+          "line": 1264,
+          "selected_by_if": 1264,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24651,8 +24691,8 @@
             "validate_workspace_change_session_id"
           ],
           "function": "dispatch_get",
-          "line": 2629,
-          "selected_by_if": 2629,
+          "line": 2635,
+          "selected_by_if": 2635,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24691,8 +24731,8 @@
             "usage_meter.usage_summary"
           ],
           "function": "dispatch_get",
-          "line": 2549,
-          "selected_by_if": 2549,
+          "line": 2555,
+          "selected_by_if": 2555,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24729,8 +24769,8 @@
             "refresh_provider_decision"
           ],
           "function": "dispatch_get",
-          "line": 1247,
-          "selected_by_if": 1247,
+          "line": 1253,
+          "selected_by_if": 1253,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24766,8 +24806,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1033,
-          "selected_by_if": 1033,
+          "line": 1039,
+          "selected_by_if": 1039,
           "source": "core/web/api/service.py"
         },
         {
@@ -24821,8 +24861,8 @@
             "render_null_browser_html"
           ],
           "function": "dispatch_get",
-          "line": 1194,
-          "selected_by_if": 1194,
+          "line": 1200,
+          "selected_by_if": 1200,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24845,5 +24885,5 @@
   ],
   "schema": "vool.windows_authority_audit.v1",
   "scope": "Current Windows source; static discovery and command census, not installed-artifact evidence.",
-  "source_fingerprint": "982d1c456d6f3308c16db6cca1fdd90377c3d3fe424116715343d8923550226a"
+  "source_fingerprint": "72e69252e1cff71f0880934f12ce7401c363f45070d37f08367dc39a58519cc4"
 }

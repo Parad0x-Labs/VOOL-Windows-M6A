@@ -110,6 +110,7 @@ def _ledger_js() -> str:
     return "\n".join(
         [
             esc.group(0),
+            _slice(source, "function pageT(", "function pageTF("),
             _slice(source, "function panelRow(", "const LEDGER_SKIP"),
             _slice(source, "const LEDGER_SKIP", "function ledgerRanNoTool"),
             _slice(source, "const ACTIVITY_CATEGORY_RULES", "function activityCategoryFor("),
@@ -134,7 +135,7 @@ def _run_node(harness: str, *, js: str | None = None) -> Any:
         handle.write(_DOM_STUB + (js if js is not None else _ledger_js()) + "\n" + harness)
         path = handle.name
     try:
-        result = subprocess.run([node, path], capture_output=True, text=True, timeout=120)
+        result = subprocess.run([node, path], capture_output=True, text=True, encoding="utf-8", timeout=120)
     finally:
         Path(path).unlink(missing_ok=True)
     assert result.returncode == 0, f"chat-page ledger JS failed under node:\n{result.stderr}"

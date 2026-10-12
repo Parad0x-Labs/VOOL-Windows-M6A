@@ -58,12 +58,16 @@ class _ExecutionPlugin:
         path = self._output_path.with_suffix(".progress.json")
         temporary = path.with_suffix(".tmp")
         path.parent.mkdir(parents=True, exist_ok=True)
-        temporary.write_text(
-            json.dumps({"nodeid": nodeid, "phase": phase, "started_total": len(self._started)})
-            + "\n",
-            encoding="utf-8",
-        )
-        temporary.replace(path)
+        try:
+            temporary.write_text(
+                json.dumps({"nodeid": nodeid, "phase": phase, "started_total": len(self._started)})
+                + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(path)
+        except OSError:
+            # Progress is diagnostic only; an unwritable snapshot must not interrupt pytest.
+            temporary.unlink(missing_ok=True)
 
     def pytest_runtest_logreport(self, report: Any) -> None:
         outcome = _outcome_of(report)

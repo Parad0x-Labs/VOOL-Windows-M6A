@@ -445,6 +445,18 @@ def test_progress_snapshot_preserves_current_phase_without_claiming_completion(t
     assert not progress.with_suffix(".tmp").exists()
 
 
+def test_progress_snapshot_write_failure_does_not_interrupt_pytest(monkeypatch, tmp_path: Path) -> None:
+    output = tmp_path / "execution.json"
+    plugin = _ExecutionPlugin(output_path=output)
+
+    def deny_write(*_args, **_kwargs):
+        raise PermissionError("diagnostic evidence denied")
+
+    monkeypatch.setattr(Path, "write_text", deny_write)
+    plugin.pytest_runtest_logstart("tests/test_probe.py::test_probe", None)
+    assert plugin._started == ["tests/test_probe.py::test_probe"]
+
+
 def test_failure_evidence_is_written_before_session_completion(tmp_path: Path) -> None:
     output = tmp_path / "execution.json"
     plugin = _ExecutionPlugin(output_path=output)

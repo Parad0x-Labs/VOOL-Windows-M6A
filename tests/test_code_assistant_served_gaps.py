@@ -93,12 +93,19 @@ def served_factory(tmp_path: Path):
         _stub_models_are_resident(provider)
         provider.__enter__()
         try:
+            run_in_home(home, SEED_MANIFEST.format(root=REPO_ROOT, base_url=provider.base_url, registered=list(models)))
+            run_in_home(
+                home,
+                "from storage.model_provider_manifest import list_provider_manifests\n"
+                "from tests._authorship_certification import certify_for_authorship\n"
+                "for manifest in list_provider_manifests():\n"
+                "    certify_for_authorship(manifest)\n",
+            )
+            provider.reset()
             try:
                 daemon.start(timeout=240)
             except Exception as exc:  # pragma: no cover - environment, not the runtime
                 pytest.skip(f"served daemon could not boot here: {exc}")
-            run_in_home(home, SEED_MANIFEST.format(root=REPO_ROOT, base_url=provider.base_url, registered=list(models)))
-            provider.reset()
         except BaseException:
             daemon.stop()
             provider.__exit__(None, None, None)
@@ -180,7 +187,15 @@ def test_served_local_and_cloud_dialects_normalize_identically(served_factory) -
                 return _chat_with_operator(daemon, served["home"], session, text, model=model)
 
             def turn(text: str, name: str, arguments: dict, call_id: str, _d=dialect, _s=session, _m=model) -> None:
-                scripted_dialect_turn(_s, _m, _d, text, name, arguments, call_id)
+                scripted_dialect_turn(
+                    session=_s,
+                    model=_m,
+                    dialect=_d,
+                    text=text,
+                    name=name,
+                    arguments=arguments,
+                    call_id=call_id,
+                )
 
             turn(DEMAND, "code__task__open", {"objective": DEMAND}, "o1")
             task_id = (_task_ids(served["store_dir"]) - set(journals)).pop()

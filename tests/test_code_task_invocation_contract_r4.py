@@ -18,7 +18,6 @@ No model is involved and none is claimed.
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
@@ -140,8 +139,8 @@ def test_attached_inline_or_module_entries_are_not_the_named_script(rate_project
 
 
 @pytest.mark.parametrize("command", [
-    f"{sys.executable} -O -m pytest -q tests/test_ledger.py",                  # rewrite mode: helper assert stripped
-    f"{sys.executable} -OO -m pytest -q --assert plain tests/test_ledger.py",  # no assertion executes at all
+    "python3 -O -m pytest -q tests/test_ledger.py",                  # rewrite mode: helper assert stripped
+    "python3 -OO -m pytest -q --assert plain tests/test_ledger.py",  # no assertion executes at all
 ])
 def test_assertion_stripping_modes_cannot_certify_a_pytest_obligation_novel(ledger_project, command):
     task = _ledger(ledger_project, "optimized-pytest")
