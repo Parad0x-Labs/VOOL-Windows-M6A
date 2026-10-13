@@ -116,7 +116,8 @@ class ModelExecutionLayerTests(unittest.TestCase):
         interpretation: HumanInputInterpretation,
         session_id: str | None = None,
     ) -> Any:
-        session_id = session_id or self._new_context_session()
+        session_id = session_id or task.session_id or self._new_context_session()
+        task.session_id = session_id
         source_context = {
             "surface": "local",
             "runtime_session_id": session_id,
@@ -133,6 +134,15 @@ class ModelExecutionLayerTests(unittest.TestCase):
             session_id=session_id,
             source_context=source_context,
         )
+
+    @staticmethod
+    def _routing_context(task: Any, surface: str) -> dict[str, str]:
+        return {
+            "surface": surface,
+            "platform": surface,
+            "turn_id": task.task_id,
+            "runtime_session_id": task.session_id,
+        }
 
     def _insert_local_shard(self, *, session_id: str) -> None:
         conn = get_connection()
@@ -256,7 +266,7 @@ class ModelExecutionLayerTests(unittest.TestCase):
                 persona=self.persona,
                 force_model=False,
                 surface="openclaw",
-                source_context={"surface": "openclaw", "platform": "openclaw"},
+                source_context=self._routing_context(task, "openclaw"),
             )
 
         self.assertEqual(decision.source, "provider_execution")
@@ -284,7 +294,7 @@ class ModelExecutionLayerTests(unittest.TestCase):
                 persona=self.persona,
                 force_model=False,
                 surface="openclaw",
-                source_context={"surface": "openclaw", "platform": "openclaw"},
+                source_context=self._routing_context(task, "openclaw"),
             )
 
         self.assertEqual(decision.source, "no_provider_available")
@@ -421,7 +431,7 @@ class ModelExecutionLayerTests(unittest.TestCase):
                 persona=self.persona,
                 force_model=True,
                 surface="cli",
-                source_context={"surface": "cli", "platform": "cli"},
+                source_context=self._routing_context(task, "cli"),
             )
 
         adapter.run_structured_task.assert_called_once()
@@ -517,7 +527,7 @@ class ModelExecutionLayerTests(unittest.TestCase):
                 persona=self.persona,
                 force_model=True,
                 surface="openclaw",
-                source_context={"surface": "openclaw", "platform": "openclaw"},
+                source_context=self._routing_context(task, "openclaw"),
             )
 
         self.assertEqual(rank_candidates.call_args.kwargs["role"], "queen")
@@ -611,7 +621,7 @@ class ModelExecutionLayerTests(unittest.TestCase):
                 persona=self.persona,
                 force_model=True,
                 surface="openclaw",
-                source_context={"surface": "openclaw", "platform": "openclaw"},
+                source_context=self._routing_context(task, "openclaw"),
             )
 
         self.assertEqual(decision.provider_name, queen_manifest.provider_name)
@@ -694,7 +704,7 @@ class ModelExecutionLayerTests(unittest.TestCase):
                 context_result=context_result,
                 persona=self.persona,
                 surface="openclaw",
-                source_context={"surface": "openclaw", "platform": "openclaw"},
+                source_context=self._routing_context(task, "openclaw"),
             )
 
         adapter.run_structured_task.assert_called_once()
