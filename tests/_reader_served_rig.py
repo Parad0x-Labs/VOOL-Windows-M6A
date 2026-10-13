@@ -320,6 +320,7 @@ class ServedDaemon:
         provider_name: str = "reader-stub",
         vision: bool = False,
         env_extra: dict[str, str] | None = None,
+        manifest_metadata: dict[str, Any] | None = None,
     ) -> None:
         self.home = Path(home)
         self.provider_name = provider_name
@@ -327,6 +328,7 @@ class ServedDaemon:
         #: `metadata.input_modalities`, and the door sends pixels only when it says True -- so this
         #: flag is what separates "frames travelled" from "frames were withheld, and said so".
         self.vision = bool(vision)
+        self.manifest_metadata = dict(manifest_metadata or {})
         self.port = free_port()
         self.provider = provider
         self.model = model
@@ -404,7 +406,7 @@ class ServedDaemon:
             "'timeout_seconds': 120, 'health_timeout_seconds': 5, 'temperature': 0.0, "
             "'supports_json_mode': False, 'supports_json_schema': False, 'context_window': 8192, "
             "'native_ollama_chat': True},\n"
-            f"    metadata={{'input_modalities': {(['text', 'image'] if self.vision else ['text'])!r}}},\n"
+            f"    metadata={{'input_modalities': {(['text', 'image'] if self.vision else ['text'])!r}, **{self.manifest_metadata!r}}},\n"
             "    enabled=True,\n"
             "))\n"
             "print('registered')\n"
