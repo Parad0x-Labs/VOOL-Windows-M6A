@@ -138,6 +138,14 @@ def test_the_four_census_findings_specifically_resolve_to_read_actions() -> None
         assert set(actions_for_tool(intent, {})) == wanted, intent
 
 
+@pytest.mark.parametrize(
+    "intent",
+    ["operator.show_agenda", "operator.search_calendar_event"],
+)
+def test_calendar_provider_reads_require_network_permission(intent: str) -> None:
+    assert set(actions_for_tool(intent, {})) == {PermissionAction.USE_NETWORK}
+
+
 #: Actions that mutate something. A contract claiming `read_only` must resolve to none of them.
 _MUTATING_ACTIONS = {
     PermissionAction.CREATE_FILES,
