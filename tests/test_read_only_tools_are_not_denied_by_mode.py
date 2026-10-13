@@ -7,8 +7,10 @@ plan/auto/bypass. Four contracts that declare `side_effect_class="read_only"` we
 denied in exactly the modes meant to be more permissive — the same defect the policy's
 own comment records for `pdf.*`/`skill.*`, which were fixed by declaring their actions.
 
-This test is the general form, not a fix for four names: EVERY read-only contract must
-resolve to real read actions, so a newly added one cannot repeat the defect silently.
+This test is the general form, not a fix for four names: every permission-governed read-only
+contract must resolve to real read actions, so a newly added one cannot repeat the defect
+silently. Email draft save/get/approve are an explicit local-review-state exception: the policy
+deliberately gives them no mode action because they neither access files nor send anything.
 """
 
 from __future__ import annotations
@@ -27,6 +29,14 @@ from core.runtime_tool_contracts import runtime_tool_contracts
 #: `respond.direct` returns inside the executor BEFORE the permission gate is consulted
 #: (core/tool_intent_executor.py), so its classification never gates anything.
 _NOT_GATED = {"respond.direct"}
+
+# These operations mutate only VOOL's review ledger. The email policy explicitly leaves them
+# actionless; sending remains a separate, permission-gated intent.
+_LOCAL_REVIEW_STATE = {
+    "email.draft.save",
+    "email.draft.get",
+    "email.draft.approve",
+}
 
 #: Derives its actions from the command string it is given; with empty arguments it has
 #: nothing to classify, which is correct rather than a defect.
@@ -51,12 +61,21 @@ def test_the_census_found_read_only_contracts_to_check() -> None:
 @pytest.mark.parametrize("intent", _read_only_intents())
 def test_a_read_only_tool_never_classifies_as_an_unknown_side_effect(intent: str) -> None:
     actions = actions_for_tool(intent, {})
-    assert actions, f"{intent} resolved to no permission actions at all"
+    if intent in _LOCAL_REVIEW_STATE:
+        assert not actions, f"{intent} is intentionally ungated local review state"
+    else:
+        assert actions, f"{intent} resolved to no permission actions at all"
     assert PermissionAction.UNKNOWN_SIDE_EFFECT not in actions, (
         f"{intent} declares side_effect_class='read_only' but classifies as an unknown "
         "side effect, which the mode matrix DENIES in plan/auto/bypass — declare "
         "permission_actions on its contract"
     )
+
+
+def test_local_email_draft_state_is_an_explicit_no_action_exception() -> None:
+    declared = {contract.intent for contract in runtime_tool_contracts()}
+    assert declared >= _LOCAL_REVIEW_STATE
+    assert all(not actions_for_tool(intent, {}) for intent in _LOCAL_REVIEW_STATE)
 
 
 #: Plan mode denies network and settings actions on purpose — the policy comment states the
@@ -117,6 +136,14 @@ def test_the_four_census_findings_specifically_resolve_to_read_actions() -> None
         if intent not in declared:
             continue  # a contract may be withdrawn; absence is not this test's business
         assert set(actions_for_tool(intent, {})) == wanted, intent
+
+
+@pytest.mark.parametrize(
+    "intent",
+    ["operator.show_agenda", "operator.search_calendar_event"],
+)
+def test_calendar_provider_reads_require_network_permission(intent: str) -> None:
+    assert set(actions_for_tool(intent, {})) == {PermissionAction.USE_NETWORK}
 
 
 #: Actions that mutate something. A contract claiming `read_only` must resolve to none of them.
