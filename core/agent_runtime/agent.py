@@ -1530,6 +1530,7 @@ class VoolAgent(
             # branches on -- and it is a no-op under VOOL_SEMANTIC_REACH=0. See
             # `core.semantic.turn_observation`.
             from core.semantic.turn_observation import observe_turn
+            from core.turn_contract import TURN_STATE_KEY
 
             # A caller may pass no context at all (the CLI does). `_run_once_inner` then builds its
             # own and the observer never sees it, so the receipt had no session id and was never
@@ -1646,7 +1647,7 @@ class VoolAgent(
                                 )
                         except Exception:
                             _m2_bound = None
-                        from core.turn_contract import TURN_STATE_KEY, TurnState
+                        from core.turn_contract import TurnState
 
                         _m4_state = TurnState.from_intake(
                             request=_turn_request,
