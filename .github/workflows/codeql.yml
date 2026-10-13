@@ -30,6 +30,8 @@ jobs:
     timeout-minutes: 120
     permissions:
       contents: read
+      # The analyze step reads this workflow run's metadata and fails without it.
+      actions: read
     strategy:
       fail-fast: false
       matrix:
