@@ -2220,6 +2220,9 @@ companion = [
 ]
 dev = [
     { name = "build" },
+    { name = "eth-abi" },
+    { name = "eth-account" },
+    { name = "eth-utils" },
     { name = "httpx" },
     { name = "mypy" },
     { name = "pytest" },
@@ -2275,8 +2278,11 @@ requires-dist = [
     { name = "cryptography", specifier = ">=41.0" },
     { name = "datasets", marker = "extra == 'models'", specifier = ">=3.2" },
     { name = "datasets", marker = "extra == 'runtime'", specifier = ">=3.2" },
+    { name = "eth-abi", marker = "extra == 'dev'", specifier = ">=6.0" },
     { name = "eth-abi", marker = "extra == 'evm'", specifier = ">=6.0" },
+    { name = "eth-account", marker = "extra == 'dev'", specifier = ">=0.13" },
     { name = "eth-account", marker = "extra == 'evm'", specifier = ">=0.13" },
+    { name = "eth-utils", marker = "extra == 'dev'", specifier = ">=6.0" },
     { name = "eth-utils", marker = "extra == 'evm'", specifier = ">=6.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "huggingface-hub", marker = "extra == 'models'", specifier = ">=0.28" },
