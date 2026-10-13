@@ -9,16 +9,18 @@ to end the turn, and the demand census could only REPORT the news half instead o
 ROUTING it. The same message with a question-shaped second clause ("... and what is gold trading
 at?") split and served both halves, which is why this is a class defect and not a wording.
 
-The daemon runs on a sealed fixture transport (tests/fixture_transport): quotes, a news feed and the
-feed's pages are dated fixtures; every other host is refused. Assertions are environmental -- which
+The daemon runs on a sealed fixture transport (tests/fixture_transport) with synthetic CoinGecko
+index/price responses; every other host is refused. Assertions are environmental -- which
 sub-requests the runtime opened and what ran under them, read from `runtime_session_events` -- never
-the prose.
+the prose or response content.
 """
 from __future__ import annotations
 
 import json
 import os
 import sqlite3
+import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -28,7 +30,6 @@ import pytest
 import tests._reader_served_rig as rig
 
 ROOT = Path(__file__).resolve().parents[1]
-MANIFEST = ROOT / "validation-logs" / "two-intent-routing-20260907" / "fixtures" / "two_intent_manifest.json"
 SHIM = ROOT / "tests" / "fixture_transport"
 
 OPERATOR_WORDING = "get me latest on Iran and oil prices pls"
@@ -106,11 +107,48 @@ def _ran_under(rows: list[tuple[int, str, str, dict]], start_seq: int, next_seq:
 
 @pytest.fixture(scope="module")
 def drive(tmp_path_factory):
-    assert MANIFEST.is_file(), MANIFEST
     tmp_path = tmp_path_factory.mktemp("two-intent-served")
+    manifest = tmp_path / "two_intent_manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "name": "synthetic-coin-index",
+                        "host": "api.coingecko.com",
+                        "path_prefix": "/api/v3/coins/markets",
+                        "json": [
+                            {
+                                "id": "bitcoin",
+                                "symbol": "btc",
+                                "name": "Bitcoin",
+                                "market_cap_rank": 1,
+                            }
+                        ],
+                    },
+                    {
+                        "name": "synthetic-bitcoin-price",
+                        "host": "api.coingecko.com",
+                        "path_prefix": "/api/v3/simple/price",
+                        "json": {
+                            "bitcoin": {
+                                "usd": 60000,
+                                "eur": 55000,
+                                "btc": 1,
+                                "usd_24h_change": 0.0,
+                                "usd_market_cap": 1_000_000_000_000,
+                                "last_updated_at": 1791887200,
+                            }
+                        },
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
     env_extra = {
         "PYTHONPATH": os.pathsep.join([str(SHIM), str(rig.REPO_ROOT), str(rig.READER_DEPS)]),
-        "VOOL_FIXTURE_TRANSPORT_MANIFEST": str(MANIFEST),
+        "VOOL_FIXTURE_TRANSPORT_MANIFEST": str(manifest),
         "VOOL_FIXTURE_TRANSPORT_LOG": str(tmp_path / "transport.log"),
         "ALLOW_BROWSER_FALLBACK": "0",
         "WEB_SEARCH_PROVIDER_ORDER": "google_html",
@@ -120,10 +158,32 @@ def drive(tmp_path_factory):
     # gate does not reject as empty.
     provider = rig.CapturingProvider(default="Nothing further was found in the sources available for this request.")
     provider.__enter__()
-    daemon = rig.ServedDaemon(tmp_path / "home", provider=provider, env_extra=env_extra)
+    daemon = rig.ServedDaemon(
+        tmp_path / "home",
+        provider=provider,
+        env_extra=env_extra,
+        # The HTTP stub is a tiny scripted test server, not an 8B model. Give the router an honest
+        # footprint so hardware-fit does not exclude the only provider this hermetic test can use.
+        manifest_metadata={"ram_budget_gb": 1.0, "vram_budget_gb": 1.0},
+    )
     daemon.register_provider()
     daemon.start()
     try:
+        script = (
+            "from storage.model_provider_manifest import list_provider_manifests; "
+            "from tests._authorship_certification import certify_for_authorship; "
+            "[certify_for_authorship(m) for m in list_provider_manifests() "
+            "if m.provider_name == 'reader-stub' and m.model_name == 'reader-drive:stub']"
+        )
+        subprocess.run(
+            [sys.executable, "-c", script],
+            cwd=rig.REPO_ROOT,
+            env=daemon.env(),
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
         cert = daemon.certify()
         assert cert.get("state") == "verified", cert
         yield daemon
