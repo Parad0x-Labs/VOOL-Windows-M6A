@@ -1,0 +1,39 @@
+name: Dependency Audit
+
+# Fails a pull request that brings in a known vulnerability main does not already have:
+# uv.lock through pip-audit and mobile/package-lock.json through npm audit, both audited for
+# the base and the head at the same moment (.github/scripts/new_vulns.py). Advisories already
+# on main are the weekly Security Audit's and Dependabot's job; this gate stops new ones.
+# (GitHub's dependency-review action is not available on this private repository.)
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install audit tools
+        # uv 0.11.1 matches the version uv.lock is maintained with; export --frozen never relocks.
+        run: python -m pip install "uv==0.11.1" "pip-audit==2.10.1"
+      - name: Check out the base branch beside the head
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git worktree add "$RUNNER_TEMP/base" "$BASE_SHA"
+      - name: Fail on vulnerabilities new in this pull request
+        run: python .github/scripts/new_vulns.py "$RUNNER_TEMP/base" .

@@ -2,8 +2,10 @@ name: CodeQL
 
 # Static security analysis for every language this repo ships: the Python runtime, the C#
 # Windows broker and approval host, the TypeScript mobile app and the workflow files
-# themselves. Findings land in Security > Code scanning; a ruleset can then make the
-# "CodeQL" check block merges on new high-severity alerts.
+# themselves. GitHub code scanning is not available on this private repository, so results
+# are not uploaded: .github/scripts/codeql_gate.py reads the SARIF in the job, fails a pull
+# request on a high or critical finding in a file it changes, and lists every finding in the
+# job summary. The SARIF is kept as a workflow artifact.
 
 on:
   pull_request:
@@ -28,8 +30,6 @@ jobs:
     timeout-minutes: 120
     permissions:
       contents: read
-      security-events: write
-      actions: read
     strategy:
       fail-fast: false
       matrix:
@@ -47,6 +47,8 @@ jobs:
             build-mode: none
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - name: Set up the pinned .NET SDK (global.json)
         if: matrix.language == 'csharp'
         uses: actions/setup-dotnet@v4
@@ -60,3 +62,28 @@ jobs:
       - uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
+          upload: never
+          output: ${{ runner.temp }}/codeql-sarif
+      - name: Keep the SARIF
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: codeql-sarif-${{ matrix.language }}
+          path: ${{ runner.temp }}/codeql-sarif/
+          if-no-files-found: warn
+      - name: List changed files
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: git diff --name-only "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/changed-files.txt"
+      - name: Gate on findings
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            python3 .github/scripts/codeql_gate.py "$RUNNER_TEMP/codeql-sarif" --changed-files "$RUNNER_TEMP/changed-files.txt"
+          else
+            python3 .github/scripts/codeql_gate.py "$RUNNER_TEMP/codeql-sarif"
+          fi
