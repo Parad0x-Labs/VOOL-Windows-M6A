@@ -12,6 +12,7 @@ from ops.process_tree import process_group_kwargs, stop_process_tree
 from ops.pytest_execution import _ExecutionPlugin
 from ops.pytest_shards import (
     GATE_ENV_VAR,
+    JOB_TARGETS_FILE,
     REQUIRED_EXECUTED_FILES,
     ShardAssignment,
     _execution_manifest_error,
@@ -23,6 +24,7 @@ from ops.pytest_shards import (
     partition_targets,
     run_collected_shards,
     run_shards,
+    select_job_targets,
     tracked_test_targets,
     validate_pytest_args,
 )
@@ -894,3 +896,73 @@ def test_explicit_targets_stay_outside_the_gate_env(tmp_path: Path) -> None:
     )
 
     assert rc == 0, "focused/explicit-target runs remain dev-friendly (no VOOL_GATE)"
+
+
+def test_job_split_is_disjoint_complete_and_stable() -> None:
+    targets = tuple(f"tests/test_{index:03d}.py" for index in range(200))
+    slices = [select_job_targets(targets, job_index=index, job_count=10) for index in range(1, 11)]
+
+    assert sorted(target for part in slices for target in part) == sorted(targets)
+    assert sum(len(part) for part in slices) == len(targets)
+    assert all(part for part in slices), "200 files over 10 jobs must leave no job empty"
+    # Adding a file never moves an existing file to another job.
+    grown = select_job_targets((*targets, "tests/test_new.py"), job_index=3, job_count=10)
+    assert set(slices[2]) <= set(grown)
+    for index, count in ((0, 10), (11, 10), (1, 0)):
+        try:
+            select_job_targets(targets, job_index=index, job_count=count)
+        except ValueError:
+            continue
+        raise AssertionError(f"job {index}/{count} must be rejected")
+
+
+def _synthetic_split_repo(tmp_path: Path) -> Path:
+    repo_root = _synthetic_gate_repo(tmp_path, _REQUIRED_GATE_BODY)
+    for index in range(8):
+        (repo_root / "tests" / f"test_more_{index}.py").write_text(
+            "def test_more():\n    assert True\n", encoding="utf-8"
+        )
+    return repo_root
+
+
+def test_split_jobs_run_their_slices_and_cover_the_scope_once(tmp_path: Path) -> None:
+    repo_root = _synthetic_split_repo(tmp_path)
+    records = []
+    for index in (1, 2):
+        artifact_root = tmp_path / f"job-{index}"
+        rc = run_collected_shards(
+            repo_root=repo_root,
+            paths=(),
+            workers=1,
+            timeout_seconds=120,
+            collection_timeout_seconds=120,
+            tail_lines=20,
+            artifact_root=artifact_root,
+            job_index=index,
+            job_count=2,
+        )
+        assert rc == 0
+        (record_path,) = artifact_root.glob(f"*/{JOB_TARGETS_FILE}")
+        records.append(json.loads(record_path.read_text(encoding="utf-8")))
+
+    collected = records[0]["collected_targets"]
+    assert records[1]["collected_targets"] == collected
+    first, second = (set(record["job_targets"]) for record in records)
+    assert first and second and not first & second
+    assert first | second == set(collected)
+
+
+def test_split_job_refuses_explicit_targets_and_bad_positions(tmp_path: Path) -> None:
+    repo_root = _synthetic_split_repo(tmp_path)
+    for paths, index, count in ((("tests/test_extra.py",), 1, 2), ((), 3, 2), ((), 0, 2)):
+        rc = run_collected_shards(
+            repo_root=repo_root,
+            paths=paths,
+            workers=1,
+            timeout_seconds=120,
+            collection_timeout_seconds=120,
+            tail_lines=20,
+            job_index=index,
+            job_count=count,
+        )
+        assert rc == 1

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -428,3 +429,238 @@ def _process_exists(pid: int) -> bool:
     except ProcessLookupError:
         return False
     return True
+
+
+def test_split_job_passes_without_required_lanes_it_does_not_own(tmp_path: Path) -> None:
+    observed: list[tuple[str, ...]] = []
+    log_dir = tmp_path / "logs"
+    _plant_execution_manifest(log_dir, shard=1, files={"tests/test_more.py": _counts(passed=3)})
+
+    rc = run_verification(
+        repo_root=tmp_path,
+        log_dir=log_dir,
+        version_info=PY312,
+        tool_versions=TOOLS,
+        stage_runner=_stage_runner((0, 0), observed),
+        job_index=2,
+        job_count=3,
+    )
+
+    assert rc == 0
+    assert observed[1][-4:] == ("--job-index", "2", "--job-count", "3")
+    receipt = json.loads((log_dir / "verification-receipt.json").read_text())
+    assert (receipt["outcome"], receipt["mode"]) == ("shard_passed", "authoritative-shard")
+    assert receipt["job"] == {"index": 2, "count": 3}
+
+
+def test_split_job_still_rejects_a_required_lane_it_owns_that_executed_nothing(
+    tmp_path: Path,
+) -> None:
+    from ops.pytest_shards import REQUIRED_EXECUTED_FILES
+
+    observed: list[tuple[str, ...]] = []
+    log_dir = tmp_path / "logs"
+    _plant_execution_manifest(
+        log_dir,
+        shard=1,
+        files={
+            "tests/test_more.py": _counts(passed=3),
+            REQUIRED_EXECUTED_FILES[0]: _counts(skipped=4),
+        },
+    )
+
+    rc = run_verification(
+        repo_root=tmp_path,
+        log_dir=log_dir,
+        version_info=PY312,
+        tool_versions=TOOLS,
+        stage_runner=_stage_runner((0, 0), observed),
+        job_index=1,
+        job_count=3,
+    )
+
+    assert rc == 1
+    receipt = json.loads((log_dir / "verification-receipt.json").read_text())
+    assert receipt["failure"] == "required_lane_zero_executed"
+
+
+def test_split_job_cannot_be_focused_or_out_of_range(tmp_path: Path) -> None:
+    for index, count, paths, focused in ((4, 3, (), False), (1, 2, ("tests/test_x.py",), True)):
+        observed: list[tuple[str, ...]] = []
+        log_dir = tmp_path / f"logs-{index}-{count}"
+        rc = run_verification(
+            repo_root=tmp_path,
+            paths=paths,
+            focused=focused,
+            log_dir=log_dir,
+            version_info=PY312,
+            tool_versions=TOOLS,
+            stage_runner=_stage_runner((0, 0), observed),
+            job_index=index,
+            job_count=count,
+        )
+        assert rc == 1
+        assert observed == []
+        receipt = json.loads((log_dir / "verification-receipt.json").read_text())
+        assert receipt["failure"] == "invalid_job_split"
+
+
+def _split_scope() -> tuple[str, ...]:
+    from ops.pytest_shards import REQUIRED_EXECUTED_FILES
+
+    return tuple(sorted({*REQUIRED_EXECUTED_FILES, *(f"tests/test_more_{i}.py" for i in range(30))}))
+
+
+def _plant_split_job(
+    shards_root: Path,
+    *,
+    index: int,
+    count: int,
+    collected: tuple[str, ...],
+    job_targets: tuple[str, ...] | None = None,
+    counts: dict[str, dict[str, int]] | None = None,
+    returncodes: tuple[int, int] = (0, 0),
+) -> Path:
+    from ops.pytest_shards import JOB_TARGETS_FILE, JOB_TARGETS_SCHEMA, select_job_targets
+
+    job_dir = shards_root / f"verification-logs-py3.12.13-shard-{index}"
+    owned = (
+        job_targets
+        if job_targets is not None
+        else select_job_targets(collected, job_index=index, job_count=count)
+    )
+    files = {name: _counts(passed=2) for name in owned}
+    files.update({name: value for name, value in (counts or {}).items() if name in owned})
+    _plant_execution_manifest(job_dir, shard=1, files=files)
+    (job_dir / "pytest-shards" / "run-1" / JOB_TARGETS_FILE).write_text(
+        json.dumps(
+            {
+                "schema": JOB_TARGETS_SCHEMA,
+                "job_index": index,
+                "job_count": count,
+                "collected_targets": list(collected),
+                "job_targets": list(owned),
+            }
+        ),
+        encoding="utf-8",
+    )
+    run_verification(
+        repo_root=shards_root,
+        log_dir=job_dir,
+        version_info=PY312,
+        tool_versions=TOOLS,
+        stage_runner=_stage_runner(returncodes, []),
+        job_index=index,
+        job_count=count,
+    )
+    return job_dir
+
+
+def _aggregate(shards_root: Path, tmp_path: Path, count: int = 3) -> tuple[int, dict]:
+    from ops.verify import run_aggregate
+
+    log_dir = tmp_path / "aggregate"
+    rc = run_aggregate(
+        shards_root=shards_root,
+        job_count=count,
+        log_dir=log_dir,
+        version_info=PY312,
+        tool_versions=TOOLS,
+    )
+    return rc, json.loads((log_dir / "verification-receipt.json").read_text())
+
+
+def test_aggregate_passes_only_when_every_job_passed_and_covered_the_scope(tmp_path: Path) -> None:
+    shards_root = tmp_path / "shards"
+    collected = _split_scope()
+    for index in (1, 2, 3):
+        _plant_split_job(shards_root, index=index, count=3, collected=collected)
+
+    rc, receipt = _aggregate(shards_root, tmp_path)
+
+    assert rc == 0
+    assert (receipt["outcome"], receipt["mode"]) == ("passed", "authoritative-aggregate")
+    assert [job["index"] for job in receipt["jobs"]] == [1, 2, 3]
+    assert receipt["tests"]["shards"] == 3
+    assert receipt["tests"]["totals"]["executed_total"] == 2 * len(collected)
+    assert all(
+        lane["state"] == "executed"
+        for lane in receipt["tests"]["required_lanes"]["required_executed_files"].values()
+    )
+
+
+def test_aggregate_rejects_a_missing_failed_or_duplicated_job(tmp_path: Path) -> None:
+    collected = _split_scope()
+
+    missing = tmp_path / "missing"
+    for index in (1, 3):
+        _plant_split_job(missing, index=index, count=3, collected=collected)
+    assert _aggregate(missing, tmp_path)[1]["failure"] == "job_missing"
+
+    failed = tmp_path / "failed"
+    for index in (1, 2, 3):
+        _plant_split_job(
+            failed, index=index, count=3, collected=collected,
+            returncodes=(0, 1) if index == 2 else (0, 0),
+        )
+    assert _aggregate(failed, tmp_path)[1]["failure"] == "job_not_passed"
+
+    duplicated = tmp_path / "duplicated"
+    for index in (1, 2, 3):
+        _plant_split_job(duplicated, index=index, count=3, collected=collected)
+    shutil.copytree(duplicated / "verification-logs-py3.12.13-shard-2", duplicated / "extra-copy")
+    assert _aggregate(duplicated, tmp_path)[1]["failure"] == "job_duplicated"
+
+    mismatched = tmp_path / "mismatched"
+    for index in (1, 2, 3):
+        _plant_split_job(mismatched, index=index, count=3, collected=collected)
+    rc, receipt = _aggregate(mismatched, tmp_path, count=4)
+    assert rc == 1 and receipt["failure"] == "job_split_mismatch"
+
+
+def test_aggregate_rejects_a_slice_that_skipped_or_changed_its_files(tmp_path: Path) -> None:
+    from ops.pytest_shards import select_job_targets
+
+    collected = _split_scope()
+    shards_root = tmp_path / "shards"
+    for index in (1, 2, 3):
+        owned = select_job_targets(collected, job_index=index, job_count=3)
+        _plant_split_job(
+            shards_root, index=index, count=3, collected=collected,
+            job_targets=owned[1:] if index == 2 else None,
+        )
+
+    rc, receipt = _aggregate(shards_root, tmp_path)
+
+    assert rc == 1
+    assert receipt["failure"] == "job_coverage_gap"
+
+    drifted = tmp_path / "drifted"
+    for index in (1, 2, 3):
+        _plant_split_job(
+            drifted, index=index, count=3,
+            collected=collected[1:] if index == 3 else collected,
+        )
+    assert _aggregate(drifted, tmp_path)[1]["failure"] == "job_collection_mismatch"
+
+
+def test_aggregate_enforces_required_lanes_across_all_jobs(tmp_path: Path) -> None:
+    from ops.pytest_shards import REQUIRED_EXECUTED_FILES
+
+    collected = _split_scope()
+    shards_root = tmp_path / "shards"
+    silenced = REQUIRED_EXECUTED_FILES[0]
+    for index in (1, 2, 3):
+        # The owning job's own receipt is red for this, so plant the manifest after the fact
+        # to prove the aggregate checks the lanes itself rather than trusting the job.
+        job_dir = _plant_split_job(shards_root, index=index, count=3, collected=collected)
+        manifest = job_dir / "pytest-shards" / "run-1" / "logs" / "shard-1-execution.json"
+        payload = json.loads(manifest.read_text())
+        if silenced in payload["summary"]["files"]:
+            payload["summary"]["files"][silenced] = _counts(skipped=5)
+            manifest.write_text(json.dumps(payload))
+
+    rc, receipt = _aggregate(shards_root, tmp_path)
+
+    assert rc == 1
+    assert receipt["failure"] == "required_lane_zero_executed"

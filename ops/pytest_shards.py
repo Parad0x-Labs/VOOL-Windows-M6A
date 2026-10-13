@@ -275,6 +275,37 @@ def assignments_match_manifest(
     return Counter(str(item) for item in targets) == Counter(assigned)
 
 
+#: Written into a split run's root so the aggregate gate can prove the jobs covered the whole
+#: canonical collection exactly once.
+JOB_TARGETS_FILE = "job-targets.json"
+JOB_TARGETS_SCHEMA = "vool.pytest-job.v1"
+
+
+def select_job_targets(
+    targets: Sequence[str], *, job_index: int, job_count: int
+) -> tuple[str, ...]:
+    """Return the canonical test files one CI job owns when the suite is split across jobs.
+
+    Every job collects the full canonical scope and keeps the files whose stable hash lands on
+    its index, so the jobs are disjoint, their union is the whole collection, and adding a file
+    never moves another file to a different job. The key differs from `partition_targets` so
+    the in-job worker split stays independent of the job split.
+    """
+
+    if job_count < 1 or not 1 <= job_index <= job_count:
+        raise ValueError(f"job {job_index}/{job_count} is not a valid split position")
+    ordered_targets = sorted({str(item) for item in targets if str(item).strip()})
+    return tuple(
+        target
+        for target in ordered_targets
+        if int.from_bytes(
+            hashlib.blake2b(f"job:{target}".encode(), digest_size=8).digest(), "big"
+        )
+        % job_count
+        == job_index - 1
+    )
+
+
 def tracked_test_targets(repo_root: Path) -> tuple[str, ...]:
     """Return tracked pytest-shaped files so deleting a suite cannot become empty success."""
 
@@ -561,11 +592,20 @@ def run_collected_shards(
     tail_lines: int = 200,
     artifact_root: Path | None = None,
     share_process_group: bool = False,
+    job_index: int = 1,
+    job_count: int = 1,
 ) -> int:
     try:
         validated_pytest_args = validate_pytest_args(pytest_args)
     except ValueError as exc:
         print(f"!! {exc}", flush=True)
+        return 1
+    if job_count < 1 or not 1 <= job_index <= job_count:
+        print(f"!! job {job_index}/{job_count} is not a valid split position", flush=True)
+        return 1
+    if job_count > 1 and paths:
+        # A split is a slice of the authoritative full scope; explicit targets are not one.
+        print("!! a job split runs the full canonical scope and takes no explicit targets", flush=True)
         return 1
     if artifact_root is not None:
         artifact_root.mkdir(parents=True, exist_ok=True)
@@ -611,17 +651,41 @@ def run_collected_shards(
             for target in gaps:
                 print(f"  - {target}", flush=True)
             return 1
+    scope = manifest.targets
+    if job_count > 1:
+        scope = select_job_targets(manifest.targets, job_index=job_index, job_count=job_count)
+        (run_root / JOB_TARGETS_FILE).write_text(
+            json.dumps(
+                {
+                    "schema": JOB_TARGETS_SCHEMA,
+                    "job_index": job_index,
+                    "job_count": job_count,
+                    "collected_targets": sorted(manifest.targets),
+                    "job_targets": list(scope),
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        print(
+            f"job {job_index}/{job_count}: {len(scope)} of {len(manifest.targets)} test files",
+            flush=True,
+        )
+        if not scope:
+            print(f"!! job {job_index}/{job_count} owns no test files", flush=True)
+            return 1
     assignments = partition_targets(
-        manifest.targets,
+        scope,
         repo_root=repo_root,
         workers=max(1, int(workers)),
     )
-    if not assignments_match_manifest(manifest.targets, assignments):
+    if not assignments_match_manifest(scope, assignments):
         print("!! shard union does not exactly match the collection manifest", flush=True)
         return 1
     expected_nodeids_by_target = {
         target: tuple(nodeid for nodeid, path in manifest.items if path == target)
-        for target in manifest.targets
+        for target in scope
     }
     return run_shards(
         assignments,
@@ -681,6 +745,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Lines printed from a failed log; the complete log remains under the run root.",
     )
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--job-index",
+        type=int,
+        default=1,
+        help="1-based position of this CI job when the full scope is split across jobs.",
+    )
+    parser.add_argument(
+        "--job-count",
+        type=int,
+        default=1,
+        help="Number of CI jobs the full scope is split across (1 = no split).",
+    )
     return parser
 
 
@@ -700,6 +776,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         tail_lines=max(0, int(args.tail_lines)),
         artifact_root=args.artifact_root,
         share_process_group=True,
+        job_index=int(args.job_index),
+        job_count=int(args.job_count),
     )
 
 

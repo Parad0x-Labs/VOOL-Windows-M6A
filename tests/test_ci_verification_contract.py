@@ -22,7 +22,10 @@ from ops.pytest_shards import validate_pytest_args
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
-EXPECTED_GATE_COMMAND = (
+#: The authoritative scope is split across this many CI jobs; the matrix and both gate commands
+#: must agree on it.
+SHARD_JOB_COUNT = 10
+EXPECTED_SHARD_COMMAND = (
     "python",
     "ops/verify.py",
     "--workers",
@@ -32,7 +35,19 @@ EXPECTED_GATE_COMMAND = (
     "--tail-lines=2000",
     "--timeout-seconds",
     "7200",
+    *shlex.split("--job-index ${{ matrix.shard }}"),
+    "--job-count",
+    str(SHARD_JOB_COUNT),
 )
+EXPECTED_AGGREGATE_COMMAND = (
+    "python",
+    "ops/verify.py",
+    "--aggregate-shards=.verification-shards",
+    "--job-count",
+    str(SHARD_JOB_COUNT),
+    "--log-dir=.verification-logs",
+)
+SHARD_ARTIFACT_PREFIX = "verification-logs-py3.12.13-shard-"
 
 
 def _load_workflow() -> dict[str, Any]:
@@ -45,38 +60,68 @@ def _named_step(job: dict[str, Any], name: str) -> dict[str, Any]:
     return matches[0]
 
 
+def _assert_exact_python(job: dict[str, Any]) -> None:
+    setup_steps = [
+        step for step in job["steps"] if str(step.get("uses", "")).startswith("actions/setup-python@")
+    ]
+    assert len(setup_steps) == 1
+    assert setup_steps[0]["with"]["python-version"] == "3.12.13"
+
+
+def _assert_complete_upload(job: dict[str, Any], name: str) -> None:
+    upload = _named_step(job, "Upload complete verification logs")
+    assert upload["if"] == "always()"
+    assert upload["with"]["name"] == name
+    assert upload["with"]["path"] == ".verification-logs/"
+    assert upload["with"]["include-hidden-files"] is True
+    assert upload["with"]["if-no-files-found"] == "error"
+
+
 def _assert_authoritative_contract(workflow: dict[str, Any]) -> None:
     triggers = workflow.get("on", workflow.get(True))
     assert isinstance(triggers, dict)
     for event in ("push", "pull_request"):
         assert event in triggers
         assert "paths-ignore" not in triggers[event]
-    verify = workflow["jobs"]["verify"]
-    assert "if" not in verify
 
-    setup_steps = [
-        step for step in verify["steps"] if str(step.get("uses", "")).startswith("actions/setup-python@")
-    ]
-    assert len(setup_steps) == 1
-    assert setup_steps[0]["with"]["python-version"] == "3.12.13"
-
-    gate_step = _named_step(verify, "Run authoritative verification")
+    # Every slice of the split runs on every push and PR, exactly once per position.
+    shards = workflow["jobs"]["verify-shard"]
+    assert "if" not in shards
+    assert shards["strategy"]["fail-fast"] is False
+    assert shards["strategy"]["matrix"] == {"shard": list(range(1, SHARD_JOB_COUNT + 1))}
+    _assert_exact_python(shards)
+    gate_step = _named_step(shards, "Run authoritative verification shard")
     assert "if" not in gate_step
     command = tuple(shlex.split(gate_step["run"]))
-    assert command == EXPECTED_GATE_COMMAND
+    assert command == EXPECTED_SHARD_COMMAND
     forwarded = tuple(
         token.removeprefix("--pytest-arg=")
         for token in command
         if token.startswith("--pytest-arg=")
     )
     validate_pytest_args(forwarded)
+    _assert_complete_upload(shards, SHARD_ARTIFACT_PREFIX + "${{ matrix.shard }}")
 
-    upload = _named_step(verify, "Upload complete verification logs")
-    assert upload["if"] == "always()"
-    assert upload["with"]["path"] == ".verification-logs/"
-    assert upload["with"]["include-hidden-files"] is True
-    assert upload["with"]["if-no-files-found"] == "error"
+    # The gate always runs, reads every slice, and fails unless all of them passed.
+    verify = workflow["jobs"]["verify"]
+    assert verify["if"] == "always()"
+    assert verify["needs"] == ["verify-shard"]
+    _assert_exact_python(verify)
+    download = _named_step(verify, "Download every shard's verification logs")
+    assert "if" not in download
+    assert download["with"] == {"pattern": SHARD_ARTIFACT_PREFIX + "*", "path": ".verification-shards"}
+    aggregate = _named_step(verify, "Run authoritative verification")
+    assert "if" not in aggregate
+    assert tuple(shlex.split(aggregate["run"])) == EXPECTED_AGGREGATE_COMMAND
+    guard = _named_step(verify, "Require every verification shard to pass")
+    assert "if" not in guard
+    assert guard["env"] == {"SHARDS_RESULT": "${{ needs.verify-shard.result }}"}
+    assert 'test "$SHARDS_RESULT" = "success"' in guard["run"]
+    steps = verify["steps"]
+    assert steps.index(download) < steps.index(aggregate) < steps.index(guard)
+    _assert_complete_upload(verify, "verification-logs-py3.12.13")
     assert workflow["jobs"]["build"]["needs"] == ["verify"]
+    assert "if" not in workflow["jobs"]["build"]
 
     for job in workflow["jobs"].values():
         assert not job.get("continue-on-error", False)
@@ -94,23 +139,51 @@ def test_push_and_pr_ci_use_the_exact_authoritative_gate() -> None:
 
 @pytest.mark.parametrize(
     "mutation",
-    ("floating_python", "collect_only", "step_disabled", "job_disabled"),
+    (
+        "floating_python",
+        "collect_only",
+        "step_disabled",
+        "job_disabled",
+        "aggregate_disabled",
+        "aggregate_skipped_on_failure",
+        "shrunk_matrix",
+        "job_count_mismatch",
+        "guard_removed",
+        "guard_disabled",
+        "fail_fast",
+    ),
 )
 def test_contract_mutations_are_rejected(mutation: str) -> None:
     workflow = copy.deepcopy(_load_workflow())
+    shards = workflow["jobs"]["verify-shard"]
     verify = workflow["jobs"]["verify"]
     if mutation == "floating_python":
-        setup = next(step for step in verify["steps"] if "setup-python" in step.get("uses", ""))
+        setup = next(step for step in shards["steps"] if "setup-python" in step.get("uses", ""))
         setup["with"]["python-version"] = "3.12"
     elif mutation == "collect_only":
-        gate = _named_step(verify, "Run authoritative verification")
+        gate = _named_step(shards, "Run authoritative verification shard")
         gate["run"] += " --pytest-arg=--collect-only"
     elif mutation == "step_disabled":
-        _named_step(verify, "Run authoritative verification")["if"] = False
-    else:
+        _named_step(shards, "Run authoritative verification shard")["if"] = False
+    elif mutation == "job_disabled":
+        shards["if"] = False
+    elif mutation == "aggregate_disabled":
         verify["if"] = False
+    elif mutation == "aggregate_skipped_on_failure":
+        del verify["if"]
+    elif mutation == "shrunk_matrix":
+        shards["strategy"]["matrix"]["shard"] = list(range(1, SHARD_JOB_COUNT))
+    elif mutation == "job_count_mismatch":
+        aggregate = _named_step(verify, "Run authoritative verification")
+        aggregate["run"] = aggregate["run"].replace(f"--job-count {SHARD_JOB_COUNT}", "--job-count 9")
+    elif mutation == "guard_removed":
+        verify["steps"].remove(_named_step(verify, "Require every verification shard to pass"))
+    elif mutation == "guard_disabled":
+        _named_step(verify, "Require every verification shard to pass")["if"] = False
+    else:
+        shards["strategy"]["fail-fast"] = True
 
-    with pytest.raises((AssertionError, ValueError)):
+    with pytest.raises((AssertionError, ValueError, KeyError)):
         _assert_authoritative_contract(workflow)
 
 
@@ -159,7 +232,7 @@ def _assert_linux_confinement_contract(job: dict[str, Any], log_root: str, gate_
 
 @pytest.mark.parametrize(
     ("job_name", "log_root", "gate_name"),
-    (("verify", ".verification-logs", "Run authoritative verification"),
+    (("verify-shard", ".verification-logs", "Run authoritative verification shard"),
      ("compatibility", ".compatibility-logs", "Run compatibility collection and shards")),
 )
 def test_linux_ci_provisions_and_checks_confinement_before_tests(job_name, log_root, gate_name) -> None:
@@ -170,7 +243,7 @@ def test_linux_ci_provisions_and_checks_confinement_before_tests(job_name, log_r
     "disabled", "ignored_failure", "root_probe", "late_probe", "floating_runner", "restricted_runner",
 ))
 def test_linux_confinement_contract_rejects_bypasses(mutation: str) -> None:
-    job = copy.deepcopy(_load_workflow()["jobs"]["verify"])
+    job = copy.deepcopy(_load_workflow()["jobs"]["verify-shard"])
     probe = _named_step(job, "Verify Linux confinement")
     if mutation == "disabled":
         probe["if"] = False
@@ -186,7 +259,7 @@ def test_linux_confinement_contract_rejects_bypasses(mutation: str) -> None:
         job["steps"].remove(probe)
         job["steps"].append(probe)
     with pytest.raises(AssertionError):
-        _assert_linux_confinement_contract(job, ".verification-logs", "Run authoritative verification")
+        _assert_linux_confinement_contract(job, ".verification-logs", "Run authoritative verification shard")
 
 
 def test_llm_lanes_install_shared_fixture_and_browser_dependencies() -> None:

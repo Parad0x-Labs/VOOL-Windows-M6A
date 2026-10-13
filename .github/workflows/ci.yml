@@ -14,12 +14,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  verify:
-    # 35.9k tests on a 2-core hosted runner need far more than the default 30-minute shard deadline.
-    timeout-minutes: 360
+  verify-shard:
+    # 35.9k tests overran a single 2-core runner's 7200 s shard deadline, so the authoritative
+    # scope is split across jobs. Each job collects the full canonical scope and runs its stable
+    # slice; the `verify` job below is the gate and proves the slices covered everything once.
+    timeout-minutes: 150
     # Bounded CI bridge: keep real non-root bwrap probes; never disable host security.
     # Migrate before this hosted image retires on 2027-04-17.
     runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep this list 1..N and equal to --job-count in both gate commands.
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -56,10 +63,51 @@ jobs:
         # The required served-chat-UI suites fail the authoritative lane when this binary is
         # absent (required-suite gate), so provisioning here is what keeps the lane executed, not skipped.
         run: python -m playwright install --with-deps chromium
-      - name: Run authoritative verification
+      - name: Run authoritative verification shard
         run: >-
           python ops/verify.py --workers 4 --pytest-arg=--tb=short
           --log-dir=.verification-logs --tail-lines=2000 --timeout-seconds 7200
+          --job-index ${{ matrix.shard }} --job-count 10
+      - name: Upload complete verification logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: verification-logs-py3.12.13-shard-${{ matrix.shard }}
+          path: .verification-logs/
+          include-hidden-files: true
+          if-no-files-found: error
+
+  verify:
+    # The release gate. It runs even when a shard failed so the receipt names what is missing,
+    # and it passes only when every shard passed and together they ran the whole scope once.
+    if: always()
+    needs: [verify-shard]
+    timeout-minutes: 30
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12.13"
+      - name: Install verification dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      - name: Download every shard's verification logs
+        uses: actions/download-artifact@v7
+        with:
+          pattern: verification-logs-py3.12.13-shard-*
+          path: .verification-shards
+      - name: Run authoritative verification
+        run: >-
+          python ops/verify.py --aggregate-shards=.verification-shards --job-count 10
+          --log-dir=.verification-logs
+      - name: Require every verification shard to pass
+        env:
+          SHARDS_RESULT: ${{ needs.verify-shard.result }}
+        run: |
+          echo "verify-shard result: $SHARDS_RESULT"
+          test "$SHARDS_RESULT" = "success"
       - name: Upload complete verification logs
         if: always()
         uses: actions/upload-artifact@v7

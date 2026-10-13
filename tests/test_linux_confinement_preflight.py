@@ -108,7 +108,7 @@ def test_evidence_write_failure_cannot_publish_success(monkeypatch, tmp_path, ca
 
 
 @pytest.mark.parametrize("job_name,log_root", (
-    ("verify", ".verification-logs"), ("compatibility", ".compatibility-logs"),
+    ("verify-shard", ".verification-logs"), ("compatibility", ".compatibility-logs"),
 ))
 @pytest.mark.parametrize("fault", ("none", "update", "install", "version"))
 def test_actual_setup_shell_preserves_failure_exit_and_log(tmp_path, job_name, log_root, fault):
