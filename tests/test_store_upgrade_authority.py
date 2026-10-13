@@ -8,12 +8,13 @@ with ``sqlite3.OperationalError: no such column: attempt_role`` — raised from
 dynamic patch phase. On any database whose ``runtime_attempts`` predates that column the boot
 order is inverted: the schema script queries a column the authority has not yet added.
 
-Fixtures here are SANITIZED and built from SCHEMA SHAPE ONLY — historical SCHEMA_SQL strings
-extracted from this repository's own git history plus synthetic rows, never real user data:
+Fixtures here are SANITIZED schema shapes derived from the checked-in SCHEMA_SQL plus synthetic
+rows, never real user data. They model the columns and table absence relevant to each upgrade
+contract without depending on historical commits that are absent from this repository's history:
 
-- n-2 shape: SCHEMA_SQL at ``9b644f3f^`` (the parent that introduced ``attempt_role``),
-  i.e. ``runtime_attempts`` WITHOUT the chain-role columns.
-- n-1 shape: SCHEMA_SQL at ``9b644f3f``.
+- n-2 shape: ``runtime_attempts`` without ``attempt_role``, ``execution_slot``, or
+  ``retry_idempotency_key``.
+- n-1 shape: ``runtime_attempts`` without ``execution_slot`` or ``retry_idempotency_key``.
 - current shape: produced by this binary's own ``run_migrations``.
 
 The upgrade contract under test: ordered steps before any DDL that depends on them;
@@ -25,54 +26,54 @@ from __future__ import annotations
 
 import re
 import sqlite3
-import subprocess
 from pathlib import Path
 
 import pytest
 
-REPO = Path(__file__).resolve().parents[1]
+N2_SCHEMA_SHAPE = "n2"
+N1_SCHEMA_SHAPE = "n1"
 
-N2_SCHEMA_SHA = "9b644f3f^"  # runtime_attempts predates attempt_role — the reported failure shape
-N1_SCHEMA_SHA = "9b644f3f"  # attempt_role present; newest dynamic columns still dynamic
-
-# The two NEWEST dynamic steps (the current binary's n-1 delta): a database created by the
-# immediately previous binary has the full SCHEMA_SQL tables EXCEPT these columns.
-NEWEST_STEPS = (
-    ("runtime_attempts", "execution_slot"),
-    ("runtime_attempts", "retry_idempotency_key"),
-)
+# The two newest dynamic steps (the current binary's n-1 delta).
+NEWEST_COLUMNS = ("execution_slot", "retry_idempotency_key")
 
 
-def _current_schema_minus_newest_steps() -> str:
-    """The n-1 shape: today's SCHEMA_SQL with the newest dynamic columns (and the dependent
-    unique index) stripped — exactly what the previous binary created for fresh installs."""
+def _schema_sql_for_shape(shape: str) -> str:
+    """Build a sanitized prior-version schema shape from the checked-in schema."""
     from storage.migrations import SCHEMA_SQL
 
+    columns_by_shape = {
+        "n1": NEWEST_COLUMNS,
+        "n2": ("attempt_role", *NEWEST_COLUMNS),
+    }
+    if shape not in columns_by_shape:
+        raise ValueError(f"unknown migration fixture shape: {shape}")
+
     schema = SCHEMA_SQL
-    for _table, column in NEWEST_STEPS:
-        schema = re.sub(
-            rf"\n\s*{column} (TEXT|INTEGER)[^\n]*,?", "", schema
+    for column in columns_by_shape[shape]:
+        schema, removed = re.subn(
+            rf"(?m)^[ \t]*{re.escape(column)}[ \t]+(?:TEXT|INTEGER)\b[^\n]*,[ \t]*$\r?\n?",
+            "",
+            schema,
         )
-    schema = re.sub(
-        r"CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_attempts_retry_idempotency[^;]*;",
-        "",
-        schema,
-    )
+        if removed != 1:
+            raise AssertionError(f"expected one {column} column in SCHEMA_SQL")
+
+    for index in ("idx_runtime_attempts_session_role", "idx_runtime_attempts_retry_idempotency"):
+        schema = re.sub(
+            rf"(?ms)^[ \t]*CREATE (?:UNIQUE )?INDEX IF NOT EXISTS {re.escape(index)}\b.*?;[ \t]*\r?\n?",
+            "",
+            schema,
+        )
     return schema
 
 
-def _schema_sql_from_git(spec: str) -> str:
-    done = subprocess.run(
-        ["git", "-C", str(REPO), "show", f"{spec}:storage/migrations.py"],
-        capture_output=True, text=True, check=True,
-    )
-    match = re.search(r'SCHEMA_SQL = """(.*?)"""', done.stdout, re.DOTALL)
-    assert match, f"no SCHEMA_SQL in {spec}"
-    return match.group(1)
+def _current_schema_minus_newest_steps() -> str:
+    """The n-1 shape with the newest dynamic columns and dependent indexes removed."""
+    return _schema_sql_for_shape(N1_SCHEMA_SHAPE)
 
 
 def _build_fixture(db_path: Path, schema_sql: str, survivors: dict[str, int]) -> None:
-    """Materialize a sanitized old-shape database: the historical schema plus generic rows."""
+    """Materialize a sanitized old-shape database plus generic rows."""
     conn = sqlite3.connect(db_path)
     try:
         conn.executescript(schema_sql)
@@ -102,7 +103,7 @@ def old_shape_db(tmp_path: Path, request) -> Path:
     db = tmp_path / "vool_web0_v2.db"
     _build_fixture(
         db,
-        _schema_sql_from_git(request.param),
+        _schema_sql_for_shape(request.param),
         survivors={
             "runtime_sessions": 2,
             "dialogue_sessions": 2,
@@ -130,11 +131,12 @@ def _rows(db: Path, table: str) -> int:
 def test_version_four_install_upgrades_before_scheduling_and_keeps_rows(tmp_path, note):
     from core.operator import reminders
     from storage.db import STORE_APPLICATION_ID, get_connection
-    from storage.migrations import run_migrations
+    from storage.migrations import SCHEMA_SQL, run_migrations
 
     db = tmp_path / "existing-v4.db"
-    _build_fixture(db, _schema_sql_from_git("ad619e3f"), {"runtime_sessions": 2})
+    _build_fixture(db, SCHEMA_SQL, {"runtime_sessions": 2})
     with sqlite3.connect(db) as conn:
+        conn.execute("DROP TABLE IF EXISTS reminder_requests")
         conn.execute(f"PRAGMA application_id={STORE_APPLICATION_ID}")
         conn.execute("PRAGMA user_version=4")
         assert not conn.execute("SELECT 1 FROM sqlite_master WHERE name='reminder_requests'").fetchone()
@@ -151,7 +153,7 @@ def test_version_four_install_upgrades_before_scheduling_and_keeps_rows(tmp_path
     assert _rows(db, "runtime_sessions") == 2
 
 
-@pytest.mark.parametrize("old_shape_db", [N2_SCHEMA_SHA], indirect=True)
+@pytest.mark.parametrize("old_shape_db", [N2_SCHEMA_SHAPE], indirect=True)
 def test_n2_upgrade_succeeds_survives_data_and_restarts(old_shape_db: Path) -> None:
     """The reported failure, now the contract: an n-2 database upgrades, keeps its dialogue /
     attempts / checkpoint rows, answers the new-column queries, and reopens cleanly."""
@@ -200,7 +202,7 @@ def test_upgrade_failure_at_any_boundary_restores_pre_update_bytes_exactly(
         db = tmp_path / f"fixture-{counter['n']}.db"
         _build_fixture(
             db,
-            _schema_sql_from_git(N2_SCHEMA_SHA),
+            _schema_sql_for_shape(N2_SCHEMA_SHAPE),
             survivors={"runtime_sessions": 1, "dialogue_sessions": 1, "runtime_attempts": 1},
         )
         return db
@@ -299,7 +301,7 @@ def test_older_binary_refuses_migrated_data_rollback_stays_coherent(
     from storage.migrations import run_migrations
 
     db = tmp_path / "vool_web0_v2.db"
-    _build_fixture(db, _schema_sql_from_git(N2_SCHEMA_SHA), survivors={"runtime_attempts": 1})
+    _build_fixture(db, _schema_sql_for_shape(N2_SCHEMA_SHAPE), survivors={"runtime_attempts": 1})
     run_migrations(db_path=db)
 
     monkeypatch.setattr(storage_db, "STORE_USER_VERSION", 2)  # the old binary's contract
@@ -337,7 +339,7 @@ def test_rerunning_the_same_migration_changes_nothing(tmp_path: Path) -> None:
     from storage.migrations import run_migrations
 
     db = tmp_path / "vool_web0_v2.db"
-    _build_fixture(db, _schema_sql_from_git(N2_SCHEMA_SHA), survivors={"runtime_attempts": 1})
+    _build_fixture(db, _schema_sql_for_shape(N2_SCHEMA_SHAPE), survivors={"runtime_attempts": 1})
     run_migrations(db_path=db)
     dump1 = _semantic_dump(db)
 
@@ -350,7 +352,7 @@ def test_rerunning_the_same_migration_changes_nothing(tmp_path: Path) -> None:
     assert dump1 == dump3
 
 
-@pytest.mark.parametrize("old_shape_db", [N2_SCHEMA_SHA, N1_SCHEMA_SHA], indirect=True)
+@pytest.mark.parametrize("old_shape_db", [N2_SCHEMA_SHAPE, N1_SCHEMA_SHAPE], indirect=True)
 def test_upgrade_matrix_versions(tmp_path: Path, old_shape_db: Path) -> None:
     from storage.db import STORE_USER_VERSION
     from storage.migrations import run_migrations

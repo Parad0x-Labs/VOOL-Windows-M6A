@@ -2,7 +2,7 @@
 
 `storage/migrations.py` placed `CREATE UNIQUE INDEX ... retry_idempotency_key` inside `SCHEMA_SQL`,
 executed as one `executescript()` batch. On a LEGACY database that already has `runtime_attempts`
-(from before this column existed -- e.g. the reviewed tip at 7ff50e8d), `CREATE TABLE IF NOT
+without this column, `CREATE TABLE IF NOT
 EXISTS` is a no-op, so the index statement immediately raises `OperationalError: no such column:
 retry_idempotency_key` and aborts the WHOLE script -- silently skipping every table/index defined
 after it AND every `_add_column_if_missing()` call in `run_migrations()` (which runs after the
@@ -13,17 +13,15 @@ Fixed by removing the premature index statement from `SCHEMA_SQL` -- the correct
 already existed later in `run_migrations()`, immediately after `_add_column_if_missing` guarantees
 the column exists.
 
-The legacy database fixture here is built from the REAL historical schema at the reviewed tip
-(`git show 7ff50e8d...:storage/migrations.py`), not a hand-approximated shape -- that file has ZERO
-occurrences of `retry_idempotency_key`, confirmed directly, so this reproduces the exact upgrade
-path a real pre-existing installation goes through.
+The sanitized legacy fixture is derived from the checked-in current schema with only the target
+column and its dependent index removed. This tests the upgrade contract directly and does not rely
+on historical commits that are absent from this repository's public history.
 """
 
 from __future__ import annotations
 
-import ast
+import re
 import sqlite3
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,29 +33,23 @@ from core.runtime_continuity import (
     latest_runtime_attempt,
     reset_runtime_continuity_state,
 )
-from storage.migrations import run_migrations
-
-_LEGACY_COMMIT = "7ff50e8d42ed13bbe9fc888ac649d6d942731202"
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-_legacy_schema_sql_cache: str | None = None
+from storage.migrations import SCHEMA_SQL, run_migrations
 
 
 def _legacy_schema_sql() -> str:
-    """The REAL `SCHEMA_SQL` string as it existed at the reviewed tip, extracted via `ast` (no
-    import, no execution of the historical file -- just its one string literal)."""
-    global _legacy_schema_sql_cache
-    if _legacy_schema_sql_cache is not None:
-        return _legacy_schema_sql_cache
-    result = subprocess.run(
-        ["git", "show", f"{_LEGACY_COMMIT}:storage/migrations.py"],
-        cwd=str(_REPO_ROOT), capture_output=True, text=True, check=True,
+    """Build the legacy shape under test without depending on unavailable Git history."""
+    schema, removed = re.subn(
+        r"(?m)^[ \t]*retry_idempotency_key[ \t]+TEXT\b[^\n]*,[ \t]*$\n?",
+        "",
+        SCHEMA_SQL,
     )
-    tree = ast.parse(result.stdout)
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "SCHEMA_SQL" for t in node.targets):
-            _legacy_schema_sql_cache = ast.literal_eval(node.value)
-            return _legacy_schema_sql_cache
-    raise RuntimeError("SCHEMA_SQL not found in the historical migrations.py")
+    if removed != 1:
+        raise AssertionError("expected one retry_idempotency_key column in SCHEMA_SQL")
+    return re.sub(
+        r"(?ms)^[ \t]*CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_attempts_retry_idempotency\b.*?;[ \t]*\r?\n?",
+        "",
+        schema,
+    )
 
 
 def _build_legacy_database(db_path: Path) -> None:
@@ -142,10 +134,10 @@ class CaseAFreshEmptyDatabaseTests(_MigrationCaseBase):
         self._assert_lane_functional()
 
 
-class CaseBHistoricalSchemaDatabaseTests(_MigrationCaseBase):
-    """Database built using the EXACT schema at the reviewed tip (7ff50e8d), no data yet."""
+class CaseBLegacySchemaDatabaseTests(_MigrationCaseBase):
+    """Synthetic legacy shape: runtime_attempts exists without its later retry key."""
 
-    def test_upgrading_the_historical_schema_succeeds(self) -> None:
+    def test_upgrading_the_legacy_schema_succeeds(self) -> None:
         _build_legacy_database(self._db_path)
         self.assertFalse(_column_exists(self._db_path, "runtime_attempts", "retry_idempotency_key"))
 
@@ -157,8 +149,7 @@ class CaseBHistoricalSchemaDatabaseTests(_MigrationCaseBase):
 
 class CaseCLegacyDatabaseWithExistingRowsTests(_MigrationCaseBase):
     """Legacy database with a real original attempt, a retry child, and terminal attempts --
-    built and populated entirely through the columns the historical schema actually had (no
-    retry_idempotency_key column at all)."""
+    populated with the target retry_idempotency_key column absent."""
 
     def _seed_legacy_rows(self) -> tuple[str, str]:
         conn = sqlite3.connect(str(self._db_path))
