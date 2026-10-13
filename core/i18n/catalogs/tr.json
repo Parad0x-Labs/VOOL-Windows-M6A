@@ -531,6 +531,10 @@
     "fault.wallet_dependency_unavailable.message": "Bu yapı EVM imzalama veya ABI kodlaması yapamaz: Ethereum kitaplıkları bu makinede kurulu değil. Hiçbir şey imzalanmadı veya gönderilmedi. Solana, saklama ve harcama tavanları etkilenmez; kitaplıklar kurulunca tekrar deneyin.",
     "fault.wallet_paykit_unavailable.action": "pay-kit ödemelerini etkinleştirmek için VOOL'un isteğe bağlı pay ekini Python 3.11 veya daha yenisine kurun; cüzdan her durumda kendi imzalayıcısını, harcama tavanlarını ve onayını korur.",
     "fault.wallet_paykit_unavailable.message": "Bu yapı Solana x402 veya MPP tekliflerini ödeyemez: isteğe bağlı pay eki (Solana pay-kit, Python 3.11 veya daha yenisi) bu makinede kurulu değil. Hiçbir şey imzalanmadı veya gönderilmedi. Cüzdanın diğer her işlevi onsuz çalışır; kurulunca tekrar deneyin.",
+    "fault.wallet_payment_channel_off.action": "Bir ödeme kanalını Kripto ayarlarında yalnızca ödemelerin onun üzerinden yapılmasını istiyorsanız açın; tavan ve sizin onayınız her kanalda geçerlidir.",
+    "fault.wallet_payment_channel_off.message": "Bu ödeme kapalı bir ödeme kanalından geçiyor, bu yüzden hiçbir şey imzalanmadı veya gönderilmedi. Kanalı Ayarlar, Kripto, Ödeme kanalları'ndan açın, sonra tekrar deneyin.",
+    "fault.wallet_x402_sdk_unavailable.action": "Bir Crypto Pilot cüzdanından Base'deki x402 tekliflerini ödemek için VOOL'un isteğe bağlı x402 ekini kurun; cüzdan her durumda kendi imzalayıcısını, harcama tavanlarını ve onayını korur.",
+    "fault.wallet_x402_sdk_unavailable.message": "Bu yapı x402 Foundation SDK üzerinden Base'deki x402 tekliflerini ödeyemez: isteğe bağlı x402 eki bu makinede kurulu değil. Hiçbir şey imzalanmadı veya gönderilmedi. Cüzdanın diğer her işlevi onsuz çalışır; kurulunca tekrar deneyin.",
     "fault.wallet_disabled.action": "Cüzdanı yalnızca bu kurulumda ödemeler isteniyorsa açıkça etkinleştirin (VOOL_WALLET_ENABLED=1).",
     "fault.wallet_disabled.message": "Cüzdan kapalı, bu yüzden önerilen veya gönderilen ödeme olmadı. Önce etkinleştirin, sonra tekrar deneyin.",
     "fault.wallet_duplicate_payment.action": "Var olan önerinin makbuzunu kontrol edin; gerçekten yeni bir ödeme için yeni bir eşgüçlülük anahtarı kullanın.",
@@ -1863,7 +1867,7 @@
     "addons.registry_empty": "Bu belirli VOOL derlemesi ve arama için listelenmiş bir sürüm yok.",
     "addons.registry_inspect": "İncelemek için indir"
   },
-  "source_catalog_sha256": "96957557e54e7e84181f8c3e38ae74c22b54a4084bd6459c64ad55634b15f037",
+  "source_catalog_sha256": "280f162bb0c2027a392a2f7530e93aecf1eba6102daa8b9102b09d30e61f7950",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
