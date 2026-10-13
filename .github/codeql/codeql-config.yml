@@ -1,0 +1,10 @@
+name: VOOL Windows CodeQL config
+
+# security-extended = the default security queries plus lower-precision security queries.
+queries:
+  - uses: security-extended
+
+# Only generated, minified third-party bundles are excluded: their alerts point at upstream
+# build output nobody here can fix line by line. Vendored source stays in scope.
+paths-ignore:
+  - "**/*.min.js"

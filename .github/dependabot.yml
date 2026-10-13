@@ -1,7 +1,7 @@
 version: 2
-# Only ecosystems this repo actually has. npm and cargo were configured at "/" with no
-# package.json or Cargo.toml anywhere in the tree, so both failed every week and left
-# main permanently red -- which is how a real failure gets ignored.
+# Only ecosystems this repo actually has, each at the directory that holds its manifest.
+# npm and cargo were once configured at "/" with no package.json or Cargo.toml there, so both
+# failed every week and left main permanently red -- which is how a real failure gets ignored.
 updates:
   # pip / Python
   - package-ecosystem: "pip"
@@ -19,3 +19,22 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 3
     labels: ["dependencies", "ci"]
+
+  # npm: the mobile app's lock file (mobile/package-lock.json)
+  - package-ecosystem: "npm"
+    directory: "/mobile"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "security"]
+
+  # NuGet: the native approval host's WebView2 pin (installer/windows_host/packages.lock.json,
+  # restored with --locked-mode in the gauntlet). The broker has no package references.
+  - package-ecosystem: "nuget"
+    directory: "/installer/windows_host"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "security"]

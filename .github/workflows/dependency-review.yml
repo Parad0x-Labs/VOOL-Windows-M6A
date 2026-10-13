@@ -1,0 +1,24 @@
+name: Dependency Review
+
+# Fails a pull request that adds or upgrades to a dependency with a known vulnerability of
+# moderate severity or worse, across every manifest GitHub's dependency graph reads
+# (pyproject.toml, requirements*.txt, uv.lock, mobile/package-lock.json, NuGet lock files,
+# workflow actions). Existing advisories on main are the weekly Security Audit's and
+# Dependabot's job; this gate stops new ones from coming in.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: moderate
