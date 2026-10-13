@@ -447,6 +447,35 @@ def test_progress_snapshot_preserves_current_phase_without_claiming_completion(t
     assert not progress.with_suffix(".tmp").exists()
 
 
+def test_execution_wrapper_survives_test_path_stat_monkeypatch(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    output = tmp_path / "nested" / "logs" / "execution.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "ops" / "pytest_execution.py"),
+            "--output",
+            str(output),
+            "--",
+            "--tb=short",
+            "tests/updater/test_platforms_macos.py::TestAtomicSwap::test_cross_volume_swap_refused_not_copied",
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    execution = json.loads(output.read_text(encoding="utf-8"))
+    assert execution["exitstatus"] == 0
+    assert execution["collected_nodeids"] == [
+        "tests/updater/test_platforms_macos.py::TestAtomicSwap::test_cross_volume_swap_refused_not_copied"
+    ]
+    assert execution["summary"]["passed"] == 1
+
+
 def test_progress_snapshot_write_failure_does_not_interrupt_pytest(monkeypatch, tmp_path: Path) -> None:
     output = tmp_path / "execution.json"
     plugin = _ExecutionPlugin(output_path=output)

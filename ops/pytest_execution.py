@@ -57,7 +57,6 @@ class _ExecutionPlugin:
         # This bounded snapshot is diagnostic only, never a completion receipt.
         path = self._output_path.with_suffix(".progress.json")
         temporary = path.with_suffix(".tmp")
-        path.parent.mkdir(parents=True, exist_ok=True)
         try:
             temporary.write_text(
                 json.dumps({"nodeid": nodeid, "phase": phase, "started_total": len(self._started)})
@@ -77,7 +76,6 @@ class _ExecutionPlugin:
             # A deadline can kill the shard before sessionfinish. Retain each failure now;
             # this journal is diagnostic evidence, never a completed execution receipt.
             failure_path = self._output_path.with_suffix(".failures.jsonl")
-            failure_path.parent.mkdir(parents=True, exist_ok=True)
             failure = {
                 "schema": "vool.pytest-failure.v1",
                 "nodeid": str(report.nodeid),
@@ -136,7 +134,6 @@ class _ExecutionPlugin:
                 },
             },
         }
-        self._output_path.parent.mkdir(parents=True, exist_ok=True)
         self._output_path.write_text(
             json.dumps(payload, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
@@ -179,7 +176,9 @@ def main(argv: list[str] | None = None) -> int:
         pytest_args = pytest_args[1:]
     for variable in ("PYTEST_ADDOPTS", "PYTEST_DISABLE_PLUGIN_AUTOLOAD", "PYTEST_PLUGINS"):
         os.environ.pop(variable, None)
-    plugin = _ExecutionPlugin(output_path=Path(args.output))
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plugin = _ExecutionPlugin(output_path=output_path)
     return int(pytest.main(["-o", "addopts=", *pytest_args], plugins=[plugin]))
 
 
