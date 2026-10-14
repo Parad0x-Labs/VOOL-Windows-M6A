@@ -1613,8 +1613,8 @@ def restore_persisted_bypass_grants() -> int:
 
     Fail-closed at every doubt: a file that does not parse, does not carry a matching integrity
     MAC, or carries a structurally invalid entry restores NOTHING from that file (it is moved
-    aside as `.corrupt-<ts>` so it cannot keep poisoning restarts). An entry whose chat is gone,
-    deleted, no longer project-bound, or whose project root no longer equals the grant's bound
+    aside as `.corrupt-<ts>-<nonce>` so repeated quarantines do not collide). An entry whose chat is
+    gone, deleted, no longer project-bound, or whose project root no longer equals the grant's bound
     workspace is dropped: authority that outlived its binding is not restored. Revoked entries on
     disk stay revoked -- including grants the mirror still holds live but the revocation journal
     names: those restore as explicitly revoked, never executable.
@@ -1673,7 +1673,7 @@ def restore_persisted_bypass_grants() -> int:
             # Corrupt or tampered: quarantine so the NEXT restart does not read the same bytes,
             # and restore nothing. Dropping is safe -- the owner re-approves; forging is not.
             with contextlib.suppress(OSError):
-                path.rename(path.with_name(f"{path.name}.corrupt-{int(time.time())}"))
+                path.rename(path.with_name(f"{path.name}.corrupt-{int(time.time())}-{secrets.token_hex(16)}"))
             return 0
 
         def _quarantine_store() -> None:
@@ -1681,7 +1681,7 @@ def restore_persisted_bypass_grants() -> int:
                 if doomed is None:
                     continue
                 with contextlib.suppress(OSError):
-                    doomed.rename(doomed.with_name(f"{doomed.name}.corrupt-{int(time.time())}"))
+                    doomed.rename(doomed.with_name(f"{doomed.name}.corrupt-{int(time.time())}-{secrets.token_hex(16)}"))
 
         journal_path = _bypass_revocations_path()
         journal_exists = journal_path is not None and journal_path.exists()

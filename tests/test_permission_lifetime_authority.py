@@ -463,6 +463,43 @@ def test_corrupt_or_tampered_mirror_restores_nothing_and_is_quarantined(tmp_path
     assert not path.exists()
 
 
+@pytest.mark.parametrize("damage", ["mirror", "history"])
+def test_repeated_quarantine_preserves_every_store_at_the_same_timestamp(tmp_path, monkeypatch, damage):
+    from core import mode_permission_policy as policy
+
+    monkeypatch.setattr(policy.time, "time", lambda: 1_720_000_000.0)
+    ws = _ws(tmp_path)
+    _bind_chat_to_workspace("chat-quarantine", ws)
+    activate_bypass_grant(
+        session_id="chat-quarantine", scope="session", explicit_confirmation=True,
+        until_off=True, workspace_root=ws,
+    )
+    mirror = policy._bypass_grants_path()
+    paths = [mirror] if damage == "mirror" else [
+        mirror, policy._bypass_revocations_path(), policy._bypass_revocations_head_path(),
+    ]
+    originals = {path: path.read_bytes() for path in paths}
+    archived = {path: [b"previous quarantine evidence"] for path in paths}
+    for path in paths:
+        path.with_name(f"{path.name}.corrupt-1720000000").write_bytes(archived[path][0])
+
+    for attempt in range(3):
+        for path, content in originals.items():
+            path.write_bytes(content)
+        poison = mirror if damage == "mirror" else policy._bypass_revocations_path()
+        poison.write_bytes(f"invalid store {attempt}".encode())
+        for path in paths:
+            archived[path].append(path.read_bytes())
+        _BYPASS_GRANTS.clear()
+        policy._BYPASS_GRANTS_RESTORED = False
+        assert policy.restore_persisted_bypass_grants() == 0
+        assert not _BYPASS_GRANTS, "quarantine must never restore executable authority"
+        for path in paths:
+            assert not path.exists(), "poison must not remain at the live path"
+            copies = list(path.parent.glob(f"{path.name}.corrupt-*"))
+            assert sorted(copy.read_bytes() for copy in copies) == sorted(archived[path])
+
+
 def test_a_json_object_saying_until_off_is_not_evidence_of_authority(tmp_path):
     """Forged entries inside a MAC-valid envelope are still refused by the shape law."""
     import hashlib
