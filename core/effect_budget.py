@@ -1929,20 +1929,20 @@ def reconcile_effect_cost(
 
 def reservation_rows(state: str = "", owner_ref: str = "") -> list[dict[str, Any]]:
     """Durable reservation rows (copies), optionally filtered."""
-    conn = _budget_connection()
-    _ensure_tables(conn)
-    query = f"SELECT * FROM {_RESERVATIONS_TABLE}"
-    clauses: list[str] = []
-    params: list[Any] = []
-    if state:
-        clauses.append("state=?")
-        params.append(state)
-    if owner_ref:
-        clauses.append("owner_ref=?")
-        params.append(owner_ref)
-    if clauses:
-        query += " WHERE " + " AND ".join(clauses)
-    return [dict(row) for row in conn.execute(query, params).fetchall()]
+    with contextlib.closing(_budget_connection()) as conn:
+        _ensure_tables(conn)
+        query = f"SELECT * FROM {_RESERVATIONS_TABLE}"
+        clauses: list[str] = []
+        params: list[Any] = []
+        if state:
+            clauses.append("state=?")
+            params.append(state)
+        if owner_ref:
+            clauses.append("owner_ref=?")
+            params.append(owner_ref)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        return [dict(row) for row in conn.execute(query, params).fetchall()]
 
 
 def budget_events(event_kind: str = "", limit: int = 0) -> list[dict[str, Any]]:
