@@ -13692,6 +13692,7 @@
           "path": "/api/cloud/providers",
           "permission": "",
           "proof": [
+            "tests/test_chat_page_layout_geometry.py",
             "tests/test_chat_page_multiprovider.py",
             "tests/test_multiprovider_endpoints.py",
             "tests/usepod/test_usepod_registration.py"

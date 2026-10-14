@@ -95,7 +95,7 @@ SETUP = r"""
 # The real cloud-model path: connect a key and let renderCloudModels() build the rows and reposition.
 LOAD_MODELS = r"""
 async () => {
-  setCloudConnected(true);
+  await refreshCredentials();
   await renderCloudModels();
   return document.querySelectorAll('#modelPop .pop-item.cloud-dyn').length;
 }
@@ -221,7 +221,42 @@ def _route(route):
         route.fulfill(status=200, content_type="application/json",
                       body=json.dumps({"credentials": [{"name": "llm.cloud.openrouter"}]}))
         return
+    if "/api/cloud/providers" in request.url:
+        # The real page requires a configured provider as well as a credential and catalogue.
+        route.fulfill(status=200, content_type="application/json",
+                      body=json.dumps({"providers": [{"id": "openrouter", "label": "OpenRouter",
+                                                       "model_id_style": "slash",
+                                                       "user_base_url": False,
+                                                       "auth_placement": "authorization_bearer"}]}))
+        return
     route.fulfill(status=200, content_type="application/json", body="{}")
+
+
+@pytest.mark.parametrize("provider_present,credential_present", [(True, True), (False, True), (True, False)])
+def test_cloud_rows_require_both_the_provider_and_its_credential(provider_present, credential_present) -> None:
+    """The geometry fixture must exercise the real configured-provider gate, not override it."""
+    ctx, browser = _launch()
+    try:
+        page = browser.new_page()
+
+        def route(request_route):
+            url = request_route.request.url
+            if ((not provider_present and "/api/cloud/providers" in url)
+                    or (not credential_present and "/api/settings/credentials" in url)):
+                request_route.fulfill(status=200, content_type="application/json", body="{}")
+                return
+            _route(request_route)
+
+        page.route("**/*", route)
+        page.goto("http://vool.test/chat")
+        rows = page.evaluate(LOAD_MODELS)
+        if provider_present and credential_present:
+            assert rows >= 30
+        else:
+            assert rows == 0
+    finally:
+        browser.close()
+        ctx.stop()
 
 
 def _drag_panel_splitter_left(page) -> None:
@@ -298,6 +333,8 @@ def matrix():
             if not panel_open:
                 page.click("#panelBtn")
             page.click("#modelBtn")
+            # Opening the picker refreshes credentials again; measure its completed catalogue.
+            page.evaluate(LOAD_MODELS)
             page.wait_for_function("document.querySelectorAll('#modelPop .pop-item.cloud-dyn').length >= 30")
             out[f"{key}:menu"] = page.evaluate(REPORT)
             out[f"{key}:menu"]["cloudRows"] = page.locator("#modelPop .pop-item.cloud-dyn").count()
@@ -310,6 +347,7 @@ def matrix():
             page.wait_for_timeout(160)
             page.evaluate(LOAD_MODELS)
             page.click("#modelBtn")
+            page.evaluate(LOAD_MODELS)
             page.wait_for_function("document.querySelectorAll('#modelPop .pop-item.cloud-dyn').length >= 30")
             out[f"{key}:menu-panel-closed"] = page.evaluate(REPORT)
 
