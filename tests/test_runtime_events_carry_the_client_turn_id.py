@@ -129,6 +129,43 @@ class AgentNodeEventsCarryTheTurnTests(_LedgerCase):
         events = list_runtime_session_events("s-keep")
         self.assertEqual(events[0].get("client_turn_id"), "turn-inner")
 
+    def test_explicit_session_fallback_reaches_both_ledger_and_stream(self) -> None:
+        from core.runtime_task_events import register_runtime_event_sink, unregister_runtime_event_sink
+
+        streamed = []
+        context = {"cancel_turn_id": "turn-stream", "runtime_event_stream_id": "node-test-stream"}
+        original = dict(context)
+        register_runtime_event_sink("node-test-stream", streamed.append)
+        try:
+            emit = self._emitter("s-stream-fallback", context)
+            emit("agent_node_started", {"node_id": "n1", "operation": "noop"})
+        finally:
+            unregister_runtime_event_sink("node-test-stream")
+        events = list_runtime_session_events("s-stream-fallback")
+        self.assertEqual(context, original)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(len(streamed), 1)
+        self.assertEqual(streamed[0], events[0])
+        self.assertEqual(events[0]["client_turn_id"], "turn-stream")
+
+    def test_existing_context_owner_is_not_replaced_by_the_fallback(self) -> None:
+        for key in ("runtime_session_id", "session_id"):
+            owner = f"s-owner-{key}"
+            emit = self._emitter("s-unused-fallback", {key: owner})
+            emit("agent_node_started", {"node_id": "n1", "operation": "noop"})
+            self.assertEqual(len(list_runtime_session_events(owner)), 1)
+        self.assertEqual(list_runtime_session_events("s-unused-fallback"), [])
+
+    def test_emitter_captures_context_before_worker_threads_run(self) -> None:
+        context = {"session_id": "s-captured", "cancel_turn_id": "turn-captured"}
+        emit = self._emitter("s-captured", context)
+        context.update(session_id="s-later", cancel_turn_id="turn-later")
+        emit("agent_node_started", {"node_id": "n1", "operation": "noop"})
+        events = list_runtime_session_events("s-captured")
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["client_turn_id"], "turn-captured")
+        self.assertEqual(list_runtime_session_events("s-later"), [])
+
 
 class RuntimeAttemptEventsCarryTheTurnTests(_LedgerCase):
     def test_the_attempt_lifecycle_events_are_all_tagged(self) -> None:

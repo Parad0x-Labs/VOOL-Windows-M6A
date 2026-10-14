@@ -3671,7 +3671,15 @@ class VoolAgent(
         chat page files it under "Between turns" instead of inside its turn (observed live
         2026-08-14, session openclaw:ed890df3, seqs 15-16/79-82).
         """
-        client_turn_id = str((source_context or {}).get("cancel_turn_id") or "").strip()
+        node_context = dict(source_context or {})
+        # Streaming still needs the explicit ledger destination when a caller has no
+        # session in its context. Capture it without mutating the caller's turn state.
+        context_session_id = str(
+            node_context.get("runtime_session_id") or node_context.get("session_id") or ""
+        ).strip()
+        if not context_session_id:
+            node_context["runtime_session_id"] = session_id
+        client_turn_id = str(node_context.get("cancel_turn_id") or "").strip()
         # The canonical turn identity, captured on the turn's own thread for the same reason
         # `client_turn_id` is: this emitter writes BELOW the seam that stamps it, so it must carry
         # the value rather than let the seam resolve it. Without this the node rows are the only
@@ -3680,7 +3688,7 @@ class VoolAgent(
         try:
             from core.execution_truth import resolve_turn_key
 
-            node_turn_key = resolve_turn_key(source_context, None)
+            node_turn_key = resolve_turn_key(node_context, None)
         except Exception:
             node_turn_key = ""
 
@@ -3705,7 +3713,7 @@ class VoolAgent(
             # Companion's typed activity language (117 phrases / 15 categories) had no events to
             # narrate and sat on IDLE while real work happened (measured live 2026-08-29).
             self._emit_runtime_event(
-                source_context,
+                node_context,
                 event_type=event_type,
                 message=message,
                 **details,
