@@ -66,9 +66,10 @@ class AgentNodeEventsCarryTheTurnTests(_LedgerCase):
     def _emitter(self, session_id: str, source_context: dict | None):
         from apps.vool_agent import VoolAgent
 
-        # The real emitter factory. It reads nothing off `self`, and binding it through the class
-        # keeps this test on the production closure rather than a reimplementation of it.
-        return VoolAgent._agent_node_emitter(object(), session_id, source_context)
+        # The streaming path calls the agent's real event/checkpoint mixins. Allocate that
+        # receiver without initializing unrelated model/provider services; emission stays real.
+        agent = object.__new__(VoolAgent)
+        return agent._agent_node_emitter(session_id, source_context)
 
     def test_node_events_carry_the_client_turn_id_through_the_real_runner(self) -> None:
         emit = self._emitter("s-node", {"cancel_turn_id": "turn-77", "session_id": "s-node"})
