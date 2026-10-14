@@ -31,6 +31,20 @@ from __future__ import annotations
 import os as _bootstrap_os
 import sys as _bootstrap_sys
 
+
+def _windows_bootstrap_argument(argument: str) -> str:
+    """Quote one CRT argument without importing candidate-shadowable modules."""
+    quoted = '"'
+    backslashes = 0
+    for char in argument:
+        if char == "\\":
+            backslashes += 1
+            continue
+        quoted += "\\" * (2 * backslashes + 1 if char == '"' else backslashes) + char
+        backslashes = 0
+    return quoted + "\\" * (2 * backslashes) + '"'
+
+
 # A script directory is normally first on ``sys.path``. A hostile candidate proved that placing a
 # ``scripts/hashlib.py`` beside this file could therefore forge the corpus digest before the
 # controller had done any work. Re-exec the controller in isolated mode before importing any
@@ -39,11 +53,18 @@ if __name__ == "__main__" and not _bootstrap_sys.flags.isolated:
     _clean_env = dict(_bootstrap_os.environ)
     _clean_env.pop("PYTHONPATH", None)
     _clean_env.pop("PYTHONHOME", None)
-    _bootstrap_os.execve(
-        _bootstrap_sys.executable,
-        [_bootstrap_sys.executable, "-I", _bootstrap_os.path.abspath(__file__), *_bootstrap_sys.argv[1:]],
-        _clean_env,
-    )
+    _arguments = [_bootstrap_sys.executable, "-I", _bootstrap_os.path.abspath(__file__), *_bootstrap_sys.argv[1:]]
+    if _bootstrap_os.name == "nt":
+        # The native explicit-environment CRT launch crashes on the supported Windows
+        # interpreter. Inherit the cleaned bootstrap environment instead; -I remains mandatory.
+        _bootstrap_os.environ.pop("PYTHONPATH", None)
+        _bootstrap_os.environ.pop("PYTHONHOME", None)
+        _bootstrap_sys.exit(_bootstrap_os.spawnv(
+            _bootstrap_os.P_WAIT, _bootstrap_sys.executable,
+            [_windows_bootstrap_argument(arg) for arg in _arguments],
+        ))
+    else:
+        _bootstrap_os.execve(_bootstrap_sys.executable, _arguments, _clean_env)
 
 import _hashlib
 import argparse

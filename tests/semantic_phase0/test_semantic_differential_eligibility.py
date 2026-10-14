@@ -627,6 +627,95 @@ def test_executable_controller_reexecs_isolated_from_cwd_and_pythonpath(tmp_path
     assert "--candidate" in completed.stdout
 
 
+def _bootstrap_source() -> str:
+    import ast
+
+    nodes = []
+    for node in ast.parse(_SCRIPT.read_text(encoding="utf-8")).body:
+        if isinstance(node, ast.Import) and any(alias.name == "_hashlib" for alias in node.names):
+            break
+        nodes.append(node)
+    return ast.unparse(ast.Module(body=nodes, type_ignores=[]))
+
+
+@pytest.mark.parametrize("platform", ["nt", "posix"])
+def test_bootstrap_preserves_isolation_without_windows_environment_launch(platform) -> None:
+    import builtins
+    import types
+
+    environment = {"PYTHONPATH": "synthetic-shadow", "PYTHONHOME": "synthetic-home", "KEEP": "value"}
+    calls = []
+
+    class Launched(Exception):
+        pass
+
+    def launch(executable, arguments, *env):
+        calls.append((executable, arguments, env))
+        raise Launched
+
+    def unsafe_launch(*args):
+        raise AssertionError("Windows explicit-environment launch reproduces the native fault")
+
+    os_module = types.SimpleNamespace(
+        name=platform, environ=environment, path=types.SimpleNamespace(abspath=lambda path: path),
+        P_WAIT=0, spawnv=lambda mode, *args: launch(*args) if mode == 0 else unsafe_launch(),
+        execve=unsafe_launch if platform == "nt" else launch,
+    )
+    sys_module = types.SimpleNamespace(executable="python", flags=types.SimpleNamespace(isolated=False), argv=["controller", "--help"], exit=unsafe_launch)
+    trusted_import = builtins.__import__
+
+    def imports(name, *args, **kwargs):
+        return {"os": os_module, "sys": sys_module}.get(name) or trusted_import(name, *args, **kwargs)
+
+    namespace = {"__name__": "__main__", "__file__": "controller", "__builtins__": {**vars(builtins), "__import__": imports}}
+    with pytest.raises(Launched):
+        exec(compile(_bootstrap_source(), "controller", "exec"), namespace)
+    assert len(calls) == 1
+    executable, arguments, supplied_env = calls[0]
+    assert executable == "python"
+    if platform == "nt":
+        assert supplied_env == ()
+        assert arguments == ['"python"', '"-I"', '"controller"', '"--help"']
+        assert environment == {"KEEP": "value"}
+    else:
+        assert supplied_env == ({"KEEP": "value"},)
+        assert arguments == ["python", "-I", "controller", "--help"]
+        assert environment["PYTHONPATH"] == "synthetic-shadow"
+
+
+@pytest.mark.parametrize("argument", ["", 'space and "quotes"', "trailing\\"])
+def test_bootstrap_roundtrips_arguments_and_isolates_imports(tmp_path, argument) -> None:
+    import json
+    import os
+    import subprocess
+    import sys
+
+    folder = tmp_path / "controller path's namespace"
+    folder.mkdir()
+    (folder / "json.py").write_text("raise RuntimeError('synthetic shadow imported')\n", encoding="utf-8")
+    probe = folder / "controller probe.py"
+    probe.write_text(
+        _bootstrap_source() + "\nimport json,os,sys\nprint(json.dumps({'isolated':sys.flags.isolated,'argv':sys.argv[1:],'shadow_env':'PYTHONPATH' in os.environ}))\n",
+        encoding="utf-8",
+    )
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(folder)
+    completed = subprocess.run([sys.executable, str(probe), argument], cwd=folder, env=environment, capture_output=True, text=True, timeout=30)
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == {"isolated": 1, "argv": [argument], "shadow_env": False}
+
+
+@pytest.mark.parametrize("status", [0, 7])
+def test_bootstrap_propagates_the_isolated_child_status(tmp_path, status) -> None:
+    import subprocess
+    import sys
+
+    probe = tmp_path / "controller status.py"
+    probe.write_text(_bootstrap_source() + f"\n_bootstrap_sys.exit({status})\n", encoding="utf-8")
+    completed = subprocess.run([sys.executable, str(probe)], capture_output=True, text=True, timeout=30)
+    assert completed.returncode == status, completed.stderr
+
+
 def test_mixed_host_drift_never_launders_a_stable_candidate_regression() -> None:
     module = _differential()
     base = {
