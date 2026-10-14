@@ -24,6 +24,7 @@ VOOL_MEDIA_FILES = [
     VOOL_ROOT / "core" / "web" / "api" / "media_editor_api.py",
 ]
 NEBULA_ROOT = Path(os.environ.get("NEBULA_MEDIA_HOME", ""))
+VENDORED_NEBULA_ROOT = VOOL_ROOT / "vendor" / "nebula-media"
 
 ffmpeg_ok = bool(shutil.which("ffmpeg"))
 
@@ -311,12 +312,12 @@ def test_S6_no_duplicate_trim_implementation_in_vool():
 def test_S7_nebula_does_not_own_vool_concepts():
     """S7: nebula-media mechanism modules must not import vool concepts or
     own receipts/project/permission state."""
-    if not NEBULA_ROOT.is_dir():
-        pytest.skip("NEBULA_MEDIA_HOME not set")
+    # Structural ownership checks always inspect the shipped source, not an
+    # optional external checkout used by the live worker/export tests.
     allowed_roots = {"__future__", "json", "logging", "shutil", "subprocess",
                      "sys", "dataclasses", "pathlib", "typing", "media_ops"}
     for mod in ("media_ops.py", "worker.py"):
-        tree = _tree(NEBULA_ROOT / "nebula" / mod)
+        tree = _tree(VENDORED_NEBULA_ROOT / "nebula" / mod)
         mods: list[str] = []
         for n in _ast.walk(tree):
             if isinstance(n, _ast.Import):
@@ -330,6 +331,38 @@ def test_S7_nebula_does_not_own_vool_concepts():
         for banned in ("receipt", "permission"):
             assert not any(banned in n for n in names), \
                 f"nebula/{mod} owns a vool concept '{banned}' (S7)"
+
+
+@pytest.fixture()
+def ownership_source(tmp_path, monkeypatch):
+    root = tmp_path / "mechanism"
+    package = root / "nebula"
+    package.mkdir(parents=True)
+    for mod in ("media_ops.py", "worker.py"):
+        shutil.copyfile(VENDORED_NEBULA_ROOT / "nebula" / mod, package / mod)
+    monkeypatch.setattr(f"{__name__}.VENDORED_NEBULA_ROOT", root)
+    return package
+
+
+@pytest.mark.parametrize("mod", ["media_ops.py", "worker.py"])
+@pytest.mark.parametrize("violation", ["import core", "receipt = {}", "permission = False"])
+def test_S7_rejects_ownership_violations(ownership_source, mod, violation):
+    path = ownership_source / mod
+    path.write_text(path.read_text() + "\n" + violation + "\n")
+    with pytest.raises(AssertionError, match=r"unexpected module|owns a vool concept"):
+        test_S7_nebula_does_not_own_vool_concepts()
+
+
+@pytest.mark.parametrize("mod", ["media_ops.py", "worker.py"])
+def test_S7_missing_shipped_source_fails_closed(ownership_source, mod):
+    (ownership_source / mod).unlink()
+    with pytest.raises(FileNotFoundError):
+        test_S7_nebula_does_not_own_vool_concepts()
+
+
+def test_S7_shipped_source_check_does_not_depend_on_worker_configuration(tmp_path, monkeypatch):
+    monkeypatch.setattr(f"{__name__}.NEBULA_ROOT", tmp_path / "unconfigured-worker")
+    test_S7_nebula_does_not_own_vool_concepts()
 
 
 def test_S8_no_codec_catalog_dumped_to_model():
