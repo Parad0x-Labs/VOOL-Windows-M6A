@@ -249,9 +249,10 @@ def test_the_corpus_is_a_pinned_artifact_the_candidate_does_not_compute() -> Non
     import json
 
     module = _differential()
-    assert module.FROZEN_CORPUS_SOURCE_SHA == "c23257da1afd53ed721aa01da529ef74bd6df45a", (
-        "the corpus must come from the immutable review-start object, not candidate HEAD"
+    assert module.FROZEN_CORPUS_SOURCE_SHA == "78f818b802c57fe77bc138b92b78e0424c527b9b", (
+        "the corpus must come from the immutable original public object, not candidate HEAD"
     )
+    assert module.FROZEN_CORPUS_SHA256 == "b9d1dfb5de50fd2cdaa41e0c82ebfba369a2df1150bf8f44b292acdf74783d02"
     source = _SCRIPT.read_text(encoding="utf-8")
     # Parsed, not string-matched: the comment explaining WHY it is never called contains the name,
     # and a test that cannot tell a call from a sentence about a call is not measuring anything.
@@ -278,7 +279,7 @@ def test_the_corpus_is_a_pinned_artifact_the_candidate_does_not_compute() -> Non
 
     root = Path(_SCRIPT).resolve().parents[1]
     raw = subprocess.check_output(
-        ["/usr/bin/git", "-C", str(root), "show", f"{module.FROZEN_CORPUS_SOURCE_SHA}:{module.FROZEN_CORPUS_OBJECT}"]
+        [str(module._trusted_git_executable()), "-C", str(root), "show", f"{module.FROZEN_CORPUS_SOURCE_SHA}:{module.FROZEN_CORPUS_OBJECT}"]
     )
     payload = json.loads(raw)
     turns = [str(t) for t in payload["turns"]]
@@ -319,6 +320,62 @@ def test_loader_refuses_a_trusted_object_that_disagrees_with_the_digest_pin(monk
     monkeypatch.setattr(module, "FROZEN_CORPUS_SHA256", "0" * 64)
     with pytest.raises(module.CorpusIntegrityError, match="does not match the digest"):
         module.load_frozen_corpus(controller)
+
+
+def test_missing_immutable_object_never_falls_back_to_the_worktree(monkeypatch) -> None:
+    module = _differential()
+    monkeypatch.setattr(module, "FROZEN_CORPUS_SOURCE_SHA", "0" * 40)
+    with pytest.raises(module.CorpusIntegrityError, match="immutable frozen corpus object is unavailable"):
+        module.load_frozen_corpus(_SCRIPT.resolve().parents[1])
+
+
+def test_missing_trusted_git_fails_closed(monkeypatch) -> None:
+    module = _differential()
+    monkeypatch.setattr(module, "_TRUSTED_GIT_EXECUTABLES", ())
+    with pytest.raises(module.CorpusIntegrityError, match="trusted git executable is unavailable"):
+        module.load_frozen_corpus(_SCRIPT.resolve().parents[1])
+
+
+def test_candidate_path_cannot_select_the_controller_git(tmp_path, monkeypatch) -> None:
+    module = _differential()
+    candidate = tmp_path / "candidate-bin"
+    candidate.mkdir()
+    for name in ("git", "git.exe"):
+        fake = candidate / name
+        fake.write_text("candidate git must never run\n", encoding="utf-8")
+        fake.chmod(0o755)
+    monkeypatch.setenv("PATH", str(candidate))
+    trusted = module._trusted_git_executable()
+    assert trusted.is_absolute()
+    assert trusted.parent != candidate
+    turns, digest = module.load_frozen_corpus(_SCRIPT.resolve().parents[1])
+    assert len(turns) == 252
+    assert digest == module.FROZEN_CORPUS_SHA256
+
+
+@pytest.mark.parametrize("folder", ["tree with spaces", "tree's namespace"])
+def test_proof_driver_quotes_paths_and_keeps_temporary_state_in_its_home(tmp_path, folder) -> None:
+    module = _differential()
+    tree = tmp_path / folder
+    for package in ("apps", "core", "tests"):
+        package_dir = tree / package
+        package_dir.mkdir(parents=True)
+        (package_dir / "__init__.py").write_text("", encoding="utf-8")
+    (tree / "apps" / "vool_agent.py").write_text(
+        "import os\nfrom pathlib import Path\n"
+        "class _Loader: pass\n"
+        "class VoolAgent:\n"
+        "    def __init__(self, **kwargs): self.context_loader = _Loader()\n"
+        "    def start(self): pass\n"
+        "    def run_once(self, text, **kwargs):\n"
+        "        return {'response': str(Path.cwd().is_relative_to(Path(os.environ['HOME'])))}\n",
+        encoding="utf-8",
+    )
+    (tree / "core" / "policy_engine.py").write_text("_POLICY_CACHE = {}\ndef load(): return {}\n", encoding="utf-8")
+    (tree / "tests" / "conftest.py").write_text("def make_stub_context(): return {}\n", encoding="utf-8")
+    rows = module._run_corpus(tree, "quoted_path_probe", ["probe"])
+    assert rows[0]["raised"] == ""
+    assert rows[0]["fields"]["response"] == repr("True")
 
 
 def test_a_candidate_corpus_cannot_shrink_the_frozen_universe() -> None:
