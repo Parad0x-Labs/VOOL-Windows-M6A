@@ -18,10 +18,11 @@ THE CAUSE, per clause rather than per message
 `test_no_clause_of_the_combined_prompt_is_an_audit_request` is the root-cause assertion. Run the
 detectors clause by clause and no clause is an audit request; run them on the whole text and it is
 one, because the audit VERB comes from the traveler-exchange clause and the FILENAME `app.py` from
-the StormWatch clause. The whole-text read also loses claims: `looks_like_agentic_build_request` is
-True for the StormWatch clause alone and False for the whole message, and `looks_like_location_ask`
-is True for "where was this file stored?" alone and False for the whole message. So the build and
-the receipt question were not outvoted -- they were invisible.
+the StormWatch clause. The original whole-text read also lost the build and receipt claims. Build
+detection now reads imperative clauses, so it sees StormWatch in the combined message too; that
+does not give the builder whole-turn scope. The receipt detector still declines the whole message
+while accepting "where was this file stored?" alone. Coverage must preserve both requests without
+letting either family claim the other's work.
 
 THE CONTRACT (`core.agent_runtime.answer_coverage`)
 ---------------------------------------------------
@@ -137,14 +138,49 @@ def test_no_clause_of_the_combined_prompt_is_an_audit_request() -> None:
 
 
 def test_the_whole_text_read_also_loses_claims_that_clauses_make() -> None:
-    """Over-claiming is only half of it: two requests were invisible to the whole-text read."""
+    """The receipt still needs slicing; detecting the build is not whole-turn authority."""
     from core.action_receipt_location import looks_like_location_ask
 
     assert looks_like_agentic_build_request(STORMWATCH) is True
-    assert looks_like_agentic_build_request(COMBINED) is False
+    assert looks_like_agentic_build_request(COMBINED) is True
 
     assert looks_like_location_ask("where was this file stored?") is True
     assert looks_like_location_ask(COMBINED) is False
+
+
+@pytest.mark.parametrize("other", (PURE_TRY, PURE_RECEIPT))
+@pytest.mark.parametrize("build_first", (False, True))
+def test_detecting_a_build_beside_a_question_does_not_claim_the_whole_turn(
+    other: str, build_first: bool,
+) -> None:
+    text = "\n".join((STORMWATCH, other) if build_first else (other, STORMWATCH))
+    slices = turn_slices(text)
+    build_ids = tuple(item.slice_id for item in slices if item.text.strip() == STORMWATCH)
+    other_ids = tuple(item.slice_id for item in slices if item.text.strip() == other)
+
+    assert len(slices) == 2
+    assert len(build_ids) == len(other_ids) == 1
+    assert looks_like_agentic_build_request(text) is True
+    coverage = coverage_for(text, FAMILY_PROJECT_BUILD)
+    assert coverage.consumed == build_ids
+    assert coverage.conflicting == other_ids
+    assert coverage.scope == CLAIM_SCOPE_SLICE
+    assert claim_may_preempt_turn(text, FAMILY_PROJECT_BUILD) is False
+
+
+@pytest.mark.parametrize("other", (PURE_TRY, PURE_RECEIPT))
+def test_sibling_questions_do_not_override_a_build_opt_out(other: str) -> None:
+    text = f"{other}\n{STORMWATCH}\nDo not write any code."
+    assert looks_like_agentic_build_request(text) is False
+
+
+@pytest.mark.parametrize("other", (
+    "Should we build a small Python project?",
+    "Explain how to create a small Python project.",
+    "Create notes.txt containing hello in this project.",
+))
+def test_sibling_questions_do_not_promote_discussion_or_a_single_file(other: str) -> None:
+    assert looks_like_agentic_build_request(f"{PURE_TRY}\n{other}") is False
 
 
 def test_the_whole_text_currency_read_mixes_numbers_across_two_requests() -> None:
