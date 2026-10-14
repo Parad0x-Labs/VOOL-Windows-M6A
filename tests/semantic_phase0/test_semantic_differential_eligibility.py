@@ -354,8 +354,9 @@ def test_candidate_path_cannot_select_the_controller_git(tmp_path, monkeypatch) 
 
 
 @pytest.mark.parametrize("folder", ["tree with spaces", "tree's namespace"])
-def test_proof_driver_quotes_paths_and_keeps_temporary_state_in_its_home(tmp_path, folder) -> None:
+def test_proof_driver_quotes_paths_and_keeps_temporary_state_in_its_home(tmp_path, folder, monkeypatch) -> None:
     module = _differential()
+    monkeypatch.setenv("VOOL_UNOFFERED_PROOF_VALUE", "synthetic-private-value")
     tree = tmp_path / folder
     for package in ("apps", "core", "tests"):
         package_dir = tree / package
@@ -368,7 +369,8 @@ def test_proof_driver_quotes_paths_and_keeps_temporary_state_in_its_home(tmp_pat
         "    def __init__(self, **kwargs): self.context_loader = _Loader()\n"
         "    def start(self): pass\n"
         "    def run_once(self, text, **kwargs):\n"
-        "        return {'response': str(Path.cwd().is_relative_to(Path(os.environ['HOME'])))}\n",
+        "        isolated = Path.cwd().is_relative_to(Path(os.environ['HOME']))\n"
+        "        return {'response': str(isolated and 'VOOL_UNOFFERED_PROOF_VALUE' not in os.environ)}\n",
         encoding="utf-8",
     )
     (tree / "core" / "policy_engine.py").write_text("_POLICY_CACHE = {}\ndef load(): return {}\n", encoding="utf-8")

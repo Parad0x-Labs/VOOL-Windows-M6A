@@ -178,6 +178,9 @@ def _run_corpus(tree: Path, label: str, texts: list[str]) -> list[dict]:
         env = {
             "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
             "HOME": home,
+            "TEMP": home,
+            "TMP": home,
+            "TMPDIR": home,
             "VOOL_HOME": home,
             "VOOL_CREDENTIAL_STORE": "vault",
             "VOOL_KEY_STORAGE_MODE": "file",
@@ -186,8 +189,12 @@ def _run_corpus(tree: Path, label: str, texts: list[str]) -> list[dict]:
             "VOOL_SKIP_TORCH_GPU_PROBE": "1",
             "PYTHONDONTWRITEBYTECODE": "1",
         }
+        if _bootstrap_os.name == "nt":
+            # Windows needs this OS path to initialize its socket library; no ambient
+            # credentials or other operator environment are inherited.
+            env["SystemRoot"] = _bootstrap_os.environ.get("SystemRoot", "C:\\Windows")
         script = (
-            _DRIVER.replace("__TREE__", str(tree))
+            _DRIVER.replace('"__TREE__"', repr(str(tree)))
             .replace("__FIELDS__", repr(list(PUBLIC_FIELDS)))
             .replace("__TEXTS__", repr(list(texts)))
         )
@@ -212,10 +219,10 @@ def _row_key(row: dict) -> tuple:
 #: obeyed. Regenerate deliberately (and say so in the commit) if the corpus is ever meant to change.
 FROZEN_CORPUS_SHA256 = "b9d1dfb5de50fd2cdaa41e0c82ebfba369a2df1150bf8f44b292acdf74783d02"
 FROZEN_CORPUS_COUNT = 252
-# The immutable git object that first froze this corpus. The candidate worktree is never read for
+# The original public object preserves the exact frozen corpus and its digest. The candidate worktree is never read for
 # corpus bytes, pins, loader code, or ids. Git's object id is content-addressed; replacing a worktree
 # file, symlink, import helper, or pin cannot change these bytes.
-FROZEN_CORPUS_SOURCE_SHA = "c23257da1afd53ed721aa01da529ef74bd6df45a"
+FROZEN_CORPUS_SOURCE_SHA = "78f818b802c57fe77bc138b92b78e0424c527b9b"
 FROZEN_CORPUS_OBJECT = "ops/semantic_phase0_frozen_corpus.json"
 
 
@@ -223,19 +230,29 @@ class CorpusIntegrityError(RuntimeError):
     """The turn universe is not the one this proof is defined over."""
 
 
+_TRUSTED_GIT_EXECUTABLES = (
+    (Path("C:/Program Files/Git/cmd/git.exe"), Path("C:/Program Files/Git/bin/git.exe"))
+    if _bootstrap_os.name == "nt"
+    else (Path("/usr/bin/git"), Path("/bin/git"), Path("/usr/local/bin/git"))
+)
+
+
+def _trusted_git_executable() -> Path:
+    # Never search candidate-controlled PATH or a candidate working directory.
+    for path in _TRUSTED_GIT_EXECUTABLES:
+        if path.is_absolute() and path.is_file():
+            return path
+    raise CorpusIntegrityError("trusted git executable is unavailable")
+
+
 def load_frozen_corpus(controller_tree: Path) -> tuple[list[str], str]:
     """Load the universe from an immutable git object in the trusted controller repository."""
     root = Path(controller_tree).resolve()
-    git = next(
-        (path for path in (Path("/usr/bin/git"), Path("/bin/git"), Path("/usr/local/bin/git")) if path.is_file()),
-        None,
-    )
-    if git is None:
-        raise CorpusIntegrityError("trusted git executable is unavailable")
+    git = _trusted_git_executable()
     completed = subprocess.run(
         [str(git), "-C", str(root), "show", f"{FROZEN_CORPUS_SOURCE_SHA}:{FROZEN_CORPUS_OBJECT}"],
-        cwd="/",
-        env={"PATH": "/usr/bin:/bin:/usr/local/bin", "LC_ALL": "C"},
+        cwd=root.anchor,
+        env={"PATH": _bootstrap_os.pathsep.join(str(path.parent) for path in _TRUSTED_GIT_EXECUTABLES), "LC_ALL": "C"},
         capture_output=True,
         check=False,
     )
