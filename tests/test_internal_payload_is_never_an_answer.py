@@ -203,6 +203,24 @@ def test_the_grounded_turn_still_delivers_a_clean_final_text(make_agent) -> None
     assert "The router ranks by cost class first" in response
 
 
+@pytest.mark.parametrize("scenario", [
+    test_the_grounded_turn_replaces_a_monologue_final_text,
+    test_the_grounded_turn_still_delivers_a_clean_final_text,
+])
+def test_grounded_fixture_uses_the_complete_research_result(make_agent, scenario) -> None:
+    from core.curiosity_roamer import AdaptiveResearchResult
+
+    agent = make_agent()
+    scenario(lambda: agent)
+    research = agent._collect_adaptive_research.return_value
+    assert isinstance(research, AdaptiveResearchResult)
+    assert research.queries_run == []
+    assert research.source_domains == []
+    assert research.evidence_strength == "none"
+    assert research.to_dict()["queries_run"] == []
+    assert research.to_dict()["notes"] == []
+
+
 def _drive_grounded_turn(agent, *, decision, asked: str) -> str:
     """Run the real grounded turn, stubbing only what needs a network or a database.
 
@@ -210,13 +228,13 @@ def _drive_grounded_turn(agent, *, decision, asked: str) -> str:
     (`model_final_answer_hit and _internal_payload(model_final_text)`) runs for real.
     """
 
+    from core.curiosity_roamer import AdaptiveResearchResult
     from core.human_input_adapter import adapt_user_input
     from core.identity_manager import load_active_persona
 
-    adaptive = SimpleNamespace(
+    adaptive = AdaptiveResearchResult(
         enabled=False, tool_gap_note="", admitted_uncertainty=False, notes=[],
         reason="not_needed", strategy="none", actions_taken=[],
-        to_dict=lambda: {"enabled": False, "reason": "not_needed"},
     )
     task = SimpleNamespace(
         task_id="task-internal-payload", task_summary=asked, environment_os="darwin",
