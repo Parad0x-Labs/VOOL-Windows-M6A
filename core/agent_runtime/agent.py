@@ -146,7 +146,7 @@ from core.tool_intent_executor import (
     render_capability_truth_response,
     should_attempt_tool_intent,
 )
-from core.turn_contract import TURN_REQUEST_KEY, TurnRequest
+from core.turn_contract import TURN_REQUEST_KEY, TURN_STATE_KEY, TurnRequest
 from core.user_preferences import load_preferences, maybe_handle_preference_command
 from core.within_turn_retraction import intake_request_text
 from network import signer as signer_mod
@@ -1648,7 +1648,7 @@ class VoolAgent(
                                 )
                         except Exception:
                             _m2_bound = None
-                        from core.turn_contract import TURN_STATE_KEY, TurnState
+                        from core.turn_contract import TurnState
 
                         _m4_state = TurnState.from_intake(
                             request=_turn_request,
