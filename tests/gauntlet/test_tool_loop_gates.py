@@ -302,6 +302,23 @@ def test_full_loop_writes_a_real_file_on_disk(make_agent, allow_workspace_writes
             source_context={**_OPENCLAW, "workspace": tmpdir},
         )
 
+        # Filesystem availability does not authorize a Manual-mode mutation. Review
+        # and approve the exact action through the real controller, then resume it.
+        assert result["mode"] == "tool_preview"
+        assert not target.exists(), "the loop wrote the file before approval"
+        request = result["details"]["approval_request"]
+        assert request["intent"] == "workspace.write_file"
+        from core.mode_permission_policy import resolve_approval
+
+        approved = resolve_approval(request["approval_id"], decision="allow", scope="once")
+        assert approved and approved["status"] == "approved"
+        assert approved["scope"] == "once"
+        result = agent.run_once(
+            "continue",
+            session_id_override="openclaw:loop-write",
+            source_context={**_OPENCLAW, "workspace": tmpdir, "mode_approval_token": request["approval_id"]},
+        )
+
         assert result["mode"] == "tool_executed"
         assert target.exists(), "the loop did not write the file to disk"
         assert "written through the loop" in target.read_text(encoding="utf-8")
