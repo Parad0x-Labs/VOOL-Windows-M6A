@@ -991,7 +991,9 @@ body:not(.panel-open) #xpanel { display:none; }
   #xpanel { position:fixed; right:0; top:var(--app-header-h,54px); bottom:0; z-index:25; box-shadow:-2px 0 12px #0008; }
   /* A fixed box is out of flow, so `flex:0 0 5px` no longer sizes it and an empty div collapses
      to nothing. The width has to be stated again here or the handle becomes ungrabbable. */
-  #xpResize { position:fixed; width:5px; top:var(--app-header-h,54px); bottom:0; z-index:26; }
+  /* Only the drag rail outranks the answer-pending footer (35); its warning and Revoke control
+     still outrank the panel body and companion. Keep both the rail and operator controls usable. */
+  #xpResize { position:fixed; width:5px; top:var(--app-header-h,54px); bottom:0; z-index:36; }
 }
 
   /* --- Setup line: at most one small dismissible line on a fresh profile (opens /setup) --- */
