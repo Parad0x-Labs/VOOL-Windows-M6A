@@ -184,7 +184,7 @@ def _windows_workspace_broker_required(source_context: dict[str, Any] | None) ->
     helpers. A normal served/API turn carries the immutable execution identity; that path fails
     closed when the packaged broker is unavailable and never falls back to an in-process write.
     """
-    return os.name == "nt" and isinstance(source_context, dict) and bool(source_context.get("_execution_identity"))
+    return _is_windows_platform() and isinstance(source_context, dict) and bool(source_context.get("_execution_identity"))
 
 
 def _dispatch_with_mutation_activity(
