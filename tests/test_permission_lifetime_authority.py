@@ -726,7 +726,12 @@ def test_unverifiable_revocation_history_restores_nothing_after_a_real_restart(t
         lines[0] = lines[0][:-4] + "beef"  # a COMPLETE record that no longer MACs
         journal.write_text("\n".join(lines) + "\n", encoding="utf-8")
     elif damage == "unreadable":
-        journal.chmod(0o000)
+        # chmod(0) does not deny reads on Windows or under a privileged POSIX user.
+        # A directory at the journal path makes the real OS read fail in BOTH processes.
+        journal.rename(journal.with_name(journal.name + ".unreadable-source"))
+        journal.mkdir()
+        with pytest.raises(OSError):
+            journal.read_text(encoding="utf-8")
     elif damage == "emptied":
         journal.write_text("", encoding="utf-8")  # every acknowledged record deleted
     elif damage == "stripped-stamp":
