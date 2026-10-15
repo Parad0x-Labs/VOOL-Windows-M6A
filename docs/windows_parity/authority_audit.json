@@ -20046,6 +20046,7 @@
           "path": "/api/runtime/local-model/retry",
           "permission": "",
           "proof": [
+            "tests/command_registry/test_runtime_lane_ownership.py",
             "tests/test_local_model_door_and_probe_measurement.py",
             "tests/test_vool_api_server.py",
             "tests/test_vool_settings_page.py"
@@ -20097,6 +20098,7 @@
           "path": "/api/runtime/model-pull/retry",
           "permission": "",
           "proof": [
+            "tests/command_registry/test_runtime_lane_ownership.py",
             "tests/test_local_model_door_and_probe_measurement.py",
             "tests/test_vool_settings_page.py"
           ],
