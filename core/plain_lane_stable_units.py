@@ -138,17 +138,36 @@ def derive_plain_lane_unit_entries(
     author verdict as `author_eligible`; computed entries carry the runtime's own arithmetic.
     """
     from core.agent_runtime.answer_coverage import answering_body, demand_units, unit_anchors
+    from core.agent_runtime.demand_ownership import execution_unit_spans
 
     request = str(request_text or "")
     answer = str(answer_text or "")
     if not request.strip() or not answer.strip():
         return [], []
     try:
-        units = tuple(demand_units(request))
+        units: tuple[Any, ...] = tuple(demand_units(request))
     except Exception:
         return [], []
     if not units:
         return [], []
+    grouped_member_ids: tuple[str, ...] = ()
+    if len(units) > 1:
+        try:
+            groups = execution_unit_spans(request)
+        except Exception:
+            groups = ()
+        # Facet obligations share one answer, not one obligation. Only a wholly
+        # stable execution group may share its render; arithmetic keeps its own
+        # computed channel and a current sibling cannot inherit stable authority.
+        if (
+            len(groups) == 1
+            and groups[0].unit_id == units[0].unit_id
+            and groups[0].member_unit_ids == tuple(unit.unit_id for unit in units)
+            and unit_is_stable(groups[0].text)
+            and all(unit_is_stable(unit.text) and not _arithmetic_statement(unit.text) for unit in units)
+        ):
+            grouped_member_ids = groups[0].member_unit_ids
+            units = groups
     lines = [line.strip() for line in answering_body(answer).splitlines() if line.strip()]
     stable_entries: list[dict[str, Any]] = []
     computed_entries: list[dict[str, Any]] = []
@@ -194,6 +213,7 @@ def derive_plain_lane_unit_entries(
                 "node_id": f"unit:{unit_id}",
                 "demand_id": unit_id,
                 "demand_text": text[:200],
+                **({"accounted_unit_ids": list(grouped_member_ids)} if grouped_member_ids else {}),
                 "summary": render[:4000],
                 "author_eligible": author_eligible is True,
                 "authority": PLAIN_LANE_UNIT_AUTHORITY,
