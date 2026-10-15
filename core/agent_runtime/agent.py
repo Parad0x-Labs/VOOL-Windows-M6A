@@ -4313,7 +4313,7 @@ class VoolAgent(
                 source_context=source_context,
                 canonical_units=_m3_units(raw_input),
             )
-            if plan is None:
+            if plan is None or not plan.subtasks:
                 self._record_lane_proposal(
                     source_context,
                     declined_live_data_proposal(
@@ -4504,7 +4504,7 @@ class VoolAgent(
                 source_context=source_context,
                 canonical_units=_m3_units(raw_input),
             )
-            if plan is None:
+            if plan is None or not plan.subtasks:
                 self._record_lane_proposal(
                     source_context,
                     declined_live_data_proposal(

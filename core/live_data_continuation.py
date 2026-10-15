@@ -121,8 +121,9 @@ from typing import Any
 #: already absorbed, never over a topic change.
 _HISTORY_LOOKBACK = 6
 
-#: Scaffolding a continuation is MADE of. None of it is content: stripping it is what reveals
-#: whether the user actually introduced anything. Temporal markers belong here because "and now?"
+#: Scaffolding a continuation is MADE of. Domain words are only empty within the matching request;
+#: `_domain_scaffolding_matches_request` guards that contextual reading before inheritance.
+#: Temporal markers belong here because "and now?"
 #: re-asks the same question about the same subject -- the time frame is already part of the
 #: inherited request, which was itself a request for the current value.
 _SCAFFOLDING = frozenset(
@@ -146,6 +147,29 @@ _SCAFFOLDING = frozenset(
 
 _TOKEN_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 _DIGIT_RE = re.compile(r"\d")
+
+#: The domain-bearing members of `_SCAFFOLDING`, not a second request classifier. A price word
+#: cannot disappear into a weather re-ask (or vice versa); news belongs to neither live-data lane.
+_DOMAIN_SCAFFOLDING = {
+    "weather": frozenset({"temp", "temperature", "weather"}),
+    "market_prices": frozenset({"price", "value"}),
+}
+_DOMAIN_WORDS = frozenset({"news"}).union(*_DOMAIN_SCAFFOLDING.values())
+
+
+def _domain_scaffolding_matches_request(text: Any, request_text: str) -> bool:
+    named = {token.casefold() for token in _TOKEN_RE.findall(str(text or ""))} & _DOMAIN_WORDS
+    if not named:
+        return True
+    from core.execution_requirements import _live_data_classification
+
+    classification = _live_data_classification(request_text)
+    allowed = frozenset().union(*(
+        _DOMAIN_SCAFFOLDING.get(toolset, frozenset())
+        for toolset in (classification[2] if classification else ())
+    ))
+    return named <= allowed
+
 
 #: An assistant turn that rendered a live value carries the source form the live-data contracts
 #: emit (`core.weather_result_contract`, `core.live_quote_contract`). Used as corroboration that the
@@ -448,6 +472,7 @@ def prior_live_data_request(
         for message in _messages(source_context)
         if str(message.get("role") or "").strip().lower() == "user"
     ]
+    nudges: list[str] = []
     for message in reversed(user_messages[-_HISTORY_LOOKBACK:]):
         content = " ".join(str(message.get("content") or "").split())
         if not content:
@@ -460,13 +485,14 @@ def prior_live_data_request(
             # Deliberately ahead of the classification below: `_SCAFFOLDING` holds the domain's own
             # question words, so a lone "weather?" is a nudge that would otherwise classify as a
             # live-data request and answer as its own anchor.
+            nudges.append(content)
             continue
         # A real live-data request is ALWAYS a valid anchor, including one this obligation was born
         # from -- which is why this sits above the absorbed check rather than below it. Ordered the
         # other way, the founding request ("Get weather for Kaunas.") was in `absorbed`, got stepped
         # over as though it were a continuation of itself, and the walk-back ran off the end.
         if _live_data_classification(content) is not None:
-            return content
+            return content if all(_domain_scaffolding_matches_request(nudge, content) for nudge in nudges) else ""
         if content.casefold() in already:
             # A turn this obligation already answered -- part of it, not an interruption. This is
             # why a rebinding turn does not look like an abandoned thread to the turn after it.
@@ -929,13 +955,15 @@ def continuation_inheritance(
 
     allocation_request = _allocation_continuation(text, source_context)
     if allocation_request[0]:
-        return allocation_request
+        return allocation_request if _domain_scaffolding_matches_request(text, allocation_request[0]) else ("", "")
     residue = _continuation_residue(text)
     if residue is None:
         # The turn is stating something of its own. Nothing is inherited -- this is the branch that
         # keeps an unrelated new turn from replaying the previous subject. The single exception is
         # the clarification below, whose every bound is stated where it is checked.
         recovered = _clarification_recovers_the_obligation(text, source_context=source_context)
+        if recovered and not _domain_scaffolding_matches_request(text, recovered):
+            return "", ""
         return recovered, (INHERIT_CLARIFICATION if recovered else "")
 
     obligation = _recorded_obligation(source_context)
@@ -947,6 +975,9 @@ def continuation_inheritance(
         operation=str((obligation or {}).get("operation") or ""),
     )
     if not prior:
+        return "", ""
+    request_text = str((obligation or {}).get("request_text") or "").strip() or prior
+    if not _domain_scaffolding_matches_request(text, request_text):
         return "", ""
 
     if not residue:
