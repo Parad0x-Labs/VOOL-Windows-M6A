@@ -426,14 +426,43 @@ def _install_recorded(tmp_path: Path, label: str, scenario: str):
 
 @pytest.mark.parametrize("label", ["v1_df49", "v2_e064"])
 def test_a_recorded_part_applied_batch_migrates_to_a_checkpoint(shipping, tmp_path, label):
-    recorded, _ctx, step, workspace = _install_recorded(tmp_path, label, "two_pending_units")
+    recorded, ctx, step, workspace = _install_recorded(tmp_path, label, "two_pending_units")
     assert recorded["stage"] == "mutate"  # the older runtimes kept the batch at mutate
+    before = (workspace / "labels.js").read_bytes()
     b = recorded["proposals"]["b"]["arguments"]
-    assert step("b-early", "workspace.write_file", b).status == "checkpoint_required"
+    # Migration keeps the landed repair's checkpoint, not authority to write a destination
+    # the older journal never recorded. Its missing consent is refused before the unit gate.
+    early = step("b-early", "workspace.write_file", b)
+    assert early.ok is False and early.status == "destination_unrecorded"
+    journal = _journal(recorded["task_id"])
+    assert journal["stage"] == "narrow_test" and journal["checkpoint"]["unit"] == "a"
+    assert journal["checkpoint"]["revision"] == journal["revision"] == 1
+    assert not journal["steps"]["b-early"]["executed"] and not journal["steps"]["b-early"]["receipts"]
+    assert not journal["proposals"]["b"]["consumed_by"]
+    assert (workspace / "labels.js").read_bytes() == before
     narrow = step("migrated-narrow", "workspace.run_tests", {"command": "node check.js"})
     assert narrow.details["tool_result"]["success"] is True and narrow.details["stage"] == "cumulative"
     cumulative = step("migrated-full", "workspace.run_tests", {"command": "node check.js"})
     assert cumulative.details["tool_result"]["success"] is True and cumulative.details["stage"] == "mutate"
+    # Passing checks cannot supply the pending proposal's missing destination review.
+    unreviewed = step("b-unreviewed", "workspace.write_file", b)
+    assert unreviewed.ok is False and unreviewed.status == "destination_unrecorded"
+    assert not _journal(recorded["task_id"])["steps"]["b-unreviewed"]["executed"]
+    assert (workspace / "labels.js").read_bytes() == before
+    assert step("b-reread", "workspace.read_file", {"path": "labels.js"}).ok
+    reviewed = _door("code.task.propose", {
+        "task_id": recorded["task_id"], "proposal_id": "b", "intent": "workspace.write_file",
+        "arguments": b, "rationale": recorded["proposals"]["b"]["rationale"],
+    }, ctx)
+    assert reviewed.ok, (reviewed.status, reviewed.response_text)
+    destinations = _journal(recorded["task_id"])["proposals"]["b"]["preview"]["destinations"]
+    assert len(destinations) == 1
+    assert destinations[0]["intent"] == "workspace.write_file" and destinations[0]["path"] == "labels.js"
+    assert destinations[0]["target"] == str((workspace / "labels.js").resolve())
+    assert destinations[0]["kind"] == "file" and destinations[0]["prior_sha256"] == b["expected_hash"]
+    assert _journal(recorded["task_id"])["proposals"]["b"]["approved"] is False
+    assert _door("code.task.approve", {"task_id": recorded["task_id"], "proposal_id": "b"}, ctx).ok
+    assert _journal(recorded["task_id"])["proposals"]["b"]["approved_at"] != recorded["proposals"]["b"]["approved_at"]
     assert step("b", "workspace.write_file", b).ok
     assert (workspace / "labels.js").read_text(encoding="utf-8") == b["content"]
     assert _journal(recorded["task_id"])["checkpoint"]["unit"] == "b"
@@ -467,3 +496,149 @@ def test_a_recorded_task_awaiting_its_full_check_keeps_its_passed_focused_check(
         (full.status, full.details.get("stage"))
     history = [(v["stage"], v["success"], v["revision"]) for v in _journal(recorded["task_id"])["verifications"]]
     assert history[-2:] == [("narrow_test", True, 1), ("cumulative", True, 1)], history
+
+
+def _recorded_approval_for_review(tmp_path: Path, label: str):
+    import hashlib
+
+    recorded, ctx, step, workspace = _install_recorded(tmp_path, label, "approved_with_hash")
+    arguments = recorded["proposals"]["p1"]["arguments"]
+    target = workspace / arguments["path"]
+    # The recorded runtime reviewed LF bytes. Materialize those exact bytes in this disposable
+    # workspace even when Git checked the fixture out as CRLF; never rewrite the source fixture.
+    content = target.read_text(encoding="utf-8").encode("utf-8")
+    assert hashlib.sha256(content).hexdigest() == arguments["expected_hash"]
+    target.write_bytes(content)
+    refused = step("legacy-unreviewed", "workspace.write_file", arguments)
+    assert refused.ok is False and refused.status == "destination_unrecorded"
+    assert not _journal(recorded["task_id"])["steps"]["legacy-unreviewed"]["executed"]
+    return recorded, ctx, step, workspace
+
+
+def _repreview_legacy(recorded: dict, ctx: dict, *, arguments: dict | None = None):
+    proposal = recorded["proposals"]["p1"]
+    return _door("code.task.propose", {
+        "task_id": recorded["task_id"], "proposal_id": "p1", "intent": proposal["intent"],
+        "arguments": proposal["arguments"] if arguments is None else arguments, "rationale": proposal["rationale"],
+    }, ctx)
+
+
+def _legacy_approval_binding(recorded: dict, ctx: dict):
+    from core.code_assistant.task_runtime import approved_replacement_destination
+
+    arguments = recorded["proposals"]["p1"]["arguments"]
+    return approved_replacement_destination(
+        ctx, intent="workspace.write_file", path=arguments["path"], content=arguments["content"],
+        expected_hash=arguments["expected_hash"], task_id=recorded["task_id"],
+    )
+
+
+@pytest.mark.parametrize("label", ["v1_df49", "v2_e064"])
+def test_legacy_repreview_requires_fresh_approval_across_restart_and_retries(shipping, tmp_path, label):
+    from core.code_assistant.task_runtime import code_task_runtime
+
+    recorded, ctx, step, workspace = _recorded_approval_for_review(tmp_path, label)
+    arguments = recorded["proposals"]["p1"]["arguments"]
+    before = (workspace / "math.js").read_bytes()
+    assert _legacy_approval_binding(recorded, ctx)[0] is None
+    reviewed = _repreview_legacy(recorded, ctx)
+    assert reviewed.ok and reviewed.details.get("replayed") is not True
+    assert reviewed.details["proposal_state"] == "pending_approval"
+    assert "code.task.approve" in reviewed.response_text
+    row = _journal(recorded["task_id"])["proposals"]["p1"]
+    assert row["approved"] is False and row["preview"]["destinations"]
+    assert row["approved_at"] == recorded["proposals"]["p1"]["approved_at"]
+    assert row["arguments"] == arguments and not row["consumed_by"] and not row["reserved_by"]
+    code_task_runtime().reset()
+    assert _legacy_approval_binding(recorded, ctx)[0] is None
+    refused = step("review-is-not-approval", "workspace.write_file", arguments)
+    assert refused.ok is False and refused.status == "approval_mismatch"
+    assert not _journal(recorded["task_id"])["steps"]["review-is-not-approval"]["executed"]
+    version = _journal(recorded["task_id"])["journal_version"]
+    retry = _repreview_legacy(recorded, ctx)
+    assert retry.ok and retry.details["replayed"] and retry.details["proposal_state"] == "pending_approval"
+    assert _journal(recorded["task_id"])["journal_version"] == version
+    assert _legacy_approval_binding(recorded, ctx)[0] is None
+    assert _door("code.task.approve", {"task_id": recorded["task_id"], "proposal_id": "p1"}, ctx).ok
+    code_task_runtime().reset()
+    assert _legacy_approval_binding(recorded, ctx)[0] is not None
+    approved = _journal(recorded["task_id"])["proposals"]["p1"]
+    assert approved["approved_at"] != recorded["proposals"]["p1"]["approved_at"]
+    replay = _repreview_legacy(recorded, ctx)
+    assert replay.ok and replay.details["replayed"] and replay.details["proposal_state"] == "approved"
+    assert _journal(recorded["task_id"])["proposals"]["p1"] == approved
+    assert (workspace / "math.js").read_bytes() == before
+
+
+@pytest.mark.parametrize("label", ["v1_df49", "v2_e064"])
+def test_legacy_repreview_keeps_conflicting_requests_unbound(shipping, tmp_path, label):
+    recorded, ctx, _step, workspace = _recorded_approval_for_review(tmp_path, label)
+    before = _journal(recorded["task_id"])["proposals"]["p1"]
+    content = (workspace / "math.js").read_bytes()
+    conflict = _repreview_legacy(recorded, ctx, arguments={**before["arguments"], "content": "not the reviewed repair"})
+    assert conflict.ok is False and conflict.status == "proposal_id_conflict"
+    assert _journal(recorded["task_id"])["proposals"]["p1"] == before
+    assert _legacy_approval_binding(recorded, ctx)[0] is None
+    assert (workspace / "math.js").read_bytes() == content
+
+
+@pytest.mark.parametrize("label", ["v1_df49", "v2_e064"])
+def test_legacy_repreview_cannot_cross_the_session_owner(shipping, tmp_path, label):
+    recorded, ctx, _step, workspace = _recorded_approval_for_review(tmp_path, label)
+    before = _journal(recorded["task_id"])["proposals"]["p1"]
+    content = (workspace / "math.js").read_bytes()
+    foreign = {**ctx, "session_id": "another-reviewer", "runtime_session_id": "another-reviewer"}
+    refused = _repreview_legacy(recorded, foreign)
+    assert refused.ok is False
+    assert _journal(recorded["task_id"])["proposals"]["p1"] == before
+    assert _legacy_approval_binding(recorded, foreign)[0] is None
+    assert (workspace / "math.js").read_bytes() == content
+
+
+@pytest.mark.parametrize("label", ["v1_df49", "v2_e064"])
+def test_legacy_repreview_cannot_reopen_a_cancelled_task(shipping, tmp_path, label):
+    recorded, ctx, _step, workspace = _recorded_approval_for_review(tmp_path, label)
+    assert _door("code.task.cancel", {"task_id": recorded["task_id"], "reason": "operator"}, ctx).ok
+    before = _journal(recorded["task_id"])["proposals"]["p1"]
+    content = (workspace / "math.js").read_bytes()
+    refused = _repreview_legacy(recorded, ctx)
+    assert refused.ok is False and refused.status == "cancelled"
+    assert _journal(recorded["task_id"])["proposals"]["p1"] == before
+    assert _legacy_approval_binding(recorded, ctx)[0] is None
+    assert (workspace / "math.js").read_bytes() == content
+
+
+@pytest.mark.parametrize("label", ["v1_df49", "v2_e064"])
+def test_legacy_repreview_does_not_approve_bytes_changed_after_review(shipping, tmp_path, label):
+    recorded, ctx, _step, workspace = _recorded_approval_for_review(tmp_path, label)
+    assert _repreview_legacy(recorded, ctx).ok
+    edited = (workspace / "math.js").read_bytes() + b"// independent edit\n"
+    (workspace / "math.js").write_bytes(edited)
+    refused = _door("code.task.approve", {"task_id": recorded["task_id"], "proposal_id": "p1"}, ctx)
+    assert refused.ok is False and refused.status == "stale_base"
+    assert _journal(recorded["task_id"])["proposals"]["p1"]["approved"] is False
+    assert _legacy_approval_binding(recorded, ctx)[0] is None
+    assert (workspace / "math.js").read_bytes() == edited
+
+
+@pytest.mark.parametrize("label", ["v1_df49", "v2_e064"])
+@pytest.mark.parametrize("fence", ["reserved_by", "consumed_by"])
+def test_legacy_repreview_never_upgrades_a_reserved_or_consumed_proposal(shipping, tmp_path, label, fence):
+    from core.code_assistant.task_runtime import code_task_runtime
+
+    recorded, ctx, _step, workspace = _recorded_approval_for_review(tmp_path, label)
+    path = Path(os.environ["VOOL_CODE_TASK_DIR"]) / f"{recorded['task_id']}.json"
+    journal = _journal(recorded["task_id"])
+    # Negative recovery fixture: a prior worker reserved or consumed this historical proposal.
+    # No approval is minted and no worker runs; neither fence permits destination re-binding.
+    journal["proposals"]["p1"][fence] = "previous-worker-step"
+    path.write_text(json.dumps(journal), encoding="utf-8")
+    code_task_runtime().reset()
+    before = _journal(recorded["task_id"])["proposals"]["p1"]
+    content = (workspace / "math.js").read_bytes()
+    replay = _repreview_legacy(recorded, ctx)
+    assert replay.ok and replay.details["replayed"]
+    assert replay.details["proposal_state"] == ("in_flight" if fence == "reserved_by" else "consumed")
+    assert _journal(recorded["task_id"])["proposals"]["p1"] == before
+    assert _legacy_approval_binding(recorded, ctx)[0] is None
+    assert (workspace / "math.js").read_bytes() == content
