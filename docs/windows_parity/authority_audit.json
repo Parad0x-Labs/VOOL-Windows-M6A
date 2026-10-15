@@ -4724,7 +4724,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_store_mutation_records",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 773,
+      "line": 778,
       "source": "core/execution/artifacts.py"
     },
     {
@@ -4733,7 +4733,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_store_mutation_records",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 777,
+      "line": 782,
       "source": "core/execution/artifacts.py"
     },
     {
@@ -4753,6 +4753,15 @@
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
       "line": 221,
       "source": "core/execution/git_tools.py"
+    },
+    {
+      "authority_status": "unresolved",
+      "call": "path.parent.mkdir",
+      "effect_kind": "filesystem_mutation",
+      "function": "write_owner_only_ledger",
+      "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
+      "line": 159,
+      "source": "core/execution/windows_private_ledger.py"
     },
     {
       "authority_status": "unresolved",
@@ -24886,5 +24895,5 @@
   ],
   "schema": "vool.windows_authority_audit.v1",
   "scope": "Current Windows source; static discovery and command census, not installed-artifact evidence.",
-  "source_fingerprint": "2595fe04843c710f704a3b0293d75675bee714278090c9cc0c658ad30adf99a1"
+  "source_fingerprint": "1e3d85b54dd94f7cb11e97178205c98c84e327c0f0659dbec2441be40a03089b"
 }
