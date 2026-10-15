@@ -2978,6 +2978,7 @@ def register_external_approval(request: dict[str, Any]) -> str:
     entry = {
         **dict(request or {}),
         "approval_id": token,
+        "approval_origin": "external",
         "status": "pending",
         "one_time": True,
         "expires_at": float(request.get("expires_at") or (time.time() + 86400)),
@@ -2997,7 +2998,13 @@ def resolve_approval(token: str, *, decision: str, scope: str = "once") -> dict[
     if denied is None and str(decision or "").strip().lower() == "deny":
         with _LOCK:
             denied = dict(_APPROVALS.get(str(token or "").strip()) or {})
-    if denied and denied.get("status") == "denied":
+    # Settings-only consent has no runtime turn to close. The registration door
+    # owns this marker; any session or binding field still requires reconciliation,
+    # including incomplete identities. Unmarked legacy entries remain fail-closed.
+    if denied and denied.get("status") == "denied" and (
+        denied.get("approval_origin") != "external"
+        or "session_id" in denied or "runtime_binding" in denied
+    ):
         from core.runtime_continuity import reconcile_denied_approval
 
         reconcile_denied_approval(denied)

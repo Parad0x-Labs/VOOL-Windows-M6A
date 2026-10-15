@@ -6317,7 +6317,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "reset_mode_permission_state",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 3534,
+      "line": 3541,
       "source": "core/mode_permission_policy.py"
     },
     {
@@ -24895,5 +24895,5 @@
   ],
   "schema": "vool.windows_authority_audit.v1",
   "scope": "Current Windows source; static discovery and command census, not installed-artifact evidence.",
-  "source_fingerprint": "62a81e0e33a0705caae2b8296a7ef969a67a5be29fc19dd8a8ee7080c23ce980"
+  "source_fingerprint": "5e4e3975afebef80c32be8ab30460e9bf2df702377d50dc57db410e930bb8a8d"
 }
