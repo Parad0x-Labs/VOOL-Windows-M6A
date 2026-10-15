@@ -113,3 +113,39 @@ def test_served_malformed_registry_result_is_internal_not_stale(tmp_path, monkey
     actual_status, body = resolve(pending)
     assert actual_status == 500 and body["fault_code"] == "internal"
     assert body["error"] == "approval resolution failed"
+
+
+@pytest.mark.parametrize("decision", ["allow", "deny"])
+def test_served_missing_approval_preserves_the_legacy_error_text(tmp_path, decision):
+    pending = pending_write(tmp_path)
+    status, body = resolve(pending, decision=decision, approval_id="missing-token")
+    assert status == 409
+    assert body == {"error": "approval is missing, stale, or already resolved", "fault_code": "conflict"}
+    assert policy._APPROVALS[pending.approval["approval_id"]]["status"] == "pending"
+    assert runtime.get_runtime_attempt(pending.attempt_id)["lifecycle_state"] == "WAITING_APPROVAL"
+
+
+def test_registry_missing_approval_keeps_its_identity_in_fault_detail(tmp_path):
+    from core.command_registry import legacy
+
+    pending_write(tmp_path)
+    status, body = legacy.forward("approvals.resolve", {
+        "approval_id": "missing-token", "decision": "deny", "scope": "once",
+    })
+    assert status == 409 and body["ok"] is False
+    assert body["summary"] == "approval is missing, stale, or already resolved"
+    assert body["fault"]["code"] == "conflict"
+    assert body["fault"]["detail"] == {"approval_id": "missing-token"}
+
+
+def test_served_other_conflicts_are_not_relabelled_as_missing_tokens(tmp_path, monkeypatch):
+    from core.command_registry import legacy
+
+    pending = pending_write(tmp_path)
+    monkeypatch.setattr(legacy, "forward", lambda *args, **kwargs: (409, {
+        "ok": False, "summary": "denial reconciliation conflict", "fault": {"code": "conflict"},
+    }))
+    status, body = resolve(pending)
+    assert status == 409
+    assert body == {"error": "denial reconciliation conflict", "fault_code": "conflict"}
+    assert policy._APPROVALS[pending.approval["approval_id"]]["status"] == "pending"

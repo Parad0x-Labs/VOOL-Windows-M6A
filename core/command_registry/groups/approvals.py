@@ -92,7 +92,7 @@ def _handle_resolve(inp, ctx):
     if approval is None:
         return HandlerFault(
             fault_code="conflict",
-            summary=f"Approval {inp.approval_id!r} is missing, stale, or already resolved",
+            summary="approval is missing, stale, or already resolved",
             detail={"approval_id": inp.approval_id},
         )
     return HandlerOk(
