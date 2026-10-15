@@ -1,21 +1,23 @@
-"""One enumerated comparison is ONE demand, not three.
+"""One enumerated comparison is ONE execution group, with distinct facet obligations.
 
 Measured 2026-09-06 (served comparison, fixture transport): the closure sweep listed
 "Now compare the VW Passat", "and the VW Golf in detail: production periods, sales, regions,
 engines" and "and prices." as three things that could not be answered -- the request had been cut
 at each "and" into pseudo-demands, and every one of them was reported unanswered beneath an answer
 that had just published six supported claims about exactly that comparison. The subjects a
-comparison coordinates, and the facet list a colon introduces, are one request.
+comparison coordinates, and the facet list a colon introduces, share one execution
+context. CT-301 accounts for each facet separately before that grouping.
 """
 from __future__ import annotations
 
 from core.agent_runtime.answer_coverage import demand_units
+from core.agent_runtime.demand_ownership import execution_unit_spans
 
 COMPARISON = "Now compare the VW Passat and the VW Golf in detail: production periods, sales, regions, engines and prices."
 
 
 def test_an_enumerated_comparison_mints_one_demand() -> None:
-    units = demand_units(COMPARISON)
+    units = execution_unit_spans(COMPARISON)
     assert len(units) == 1, [u.text for u in units]
     assert "prices" in units[0].text and "Passat" in units[0].text
 
