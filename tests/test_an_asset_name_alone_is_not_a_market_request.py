@@ -73,22 +73,21 @@ def agent() -> VoolAgent:
 def _drive(agent: VoolAgent, text: str) -> tuple[list[tuple[str, str]], bool]:
     """Run the real turn and report (scheduled subtasks, ordinary-lane-was-reached).
 
-    `build_live_data_plan` is wrapped, not replaced: the REAL planner runs and its REAL output is
-    recorded, so this observes production scheduling rather than asserting against a double. The
+    `run_live_data_plan` is wrapped, not replaced: the REAL runner receives the REAL plan, so
+    this observes submissions rather than speculative coverage-binder plans. No submissions or
+    entities are deduplicated. The
     ordinary frontdoor is stubbed to a canned result purely to stop the turn there -- reaching it
     at all is the signal (the live-data lane declined this turn), and stopping keeps the test off
     the model lane.
     """
-    import core.agent_runtime.live_data_plan as live_data_plan_module
+    import core.agent_runtime.live_data_runner as live_data_runner_module
 
     scheduled: list[tuple[str, str]] = []
-    real_build = live_data_plan_module.build_live_data_plan
+    real_run = live_data_runner_module.run_live_data_plan
 
-    def recording_build(user_text, **kwargs):
-        plan = real_build(user_text, **kwargs)
-        if plan is not None:
-            scheduled.extend((task.operation, task.entity) for task in plan.subtasks)
-        return plan
+    def recording_run(plan, **kwargs):
+        scheduled.extend((task.operation, task.entity) for task in plan.subtasks)
+        return real_run(plan, **kwargs)
 
     reached_ordinary = {"hit": False}
 
@@ -96,7 +95,7 @@ def _drive(agent: VoolAgent, text: str) -> tuple[list[tuple[str, str]], bool]:
         reached_ordinary["hit"] = True
         return {"result": {"response": "ordinary lane", "model_calls": 0, "route": "test:ordinary"}}
 
-    with mock.patch.object(live_data_plan_module, "build_live_data_plan", new=recording_build), \
+    with mock.patch.object(live_data_runner_module, "run_live_data_plan", new=recording_run), \
          mock.patch.object(VoolAgent, "_handle_turn_frontdoor", new=stub_frontdoor):
         agent.run_once(text, source_context=dict(SOURCE_CONTEXT))
     return scheduled, reached_ordinary["hit"]
@@ -178,22 +177,21 @@ def test_a_second_turn_correction_is_not_dragged_back_to_market_by_the_prior_ent
     """
     session = "g4-two-turn-correction"
 
-    import core.agent_runtime.live_data_plan as live_data_plan_module
+    import core.agent_runtime.live_data_runner as live_data_runner_module
 
     turn_two_scheduled: list[tuple[str, str]] = []
-    real_build = live_data_plan_module.build_live_data_plan
+    real_run = live_data_runner_module.run_live_data_plan
     recording_enabled = {"on": False}
 
-    def recording_build(user_text, **kwargs):
-        plan = real_build(user_text, **kwargs)
-        if plan is not None and recording_enabled["on"]:
+    def recording_run(plan, **kwargs):
+        if recording_enabled["on"]:
             turn_two_scheduled.extend((task.operation, task.entity) for task in plan.subtasks)
-        return plan
+        return real_run(plan, **kwargs)
 
     def stub_frontdoor(*_args, **_kwargs):
         return {"result": {"response": "ordinary lane", "model_calls": 0, "route": "test:ordinary"}}
 
-    with mock.patch.object(live_data_plan_module, "build_live_data_plan", new=recording_build), \
+    with mock.patch.object(live_data_runner_module, "run_live_data_plan", new=recording_run), \
          mock.patch.object(VoolAgent, "_handle_turn_frontdoor", new=stub_frontdoor):
         agent.run_once(
             "What's the gold price?",
