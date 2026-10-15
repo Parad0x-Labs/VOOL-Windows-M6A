@@ -1541,6 +1541,13 @@
       "registry_command_id": "",
       "surface": "http"
     },
+    "http:GET:/companion": {
+      "classification": "EXTERNAL_TRANSPORT_ONLY",
+      "name": "GET /companion",
+      "note": "loopback-only presentation page; core.companion_world_fragment.render_desktop_companion_html owns the renderer; no query or action input",
+      "registry_command_id": "",
+      "surface": "http"
+    },
     "http:GET:/healthz": {
       "classification": "EXTERNAL_TRANSPORT_ONLY",
       "name": "GET /healthz",
@@ -2339,6 +2346,20 @@
       "registry_command_id": "",
       "surface": "http"
     },
+    "http:POST:/api/runtime/local-model/retry": {
+      "classification": "EXTERNAL_TRANSPORT_ONLY",
+      "name": "POST /api/runtime/local-model/retry",
+      "note": "local-model runtime operator action; RuntimeServices.local_model_setup_refresh owns failed local chat checks and policy/state/rate limits, never download; loopback, same-origin, empty body",
+      "registry_command_id": "",
+      "surface": "http"
+    },
+    "http:POST:/api/runtime/model-pull/retry": {
+      "classification": "EXTERNAL_TRANSPORT_ONLY",
+      "name": "POST /api/runtime/model-pull/retry",
+      "note": "local-model runtime operator action; RuntimeServices.model_pull_restart owns selected-model download retry and policy/state/rate limits; loopback, same-origin, empty body",
+      "registry_command_id": "",
+      "surface": "http"
+    },
     "http:POST:/api/search/detect": {
       "classification": "EXTERNAL_TRANSPORT_ONLY",
       "name": "POST /api/search/detect",
@@ -2895,7 +2916,7 @@
   },
   "totals": {
     "DEAD": 0,
-    "EXTERNAL_TRANSPORT_ONLY": 280,
+    "EXTERNAL_TRANSPORT_ONLY": 283,
     "GENERATED_ADAPTER": 124,
     "LEGACY_UNMIGRATED": 0,
     "REGISTRY_OWNED": 8

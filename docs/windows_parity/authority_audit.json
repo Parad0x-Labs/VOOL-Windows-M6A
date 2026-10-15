@@ -20037,11 +20037,11 @@
       "method_routes": [
         {
           "census_id": "http:POST:/api/runtime/local-model/retry",
-          "classification": "LEGACY_UNMIGRATED",
+          "classification": "EXTERNAL_TRANSPORT_ONLY",
           "effects": "",
           "handler": "",
           "method": "POST",
-          "note": "",
+          "note": "local-model runtime operator action; RuntimeServices.local_model_setup_refresh owns failed local chat checks and policy/state/rate limits, never download; loopback, same-origin, empty body",
           "owning_command": "",
           "path": "/api/runtime/local-model/retry",
           "permission": "",
@@ -20088,11 +20088,11 @@
       "method_routes": [
         {
           "census_id": "http:POST:/api/runtime/model-pull/retry",
-          "classification": "LEGACY_UNMIGRATED",
+          "classification": "EXTERNAL_TRANSPORT_ONLY",
           "effects": "",
           "handler": "",
           "method": "POST",
-          "note": "",
+          "note": "local-model runtime operator action; RuntimeServices.model_pull_restart owns selected-model download retry and policy/state/rate limits; loopback, same-origin, empty body",
           "owning_command": "",
           "path": "/api/runtime/model-pull/retry",
           "permission": "",
@@ -23412,11 +23412,11 @@
       "method_routes": [
         {
           "census_id": "http:GET:/companion",
-          "classification": "LEGACY_UNMIGRATED",
+          "classification": "EXTERNAL_TRANSPORT_ONLY",
           "effects": "",
           "handler": "",
           "method": "GET",
-          "note": "",
+          "note": "loopback-only presentation page; core.companion_world_fragment.render_desktop_companion_html owns the renderer; no query or action input",
           "owning_command": "",
           "path": "/companion",
           "permission": "",
@@ -24896,5 +24896,5 @@
   ],
   "schema": "vool.windows_authority_audit.v1",
   "scope": "Current Windows source; static discovery and command census, not installed-artifact evidence.",
-  "source_fingerprint": "f14079edbe84f546e3fdb61a064e3b0dfd7236690f80f501bcc18559e378c5a0"
+  "source_fingerprint": "14f272e3d36202f62f9a5bdc5f37437ddd8b63dec8dbe8ddd3dd51912810775a"
 }
