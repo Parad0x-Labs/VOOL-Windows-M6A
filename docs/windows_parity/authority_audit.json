@@ -7739,7 +7739,7 @@
       "effect_kind": "network_send",
       "function": "_classify_via_model",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 2358,
+      "line": 2391,
       "source": "core/task_router.py"
     },
     {
@@ -24895,5 +24895,5 @@
   ],
   "schema": "vool.windows_authority_audit.v1",
   "scope": "Current Windows source; static discovery and command census, not installed-artifact evidence.",
-  "source_fingerprint": "1e3d85b54dd94f7cb11e97178205c98c84e327c0f0659dbec2441be40a03089b"
+  "source_fingerprint": "62a81e0e33a0705caae2b8296a7ef969a67a5be29fc19dd8a8ee7080c23ce980"
 }

@@ -751,6 +751,16 @@ _SEQUENCE_FORMAT_QUALIFIER_RE = re.compile(
     re.IGNORECASE,
 )
 
+# A coverage proof accepts only presentation words after an output verb. A
+# topic word alone ("tell me a haiku now") cannot claim an independent request.
+_SEQUENCE_OUTPUT_WORDS = frozenset({
+    "output", "print", "return", "respond", "answer", "reply", "show", "give", "display",
+    "format", "render", "state", "write", "tell", "what", "whats", "how", "is", "does",
+    "me", "the", "a", "an", "exactly", "only", "final", "array", "list", "sequence", "result",
+    "value", "values", "elements", "contents", "in", "with", "brackets", "bracketed", "commas",
+    "no", "spaces", "raw", "json", "it", "look", "now", "of", "as", "example",
+})
+
 #: Compact rendering is used only when the turn ASKS for it: "no spaces", an example like
 #: "[1,2,3] format" / "[1,2,3]-style", or "in brackets".
 _SEQUENCE_COMPACT_RE = re.compile(
@@ -852,11 +862,12 @@ def _apply_sequence_step(segment: str, values: list[float]) -> list[float] | Non
     return None
 
 
-def evaluate_sequence_ops_request(text: str) -> str | None:
+def evaluate_sequence_ops_request(text: str, *, require_complete: bool = False) -> str | None:
     """A literal starting list plus an ordered closed verb set, executed exactly.
 
     Returns the final list -- compact ("[10,3,4]") when the turn asked for a bracket/no-spaces
     form, a sentence otherwise -- or None the moment anything falls outside the closed grammar.
+    Coverage uses require_complete to reject unrelated preambles and unknown format-tail text.
     """
 
     body = " ".join(str(text or "").split())
@@ -868,6 +879,17 @@ def evaluate_sequence_ops_request(text: str) -> str | None:
     subject_match = _SEQUENCE_SUBJECT_RE.search(body[: declaration.start("list")])
     if not subject_match:
         return None
+    # Coverage may bind every demand only when the declaration opens the request,
+    # not when the evaluator found a list after an independent leading ask.
+    if require_complete:
+        if not re.fullmatch(
+            r"\s*(?:(?:ok|okay|so|please|my|the)\s+)*", body[:subject_match.start()], re.IGNORECASE
+        ):
+            return None
+        if not re.fullmatch(
+            r"\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*)?", body[subject_match.end():declaration.start()]
+        ):
+            return None
     # The declared subject's own tokens ("Array Q" -> array, q) count as on-topic below: a
     # question naming the subject ("What is Q now?") is about the list by definition, and the
     # generic topic vocabulary cannot enumerate every name a user gives a list. Single letters
@@ -891,6 +913,11 @@ def evaluate_sequence_ops_request(text: str) -> str | None:
     executed = 0
     in_format_tail = False
     steps_text = _SEQUENCE_FORMAT_EXAMPLE_RE.sub("[example]", body[declaration.end() :])
+    if require_complete:
+        steps_text = re.sub(
+            r"\(\s*(?:e\.g\.|for\s+example)\s*,?\s*\[example\]\s*\)", "", steps_text,
+            flags=re.IGNORECASE,
+        )
     for raw_segment in _SEQUENCE_SPLIT_RE.split(steps_text):
         segment = _SEQUENCE_LEADING_FILLER_RE.sub("", (raw_segment or "").strip(" ,.;:!?")).strip()
         segment = _SEQUENCE_TRAILING_FILLER_RE.sub("", segment).strip()
@@ -900,6 +927,8 @@ def evaluate_sequence_ops_request(text: str) -> str | None:
             continue
         if _SEQUENCE_OUTPUT_DIRECTIVE_RE.match(segment) or _SEQUENCE_QUESTION_RE.match(segment):
             segment_words = {word.lower() for word in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", segment)}
+            if require_complete and segment_words - subject_tokens - _SEQUENCE_OUTPUT_WORDS:
+                return None
             if _SEQUENCE_OUTPUT_TOPIC_RE.search(segment) or (subject_tokens & segment_words):
                 # Everything after the output directive is presentation, not operations. The
                 # directive's own comma-split tail ("commas", "but with absolutely no spaces
@@ -913,7 +942,11 @@ def evaluate_sequence_ops_request(text: str) -> str | None:
             return None
         applied = _apply_sequence_step(segment, values)
         if applied is None:
-            if in_format_tail:
+            if in_format_tail and (not require_complete or re.fullmatch(
+                r"commas|(?:but\s+)?(?:with\s+)?(?:absolutely\s+)?no\s+spaces"
+                r"|no\s+punctuation(?:\s+at\s+the\s+end)?|no\s+explanation",
+                segment, re.IGNORECASE,
+            )):
                 continue
             return None
         values = applied

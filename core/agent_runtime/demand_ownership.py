@@ -709,12 +709,27 @@ def _operator_action_binds(text: str, units: Any) -> frozenset[str]:
     )
 
 
+def _arithmetic_binds(text: str, units: Any) -> dict[str, str]:
+    """Keep a fully parsed sequence's declaration and dependent operations together.
+
+    The per-unit arithmetic probe cannot compute an append without its starting
+    list. The same evaluator that executes the lane proves the whole request,
+    with strict coverage so unknown output-tail prose cannot hide another ask.
+    """
+    from core.task_router import evaluate_sequence_ops_request
+
+    if evaluate_sequence_ops_request(str(text or ""), require_complete=True) is None:
+        return {}
+    return {unit.unit_id: BIND_STEP for unit in units}
+
+
 _COVERAGE_BINDERS: dict[str, Any] = {
     "live_data": _live_data_binds,
     "workspace_audit": _workspace_audit_binds,
     "workspace_write": _workspace_write_binds,
     "currency": _currency_binds,
     "operator_action": _operator_action_binds,
+    "arithmetic": _arithmetic_binds,
 }
 
 
