@@ -178,15 +178,25 @@ def _resolve_turn_keys(
 
     Turn keys come from server-stamped identities only: the caller's explicit key, the
     finalization's own turn id, and the turn keys of events that carry THIS request id in
-    their details. Events join when their stamped identity is one of those keys or when they
-    themselves carry the request id — never by recency.
+    their details. An explicitly request-bound event must belong to THIS request, even when
+    another request reuses its turn key. Only requestless legacy events join by turn key.
     """
+    from core.invocation.ledger import get_invocation
+
+    request_ids = {request_id}
+    invocation = get_invocation(request_id) if request_id.startswith("req:http:") else None
+    if invocation and invocation.get("external_kind") == "http":
+        # HTTP trace events carry the external id; committed rows carry req:http:<id>.
+        # Read their accepted binding instead of guessing an alias from a namespace string.
+        external_id = _clean(invocation.get("external_value"))
+        if external_id:
+            request_ids.add(external_id)
     candidates: list[str] = []
     for value in (explicit, _clean((finalization_row or {}).get("turn_id"))):
         if value and value not in candidates:
             candidates.append(value)
     for event in events:
-        if _clean(event.get("request_id")) != request_id:
+        if _clean(event.get("request_id")) not in request_ids:
             continue
         key = _clean(event.get("turn_key"))
         if key and key not in candidates:
@@ -194,8 +204,8 @@ def _resolve_turn_keys(
     turn_events = [
         event
         for event in events
-        if _clean(event.get("request_id")) == request_id
-        or (_clean(event.get("turn_key")) and _clean(event.get("turn_key")) in candidates)
+        if _clean(event.get("request_id")) in request_ids
+        or (not _clean(event.get("request_id")) and _clean(event.get("turn_key")) in candidates)
     ]
     return candidates, turn_events
 
