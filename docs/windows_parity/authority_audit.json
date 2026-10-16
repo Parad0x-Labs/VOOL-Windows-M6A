@@ -7928,7 +7928,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "download",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 260,
+      "line": 262,
       "source": "core/updater/download.py"
     },
     {
@@ -7937,7 +7937,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "download",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 261,
+      "line": 263,
       "source": "core/updater/download.py"
     },
     {
@@ -7946,21 +7946,12 @@
       "effect_kind": "filesystem_mutation",
       "function": "download",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 331,
+      "line": 333,
       "source": "core/updater/download.py"
     },
     {
       "authority_status": "unresolved",
       "call": "meta_path.unlink",
-      "effect_kind": "filesystem_mutation",
-      "function": "download",
-      "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 332,
-      "source": "core/updater/download.py"
-    },
-    {
-      "authority_status": "unresolved",
-      "call": "os.replace",
       "effect_kind": "filesystem_mutation",
       "function": "download",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
@@ -7969,11 +7960,20 @@
     },
     {
       "authority_status": "unresolved",
+      "call": "os.replace",
+      "effect_kind": "filesystem_mutation",
+      "function": "download",
+      "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
+      "line": 336,
+      "source": "core/updater/download.py"
+    },
+    {
+      "authority_status": "unresolved",
       "call": "meta_path.unlink",
       "effect_kind": "filesystem_mutation",
       "function": "download",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 335,
+      "line": 337,
       "source": "core/updater/download.py"
     },
     {
@@ -24898,5 +24898,5 @@
   ],
   "schema": "vool.windows_authority_audit.v1",
   "scope": "Current Windows source; static discovery and command census, not installed-artifact evidence.",
-  "source_fingerprint": "b19d480b6e708dd07a6a40be5903b5f5e0bf87c22cb853f4d9356132abf91e11"
+  "source_fingerprint": "76e71841ef4abc5e541591e96b10d11aa2457dc383845c168b084f970ac2f4b3"
 }
