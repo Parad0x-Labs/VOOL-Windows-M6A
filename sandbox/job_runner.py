@@ -686,25 +686,35 @@ class JobRunner:
         bwrap = shutil.which("bwrap")
         if not bwrap:
             return None
+        resolved_roots = []
+        for root in allowed_roots:
+            resolved = str(root.resolve() if isinstance(root, Path) else Path(root).resolve())
+            if resolved == "/" or resolved == "/dev" or resolved.startswith("/dev/"):
+                raise KernelIsolationUnavailableError("Linux writable roots cannot overlap private devices.")
+            resolved_roots.append(resolved)
         net_flag = ["--unshare-net"] if deny_network else []
+        base = [bwrap, *net_flag, "--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/tmp"]
         # Probed without the per-root binds: the question is whether this host grants the
         # namespace at all, not whether one particular root exists. Keyed separately per
         # `deny_network` -- with the flag dropped, this probes plain bwrap sandboxing (no network
         # namespace required), a different capability than the deny_network=True probe.
         if not _backend_usable(
             f"bwrap:deny_network={deny_network}",
-            [bwrap, *net_flag, "--ro-bind", "/", "/", "--tmpfs", "/tmp", "--", "true"],
+            [*base, "--", "/bin/sh", "-c", "exec 3<>/dev/null"],
         ):
-            return None
+            # A present but unusable filesystem backend must not fall through to a
+            # network-only wrapper that cannot enforce the same device/write boundary.
+            raise KernelIsolationUnavailableError("Bubblewrap cannot provide usable private devices on this host.")
         # FS isolation in addition to (optionally) the network namespace: mount the whole
         # host read-only, then re-bind only the allowed workspace roots writable,
-        # plus a private tmpfs for /tmp. 'unshare -n' alone gives NO filesystem
+        # plus private devices and a private tmpfs for /tmp. The inherited /dev under
+        # the read-only host bind cannot provide usable devices to confined Git/pytest.
+        # 'unshare -n' alone gives NO filesystem
         # isolation, so bwrap is the preferred backend when present. The `--ro-bind`/`--bind`
         # confinement below applies regardless of `deny_network` -- ANVIL, 2026-08-07: filesystem
         # confinement must hold even when network trust is relaxed for a local test/lint run.
-        cmd: list[str] = [bwrap, *net_flag, "--ro-bind", "/", "/", "--tmpfs", "/tmp"]
-        for root in allowed_roots:
-            resolved = str(root.resolve() if isinstance(root, Path) else Path(root).resolve())
+        cmd: list[str] = base.copy()
+        for resolved in resolved_roots:
             cmd += ["--bind", resolved, resolved]
         cmd += ["--", *list(argv)]
         return cmd

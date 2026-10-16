@@ -1,4 +1,4 @@
-"""CI prerequisite only: prove both existing Bubblewrap modes run as the test user."""
+"""CI prerequisite: prove both Bubblewrap modes provide usable private devices."""
 from __future__ import annotations
 
 import argparse
@@ -38,9 +38,10 @@ def collect_report() -> dict:
         return report
     report["binary"] = binary
     for deny_network in (True, False):
-        # Keep these root-independent no-ops equivalent to JobRunner's existing probes.
+        # Keep this root-independent device check equivalent to JobRunner's probe.
         argv = [binary, *(["--unshare-net"] if deny_network else []),
-                "--ro-bind", "/", "/", "--tmpfs", "/tmp", "--", "true"]
+                "--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/tmp",
+                "--", "/bin/sh", "-c", "exec 3<>/dev/null"]
         probe = {
             "deny_network": deny_network, "argv": argv,
             "returncode": None, "stdout": "", "stderr": "", "ok": False,
