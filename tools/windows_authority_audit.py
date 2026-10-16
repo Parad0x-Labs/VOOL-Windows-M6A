@@ -269,7 +269,7 @@ def _source_fingerprint() -> str:
     for file in (ROOT / "config" / "release").rglob("*"):
         if file.is_file() and file.suffix.lower() in {".json", ".toml"}:
             files.add(file)
-    for file in sorted(files):
+    for file in sorted(files, key=lambda path: path.relative_to(ROOT).as_posix()):
         digest.update(file.relative_to(ROOT).as_posix().encode("utf-8"))
         digest.update(b"\0")
         # Git checks these text sources out with platform-specific line endings. Pin source
