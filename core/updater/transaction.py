@@ -21,7 +21,8 @@ Hard laws enforced here:
     it (work.py);
   * crash recovery (below) turns "process died mid-update" into either a clean ABORT
     (pre-swap) or an automatic rollback + relaunch of the previous version (post-swap)
-    — a half-finished update never stays installed.
+    — recovery that cannot prove restoration requires manual intervention instead
+    of claiming rollback succeeded.
 """
 from __future__ import annotations
 
@@ -595,8 +596,8 @@ class UpdateFlow:
         self._publish(UpdatePhase.BACKING_UP)
         snapshot_dir = self.paths.transaction_dir(self._txid) / "config-snapshot"
         sources = [self.data_dir / rel for rel in self.snapshot_relpaths]
-        snapshot_tree(sources, snapshot_dir)
-        self._step(Step.SNAPSHOT_COMPLETE)
+        saved = snapshot_tree(sources, snapshot_dir)
+        self._step(Step.SNAPSHOT_COMPLETE, {"saved_paths": sorted(saved)})
 
         # 8) The swap path. A helper that performs the swap itself (the external
         # macOS script) gets the DELEGATED sequence: migrations run BEFORE the
@@ -728,7 +729,7 @@ def time_await(clock: Callable[[], float]):
 @dataclass
 class RecoveryResult:
     txid: str
-    action: str  # "aborted" | "rolled_back" | "finalized" | "already_terminal" | "left_running"
+    action: str  # "aborted" | "rolled_back" | "finalized" | "already_terminal" | "left_running" | "recovery_failed"
     detail: str = ""
     prior_path: Path | None = None
 
@@ -750,7 +751,8 @@ def recover_interrupted_update(
     Pre-swap leftovers are aborted + cleaned (the previous version never changed).
     Post-swap leftovers get a health check against the NEW version: healthy ⇒ finalize
     (the crash was cosmetic), unhealthy ⇒ automatic rollback + relaunch of the previous
-    version. A transaction whose owning process is still alive is left alone.
+    version. An incomplete rollback remains nonterminal and requires manual recovery;
+    later transactions are left alone rather than advancing over that failure.
     """
     data_dir = Path(data_dir)
     app_path = Path(app_path)
@@ -801,30 +803,55 @@ def recover_interrupted_update(
 
         prior_payload = journal.payload_of(Step.SWAPPED).get("prior_path") or ""
         prior = Path(prior_payload) if prior_payload else None
-        # stop the (possibly helper-relaunched) new version first: it holds the
-        # service port the prior version needs (see rollback_active). A delegated
-        # helper gets a plain stop — its shutdown_app() runs the swap script.
-        if getattr(helper, "performs_swap", False):
-            stop = getattr(helper, "stop_running_app", None)
-            if callable(stop):
-                with contextlib.suppress(Exception):
-                    stop(timeout=10.0)
-        else:
-            with contextlib.suppress(Exception):
+        stage = "checking the rollback backup"
+        try:
+            if installer is None or prior is None or not prior.exists():
+                raise RuntimeError("the previous app cannot be restored")
+            snapshot_dir = tx_dir / "config-snapshot"
+            saved = journal.payload_of(Step.SNAPSHOT_COMPLETE).get("saved_paths")
+            allowed = {Path(rel).name for rel in SNAPSHOT_RELPATHS}
+            if (
+                not isinstance(saved, list)
+                or not all(isinstance(name, str) and name in allowed for name in saved)
+                or len(set(saved)) != len(saved)
+                or not snapshot_dir.is_dir()
+                or {child.name for child in snapshot_dir.iterdir()} != set(saved)
+                or any((snapshot_dir / name).is_symlink() for name in saved)
+            ):
+                raise RuntimeError("the saved settings cannot be verified")
+
+            stage = "stopping the app"
+            # A delegated helper's shutdown_app runs the swap script, not a plain stop.
+            if getattr(helper, "performs_swap", False):
+                stop = getattr(helper, "stop_running_app", None)
+                if not callable(stop) or not stop(timeout=10.0):
+                    raise RuntimeError("the app did not stop")
+            else:
                 helper.shutdown_app()
-            with contextlib.suppress(Exception):
-                helper.wait_until_stopped(timeout=30.0)
-        if prior is not None and prior.exists() and installer is not None:
+                if not helper.wait_until_stopped(timeout=30.0):
+                    raise RuntimeError("the app did not stop")
+
+            stage = "restoring the previous app"
             restore = installer.restore_prior(app_path, prior, txid=txid)
             if not restore.ok:
-                logger.error("recovery rollback could not restore prior: %s", restore.detail)
-        snapshot_dir = tx_dir / "config-snapshot"
-        if snapshot_dir.exists():
+                raise RuntimeError("the previous app restore was refused")
+            stage = "restoring settings"
             destinations = [data_dir / rel for rel in SNAPSHOT_RELPATHS]
-            with contextlib.suppress(Exception):
-                restore_tree(snapshot_dir, destinations)
-        with contextlib.suppress(Exception):
-            helper.relaunch(app_path)
+            restore_tree(snapshot_dir, destinations)
+            stage = "restarting the previous app"
+            if not helper.relaunch(app_path):
+                raise RuntimeError("the previous app could not be restarted")
+        except Exception:
+            logger.exception("startup rollback incomplete while %s", stage)
+            detail = f"automatic recovery could not finish while {stage}; manual recovery is required"
+            status.publish(
+                UpdatePhase.UNAVAILABLE,
+                reason=detail,
+                fault=UpdateFault.UNEXPECTED,
+                recovery_action="Fully stop VOOL before manual recovery, and keep the update backups.",
+            )
+            results.append(RecoveryResult(txid, "recovery_failed", detail))
+            break
         journal.append(Step.ROLLED_BACK, {"detail": "automatic rollback during startup recovery"})
         status.publish(
             UpdatePhase.ROLLED_BACK,

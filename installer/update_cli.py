@@ -172,14 +172,18 @@ def cmd_recover(args: argparse.Namespace) -> int:
     if not results:
         print("No unfinished updates found — nothing to recover.")
         return 0
+    failed = False
     for item in results:
         verb = {
             "aborted": "An unfinished update was cleaned up (the app was never changed).",
             "rolled_back": "An unfinished update was rolled back and the previous version restarted.",
             "finalized": "An update that had been interrupted mid-install turned out healthy and is now complete.",
-        }.get(item.action, item.action)
+        }.get(item.action)
+        if verb is None:
+            failed = True
+            verb = item.detail or "Update recovery did not complete; manual recovery is required."
         print(verb)
-    return 0
+    return 1 if failed else 0
 
 
 def build_parser() -> argparse.ArgumentParser:

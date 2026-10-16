@@ -8261,7 +8261,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "__init__",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 144,
+      "line": 145,
       "source": "core/updater/transaction.py"
     },
     {
@@ -8270,7 +8270,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "append",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 151,
+      "line": 152,
       "source": "core/updater/transaction.py"
     },
     {
@@ -8279,7 +8279,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "rollback_active",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 340,
+      "line": 341,
       "source": "core/updater/transaction.py"
     },
     {
@@ -8288,7 +8288,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_write_receipt",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 383,
+      "line": 384,
       "source": "core/updater/transaction.py"
     },
     {
@@ -8297,7 +8297,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_write_receipt",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 385,
+      "line": 386,
       "source": "core/updater/transaction.py"
     },
     {
@@ -8306,7 +8306,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_write_receipt",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 386,
+      "line": 387,
       "source": "core/updater/transaction.py"
     },
     {
@@ -8315,7 +8315,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_tail",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 546,
+      "line": 547,
       "source": "core/updater/transaction.py"
     },
     {
@@ -8324,7 +8324,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_tail",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 559,
+      "line": 560,
       "source": "core/updater/transaction.py"
     },
     {
@@ -8333,7 +8333,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_tail",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 575,
+      "line": 576,
       "source": "core/updater/transaction.py"
     },
     {
@@ -8342,7 +8342,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_tail",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 591,
+      "line": 592,
       "source": "core/updater/transaction.py"
     },
     {
@@ -8351,7 +8351,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "recover_interrupted_update",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 781,
+      "line": 783,
       "source": "core/updater/transaction.py"
     },
     {
@@ -24898,5 +24898,5 @@
   ],
   "schema": "vool.windows_authority_audit.v1",
   "scope": "Current Windows source; static discovery and command census, not installed-artifact evidence.",
-  "source_fingerprint": "76e71841ef4abc5e541591e96b10d11aa2457dc383845c168b084f970ac2f4b3"
+  "source_fingerprint": "62d3a0f8bd4134675a80864c8e7df494db3a879e6c22af912822a3f94ee36e77"
 }

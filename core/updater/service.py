@@ -23,11 +23,12 @@ from core.updater.decision import UpdateDecision, decide_update
 from core.updater.download import fetch_manifest_bytes
 from core.updater.manifest import ManifestVerification, VerifiedManifest, parse_and_verify_manifest
 from core.updater.state import HighWaterStore, UpdaterPaths
-from core.updater.status import StatusStore, UpdatePhase
+from core.updater.status import StatusStore, UpdateFault, UpdatePhase
 from core.updater.transaction import (
     DestructiveWorkResolution,
     ExternalHelper,
     FlowResult,
+    RecoveryResult,
     Step,
     UpdateFlow,
     recover_interrupted_update,
@@ -221,7 +222,7 @@ def startup_recover_and_start(
     """Startup hook: local-only crash recovery (fast, never raises into the caller),
     then the NON-BLOCKING background check. The app always starts."""
     try:
-        return recover_interrupted_update(
+        results = recover_interrupted_update(
             data_dir=data_dir,
             app_path=app_path,
             helper=helper,
@@ -232,9 +233,20 @@ def startup_recover_and_start(
         )
     except Exception:
         logger.exception("update recovery failed at startup; the app still starts")
-        return []
-    finally:
-        service.start()
+        results = [RecoveryResult("", "recovery_failed", "startup recovery failed; manual recovery is required")]
+    if any(item.action not in {"aborted", "rolled_back", "finalized"} for item in results):
+        try:
+            service.status.publish(
+                UpdatePhase.UNAVAILABLE,
+                reason="an interrupted update requires manual recovery before updates can continue",
+                fault=UpdateFault.UNEXPECTED,
+                recovery_action="Fully stop VOOL before manual recovery, and keep the update backups.",
+            )
+        except Exception:
+            logger.exception("could not persist the incomplete recovery status")
+        return results
+    service.start()
+    return results
 
 
 __all__ = [

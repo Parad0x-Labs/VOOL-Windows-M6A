@@ -37,7 +37,7 @@ from core.updater.migrations import MigrationCatalog
 from core.updater.platforms import installer_for, platform_key
 from core.updater.service import UpdateCheckService, UpdateController, UserGesture
 from core.updater.state import HighWaterStore, UpdaterPaths, _atomic_write_json, _read_json
-from core.updater.status import StatusStore, UpdatePhase
+from core.updater.status import StatusStore, UpdateFault, UpdatePhase, plain_message
 from core.updater.transaction import (
     DestructiveWorkResolution,
     ExternalHelper,
@@ -52,12 +52,14 @@ logger = logging.getLogger("vool.updater.runtime")
 
 RECOVERY_BOUND_SECONDS = 10.0
 CHECK_BOUND_SECONDS = 30.0
+_MANUAL_RECOVERY_ACTION = "Fully stop VOOL before manual recovery, and keep the update backups."
 
 
 class UnavailableReason(str, Enum):
     DISABLED = "disabled"
     NO_TRUSTED_PUBLISHER = "no_trusted_publisher"
     NO_FEED = "no_feed_configured"
+    RECOVERY_FAILED = "recovery_failed"
 
     @property
     def plain(self) -> str:
@@ -68,6 +70,7 @@ class UnavailableReason(str, Enum):
                 "where updates would come from"
             ),
             UnavailableReason.NO_FEED: "no release feed address is configured",
+            UnavailableReason.RECOVERY_FAILED: "an interrupted update requires manual recovery before updates can continue",
         }[self]
 
 
@@ -214,6 +217,8 @@ class UpdateSubsystem:
             logger.info("update subsystem UNAVAILABLE: %s", self.unavailable_reason.value)
             return self
         self._recover_bounded()
+        if not self.configured:
+            return self
         assert self.service is not None
         self.service.start()
         return self
@@ -235,12 +240,20 @@ class UpdateSubsystem:
                 channel=self.feed.channel,
                 platform=self.platform,
             )
-            with contextlib.suppress(concurrent.futures.TimeoutError):
-                results = future.result(timeout=RECOVERY_BOUND_SECONDS)
-                for item in results or []:
-                    logger.info("startup update recovery: %s %s", item.txid, item.action)
+            results = future.result(timeout=RECOVERY_BOUND_SECONDS)
+            for item in results or []:
+                logger.info("startup update recovery: %s %s", item.txid, item.action)
+            if any(item.action not in {"aborted", "rolled_back", "finalized"} for item in results or []):
+                raise RuntimeError("startup update recovery did not complete")
         except Exception:
-            logger.exception("update recovery failed at boot; continuing")
+            logger.exception("update recovery failed at boot; updates remain unavailable")
+            self.unavailable_reason = UnavailableReason.RECOVERY_FAILED
+            self.configured = False
+            with contextlib.suppress(Exception):
+                self.status.publish(
+                    UpdatePhase.UNAVAILABLE, reason=self.unavailable_reason.plain,
+                    fault=UpdateFault.UNEXPECTED, recovery_action=_MANUAL_RECOVERY_ACTION,
+                )
         finally:
             with contextlib.suppress(Exception):
                 executor.shutdown(wait=False)
@@ -309,6 +322,14 @@ class UpdateSubsystem:
             "notes": "",
             "restart_pending": bool(self._paused_txid),
         }
+        if self.unavailable_reason is UnavailableReason.RECOVERY_FAILED:
+            # A worker finishing after the bounded startup wait cannot clear this latch.
+            payload.update(
+                phase=UpdatePhase.UNAVAILABLE.value,
+                message=plain_message(UpdatePhase.UNAVAILABLE, reason=self.unavailable_reason.plain),
+                fault_code=UpdateFault.UNEXPECTED.value,
+                recovery_action=_MANUAL_RECOVERY_ACTION,
+            )
         offer = self.service.current_offer() if self.service else None
         if offer is not None:
             payload["notes"] = offer.manifest.notes
