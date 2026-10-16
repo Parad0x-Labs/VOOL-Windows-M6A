@@ -31,7 +31,8 @@ def test_both_exact_probes_run_once_and_preserve_results(linux_user, monkeypatch
     assert run.call_count == 2
     for i, denied in enumerate((True, False)):
         expected = ["/usr/bin/bwrap", *(["--unshare-net"] if denied else []),
-                    "--ro-bind", "/", "/", "--tmpfs", "/tmp", "--", "true"]
+                    "--ro-bind", "/", "/", "--dev", "/dev", "--tmpfs", "/tmp",
+                    "--", "/bin/sh", "-c", "exec 3<>/dev/null"]
         assert report["probes"][i] == {
             "deny_network": denied, "argv": expected, "returncode": returncodes[i],
             "stdout": "output", "stderr": "raw denial", "ok": returncodes[i] == 0,

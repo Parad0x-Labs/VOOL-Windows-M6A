@@ -93,9 +93,10 @@ def test_an_unusable_backend_is_not_reported_as_a_failed_command(monkeypatch, tm
 def test_a_backend_on_path_but_denied_is_not_chosen(monkeypatch) -> None:
     """Presence was the bug. `shutil.which` finding a backend is not evidence it can isolate.
 
-    Asserts the rule rather than one platform's backend: whichever backend this host would reach
-    for, it has to be probed before it is trusted. Naming `unshare` here would pass on Linux and
-    vacuously skip the check on the macOS lane, where `_linux_*_prefix` returns early on platform.
+    The POSIX prefix path probes its filesystem backend before trusting it. A failed bwrap
+    probe must not continue to a network-only wrapper. Windows uses the native broker outside
+    this prefix path, so exercise the Linux prefix contract there rather than asserting that
+    a POSIX backend was probed on Windows.
     """
     job_runner.reset_isolation_backend_probe_cache()
     # Every backend "installed", so only the probe can rule any of them out.
@@ -108,12 +109,15 @@ def test_a_backend_on_path_but_denied_is_not_chosen(monkeypatch) -> None:
 
     monkeypatch.setattr(job_runner, "_backend_usable", _probe)
     runner = _isolation_probe_runner()
-
-    with pytest.raises(job_runner.KernelIsolationUnavailableError):
-        runner._with_network_isolation(["true"], (runner.policy.workspace_root,))
+    prefix_platform = "darwin" if sys.platform == "darwin" else "linux"
+    with monkeypatch.context() as host:
+        host.setattr(job_runner.sys, "platform", prefix_platform)
+        host.setattr(job_runner.os, "name", "posix")
+        with pytest.raises(job_runner.KernelIsolationUnavailableError):
+            runner._with_network_isolation(["true"], (runner.policy.workspace_root,))
 
     assert probed, "a backend on PATH was accepted without ever being probed for whether it works"
-    expected = "sandbox-exec" if sys.platform == "darwin" else "unshare"
+    expected = "sandbox-exec" if prefix_platform == "darwin" else "bwrap:deny_network=True"
     assert expected in probed, f"this host's backend was not probed; probed={probed}"
     job_runner.reset_isolation_backend_probe_cache()
 
