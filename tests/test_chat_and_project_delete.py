@@ -12,7 +12,7 @@ from core.memory.entries import (
     record_memory_entry,
     resolve_memory_access_policy,
 )
-from core.memory.files import load_jsonl
+from core.memory.files import load_jsonl, session_summaries_path
 from core.persistent_memory import (
     append_conversation_event,
     delete_conversation_session,
@@ -54,7 +54,11 @@ def _seed(sid: str, fact: str) -> None:
 
 
 def _mem_sessions() -> set:
-    return {str(r.get("session_id") or "") for r in load_jsonl(memory_entries_path())}
+    # Erasure tombstones remain in the ledger, but are not live, retrievable memories.
+    return {
+        str(r.get("session_id") or "") for r in load_jsonl(memory_entries_path())
+        if str(r.get("status") or "") != "erased"
+    }
 
 
 def test_delete_conversation_session_removes_transcript_memory_and_meta() -> None:
@@ -130,3 +134,45 @@ def test_project_reveal_opens_the_folder(tmp_path, monkeypatch) -> None:
     assert res.status == 200 and _j(res)["ok"] is True
     # Some other Popen calls happen (hardware probes); the reveal opens the folder in Finder.
     assert any(c and c[0] == "open" and str(folder) in c for c in calls)
+
+
+@pytest.mark.parametrize("operation", ["forget", "chat_delete", "project_delete"])
+def test_session_erasure_keeps_evidence_and_unrelated_memory(tmp_path, operation) -> None:
+    _seed(_A, "alpha erased canary")
+    _seed(_B, "beta retained canary")
+    before = load_jsonl(memory_entries_path())
+    target = next(row for row in before if row.get("session_id") == _A)
+    survivor = next(row for row in before if row.get("session_id") == _B)
+    expected_forgot = 1 + sum(row.get("session_id") == _A for row in load_jsonl(session_summaries_path()))
+    if operation == "forget":
+        assert forget_sessions_memory([_A]) == expected_forgot
+    elif operation == "chat_delete":
+        assert delete_conversation_session(_A) is True
+    else:
+        folder = tmp_path / "erase-project"
+        folder.mkdir()
+        pid = _j(_post("/api/projects", {"name": "Erasure", "root": str(folder)}))["project"]["id"]
+        assert _post("/api/chat/session", {"session_id": _A, "project_id": pid}).status == 200
+        response = _post("/api/projects/delete", {"id": pid})
+        assert response.status == 200 and _j(response)["forgot"] == expected_forgot
+
+    rows = load_jsonl(memory_entries_path())
+    assert len(rows) == 2, "erasure must preserve its durable evidence and the other chat's row"
+    tombstone = next(row for row in rows if row.get("record_id") == target["record_id"])
+    assert tombstone["status"] == "erased"
+    assert tombstone["erasure_salt"] and tombstone["erasure_digest"]
+    assert not {"text", "session_id", "origin_chat_id", "content_hash"} & tombstone.keys()
+    assert survivor in rows, "the unrelated memory must remain byte-for-byte equivalent"
+    assert "alpha erased canary" not in memory_entries_path().read_text(encoding="utf-8")
+    assert _mem_sessions() == {_B}, "erasure evidence must not appear as a live memory"
+
+
+def test_memory_session_view_keeps_unscoped_live_rows() -> None:
+    rows = [
+        {"record_id": "unscoped", "session_id": "", "status": "active", "text": "unscoped canary"},
+        {"record_id": "scoped", "session_id": _B, "status": "active", "text": "scoped canary"},
+        {"record_id": "erased", "status": "erased", "erasure_salt": "synthetic", "erasure_digest": "synthetic"},
+    ]
+    memory_entries_path().write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    assert _mem_sessions() == {"", _B}, "only erased rows may disappear from the live view"
+    assert load_jsonl(memory_entries_path()) == rows, "reading memory must not rewrite erasure evidence"

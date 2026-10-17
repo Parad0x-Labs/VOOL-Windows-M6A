@@ -9,6 +9,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/windows-release-gauntlet.yml"
+      - "ops/windows_native_ci_user.ps1"
       - "Install_And_Run_VOOL.ps1"
       - "Install_And_Run_VOOL.bat"
       - "Test_VOOL_Windows_Gauntlet.cmd"
@@ -65,6 +66,7 @@ on:
     branches: [main, develop]
     paths:
       - ".github/workflows/windows-release-gauntlet.yml"
+      - "ops/windows_native_ci_user.ps1"
       - "Install_And_Run_VOOL.ps1"
       - "Install_And_Run_VOOL.bat"
       - "Test_VOOL_Windows_Gauntlet.cmd"
@@ -138,7 +140,7 @@ jobs:
           python -m pip install -e ".[dev,companion]"
       - name: Check native bundle contracts
         shell: pwsh
-        run: python -m pytest -q tests/test_bundle_tooling.py tests/test_native_runtime_supervisor.py tests/test_windows_inno_compile.py
+        run: python -m pytest -q tests/test_bundle_tooling.py tests/test_native_runtime_supervisor.py tests/test_windows_inno_compile.py tests/test_ci_verification_contract.py
       - name: Compile native approval host from locked dependencies
         shell: pwsh
         run: |
@@ -151,18 +153,33 @@ jobs:
       - name: Build and exercise native execution broker
         shell: pwsh
         run: |
-          dotnet restore installer/windows_broker/Vool.WindowsBroker.csproj
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          dotnet publish installer/windows_broker/Vool.WindowsBroker.csproj --configuration Release --no-restore -warnaserror
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          dotnet restore installer/windows_broker/tests/Vool.WindowsBroker.Tests.csproj
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          dotnet build installer/windows_broker/tests/Vool.WindowsBroker.Tests.csproj --configuration Release --no-restore -warnaserror
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $broker = (Resolve-Path installer/windows_broker/bin/Release/net10.0-windows10.0.17763.0/win-x64/publish/vool-broker.exe).Path
-          $tests = (Resolve-Path installer/windows_broker/tests/bin/Release/net10.0-windows10.0.17763.0/win-x64/vool-broker-tests.exe).Path
-          & $tests $broker
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Path .windows-broker-logs -Force | Out-Null
+          Start-Transcript -Path .windows-broker-logs/native-broker.log
+          try {
+            dotnet restore installer/windows_broker/Vool.WindowsBroker.csproj
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            dotnet publish installer/windows_broker/Vool.WindowsBroker.csproj --configuration Release --no-restore -warnaserror
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            dotnet restore installer/windows_broker/tests/Vool.WindowsBroker.Tests.csproj
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            dotnet build installer/windows_broker/tests/Vool.WindowsBroker.Tests.csproj --configuration Release --no-restore -warnaserror
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $broker = (Resolve-Path installer/windows_broker/bin/Release/net10.0-windows10.0.17763.0/win-x64/publish/vool-broker.exe).Path
+            $tests = (Resolve-Path installer/windows_broker/tests/bin/Release/net10.0-windows10.0.17763.0/win-x64/vool-broker-tests.exe).Path
+            & pwsh -NoLogo -NoProfile -NonInteractive -File ops/windows_native_ci_user.ps1
+            $brokerExit = $LASTEXITCODE
+            if ($brokerExit -ne 0) { exit $brokerExit }
+          } finally {
+            Stop-Transcript
+          }
+      - name: Upload native broker evidence
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: vool-windows-native-broker
+          path: .windows-broker-logs/
+          include-hidden-files: true
+          if-no-files-found: error
       - name: Check Windows trust and source inventory
         shell: pwsh
         run: |

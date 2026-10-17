@@ -29,6 +29,7 @@ from core.model_registry import ModelRegistry
 from core.task_router import create_task_record
 from storage.db import get_connection
 from storage.migrations import run_migrations
+from tests._ollama_metadata_server import OllamaMetadataHandler
 
 TOOLS = build_cloud_tool_definitions(
     [
@@ -44,13 +45,15 @@ TOOLS = build_cloud_tool_definitions(
 # --- seam 1: the Ollama lane raises typed on ANY tool_intent turn, not only tools_required ----
 
 
-class _FixtureHandler(http.server.BaseHTTPRequestHandler):
+class _FixtureHandler(OllamaMetadataHandler):
     body: bytes = b"{}"
 
     def log_message(self, fmt, *args):
         pass
 
     def do_POST(self):
+        if self.serve_model_metadata():
+            return
         self.rfile.read(int(self.headers.get("Content-Length", 0) or 0))
         cls = type(self)
         self.send_response(200)

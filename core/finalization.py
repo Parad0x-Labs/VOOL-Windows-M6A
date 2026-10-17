@@ -28,9 +28,15 @@ import hashlib
 import logging
 import os
 import sqlite3
-from typing import Any
+from collections.abc import Iterable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from storage.db import get_connection
+
+if TYPE_CHECKING:
+    from core.semantic.publication_conservation import PublishedSlot
+    from core.semantic.slot_reconciliation import SlotResult
 
 _log = logging.getLogger(__name__)
 
@@ -182,20 +188,102 @@ RSS_REASON_ANSWERED_IN_PART = (
 )
 
 
-def _render_closure_rows(pending: list[dict[str, Any]], content: str) -> str:
+@dataclass(frozen=True)
+class _RenderedClosureRow:
+    slot_id: str
+    ledger_state: str
+    rendering: str
+    byte_start: int
+    byte_end: int
+
+
+@dataclass(frozen=True)
+class _ClosureRenderReceipt:
+    """Private render-to-finalization handoff; never read from caller context or persisted."""
+
+    set_id: str
+    set_version: str
+    turn_id: str
+    graph_digest: str
+    section: str
+    rows: tuple[_RenderedClosureRow, ...]
+
+
+def _render_closure_rows(
+    pending: list[dict[str, Any]], content: str, *, _owned_rows: list[_RenderedClosureRow] | None = None,
+) -> str:
     """The closure section: unanswered slots under one header, partially answered under another."""
     unanswered = [row for row in pending if not row.get("answered_in_part")]
     partial = [row for row in pending if row.get("answered_in_part")]
     blocks: list[str] = []
-    if unanswered:
-        lines = [] if RSS_UNAVAILABLE_HEADER in content else [RSS_UNAVAILABLE_HEADER]
-        lines += [f"* {str(row.get('text') or '').strip()} — {row.get('reason')}" for row in unanswered]
-        blocks.append("\n".join(lines))
-    if partial:
-        lines = [] if RSS_PARTIAL_HEADER in content else [RSS_PARTIAL_HEADER]
-        lines += [f"* {str(row.get('text') or '').strip()} — {row.get('reason')}" for row in partial]
+    offset = 0
+    for group, header in ((unanswered, RSS_UNAVAILABLE_HEADER), (partial, RSS_PARTIAL_HEADER)):
+        if not group:
+            continue
+        if blocks:
+            offset += 2
+        lines = [] if header in content else [header]
+        if lines:
+            offset += len(header.encode("utf-8"))
+        for row in group:
+            if lines:
+                offset += 1
+            line = f"* {str(row.get('text') or '').strip()} — {row.get('reason')}"
+            start = offset
+            offset += len(line.encode("utf-8"))
+            if _owned_rows is not None:
+                _owned_rows.append(_RenderedClosureRow(
+                    slot_id=str(row.get("unit_id") or ""), ledger_state=str(row.get("state") or ""),
+                    rendering=line, byte_start=start, byte_end=offset,
+                ))
+            lines.append(line)
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks)
+
+
+def _closure_publications(
+    receipts: tuple[_ClosureRenderReceipt, ...], *, bound: tuple[str, str],
+    rows: Iterable[dict[str, Any]], results: Iterable[SlotResult], content: str,
+) -> tuple[PublishedSlot, ...]:
+    """Bind owned disclosure rows to the final suffix, not a guessed matching occurrence.
+
+    Table normalization may move the suffix; it must preserve the entire owned section verbatim.
+    Cancellation, lost/edited rows, stale bindings and answered-state claims stay invalid. No
+    receipt is semantic evidence that a model answered a slot. Duplicates are retained for refusal.
+    """
+    from core.semantic.publication_conservation import PublishedSlot
+    from core.semantic.request_graph import SlotId, TerminalDisposition
+
+    payload = content.encode("utf-8")
+    source_rows = {str(row.get("unit_id") or ""): row for row in rows}
+    dispositions = {str(result.slot_id): result.disposition for result in results}
+    content_hash = _sha256_hex(content)
+    out = []
+    for receipt in receipts:
+        section = receipt.section.encode("utf-8")
+        intact = bool(section) and payload.endswith(section)
+        base = len(payload) - len(section)
+        for row in receipt.rows:
+            span_valid = (
+                type(row.byte_start) is int and type(row.byte_end) is int
+                and 0 <= row.byte_start < row.byte_end <= len(section)
+            )
+            source = source_rows.get(row.slot_id)
+            valid = (
+                intact and span_valid and (receipt.set_id, receipt.set_version) == bound
+                and source is not None and row.ledger_state == str(source.get("state") or "")
+                and row.rendering.startswith(f"* {str(source.get('text') or '').strip()} — ")
+                and section[row.byte_start:row.byte_end] == row.rendering.encode("utf-8")
+                and dispositions.get(row.slot_id) is not TerminalDisposition.ANSWERED
+            )
+            out.append(PublishedSlot(
+                slot_id=SlotId(row.slot_id), visible=True, rendering=row.rendering,
+                turn_id=receipt.turn_id, graph_digest=receipt.graph_digest,
+                content_hash=content_hash if valid else "",
+                byte_start=base + row.byte_start if intact and span_valid else -1,
+                byte_end=base + row.byte_end if intact and span_valid else -1,
+            ))
+    return tuple(out)
 
 
 def _rss_bound_set(caller_closure: dict[str, Any] | None) -> tuple[str, str] | None:
@@ -271,7 +359,8 @@ CONSERVATION_EVENT = "semantic_conservation_verdict"
 
 
 def _semantic_conservation_verdict(
-    caller_closure: dict[str, Any] | None, content: str, source_context: dict[str, Any] | None
+    caller_closure: dict[str, Any] | None, content: str, source_context: dict[str, Any] | None,
+    *, _render_receipts: tuple[_ClosureRenderReceipt, ...] = (),
 ) -> dict[str, Any] | None:
     """The slot-conservation and publication-conservation verdicts for this turn, recorded.
 
@@ -280,11 +369,14 @@ def _semantic_conservation_verdict(
     THIS turn's graph. Publication law: every terminal slot is VISIBLE in the served bytes.
 
     EVIDENCE GRADE. The only per-slot evidence this runtime can derive from the final payload today
-    is the text ladder (``unit_answer_evidence`` over the FINAL bytes -- after grounding, redaction
+    for ordinary answer prose is the text ladder (``unit_answer_evidence`` over the FINAL bytes -- after grounding, redaction
     and format passes). A ledger row that says ``satisfied`` is a label; it counts as an answer here
     only if the ladder finds the slot in the bytes that ship, and it is reported as UNVERIFIED (and
-    hidden) otherwise. Renderer-emitted slot-bound blocks are the stronger evidence this verdict
-    does not yet have, and the grade says so; nobody may read this verdict as block-bound proof.
+    hidden) otherwise. Publication references bind actual final UTF-8 spans to the slot, turn,
+    graph and payload hash. Their assignment still comes from lexical inference, NOT renderer-
+    emitted semantic blocks; neither a span nor a hash proves semantic fulfillment. Closure rows
+    emitted here carry private renderer-owned receipts instead: they prove visible disclosure of
+    a disposition, never that an unknown or partial slot was answered.
 
     STATUS. ``evaluated`` when a graph and terminal rows existed; ``not_evaluated`` with a reason
     when they did not (no bound set, a pre-graph set, an UNREADABLE stored graph, no rows). A missing
@@ -301,11 +393,19 @@ def _semantic_conservation_verdict(
         "status": "not_evaluated",
         "reason": "",
         "evidence_grade": "text_ladder_over_final_bytes",
+        "publication_evidence_grade": "slot_turn_graph_bound_final_byte_spans",
+        "final_content_hash": _sha256_hex(content),
         "enforced": os.environ.get(CONSERVATION_ENV, "").strip().lower() == "enforce",
     }
     try:
-        from core.agent_runtime.answer_coverage import DEMAND_SATISFIED, unit_answer_evidence, unit_is_disclosed_in
+        from core.agent_runtime.answer_coverage import (
+            DEMAND_SATISFIED,
+            answering_body,
+            unit_answer_evidence,
+            unit_is_disclosed_in,
+        )
         from core.conductor import obligation_ledger as _obligations
+        from core.semantic.answer_proof import answer_proof
         from core.semantic.bridges.demand import slot_results_from_ledger
         from core.semantic.bridges.ledger import graph_from_snapshot, snapshot_has_graph
         from core.semantic.bridges.publication import published_slots
@@ -324,6 +424,8 @@ def _semantic_conservation_verdict(
             _emit_conservation_event(source_context, verdict)
             return verdict
         request_text = str((snapshot or {}).get("request_text") or "")
+        semantic_answer_proof = answer_proof(graph, request_text=request_text, final_content=content)
+        semantic_answer_proof.update(set_id=bound[0], set_version=bound[1])
         ladder = unit_answer_evidence(request_text, content) if request_text else {}
         answered: dict[str, str] = {}
         rendered: dict[str, str] = {}
@@ -332,19 +434,33 @@ def _semantic_conservation_verdict(
             state = str(row.get("state") or "")
             if state == DEMAND_SATISFIED:
                 if ladder.get(unit_id) == DEMAND_SATISFIED:
-                    answered[unit_id] = f"text_ladder:{DEMAND_SATISFIED}"
+                    # This is supporting text, not a label pretending to be served content.
+                    # Per-slot fulfillment remains the lexical ladder's explicitly weak claim.
+                    answered[unit_id] = answering_body(content)
             elif unit_is_disclosed_in(str(row.get("text") or ""), content):
-                rendered[unit_id] = str(row.get("text") or "")
+                rendered[unit_id] = next(
+                    line for line in content.splitlines()
+                    if unit_is_disclosed_in(str(row.get("text") or ""), line)
+                )
         results = slot_results_from_ledger(rows, answered_content=answered, graph=graph)
         reconciliation = reconcile(graph, results, require_binding=True)
-        publication = verify_publication(
-            reconciliation, published_slots(results, answered_units=answered, rendered_units=rendered)
+        published = published_slots(
+            results, answered_units=answered, rendered_units=rendered, final_content=content,
         )
+        owned = _closure_publications(_render_receipts, bound=bound, rows=rows, results=results, content=content)
+        owned_ids = {str(record.slot_id) for record in owned}
+        # An explicit owned claim, even an invalid one, cannot escape via lexical fallback.
+        published = tuple(record for record in published if str(record.slot_id) not in owned_ids) + owned
+        publication = verify_publication(reconciliation, published, final_content=content)
+        rows_by_unit = {str(row.get("unit_id") or ""): row for row in rows}
+        publication_by_slot = {str(p.slot_id): p for p in published}
         verdict.update({
             "status": "evaluated",
             "graph_digest": _graph_digest_of(graph),
             "frozen_slot_count": len(graph.slot_ids),
             "terminal_slot_count": len(results),
+            # Independent of lexical coverage/publication; never promotes a ledger disposition.
+            "semantic_answer_proof": semantic_answer_proof,
             "slot_conservation": {
                 "conserved": reconciliation.conserved,
                 "missing": list(reconciliation.missing),
@@ -359,7 +475,32 @@ def _semantic_conservation_verdict(
                 "omitted": list(publication.omitted),
                 "hidden": list(publication.hidden),
                 "invented": list(publication.invented),
+                "duplicated": list(publication.duplicated),
+                "invalid": list(publication.invalid),
             },
+            # Text-free provenance makes unverified fulfillment distinguishable from byte loss.
+            # A hidden inferred slot is not proof that the actual rendered answer omitted it.
+            "slot_evidence": [
+                {
+                    "slot_id": str(result.slot_id),
+                    "disposition": result.disposition.value,
+                    "ledger_state": str(rows_by_unit[str(result.slot_id)].get("state") or ""),
+                    "evidence_source": str(rows_by_unit[str(result.slot_id)].get("evidence_source") or ""),
+                    "fulfillment_evidence": str(ladder.get(str(result.slot_id)) or "indeterminate"),
+                    "visibility_basis": "renderer_owned" if str(result.slot_id) in owned_ids else "lexical_inference",
+                    "final_byte_coverage": (
+                        "verified" if publication_by_slot[str(result.slot_id)].visible
+                        and result.slot_id not in publication.invalid
+                        and result.slot_id not in publication.duplicated else "indeterminate"
+                    ),
+                    "turn_id": result.turn_id,
+                    "graph_digest": result.graph_digest,
+                    "content_hash": publication_by_slot[str(result.slot_id)].content_hash,
+                    "byte_start": publication_by_slot[str(result.slot_id)].byte_start,
+                    "byte_end": publication_by_slot[str(result.slot_id)].byte_end,
+                }
+                for result in results
+            ],
         })
         _emit_conservation_event(source_context, verdict)
         return verdict
@@ -411,6 +552,7 @@ def _rss_closure_sweep(
     *,
     withheld_reason: str = RSS_REASON_WITHHELD,
     published_in_part: bool = False,
+    _render_receipts: list[_ClosureRenderReceipt] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """THE enforcement point: no requested slot leaves this turn unaccounted.
 
@@ -615,7 +757,21 @@ def _rss_closure_sweep(
         census["demand_rendered"] = len(pending)
         if not pending:
             return content, census
-        return content.rstrip() + "\n\n" + _render_closure_rows(pending, content), census
+        owned_rows: list[_RenderedClosureRow] = []
+        section = _render_closure_rows(pending, content, _owned_rows=owned_rows)
+        if _render_receipts is not None and _frozen_source == "graph":
+            try:
+                from core.semantic.bridges.ledger import graph_from_snapshot
+
+                graph = graph_from_snapshot(_obligations.snapshot_request_graph(*bound))
+                if graph is not None:
+                    _render_receipts.append(_ClosureRenderReceipt(
+                        set_id=bound[0], set_version=bound[1], turn_id=str(graph.turn_id or ""),
+                        graph_digest=_graph_digest_of(graph), section=section, rows=tuple(owned_rows),
+                    ))
+            except Exception as exc:
+                _log.warning("closure render ownership unavailable: %s", type(exc).__name__)
+        return content.rstrip() + "\n\n" + section, census
     except Exception as exc:  # never let accounting discard a computed answer
         _log.warning("RSS closure sweep failed; turn ships unswept: %s", exc)
         return content, {"rss_sweep_error": type(exc).__name__}
@@ -953,6 +1109,7 @@ def finalize_answer(
         else RSS_REASON_WITHHELD
     )
     _publication = dict(_grounding_record.get("publication") or {})
+    _render_receipts: list[_ClosureRenderReceipt] = []
     content, _rss_census = _rss_closure_sweep(
         content,
         closure,
@@ -960,6 +1117,7 @@ def finalize_answer(
         withheld_reason=_withheld_reason,
         # Supported statements shipped beside the withheld ones: the slot was answered in part.
         published_in_part=bool(_withheld) and int(_publication.get("supported_claim_count") or 0) > 0,
+        _render_receipts=_render_receipts,
     )
     # PRESENTATION RENDER LANE — the recovered renderer family (recovery vault
     # family `presentation-render`), live at the one door every answer crosses.
@@ -976,39 +1134,6 @@ def finalize_answer(
     except Exception:  # pragma: no cover - the lane must not be able to end a working turn
         _log.exception("presentation render lane failed; publishing unrendered")
         _render_lane_record = {}
-    # KEYSTONE: slot + publication conservation over the door's RequestGraph, from the ledger's own
-    # terminal rows. Recorded as a ledger event every turn; refuses only under the enforce flag.
-    # `source_context` was discarded above (reserved-key law); the retained copy carries the
-    # session/turn keys the ledger event funnel reads.
-    _conservation = _semantic_conservation_verdict(closure, content, _selection_context)
-    if (
-        _conservation is not None
-        and _conservation.get("enforced")
-        and _conservation.get("status") == "evaluated"
-    ):
-        _slot_ok = bool(_conservation["slot_conservation"]["conserved"])
-        _pub_ok = bool(_conservation["publication_conservation"]["conserved"])
-        if not (_slot_ok and _pub_ok):
-            raise FinalizationRejected(
-                "",
-                "SLOT_CONSERVATION:" + ("slots" if not _slot_ok else "publication") + f":{_conservation['set_version']}",
-                "",
-            )
-    # C19 PRESENTATION SELECTION — post-gate re-stamp. The router's pre-gate
-    # record rides ``display_metadata``/turn context and describes bytes the
-    # gates above could still have replaced; the shipped record is re-derived
-    # from the bytes that actually commit, so it can never describe bytes that
-    # did not ship. On a REFUSED turn the shipped truth is the refusal.
-    _grounding_refused = str(
-        dict(_grounding_record.get("publication") or {}).get("state") or ""
-    ) == "refused"
-    _presentation_selection = _restamp_presentation_selection(
-        content,
-        _selection_context,
-        display_metadata,
-        _grounding_refused,
-        turn_id,
-    )
     # F-07: the durable ledger is authoritative; caller dict advisory only.
     verdict = _authoritative_closure_verdict(closure)
     if not isinstance(verdict, dict) or not {
@@ -1055,7 +1180,7 @@ def finalize_answer(
     if _turn_cancel_marker_fired(_cancel_context):
         # The operator cancelled this turn and the cancel was acknowledged. Whatever the lanes
         # composed afterwards is not published: the committed bytes are the typed cancel notice --
-        # decided AFTER every gate and the closure sweep so nothing rewrites it -- and the typed
+        # decided AFTER every content-mutating gate and the closure sweep so nothing rewrites it -- and the typed
         # `task_cancelled` reaches the page. Measured 2026-09-06 on a scratch daemon: a cancel
         # acknowledged mid-retrieval was followed by every remaining facet query, a model call and
         # a published comparison -- an orphan answer under a cancelled turn.
@@ -1073,6 +1198,31 @@ def finalize_answer(
             )
         except Exception:
             pass
+    # KEYSTONE: verify the FINAL bytes, including a cancellation replacement. No content mutation
+    # may follow these span/hash references. The retained context carries the ledger's session keys.
+    _conservation = _semantic_conservation_verdict(
+        closure, content, _selection_context, _render_receipts=tuple(_render_receipts),
+    )
+    if (
+        _conservation is not None
+        and _conservation.get("enforced")
+        and _conservation.get("status") == "evaluated"
+    ):
+        _slot_ok = bool(_conservation["slot_conservation"]["conserved"])
+        _pub_ok = bool(_conservation["publication_conservation"]["conserved"])
+        if not (_slot_ok and _pub_ok):
+            raise FinalizationRejected(
+                "",
+                "SLOT_CONSERVATION:" + ("slots" if not _slot_ok else "publication") + f":{_conservation['set_version']}",
+                "",
+            )
+    # C19 post-gate re-stamp must also describe the final cancellation/refusal/answer bytes.
+    _grounding_refused = str(
+        dict(_grounding_record.get("publication") or {}).get("state") or ""
+    ) == "refused"
+    _presentation_selection = _restamp_presentation_selection(
+        content, _selection_context, display_metadata, _grounding_refused, turn_id,
+    )
     content_hash = _sha256_hex(content)
     clean_turn_id = str(turn_id or "").strip()
     # K-09: finalization identity derives from OPAQUE inputs
@@ -1223,6 +1373,9 @@ def no_answer_terminal(
     # rows, so no fence presentation is required.
     semantic_result_id = current_semantic_result_id()
     verdict = _authoritative_closure_verdict(closure)
+    from core.semantic.semantic_admissions import current_request_id
+
+    bound_request_id = str(current_request_id() or "")
     if persist:
         from core.semantic.semantic_admissions import (
             current_execution_identity,
@@ -1232,7 +1385,7 @@ def no_answer_terminal(
         enforce_fence_if_onboarded()
         cited_sr = semantic_result_id.strip()
         if cited_sr:
-            from core.semantic.semantic_admissions import admission_exists
+            from core.semantic.semantic_admissions import admission_exists, get_admission
 
             if not admission_exists(cited_sr):
                 raise FinalizationRejected(
@@ -1240,6 +1393,9 @@ def no_answer_terminal(
                     "NO_ADMISSION_ROW",
                     "",
                 )
+            admission = get_admission(cited_sr) or {}
+            if bound_request_id and admission.get("request_id") != bound_request_id:
+                raise FinalizationRejected(cited_sr, "ADMISSION_REQUEST_MISMATCH", "")
         if not cited_sr and current_execution_identity():
             raise FinalizationRejected("", "EMPTY_SR_ONBOARDED_LANE", "")
     record = {
@@ -1247,30 +1403,27 @@ def no_answer_terminal(
         "version": 1,
         "turn_id": str(turn_id or "").strip(),
         "semantic_result_id": semantic_result_id,
+        "request_id": bound_request_id,
         "status": NO_ANSWER_TERMINAL,
         "reason_code": str(reason_code or "unspecified"),
         "detail": str(detail or ""),
         "closure_verdict": verdict,
     }
-    # The turn ends with no semantic answer: the staged transcript row (if the lane staged one)
-    # is written with an EMPTY assistant text and the typed reason, never with the draft that
-    # was refused -- the transcript says what the wire said.
-    try:
-        from core.persistent_memory import TRANSCRIPT_COMMIT_STATE_NO_ANSWER, flush_staged_conversation_events
-        from core.semantic.semantic_admissions import current_request_id as _na_request_id
-
-        _na_bound = str(_na_request_id() or "")
-        if _na_bound:
-            flush_staged_conversation_events(
-                _na_bound,
-                commit_state=TRANSCRIPT_COMMIT_STATE_NO_ANSWER,
-                assistant_text="",
-            )
-    except Exception:
-        _log.exception("staged transcript row was not flushed at the no-answer terminal")
     if persist:
         conn = get_connection()
         try:
+            from core.semantic.semantic_admissions import current_execution_identity
+
+            identity = current_execution_identity()
+            # The fence shares the INSERT snapshot. Terminal generations may
+            # record no-answer truth, but a stale tuple still writes zero rows.
+            fence = ""
+            params = []
+            if identity:
+                fence = (" WHERE EXISTS (SELECT 1 FROM executions WHERE execution_id = ? "
+                         "AND generation = ? AND runtime_epoch = ?)")
+                params = [str(identity.get("execution_id") or ""), int(identity.get("generation") or 0),
+                          str(identity.get("runtime_epoch") or "")]
             finalization_id = "fc:" + hashlib.sha256(
                 "\x1f".join(
                     (
@@ -1282,30 +1435,119 @@ def no_answer_terminal(
                     )
                 ).encode("utf-8")
             ).hexdigest()[:32]
-            conn.execute(
+            cursor = conn.execute(
                 """
                 INSERT INTO a7_finalizations (
                     finalization_id, semantic_result_id, turn_id, content_hash,
                     canonical_content, status, request_id, payload_ref,
                     availability, terminal_reason
-                ) VALUES (?, ?, ?, '', '', ?, ?, NULL, 'AVAILABLE', ?)
-                """,
+                ) SELECT ?, ?, ?, '', '', ?, ?, NULL, 'AVAILABLE', ?
+                """ + fence,
                 (
                     finalization_id,
                     record["semantic_result_id"],
                     record["turn_id"],
                     NO_ANSWER_TERMINAL,
-                    "",
+                    bound_request_id,
                     str(record["reason_code"]),
+                    *params,
                 ),
             )
+            if cursor.rowcount != 1:
+                from core.invocation.ledger import FenceRefused
+
+                raise FenceRefused("no-answer finalization fence refused")
             conn.commit()
             record["finalization_id"] = finalization_id
         except sqlite3.IntegrityError:
             conn.rollback()
+            # First truth wins. A duplicate must return the existing seal,
+            # not hide an incompatible answer/reason under a silent conflict.
+            stored = conn.execute(
+                "SELECT * FROM a7_finalizations WHERE (semantic_result_id = ? AND semantic_result_id != '') "
+                "OR (request_id = ? AND request_id != '')",
+                (semantic_result_id, bound_request_id),
+            ).fetchall()
+            if (len(stored) != 1 or stored[0]["status"] != NO_ANSWER_TERMINAL
+                    or stored[0]["terminal_reason"] != record["reason_code"]
+                    or stored[0]["turn_id"] != record["turn_id"]
+                    or str(stored[0]["request_id"] or "") != bound_request_id):
+                raise FinalizationRejected(semantic_result_id, "NO_ANSWER_CONFLICT", "")
+            record["finalization_id"] = stored[0]["finalization_id"]
+            record["semantic_result_id"] = stored[0]["semantic_result_id"]
         finally:
             conn.close()
+    # A refused durable write cannot flush a transcript. Non-persisted typed
+    # terminals retain the legacy contract: discard the staged draft and write
+    # its existing user row with empty assistant text, without minting an A7 row.
+    try:
+        from core.persistent_memory import TRANSCRIPT_COMMIT_STATE_NO_ANSWER, flush_staged_conversation_events
+
+        if bound_request_id:
+            flush_staged_conversation_events(bound_request_id,
+                commit_state=TRANSCRIPT_COMMIT_STATE_NO_ANSWER, assistant_text="")
+    except Exception:
+        _log.exception("staged transcript row was not flushed at the no-answer terminal")
     return record
+
+
+def finalize_denied_approval(*, binding: dict[str, Any], turn_id: str, approval_id: str) -> dict[str, Any]:
+    """Finalize the denied request in its own scope, never the operator's newer turn."""
+    from core.conductor import obligation_ledger as ledger
+    from core.semantic.semantic_admissions import (
+        bound_execution_context,
+        bound_request_context,
+        enforce_fence_if_onboarded,
+    )
+    from core.semantic.semantic_result_seam import SemanticSource, admit_semantic_result, reset_admission
+
+    def finalize() -> dict[str, Any]:
+        request_id = str(binding.get("request_id") or "")
+        owned_set = binding.get("obligation_set")
+        if not request_id or not turn_id or not approval_id or not owned_set or len(owned_set) != 2:
+            raise ValueError("denial finalization requires its original request and obligation set")
+        with bound_request_context(request_id), bound_execution_context(binding):
+            enforce_fence_if_onboarded()
+            snapshot = ledger._read_snapshot(*owned_set)
+            if not snapshot or snapshot.get("request_id") != request_id:
+                raise ValueError("denial obligation set belongs to a different request")
+            ledger.bind_active_set(*owned_set)
+            reset_admission()
+            # Finalization is the demand disposition owner. Existing satisfied
+            # or failed work is retained; only unresolved work is cancelled.
+            for item in snapshot.get("obligations") or []:
+                if item.get("state") in {"planned", "absent"}:
+                    ledger.record_disposition(*owned_set, str(item["obligation_id"]), "cancelled",
+                        evidence_source=ledger.RSS_SWEEP_EVIDENCE if item.get("kind") == "demand" else "operator_denial",
+                        evidence_ref=approval_id)
+            verdict = ledger.closure_verdict(*owned_set)
+            if verdict.get("open_count") != 0:
+                raise FinalizationRejected("", "DENIAL_OBLIGATIONS_OPEN", "")
+            conn = get_connection()
+            try:
+                existing = conn.execute("SELECT * FROM a7_finalizations WHERE request_id = ?", (request_id,)).fetchall()
+            finally:
+                conn.close()
+            if existing:
+                row = existing[0]
+                from core.semantic.semantic_admissions import get_admission
+
+                admission = get_admission(str(row["semantic_result_id"])) or {}
+                if (len(existing) != 1 or row["status"] != NO_ANSWER_TERMINAL
+                        or row["terminal_reason"] != "permission_denied" or row["turn_id"] != turn_id
+                        or admission.get("request_id") != request_id or admission.get("accepted") != 1
+                        or admission.get("source_class") != "refusal_policy"
+                        or admission.get("obligation_set_version") != owned_set[1]):
+                    raise FinalizationRejected("", "DENIAL_FINALIZATION_CONFLICT", "")
+                return {"finalization_id": row["finalization_id"], "semantic_result_id": row["semantic_result_id"]}
+            admit_semantic_result({"type": "no_answer.terminal", "reason_code": "permission_denied"},
+                source_override=SemanticSource.REFUSAL_POLICY, turn_id=turn_id,
+                denial_approval_id=approval_id)
+            return no_answer_terminal(turn_id=turn_id, reason_code="permission_denied", closure=verdict)
+
+    # Preserve every outer ContextVar (request, execution, admission and graph),
+    # including when finalization fails or the click belongs to another turn.
+    return contextvars.copy_context().run(finalize)
 
 
 def get_finalization_by_request_id(

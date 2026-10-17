@@ -22,7 +22,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shlex
 from pathlib import Path
 
 import pytest
@@ -56,10 +55,31 @@ def _open_and_identify(ctx: dict, path: str) -> str:
     read = door("code.task.step", {"task_id": task_id, "step_id": f"read-{path}", "intent": "workspace.read_file",
                                    "arguments": {"path": path}}, ctx)
     assert read.ok, read.response_text
-    probe = f"import runpy; assert runpy.run_path({path!r})['vat'](10) == 2"
-    reproduced = door("code.task.step", {"task_id": task_id, "step_id": f"repro-{path}", "intent": "workspace.run_tests",
-                                         "arguments": {"command": "python -c " + shlex.quote(probe)}}, ctx)
-    assert reproduced.details["tool_result"]["success"] is False, reproduced.details
+    root = Path(ctx["workspace"])
+    probe_dir = root / ".vool-test-probe"
+    probe_dir.mkdir(exist_ok=True)
+    probe_path = probe_dir / "test_reproduction.py"
+    probe_path.write_text(
+        "import runpy\n\n"
+        "def test_vat_is_one_fifth():\n"
+        f"    assert runpy.run_path({path!r})['vat'](10) == 2\n",
+        encoding="utf-8",
+    )
+    try:
+        reproduced = door(
+            "code.task.step",
+            {
+                "task_id": task_id,
+                "step_id": f"repro-{path}",
+                "intent": "workspace.run_tests",
+                "arguments": {"command": "python -m pytest -q .vool-test-probe/test_reproduction.py"},
+            },
+            ctx,
+        )
+    finally:
+        probe_path.unlink(missing_ok=True)
+        probe_dir.rmdir()
+    assert reproduced.details.get("tool_result", {}).get("success") is False, reproduced.details
     identified = door("code.task.identify", {"task_id": task_id, "path": path, "line": 2,
                                              "reason": "vat multiplies by two instead of taking a fifth"}, ctx)
     assert identified.ok, identified.response_text

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
@@ -53,6 +54,12 @@ internal static class Probe
                         throw new ArgumentOutOfRangeException(nameof(sleepMilliseconds));
                     Thread.Sleep(sleepMilliseconds);
                     result["sleptMs"] = sleepMilliseconds;
+                    break;
+
+                case "--inspect-console":
+                    result["consoleCodePage"] = GetConsoleCP();
+                    result["stdoutType"] = NativeMethods.GetFileType(GetStdHandle(-11));
+                    result["stderrType"] = NativeMethods.GetFileType(GetStdHandle(-12));
                     break;
 
                 case "--write-scratch":
@@ -134,10 +141,14 @@ internal static class Probe
                     break;
 
                 case "--job-child-report":
+                    if (arguments.Count != 2 || index != 0)
+                        throw new ArgumentException("--job-child-report requires exactly one report path.");
                     var reportPath = ReadValue(arguments, ref index, "--job-child-report");
                     WriteJobChildReport(reportPath);
-                    result["jobChildReport"] = true;
-                    break;
+                    // This child reports through the existing operation-owned
+                    // file, not stdout. Do not mix a second JSON object into the
+                    // parent's broker pipe or create pipes inside the sandbox.
+                    return 0;
 
                 case "--inspect":
                     break;
@@ -433,42 +444,63 @@ internal static class Probe
         if (string.IsNullOrWhiteSpace(processPath))
             return null;
 
-        var startInfo = new ProcessStartInfo(processPath)
+        var startupInfo = new NativeMethods.StartupInfoEx
         {
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
+            StartupInfo = new NativeMethods.StartupInfo
+            {
+                Cb = Marshal.SizeOf<NativeMethods.StartupInfo>(),
+            },
         };
-        startInfo.ArgumentList.Add("probe");
-        startInfo.ArgumentList.Add("--job-child-report");
-        startInfo.ArgumentList.Add(reportPath);
-        using var child = Process.Start(startInfo);
-        if (child is null)
-            return null;
-        if (!child.WaitForExit(5_000))
+        var commandLine = Marshal.StringToHGlobalUni(WindowsCommandLine.Build(
+            processPath, ["probe", "--job-child-report", reportPath]));
+        NativeMethods.ProcessInformation processInformation;
+        try
         {
-            try
-            {
-                child.Kill(entireProcessTree: true);
-            }
-            catch (InvalidOperationException)
-            {
-                // The job remains the authoritative cleanup boundary.
-            }
+            // Inherit the current restricted token and job, but no handles or
+            // console. This fixed self-probe needs neither a shell nor stdio pipes.
+            if (!NativeMethods.CreateProcessW(
+                    processPath, commandLine, IntPtr.Zero, IntPtr.Zero,
+                    inheritHandles: false, NativeMethods.DetachedProcess,
+                    IntPtr.Zero, Environment.CurrentDirectory,
+                    ref startupInfo, out processInformation))
+                throw NativeMethods.LastError("CreateProcessW(detached job-report child)");
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(commandLine);
+        }
+        using var child = new SafeNativeHandle(processInformation.Process, ownsHandle: true);
+        using var thread = new SafeNativeHandle(processInformation.Thread, ownsHandle: true);
+        if (child.IsInvalid || thread.IsInvalid)
+            throw new BrokerSecurityException("Job-report child returned invalid native handles.");
+        var wait = NativeMethods.WaitForSingleObject(child, 5_000);
+        if (wait == NativeMethods.WaitTimeout)
+        {
+            // The enclosing broker's job remains the authoritative cleanup boundary.
             return null;
         }
+        if (wait != NativeMethods.WaitObject0)
+            throw NativeMethods.LastError("WaitForSingleObject(job-report child)");
+        if (!NativeMethods.GetExitCodeProcess(child, out var exitCode))
+            throw NativeMethods.LastError("GetExitCodeProcess(job-report child)");
 
-        _ = child.StandardOutput.ReadToEnd();
-        _ = child.StandardError.ReadToEnd();
+        if (exitCode != 0)
+            throw new BrokerSecurityException($"Child job-report exited {unchecked((int)exitCode)} (0x{exitCode:X8}).");
         var inJob = false;
         if (File.Exists(reportPath))
         {
             using var document = JsonDocument.Parse(File.ReadAllText(reportPath));
             inJob = document.RootElement.TryGetProperty("inJob", out var property)
                 && property.ValueKind == JsonValueKind.True;
+            var childToken = document.RootElement.GetProperty("token").Deserialize<TokenSecuritySnapshot>(JsonOptions)
+                ?? throw new BrokerSecurityException("Child job-report has no token evidence.");
+            using var parentToken = OpenCurrentToken();
+            var expected = TokenInspector.Inspect(parentToken);
+            TokenInspector.RequireUntrustedExecutionToken(childToken, expected.AppContainerSid);
+            if (childToken.UserSid != expected.UserSid)
+                throw new BrokerSecurityException("Child job-report user SID does not match its parent.");
         }
-        return (child.ExitCode, inJob);
+        return (unchecked((int)exitCode), inJob);
     }
 
     private static int SpawnSleeper(int milliseconds)
@@ -490,10 +522,11 @@ internal static class Probe
 
     private static void WriteJobChildReport(string reportPath)
     {
-        var inJob = NativeMethods.IsProcessInJob(
+        if (!NativeMethods.IsProcessInJob(
             NativeMethods.GetCurrentProcess(),
             IntPtr.Zero,
-            out var isInJob) && isInJob;
+            out var inJob))
+            throw NativeMethods.LastError("IsProcessInJob(job-report child)");
         using var token = OpenCurrentToken();
         var payload = new
         {
@@ -517,6 +550,12 @@ internal static class Probe
             throw new ArgumentException($"Invalid integer for {option}.");
         return parsed;
     }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern uint GetConsoleCP();
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern IntPtr GetStdHandle(int standardHandle);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

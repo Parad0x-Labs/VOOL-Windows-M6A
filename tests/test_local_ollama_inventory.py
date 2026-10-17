@@ -2,7 +2,29 @@ from __future__ import annotations
 
 from unittest import mock
 
-from core.local_ollama_inventory import installed_ollama_model_inventory
+import pytest
+
+from core.local_ollama_inventory import installed_ollama_model_inventory, ollama_reasoning_support
+
+
+@pytest.mark.parametrize("architecture", ["qwen3", "qwen3moe"])
+@pytest.mark.parametrize("finetune,expected", [("Thinking", "thinking_only"), ("Instruct", "non_thinking_only")])
+def test_reasoning_support_uses_actual_2507_weight_metadata(architecture, finetune, expected):
+    assert ollama_reasoning_support({
+        "general.architecture": architecture,
+        "general.version": "2507",
+        "general.finetune": finetune,
+    }) == expected
+
+
+@pytest.mark.parametrize("metadata", [
+    None, [], {}, {"general.name": "Qwen3-4B-Thinking-2507"},
+    {"general.architecture": "qwen3", "general.finetune": "Thinking"},
+    {"general.architecture": "qwen3", "general.version": "2507", "general.finetune": "hybrid"},
+    {"general.architecture": "other", "general.version": "2507", "general.finetune": "Thinking"},
+])
+def test_reasoning_support_does_not_guess_from_missing_or_unknown_metadata(metadata):
+    assert ollama_reasoning_support(metadata) == "unknown"
 
 
 def test_inventory_preserves_exact_ollama_artifact_size_bytes() -> None:

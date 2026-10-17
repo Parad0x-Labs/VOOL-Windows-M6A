@@ -91,10 +91,11 @@ def response_header_facts(headers: Any) -> dict[str, str]:
 
 def build_verification_receipt(*, call_id: str, request_id: str, requested_model: str,
                                selected_model: str, provider_id: str, response: Any = None,
-                               outcome: str = 'completed', timestamp: float | None = None) -> dict[str, Any]:
+                               outcome: str = 'completed', timestamp: float | None = None,
+                               call_role: str = '') -> dict[str, Any]:
     """Malformed response metadata must never discard a usable model answer."""
     args = dict(call_id=call_id, request_id=request_id, requested_model=requested_model,
-                selected_model=selected_model, provider_id=provider_id, outcome=outcome)
+                selected_model=selected_model, provider_id=provider_id, outcome=outcome, call_role=call_role)
     try:
         return _build_verification_receipt(**args, response=response, timestamp=timestamp)
     except Exception:
@@ -113,7 +114,8 @@ def build_verification_receipt(*, call_id: str, request_id: str, requested_model
 
 def _build_verification_receipt(*, call_id: str, request_id: str, requested_model: str,
                                selected_model: str, provider_id: str, response: Any = None,
-                               outcome: str = 'completed', timestamp: float | None = None) -> dict[str, Any]:
+                               outcome: str = 'completed', timestamp: float | None = None,
+                               call_role: str = '') -> dict[str, Any]:
     now = time.time() if timestamp is None else timestamp
     metadata = _mapping(getattr(response, 'provider_metadata', None) or getattr(response, 'provider_evidence', None))
     usepod = _mapping(metadata.get('usepod'))
@@ -131,6 +133,8 @@ def _build_verification_receipt(*, call_id: str, request_id: str, requested_mode
         'call_id': _text(call_id), 'request_id': _text(request_id),
         'timestamp': datetime.fromtimestamp(now, timezone.utc).isoformat(),
         'outcome': outcome,
+        # Runtime-owned purpose of this invocation, not an answer-model identity or attestation.
+        'call_role': _text(call_role),
         'requested_model': _text(requested_model), 'selected_model': _text(selected_model),
         'returned_model': returned,
         'model_match': 'unreported' if returned is None else ('matches_selected' if returned == selected_model else 'different_identifier'),

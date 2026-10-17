@@ -13,7 +13,6 @@ the machine's Documents and Downloads directories)."""
 from __future__ import annotations
 
 import hashlib
-import shlex
 from pathlib import Path
 
 import pytest
@@ -46,14 +45,30 @@ def _approved(ctx: dict, path: str = MONEY) -> tuple[str, dict]:
         ctx,
     )
     assert read.ok, read.response_text
-    check = f"import runpy; assert runpy.run_path({path!r})['cents'](1.25) == 125"
-    reproduced = door(
-        "code.task.step",
-        {"task_id": task_id, "step_id": "repro", "intent": "workspace.run_tests",
-         "arguments": {"command": "python -c " + shlex.quote(check)}},
-        ctx,
+    probe_dir = root / ".vool-test-probe"
+    probe_dir.mkdir(exist_ok=True)
+    probe_path = probe_dir / "test_reproduction.py"
+    probe_path.write_text(
+        "import runpy\n\n"
+        "def test_cents_are_one_hundredth():\n"
+        f"    assert runpy.run_path({path!r})['cents'](1.25) == 125\n",
+        encoding="utf-8",
     )
-    assert reproduced.details["tool_result"]["success"] is False, reproduced.details
+    try:
+        reproduced = door(
+            "code.task.step",
+            {
+                "task_id": task_id,
+                "step_id": "repro",
+                "intent": "workspace.run_tests",
+                "arguments": {"command": "python -m pytest -q .vool-test-probe/test_reproduction.py"},
+            },
+            ctx,
+        )
+    finally:
+        probe_path.unlink(missing_ok=True)
+        probe_dir.rmdir()
+    assert reproduced.details.get("tool_result", {}).get("success") is False, reproduced.details
     identified = door(
         "code.task.identify", {"task_id": task_id, "path": path, "line": 2, "reason": "cents multiplies by ten"}, ctx
     )

@@ -68,7 +68,9 @@ def profile_context_lines_for_session(session_id: str = "", *, principal: str = 
         return []
 
 
-def _continuity_lines(session_state: dict[str, Any]) -> list[str]:
+def _continuity_lines(
+    session_state: dict[str, Any], *, include_user_profile_context: bool = True,
+) -> list[str]:
     # Two identity anchors, always paired and always labelled: the USER's saved settings name and
     # the ASSISTANT's own product name. Paired, because stating only one is how the runtime came to
     # answer "yo say my name!" with its own name. The user anchor also stops an unknown name being
@@ -84,7 +86,8 @@ def _continuity_lines(session_state: dict[str, Any]) -> list[str]:
     # response/format preferences) for the turn in flight -- A8-gated at the source, scope-
     # resolved for this chat. The name is already stated by the identity lines above, so it is
     # excluded here; with no items this adds nothing and an ordinary turn is byte-identical.
-    lines.extend(profile_context_lines_for_session())
+    if include_user_profile_context:
+        lines.extend(profile_context_lines_for_session())
     current_user_goal = str(session_state.get("current_user_goal") or "").strip()
     assistant_commitments = [str(item).strip() for item in list(session_state.get("assistant_commitments") or []) if str(item or "").strip()]
     unresolved_followups = [str(item).strip() for item in list(session_state.get("unresolved_followups") or []) if str(item or "").strip()]
@@ -752,7 +755,9 @@ def build_bootstrap_context(
     quality_flags = list(getattr(interpretation, "quality_flags", []) or [])
     topic_hints = list(getattr(interpretation, "topic_hints", []) or [])
     references = list(getattr(interpretation, "reference_targets", []) or [])
-    continuity_lines = _continuity_lines(session_state)
+    continuity_lines = _continuity_lines(
+        session_state, include_user_profile_context=include_user_profile_context,
+    )
 
     active_mission_block = ""
     if include_private_context and include_mission_context:

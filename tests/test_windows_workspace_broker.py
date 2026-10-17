@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -33,6 +34,26 @@ def _context(root: Path) -> dict[str, object]:
         "operating_mode": "manual",
         "workspace_root": str(root),
     }
+
+
+@pytest.fixture()
+def windows_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Select Windows without changing os.name, which would break pathlib on POSIX.
+    monkeypatch.setattr(runtime_tools, "_is_windows_platform", lambda: True)
+
+
+@pytest.mark.parametrize("windows", [False, True])
+@pytest.mark.parametrize("context", [None, {}, {"_execution_identity": {}}, {"_execution_identity": {"request_id": "req-1"}}])
+def test_workspace_broker_selection_requires_windows_and_execution_identity(
+    windows: bool, context: dict[str, object] | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runtime_tools, "_is_windows_platform", lambda: windows)
+    identity_bound = bool((context or {}).get("_execution_identity"))
+    assert runtime_tools._windows_workspace_broker_required(context) is (windows and identity_bound)
+
+
+def test_platform_probe_matches_the_native_host() -> None:
+    assert runtime_tools._is_windows_platform() is (os.name == "nt")
 
 
 def test_workspace_write_approval_binds_prior_state_and_does_not_replay_after_change(tmp_path: Path) -> None:
@@ -116,7 +137,7 @@ def test_missing_native_broker_fails_closed_without_touching_target(
 
 
 def test_identity_bound_windows_write_routes_through_broker_and_never_falls_back(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, windows_runtime: None
 ) -> None:
     target = tmp_path / "guarded.txt"
     calls: list[dict[str, object]] = []
@@ -196,7 +217,7 @@ def test_identity_bound_windows_write_routes_through_broker_and_never_falls_back
 
 
 def test_identity_bound_windows_write_refuses_without_broker_fallback(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, windows_runtime: None
 ) -> None:
     target = tmp_path / "guarded.txt"
     monkeypatch.setattr(

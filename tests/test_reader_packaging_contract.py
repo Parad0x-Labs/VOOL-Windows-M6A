@@ -6,7 +6,7 @@ surface that installs the product. A decoder missing from any one surface means 
 built from that surface silently degrade a format to typed-unavailable — safe, but never
 to be described as support. Pinned today:
 
-* ``pypdf==6.16.2`` — confined PDF text fallback.
+* ``pypdf==6.19.0`` — confined PDF text fallback.
 * ``xlrd==2.0.1``   — legacy XLS reader (pure Python, no native parts).
 """
 
@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 #: The full census: pin -> the registry format that dies without it.
 CANONICAL_DECODERS = {
-    "pypdf==6.16.2": "pdf",
+    "pypdf==6.19.0": "pdf",
     "xlrd==2.0.1": "xls",
 }
 
@@ -106,7 +106,8 @@ def test_lock_graph_carries_the_same_pinned_runtime_dependency(pin):
     name, _, version = pin.partition("==")
     _canonical_requirement(pin)
     packages = _read_toml("uv.lock")["package"]
-    project = next(item for item in packages if item["name"] == "vool-hive-mind")
+    project_name = _read_toml("pyproject.toml")["project"]["name"]
+    project = next(item for item in packages if item["name"] == project_name)
     decoder = next((item for item in packages if item["name"] == name), None)
     assert decoder is not None, f"frozen installs must resolve the {name} decoder"
     assert decoder["version"] == version

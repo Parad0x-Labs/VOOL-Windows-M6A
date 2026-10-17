@@ -21,6 +21,8 @@ What is faked, and why each is the right depth:
   entity extraction is still genuinely under test -- when the planner invents a location, the fake
   is asked for it and the request is recorded, which is exactly how G8/G9 catch it.
 * the market quote fetch, same reasoning.
+* machine capacity, available resources and exact installed-model inventory. The scripted
+  backend identity is stable; the real setup, admission and certification readers still decide.
 
 Nothing else is patched. In particular the harness never fakes routing, arbitration, continuation,
 capsule selection, or answer assembly -- those are the things being tested, and a suite that stubs
@@ -328,6 +330,36 @@ def install(monkeypatch, *, machine: Any | None = None) -> None:
     fixed = machine if machine is not None else machine_probe()
     monkeypatch.setattr(hardware_tier, "probe_machine", lambda: fixed, raising=True)
 
+    # Provisioning and chat eligibility also read live headroom, disk and inventory. Leaving
+    # those on the host makes this nominally 32 GiB machine depend on the CI runner's load,
+    # and makes the selected scripted model look missing. Supply facts, not a ready verdict.
+    from adapters.openai_compatible_adapter import OpenAICompatibleAdapter
+    from core import local_ollama_inventory, system_resources
+    from core.web.api import runtime as api_runtime
+    from tests._authorship_certification import RUNTIME_IDENTITY
+
+    ram = float(fixed.ram_gb)
+    monkeypatch.setattr(system_resources, "snapshot", lambda **_kwargs: system_resources.ResourceSnapshot(
+        total_ram_gb=ram, available_ram_gb=ram * 0.8, used_ram_gb=ram * 0.2,
+        free_fraction=0.8, memory_pressure="normal", load_1m=0.0,
+        cpu_count=fixed.cpu_cores, load_per_core=0.0, swap_used_gb=0.0,
+        ollama_loaded_gb=0.0, comfyui_running=False, reserve_gb=ram * 0.2,
+        usable_gb=ram * 0.6,
+    ), raising=True)
+    monkeypatch.setattr(api_runtime, "free_disk_gb_for_path", lambda _path: 128.0, raising=True)
+
+    def _model_inventory(*, path="/api/tags", **_kwargs):
+        if path == "/api/ps":
+            return []  # Installed is not resident.
+        if path != "/api/tags":
+            return None
+        return [{"name": tag, "digest": RUNTIME_IDENTITY["model_digest"]}
+                for tag in ("qwen3:4b", "qwen3:8b", "qwen3:14b")]
+
+    monkeypatch.setattr(local_ollama_inventory, "_ollama_models_payload", _model_inventory, raising=True)
+    monkeypatch.setattr(OpenAICompatibleAdapter, "tool_certification_runtime_identity",
+                        lambda _self: dict(RUNTIME_IDENTITY), raising=True)
+
     import tools.web.web_research as web_research
 
     monkeypatch.setattr(
@@ -561,6 +593,11 @@ def runtime() -> Any:
                     certify_for_authorship(_manifest)
                 except Exception:  # pragma: no cover - a manifest outside the probe's reach
                     continue
+            # The server normally runs this after binding. This in-process chat driver has no
+            # server loop: finish the same real inventory/certification/health/admission checks
+            # before driving turns instead of leaving the selected model in "preparing" forever.
+            if callable(_RUNTIME.deferred_prewarm):
+                _RUNTIME.deferred_prewarm()
         return _RUNTIME
 
 

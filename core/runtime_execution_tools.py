@@ -184,7 +184,7 @@ def _windows_workspace_broker_required(source_context: dict[str, Any] | None) ->
     helpers. A normal served/API turn carries the immutable execution identity; that path fails
     closed when the packaged broker is unavailable and never falls back to an in-process write.
     """
-    return os.name == "nt" and isinstance(source_context, dict) and bool(source_context.get("_execution_identity"))
+    return _is_windows_platform() and isinstance(source_context, dict) and bool(source_context.get("_execution_identity"))
 
 
 def _dispatch_with_mutation_activity(
@@ -5109,38 +5109,38 @@ def _read_machine_file(arguments: dict[str, Any]) -> RuntimeExecutionResult:
                     ),
                 },
             )
-    allowed_roots = [_home_relative_label(root) for root in _safe_machine_roots()]
-    # Echo the requested path: "that path" forced the reader to match the refusal back to
-    # their own message (matrix §6, acceptance turn 16). Bounded, and the path is the
-    # user's own text restated, never new information.
-    requested = " ".join(str(arguments.get("path") or "").split())[:200]
-    if requested:
-        try:
-            requested_label = _home_relative_label(Path(requested))
-        except Exception:
-            requested_label = requested
-    else:
-        requested_label = "that path"
-    return RuntimeExecutionResult(
-        handled=True,
-        ok=False,
-        status="not_allowed",
-        response_text=(
-            f"I cannot read `{requested_label}` in this lane. "
-            f"I can only read files inside: {', '.join(allowed_roots)}. "
-            "For repo or project paths, use workspace.read_file against the active workspace root."
-        ),
-        details={
-            "observation": _tool_observation(
-                intent="machine.read_file",
-                tool_surface="machine",
-                ok=False,
-                status="not_allowed",
-                allowed_roots=allowed_roots,
-                requested_path=requested_label,
+        allowed_roots = [_home_relative_label(root) for root in _safe_machine_roots()]
+        # Echo the requested path: "that path" forced the reader to match the refusal back to
+        # their own message (matrix §6, acceptance turn 16). Bounded, and the path is the
+        # user's own text restated, never new information.
+        requested = " ".join(str(arguments.get("path") or "").split())[:200]
+        if requested:
+            try:
+                requested_label = _home_relative_label(Path(requested))
+            except Exception:
+                requested_label = requested
+        else:
+            requested_label = "that path"
+        return RuntimeExecutionResult(
+            handled=True,
+            ok=False,
+            status="not_allowed",
+            response_text=(
+                f"I cannot read `{requested_label}` in this lane. "
+                f"I can only read files inside: {', '.join(allowed_roots)}. "
+                "For repo or project paths, use workspace.read_file against the active workspace root."
             ),
-        },
-    )
+            details={
+                "observation": _tool_observation(
+                    intent="machine.read_file",
+                    tool_surface="machine",
+                    ok=False,
+                    status="not_allowed",
+                    allowed_roots=allowed_roots,
+                    requested_path=requested_label,
+                ),
+            },
+        )
     if not target.exists() or not target.is_file():
         return RuntimeExecutionResult(
             handled=True,

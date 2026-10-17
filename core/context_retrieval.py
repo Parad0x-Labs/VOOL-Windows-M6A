@@ -293,7 +293,7 @@ def _capsule_recall_kind(query: str) -> str:
         return ""
     if re.search(r"\bwhat\s+(?:project\s+)?domain\s+did\s+i\s+(?:ask\s+for|choose|request|say)\b", text):
         return "domain"
-    if "mission" in text and re.search(r"\b(?:summari[sz]e|recall|recap|state|describe|current|active|what)\b", text):
+    if re.search(r"\bmission\b", text) and re.search(r"\b(?:summari[sz]e|recall|recap|state|describe|current|active|what)\b", text):
         return "mission"
     if "code" in text and (
         re.search(r"\b(?:what|which)\b.{0,48}\bcode\b", text)

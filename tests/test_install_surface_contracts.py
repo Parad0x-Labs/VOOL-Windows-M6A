@@ -169,8 +169,9 @@ def test_bootstrap_scripts_support_checksum_verification_and_docs_do_not_pipe_re
     assert "| iex" not in readme
     assert "| bash" not in install_doc
     assert "| iex" not in install_doc
-    assert "curl -fsSLo bootstrap_vool.sh" in readme
-    assert "Invoke-WebRequest https://raw.githubusercontent.com/Parad0x-Labs/vool/main/installer/bootstrap_vool.ps1 -OutFile bootstrap_vool.ps1" in readme
+    assert "docs/WINDOWS_BUILD_AND_TEST.md" in readme
+    assert "legacy source-bootstrap" in install_doc
+    assert "WINDOWS_BUILD_AND_TEST.md" in install_doc
     assert "curl -fsSLo bootstrap_vool.sh" in install_doc
     assert "Invoke-WebRequest https://raw.githubusercontent.com/Parad0x-Labs/vool/main/installer/bootstrap_vool.ps1 -OutFile bootstrap_vool.ps1" in install_doc
 
@@ -214,8 +215,8 @@ def test_install_profile_selection_is_available_across_bootstrap_and_installer_s
     assert "installer\\build_windows_package.ps1" in install_doc
     assert "install-profile --set ollama-only" in sh_installer
     assert "install-profile --set ollama-max" in sh_installer
-    assert "install-profile --set local-max" in readme
-    assert "--install-profile local-only" in readme
+    assert "--install-profile local-max" in install_doc
+    assert "--install-profile local-only" in install_doc
     assert "install-profile --set ollama-only" in install_doc
     assert "install-profile --set ollama-max" in install_doc
     assert "ollama-only" in sh_bootstrap

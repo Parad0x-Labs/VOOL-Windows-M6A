@@ -146,7 +146,7 @@ from core.tool_intent_executor import (
     render_capability_truth_response,
     should_attempt_tool_intent,
 )
-from core.turn_contract import TURN_REQUEST_KEY, TurnRequest
+from core.turn_contract import TURN_REQUEST_KEY, TURN_STATE_KEY, TurnRequest
 from core.user_preferences import load_preferences, maybe_handle_preference_command
 from core.within_turn_retraction import intake_request_text
 from network import signer as signer_mod
@@ -534,6 +534,8 @@ def _certify_entrance_turn(
     result = (outcome or {}).get("result") if isinstance(outcome, dict) else None
     if not isinstance(result, dict):
         return
+    if result.get("task_outcome") == "pending_approval":
+        return  # A resumable permission pause cannot occupy immutable answer finality.
     if isinstance(result.get("vool_response_commit"), dict):
         return
     # Certify only a result a LANE actually served. A served answer names how it was produced —
@@ -1646,7 +1648,7 @@ class VoolAgent(
                                 )
                         except Exception:
                             _m2_bound = None
-                        from core.turn_contract import TURN_STATE_KEY, TurnState
+                        from core.turn_contract import TurnState
 
                         _m4_state = TurnState.from_intake(
                             request=_turn_request,
@@ -2982,6 +2984,7 @@ class VoolAgent(
                 # model produced read timeouts (measured 2026-08-05, see
                 # `_maybe_answer_planned_turn`).
                 max_workers=1,
+                stop_on_approval=True,
             )
         except Exception:
             # A pool-level fault after units began dispatching is terminal, not a
@@ -3045,6 +3048,36 @@ class VoolAgent(
             self._record_demand_discharge(source_context, _demand_ledger, outcomes)
         except Exception:
             pass
+
+        pending = next((outcome for outcome in outcomes if outcome.needs_approval), None)
+        if pending is not None:
+            # Children suppress live events and durable conversation writes. The parent owns
+            # the approval card and checkpoint; keep the original payload, not a merged failure.
+            pending_result = dict(pending.pending_result or {})
+            details = dict(pending_result.get("details") or {})
+            pending_context = {**dict(source_context or {}), "persist_memory": False}
+            approval_request = dict(details.get("approval_request") or {})
+            if approval_request:
+                self._emit_runtime_event(
+                    pending_context, event_type="tool_preview",
+                    message=pending.pending_message or "Waiting for approval for the proposed action.",
+                    tool_name=str(pending_result.get("tool_name") or ""),
+                    status="pending_approval", approval_request=approval_request,
+                )
+            from core.turn_contract import TURN_REQUEST_KEY
+
+            parent_request = pending_context.get(TURN_REQUEST_KEY)
+            result = self._action_fast_path_result(
+                task_id=str(getattr(parent_request, "turn_id", "") or pending_result.get("task_id") or ""),
+                session_id=session_id, user_input=effective_input,
+                response=pending.pending_message or "Waiting for approval for the proposed action.",
+                confidence=0.95, source_context=pending_context,
+                reason="demand_owned_mixed_turn_pending_approval", success=False,
+                details=details, mode_override="tool_preview", task_outcome="pending_approval",
+            )
+            result["task_outcome"] = "pending_approval"
+            result["tool_name"] = str(pending_result.get("tool_name") or "")
+            return result
 
         # P0 MIXED-DEMAND TERMINAL CLOSURE — the authorship publication gate
         # reads this turn's record, and everything on it predates the first
@@ -3638,7 +3671,15 @@ class VoolAgent(
         chat page files it under "Between turns" instead of inside its turn (observed live
         2026-08-14, session openclaw:ed890df3, seqs 15-16/79-82).
         """
-        client_turn_id = str((source_context or {}).get("cancel_turn_id") or "").strip()
+        node_context = dict(source_context or {})
+        # Streaming still needs the explicit ledger destination when a caller has no
+        # session in its context. Capture it without mutating the caller's turn state.
+        context_session_id = str(
+            node_context.get("runtime_session_id") or node_context.get("session_id") or ""
+        ).strip()
+        if not context_session_id:
+            node_context["runtime_session_id"] = session_id
+        client_turn_id = str(node_context.get("cancel_turn_id") or "").strip()
         # The canonical turn identity, captured on the turn's own thread for the same reason
         # `client_turn_id` is: this emitter writes BELOW the seam that stamps it, so it must carry
         # the value rather than let the seam resolve it. Without this the node rows are the only
@@ -3647,7 +3688,7 @@ class VoolAgent(
         try:
             from core.execution_truth import resolve_turn_key
 
-            node_turn_key = resolve_turn_key(source_context, None)
+            node_turn_key = resolve_turn_key(node_context, None)
         except Exception:
             node_turn_key = ""
 
@@ -3672,7 +3713,7 @@ class VoolAgent(
             # Companion's typed activity language (117 phrases / 15 categories) had no events to
             # narrate and sat on IDLE while real work happened (measured live 2026-08-29).
             self._emit_runtime_event(
-                source_context,
+                node_context,
                 event_type=event_type,
                 message=message,
                 **details,
@@ -4272,7 +4313,7 @@ class VoolAgent(
                 source_context=source_context,
                 canonical_units=_m3_units(raw_input),
             )
-            if plan is None:
+            if plan is None or not plan.subtasks:
                 self._record_lane_proposal(
                     source_context,
                     declined_live_data_proposal(
@@ -4463,7 +4504,7 @@ class VoolAgent(
                 source_context=source_context,
                 canonical_units=_m3_units(raw_input),
             )
-            if plan is None:
+            if plan is None or not plan.subtasks:
                 self._record_lane_proposal(
                     source_context,
                     declined_live_data_proposal(

@@ -46,7 +46,8 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 # A turn is never split into more parts than this. A plan claiming more is a runaway, not a
 # request: reject it whole rather than answering an arbitrary prefix of it.
@@ -342,6 +343,10 @@ class PlannedTaskNeedsApprovalError(Exception):
     other parts of the plan DID answer -- one part of the reply silently contradicting the other.
     """
 
+    def __init__(self, message: str, *, pending_result: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.pending_result = dict(pending_result or {})
+
 
 @dataclass
 class TaskOutcome:
@@ -350,12 +355,15 @@ class TaskOutcome:
     task: PlannedTask
     answer: str = ""
     error: str = ""
-    outcome_kind: str = ""  # "" (ordinary success/failure) | "pending_approval"
+    outcome_kind: str = ""  # "" (ordinary success/failure) | "pending_approval" | "not_attempted"
     pending_message: str = ""
+    pending_result: dict[str, Any] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
-        return bool(self.answer.strip()) and not self.error and self.outcome_kind != "pending_approval"
+        return bool(self.answer.strip()) and not self.error and self.outcome_kind not in {
+            "pending_approval", "not_attempted",
+        }
 
     @property
     def needs_approval(self) -> bool:
@@ -367,6 +375,7 @@ def run_plan(
     *,
     run_one: Callable[[PlannedTask, dict[int, TaskOutcome]], str],
     max_workers: int = 4,
+    stop_on_approval: bool = False,
 ) -> list[TaskOutcome]:
     """Run every planned request, concurrently within each dependency wave.
 
@@ -377,12 +386,22 @@ def run_plan(
 
     Falls back to sequential execution if the worker pool cannot start, because a wrong answer is a
     defect and a slow answer is not.
+
+    `stop_on_approval` requires sequential execution and leaves later requests unattempted.
     """
+    if stop_on_approval and max_workers > 1:
+        raise ValueError("Approval-pausing plans must run sequentially")
     outcomes: dict[int, TaskOutcome] = {}
+    paused = False
     for wave in execution_waves(tasks):
         if len(wave) == 1 or max_workers <= 1:
             for task in wave:
                 outcomes[task.index] = _run_single(task, run_one, outcomes)
+                if stop_on_approval and outcomes[task.index].needs_approval:
+                    paused = True
+                    break
+            if paused:
+                break
             continue
         try:
             import contextvars
@@ -422,7 +441,9 @@ def run_plan(
         outcome = outcomes.get(task.index)
         if outcome is None:
             outcome = TaskOutcome(
-                task=task, error="no outcome recorded for this request"
+                task=task,
+                error="not started while another request awaits approval" if paused else "no outcome recorded for this request",
+                outcome_kind="not_attempted" if paused else "",
             )
         results.append(outcome)
     return results
@@ -436,7 +457,10 @@ def _run_single(
     try:
         answer = str(run_one(task, done) or "").strip()
     except PlannedTaskNeedsApprovalError as exc:
-        return TaskOutcome(task=task, outcome_kind="pending_approval", pending_message=str(exc).strip())
+        return TaskOutcome(
+            task=task, outcome_kind="pending_approval", pending_message=str(exc).strip(),
+            pending_result=exc.pending_result,
+        )
     except Exception as exc:
         return TaskOutcome(task=task, error=f"{type(exc).__name__}: {exc}"[:200])
     if not answer:

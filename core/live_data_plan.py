@@ -204,7 +204,9 @@ def build_live_data_plan(
     subtask is recorded on the plan as `unclaimed_unit_ids` -- the lane's
     conservation record. The lane no longer owns demand truth; it consumes the
     identity it is given. Callers that omit it keep the legacy behavior (the
-    tests' direct-call shape), so this is a consuming seam, not a break.
+    tests' direct-call shape), so this is a consuming seam, not a break. A declined
+    request with a canonical set returns an empty plan with every unit unclaimed;
+    declining execution must not discard the caller's conservation record.
 
     A bare continuation ("and?", "well?") is resolved to the request it re-asks BEFORE either step,
     because both need it: the requirement is derived from the prior text, and so is entity
@@ -216,15 +218,22 @@ def build_live_data_plan(
     from core.retrieval_constraints import retrieval_candidate_text
 
     raw_text = str(user_text or "")
+    unclaimed_plan = LiveDataPlan(
+        plan_id=plan_id,
+        attempt_id=attempt_id,
+        original_request=raw_text,
+        subtasks=(),
+        unclaimed_unit_ids=tuple(unit.unit_id for unit in canonical_units),
+    ) if canonical_units else None
     inherited, inherit_kind = continuation_inheritance(user_text, source_context=source_context)
     effective_text = inherited or user_text
 
     requirements = requirements_for(effective_text, source_context=source_context)
     if requirements.answer_mode != "LIVE_DATA":
-        return None
+        return unclaimed_plan
     candidate_text = retrieval_candidate_text(effective_text)
     if not candidate_text:
-        return None
+        return unclaimed_plan
     user_text = effective_text
 
     subtasks: list[LiveDataSubtask] = []
@@ -456,7 +465,7 @@ def build_live_data_plan(
             )
 
     if not subtasks:
-        return None
+        return unclaimed_plan
     # M3 CONSERVATION: consume the canonical set -- a unit no subtask bound is
     # NAMED here, never silently absent. No re-minting: the units are the caller's.
     unclaimed_unit_ids: tuple[str, ...] = ()

@@ -15,12 +15,11 @@ from __future__ import annotations
 import itertools
 import tempfile
 from pathlib import Path
-from types import SimpleNamespace
 from unittest import mock
 
 import pytest
 
-from core.execution.models import WorkflowPlannerDecision
+from core.execution.models import ToolIntentExecution, WorkflowPlannerDecision
 from core.execution.planner import should_attempt_tool_intent
 from core.hive_activity_tracker import HiveActivityTracker, HiveActivityTrackerConfig
 from core.memory_first_router import ModelExecutionDecision
@@ -136,7 +135,7 @@ def test_native_call_ids_do_not_hide_a_repeated_semantic_tool_call(make_agent):
         return_value=_final_decision("Workspace tree under `.` contains `notes.txt`.")
     )
 
-    execution = SimpleNamespace(
+    execution = ToolIntentExecution(
         handled=True,
         ok=True,
         status="executed",
@@ -186,7 +185,7 @@ def test_exhausted_tool_budget_is_not_reported_as_completed(make_agent):
 
     def _executed(payload: dict, **_: object):
         path = str((payload.get("arguments") or {}).get("path") or "")
-        return SimpleNamespace(
+        return ToolIntentExecution(
             handled=True,
             ok=True,
             status="executed",
@@ -217,6 +216,27 @@ def test_exhausted_tool_budget_is_not_reported_as_completed(make_agent):
     assert result["details"]["loop_stop_reason"] == "step_budget_exhausted"
     assert "incomplete" in result["response"].lower()
     assert "not a completed audit" in result["response"].lower()
+
+
+@pytest.mark.parametrize("scenario", [
+    test_native_call_ids_do_not_hide_a_repeated_semantic_tool_call,
+    test_exhausted_tool_budget_is_not_reported_as_completed,
+])
+def test_tool_loop_fixtures_use_the_production_execution_result(make_agent, monkeypatch, scenario):
+    producer = ToolIntentExecution
+    executions = []
+
+    def recorded_result(**kwargs):
+        execution = producer(**kwargs)
+        executions.append(execution)
+        return execution
+
+    monkeypatch.setitem(globals(), "ToolIntentExecution", recorded_result)
+    scenario(make_agent)
+    assert executions
+    assert all(isinstance(execution, producer) for execution in executions)
+    assert all(execution.user_safe_response_text == "" for execution in executions)
+    assert all(execution.details["observation"]["ok"] for execution in executions)
 
 
 def test_unavailable_tool_model_does_not_execute_empty_payload(make_agent):
@@ -280,6 +300,23 @@ def test_full_loop_writes_a_real_file_on_disk(make_agent, allow_workspace_writes
             "save the notes to workspace file loop_output.txt",
             session_id_override="openclaw:loop-write",
             source_context={**_OPENCLAW, "workspace": tmpdir},
+        )
+
+        # Filesystem availability does not authorize a Manual-mode mutation. Review
+        # and approve the exact action through the real controller, then resume it.
+        assert result["mode"] == "tool_preview"
+        assert not target.exists(), "the loop wrote the file before approval"
+        request = result["details"]["approval_request"]
+        assert request["intent"] == "workspace.write_file"
+        from core.mode_permission_policy import resolve_approval
+
+        approved = resolve_approval(request["approval_id"], decision="allow", scope="once")
+        assert approved and approved["status"] == "approved"
+        assert approved["scope"] == "once"
+        result = agent.run_once(
+            "continue",
+            session_id_override="openclaw:loop-write",
+            source_context={**_OPENCLAW, "workspace": tmpdir, "mode_approval_token": request["approval_id"]},
         )
 
         assert result["mode"] == "tool_executed"

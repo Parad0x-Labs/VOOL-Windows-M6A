@@ -45,11 +45,50 @@ class _ExecutionPlugin:
     def pytest_runtest_logstart(self, nodeid: str, location: Any) -> None:
         del location
         self._started.append(str(nodeid))
+        self._write_progress(nodeid, "setup")
+
+    def pytest_runtest_call(self, item: Any) -> None:
+        self._write_progress(str(item.nodeid), "call")
+
+    def pytest_runtest_teardown(self, item: Any) -> None:
+        self._write_progress(str(item.nodeid), "teardown")
+
+    def _write_progress(self, nodeid: str, phase: str) -> None:
+        # This bounded snapshot is diagnostic only, never a completion receipt.
+        path = self._output_path.with_suffix(".progress.json")
+        temporary = path.with_suffix(".tmp")
+        try:
+            temporary.write_text(
+                json.dumps({"nodeid": nodeid, "phase": phase, "started_total": len(self._started)})
+                + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(path)
+        except OSError:
+            # Progress is diagnostic only; an unwritable snapshot must not interrupt pytest.
+            temporary.unlink(missing_ok=True)
 
     def pytest_runtest_logreport(self, report: Any) -> None:
         outcome = _outcome_of(report)
         if outcome is None:
             return
+        if outcome in {"failed", "errors"}:
+            # A deadline can kill the shard before sessionfinish. Retain each failure now;
+            # this journal is diagnostic evidence, never a completed execution receipt.
+            failure_path = self._output_path.with_suffix(".failures.jsonl")
+            failure = {
+                "schema": "vool.pytest-failure.v1",
+                "nodeid": str(report.nodeid),
+                "when": str(report.when),
+                "outcome": outcome,
+                "longrepr": str(getattr(report, "longreprtext", "")),
+                "sections": [
+                    {"name": str(name), "content": str(content)}
+                    for name, content in getattr(report, "sections", ())
+                ],
+            }
+            with failure_path.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps(failure, ensure_ascii=True) + "\n")
         path = str(report.nodeid).split("::", 1)[0]
         self._totals[outcome] = self._totals.get(outcome, 0) + 1
         per_file = self._by_file.setdefault(path, {})
@@ -95,7 +134,6 @@ class _ExecutionPlugin:
                 },
             },
         }
-        self._output_path.parent.mkdir(parents=True, exist_ok=True)
         self._output_path.write_text(
             json.dumps(payload, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
@@ -138,7 +176,9 @@ def main(argv: list[str] | None = None) -> int:
         pytest_args = pytest_args[1:]
     for variable in ("PYTEST_ADDOPTS", "PYTEST_DISABLE_PLUGIN_AUTOLOAD", "PYTEST_PLUGINS"):
         os.environ.pop(variable, None)
-    plugin = _ExecutionPlugin(output_path=Path(args.output))
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    plugin = _ExecutionPlugin(output_path=output_path)
     return int(pytest.main(["-o", "addopts=", *pytest_args], plugins=[plugin]))
 
 

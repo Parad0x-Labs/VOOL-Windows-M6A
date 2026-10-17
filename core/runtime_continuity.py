@@ -381,17 +381,20 @@ def append_runtime_event(
     # A8 pass-002 writer gate: an event that carries governed bytes whose
     # payload transitioned WITHHELD/ERASED mid-flight is not durably appended
     # (ERASE dominates the append path).
-    from core.finalization import writer_may_persist_text
+    from core.finalization import availability_read_scope, writer_may_persist_text
 
-    if not writer_may_persist_text(clean_message):
-        clean_message = ""
-    raw_details = dict(details or {})
-    clean_details = _scrub_persisted(raw_details)
-    _restore_workspace_confinement_evidence(clean_details, raw_details)
-    # A8 PASS003 (CE09): details_json is a payload-bearing surface too — the
-    # same unavailable-verdict veto applies to every embedded string, not
-    # just the message column.
-    clean_details = _gate_payload_tree(clean_details)
+    # Share only the connection within each synchronous read phase, never
+    # verdicts or an idle connection across the subsequent event write.
+    with availability_read_scope():
+        if not writer_may_persist_text(clean_message):
+            clean_message = ""
+        raw_details = dict(details or {})
+        clean_details = _scrub_persisted(raw_details)
+        _restore_workspace_confinement_evidence(clean_details, raw_details)
+        # A8 PASS003 (CE09): details_json is a payload-bearing surface too — the
+        # same unavailable-verdict veto applies to every embedded string, not
+        # just the message column.
+        clean_details = _gate_payload_tree(clean_details)
     timestamp = str(created_at or _utcnow())
     with _LOCK:
         conn = _conn()
@@ -415,12 +418,13 @@ def append_runtime_event(
                     return True
 
             governed_strings: list[str] = [clean_message, *list(_iter_tree_strings(clean_details))]
-            if any(
-                text and _durable_veto(text) for text in governed_strings
-            ):
-                clean_message = ""
-                clean_details = {}
-                request_preview = _clean_request_preview("")
+            with availability_read_scope():
+                if any(
+                    text and _durable_veto(text) for text in governed_strings
+                ):
+                    clean_message = ""
+                    clean_details = {}
+                    request_preview = _clean_request_preview("")
             conn.execute(
                 """
                 INSERT INTO runtime_session_events (
@@ -1068,20 +1072,24 @@ def update_runtime_checkpoint(
     # erase must never durably restore governed payload bytes. Availability
     # is consulted at THIS durable boundary — WITHHELD/ERASED verdicts veto
     # the write; a store failure fails closed (refusal, never disclosure).
+    from core.finalization import availability_read_scope
+
     if next_final_response.strip():
         from core.finalization import writer_may_persist_text
 
-        if not writer_may_persist_text(next_final_response):
-            raise CheckpointTransitionRefused(
-                f"checkpoint {checkpoint_id}: governed payload is WITHHELD/ERASED; "
-                "stale-writer resurrection refused"
-            )
-        for evidence_value in _iter_source_context_strings(merged_source_context):
-            if not writer_may_persist_text(evidence_value):
+        # Reuse only a short-lived connection, never an availability verdict.
+        with availability_read_scope():
+            if not writer_may_persist_text(next_final_response):
                 raise CheckpointTransitionRefused(
-                    f"checkpoint {checkpoint_id}: source_context carries "
-                    "WITHHELD/ERASED payload; write refused"
+                    f"checkpoint {checkpoint_id}: governed payload is WITHHELD/ERASED; "
+                    "stale-writer resurrection refused"
                 )
+            for evidence_value in _iter_source_context_strings(merged_source_context):
+                if not writer_may_persist_text(evidence_value):
+                    raise CheckpointTransitionRefused(
+                        f"checkpoint {checkpoint_id}: source_context carries "
+                        "WITHHELD/ERASED payload; write refused"
+                    )
     if (
         current_status in _CHECKPOINT_TERMINAL_STATUSES
         and existing_final_response
@@ -1126,20 +1134,21 @@ def update_runtime_checkpoint(
                 except Exception:
                     return True
 
-            if next_final_response.strip() and _durable_veto(next_final_response):
-                raise CheckpointTransitionRefused(
-                    f"checkpoint {checkpoint_id}: governed payload is WITHHELD/"
-                    "ERASED at the durable boundary; stale-writer resurrection "
-                    "refused"
-                )
-            if any(
-                str(value or "").strip() and _durable_veto(str(value))
-                for value in _iter_source_context_strings(merged_source_context)
-            ):
-                raise CheckpointTransitionRefused(
-                    f"checkpoint {checkpoint_id}: source_context carries "
-                    "WITHHELD/ERASED payload at the durable boundary; write refused"
-                )
+            with availability_read_scope():
+                if next_final_response.strip() and _durable_veto(next_final_response):
+                    raise CheckpointTransitionRefused(
+                        f"checkpoint {checkpoint_id}: governed payload is WITHHELD/"
+                        "ERASED at the durable boundary; stale-writer resurrection "
+                        "refused"
+                    )
+                if any(
+                    str(value or "").strip() and _durable_veto(str(value))
+                    for value in _iter_source_context_strings(merged_source_context)
+                ):
+                    raise CheckpointTransitionRefused(
+                        f"checkpoint {checkpoint_id}: source_context carries "
+                        "WITHHELD/ERASED payload at the durable boundary; write refused"
+                    )
             conn.execute(
                 """
                 UPDATE runtime_checkpoints
@@ -3628,6 +3637,33 @@ def store_tool_receipt(
         "updated_at": timestamp,
     }
     with _LOCK:
+        existing = load_tool_receipt(clean_receipt_key)
+        incoming = safe_execution.get("action_record", {})
+        if (existing is None and safe_execution.get("approval_id")
+                and incoming.get("result", {}).get("outcome") == "pending_approval"):
+            conn = _conn()
+            try:
+                denied_rows = conn.execute(
+                    "SELECT receipt_key FROM runtime_tool_receipts WHERE session_id = ? "
+                    "AND checkpoint_id = ? AND tool_name = ? "
+                    "AND json_extract(execution_json, '$.approval_id') = ? "
+                    "AND json_extract(execution_json, '$.action_record.result.status') = 'permission_denied' LIMIT 2",
+                    (payload["session_id"], payload["checkpoint_id"], payload["tool_name"], safe_execution["approval_id"]),
+                ).fetchall()
+            finally:
+                conn.close()
+            if len(denied_rows) > 1:
+                raise ValueError("ambiguous denied action receipt")
+            if denied_rows:
+                existing = load_tool_receipt(denied_rows[0]["receipt_key"])
+        existing_record = (existing or {}).get("execution", {}).get("action_record", {})
+        if (existing_record.get("result", {}).get("status") == "permission_denied"
+                and existing_record.get("approval", {}).get("approval_state") == "denied"):
+            if any(existing.get(key) != payload[key] for key in ("session_id", "checkpoint_id", "tool_name")):
+                raise ValueError("denied receipt ownership mismatch")
+            if incoming == existing_record or incoming.get("result", {}).get("outcome") == "pending_approval":
+                return existing
+            raise ValueError("a denied action receipt cannot be rewritten")
         conn = _conn()
         try:
             conn.execute(
@@ -3656,6 +3692,186 @@ def store_tool_receipt(
         finally:
             conn.close()
     return payload
+
+
+def _record_denial_finalization_failure(*, session_id: str, approval_id: str,
+        turn_id: str, binding: dict[str, Any], error: Exception) -> None:
+    """Diagnostic only: preserve the original owner and never assert terminal closure."""
+    from core.finalization import FinalizationRejected
+    from core.invocation.ledger import FenceRefused
+    from core.secret_redaction import redact_secrets
+
+    reason = "denial_finalization_failed"
+    if isinstance(error, FenceRefused):
+        reason = "denial_execution_fence_refused"
+    elif isinstance(error, FinalizationRejected) and error.stored_content_hash in {
+            "DENIAL_OBLIGATIONS_OPEN", "DENIAL_FINALIZATION_CONFLICT"}:
+        reason = error.stored_content_hash
+    elif isinstance(error, ValueError) and str(error) in {
+            "denial finalization requires its original request and obligation set",
+            "denial obligation set belongs to a different request"}:
+        reason = "denial_owner_mismatch"
+    append_runtime_event(session_id=session_id, event_type="approval_denial_finalization_failed",
+        message="Denied action cancellation did not complete finalization.", details={
+            "approval_id": approval_id, "task_id": turn_id,
+            "request_id": str(binding.get("request_id") or ""),
+            "attempt_id": str(binding.get("attempt_id") or ""),
+            "execution_id": str(binding.get("execution_id") or ""),
+            "generation": binding.get("generation"), "runtime_epoch": binding.get("runtime_epoch"),
+            "obligation_set": binding.get("obligation_set"),
+            "exception_class": type(error).__name__[:64], "failure_reason": reason,
+            "exception_message": redact_secrets(str(error))[:512],
+        })
+
+
+def reconcile_denied_approval(approval: dict[str, Any]) -> None:
+    """Close exact pending previews without dispatching or claiming a fulfilled task.
+
+    Permission policy owns the decision. This owner reconciles its own records,
+    retaining the preview events and updating the same receipt identities. A
+    partial store failure is observable and repeatable; it never creates a grant.
+    """
+    if approval.get("status") != "denied":
+        raise ValueError("a denied approval is required")
+    session_id = str(approval.get("session_id") or "").strip()
+    approval_id = str(approval.get("approval_id") or "").strip()
+    tool_name = str(approval.get("intent") or "").strip()
+    if not session_id or not approval_id or not tool_name:
+        raise ValueError("denial ownership is required")
+    with _LOCK:
+        conn = _conn()
+        try:
+            done = conn.execute(
+                "SELECT 1 FROM runtime_session_events WHERE session_id = ? "
+                "AND event_type = 'approval_denial_terminal' "
+                "AND json_extract(details_json, '$.approval_id') = ?",
+                (session_id, approval_id),
+            ).fetchone()
+            if done:
+                return
+            rows = conn.execute(
+                "SELECT e.details_json, r.receipt_key FROM runtime_session_events e "
+                "LEFT JOIN runtime_tool_receipts r ON r.session_id = e.session_id "
+                "AND r.checkpoint_id = json_extract(e.details_json, '$.checkpoint_id') "
+                "AND r.tool_name = json_extract(e.details_json, '$.tool_name') "
+                "AND (json_extract(r.execution_json, '$.approval_id') = "
+                "json_extract(e.details_json, '$.approval_request.approval_id') "
+                "OR (COALESCE(json_extract(r.execution_json, '$.approval_id'), '') = '' "
+                "AND r.receipt_key = json_extract(e.details_json, '$.receipt_id'))) "
+                "WHERE e.session_id = ? AND e.event_type = 'tool_preview' "
+                "AND json_extract(e.details_json, '$.approval_request.approval_id') = ? "
+                "AND json_extract(e.details_json, '$.tool_name') = ? ORDER BY e.seq LIMIT 257",
+                (session_id, approval_id, tool_name),
+            ).fetchall()
+        finally:
+            conn.close()
+        if len(rows) > 256:
+            raise ValueError("denial preview bound exceeded")
+        if not rows:
+            return  # Legacy/direct permission decisions may have no runtime work.
+        previews = [{**_json_loads(row["details_json"], fallback={}), "receipt_id": row["receipt_key"]} for row in rows]
+        binding = dict(approval.get("runtime_binding") or {})
+        attempt = get_runtime_attempt(str(binding.get("attempt_id") or "")) if binding else None
+        if binding:
+            from core.invocation.ledger import get_execution, get_invocation, require_generation, set_execution_terminal
+
+            invocation = get_invocation(str(binding.get("request_id") or "")) or {}
+            execution = get_execution(str(binding.get("execution_id") or "")) or {}
+            if (not attempt or attempt.get("session_id") != session_id
+                    or invocation.get("session_binding") != session_id
+                    or execution.get("request_id") != binding.get("request_id")
+                    or execution.get("execution_id") != attempt.get("root_attempt_id")):
+                raise ValueError("denial runtime binding disagrees with its owners")
+            recovering = (attempt.get("lifecycle_state") == "CANCELLED"
+                          and attempt.get("terminal_reason") == "permission_denied")
+            if not recovering:
+                if attempt.get("lifecycle_state") in _TERMINAL_ATTEMPT_STATES:
+                    raise ValueError("denial cannot rewrite a terminal attempt")
+                require_generation(str(binding["execution_id"]), int(binding.get("generation") or 0),
+                    runtime_epoch=str(binding.get("runtime_epoch") or ""))
+            # Stop this generation before changing outcome-bearing records. A retry
+            # or stale epoch must win here without any receipt/checkpoint rewrite.
+            if not set_execution_terminal(str(binding["execution_id"]), "CANCELLED",
+                    runtime_epoch=str(binding.get("runtime_epoch") or ""),
+                    expect_generation=int(binding.get("generation") or 0)):
+                execution = get_execution(str(binding["execution_id"])) or {}
+                if (execution.get("state") != "CANCELLED"
+                        or execution.get("generation") != binding.get("generation")
+                        or execution.get("runtime_epoch") != binding.get("runtime_epoch")):
+                    raise ValueError("denial execution fence refused")
+        receipt_ids, checkpoint_ids = set(), set()
+        from core.agent_runtime.orchestrator import build_tool_action_record
+
+        for preview in previews:
+            receipt_id = str(preview.get("receipt_id") or "")
+            receipt = load_tool_receipt(receipt_id)
+            if (not receipt or receipt.get("session_id") != session_id
+                    or receipt.get("tool_name") != tool_name
+                    or receipt.get("checkpoint_id") != preview.get("checkpoint_id")):
+                raise ValueError("denial preview has no matching durable receipt")
+            checkpoint_id = str(receipt.get("checkpoint_id") or "")
+            checkpoint = get_runtime_checkpoint(checkpoint_id)
+            if not checkpoint or checkpoint.get("session_id") != session_id:
+                raise ValueError("denial checkpoint ownership mismatch")
+            record = dict(receipt.get("execution", {}).get("action_record") or {})
+            status = str(record.get("result", {}).get("status") or "")
+            if status != "permission_denied":
+                if record.get("result", {}).get("outcome") != "pending_approval":
+                    raise ValueError("denial cannot rewrite a completed tool action")
+                terminal = build_tool_action_record(
+                    {**dict(record.get("identifiers") or {}), "runtime_session_id": session_id,
+                     "project_id": record.get("origin", {}).get("project_id"), "actor_id": record.get("actor")},
+                    event_type="tool_failed", message="Operator denied the action; it was not executed.",
+                    details={**preview, "arguments": record.get("parameters", {}), "mode": "tool_failed",
+                        "status": "permission_denied", "ok": False, "approval_state": "denied",
+                        "approval_id": approval_id, "decision": "deny", "scope": "once",
+                        "action_id": record["action_id"], "receipt_id": record["receipt_id"],
+                        "summary": "Operator denied the action; it was not executed."},
+                )
+                store_tool_receipt(receipt_key=receipt_id, session_id=session_id, checkpoint_id=checkpoint_id,
+                    tool_name=tool_name, idempotency_key=receipt["idempotency_key"], arguments=receipt["arguments"],
+                    execution={**dict(receipt["execution"]), "action_record": terminal})
+            if checkpoint.get("status") == "pending_approval":
+                finalize_runtime_checkpoint(checkpoint_id, status="cancelled", failure_text="permission_denied",
+                    outcome={"fulfillment_status": "cancelled", "failure_stage": "permission",
+                             "failure_codes": ["permission_denied"], "retryable": False})
+            elif (checkpoint.get("status") != "cancelled"
+                    or checkpoint.get("outcome", {}).get("failure_codes") != ["permission_denied"]):
+                raise ValueError("denial cannot rewrite a non-pending checkpoint")
+            receipt_ids.add(receipt_id)
+            checkpoint_ids.add(checkpoint_id)
+        if attempt:
+            updated = update_runtime_attempt(attempt["attempt_id"], lifecycle_state="CANCELLED",
+                terminal_reason="permission_denied", retryable=False, completed=True,
+                client_turn_id=str(approval.get("task_id") or ""))
+            if not updated or updated.get("transition_refused"):
+                raise ValueError("denial attempt transition refused")
+        finalization = None
+        if binding:
+            try:
+                from core.finalization import finalize_denied_approval
+
+                finalization = finalize_denied_approval(binding=binding,
+                    turn_id=str(approval.get("task_id") or ""), approval_id=approval_id)
+            except Exception as error:
+                # Diagnostic persistence cannot replace the original failure or
+                # let this path emit a successful denial-terminal event.
+                with contextlib.suppress(Exception):
+                    _record_denial_finalization_failure(session_id=session_id, approval_id=approval_id,
+                        turn_id=str(approval.get("task_id") or ""), binding=binding, error=error)
+                raise
+        append_runtime_event(session_id=session_id, event_type="approval_denial_terminal",
+            message="Denied action closed without execution.", details={
+                "approval_id": approval_id, "task_id": str(approval.get("task_id") or ""),
+                "request_id": str(binding.get("request_id") or ""), "tool_name": tool_name,
+                "attempt_id": str(binding.get("attempt_id") or ""), "decision": "deny",
+                "effect_count": 0, "effect_scope": "denied_proposal", "fulfillment_status": "cancelled",
+                "receipt_ids": sorted(receipt_ids), "checkpoint_ids": sorted(checkpoint_ids),
+                **({"finalization_id": finalization["finalization_id"],
+                    "semantic_result_id": finalization["semantic_result_id"],
+                    "obligation_set": binding["obligation_set"],
+                    "terminal_status": "no_answer_terminal"} if finalization else {}),
+            })
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -83,7 +83,7 @@ def test_verifier_required_call_is_buffered_before_publication() -> None:
     request = ModelRequest(
         task_kind="normalization_assist",
         prompt="review this",
-        metadata={"defer_stream_until_verified": True},
+        metadata={"defer_stream_until_verified": True, "task_role": "verifier"},
     )
     router = MemoryFirstRouter()
 

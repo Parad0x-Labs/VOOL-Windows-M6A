@@ -31,6 +31,7 @@ import re
 import subprocess
 from pathlib import Path
 from typing import Any
+from urllib.request import Request, urlopen
 
 import pytest
 
@@ -349,16 +350,46 @@ class GuidedProvider(ScriptedProvider):
         super().__init__({MODEL: "ok"})
         self.policy = policy
 
-    def reply_for(self, model: str, *, has_tool_result: bool) -> Any:
+    def reply_for(self, model: str, *, has_tool_result: bool, body: dict[str, Any] | None = None) -> Any:
         with self._lock:
             last = self.calls[-1] if self.calls else None
-        if last is None or not last.get("tools"):
-            # The classifier call: plain text, as the rig's own fixtures answer it.
-            return "shell_guidance"
+        tool_names = set(last.get("tools") or []) if last is not None else set()
+        if "vool_probe_add" in tool_names:
+            return [
+                _call("vool_probe_add", {"left": 19, "right": 23}),
+                _call("vool_probe_lookup_nonce", {"key": "alpha"}),
+            ]
+        if "vool_probe_echo" in tool_names:
+            messages = (body or {}).get("messages") or []
+            recovered = any(
+                message.get("role") == "tool"
+                and "synthetic_validation_error" in str(message.get("content") or "")
+                for message in messages if isinstance(message, dict)
+            )
+            return _call("vool_probe_echo", {"token": "recovered" if recovered else "repair-me"})
+        if not tool_names and has_tool_result:
+            messages = (body or {}).get("messages") or []
+            joined = " ".join(str(message.get("content") or "") for message in messages if isinstance(message, dict))
+            nonces = re.findall(r"\b[0-9a-f]{12}\b", joined)
+            return f"The sum is 42 and the sealed nonce is {nonces[0]}." if nonces else "The sum is 42."
         prompt = (
             f"{last.get('system') or ''}\n{last.get('full_prompt') or ''}"
             f"\n{last.get('prompt_tail') or ''}"
-        )
+        ) if last is not None else ""
+        if 'Wire format: return ONLY {"requests": [...]}' in prompt:
+            clause_ids = list(dict.fromkeys(re.findall(r'"id":\s*"(clause-[^" ]+)"', prompt)))
+            plan = json.dumps({
+                "requests": [{
+                    "request": "",
+                    "source_clause_ids": clause_ids,
+                    "operation": "workspace_investigation",
+                    "depends_on": [],
+                }]
+            })
+            return plan
+        if last is None or not last.get("tools"):
+            # The classifier call: plain text, as the rig's own fixtures answer it.
+            return "shell_guidance"
         return self.policy.reply(prompt)
 
 
@@ -417,14 +448,46 @@ def _boot(served_factory, workspace_files: dict[str, str], policy: GuidedRepair)
     _stub_models_are_resident(provider)
     provider.__enter__()
     try:
+        run_in_home(rig["home"], SEED_MANIFEST.format(root=REPO_ROOT, base_url=provider.base_url, registered=[MODEL]))
+        run_in_home(
+            rig["home"],
+            "from storage.model_provider_manifest import list_provider_manifests, upsert_provider_manifest\n"
+            "for manifest in list_provider_manifests():\n"
+            f"    if manifest.model_name == {MODEL!r}:\n"
+            "        updated = manifest.model_copy(update={\n"
+            "            'capabilities': [*manifest.capabilities, 'tool_intent'],\n"
+            "            'metadata': {**manifest.metadata, 'tool_support': ['structured_json', 'tool_calls']},\n"
+            "        })\n"
+            "        upsert_provider_manifest(updated)\n",
+        )
+        provider.reset()
         daemon.start(timeout=240)
     except Exception as exc:  # pragma: no cover - environment, not the runtime
         provider.__exit__(None, None, None)
         pytest.skip(f"served daemon could not boot here: {exc}")
-    run_in_home(rig["home"], SEED_MANIFEST.format(root=REPO_ROOT, base_url=provider.base_url, registered=[MODEL]))
-    provider.reset()
     rig.update(daemon=daemon, provider=provider)
     rig["made"].append((daemon, provider))
+    request = Request(
+        f"{daemon.base_url}/api/model-tool-certification/run",
+        data=json.dumps({
+            "provider_name": "ollama-local", "model_name": MODEL, "timeout_seconds": 60,
+        }).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urlopen(request, timeout=180) as response:
+        certification = json.loads(response.read().decode("utf-8"))
+    assert certification.get("state") == "verified", certification
+    author_status = run_in_home(
+        rig["home"],
+        "import json\n"
+        "from core.final_answer_authorship import author_certification\n"
+        "from storage.model_provider_manifest import list_provider_manifests\n"
+        f"print(json.dumps([author_certification(manifest).to_dict() for manifest in list_provider_manifests() "
+        f"if manifest.model_name == {MODEL!r}]))\n",
+    )
+    authors = json.loads(author_status)
+    assert len(authors) == 1 and authors[0].get("certified") is True, authors
     return rig
 
 
@@ -546,7 +609,7 @@ def _run_guided_repair(served_factory, files: dict[str, str], demand: str, defec
     )
     rig = _boot(served_factory, files, policy)
     session = "served-boundary"
-    reply = rig["daemon"].chat(demand, session_id=session, mode="auto", timeout=900.0)
+    reply = rig["daemon"].chat(demand, session_id=session, model=MODEL, mode="auto", timeout=900.0)
     # The task plane's mutation is an overwrite-class act: the runtime raises the operator's
     # approval and pauses. The operator resolves each approval through the real /api/mode
     # door and resumes with its token -- the same authority the native e496 run exercised
@@ -558,7 +621,7 @@ def _run_guided_repair(served_factory, files: dict[str, str], demand: str, defec
         if not token:
             break
         reply = rig["daemon"].chat(
-            "continue the approved repair", session_id=session, mode="auto",
+            "continue the approved repair", session_id=session, model=MODEL, mode="auto",
             approval_token=token, timeout=900.0,
         )
     return {**rig, "reply": reply, "policy": policy, "demand": demand}
@@ -612,7 +675,7 @@ def test_served_uncooperative_model_fails_honestly_and_changes_no_bytes(served_f
     policy = Narrator(command="node test.js", defects=[ORIGINAL_DEFECT], narration="x")
     rig = _boot(served_factory, ORIGINAL_FILES, policy)
     before = (rig["workspace"] / "math.js").read_bytes()
-    reply = rig["daemon"].chat(ORIGINAL_DEMAND, session_id="served-negative", mode="auto", timeout=900.0)
+    reply = rig["daemon"].chat(ORIGINAL_DEMAND, session_id="served-negative", model=MODEL, mode="auto", timeout=900.0)
     text = _reply_text(reply)
     assert "completed." not in text
     assert "incomplete" in text or "unfinished" in text.lower(), text[:400]
@@ -667,14 +730,14 @@ def test_served_wrong_first_fix_recovers_in_the_same_task(served_factory) -> Non
     ]
     rig = _boot(served_factory, WRONG_FIX_FILES, policy)
     session = "served-wrong-first"
-    reply = rig["daemon"].chat(WRONG_DEMAND, session_id=session, mode="auto", timeout=900.0)
+    reply = rig["daemon"].chat(WRONG_DEMAND, session_id=session, model=MODEL, mode="auto", timeout=900.0)
     for _attempt in range(6):
         if _task_verdict(rig["store_dir"]) in {"completed", "cancelled", "rolled_back"}:
             break
         token = _resolve_approvals(rig["daemon"], rig["home"], session)
         if not token:
             break
-        reply = rig["daemon"].chat("continue the approved repair", session_id=session, mode="auto",
+        reply = rig["daemon"].chat("continue the approved repair", session_id=session, model=MODEL, mode="auto",
                                   approval_token=token, timeout=900.0)
     workspace: Path = rig["workspace"]
     journal = _journal(rig["store_dir"])
@@ -748,14 +811,14 @@ def test_served_second_defect_discovered_by_between_repairs_validation(served_fa
     session = "served-sequential"
     reply = rig["daemon"].chat(
         "Repair the failing behavior in this project and describe the changes.",
-        session_id=session, mode="auto", timeout=900.0)
+        session_id=session, model=MODEL, mode="auto", timeout=900.0)
     for _attempt in range(6):
         if _task_verdict(rig["store_dir"]) in {"completed", "cancelled", "rolled_back"}:
             break
         token = _resolve_approvals(rig["daemon"], rig["home"], session)
         if not token:
             break
-        reply = rig["daemon"].chat("continue the approved repair", session_id=session, mode="auto",
+        reply = rig["daemon"].chat("continue the approved repair", session_id=session, model=MODEL, mode="auto",
                                   approval_token=token, timeout=900.0)
     workspace: Path = rig["workspace"]
     journal = _journal(rig["store_dir"])

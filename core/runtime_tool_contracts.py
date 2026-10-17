@@ -2669,7 +2669,7 @@ def _runtime_tool_contracts_raw() -> list[RuntimeToolContract]:
             artifact_emission="none",
             error_contract="returns_structured_error_result",
             handler="external_lane",
-            permission_actions=("use_network",),
+            permission_actions=("use_network_access",),
         ),
         RuntimeToolContract(
             intent="operator.list_calendars",
@@ -2688,7 +2688,7 @@ def _runtime_tool_contracts_raw() -> list[RuntimeToolContract]:
             artifact_emission="none",
             error_contract="returns_structured_error_result",
             handler="external_lane",
-            permission_actions=("use_network",),
+            permission_actions=("use_network_access",),
         ),
         RuntimeToolContract(
             intent="operator.inspect_calendar_event",
@@ -2707,7 +2707,7 @@ def _runtime_tool_contracts_raw() -> list[RuntimeToolContract]:
             artifact_emission="none",
             error_contract="returns_structured_error_result",
             handler="external_lane",
-            permission_actions=("use_network",),
+            permission_actions=("use_network_access",),
         ),
         RuntimeToolContract(
             intent="operator.find_notes",
@@ -2802,7 +2802,7 @@ def _runtime_tool_contracts_raw() -> list[RuntimeToolContract]:
             artifact_emission="none",
             error_contract="returns_structured_error_result",
             handler="external_lane",
-            permission_actions=("use_network",),
+            permission_actions=("use_network_access",),
         ),
         RuntimeToolContract(
             intent="operator.search_calendar_event",
@@ -2821,7 +2821,7 @@ def _runtime_tool_contracts_raw() -> list[RuntimeToolContract]:
             artifact_emission="none",
             error_contract="returns_structured_error_result",
             handler="external_lane",
-            permission_actions=("use_network",),
+            permission_actions=("use_network_access",),
         ),
         RuntimeToolContract(
             intent="operator.list_reminders",

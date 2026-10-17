@@ -13,6 +13,7 @@ from typing import Any
 
 from core.local_model_policy import local_models_enabled, manifest_is_local
 from core.model_registry import ModelRegistry
+from core.ollama_endpoint import ollama_base_url
 from core.provider_routing import provider_capability_truth_for_manifest
 from core.resource_governor import (
     current_runtime_identity,
@@ -217,7 +218,7 @@ def evaluate_local_chat_eligibility(
     current_residents = _safe_residents(residents_loader)
     resident = _resident_match(current_residents, tag, digest, provider_id)
     if not endpoint_value:
-        endpoint_value = "http://127.0.0.1:11434"
+        endpoint_value = ollama_base_url(env)
     try:
         load_decision = plan_loader(
             tag,

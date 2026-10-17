@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from types import MappingProxyType
 
@@ -165,10 +167,15 @@ class RoutingAuthorityV2ShadowStore:
     def execution_authority(self) -> bool:
         return False
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(str(self._path), timeout=30.0)
-        connection.execute("PRAGMA busy_timeout = 30000")
-        return connection
+        try:
+            connection.execute("PRAGMA busy_timeout = 30000")
+            with connection:
+                yield connection
+        finally:
+            connection.close()
 
     def _initialize_shadow_schema(self) -> None:
         with self._connect() as connection:

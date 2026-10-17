@@ -4,7 +4,13 @@ from unittest import mock
 import pytest
 
 from core.provider_call_deadline import PROVIDER_DEADLINE_KEY, ProviderCallDeadlineExceededError
-from tests.test_openai_compatible_adapter import _cloud_adapter, _native_tool_request, _ollama_adapter, _request
+from tests.test_openai_compatible_adapter import (
+    _cloud_adapter,
+    _native_tool_request,
+    _ollama_adapter,
+    _request,
+    local_metadata_for_payload_and_usage_tests,
+)
 
 
 @pytest.mark.parametrize("local", [False, True])

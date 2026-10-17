@@ -463,6 +463,43 @@ def test_corrupt_or_tampered_mirror_restores_nothing_and_is_quarantined(tmp_path
     assert not path.exists()
 
 
+@pytest.mark.parametrize("damage", ["mirror", "history"])
+def test_repeated_quarantine_preserves_every_store_at_the_same_timestamp(tmp_path, monkeypatch, damage):
+    from core import mode_permission_policy as policy
+
+    monkeypatch.setattr(policy.time, "time", lambda: 1_720_000_000.0)
+    ws = _ws(tmp_path)
+    _bind_chat_to_workspace("chat-quarantine", ws)
+    activate_bypass_grant(
+        session_id="chat-quarantine", scope="session", explicit_confirmation=True,
+        until_off=True, workspace_root=ws,
+    )
+    mirror = policy._bypass_grants_path()
+    paths = [mirror] if damage == "mirror" else [
+        mirror, policy._bypass_revocations_path(), policy._bypass_revocations_head_path(),
+    ]
+    originals = {path: path.read_bytes() for path in paths}
+    archived = {path: [b"previous quarantine evidence"] for path in paths}
+    for path in paths:
+        path.with_name(f"{path.name}.corrupt-1720000000").write_bytes(archived[path][0])
+
+    for attempt in range(3):
+        for path, content in originals.items():
+            path.write_bytes(content)
+        poison = mirror if damage == "mirror" else policy._bypass_revocations_path()
+        poison.write_bytes(f"invalid store {attempt}".encode())
+        for path in paths:
+            archived[path].append(path.read_bytes())
+        _BYPASS_GRANTS.clear()
+        policy._BYPASS_GRANTS_RESTORED = False
+        assert policy.restore_persisted_bypass_grants() == 0
+        assert not _BYPASS_GRANTS, "quarantine must never restore executable authority"
+        for path in paths:
+            assert not path.exists(), "poison must not remain at the live path"
+            copies = list(path.parent.glob(f"{path.name}.corrupt-*"))
+            assert sorted(copy.read_bytes() for copy in copies) == sorted(archived[path])
+
+
 def test_a_json_object_saying_until_off_is_not_evidence_of_authority(tmp_path):
     """Forged entries inside a MAC-valid envelope are still refused by the shape law."""
     import hashlib
@@ -689,7 +726,12 @@ def test_unverifiable_revocation_history_restores_nothing_after_a_real_restart(t
         lines[0] = lines[0][:-4] + "beef"  # a COMPLETE record that no longer MACs
         journal.write_text("\n".join(lines) + "\n", encoding="utf-8")
     elif damage == "unreadable":
-        journal.chmod(0o000)
+        # chmod(0) does not deny reads on Windows or under a privileged POSIX user.
+        # A directory at the journal path makes the real OS read fail in BOTH processes.
+        journal.rename(journal.with_name(journal.name + ".unreadable-source"))
+        journal.mkdir()
+        with pytest.raises(OSError):
+            journal.read_text(encoding="utf-8")
     elif damage == "emptied":
         journal.write_text("", encoding="utf-8")  # every acknowledged record deleted
     elif damage == "stripped-stamp":
@@ -965,12 +1007,15 @@ def test_truncated_history_is_never_legitimized_by_a_new_append_or_persist(tmp_p
     from core import mode_permission_policy as policy
     from core.mode_permission_policy import BypassStoreError
 
+    ws = _ws(tmp_path)
+    _bind_chat_to_workspace("chat-trunc", ws)
+    assert policy._workspace_root_confined(ws) == ""
     store = tmp_path / "authority" / "bypass_grants.json"
     with pytest.MonkeyPatch.context() as scoped:
         scoped.setattr(policy, "_bypass_grants_path", lambda: store)
         base = {
             "session_id": "chat-trunc", "scope": "session", "until_off": True, "expires_at": None,
-            "workspace_root": "/tmp", "issued_at": 1.0, "revoked": False, "project_id": "", "task_id": "",
+            "workspace_root": ws, "issued_at": 1.0, "revoked": False, "project_id": "", "task_id": "",
         }
         _BYPASS_GRANTS["tok-A"] = dict(base, token="tok-A")
         policy._persist_bypass_grants_locked()
@@ -1007,15 +1052,17 @@ def test_truncated_history_is_never_legitimized_by_a_new_append_or_persist(tmp_p
         with pytest.raises(BypassStoreError):
             policy._persist_bypass_grants_locked()
         # The activation-level refusal is the product surface for the same law:
+        before_tokens = set(_BYPASS_GRANTS)
         try:
             policy.activate_bypass_grant(
                 session_id="chat-trunc", scope="session", explicit_confirmation=True,
-                until_off=True, workspace_root="/tmp",
+                until_off=True, workspace_root=ws,
             )
         except ValueError as exc:
             assert "could not be recorded durably" in str(exc)
         else:  # pragma: no cover - the activation must not succeed on damaged history
             pytest.fail("an until-off grant was activated atop unverifiable revocation history")
+        assert set(_BYPASS_GRANTS) == before_tokens, "the refused activation left a new grant behind"
 
 
 def test_genuine_first_initialization_appends_without_an_anchor(tmp_path):
@@ -1119,13 +1166,16 @@ def test_lost_required_history_on_an_established_store_is_not_initialization(tmp
     from core import mode_permission_policy as policy
     from core.mode_permission_policy import BypassStoreError
 
+    ws = _ws(tmp_path)
+    _bind_chat_to_workspace("chat-lost", ws)
+    assert policy._workspace_root_confined(ws) == ""
     store = tmp_path / "authority" / "bypass_grants.json"
     with pytest.MonkeyPatch.context() as scoped:
         scoped.setattr(policy, "_bypass_grants_path", lambda: store)
         assert policy._bypass_store_lifecycle() == "fresh"
         base = {
             "session_id": "chat-lost", "scope": "session", "until_off": True, "expires_at": None,
-            "workspace_root": "/tmp", "issued_at": 1.0, "revoked": False, "project_id": "", "task_id": "",
+            "workspace_root": ws, "issued_at": 1.0, "revoked": False, "project_id": "", "task_id": "",
         }
         _BYPASS_GRANTS["tok-A"] = dict(base, token="tok-A")
         policy._persist_bypass_grants_locked()
@@ -1151,11 +1201,13 @@ def test_lost_required_history_on_an_established_store_is_not_initialization(tmp
             policy._append_bypass_revocation_journal_locked("tok-B")
         with pytest.raises(BypassStoreError, match="requires journal history"):
             policy._persist_bypass_grants_locked()
+        before_tokens = set(_BYPASS_GRANTS)
         with pytest.raises(ValueError, match="could not be recorded durably"):
             policy.activate_bypass_grant(
                 session_id="chat-lost", scope="session", explicit_confirmation=True,
-                until_off=True, workspace_root="/tmp",
+                until_off=True, workspace_root=ws,
             )
+        assert set(_BYPASS_GRANTS) == before_tokens, "the refused activation left a new grant behind"
         assert not policy._bypass_revocations_head_path().exists(), "no anchor was signed over the loss"
 
 

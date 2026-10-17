@@ -481,6 +481,7 @@ class TestCrashRecovery:
             helper=InProcessHelper(shutdown=lambda: None, relauncher=lambda path: True),
             health_probe=harness.health,
             installed_version="0.5.0",
+            platform="macos-arm64",
         )
         assert [r.action for r in results] == ["rolled_back"]
         assert harness.marker() == "old"  # previous version restored

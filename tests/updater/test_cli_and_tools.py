@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 import time
@@ -25,6 +26,33 @@ from .helpers import generate_publisher_keypair, manifest_bytes
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HELPER = REPO_ROOT / "installer" / "update" / "mac_update_helper.sh"
+
+
+def _fixture_codesign_runner(expected_bundle: Path):
+    """Byte-exact platform-command stand-in, never proof of native signing."""
+    expected = {
+        path.relative_to(expected_bundle).as_posix(): path.read_bytes()
+        for path in expected_bundle.rglob("*") if path.is_file()
+    }
+    assert expected, "the portable CLI fixture must contain actual bundle bytes"
+    commands: list[list[str]] = []
+
+    def run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        assert len(command) == 5 and command[:4] == ["codesign", "--verify", "--deep", "--strict"], command
+        commands.append(list(command))
+        bundle = Path(command[4])
+        entries = list(bundle.rglob("*")) if bundle.is_dir() else []
+        unchanged = not bundle.is_symlink() and not any(path.is_symlink() for path in entries)
+        actual = {
+            path.relative_to(bundle).as_posix(): path.read_bytes()
+            for path in entries if path.is_file()
+        } if unchanged else {}
+        return subprocess.CompletedProcess(
+            command, 0 if unchanged and actual == expected else 1,
+            stdout="", stderr="portable CLI fixture only; native signing is not evaluated",
+        )
+
+    return run, commands
 
 
 def run_cli(*args: str) -> subprocess.CompletedProcess:
@@ -83,7 +111,7 @@ class TestCLI:
 
     def test_apply_happy_path_with_local_server(self, tmp_path, pinned_keys, monkeypatch):
         private_hex, _public_hex = pinned_keys
-        # a real app bundle (ad-hoc signed) to swap — proper structure so codesign accepts it
+        # Real bundle files and swap on every host; native signing remains real on macOS.
         app = tmp_path / "Apps" / "VOOL.app"
         (app / "Contents" / "MacOS").mkdir(parents=True)
         (app / "Contents" / "Resources").mkdir()
@@ -98,7 +126,8 @@ class TestCLI:
         )
         (app / "Contents" / "MacOS" / "VOOL").write_text("#!/bin/bash\nsleep 600\n", encoding="utf-8")
         (app / "Contents" / "MacOS" / "VOOL").chmod(0o755)
-        subprocess.run(["codesign", "-s", "-", str(app)], capture_output=True, check=True)
+        if sys.platform == "darwin":
+            subprocess.run(["codesign", "-s", "-", str(app)], capture_output=True, check=True)
 
         new_bundle = tmp_path / "new"
         (new_bundle / "VOOL.app" / "Contents" / "MacOS").mkdir(parents=True)
@@ -111,7 +140,8 @@ class TestCLI:
             "#!/bin/bash\nsleep 600\n", encoding="utf-8"
         )
         (new_bundle / "VOOL.app" / "Contents" / "MacOS" / "VOOL").chmod(0o755)
-        subprocess.run(["codesign", "-s", "-", str(new_bundle / "VOOL.app")], capture_output=True, check=True)
+        if sys.platform == "darwin":
+            subprocess.run(["codesign", "-s", "-", str(new_bundle / "VOOL.app")], capture_output=True, check=True)
         import zipfile
 
         artifact = tmp_path / "artifact.zip"
@@ -157,8 +187,9 @@ class TestCLI:
         server.manifest_bytes = raw
         server.artifact_blob = blob
         try:
-            # Run the CLI IN-PROCESS so the injected seams apply; codesign stays REAL,
-            # notarization is waived for the sandbox exactly as documented.
+            # Run the CLI IN-PROCESS. macOS keeps the real codesign command; other
+            # hosts simulate only that OS command via the existing instance seam.
+            # Ed25519 manifest/artifact checks, download, swap and health stay real.
             import core.updater.download as download_module
             import core.updater.service as service_module
             import installer.update_cli as cli_module
@@ -171,13 +202,22 @@ class TestCLI:
 
             monkeypatch.setattr(download_module, "door_fetch", local_fetch)
             monkeypatch.setattr(service_module, "fetch_manifest_bytes", lambda url: raw)
-            monkeypatch.setattr(
-                cli_module, "installer_for", lambda key: MacOSBundleInstaller(default_require_notarization=False)
-            )
+            runner = None
+            verification_calls = []
+            if sys.platform != "darwin":
+                runner, verification_calls = _fixture_codesign_runner(new_bundle / "VOOL.app")
+
+            def fixture_installer(key):
+                assert key == "macos-arm64"
+                return MacOSBundleInstaller(run=runner, default_require_notarization=False)
+
+            monkeypatch.setattr(cli_module, "installer_for", fixture_installer)
             monkeypatch.setattr(cli_module, "_installed_version", lambda: "0.5.0")
             rc = cli_module.main(
                 [
                     "apply",
+                    "--platform",
+                    "macos-arm64",
                     "--data-dir",
                     str(tmp_path / "data"),
                     "--manifest-url",
@@ -188,11 +228,19 @@ class TestCLI:
                     "--health-url",
                     f"{server.url}/healthz",
                     "--relaunch-cmd",
-                    "/bin/echo relaunched",
+                    shlex.join([sys.executable, "-c", "print('relaunched')"]),
                 ]
             )
             assert rc == 0
             assert (app / "Contents" / "Resources" / "marker.txt").read_text(encoding="utf-8") == "new"
+            assert any(path == "/artifact.zip" for _method, path in server.requests)
+            assert any(path == "/healthz" for _method, path in server.requests)
+            priors = list(app.parent.glob(".VOOL.app.prior-*"))
+            assert len(priors) == 1
+            assert (priors[0] / "Contents" / "Resources" / "marker.txt").read_text(encoding="utf-8") == "old"
+            if sys.platform != "darwin":
+                assert len(verification_calls) == 1
+                assert Path(verification_calls[0][-1]).is_relative_to(tmp_path)
         finally:
             server.shutdown_server()
 

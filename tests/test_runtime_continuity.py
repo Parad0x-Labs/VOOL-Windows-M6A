@@ -317,7 +317,14 @@ class RuntimeContinuityTests(unittest.TestCase):
                 "provider_completion": {"final": {"incomplete": False, "has_content": True, "reasons": []}},
                 "verifier_presentation": {},
                 "retry_attempted": False,
+                "retry_succeeded": False,
                 "fallback_applied": False,
+                "validation_attempts": [],
+                "accepted_attempt": None,
+                "answer_commit_allowed": True,
+                "accepted_response_id": "",
+                "accepted_model_call_id": "",
+                "accepted_provider_manifest_id": "",
                 # Whether the evidence this turn retrieved is witnessed in the answer. The trace
                 # projects a WHITELIST, so a verdict not named here is invisible even when the
                 # runtime acted on it -- which is why it is asserted rather than tolerated. Empty
@@ -345,6 +352,58 @@ class RuntimeContinuityTests(unittest.TestCase):
         ])
         self.assertEqual(details["policy"]["project_import_count"], 1)
         self.assertNotIn(raw_input, str(trace))
+
+    def test_terminal_turn_trace_preserves_validation_facts_without_unreviewed_fields(self) -> None:
+        for accepted in (False, True):
+            with self.subTest(accepted=accepted):
+                runtime = RuntimeServices(display_name="VOOL")
+                runtime.agent = mock.Mock()
+                expected = {
+                    "ordinary_chat_output": {},
+                    "response_language": {},
+                    "final_ui": {},
+                    "provider_completion": {},
+                    "verifier_presentation": {},
+                    "retry_attempted": True,
+                    "retry_succeeded": accepted,
+                    "fallback_applied": False,
+                    "validation_attempts": [{"attempt": 1, "accepted": accepted}],
+                    "accepted_attempt": 1 if accepted else None,
+                    "answer_commit_allowed": accepted,
+                    "accepted_response_id": "response-retry-1" if accepted else "",
+                    "accepted_model_call_id": "model-retry-1" if accepted else "",
+                    "accepted_provider_manifest_id": "manifest-retry-1" if accepted else "",
+                    "evidence_binding": {},
+                }
+
+                def run_once(
+                    _text: str, *, source_context: dict[str, object],
+                    control: dict[str, object] = expected, **_kwargs: object,
+                ) -> dict[str, object]:
+                    source_context["response_control"] = {
+                        **json.loads(json.dumps(control)), "unreviewed_internal_payload": "synthetic-unreviewed-detail",
+                    }
+                    return {"response": "safe trace reply", "route": "conversation", "model_calls": 0}
+
+                runtime.agent.run_once.side_effect = run_once
+                captured = []
+
+                def emit(
+                    _context: dict[str, object], *, event_type: str, message: str,
+                    details: dict[str, object], events: list[dict[str, object]] = captured,
+                ) -> None:
+                    if event_type == "turn.trace_completed":
+                        events.append(details)
+
+                with mock.patch("core.runtime_task_events.emit_runtime_event", side_effect=emit):
+                    run_agent(
+                        runtime, "explain the trace", session_id=f"chat:validation-trace-{accepted}",
+                        source_context={"request_id": f"request-validation-trace-{accepted}"},
+                        workspace_root_provider=lambda: self._tmp.name,
+                    )
+                self.assertEqual(len(captured), 1)
+                self.assertEqual(captured[0]["response_control"], expected)
+                self.assertNotIn("synthetic-unreviewed-detail", json.dumps(captured))
 
     def test_terminal_turn_trace_recovers_receipts_from_completed_model_event(self) -> None:
         runtime = RuntimeServices(display_name="VOOL")

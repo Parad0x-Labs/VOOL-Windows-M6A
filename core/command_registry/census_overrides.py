@@ -143,6 +143,7 @@ _EXTERNAL: dict[str, str] = {
     # settings.credentials.set, models.pin, ...), which is why those appear above as adapters
     # and this does not.
     "http:GET:/settings": "settings page transport",
+    "http:GET:/companion": "loopback-only presentation page; core.companion_world_fragment.render_desktop_companion_html owns the renderer; no query or action input",
     "http:POST:/api/null": "web0 lane",
     "http:POST:/gate/unlock": "web0 lane",
     "http:POST:/api/show": "web0 lane",
@@ -329,6 +330,12 @@ _EXTERNAL: dict[str, str] = {
     "http:GET:/api/models/local": "model registry read feed (local models)",
     "http:GET:/api/cloud/spend-limits": "effect-budget lane read feed (spend limits)",
     "http:POST:/api/models/local/register": "model registry operator action (local model registration)",
+    # These are effectful runtime-owned operator actions, not read-only feeds or
+    # migrated registry commands. dispatch_post keeps the exact loopback,
+    # same-origin and empty-body gates; the named callbacks own setup state,
+    # selected-model policy, concurrency and retry limits.
+    "http:POST:/api/runtime/model-pull/retry": "local-model runtime operator action; RuntimeServices.model_pull_restart owns selected-model download retry and policy/state/rate limits; loopback, same-origin, empty body",
+    "http:POST:/api/runtime/local-model/retry": "local-model runtime operator action; RuntimeServices.local_model_setup_refresh owns failed local chat checks and policy/state/rate limits, never download; loopback, same-origin, empty body",
     "http:POST:/api/plugins/rescan": "plugin catalog operator action (rescan)",
     "http:GET:/api/intake/quarantine/list": "intake lane read feed (quarantine list)",
     "http:GET:/api/bug-report/destination": "bug-report lane read feed (destination state)",

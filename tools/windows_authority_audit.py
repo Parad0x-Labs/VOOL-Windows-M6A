@@ -259,6 +259,9 @@ def _source_fingerprint() -> str:
     workflow = ROOT / ".github" / "workflows" / "windows-release-gauntlet.yml"
     if workflow.is_file():
         files.add(workflow)
+    ci_entry = ROOT / "ops" / "windows_native_ci_user.ps1"
+    if ci_entry.is_file():
+        files.add(ci_entry)
     native_suffixes = {".cs", ".csproj", ".iss", ".ps1", ".cmd", ".bat", ".vbs", ".sh"}
     for file in (ROOT / "installer").rglob("*"):
         if file.is_file() and file.suffix.lower() in native_suffixes and not {"bin", "obj"} & set(file.parts):
@@ -266,10 +269,12 @@ def _source_fingerprint() -> str:
     for file in (ROOT / "config" / "release").rglob("*"):
         if file.is_file() and file.suffix.lower() in {".json", ".toml"}:
             files.add(file)
-    for file in sorted(files):
+    for file in sorted(files, key=lambda path: path.relative_to(ROOT).as_posix()):
         digest.update(file.relative_to(ROOT).as_posix().encode("utf-8"))
         digest.update(b"\0")
-        digest.update(file.read_bytes())
+        # Git checks these text sources out with platform-specific line endings. Pin source
+        # content consistently across CI hosts; exact build/payload hashes remain separate.
+        digest.update(file.read_bytes().replace(b"\r\n", b"\n"))
         digest.update(b"\0")
     return digest.hexdigest()
 

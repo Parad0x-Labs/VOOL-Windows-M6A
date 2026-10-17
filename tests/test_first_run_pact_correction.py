@@ -31,7 +31,7 @@ from core import first_run_pact, policy_engine
 from core.first_run_pact import PactFault
 from tests.first_run_pact_rig import pact_rig
 
-REPO = __file__.rsplit("/tests/", 1)[0]
+REPO = str(Path(__file__).resolve().parents[1])
 
 
 # --- 1. the return contract -----------------------------------------------------------------

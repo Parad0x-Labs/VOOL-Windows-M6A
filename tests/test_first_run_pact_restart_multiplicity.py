@@ -14,6 +14,12 @@ from core.first_run_pact import PactFault
 from tests.first_run_pact_rig import pact_rig
 
 
+class _WriterCleanupError(RuntimeError):
+    def __init__(self, errors: list[BaseException]):
+        super().__init__("pact writer cleanup failed: " + "; ".join(str(error) for error in errors))
+        self.errors = tuple(errors)
+
+
 def test_sigkill_between_writes_never_leaves_a_half_written_file(pact_rig):
     """Torn-write simulation: kill writers mid-storm; the file always parses or is quarantined.
 
@@ -42,15 +48,28 @@ def test_sigkill_between_writes_never_leaves_a_half_written_file(pact_rig):
                 return
 
     threads = [threading.Thread(target=storm, daemon=True) for _ in range(3)]
-    for thread in threads:
-        thread.start()
-    for _ in range(25):
-        raw = pact_file.read_bytes()
-        if raw.strip():
-            json.loads(raw)  # every observed instant is a parseable, complete document
-    stop.set()
-    for thread in threads:
-        thread.join(timeout=5)
+    try:
+        for thread in threads:
+            thread.start()
+        for _ in range(25):
+            raw = pact_file.read_bytes()
+            if raw.strip():
+                json.loads(raw)  # every observed instant is a parseable, complete document
+    finally:
+        original_error = sys.exc_info()[1]
+        stop.set()
+        cleanup_errors: list[BaseException] = []
+        for thread in threads:
+            if thread.ident is None:
+                continue
+            try:
+                thread.join(timeout=5)
+                if thread.is_alive():
+                    raise TimeoutError(f"pact writer {thread.name} did not stop")
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+        if cleanup_errors:
+            raise _WriterCleanupError(cleanup_errors) from original_error
     assert not errors
     json.loads(pact_file.read_text())
 

@@ -71,7 +71,7 @@ class PromptRoutedProvider:
                 # rig does, so the resource governor never plans a load for it and the memory gate keeps
                 # protecting the machine from real models only.
                 if self.path.startswith("/api/tags") or self.path.startswith("/api/ps"):
-                    return self._send({"models": [{"name": MODEL, "model": MODEL, "size": 1, "size_vram": 1, "details": {"parameter_size": "2B", "quantization_level": "Q4_K_M"}}]})
+                    return self._send({"models": [{"name": MODEL, "model": MODEL, "digest": "sha256:stub", "size": 1, "size_vram": 1, "details": {"parameter_size": "2B", "quantization_level": "Q4_K_M"}}]})
                 return self._send({"version": "0.0.0-stub"})
 
             def do_POST(self) -> None:
@@ -91,7 +91,7 @@ class PromptRoutedProvider:
                 with rig._lock:
                     rig.calls.append({"model": model, "prompt": prompt, "last_user": last_user, "path": self.path, "tools": [str(((t or {}).get("function") or {}).get("name") or "") for t in tools if isinstance(t, dict)], "has_tool_result": has_tool_result})
                 if self.path.startswith("/api/show"):
-                    return self._send({"model_info": {}, "details": {}})
+                    return self._send({"model_info": {"general.architecture": "scripted"}, "details": {}})
                 reply = rig.reply_for(model, has_tool_result=has_tool_result, last_user=last_user, tools=[str(((t or {}).get("function") or {}).get("name") or "") for t in tools if isinstance(t, dict)], prompt=prompt)
                 if isinstance(reply, dict):
                     message = {"role": "assistant", "content": "", "tool_calls": [reply]}
@@ -142,8 +142,7 @@ class PromptRoutedProvider:
 #: Run in the daemon's own home AFTER SEED_MANIFEST: certifies the stub model for the final-answer
 #: author role the way an operator's probe run would, so the runtime is willing to call it with tools.
 CERTIFY_SEED = '''
-import sys
-sys.path.insert(0, "{root}")
+# run_in_home supplies this checkout through PYTHONPATH, not Python source literals.
 from storage.model_provider_manifest import list_provider_manifests
 from tests._authorship_certification import certify_for_authorship
 

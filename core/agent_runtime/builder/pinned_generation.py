@@ -179,6 +179,27 @@ def _manifest_needs_paid_reservation(manifest: Any) -> bool:
         return False
 
 
+def _fit_local_generation_budget(manifest: Any, request: Any) -> None:
+    """A file's output ceiling cannot consume the local runner's protected input room."""
+    if str((getattr(manifest, "metadata", None) or {}).get("runtime_family") or "").strip().lower() != "ollama":
+        return
+    from adapters.openai_compatible_adapter import OpenAICompatibleAdapter, _request_messages_with_memory
+    from core.prompt_budget import estimate_message_tokens
+
+    # Use the serving adapter's actual runner limit and prompt projection, not a second
+    # context default or token estimator. Constructing it performs no provider request.
+    context_window = OpenAICompatibleAdapter(manifest)._ollama_context_window(request)
+    if context_window <= 0:
+        return
+    input_tokens = estimate_message_tokens(_request_messages_with_memory(request))
+    request.max_output_tokens = min(
+        int(request.max_output_tokens), max(1, context_window - input_tokens)
+    )
+    # Keep at least one output token: zero means provider default on some paths. If even
+    # that cannot fit, the existing adapter guard still rejects before dispatch. Never
+    # shorten the protected input or enlarge the runner to make a file generation fit.
+
+
 def build_pinned_generate_fn(
     agent: Any,
     *,
@@ -289,6 +310,7 @@ def build_pinned_generate_fn(
             metadata={"builder_generation": True},
         )
         try:
+            _fit_local_generation_budget(manifest, request)
             _adapter, response, error = router._invoke_manifest(
                 manifest=manifest,
                 request=request,
@@ -409,6 +431,7 @@ def build_pinned_generate_fn(
             metadata={"builder_generation": True, "reasoning_mandated_by_provider": True},
         )
         try:
+            _fit_local_generation_budget(manifest, request)
             _adapter, response, error = router._invoke_manifest(
                 manifest=manifest,
                 request=request,

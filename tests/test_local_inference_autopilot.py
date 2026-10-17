@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest import mock
+
+import pytest
 
 from adapters.base_adapter import ModelResponse
 from core.hardware_tier import MachineProbe
@@ -26,6 +29,31 @@ from core.runtime_task_events import register_runtime_event_sink, unregister_run
 from storage.db import get_connection
 from storage.migrations import run_migrations
 from storage.model_provider_manifest import ModelProviderManifest
+from tests._authorship_certification import certify_for_authorship, pinned_backend_identity
+
+
+@pytest.fixture(autouse=True)
+def _isolated_author_certification():
+    from core.final_answer_authorship import reset_for_tests
+
+    reset_for_tests()
+    yield
+    reset_for_tests()
+
+
+@contextmanager
+def _registered_lanes(router, *manifests, authors=()):
+    """Use the real inventory and certification stores, not permissive gate mocks."""
+    with pinned_backend_identity():
+        for manifest in manifests:
+            router.registry.register_manifest(manifest)
+        for manifest in authors:
+            certify_for_authorship(manifest)
+        yield
+
+
+def _turn_context(label: str, **extra) -> dict:
+    return {"turn_id": label, "session_id": f"session-{label}", "surface": "openclaw", **extra}
 
 
 def _capability(
@@ -929,7 +957,7 @@ def test_memory_router_prioritizes_autopilot_lane_and_emits_runtime_plan() -> No
         # for the 14B that exceeds its free RAM, marks it hardware-unfit, and the planner falls back
         # to the 32B -- making the outcome depend on the CI runner. Force the probe to "unknown" so the
         # selection is decided by the plan, not the box it runs on (matches the mocked free-VRAM=None).
-        with mock.patch("core.provider_routing._device_probe", return_value=None), mock.patch(
+        with _registered_lanes(router, heavy, verifier, authors=(verifier,)), mock.patch("core.provider_routing._device_probe", return_value=None), mock.patch(
             "core.memory_first_router._cached_free_vram_gb", return_value=None
         ), mock.patch(
             "core.memory_first_router.rank_provider_candidates", return_value=[heavy, verifier]
@@ -950,7 +978,7 @@ def test_memory_router_prioritizes_autopilot_lane_and_emits_runtime_plan() -> No
                 allow_paid_fallback=False,
                 provider_role="queen",
                 surface="openclaw",
-                source_context={"runtime_event_stream_id": "autopilot-test-stream", "surface": "openclaw"},
+                source_context=_turn_context("autopilot-task", runtime_event_stream_id="autopilot-test-stream"),
             )
     finally:
         unregister_runtime_event_sink("autopilot-test-stream")
@@ -1035,7 +1063,7 @@ def test_memory_router_blocks_explicit_heavy_plan_without_adapter_fallback() -> 
     context_result = SimpleNamespace(retrieval_confidence_score=0.2, report=context_report)
 
     try:
-        with mock.patch("core.memory_first_router.rank_provider_candidates", return_value=[fallback]), mock.patch.object(
+        with _registered_lanes(router, fallback), mock.patch("core.memory_first_router.rank_provider_candidates", return_value=[fallback]), mock.patch.object(
             router.registry,
             "build_adapter",
             side_effect=AssertionError("explicit heavy block must not invoke fallback adapter"),
@@ -1055,7 +1083,7 @@ def test_memory_router_blocks_explicit_heavy_plan_without_adapter_fallback() -> 
                 allow_paid_fallback=False,
                 provider_role="queen",
                 surface="openclaw",
-                source_context={"runtime_event_stream_id": "autopilot-heavy-block-stream", "surface": "openclaw"},
+                source_context=_turn_context("autopilot-heavy-block-task", runtime_event_stream_id="autopilot-heavy-block-stream"),
             )
     finally:
         unregister_runtime_event_sink("autopilot-heavy-block-stream")
@@ -1122,7 +1150,7 @@ def test_memory_router_blocks_missing_planned_heavy_manifest_without_fallback() 
     context_result = SimpleNamespace(retrieval_confidence_score=0.2, report=context_report)
 
     try:
-        with mock.patch("core.memory_first_router.rank_provider_candidates", return_value=[fallback]), mock.patch.object(
+        with _registered_lanes(router, fallback), mock.patch("core.memory_first_router.rank_provider_candidates", return_value=[fallback]), mock.patch.object(
             router.registry,
             "build_adapter",
             side_effect=AssertionError("missing planned heavy provider must not invoke fallback adapter"),
@@ -1142,7 +1170,7 @@ def test_memory_router_blocks_missing_planned_heavy_manifest_without_fallback() 
                 allow_paid_fallback=False,
                 provider_role="queen",
                 surface="openclaw",
-                source_context={"runtime_event_stream_id": "autopilot-heavy-missing-stream", "surface": "openclaw"},
+                source_context=_turn_context("autopilot-heavy-missing-task", runtime_event_stream_id="autopilot-heavy-missing-stream"),
             )
     finally:
         unregister_runtime_event_sink("autopilot-heavy-missing-stream")
@@ -1241,7 +1269,7 @@ def test_memory_router_does_not_fallback_after_planned_heavy_lane_failure() -> N
         raise AssertionError("planned heavy failure must not invoke smaller fallback adapter")
 
     try:
-        with mock.patch("core.memory_first_router.rank_provider_candidates", return_value=[heavy, fallback]), mock.patch.object(
+        with _registered_lanes(router, heavy, fallback, authors=(heavy,)), mock.patch("core.memory_first_router.rank_provider_candidates", return_value=[heavy, fallback]), mock.patch.object(
             router.registry,
             "build_adapter",
             side_effect=build_adapter,
@@ -1261,13 +1289,14 @@ def test_memory_router_does_not_fallback_after_planned_heavy_lane_failure() -> N
                 allow_paid_fallback=False,
                 provider_role="queen",
                 surface="openclaw",
-                source_context={"runtime_event_stream_id": "autopilot-heavy-failed-stream", "surface": "openclaw"},
+                source_context=_turn_context("autopilot-heavy-failed-task", runtime_event_stream_id="autopilot-heavy-failed-stream"),
             )
     finally:
         unregister_runtime_event_sink("autopilot-heavy-failed-stream")
 
     proof = [event for event in events if event["event_type"] == "model_lane_proof"][-1]
     assert decision.source == "explicit_heavy_lane_failed"
+    assert heavy_adapter.run_structured_task.call_count == 1
     assert proof["phase"] == "failed"
     assert proof["provider_id"] == heavy.provider_id
     assert proof["fallback_reason"] == "explicit_heavy_lane_failed:too slow"
@@ -1363,7 +1392,7 @@ def test_auto_selected_large_cloud_model_failure_still_falls_back_to_healthy_loc
         raise AssertionError(f"unexpected manifest {manifest.provider_id}")
 
     try:
-        with mock.patch(
+        with _registered_lanes(router, large_free_cloud, healthy_local, authors=(healthy_local,)), mock.patch(
             "core.memory_first_router.rank_provider_candidates", return_value=[large_free_cloud, healthy_local]
         ), mock.patch.object(router.registry, "build_adapter", side_effect=build_adapter), mock.patch(
             "core.memory_first_router.build_local_inference_autopilot_plan",
@@ -1381,12 +1410,13 @@ def test_auto_selected_large_cloud_model_failure_still_falls_back_to_healthy_loc
                 allow_paid_fallback=False,
                 provider_role="drone",
                 surface="openclaw",
-                source_context={"runtime_event_stream_id": "autopilot-auto-large-cloud-stream", "surface": "openclaw"},
+                source_context=_turn_context("autopilot-auto-large-cloud-task", runtime_event_stream_id="autopilot-auto-large-cloud-stream"),
             )
     finally:
         unregister_runtime_event_sink("autopilot-auto-large-cloud-stream")
 
     assert local_adapter.run_text_task.called, "candidate B (the healthy local model) must have been attempted"
+    assert large_adapter.run_text_task.call_count == 1
     assert decision.source != "explicit_heavy_lane_failed"
     assert decision.used_model is True
     assert decision.model_name == healthy_local.model_name
@@ -1482,7 +1512,7 @@ def test_explicit_pin_on_a_heavy_model_that_fails_never_silently_substitutes() -
             return heavy_adapter
         raise AssertionError(f"explicit pin must never invoke a different manifest, got {manifest.provider_id}")
 
-    with mock.patch(
+    with _registered_lanes(router, heavy, healthy_local, authors=(heavy, healthy_local)), mock.patch(
         "core.memory_first_router.rank_provider_candidates", return_value=[heavy, healthy_local]
     ), mock.patch.object(router.registry, "build_adapter", side_effect=build_adapter), mock.patch(
         "core.memory_first_router.build_local_inference_autopilot_plan",
@@ -1500,10 +1530,12 @@ def test_explicit_pin_on_a_heavy_model_that_fails_never_silently_substitutes() -
             allow_paid_fallback=False,
             provider_role="queen",
             surface="openclaw",
-            source_context={"requested_model": heavy.model_name, "surface": "openclaw"},
+            source_context=_turn_context("autopilot-explicit-pin-task", requested_model=heavy.model_name),
         )
 
     assert not local_adapter.run_text_task.called, "must never silently substitute a different model"
+    assert heavy_adapter.run_text_task.call_count == 1
+    assert decision.source != "routing_identity_missing"
     assert decision.used_model is not True
     assert decision.model_name != healthy_local.model_name
 
@@ -1570,7 +1602,7 @@ def test_memory_router_marks_planned_actual_lane_mismatch_as_failed_proof() -> N
     context_result = SimpleNamespace(retrieval_confidence_score=0.2, report=context_report)
 
     try:
-        with mock.patch("core.memory_first_router.rank_provider_candidates", return_value=[actual]), mock.patch.object(
+        with _registered_lanes(router, actual, authors=(actual,)), mock.patch("core.memory_first_router.rank_provider_candidates", return_value=[actual]), mock.patch.object(
             router.registry,
             "build_adapter",
             return_value=adapter,
@@ -1590,13 +1622,14 @@ def test_memory_router_marks_planned_actual_lane_mismatch_as_failed_proof() -> N
                 allow_paid_fallback=False,
                 provider_role="auto",
                 surface="openclaw",
-                source_context={"runtime_event_stream_id": "autopilot-mismatch-stream", "surface": "openclaw"},
+                source_context=_turn_context("autopilot-mismatch-task", runtime_event_stream_id="autopilot-mismatch-stream"),
             )
     finally:
         unregister_runtime_event_sink("autopilot-mismatch-stream")
 
     proof = [event for event in events if event["event_type"] == "model_lane_proof"][-1]
     assert proof["phase"] == "failed"
+    assert adapter.run_text_task.call_count == 1
     assert proof["mismatch"] is True
     assert proof["failure_reason"] == "planned_adapter_mismatch"
     assert proof["planned_provider_id"] == "ollama-local:qwen3:14b"
@@ -1689,7 +1722,7 @@ def test_memory_router_invokes_independent_verifier_lane_before_final_proof() ->
     context_result = SimpleNamespace(retrieval_confidence_score=0.2, report=context_report)
 
     try:
-        with mock.patch("core.memory_first_router.rank_provider_candidates", return_value=[primary, verifier]), mock.patch.object(
+        with _registered_lanes(router, primary, verifier, authors=(primary,)), mock.patch("core.memory_first_router.rank_provider_candidates", return_value=[primary, verifier]), mock.patch.object(
             router.registry,
             "build_adapter",
             side_effect=[primary_adapter, verifier_adapter],
@@ -1709,7 +1742,7 @@ def test_memory_router_invokes_independent_verifier_lane_before_final_proof() ->
                 allow_paid_fallback=False,
                 provider_role="queen",
                 surface="openclaw",
-                source_context={"runtime_event_stream_id": "autopilot-verifier-stream", "surface": "openclaw"},
+                source_context=_turn_context("autopilot-verifier-task", runtime_event_stream_id="autopilot-verifier-stream"),
             )
     finally:
         unregister_runtime_event_sink("autopilot-verifier-stream")
@@ -1719,6 +1752,7 @@ def test_memory_router_invokes_independent_verifier_lane_before_final_proof() ->
         verifier.provider_id,
     ]
     assert verifier_adapter.run_text_task.call_count == 1
+    assert primary_adapter.run_text_task.call_count == 1
     verifier_events = [event for event in events if event["event_type"].startswith("model_lane_verifier_")]
     assert [event["event_type"] for event in verifier_events] == [
         "model_lane_verifier_started",
@@ -1730,6 +1764,68 @@ def test_memory_router_invokes_independent_verifier_lane_before_final_proof() ->
     assert proof["provider_id"] == primary.provider_id
     assert proof["verifier_status"] == "independent_completed"
     assert decision.details["lane_proof"]["verifier_status"] == "independent_completed"
+
+
+@pytest.mark.parametrize("refusal", ["missing_turn", "missing_session", "unregistered", "uncertified"])
+def test_routing_and_authorship_refuse_before_adapter_dispatch(refusal: str) -> None:
+    router = MemoryFirstRouter()
+    manifest = ModelProviderManifest(
+        provider_name="ollama-local",
+        # Certification rows survive the shared DB reset; each refusal gets its own identity.
+        model_name=f"qwen3:8b-refusal-{refusal}",
+        source_type="http",
+        adapter_type="local_qwen_provider",
+        license_name="Apache-2.0",
+        license_reference="https://ollama.com/library/qwen3",
+        runtime_dependency="ollama",
+        capabilities=["summarize", "format", "structured_json"],
+        runtime_config={"base_url": "http://127.0.0.1:11434"},
+        metadata={"deployment_class": "local", "orchestration_role": "drone"},
+    )
+    source_context = _turn_context(f"refusal-{refusal}")
+    if refusal == "missing_turn":
+        source_context.pop("turn_id")
+    elif refusal == "missing_session":
+        source_context.pop("session_id")
+    report = SimpleNamespace(retrieval_confidence=0.0, to_dict=lambda: {"external_evidence_attachments": []})
+    with pinned_backend_identity(), mock.patch(
+        "core.memory_first_router.rank_provider_candidates", return_value=[manifest]
+    ) as ranker, mock.patch.object(router.registry, "build_adapter") as build_adapter:
+        if refusal != "unregistered":
+            router.registry.register_manifest(manifest)
+        if refusal != "uncertified":
+            certify_for_authorship(manifest)
+        else:
+            from core.final_answer_authorship import author_certification
+
+            assert author_certification(manifest).certified is False
+        decision = router._execute_provider_task(
+            task=SimpleNamespace(task_id=f"refusal-{refusal}", task_summary="explain a lighthouse"),
+            classification={"task_class": "quick_answer"},
+            interpretation=SimpleNamespace(reconstructed_text="explain a lighthouse"),
+            context_result=SimpleNamespace(retrieval_confidence_score=0.0, report=report),
+            persona=SimpleNamespace(),
+            task_hash=f"refusal-{refusal}",
+            task_kind="chat",
+            output_mode="plain_text",
+            allow_paid_fallback=False,
+            provider_role="drone",
+            surface="openclaw",
+            source_context=source_context,
+        )
+    build_adapter.assert_not_called()
+    assert decision.used_model is False
+    if refusal in {"missing_turn", "missing_session"}:
+        ranker.assert_not_called()
+        assert decision.source == "routing_identity_missing"
+        assert decision.details["attempted"] == []
+    elif refusal == "unregistered":
+        ranker.assert_called_once()
+        assert decision.details["ranked_candidates"] == []
+        assert decision.details["attempted"] == []
+    else:
+        ranker.assert_called_once()
+        assert decision.details["attempted_error_reasons"] == ["author_not_certified_for_final_answer"]
 
 
 # --------------------------------------------------------------------------------------

@@ -28,6 +28,7 @@ Marked ``served``: boots a daemon (~5-20 s). A skip is not a pass.
 """
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 from typing import Any
@@ -56,7 +57,7 @@ SESSION = "p0-served-chat"
 # memory bootstrap lane must actually ride for this proof to be non-vacuous.
 SEED = '''
 import sys
-sys.path.insert(0, "{root}")
+sys.path.insert(0, {root!r})
 from storage.db import get_connection
 from storage.migrations import run_migrations
 from storage.model_provider_manifest import ModelProviderManifest, list_provider_manifests, upsert_provider_manifest
@@ -87,6 +88,14 @@ for name in {models!r}:
     upsert_provider_manifest(manifest(name))
 print(sorted(m.provider_id for m in list_provider_manifests()))
 '''
+
+
+@pytest.mark.parametrize("root", [r"C:\Users\Example User\source", "/tmp/example user's source"])
+def test_seed_preserves_the_exact_repository_path_as_a_python_literal(root):
+    script = SEED.format(root=root, base_url="http://127.0.0.1:1", models=[MODEL])
+    compile(script, "served-forget-seed", "exec")
+    insert = ast.parse(script).body[1].value
+    assert ast.literal_eval(insert.args[1]) == root
 
 
 def _reply_text(payload: dict[str, Any]) -> str:
@@ -139,7 +148,7 @@ def served(tmp_path: Path):
             daemon.start(timeout=240)
         except Exception as exc:  # pragma: no cover - environment, not the fix
             pytest.skip(f"served daemon could not boot here: {exc}")
-        run_in_home(home, SEED.format(root=REPO_ROOT, base_url=provider.base_url, models=[MODEL]))
+        run_in_home(home, SEED.format(root=str(REPO_ROOT), base_url=provider.base_url, models=[MODEL]))
         result = _certify(daemon, MODEL)
         assert result.get("state") == "verified", f"model certification failed: {result}"
         provider.reset()
@@ -157,9 +166,22 @@ def served(tmp_path: Path):
 
 def _restart(home: Path, old: ServedDaemon) -> ServedDaemon:
     old.stop()
-    fresh = ServedDaemon(home)
+    fresh = ServedDaemon(home, env_extra=old.env_extra)
     fresh.start(timeout=240)
     return fresh
+
+
+def test_cold_restart_preserves_the_isolated_provider_settings(tmp_path, monkeypatch):
+    settings = {"VOOL_OLLAMA_URL": "http://127.0.0.1:1", "VOOL_WORKSPACE_ROOT": str(tmp_path / "ws")}
+    old = ServedDaemon(tmp_path / "home", env_extra=settings)
+    stopped = []
+    monkeypatch.setattr(old, "stop", lambda: stopped.append(True))
+    monkeypatch.setattr(ServedDaemon, "start", lambda self, **kwargs: self)
+    fresh = _restart(old.home, old)
+    assert stopped == [True]
+    assert fresh is not old
+    assert fresh.env_extra == settings
+    assert fresh.env_extra is not old.env_extra
 
 
 def test_served_forget_then_cold_restart_provider_wire_has_zero_canary_bytes(served: dict[str, Any]) -> None:

@@ -7,8 +7,9 @@ plan/auto/bypass. Four contracts that declare `side_effect_class="read_only"` we
 denied in exactly the modes meant to be more permissive — the same defect the policy's
 own comment records for `pdf.*`/`skill.*`, which were fixed by declaring their actions.
 
-This test is the general form, not a fix for four names: EVERY read-only contract must
-resolve to real read actions, so a newly added one cannot repeat the defect silently.
+This test is the general form, not a fix for four names: read-only effects must resolve
+to real read actions. The three local email review-state operations intentionally have
+no permission actions; they remain in every census and must resolve to exactly none.
 """
 
 from __future__ import annotations
@@ -32,6 +33,10 @@ _NOT_GATED = {"respond.direct"}
 #: nothing to classify, which is correct rather than a defect.
 _ARGUMENT_DERIVED = {"sandbox.run_command"}
 
+#: The policy explicitly treats local draft review state as action-free. Sending is a
+#: separate effect, not something saving, showing, or approving a draft may classify as.
+_LOCAL_REVIEW_STATE = {"email.draft.save", "email.draft.get", "email.draft.approve"}
+
 
 def _read_only_intents() -> list[str]:
     return [
@@ -51,7 +56,10 @@ def test_the_census_found_read_only_contracts_to_check() -> None:
 @pytest.mark.parametrize("intent", _read_only_intents())
 def test_a_read_only_tool_never_classifies_as_an_unknown_side_effect(intent: str) -> None:
     actions = actions_for_tool(intent, {})
-    assert actions, f"{intent} resolved to no permission actions at all"
+    if intent in _LOCAL_REVIEW_STATE:
+        assert actions == (), f"{intent} classified local review state as a permission effect"
+    else:
+        assert actions, f"{intent} resolved to no permission actions at all"
     assert PermissionAction.UNKNOWN_SIDE_EFFECT not in actions, (
         f"{intent} declares side_effect_class='read_only' but classifies as an unknown "
         "side effect, which the mode matrix DENIES in plan/auto/bypass — declare "

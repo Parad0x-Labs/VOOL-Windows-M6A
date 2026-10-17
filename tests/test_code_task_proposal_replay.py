@@ -343,8 +343,12 @@ def test_a_recorded_legacy_proposal_is_compared_with_what_it_recorded(invoice_re
     request = {"task_id": recorded["task_id"], "proposal_id": "p1", "intent": p1["intent"],
                "rationale": p1.get("rationale") or "Owner math.js: add the operands."}
     same = _door("code.task.propose", {**request, "arguments": p1["arguments"]}, ctx)
-    assert same.ok and same.details["replayed"] and same.details["proposal_state"] == "approved", \
+    # The request still matches, but its old approval never reviewed a physical destination.
+    assert same.ok and not same.details["replayed"] and same.details["proposal_state"] == "pending_approval", \
         (same.status, same.response_text)
+    assert _journal(recorded["task_id"])["proposals"]["p1"]["approved"] is False
+    retry = _door("code.task.propose", {**request, "arguments": p1["arguments"]}, ctx)
+    assert retry.ok and retry.details["replayed"] and retry.details["proposal_state"] == "pending_approval"
     changed_arguments = {**p1["arguments"], "content": p1["arguments"]["content"] + "// revised\n"}
     changed = _door("code.task.propose", {**request, "arguments": changed_arguments}, ctx)
     assert changed.status == "proposal_id_conflict" and changed.details["differences"] == ["content"], changed.details

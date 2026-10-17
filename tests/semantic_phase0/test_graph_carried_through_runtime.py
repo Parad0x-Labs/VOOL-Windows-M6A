@@ -206,6 +206,174 @@ def test_conservation_verdict_is_recorded_and_tells_the_truth(fresh_store) -> No
     assert "u1" in unrelated["publication_conservation"]["hidden"]
 
 
+def test_verdict_binds_actual_final_bytes_and_does_not_persist_answer_text(fresh_store) -> None:
+    import hashlib
+
+    from core.finalization import _semantic_conservation_verdict
+    from core.semantic.graph_serialization import graph_digest
+
+    opened, graph = _mint(TEXT)
+    sid, ver = opened["set_id"], opened["version"]
+    _sweep_to(sid, ver, {"u1": "satisfied", "u2": "unanswered"})
+    content = "🌙 Oslo weather: 12 C, overcast.\r\n\r\nCould not be answered:\r\n- how did tesla close (not dispatched)"
+    verdict = _semantic_conservation_verdict({"set_id": sid, "set_version": ver}, content, {"session_id": "bound-bytes"})
+    assert verdict["publication_conservation"]["conserved"] is True
+    assert verdict["publication_conservation"]["invalid"] == []
+    assert verdict["publication_evidence_grade"] == "slot_turn_graph_bound_final_byte_spans"
+    payload = content.encode("utf-8")
+    expected_hash = "sha256:" + hashlib.sha256(payload).hexdigest()
+    assert verdict["final_content_hash"] == expected_hash
+    by_slot = {row["slot_id"]: row for row in verdict["slot_evidence"]}
+    for row in by_slot.values():
+        assert row["turn_id"] == "turn-1" and row["graph_digest"] == graph_digest(graph)
+        assert row["content_hash"] == expected_hash and row["final_byte_coverage"] == "verified"
+        assert row["byte_end"] > row["byte_start"] >= 0
+        assert row["visibility_basis"] == "lexical_inference"
+    assert payload[by_slot["u1"]["byte_start"]:by_slot["u1"]["byte_end"]].startswith("🌙 Oslo".encode())
+    assert payload[by_slot["u2"]["byte_start"]:by_slot["u2"]["byte_end"]] == b"- how did tesla close (not dispatched)"
+    assert by_slot["u1"]["disposition"] == "answered" and by_slot["u2"]["disposition"] == "unknown"
+    assert "Oslo" not in json.dumps(verdict) and "tesla" not in json.dumps(verdict)
+
+
+@pytest.mark.parametrize("state", ["indeterminate", "satisfied"])
+def test_paraphrased_story_stays_unverified_not_falsely_certified_or_accused(state, fresh_store) -> None:
+    from core.finalization import _semantic_conservation_verdict
+
+    text = "Write a four-sentence original story about a lighthouse keeper who discovers a clock running backwards."
+    opened, _graph = _mint(text)
+    sid, ver = opened["set_id"], opened["version"]
+    _sweep_to(sid, ver, {"u1": state})
+    content = "Elias opened the brass door. The hands ticked in reverse. Sunset became dawn. The mechanism locked."
+    verdict = _semantic_conservation_verdict({"set_id": sid, "set_version": ver}, content, {"session_id": "unverified"})
+    assert verdict["slot_conservation"]["conserved"] is True
+    assert verdict["publication_conservation"]["conserved"] is False
+    (row,) = verdict["slot_evidence"]
+    assert row["ledger_state"] == state
+    assert row["disposition"] == "unverified"
+    assert row["fulfillment_evidence"] == "indeterminate" and row["final_byte_coverage"] == "indeterminate"
+    assert row["content_hash"] == "" and row["byte_start"] == row["byte_end"] == -1
+
+
+@pytest.mark.parametrize("cancelled,enforced", [(False, False), (False, True), (True, False)])
+def test_finalization_provenance_describes_committed_bytes_after_cancellation(cancelled, enforced, monkeypatch, fresh_store) -> None:
+    import hashlib
+    import threading
+
+    from core.finalization import (
+        CANCELLED_BEFORE_PUBLICATION,
+        CONSERVATION_ENV,
+        CONSERVATION_EVENT,
+        finalize_answer,
+        get_finalization_by_semantic_id,
+    )
+    from core.presentation_selection import select_presentation
+    from core.semantic.semantic_result_seam import admit_semantic_result, reset_admission
+
+    text = "what is 18^2"
+    opened, _graph = _mint(text)
+    sid, ver = opened["set_id"], opened["version"]
+    assert ol.record_disposition(sid, ver, "ob:att-1:answer", "satisfied", evidence_source="model_prose")
+    _sweep_to(sid, ver, {"u1": "satisfied"})
+    marker = threading.Event()
+    if cancelled:
+        marker.set()
+    session = "commit-byte-proof-" + str(cancelled)
+    context = {"session_id": session, "runtime_session_id": session, "cancel_event": marker}
+    content = "18² = 324"
+    if enforced:
+        monkeypatch.setenv(CONSERVATION_ENV, "enforce")
+    reset_admission()
+    try:
+        record = admit_semantic_result({"response": content})
+        semantic_id = record["_semantic_admission"]["semantic_result_id"]
+        commit = finalize_answer(
+            turn_id="turn-1", canonical_content=content, source_context=context,
+            closure={"set_id": sid, "set_version": ver},
+        )
+        final = CANCELLED_BEFORE_PUBLICATION if cancelled else content
+        stored = get_finalization_by_semantic_id(semantic_id)
+        assert stored["canonical_content"] == final
+        assert commit["content_hash"] == stored["content_hash"] == "sha256:" + hashlib.sha256(final.encode()).hexdigest()
+        events = [event for event in _events(session) if event.get("event_type") == CONSERVATION_EVENT]
+        assert len(events) == 1
+        verdict = events[0]["verdict"]
+        assert verdict["final_content_hash"] == commit["content_hash"]
+        (proof,) = verdict["slot_evidence"]
+        assert verdict["publication_conservation"]["conserved"] is not cancelled
+        if cancelled:
+            assert proof["disposition"] == "unverified" and proof["final_byte_coverage"] == "indeterminate"
+            assert proof["content_hash"] == "" and proof["byte_start"] == -1
+        else:
+            assert proof["content_hash"] == commit["content_hash"]
+            assert final.encode()[proof["byte_start"]:proof["byte_end"]] == content.encode()
+        assert commit["display_metadata"]["presentation_selection"] == select_presentation(final, context)
+    finally:
+        reset_admission()
+
+
+def test_enforcement_still_refuses_unverified_publication_with_no_finalization_row(monkeypatch, fresh_store) -> None:
+    from core import finalization
+    from core.semantic.semantic_result_seam import admit_semantic_result, reset_admission
+
+    text = "Write an original story about a lighthouse keeper."
+    opened, _graph = _mint(text)
+    sid, ver = opened["set_id"], opened["version"]
+    assert ol.record_disposition(sid, ver, "ob:att-1:answer", "satisfied", evidence_source="model_prose")
+    _sweep_to(sid, ver, {"u1": "indeterminate"})
+    monkeypatch.setenv(finalization.CONSERVATION_ENV, "enforce")
+    reset_admission()
+    try:
+        record = admit_semantic_result({"response": "Elias opened the brass door."})
+        semantic_id = record["_semantic_admission"]["semantic_result_id"]
+        with pytest.raises(finalization.FinalizationRejected, match="SLOT_CONSERVATION:publication"):
+            finalization.finalize_answer(
+                turn_id="turn-1", canonical_content="Elias opened the brass door.",
+                closure={"set_id": sid, "set_version": ver},
+            )
+        assert finalization.get_finalization_by_semantic_id(semantic_id) is None
+    finally:
+        reset_admission()
+
+
+@pytest.mark.parametrize("corruption", ["stale_hash", "foreign_turn", "duplicate"])
+def test_invalid_span_proof_cannot_reach_durable_finalization(corruption, monkeypatch, fresh_store) -> None:
+    from dataclasses import replace
+
+    from core import finalization
+    from core.semantic.bridges import publication
+    from core.semantic.semantic_result_seam import admit_semantic_result, reset_admission
+
+    text = "what is 18^2"
+    opened, _graph = _mint(text)
+    sid, ver = opened["set_id"], opened["version"]
+    assert ol.record_disposition(sid, ver, "ob:att-1:answer", "satisfied", evidence_source="model_prose")
+    _sweep_to(sid, ver, {"u1": "satisfied"})
+    monkeypatch.setenv(finalization.CONSERVATION_ENV, "enforce")
+    real_bridge = publication.published_slots
+
+    def corrupt_proof(*args, **kwargs):
+        records = real_bridge(*args, **kwargs)
+        assert len(records) == 1 and records[0].visible
+        if corruption == "duplicate":
+            return (*records, records[0])
+        change = {"content_hash": "sha256:stale"} if corruption == "stale_hash" else {"turn_id": "foreign"}
+        return (replace(records[0], **change),)
+
+    # Fault injection only: retain the actual bridge and finalization/DB/gates, corrupt its proof.
+    monkeypatch.setattr(publication, "published_slots", corrupt_proof)
+    reset_admission()
+    try:
+        record = admit_semantic_result({"response": "18² = 324"})
+        semantic_id = record["_semantic_admission"]["semantic_result_id"]
+        with pytest.raises(finalization.FinalizationRejected, match="SLOT_CONSERVATION:publication"):
+            finalization.finalize_answer(
+                turn_id="turn-1", canonical_content="18² = 324", closure={"set_id": sid, "set_version": ver},
+            )
+        assert finalization.get_finalization_by_semantic_id(semantic_id) is None
+    finally:
+        reset_admission()
+
+
 def test_an_open_slot_is_missing_from_the_terminal_set(fresh_store) -> None:
     from core.finalization import _semantic_conservation_verdict
 

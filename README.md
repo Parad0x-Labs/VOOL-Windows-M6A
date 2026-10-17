@@ -2,6 +2,8 @@
 
 > **Windows-port repository.** A local-first personal agent runtime with a native Windows host, local model serving, memory, tools, receipts, and security-gated effects.
 
+VOOL is built by Parad0x Labs.
+
 > **Status: internal development and qualification.** This repository does not claim a public signed Windows release.
 
 <p align="center">

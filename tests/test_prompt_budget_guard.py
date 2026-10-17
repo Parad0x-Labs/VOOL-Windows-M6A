@@ -6,7 +6,7 @@ from unittest import mock
 
 import pytest
 
-from adapters.base_adapter import ModelRequest
+from adapters.base_adapter import ModelRequest, ModelResponse
 from adapters.openai_compatible_adapter import OpenAICompatibleAdapter
 from core.memory_first_router import MemoryFirstRouter, _emit_grounding_dropped_event
 from core.model_health import circuit_is_open, get_provider_health, reset_provider_health
@@ -16,6 +16,9 @@ from core.prompt_budget import (
     fit_messages_to_context_window,
 )
 from core.provider_invocation_gateway import ProviderInvocationValidationError
+from storage.model_provider_manifest import ModelProviderManifest
+from tests._authorship_certification import certify_for_authorship, pinned_backend_identity
+from tests.test_openai_compatible_adapter import local_metadata_for_payload_and_usage_tests
 
 # Real qwen2.5:7b token counts (Ollama prompt_eval_count) for the exact samples below.
 # The estimate must never read BELOW these -- a low read is what lets an oversized prompt
@@ -33,7 +36,8 @@ def _isolated_author_certification():
     from core.final_answer_authorship import reset_for_tests
 
     reset_for_tests()
-    yield
+    with pinned_backend_identity():
+        yield
     reset_for_tests()
 
 
@@ -293,20 +297,30 @@ def test_ollama_prompt_budget_fails_closed_before_network_when_protected_prompt_
     assert request.metadata["prompt_budget"]["system_prompt_preserved"] is True
 
 
-def _budget_rejecting_router(exc: PromptBudgetExceededError) -> tuple[Any, Any]:
+def _budget_rejecting_router(
+    exc: PromptBudgetExceededError, *, certification_state: str | None = "verified"
+) -> tuple[Any, Any]:
     adapter = mock.Mock()
     adapter.health_check.return_value = {"ok": True}
     adapter.supports_streaming.return_value = False
     adapter.run_text_task.side_effect = exc
     registry = mock.Mock()
     registry.build_adapter.return_value = adapter
-    manifest = SimpleNamespace(
-        provider_id="ollama-local:qwen2.5:7b",
-        model_name="qwen2.5:7b",
+    manifest = ModelProviderManifest(
+        provider_name="ollama-local",
+        # A negative fixture must not inherit a prior test's persisted certification.
+        model_name=f"qwen2.5:7b-budget-{certification_state or 'unknown'}",
+        source_type="http",
+        license_name="Apache-2.0",
+        license_reference="https://ollama.com/library/qwen2.5",
+        runtime_dependency="ollama",
+        capabilities=["summarize", "format", "structured_json"],
         metadata={"runtime_family": "ollama", "cost_class": "free_local"},
-        runtime_config={"context_window": 4096},
+        runtime_config={"base_url": "http://127.0.0.1:11434", "context_window": 4096},
         adapter_type="openai_compatible",
     )
+    if certification_state is not None:
+        certify_for_authorship(manifest, state=certification_state)
     return MemoryFirstRouter(registry=registry), manifest
 
 
@@ -331,6 +345,7 @@ def test_prompt_budget_rejection_does_not_mark_a_healthy_provider_unhealthy() ->
         )
 
     failure_mock.assert_not_called()
+    router.registry.build_adapter.return_value.run_text_task.assert_called_once()
     assert response is None
     assert error is not None
     assert error.startswith("prompt_budget_exceeded")
@@ -345,7 +360,7 @@ def test_repeated_prompt_budget_rejections_never_open_the_circuit() -> None:
     reset_provider_health(manifest.provider_id)
 
     for _ in range(6):
-        router._invoke_manifest(
+        _adapter, response, error = router._invoke_manifest(
             manifest=manifest,
             request=ModelRequest(
                 task_kind="normalization_assist",
@@ -357,7 +372,10 @@ def test_repeated_prompt_budget_rejections_never_open_the_circuit() -> None:
             task=SimpleNamespace(task_id="task-1"),
             source_context=None,
         )
+        assert response is None
+        assert error is not None and error.startswith("prompt_budget_exceeded:")
 
+    assert router.registry.build_adapter.return_value.run_text_task.call_count == 6
     assert circuit_is_open(manifest.provider_id) is False
     assert get_provider_health(manifest.provider_id).consecutive_failures == 0
 
@@ -388,6 +406,7 @@ def test_manifest_validation_rejection_does_not_open_the_circuit() -> None:
         )
 
     failure_mock.assert_not_called()
+    router.registry.build_adapter.return_value.run_text_task.assert_called_once()
     assert response is None
     assert error is not None
     assert error.startswith("context_manifest_invalid:")
@@ -416,6 +435,7 @@ def test_ordinary_provider_faults_still_record_a_provider_failure() -> None:
         )
 
     failure_mock.assert_called_once()
+    router.registry.build_adapter.return_value.run_text_task.assert_called_once()
     assert response is None
     assert "connection refused" in str(error)
 
@@ -435,10 +455,10 @@ def test_completed_call_links_context_selection_to_the_final_payload_receipt() -
         },
     )
 
-    def completed_provider(call_request: ModelRequest) -> SimpleNamespace:
+    def completed_provider(call_request: ModelRequest) -> ModelResponse:
         call_request.metadata["provider_manifest_id"] = "provider-manifest-turn-402"
         call_request.metadata["provider_payload_hash"] = "a" * 64
-        return SimpleNamespace(output_text="safe", usage={})
+        return ModelResponse(output_text="safe")
 
     router.registry.build_adapter.return_value.run_text_task.side_effect = completed_provider
     source_context = {"request_id": "request-turn-400"}
@@ -453,6 +473,7 @@ def test_completed_call_links_context_selection_to_the_final_payload_receipt() -
 
     assert error is None
     assert response is not None
+    router.registry.build_adapter.return_value.run_text_task.assert_called_once()
     assert source_context["provider_manifest_links"] == [
         {
             "context_manifest_id": "context-manifest-turn-401",
@@ -475,6 +496,35 @@ def test_completed_call_links_context_selection_to_the_final_payload_receipt() -
     assert completed[0].kwargs["provider_payload_hash"] == "a" * 64
     assert completed[0].kwargs["response_control"]["ordinary_chat_output"]["allowed"] is True
     assert "RAW-PROMPT-DO-NOT-EMIT-913" not in str(completed[0].kwargs)
+
+
+@pytest.mark.parametrize("certification_state", [None, "degraded"])
+def test_uncertified_author_is_refused_before_the_prompt_budget_adapter(
+    certification_state: str | None,
+) -> None:
+    router, manifest = _budget_rejecting_router(
+        PromptBudgetExceededError("must not reach this boundary", telemetry={}),
+        certification_state=certification_state,
+    )
+    from core.final_answer_authorship import author_certification
+
+    assert author_certification(manifest).certified is False
+    reset_provider_health(manifest.provider_id)
+    with mock.patch("core.memory_first_router.record_provider_failure") as failure_mock:
+        adapter, response, error = router._invoke_manifest(
+            manifest=manifest,
+            request=ModelRequest(task_kind="chat", prompt="Explain a lighthouse."),
+            output_mode="text",
+            task=SimpleNamespace(task_id="uncertified-budget-author"),
+            source_context=None,
+        )
+    assert (adapter, response, error) == (None, None, "author_not_certified_for_final_answer")
+    router.registry.build_adapter.assert_not_called()
+    router.registry.build_adapter.return_value.health_check.assert_not_called()
+    router.registry.build_adapter.return_value.run_text_task.assert_not_called()
+    failure_mock.assert_not_called()
+    assert get_provider_health(manifest.provider_id).consecutive_failures == 0
+    assert circuit_is_open(manifest.provider_id) is False
 
 
 def _emitted_grounding_events(prompt_budget: dict[str, Any]) -> list[Any]:

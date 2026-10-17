@@ -56,6 +56,7 @@ from core.model_health import reset_provider_health
 from storage.db import get_connection
 from storage.migrations import run_migrations
 from storage.model_provider_manifest import ModelProviderManifest
+from tests._authorship_certification import certify_for_authorship, pinned_backend_identity
 
 FLOOR = _FALLBACK_ATTEMPT_FLOOR_SECONDS
 BUDGET = 60.0
@@ -91,12 +92,9 @@ def _manifest(name: str, *, deployment_class: str = "local", model_name: str | N
         # computation falls back to the SAME remaining-budget value being capped against, so the
         # `capped_timeout < existing_timeout` check never trips and the reserve-adjusted manifest
         # copy this test needs to observe is never actually produced.
-        # Off the loopback address on purpose: the local tool-certification probe reaches only
-        # loopback endpoints, and an uncertified loopback author is refused before any attempt
-        # ("author_not_certified_for_final_answer", 2026-09-07). These fixtures are budget
-        # scenarios, not local models; outside the probe's reach their operator configuration is
-        # the attestation, exactly as for a remote lane.
-        runtime_config={"base_url": "http://fixture.invalid:9", "timeout_seconds": 180},
+        # Budget fixtures still need eligible authors. Use a pinned loopback identity and the
+        # existing certification store writers; moving Ollama off loopback is not attestation.
+        runtime_config={"base_url": "http://127.0.0.1:9", "timeout_seconds": 180},
         metadata={"deployment_class": deployment_class, "orchestration_role": "queen"},
     )
 
@@ -152,7 +150,7 @@ class _Scenario:
         adapter.run_text_task.side_effect = _side_effect
         return adapter
 
-    def run(self) -> None:
+    def run(self, *, certify: bool = True) -> None:
         run_migrations()
         reset_provider_health()
         conn = get_connection()
@@ -196,13 +194,16 @@ class _Scenario:
             },
         )
 
-        with mock.patch(
+        with pinned_backend_identity(), mock.patch(
             "core.memory_first_router.rank_provider_candidates", return_value=list(self.manifests)
         ), mock.patch.object(router.registry, "build_adapter", side_effect=build_adapter), mock.patch(
             "core.memory_first_router.build_local_inference_autopilot_plan", return_value=fake_plan
         ), mock.patch(
             "core.memory_first_router.resolve_fallback_budget_seconds", return_value=self.budget_seconds
         ), mock.patch("core.memory_first_router.time.monotonic", side_effect=self.clock.monotonic):
+            if certify:
+                for manifest in self.manifests:
+                    assert certify_for_authorship(manifest)
             self.decision = router._execute_provider_task(
                 task=SimpleNamespace(task_id="budget-char-task", task_summary="hi"),
                 classification={"task_class": "daily"},
@@ -239,6 +240,17 @@ class _Scenario:
 
 
 # --- the pure reserve helper, directly ------------------------------------------------------
+
+
+def test_uncertified_budget_candidate_is_refused_before_adapter_dispatch() -> None:
+    scenario = _Scenario(delays=[None])
+    scenario.manifests = [_manifest("uncertified")]
+    scenario.run(certify=False)
+    assert scenario.attempted == []
+    assert scenario.captured_caps == {}
+    assert scenario.clock.elapsed() == 0.0
+    assert scenario.decision.source == "no_provider_available"
+    assert "author_not_certified_for_final_answer" in str(scenario.decision)
 
 
 def test_reserve_helper_is_zero_with_no_successor() -> None:
@@ -364,7 +376,7 @@ def test_explicit_pin_single_candidate_receives_full_budget() -> None:
             "adapter_type": "local_qwen_provider", "license_name": "Apache-2.0",
             "license_reference": "https://example.invalid", "weight_location": "external",
             "runtime_dependency": "ollama", "capabilities": ["summarize", "format", "structured_json"],
-            "runtime_config": {"base_url": "http://fixture.invalid:9", "timeout_seconds": 180}, "enabled": True,  # off loopback: outside the certification probe's reach, see _manifest
+            "runtime_config": {"base_url": "http://127.0.0.1:9", "timeout_seconds": 180}, "enabled": True,
             "metadata": {"deployment_class": "local", "orchestration_role": "queen"},
         }
     )
@@ -374,7 +386,7 @@ def test_explicit_pin_single_candidate_receives_full_budget() -> None:
             "adapter_type": "local_qwen_provider", "license_name": "Apache-2.0",
             "license_reference": "https://example.invalid", "weight_location": "external",
             "runtime_dependency": "ollama", "capabilities": ["summarize", "format", "structured_json"],
-            "runtime_config": {"base_url": "http://fixture.invalid:9", "timeout_seconds": 180}, "enabled": True,  # off loopback: outside the certification probe's reach, see _manifest
+            "runtime_config": {"base_url": "http://127.0.0.1:9", "timeout_seconds": 180}, "enabled": True,
             "metadata": {"deployment_class": "local", "orchestration_role": "queen"},
         }
     )
@@ -407,13 +419,15 @@ def test_explicit_pin_single_candidate_receives_full_budget() -> None:
         },
     )
 
-    with mock.patch(
+    with pinned_backend_identity(), mock.patch(
         "core.memory_first_router.rank_provider_candidates", return_value=[pinned, other]
     ), mock.patch.object(router.registry, "build_adapter", side_effect=build_adapter), mock.patch(
         "core.memory_first_router.build_local_inference_autopilot_plan", return_value=fake_plan
     ), mock.patch(
         "core.memory_first_router.resolve_fallback_budget_seconds", return_value=BUDGET
     ), mock.patch("core.memory_first_router.time.monotonic", side_effect=clock.monotonic):
+        assert certify_for_authorship(pinned)
+        assert certify_for_authorship(other)
         router._execute_provider_task(
             task=SimpleNamespace(task_id="budget-char-pin-task", task_summary="hi"),
             classification={"task_class": "daily"},
@@ -487,7 +501,10 @@ def test_deadline_boundary_at_exact_equality_blocks_the_next_candidate() -> None
 
     router = MemoryFirstRouter()
     a, b = _manifest("a"), _manifest("b")
+    router.registry.register_manifest(a)
+    router.registry.register_manifest(b)
     clock = _FakeClock()
+    a_attempted = {"value": False}
     b_attempted = {"value": False}
 
     adapter_a = mock.Mock()
@@ -495,6 +512,7 @@ def test_deadline_boundary_at_exact_equality_blocks_the_next_candidate() -> None
     adapter_a.get_license_metadata.return_value = {}
 
     def _a_side_effect(*args, **kwargs):
+        a_attempted["value"] = True
         clock.now = clock.start + BUDGET  # jump to EXACTLY the deadline, not past it
         raise RuntimeError("provider_http_500:internal server error")
 
@@ -528,13 +546,15 @@ def test_deadline_boundary_at_exact_equality_blocks_the_next_candidate() -> None
         },
     )
 
-    with mock.patch(
+    with pinned_backend_identity(), mock.patch(
         "core.memory_first_router.rank_provider_candidates", return_value=[a, b]
     ), mock.patch.object(router.registry, "build_adapter", side_effect=build_adapter), mock.patch(
         "core.memory_first_router.build_local_inference_autopilot_plan", return_value=fake_plan
     ), mock.patch(
         "core.memory_first_router.resolve_fallback_budget_seconds", return_value=BUDGET
     ), mock.patch("core.memory_first_router.time.monotonic", side_effect=clock.monotonic):
+        assert certify_for_authorship(a)
+        assert certify_for_authorship(b)
         router._execute_provider_task(
             task=SimpleNamespace(task_id="budget-char-boundary-task", task_summary="hi"),
             classification={"task_class": "daily"},
@@ -553,9 +573,14 @@ def test_deadline_boundary_at_exact_equality_blocks_the_next_candidate() -> None
             allow_paid_fallback=False,
             provider_role="queen",
             surface="openclaw",
-            source_context={"surface": "openclaw"},
+            source_context={
+                "surface": "openclaw", "_canonical_user_turn_id": "budget-boundary-turn",
+                "session_id": "budget-boundary-session", "runtime_session_id": "budget-boundary-session",
+            },
         )
 
+    assert a_attempted["value"] is True, "the deadline assertion must reach A's adapter"
+    assert clock.elapsed() == BUDGET
     assert b_attempted["value"] is False, "B must not be attempted once raw remaining budget hits exactly zero"
 
 

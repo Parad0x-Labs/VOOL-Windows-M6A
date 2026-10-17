@@ -646,7 +646,7 @@ def emit_runtime_event(
                 try:
                     from core.runtime_continuity import store_tool_receipt
 
-                    store_tool_receipt(
+                    stored = store_tool_receipt(
                         receipt_key=action_record["receipt_id"],
                         session_id=ledger_session_id,
                         checkpoint_id=str(
@@ -659,8 +659,19 @@ def emit_runtime_event(
                         ),
                         execution={
                             "action_record": action_record,
+                            "approval_id": str((payload.get("approval_request") or {}).get("approval_id") or ""),
                         },
                     )
+                    stored_record = stored.get("execution", {}).get("action_record", {})
+                    if stored_record.get("result", {}).get("status") == "permission_denied":
+                        # A late parent preview cannot resurrect a decision that
+                        # already closed the same action while this event was built.
+                        action_record = stored_record
+                        normalized_event_type = "tool_failed"
+                        payload.update(action_record=stored_record, mode="tool_failed",
+                            status="permission_denied", approval_state="denied",
+                            receipt_id=stored_record["receipt_id"], action_id=stored_record["action_id"],
+                            record_hash=stored_record["record_hash"])
                     payload["receipt_persistence"] = "stored"
                 except Exception:
                     # The action may already have happened; retain the truthful

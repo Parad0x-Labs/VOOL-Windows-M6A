@@ -71,13 +71,17 @@ def test_the_unresolved_clause_becomes_the_fail_closed_node_with_its_reason() ->
 
 def test_an_arithmetic_plan_the_model_never_returned_is_a_stated_outcome_not_a_fault() -> None:
     from types import SimpleNamespace
+    from unittest.mock import Mock
 
     from core.conductor.operations import _quantitative_run
+    from core.conductor.registry import NodeContext
     from core.conductor.shared_context import SharedTurnContext
 
     node = SimpleNamespace(arguments={"clause": "what fraction of the total is the second amount"}, request_text="what fraction of the total is the second amount", depends_on=())
     shared = SharedTurnContext.from_text("the total is 400 units and the second amount is 100 units") if hasattr(SharedTurnContext, "from_text") else None
-    ctx = SimpleNamespace(shared_context=shared, derived_facts={"total": 400.0, "second": 100.0}, run_generation=lambda _system, _prompt: "sorry, I cannot help with that")
+    generate = Mock(return_value="sorry, I cannot help with that")
+    ctx = NodeContext(shared_context=shared, derived_facts={"total": 400.0, "second": 100.0}, run_generation=generate)
     result = _quantitative_run(node, ctx)  # must not raise
+    generate.assert_called_once()
     assert result["steps"] == [] and result["values"] == {}
     assert result["cannot_determine"] and "model" in result["cannot_determine"][0]

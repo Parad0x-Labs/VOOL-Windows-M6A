@@ -1335,7 +1335,7 @@ def build_planner_run_one(
         if response_class == "approval_required":
             from core.agent_runtime.turn_planner import PlannedTaskNeedsApprovalError
 
-            raise PlannedTaskNeedsApprovalError(text or "Approval required.")
+            raise PlannedTaskNeedsApprovalError(text or "Approval required.", pending_result=result)
         if response_class in {"task_failed_user_safe", "system_error_user_safe"}:
             raise RuntimeError(text or "the task could not be completed")
         # P0 MIXED-DEMAND (served) — A RUNTIME NOTICE IS NOT AN ANSWER.

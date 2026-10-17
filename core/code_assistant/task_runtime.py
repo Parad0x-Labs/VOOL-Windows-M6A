@@ -1982,18 +1982,25 @@ class CodeTaskRuntime:
                 # The mission's replay contract: byte-identical retries replay the recorded proposal
                 # and name the lawful next action; a different request under a recorded id is a typed
                 # conflict (never a silent replay of the obsolete proposal). A destination-less
-                # (legacy) record additionally gets its preview UPGRADED with the destinations this
-                # request binds, so nothing is ever approved against a destination nobody saw -- and
-                # the approve-side drift check still refuses any change between preview and approval.
+                # (legacy) record needs a new destination preview and fresh approval; replaying the
+                # old consent must never authorize a physical destination nobody reviewed.
                 unit_id = str(arguments.get("unit") or "").strip() or proposal_id
                 replayed = self._replay_or_conflict(
                     task, existing, intent=intent, inner=inner, targets=targets, unit=unit_id)
                 if replayed.details.get("replayed") and existing.intent in _DESTINATION_INTENTS \
-                        and not existing.consumed_by and not (existing.preview or {}).get("destinations"):
+                        and not existing.consumed_by and not existing.reserved_by \
+                        and not (existing.preview or {}).get("destinations"):
                     destinations, _unresolvable = _destination_records(task, existing.intent, existing.arguments)
                     if destinations:
                         existing.preview = {**(existing.preview or {}), "destinations": destinations}
+                        existing.approved = False
                         self._persist(task)
+                        return self._result(
+                            task, ok=True, status="ok", proposal_id=proposal_id, preview=existing.preview,
+                            replayed=False, proposal_state="pending_approval",
+                            text=f"Proposal `{proposal_id}` now previews its destination; approve it with "
+                            "`code.task.approve` before executing it. The older approval does not apply.",
+                        )
                 return replayed
             # The repair-unit law and the reviewed base (the coding mission's binding machinery):
             # a unit is declared in full before its first change, changes each file once, and the

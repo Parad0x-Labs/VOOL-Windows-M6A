@@ -8,6 +8,7 @@ learns which forge it is talking to.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from urllib.parse import quote
 
@@ -111,7 +112,7 @@ class GitLabForgeAdapter(ForgeAdapter):
                 url=self._url(suffix),
                 purpose=purpose,
                 headers={"Accept": "application/json", "Content-Type": "application/json"},
-                body=_json(body or {}).encode("utf-8"),
+                body=json.dumps(body or {}).encode("utf-8"),
                 auth=self.config.auth_binding,
                 mutating=True,
             )
@@ -124,7 +125,7 @@ class GitLabForgeAdapter(ForgeAdapter):
                 url=self._url(suffix),
                 purpose=purpose,
                 headers={"Accept": "application/json", "Content-Type": "application/json"},
-                body=_json(body or {}).encode("utf-8"),
+                body=json.dumps(body or {}).encode("utf-8"),
                 auth=self.config.auth_binding,
                 mutating=True,
             )

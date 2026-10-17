@@ -272,7 +272,7 @@ def test_failed_ambiguity_probe_does_not_complete_knowledge_sibling(
 
     monkeypatch.setattr(
         "core.agent_runtime.audit_routing.select_audit_manifests",
-        lambda *args: ([SimpleNamespace(provider_id="test-author")], ""),
+        lambda *args: ([SimpleNamespace(provider_id="test-author", metadata={"cost_class": "free_local"})], ""),
     )
     monkeypatch.setattr(
         "core.final_answer_authorship.decide_final_answer_author",

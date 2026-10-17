@@ -13,7 +13,7 @@
             "RuntimeExecutionResult"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3024"
+          "source": "core/runtime_execution_tools.py:3034"
         }
       ],
       "enforcement_proof": "core/runtime_execution_tools.py exposes an explicit unavailable stub with no browser process launch.",
@@ -34,7 +34,7 @@
             "_capability_expand_family"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3200"
+          "source": "core/runtime_execution_tools.py:3210"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -53,7 +53,7 @@
             "review_evidence_tool"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3426"
+          "source": "core/runtime_execution_tools.py:3438"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -72,7 +72,7 @@
             "_contacts_tool"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3264"
+          "source": "core/runtime_execution_tools.py:3274"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -91,7 +91,7 @@
             "_contacts_tool"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3264"
+          "source": "core/runtime_execution_tools.py:3274"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -110,7 +110,7 @@
             "_contacts_tool"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3264"
+          "source": "core/runtime_execution_tools.py:3274"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -129,7 +129,7 @@
             "_contacts_tool"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3264"
+          "source": "core/runtime_execution_tools.py:3274"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -148,7 +148,7 @@
             "_contacts_tool"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3264"
+          "source": "core/runtime_execution_tools.py:3274"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -167,7 +167,7 @@
             "_demo_plan"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3311"
+          "source": "core/runtime_execution_tools.py:3321"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -186,7 +186,7 @@
             "_email_draft_tool"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3278"
+          "source": "core/runtime_execution_tools.py:3288"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -205,7 +205,7 @@
             "_email_draft_tool"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3278"
+          "source": "core/runtime_execution_tools.py:3288"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -224,7 +224,7 @@
             "_email_draft_tool"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3278"
+          "source": "core/runtime_execution_tools.py:3288"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -243,7 +243,7 @@
             "_email_draft_tool"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3278"
+          "source": "core/runtime_execution_tools.py:3288"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -262,7 +262,7 @@
             "_email_draft_tool"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3278"
+          "source": "core/runtime_execution_tools.py:3288"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -281,7 +281,7 @@
             "_email_open"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3276"
+          "source": "core/runtime_execution_tools.py:3286"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -300,7 +300,7 @@
             "_email_read"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3272"
+          "source": "core/runtime_execution_tools.py:3282"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -319,7 +319,7 @@
             "_email_reply"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3274"
+          "source": "core/runtime_execution_tools.py:3284"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -338,7 +338,7 @@
             "_email_send"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3270"
+          "source": "core/runtime_execution_tools.py:3280"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -357,7 +357,7 @@
             "_image_generate"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3281"
+          "source": "core/runtime_execution_tools.py:3291"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -376,7 +376,7 @@
             "_machine_disk_usage"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3219"
+          "source": "core/runtime_execution_tools.py:3229"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -395,7 +395,7 @@
             "_machine_display_inspect"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3225"
+          "source": "core/runtime_execution_tools.py:3235"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -415,7 +415,7 @@
             "_ensure_machine_directory"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3239"
+          "source": "core/runtime_execution_tools.py:3249"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -434,7 +434,7 @@
             "_machine_event_log_errors"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3229"
+          "source": "core/runtime_execution_tools.py:3239"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -453,7 +453,7 @@
             "_machine_find_file"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3223"
+          "source": "core/runtime_execution_tools.py:3233"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -472,7 +472,7 @@
             "_machine_find_folder"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3221"
+          "source": "core/runtime_execution_tools.py:3231"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -491,7 +491,7 @@
             "_machine_find_largest"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3227"
+          "source": "core/runtime_execution_tools.py:3237"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -510,7 +510,7 @@
             "_machine_host_state"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3233"
+          "source": "core/runtime_execution_tools.py:3243"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -530,7 +530,7 @@
             "_memoized_runtime_result"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3213"
+          "source": "core/runtime_execution_tools.py:3223"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -549,7 +549,7 @@
             "_list_machine_directory"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3211"
+          "source": "core/runtime_execution_tools.py:3221"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -568,7 +568,7 @@
             "_machine_list_processes"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3231"
+          "source": "core/runtime_execution_tools.py:3241"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -588,7 +588,7 @@
             "_machine_move_path"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3235"
+          "source": "core/runtime_execution_tools.py:3245"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -607,7 +607,7 @@
             "_read_machine_file"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3237"
+          "source": "core/runtime_execution_tools.py:3247"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -629,7 +629,7 @@
             "arguments.get"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3241"
+          "source": "core/runtime_execution_tools.py:3251"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -648,7 +648,7 @@
             "_marketplace_purchase_knowledge"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3337"
+          "source": "core/runtime_execution_tools.py:3347"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -667,7 +667,7 @@
             "_marketplace_search_listings"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3335"
+          "source": "core/runtime_execution_tools.py:3345"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -687,7 +687,7 @@
             "media_edit"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3293"
+          "source": "core/runtime_execution_tools.py:3303"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -707,7 +707,7 @@
             "media_export"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3305"
+          "source": "core/runtime_execution_tools.py:3315"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -726,7 +726,7 @@
             "media_inspect"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3289"
+          "source": "core/runtime_execution_tools.py:3299"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -746,7 +746,7 @@
             "media_open"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3285"
+          "source": "core/runtime_execution_tools.py:3295"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -766,7 +766,7 @@
             "media_undo_redo"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3301"
+          "source": "core/runtime_execution_tools.py:3311"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -786,7 +786,7 @@
             "media_undo_redo"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3297"
+          "source": "core/runtime_execution_tools.py:3307"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -1026,7 +1026,7 @@
             "_runtime_session_id"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3433"
+          "source": "core/runtime_execution_tools.py:3445"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -1056,7 +1056,7 @@
             "_pdf_extract_text"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3248"
+          "source": "core/runtime_execution_tools.py:3258"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -1075,7 +1075,7 @@
             "_pdf_ocr"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3250"
+          "source": "core/runtime_execution_tools.py:3260"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -1094,7 +1094,7 @@
             "_operator_profile_tool"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3266"
+          "source": "core/runtime_execution_tools.py:3276"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -1113,7 +1113,7 @@
             "_operator_profile_tool"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3266"
+          "source": "core/runtime_execution_tools.py:3276"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -1132,7 +1132,7 @@
             "_operator_profile_tool"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3266"
+          "source": "core/runtime_execution_tools.py:3276"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -1163,7 +1163,7 @@
             "_run_command"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3440"
+          "source": "core/runtime_execution_tools.py:3452"
         }
       ],
       "enforcement_proof": "sandbox/job_runner.py refuses native Windows execution without an OS isolation backend; regression-covered fail-closed path.",
@@ -1195,7 +1195,7 @@
             "_set_save"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3313"
+          "source": "core/runtime_execution_tools.py:3323"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -1214,7 +1214,7 @@
             "_set_use"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3315"
+          "source": "core/runtime_execution_tools.py:3325"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -1234,7 +1234,7 @@
             "_skill_create"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3254"
+          "source": "core/runtime_execution_tools.py:3264"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -1253,7 +1253,7 @@
             "_skill_inspect"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3262"
+          "source": "core/runtime_execution_tools.py:3272"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -1272,7 +1272,7 @@
             "_skill_install"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3258"
+          "source": "core/runtime_execution_tools.py:3268"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -1291,7 +1291,7 @@
             "_skill_list"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3252"
+          "source": "core/runtime_execution_tools.py:3262"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -1310,7 +1310,7 @@
             "_skill_rollback"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3260"
+          "source": "core/runtime_execution_tools.py:3270"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -1329,7 +1329,7 @@
             "_skill_validate"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3256"
+          "source": "core/runtime_execution_tools.py:3266"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -1348,7 +1348,7 @@
             "_video_generate"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3283"
+          "source": "core/runtime_execution_tools.py:3293"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -1787,7 +1787,7 @@
             "_wallet_model_tool"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3268"
+          "source": "core/runtime_execution_tools.py:3278"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -1806,7 +1806,7 @@
             "_wallet_model_tool"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3268"
+          "source": "core/runtime_execution_tools.py:3278"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -1825,7 +1825,7 @@
             "_wallet_model_tool"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3268"
+          "source": "core/runtime_execution_tools.py:3278"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -1844,7 +1844,7 @@
             "_wallet_spend"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3317"
+          "source": "core/runtime_execution_tools.py:3327"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -1863,7 +1863,7 @@
             "_wallet_model_tool"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3268"
+          "source": "core/runtime_execution_tools.py:3278"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -1882,7 +1882,7 @@
             "_web_fetch"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3339"
+          "source": "core/runtime_execution_tools.py:3349"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -1923,7 +1923,7 @@
             "_web0_add_block"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3325"
+          "source": "core/runtime_execution_tools.py:3335"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -1942,7 +1942,7 @@
             "_web0_add_gated_section"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3327"
+          "source": "core/runtime_execution_tools.py:3337"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -1961,7 +1961,7 @@
             "_web0_compile_preview"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3331"
+          "source": "core/runtime_execution_tools.py:3341"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -1980,7 +1980,7 @@
             "_web0_create_project"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3321"
+          "source": "core/runtime_execution_tools.py:3331"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -1999,7 +1999,7 @@
             "_web0_encrypt_whole_site"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3329"
+          "source": "core/runtime_execution_tools.py:3339"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -2018,7 +2018,7 @@
             "_web0_fill_slots"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3323"
+          "source": "core/runtime_execution_tools.py:3333"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -2037,7 +2037,7 @@
             "_web0_open_builder_draft"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3319"
+          "source": "core/runtime_execution_tools.py:3329"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -2056,7 +2056,7 @@
             "_web0_publish"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3333"
+          "source": "core/runtime_execution_tools.py:3343"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -2078,7 +2078,7 @@
             "_runtime_session_id"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3378"
+          "source": "core/runtime_execution_tools.py:3390"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -2100,7 +2100,7 @@
             "arguments.get"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3349"
+          "source": "core/runtime_execution_tools.py:3359"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -2119,7 +2119,7 @@
             "_git_diff"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3390"
+          "source": "core/runtime_execution_tools.py:3402"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -2138,7 +2138,7 @@
             "_git_status"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3388"
+          "source": "core/runtime_execution_tools.py:3400"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -2157,7 +2157,7 @@
             "_git_summary"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3392"
+          "source": "core/runtime_execution_tools.py:3404"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -2178,7 +2178,7 @@
             "str"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3202"
+          "source": "core/runtime_execution_tools.py:3212"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -2197,7 +2197,7 @@
             "_list_files"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3209"
+          "source": "core/runtime_execution_tools.py:3219"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -2216,7 +2216,7 @@
             "_list_tree"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3341"
+          "source": "core/runtime_execution_tools.py:3351"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -2235,7 +2235,7 @@
             "_read_file"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3347"
+          "source": "core/runtime_execution_tools.py:3357"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -2258,7 +2258,7 @@
             "arguments.get"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3368"
+          "source": "core/runtime_execution_tools.py:3379"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -2279,7 +2279,7 @@
             "_runtime_session_id"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3394"
+          "source": "core/runtime_execution_tools.py:3406"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -2300,7 +2300,7 @@
             "_run_validation"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3418"
+          "source": "core/runtime_execution_tools.py:3430"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -2321,7 +2321,7 @@
             "_run_validation"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3410"
+          "source": "core/runtime_execution_tools.py:3422"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -2342,7 +2342,7 @@
             "_run_validation"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3402"
+          "source": "core/runtime_execution_tools.py:3414"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -2361,7 +2361,7 @@
             "_search_text"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3343"
+          "source": "core/runtime_execution_tools.py:3353"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -2380,7 +2380,7 @@
             "_symbol_search"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3345"
+          "source": "core/runtime_execution_tools.py:3355"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -2403,7 +2403,7 @@
             "arguments.get"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3358"
+          "source": "core/runtime_execution_tools.py:3368"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -2422,7 +2422,7 @@
             "_x_trending"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3309"
+          "source": "core/runtime_execution_tools.py:3319"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -2441,7 +2441,7 @@
             "_wallet_model_tool"
           ],
           "function": "_dispatch_runtime_tool",
-          "source": "core/runtime_execution_tools.py:3268"
+          "source": "core/runtime_execution_tools.py:3278"
         }
       ],
       "gap": "Contract and branch are not proof of Windows host approval, OS brokering, or transitive effect containment.",
@@ -4724,7 +4724,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_store_mutation_records",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 773,
+      "line": 778,
       "source": "core/execution/artifacts.py"
     },
     {
@@ -4733,7 +4733,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_store_mutation_records",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 777,
+      "line": 782,
       "source": "core/execution/artifacts.py"
     },
     {
@@ -4753,6 +4753,15 @@
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
       "line": 221,
       "source": "core/execution/git_tools.py"
+    },
+    {
+      "authority_status": "unresolved",
+      "call": "path.parent.mkdir",
+      "effect_kind": "filesystem_mutation",
+      "function": "write_owner_only_ledger",
+      "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
+      "line": 159,
+      "source": "core/execution/windows_private_ledger.py"
     },
     {
       "authority_status": "unresolved",
@@ -4796,7 +4805,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_a8_digest_key",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 1750,
+      "line": 1992,
       "source": "core/finalization.py"
     },
     {
@@ -4805,7 +4814,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_a8_digest_key",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 1752,
+      "line": 1994,
       "source": "core/finalization.py"
     },
     {
@@ -4814,7 +4823,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_sweep_step_pins",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 3369,
+      "line": 3611,
       "source": "core/finalization.py"
     },
     {
@@ -4823,7 +4832,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_sweep_step_liquefy_vault",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 3397,
+      "line": 3639,
       "source": "core/finalization.py"
     },
     {
@@ -4832,7 +4841,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_sweep_step_liquefy_vault",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 3410,
+      "line": 3652,
       "source": "core/finalization.py"
     },
     {
@@ -4841,7 +4850,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_sweep_step_liquefy_vault",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 3423,
+      "line": 3665,
       "source": "core/finalization.py"
     },
     {
@@ -4850,7 +4859,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_sweep_step_adaptation_corpora",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 3484,
+      "line": 3726,
       "source": "core/finalization.py"
     },
     {
@@ -4859,7 +4868,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_sweep_step_mirror_snapshots",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 3543,
+      "line": 3785,
       "source": "core/finalization.py"
     },
     {
@@ -4868,7 +4877,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_sweep_step_mirror_snapshots",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 3548,
+      "line": 3790,
       "source": "core/finalization.py"
     },
     {
@@ -4877,7 +4886,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_sweep_step_honesty_receipts",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 3646,
+      "line": 3888,
       "source": "core/finalization.py"
     },
     {
@@ -5066,7 +5075,7 @@
       "effect_kind": "network_send",
       "function": "arbitrate",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 327,
+      "line": 331,
       "source": "core/intent_arbiter.py"
     },
     {
@@ -5075,7 +5084,7 @@
       "effect_kind": "network_send",
       "function": "_warm",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 439,
+      "line": 443,
       "source": "core/intent_arbiter.py"
     },
     {
@@ -5849,7 +5858,7 @@
       "effect_kind": "network_send",
       "function": "_ollama_models_payload",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 137,
+      "line": 154,
       "source": "core/local_ollama_inventory.py"
     },
     {
@@ -6308,7 +6317,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "reset_mode_permission_state",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 3452,
+      "line": 3541,
       "source": "core/mode_permission_policy.py"
     },
     {
@@ -6727,11 +6736,29 @@
     },
     {
       "authority_status": "unresolved",
+      "call": "scratch.mkdir",
+      "effect_kind": "filesystem_mutation",
+      "function": "_run_windows_broker",
+      "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
+      "line": 374,
+      "source": "core/plugin_executor.py"
+    },
+    {
+      "authority_status": "unresolved",
+      "call": "subprocess.run",
+      "effect_kind": "process_launch",
+      "function": "_run_windows_broker",
+      "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
+      "line": 431,
+      "source": "core/plugin_executor.py"
+    },
+    {
+      "authority_status": "unresolved",
       "call": ".mkdir",
       "effect_kind": "filesystem_mutation",
       "function": "run_plugin_tool",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 355,
+      "line": 642,
       "source": "core/plugin_executor.py"
     },
     {
@@ -6740,7 +6767,7 @@
       "effect_kind": "process_launch",
       "function": "run_plugin_tool",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 382,
+      "line": 686,
       "source": "core/plugin_executor.py"
     },
     {
@@ -6920,7 +6947,7 @@
       "effect_kind": "process_launch",
       "function": "__init__",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 42,
+      "line": 43,
       "source": "core/provider_http.py"
     },
     {
@@ -6929,7 +6956,7 @@
       "effect_kind": "network_send",
       "function": "_worker",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 210,
+      "line": 222,
       "source": "core/provider_http.py"
     },
     {
@@ -7244,7 +7271,7 @@
       "effect_kind": "network_send",
       "function": "unload_idle_ollama",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 87,
+      "line": 90,
       "source": "core/resource_governor.py"
     },
     {
@@ -7253,7 +7280,7 @@
       "effect_kind": "network_send",
       "function": "unload_idle_ollama",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 98,
+      "line": 101,
       "source": "core/resource_governor.py"
     },
     {
@@ -7262,7 +7289,16 @@
       "effect_kind": "process_launch",
       "function": "stop_comfyui",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 111,
+      "line": 114,
+      "source": "core/resource_governor.py"
+    },
+    {
+      "authority_status": "unresolved",
+      "call": "urllib.request.urlopen",
+      "effect_kind": "network_send",
+      "function": "current_model_digest",
+      "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
+      "line": 355,
       "source": "core/resource_governor.py"
     },
     {
@@ -7271,7 +7307,7 @@
       "effect_kind": "network_send",
       "function": "resident_models",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 215,
+      "line": 494,
       "source": "core/resource_governor.py"
     },
     {
@@ -7280,7 +7316,7 @@
       "effect_kind": "network_send",
       "function": "estimated_model_gb",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 242,
+      "line": 527,
       "source": "core/resource_governor.py"
     },
     {
@@ -7289,7 +7325,7 @@
       "effect_kind": "network_send",
       "function": "_unload_models",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 264,
+      "line": 576,
       "source": "core/resource_governor.py"
     },
     {
@@ -7343,7 +7379,7 @@
       "effect_kind": "process_launch",
       "function": "_daemon_commit_sha",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 548,
+      "line": 558,
       "source": "core/runtime_execution_tools.py"
     },
     {
@@ -7352,7 +7388,7 @@
       "effect_kind": "process_launch",
       "function": "_machine_chip_name",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 5269,
+      "line": 5281,
       "source": "core/runtime_execution_tools.py"
     },
     {
@@ -7361,7 +7397,7 @@
       "effect_kind": "process_launch",
       "function": "_machine_display_details",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 5395,
+      "line": 5407,
       "source": "core/runtime_execution_tools.py"
     },
     {
@@ -7370,7 +7406,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_ensure_machine_directory",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 5465,
+      "line": 5477,
       "source": "core/runtime_execution_tools.py"
     },
     {
@@ -7379,7 +7415,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_write_machine_file",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 5567,
+      "line": 5579,
       "source": "core/runtime_execution_tools.py"
     },
     {
@@ -7388,7 +7424,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_write_machine_file",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 5613,
+      "line": 5625,
       "source": "core/runtime_execution_tools.py"
     },
     {
@@ -7397,7 +7433,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_ensure_directory",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 6143,
+      "line": 6155,
       "source": "core/runtime_execution_tools.py"
     },
     {
@@ -7406,7 +7442,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "persist_install_profile_record",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 439,
+      "line": 447,
       "source": "core/runtime_install_profiles.py"
     },
     {
@@ -7415,7 +7451,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "persist_install_profile_record",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 448,
+      "line": 456,
       "source": "core/runtime_install_profiles.py"
     },
     {
@@ -7703,7 +7739,7 @@
       "effect_kind": "network_send",
       "function": "_classify_via_model",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 2358,
+      "line": 2391,
       "source": "core/task_router.py"
     },
     {
@@ -7892,7 +7928,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "download",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 260,
+      "line": 262,
       "source": "core/updater/download.py"
     },
     {
@@ -7901,7 +7937,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "download",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 261,
+      "line": 263,
       "source": "core/updater/download.py"
     },
     {
@@ -7910,21 +7946,12 @@
       "effect_kind": "filesystem_mutation",
       "function": "download",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 331,
+      "line": 333,
       "source": "core/updater/download.py"
     },
     {
       "authority_status": "unresolved",
       "call": "meta_path.unlink",
-      "effect_kind": "filesystem_mutation",
-      "function": "download",
-      "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 332,
-      "source": "core/updater/download.py"
-    },
-    {
-      "authority_status": "unresolved",
-      "call": "os.replace",
       "effect_kind": "filesystem_mutation",
       "function": "download",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
@@ -7933,11 +7960,20 @@
     },
     {
       "authority_status": "unresolved",
+      "call": "os.replace",
+      "effect_kind": "filesystem_mutation",
+      "function": "download",
+      "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
+      "line": 336,
+      "source": "core/updater/download.py"
+    },
+    {
+      "authority_status": "unresolved",
       "call": "meta_path.unlink",
       "effect_kind": "filesystem_mutation",
       "function": "download",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 335,
+      "line": 337,
       "source": "core/updater/download.py"
     },
     {
@@ -8225,7 +8261,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "__init__",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 144,
+      "line": 145,
       "source": "core/updater/transaction.py"
     },
     {
@@ -8234,7 +8270,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "append",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 151,
+      "line": 152,
       "source": "core/updater/transaction.py"
     },
     {
@@ -8243,7 +8279,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "rollback_active",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 340,
+      "line": 341,
       "source": "core/updater/transaction.py"
     },
     {
@@ -8252,7 +8288,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_write_receipt",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 383,
+      "line": 384,
       "source": "core/updater/transaction.py"
     },
     {
@@ -8261,7 +8297,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_write_receipt",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 385,
+      "line": 386,
       "source": "core/updater/transaction.py"
     },
     {
@@ -8270,7 +8306,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_write_receipt",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 386,
+      "line": 387,
       "source": "core/updater/transaction.py"
     },
     {
@@ -8279,7 +8315,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_tail",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 546,
+      "line": 547,
       "source": "core/updater/transaction.py"
     },
     {
@@ -8288,7 +8324,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_tail",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 559,
+      "line": 560,
       "source": "core/updater/transaction.py"
     },
     {
@@ -8297,7 +8333,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_tail",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 575,
+      "line": 576,
       "source": "core/updater/transaction.py"
     },
     {
@@ -8306,7 +8342,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_tail",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 591,
+      "line": 592,
       "source": "core/updater/transaction.py"
     },
     {
@@ -8315,7 +8351,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "recover_interrupted_update",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 781,
+      "line": 783,
       "source": "core/updater/transaction.py"
     },
     {
@@ -8810,7 +8846,7 @@
       "effect_kind": "process_launch",
       "function": "git_output",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 187,
+      "line": 221,
       "source": "core/web/api/runtime.py"
     },
     {
@@ -8819,7 +8855,7 @@
       "effect_kind": "network_send",
       "function": "_stream_ollama_pull",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 544,
+      "line": 578,
       "source": "core/web/api/runtime.py"
     },
     {
@@ -8828,7 +8864,7 @@
       "effect_kind": "process_launch",
       "function": "_openclaw_client_version",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 554,
+      "line": 555,
       "source": "core/web/api/service.py"
     },
     {
@@ -8837,7 +8873,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "dispatch_upload",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 3363,
+      "line": 3438,
       "source": "core/web/api/service.py"
     },
     {
@@ -8846,7 +8882,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "dispatch_upload",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 3366,
+      "line": 3441,
       "source": "core/web/api/service.py"
     },
     {
@@ -8866,6 +8902,15 @@
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
       "line": 433,
       "source": "core/web0_gated_html.py"
+    },
+    {
+      "authority_status": "unresolved",
+      "call": "subprocess.run",
+      "effect_kind": "process_launch",
+      "function": "run_workspace_write_broker",
+      "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
+      "line": 512,
+      "source": "core/windows_workspace_broker.py"
     },
     {
       "authority_status": "unresolved",
@@ -8909,7 +8954,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_prepare",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 83,
+      "line": 85,
       "source": "installer/bundle/bundle_supervisor.py"
     },
     {
@@ -8918,7 +8963,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_prepare",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 84,
+      "line": 86,
       "source": "installer/bundle/bundle_supervisor.py"
     },
     {
@@ -8927,7 +8972,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_prepare",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 112,
+      "line": 114,
       "source": "installer/bundle/bundle_supervisor.py"
     },
     {
@@ -8936,7 +8981,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_write_model_status",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 124,
+      "line": 126,
       "source": "installer/bundle/bundle_supervisor.py"
     },
     {
@@ -8945,7 +8990,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_acquire_lease",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 136,
+      "line": 138,
       "source": "installer/bundle/bundle_supervisor.py"
     },
     {
@@ -8954,7 +8999,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_request_window_reopen",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 195,
+      "line": 197,
       "source": "installer/bundle/bundle_supervisor.py"
     },
     {
@@ -8963,7 +9008,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_request_window_reopen",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 196,
+      "line": 198,
       "source": "installer/bundle/bundle_supervisor.py"
     },
     {
@@ -8972,7 +9017,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_consume_window_reopen",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 205,
+      "line": 207,
       "source": "installer/bundle/bundle_supervisor.py"
     },
     {
@@ -8981,7 +9026,7 @@
       "effect_kind": "network_send",
       "function": "_healthy",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 221,
+      "line": 223,
       "source": "installer/bundle/bundle_supervisor.py"
     },
     {
@@ -8990,7 +9035,7 @@
       "effect_kind": "network_send",
       "function": "_owned_api_healthy",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 265,
+      "line": 294,
       "source": "installer/bundle/bundle_supervisor.py"
     },
     {
@@ -8999,7 +9044,7 @@
       "effect_kind": "process_launch",
       "function": "_start",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 311,
+      "line": 348,
       "source": "installer/bundle/bundle_supervisor.py"
     },
     {
@@ -9008,7 +9053,7 @@
       "effect_kind": "process_launch",
       "function": "_stop_child",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 371,
+      "line": 408,
       "source": "installer/bundle/bundle_supervisor.py"
     },
     {
@@ -9017,7 +9062,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "_write_state",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 494,
+      "line": 537,
       "source": "installer/bundle/bundle_supervisor.py"
     },
     {
@@ -9026,7 +9071,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "run",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 497,
+      "line": 540,
       "source": "installer/bundle/bundle_supervisor.py"
     },
     {
@@ -9035,7 +9080,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "run",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 498,
+      "line": 541,
       "source": "installer/bundle/bundle_supervisor.py"
     },
     {
@@ -9044,7 +9089,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "run",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 504,
+      "line": 547,
       "source": "installer/bundle/bundle_supervisor.py"
     },
     {
@@ -9053,7 +9098,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "run",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 526,
+      "line": 569,
       "source": "installer/bundle/bundle_supervisor.py"
     },
     {
@@ -9062,7 +9107,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "main",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 565,
+      "line": 608,
       "source": "installer/bundle/bundle_supervisor.py"
     },
     {
@@ -9071,7 +9116,7 @@
       "effect_kind": "filesystem_mutation",
       "function": "main",
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
-      "line": 566,
+      "line": 609,
       "source": "installer/bundle/bundle_supervisor.py"
     },
     {
@@ -9271,6 +9316,114 @@
       "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
       "line": 211,
       "source": "installer/bundle/native_runtime_supervisor.py"
+    },
+    {
+      "authority_status": "unresolved",
+      "call": "os.replace",
+      "effect_kind": "filesystem_mutation",
+      "function": "atomic_json",
+      "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
+      "line": 170,
+      "source": "installer/bundle/upgrade_python_payload.py"
+    },
+    {
+      "authority_status": "unresolved",
+      "call": "self.root.mkdir",
+      "effect_kind": "filesystem_mutation",
+      "function": "begin",
+      "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
+      "line": 260,
+      "source": "installer/bundle/upgrade_python_payload.py"
+    },
+    {
+      "authority_status": "unresolved",
+      "call": "self.active.mkdir",
+      "effect_kind": "filesystem_mutation",
+      "function": "begin",
+      "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
+      "line": 261,
+      "source": "installer/bundle/upgrade_python_payload.py"
+    },
+    {
+      "authority_status": "unresolved",
+      "call": ".write_bytes",
+      "effect_kind": "filesystem_mutation",
+      "function": "begin",
+      "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
+      "line": 269,
+      "source": "installer/bundle/upgrade_python_payload.py"
+    },
+    {
+      "authority_status": "unresolved",
+      "call": ".write_bytes",
+      "effect_kind": "filesystem_mutation",
+      "function": "begin",
+      "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
+      "line": 271,
+      "source": "installer/bundle/upgrade_python_payload.py"
+    },
+    {
+      "authority_status": "unresolved",
+      "call": "os.replace",
+      "effect_kind": "filesystem_mutation",
+      "function": "begin",
+      "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
+      "line": 272,
+      "source": "installer/bundle/upgrade_python_payload.py"
+    },
+    {
+      "authority_status": "unresolved",
+      "call": "os.replace",
+      "effect_kind": "filesystem_mutation",
+      "function": "_archive",
+      "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
+      "line": 287,
+      "source": "installer/bundle/upgrade_python_payload.py"
+    },
+    {
+      "authority_status": "unresolved",
+      "call": "os.replace",
+      "effect_kind": "filesystem_mutation",
+      "function": "recover",
+      "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
+      "line": 326,
+      "source": "installer/bundle/upgrade_python_payload.py"
+    },
+    {
+      "authority_status": "unresolved",
+      "call": "os.replace",
+      "effect_kind": "filesystem_mutation",
+      "function": "recover",
+      "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
+      "line": 327,
+      "source": "installer/bundle/upgrade_python_payload.py"
+    },
+    {
+      "authority_status": "unresolved",
+      "call": "os.replace",
+      "effect_kind": "filesystem_mutation",
+      "function": "recover",
+      "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
+      "line": 334,
+      "source": "installer/bundle/upgrade_python_payload.py"
+    },
+    {
+      "authority_status": "unresolved",
+      "call": "os.replace",
+      "effect_kind": "filesystem_mutation",
+      "function": "recover",
+      "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
+      "line": 352,
+      "source": "installer/bundle/upgrade_python_payload.py"
+    },
+    {
+      "authority_status": "unresolved",
+      "call": "os.replace",
+      "effect_kind": "filesystem_mutation",
+      "function": "recover",
+      "gap": "Candidate direct effect; reachability, caller authority and JobRunner/broker bypass require review.",
+      "line": 356,
+      "source": "installer/bundle/upgrade_python_payload.py"
     },
     {
       "authority_status": "unresolved",
@@ -10803,49 +10956,49 @@
         {
           "branch_calls": [],
           "function": "parameter_size_for_model",
-          "line": 282,
+          "line": 316,
           "selected_by_if": null,
           "source": "core/web/api/runtime.py"
         },
         {
           "branch_calls": [],
           "function": "normalized_ollama_tag",
-          "line": 430,
+          "line": 464,
           "selected_by_if": null,
           "source": "core/web/api/runtime.py"
         },
         {
           "branch_calls": [],
           "function": "_stream_ollama_pull",
-          "line": 539,
+          "line": 573,
           "selected_by_if": null,
           "source": "core/web/api/runtime.py"
         },
         {
           "branch_calls": [],
           "function": "_final_task_event",
-          "line": 3178,
+          "line": 3460,
           "selected_by_if": null,
           "source": "core/web/api/runtime.py"
         },
         {
           "branch_calls": [],
           "function": "_normalize_web0_name",
-          "line": 301,
+          "line": 302,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "dispatch_get",
-          "line": 842,
+          "line": 896,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "dispatch_get",
-          "line": 842,
+          "line": 896,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
@@ -10855,84 +11008,84 @@
             "text_response"
           ],
           "function": "dispatch_get",
-          "line": 1171,
-          "selected_by_if": 1171,
+          "line": 1225,
+          "selected_by_if": 1225,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "dispatch_post",
-          "line": 2882,
+          "line": 2940,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "dispatch_post",
-          "line": 2882,
+          "line": 2940,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "is_raw_upload_path",
-          "line": 3284,
+          "line": 3359,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "is_raw_upload_path",
-          "line": 3284,
+          "line": 3359,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "raw_upload_body_ceiling",
-          "line": 3290,
-          "selected_by_if": 3290,
+          "line": 3365,
+          "selected_by_if": 3365,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "raw_upload_body_ceiling",
-          "line": 3290,
-          "selected_by_if": 3290,
+          "line": 3365,
+          "selected_by_if": 3365,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "is_raw_dictation_path",
-          "line": 3475,
+          "line": 3550,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "is_raw_dictation_path",
-          "line": 3475,
+          "line": 3550,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 4653,
+          "line": 4736,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 5248,
+          "line": 5331,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 5265,
+          "line": 5348,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
@@ -10961,8 +11114,8 @@
         {
           "branch_calls": [],
           "function": "_looks_like_runtime_version_question",
-          "line": 523,
-          "selected_by_if": 523,
+          "line": 524,
+          "selected_by_if": 524,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11000,8 +11153,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2831,
-          "selected_by_if": 2831,
+          "line": 2889,
+          "selected_by_if": 2889,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11039,8 +11192,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2817,
-          "selected_by_if": 2817,
+          "line": 2875,
+          "selected_by_if": 2875,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11075,8 +11228,8 @@
             "min"
           ],
           "function": "dispatch_get",
-          "line": 2813,
-          "selected_by_if": 2813,
+          "line": 2871,
+          "selected_by_if": 2871,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11108,8 +11261,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 2810,
-          "selected_by_if": 2810,
+          "line": 2868,
+          "selected_by_if": 2868,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11141,8 +11294,8 @@
             "schedule_adaptation_autopilot_tick"
           ],
           "function": "_dispatch_post_inner",
-          "line": 7644,
-          "selected_by_if": 7644,
+          "line": 7720,
+          "selected_by_if": 7720,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11174,8 +11327,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 2810,
-          "selected_by_if": 2810,
+          "line": 2868,
+          "selected_by_if": 2868,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11203,14 +11356,14 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4638,
-          "selected_by_if": 4638,
+          "line": 4721,
+          "selected_by_if": 4721,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 4653,
+          "line": 4736,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         }
@@ -11246,8 +11399,8 @@
             "_submit_condition"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5546,
-          "selected_by_if": 5546,
+          "line": 5629,
+          "selected_by_if": 5629,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11294,8 +11447,8 @@
             "sorted"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5668,
-          "selected_by_if": 5668,
+          "line": 5751,
+          "selected_by_if": 5751,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11335,8 +11488,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2627,
-          "selected_by_if": 2627,
+          "line": 2685,
+          "selected_by_if": 2685,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11373,8 +11526,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2646,
-          "selected_by_if": 2646,
+          "line": 2704,
+          "selected_by_if": 2704,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11420,8 +11573,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5589,
-          "selected_by_if": 5589,
+          "line": 5672,
+          "selected_by_if": 5672,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11463,8 +11616,8 @@
             "sorted"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5739,
-          "selected_by_if": 5739,
+          "line": 5822,
+          "selected_by_if": 5822,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11509,8 +11662,8 @@
             "sorted"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5646,
-          "selected_by_if": 5646,
+          "line": 5729,
+          "selected_by_if": 5729,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11546,8 +11699,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 2666,
-          "selected_by_if": 2666,
+          "line": 2724,
+          "selected_by_if": 2724,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11588,8 +11741,8 @@
             "sorted"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5759,
-          "selected_by_if": 5759,
+          "line": 5842,
+          "selected_by_if": 5842,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11630,8 +11783,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2613,
-          "selected_by_if": 2613,
+          "line": 2671,
+          "selected_by_if": 2671,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11677,8 +11830,8 @@
             "sorted"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5694,
-          "selected_by_if": 5694,
+          "line": 5777,
+          "selected_by_if": 5777,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11720,8 +11873,8 @@
             "updated_draft.to_dict"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5621,
-          "selected_by_if": 5621,
+          "line": 5704,
+          "selected_by_if": 5704,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11758,8 +11911,8 @@
             "type"
           ],
           "function": "dispatch_get",
-          "line": 903,
-          "selected_by_if": 903,
+          "line": 957,
+          "selected_by_if": 957,
           "source": "core/web/api/service.py"
         },
         {
@@ -11767,8 +11920,8 @@
             "calendar_accounts.settings_view"
           ],
           "function": "dispatch_get",
-          "line": 907,
-          "selected_by_if": 907,
+          "line": 961,
+          "selected_by_if": 961,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11819,8 +11972,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2915,
-          "selected_by_if": 2912,
+          "line": 2973,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         },
         {
@@ -11835,8 +11988,8 @@
             "str"
           ],
           "function": "dispatch_post",
-          "line": 2938,
-          "selected_by_if": 2938,
+          "line": 2996,
+          "selected_by_if": 2996,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11887,8 +12040,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2916,
-          "selected_by_if": 2912,
+          "line": 2974,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         },
         {
@@ -11899,8 +12052,8 @@
             "result.get"
           ],
           "function": "dispatch_post",
-          "line": 2960,
-          "selected_by_if": 2960,
+          "line": 3018,
+          "selected_by_if": 3018,
           "source": "core/web/api/service.py"
         }
       ]
@@ -11951,8 +12104,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2915,
-          "selected_by_if": 2912,
+          "line": 2973,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         },
         {
@@ -11963,8 +12116,8 @@
             "result.get"
           ],
           "function": "dispatch_post",
-          "line": 2945,
-          "selected_by_if": 2945,
+          "line": 3003,
+          "selected_by_if": 3003,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12015,8 +12168,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2916,
-          "selected_by_if": 2912,
+          "line": 2974,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         },
         {
@@ -12029,8 +12182,8 @@
             "result.get"
           ],
           "function": "dispatch_post",
-          "line": 2954,
-          "selected_by_if": 2954,
+          "line": 3012,
+          "selected_by_if": 3012,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12081,8 +12234,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2917,
-          "selected_by_if": 2912,
+          "line": 2975,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         },
         {
@@ -12094,8 +12247,8 @@
             "result.get"
           ],
           "function": "dispatch_post",
-          "line": 2963,
-          "selected_by_if": 2963,
+          "line": 3021,
+          "selected_by_if": 3021,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12146,8 +12299,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2916,
-          "selected_by_if": 2912,
+          "line": 2974,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         },
         {
@@ -12162,8 +12315,8 @@
             "str"
           ],
           "function": "dispatch_post",
-          "line": 2948,
-          "selected_by_if": 2948,
+          "line": 3006,
+          "selected_by_if": 3006,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12200,8 +12353,8 @@
             "type"
           ],
           "function": "dispatch_get",
-          "line": 932,
-          "selected_by_if": 932,
+          "line": 986,
+          "selected_by_if": 986,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12253,8 +12406,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2913,
-          "selected_by_if": 2912,
+          "line": 2971,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         },
         {
@@ -12268,8 +12421,8 @@
             "str"
           ],
           "function": "dispatch_post",
-          "line": 2979,
-          "selected_by_if": 2979,
+          "line": 3037,
+          "selected_by_if": 3037,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12320,8 +12473,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2913,
-          "selected_by_if": 2912,
+          "line": 2971,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12367,8 +12520,26 @@
             "pin_lock.admit_chat_turn"
           ],
           "function": "dispatch_post",
-          "line": 3034,
-          "selected_by_if": 3034,
+          "line": 3092,
+          "selected_by_if": 3092,
+          "source": "core/web/api/service.py"
+        },
+        {
+          "branch_calls": [
+            ".strip",
+            "_chat_context.get",
+            "_inbound_source_context",
+            "body.get",
+            "is_loopback_host",
+            "list",
+            "normalize_chat_history_provider",
+            "stable_openclaw_session_id_provider",
+            "str",
+            "strip_reserved_trust_keys"
+          ],
+          "function": "dispatch_post",
+          "line": 3126,
+          "selected_by_if": 3126,
           "source": "core/web/api/service.py"
         },
         {
@@ -12395,8 +12566,8 @@
             "_human_size"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6948,
-          "selected_by_if": 6948,
+          "line": 7031,
+          "selected_by_if": 7031,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12433,8 +12604,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1298,
-          "selected_by_if": 1298,
+          "line": 1356,
+          "selected_by_if": 1356,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12473,8 +12644,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1311,
-          "selected_by_if": 1311,
+          "line": 1369,
+          "selected_by_if": 1369,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12511,8 +12682,8 @@
             "limits_payload"
           ],
           "function": "dispatch_get",
-          "line": 1292,
-          "selected_by_if": 1292,
+          "line": 1350,
+          "selected_by_if": 1350,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12556,8 +12727,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1324,
-          "selected_by_if": 1324,
+          "line": 1382,
+          "selected_by_if": 1382,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12609,8 +12780,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6004,
-          "selected_by_if": 6004,
+          "line": 6087,
+          "selected_by_if": 6087,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12624,7 +12795,7 @@
         {
           "branch_calls": [],
           "function": "<module>",
-          "line": 3277,
+          "line": 3352,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         }
@@ -12674,8 +12845,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6082,
-          "selected_by_if": 6082,
+          "line": 6165,
+          "selected_by_if": 6165,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12724,7 +12895,7 @@
         {
           "branch_calls": [],
           "function": "<module>",
-          "line": 3453,
+          "line": 3528,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         }
@@ -12758,8 +12929,8 @@
             "handle_chat_export_get"
           ],
           "function": "dispatch_get",
-          "line": 1364,
-          "selected_by_if": 1364,
+          "line": 1422,
+          "selected_by_if": 1422,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12818,8 +12989,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1384,
-          "selected_by_if": 1384,
+          "line": 1442,
+          "selected_by_if": 1442,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12870,8 +13041,8 @@
             "pin_id.strip"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6115,
-          "selected_by_if": 6115,
+          "line": 6198,
+          "selected_by_if": 6198,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12906,8 +13077,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1558,
-          "selected_by_if": 1558,
+          "line": 1616,
+          "selected_by_if": 1616,
           "source": "core/web/api/service.py"
         }
       ]
@@ -12946,8 +13117,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1530,
-          "selected_by_if": 1530,
+          "line": 1588,
+          "selected_by_if": 1588,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13006,8 +13177,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2600,
-          "selected_by_if": 2600,
+          "line": 2658,
+          "selected_by_if": 2658,
           "source": "core/web/api/service.py"
         },
         {
@@ -13034,8 +13205,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4723,
-          "selected_by_if": 4723,
+          "line": 4806,
+          "selected_by_if": 4806,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13089,8 +13260,8 @@
             "isinstance"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6265,
-          "selected_by_if": 6265,
+          "line": 6348,
+          "selected_by_if": 6348,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13132,8 +13303,8 @@
             "sum"
           ],
           "function": "dispatch_get",
-          "line": 1257,
-          "selected_by_if": 1257,
+          "line": 1315,
+          "selected_by_if": 1315,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13153,6 +13324,7 @@
           "path": "/api/cloud/acceptances",
           "permission": "",
           "proof": [
+            "tests/test_cloud_picker_single_confirmation.py",
             "tests/test_model_price_acceptance.py"
           ],
           "transport": "http"
@@ -13168,8 +13340,8 @@
             "list_acceptances"
           ],
           "function": "dispatch_get",
-          "line": 2258,
-          "selected_by_if": 2258,
+          "line": 2316,
+          "selected_by_if": 2316,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13220,8 +13392,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5394,
-          "selected_by_if": 5394,
+          "line": 5477,
+          "selected_by_if": 5477,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13254,8 +13426,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1872,
-          "selected_by_if": 1872,
+          "line": 1930,
+          "selected_by_if": 1930,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13296,8 +13468,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1853,
-          "selected_by_if": 1853,
+          "line": 1911,
+          "selected_by_if": 1911,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13337,8 +13509,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2114,
-          "selected_by_if": 2114,
+          "line": 2172,
+          "selected_by_if": 2172,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13403,8 +13575,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2272,
-          "selected_by_if": 2272,
+          "line": 2330,
+          "selected_by_if": 2330,
           "source": "core/web/api/service.py"
         },
         {
@@ -13415,8 +13587,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5429,
-          "selected_by_if": 5429,
+          "line": 5512,
+          "selected_by_if": 5512,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13470,8 +13642,8 @@
             "curated_models"
           ],
           "function": "dispatch_get",
-          "line": 2343,
-          "selected_by_if": 2343,
+          "line": 2401,
+          "selected_by_if": 2401,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13509,8 +13681,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2131,
-          "selected_by_if": 2131,
+          "line": 2189,
+          "selected_by_if": 2189,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13530,6 +13702,7 @@
           "path": "/api/cloud/providers",
           "permission": "",
           "proof": [
+            "tests/test_chat_page_layout_geometry.py",
             "tests/test_chat_page_multiprovider.py",
             "tests/test_multiprovider_endpoints.py",
             "tests/usepod/test_usepod_registration.py"
@@ -13546,8 +13719,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1740,
-          "selected_by_if": 1740,
+          "line": 1798,
+          "selected_by_if": 1798,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13581,8 +13754,8 @@
             "spend_limits"
           ],
           "function": "dispatch_get",
-          "line": 2318,
-          "selected_by_if": 2318,
+          "line": 2376,
+          "selected_by_if": 2376,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13622,8 +13795,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2024,
-          "selected_by_if": 2024,
+          "line": 2082,
+          "selected_by_if": 2082,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13675,8 +13848,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4852,
-          "selected_by_if": 4852,
+          "line": 4935,
+          "selected_by_if": 4935,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13695,8 +13868,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4843,
-          "selected_by_if": 4843,
+          "line": 4926,
+          "selected_by_if": 4926,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13723,8 +13896,8 @@
             "str"
           ],
           "function": "_usepod_owner_action",
-          "line": 3805,
-          "selected_by_if": 3805,
+          "line": 3880,
+          "selected_by_if": 3880,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13747,8 +13920,8 @@
             "str"
           ],
           "function": "_usepod_owner_action",
-          "line": 3778,
-          "selected_by_if": 3778,
+          "line": 3853,
+          "selected_by_if": 3853,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13768,10 +13941,10 @@
           "path": "/api/cloud/usepod/discovery",
           "permission": "",
           "proof": [
+            "tests/test_cloud_picker_single_confirmation.py",
             "tests/test_provider_answer_recovery_served.py",
             "tests/usepod/test_usepod_adapter_lane.py",
-            "tests/usepod/test_usepod_funded_journey_served.py",
-            "tests/usepod/test_usepod_served_flow.py"
+            "tests/usepod/test_usepod_funded_journey_served.py"
           ],
           "transport": "http"
         }
@@ -13789,8 +13962,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1752,
-          "selected_by_if": 1752,
+          "line": 1810,
+          "selected_by_if": 1810,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13817,8 +13990,8 @@
             "str"
           ],
           "function": "_usepod_owner_action",
-          "line": 3805,
-          "selected_by_if": 3805,
+          "line": 3880,
+          "selected_by_if": 3880,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13843,8 +14016,8 @@
             "usepod_discovery.save_accountless_origin"
           ],
           "function": "_usepod_owner_action",
-          "line": 3870,
-          "selected_by_if": 3870,
+          "line": 3945,
+          "selected_by_if": 3945,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13866,8 +14039,8 @@
             "str"
           ],
           "function": "_usepod_owner_action",
-          "line": 3762,
-          "selected_by_if": 3762,
+          "line": 3837,
+          "selected_by_if": 3837,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13884,8 +14057,8 @@
             "sorted"
           ],
           "function": "_usepod_owner_action",
-          "line": 3774,
-          "selected_by_if": 3774,
+          "line": 3849,
+          "selected_by_if": 3849,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13905,8 +14078,8 @@
             "str"
           ],
           "function": "_usepod_owner_action",
-          "line": 3799,
-          "selected_by_if": 3799,
+          "line": 3874,
+          "selected_by_if": 3874,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13933,8 +14106,8 @@
             "str"
           ],
           "function": "_usepod_owner_action",
-          "line": 3833,
-          "selected_by_if": 3833,
+          "line": 3908,
+          "selected_by_if": 3908,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13961,8 +14134,8 @@
             "str"
           ],
           "function": "_usepod_owner_action",
-          "line": 3833,
-          "selected_by_if": 3833,
+          "line": 3908,
+          "selected_by_if": 3908,
           "source": "core/web/api/service.py"
         }
       ]
@@ -13989,8 +14162,8 @@
             "str"
           ],
           "function": "_usepod_owner_action",
-          "line": 3833,
-          "selected_by_if": 3833,
+          "line": 3908,
+          "selected_by_if": 3908,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14015,8 +14188,8 @@
             "str"
           ],
           "function": "_usepod_owner_action",
-          "line": 3890,
-          "selected_by_if": 3890,
+          "line": 3965,
+          "selected_by_if": 3965,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14051,8 +14224,8 @@
             "unresolved_x402_operations"
           ],
           "function": "dispatch_get",
-          "line": 1768,
-          "selected_by_if": 1768,
+          "line": 1826,
+          "selected_by_if": 1826,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14089,8 +14262,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 881,
-          "selected_by_if": 881,
+          "line": 935,
+          "selected_by_if": 935,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14108,8 +14281,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 881,
-          "selected_by_if": 881,
+          "line": 935,
+          "selected_by_if": 935,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14146,8 +14319,8 @@
             "json_response"
           ],
           "function": "dispatch_post",
-          "line": 2890,
-          "selected_by_if": 2890,
+          "line": 2948,
+          "selected_by_if": 2948,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14190,8 +14363,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1979,
-          "selected_by_if": 1979,
+          "line": 2037,
+          "selected_by_if": 2037,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14230,8 +14403,8 @@
             "query.get"
           ],
           "function": "dispatch_get",
-          "line": 1633,
-          "selected_by_if": 1633,
+          "line": 1691,
+          "selected_by_if": 1691,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14267,8 +14440,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5881,
-          "selected_by_if": 5881,
+          "line": 5964,
+          "selected_by_if": 5964,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14301,8 +14474,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1731,
-          "selected_by_if": 1731,
+          "line": 1789,
+          "selected_by_if": 1789,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14335,8 +14508,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5990,
-          "selected_by_if": 5990,
+          "line": 6073,
+          "selected_by_if": 6073,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14371,8 +14544,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5983,
-          "selected_by_if": 5983,
+          "line": 6066,
+          "selected_by_if": 6066,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14405,8 +14578,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5997,
-          "selected_by_if": 5997,
+          "line": 6080,
+          "selected_by_if": 6080,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14441,8 +14614,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5896,
-          "selected_by_if": 5896,
+          "line": 5979,
+          "selected_by_if": 5979,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14479,8 +14652,8 @@
             "query.get"
           ],
           "function": "dispatch_get",
-          "line": 1643,
-          "selected_by_if": 1643,
+          "line": 1701,
+          "selected_by_if": 1701,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14515,8 +14688,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5948,
-          "selected_by_if": 5948,
+          "line": 6031,
+          "selected_by_if": 6031,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14551,8 +14724,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5934,
-          "selected_by_if": 5934,
+          "line": 6017,
+          "selected_by_if": 6017,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14587,8 +14760,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5941,
-          "selected_by_if": 5941,
+          "line": 6024,
+          "selected_by_if": 6024,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14623,8 +14796,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5955,
-          "selected_by_if": 5955,
+          "line": 6038,
+          "selected_by_if": 6038,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14659,8 +14832,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1703,
-          "selected_by_if": 1703,
+          "line": 1761,
+          "selected_by_if": 1761,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14693,8 +14866,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1713,
-          "selected_by_if": 1713,
+          "line": 1771,
+          "selected_by_if": 1771,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14727,8 +14900,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5976,
-          "selected_by_if": 5976,
+          "line": 6059,
+          "selected_by_if": 6059,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14761,8 +14934,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5969,
-          "selected_by_if": 5969,
+          "line": 6052,
+          "selected_by_if": 6052,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14798,8 +14971,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5962,
-          "selected_by_if": 5962,
+          "line": 6045,
+          "selected_by_if": 6045,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14835,8 +15008,8 @@
             "query.get"
           ],
           "function": "dispatch_get",
-          "line": 1722,
-          "selected_by_if": 1722,
+          "line": 1780,
+          "selected_by_if": 1780,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14871,8 +15044,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1662,
-          "selected_by_if": 1662,
+          "line": 1720,
+          "selected_by_if": 1720,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14906,8 +15079,8 @@
             "query.get"
           ],
           "function": "dispatch_get",
-          "line": 1652,
-          "selected_by_if": 1652,
+          "line": 1710,
+          "selected_by_if": 1710,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14943,8 +15116,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1694,
-          "selected_by_if": 1694,
+          "line": 1752,
+          "selected_by_if": 1752,
           "source": "core/web/api/service.py"
         }
       ]
@@ -14979,8 +15152,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5920,
-          "selected_by_if": 5920,
+          "line": 6003,
+          "selected_by_if": 6003,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15015,8 +15188,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5927,
-          "selected_by_if": 5927,
+          "line": 6010,
+          "selected_by_if": 6010,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15053,8 +15226,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5889,
-          "selected_by_if": 5889,
+          "line": 5972,
+          "selected_by_if": 5972,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15101,8 +15274,8 @@
             "handle_context_pages_get"
           ],
           "function": "dispatch_get",
-          "line": 1374,
-          "selected_by_if": 1374,
+          "line": 1432,
+          "selected_by_if": 1432,
           "source": "core/web/api/service.py"
         },
         {
@@ -15110,8 +15283,8 @@
             "handle_context_pages_post"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5505,
-          "selected_by_if": 5505,
+          "line": 5588,
+          "selected_by_if": 5588,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15162,8 +15335,8 @@
             "workspace_root_provider"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5439,
-          "selected_by_if": 5438,
+          "line": 5522,
+          "selected_by_if": 5521,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15204,8 +15377,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2189,
-          "selected_by_if": 2188,
+          "line": 2247,
+          "selected_by_if": 2246,
           "source": "core/web/api/service.py"
         },
         {
@@ -15215,8 +15388,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2231,
-          "selected_by_if": 2231,
+          "line": 2289,
+          "selected_by_if": 2289,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15257,8 +15430,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2190,
-          "selected_by_if": 2188,
+          "line": 2248,
+          "selected_by_if": 2246,
           "source": "core/web/api/service.py"
         },
         {
@@ -15266,8 +15439,8 @@
             "_cr_forward"
           ],
           "function": "dispatch_get",
-          "line": 2218,
-          "selected_by_if": 2218,
+          "line": 2276,
+          "selected_by_if": 2276,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15316,8 +15489,8 @@
             "workspace_root_provider"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5440,
-          "selected_by_if": 5438,
+          "line": 5523,
+          "selected_by_if": 5521,
           "source": "core/web/api/service.py"
         },
         {
@@ -15334,8 +15507,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5484,
-          "selected_by_if": 5484,
+          "line": 5567,
+          "selected_by_if": 5567,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15376,8 +15549,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2189,
-          "selected_by_if": 2188,
+          "line": 2247,
+          "selected_by_if": 2246,
           "source": "core/web/api/service.py"
         },
         {
@@ -15385,8 +15558,8 @@
             "_cr_forward"
           ],
           "function": "dispatch_get",
-          "line": 2227,
-          "selected_by_if": 2227,
+          "line": 2285,
+          "selected_by_if": 2285,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15426,8 +15599,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2190,
-          "selected_by_if": 2188,
+          "line": 2248,
+          "selected_by_if": 2246,
           "source": "core/web/api/service.py"
         },
         {
@@ -15440,8 +15613,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2203,
-          "selected_by_if": 2203,
+          "line": 2261,
+          "selected_by_if": 2261,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15490,8 +15663,8 @@
             "workspace_root_provider"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5440,
-          "selected_by_if": 5438,
+          "line": 5523,
+          "selected_by_if": 5521,
           "source": "core/web/api/service.py"
         },
         {
@@ -15506,8 +15679,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5470,
-          "selected_by_if": 5470,
+          "line": 5553,
+          "selected_by_if": 5553,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15548,8 +15721,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2189,
-          "selected_by_if": 2188,
+          "line": 2247,
+          "selected_by_if": 2246,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15600,8 +15773,8 @@
             "workspace_root_provider"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5439,
-          "selected_by_if": 5438,
+          "line": 5522,
+          "selected_by_if": 5521,
           "source": "core/web/api/service.py"
         },
         {
@@ -15616,8 +15789,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5464,
-          "selected_by_if": 5464,
+          "line": 5547,
+          "selected_by_if": 5547,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15655,8 +15828,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2845,
-          "selected_by_if": 2845,
+          "line": 2903,
+          "selected_by_if": 2903,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15691,8 +15864,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 7647,
-          "selected_by_if": 7647,
+          "line": 7723,
+          "selected_by_if": 7723,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15726,8 +15899,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1784,
-          "selected_by_if": 1784,
+          "line": 1842,
+          "selected_by_if": 1842,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15778,8 +15951,8 @@
             "sorted"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4886,
-          "selected_by_if": 4886,
+          "line": 4969,
+          "selected_by_if": 4969,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15815,8 +15988,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1672,
-          "selected_by_if": 1672,
+          "line": 1730,
+          "selected_by_if": 1730,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15851,8 +16024,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1682,
-          "selected_by_if": 1682,
+          "line": 1740,
+          "selected_by_if": 1740,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15887,8 +16060,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5904,
-          "selected_by_if": 5904,
+          "line": 5987,
+          "selected_by_if": 5987,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15923,8 +16096,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5912,
-          "selected_by_if": 5912,
+          "line": 5995,
+          "selected_by_if": 5995,
           "source": "core/web/api/service.py"
         }
       ]
@@ -15958,8 +16131,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1846,
-          "selected_by_if": 1846,
+          "line": 1904,
+          "selected_by_if": 1904,
           "source": "core/web/api/service.py"
         }
       ]
@@ -16010,8 +16183,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5157,
-          "selected_by_if": 5157,
+          "line": 5240,
+          "selected_by_if": 5240,
           "source": "core/web/api/service.py"
         }
       ]
@@ -16050,8 +16223,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2009,
-          "selected_by_if": 2009,
+          "line": 2067,
+          "selected_by_if": 2067,
           "source": "core/web/api/service.py"
         }
       ]
@@ -16104,8 +16277,8 @@
             "safe_error_text"
           ],
           "function": "_dispatch_post_inner",
-          "line": 7560,
-          "selected_by_if": 7560,
+          "line": 7636,
+          "selected_by_if": 7636,
           "source": "core/web/api/service.py"
         }
       ]
@@ -16130,8 +16303,8 @@
             "_first_run_api.handle_pact_post"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5786,
-          "selected_by_if": 5786,
+          "line": 5869,
+          "selected_by_if": 5869,
           "source": "core/web/api/service.py"
         }
       ]
@@ -16254,8 +16427,8 @@
             "_first_run_api.handle_provider_get"
           ],
           "function": "dispatch_get",
-          "line": 1570,
-          "selected_by_if": 1570,
+          "line": 1628,
+          "selected_by_if": 1628,
           "source": "core/web/api/service.py"
         }
       ]
@@ -16330,8 +16503,8 @@
             "list_procedure_records"
           ],
           "function": "dispatch_get",
-          "line": 1802,
-          "selected_by_if": 1802,
+          "line": 1860,
+          "selected_by_if": 1860,
           "source": "core/web/api/service.py"
         },
         {
@@ -16345,8 +16518,8 @@
             "valid_procedure_id"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5257,
-          "selected_by_if": 5257,
+          "line": 5340,
+          "selected_by_if": 5340,
           "source": "core/web/api/service.py"
         }
       ]
@@ -16370,14 +16543,14 @@
             "valid_procedure_id"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5238,
-          "selected_by_if": 5238,
+          "line": 5321,
+          "selected_by_if": 5321,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 5248,
+          "line": 5331,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
@@ -16392,14 +16565,14 @@
             "valid_procedure_id"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5257,
-          "selected_by_if": 5257,
+          "line": 5340,
+          "selected_by_if": 5340,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 5265,
+          "line": 5348,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         }
@@ -16450,8 +16623,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2054,
-          "selected_by_if": 2054,
+          "line": 2112,
+          "selected_by_if": 2112,
           "source": "core/web/api/service.py"
         }
       ]
@@ -16499,8 +16672,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5515,
-          "selected_by_if": 5515,
+          "line": 5598,
+          "selected_by_if": 5598,
           "source": "core/web/api/service.py"
         }
       ]
@@ -16523,8 +16696,8 @@
             "handle_mobile_companion_get"
           ],
           "function": "dispatch_get",
-          "line": 996,
-          "selected_by_if": 996,
+          "line": 1050,
+          "selected_by_if": 1050,
           "source": "core/web/api/service.py"
         },
         {
@@ -16532,8 +16705,8 @@
             "handle_mobile_companion_post"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4059,
-          "selected_by_if": 4059,
+          "line": 4134,
+          "selected_by_if": 4134,
           "source": "core/web/api/service.py"
         }
       ]
@@ -16955,8 +17128,8 @@
           "proof": [
             "tests/command_registry/test_convergence_adapters.py",
             "tests/first_run_pact_rig.py",
-            "tests/test_bundle_tooling.py",
-            "tests/test_chat_composer_controls.py"
+            "tests/test_approval_resolution_transport.py",
+            "tests/test_bundle_tooling.py"
           ],
           "transport": "http"
         }
@@ -16980,15 +17153,15 @@
             "body.get",
             "bool",
             "emit_runtime_event",
+            "fault.get",
             "grant.get",
             "grant_chat_workspace_authority",
             "int",
-            "is_loopback_host",
-            "isinstance"
+            "is_loopback_host"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4310,
-          "selected_by_if": 4310,
+          "line": 4385,
+          "selected_by_if": 4385,
           "source": "core/web/api/service.py"
         }
       ]
@@ -17040,8 +17213,8 @@
             "model_radar_service.try_once"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6174,
-          "selected_by_if": 6174,
+          "line": 6257,
+          "selected_by_if": 6257,
           "source": "core/web/api/service.py"
         },
         {
@@ -17057,8 +17230,8 @@
             "sorted"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6212,
-          "selected_by_if": 6212,
+          "line": 6295,
+          "selected_by_if": 6295,
           "source": "core/web/api/service.py"
         }
       ]
@@ -17104,8 +17277,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2145,
-          "selected_by_if": 2145,
+          "line": 2203,
+          "selected_by_if": 2203,
           "source": "core/web/api/service.py"
         }
       ]
@@ -17158,8 +17331,8 @@
             "model_radar_service.get_preferences"
           ],
           "function": "dispatch_get",
-          "line": 2177,
-          "selected_by_if": 2177,
+          "line": 2235,
+          "selected_by_if": 2235,
           "source": "core/web/api/service.py"
         },
         {
@@ -17186,8 +17359,8 @@
             "model_radar_service.try_once"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6174,
-          "selected_by_if": 6174,
+          "line": 6257,
+          "selected_by_if": 6257,
           "source": "core/web/api/service.py"
         },
         {
@@ -17202,8 +17375,8 @@
             "stored.to_dict"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6234,
-          "selected_by_if": 6234,
+          "line": 6317,
+          "selected_by_if": 6317,
           "source": "core/web/api/service.py"
         }
       ]
@@ -17255,8 +17428,8 @@
             "model_radar_service.try_once"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6174,
-          "selected_by_if": 6174,
+          "line": 6257,
+          "selected_by_if": 6257,
           "source": "core/web/api/service.py"
         }
       ]
@@ -17308,8 +17481,8 @@
             "model_radar_service.try_once"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6174,
-          "selected_by_if": 6174,
+          "line": 6257,
+          "selected_by_if": 6257,
           "source": "core/web/api/service.py"
         },
         {
@@ -17325,8 +17498,8 @@
             "sorted"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6224,
-          "selected_by_if": 6224,
+          "line": 6307,
+          "selected_by_if": 6307,
           "source": "core/web/api/service.py"
         }
       ]
@@ -17366,8 +17539,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1883,
-          "selected_by_if": 1883,
+          "line": 1941,
+          "selected_by_if": 1941,
           "source": "core/web/api/service.py"
         }
       ]
@@ -17421,14 +17594,14 @@
             "run_local_model_tool_certification"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4072,
-          "selected_by_if": 4072,
+          "line": 4147,
+          "selected_by_if": 4147,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 4288,
+          "line": 4363,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         }
@@ -17449,6 +17622,7 @@
           "path": "/api/models/local",
           "permission": "",
           "proof": [
+            "tests/test_chat_registered_local_models.py",
             "tests/test_local_model_door_and_probe_measurement.py"
           ],
           "transport": "http"
@@ -17477,8 +17651,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1919,
-          "selected_by_if": 1919,
+          "line": 1977,
+          "selected_by_if": 1977,
           "source": "core/web/api/service.py"
         }
       ]
@@ -17529,8 +17703,8 @@
             "refresh_provider_truth"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4209,
-          "selected_by_if": 4209,
+          "line": 4284,
+          "selected_by_if": 4284,
           "source": "core/web/api/service.py"
         }
       ]
@@ -17554,8 +17728,8 @@
             "handle_money_get"
           ],
           "function": "dispatch_get",
-          "line": 980,
-          "selected_by_if": 980,
+          "line": 1034,
+          "selected_by_if": 1034,
           "source": "core/web/api/service.py"
         },
         {
@@ -17564,8 +17738,8 @@
             "handle_money_post"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4043,
-          "selected_by_if": 4043,
+          "line": 4118,
+          "selected_by_if": 4118,
           "source": "core/web/api/service.py"
         }
       ]
@@ -17967,8 +18141,8 @@
             "type"
           ],
           "function": "dispatch_get",
-          "line": 888,
-          "selected_by_if": 888,
+          "line": 942,
+          "selected_by_if": 942,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18019,8 +18193,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2913,
-          "selected_by_if": 2912,
+          "line": 2971,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         },
         {
@@ -18035,8 +18209,8 @@
             "str"
           ],
           "function": "dispatch_post",
-          "line": 2969,
-          "selected_by_if": 2969,
+          "line": 3027,
+          "selected_by_if": 3027,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18089,8 +18263,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2915,
-          "selected_by_if": 2912,
+          "line": 2973,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         },
         {
@@ -18100,8 +18274,8 @@
             "native_notifications.request_authorization"
           ],
           "function": "dispatch_post",
-          "line": 2934,
-          "selected_by_if": 2934,
+          "line": 2992,
+          "selected_by_if": 2992,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18153,8 +18327,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2914,
-          "selected_by_if": 2912,
+          "line": 2972,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         },
         {
@@ -18166,8 +18340,8 @@
             "str"
           ],
           "function": "dispatch_post",
-          "line": 2924,
-          "selected_by_if": 2924,
+          "line": 2982,
+          "selected_by_if": 2982,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18219,8 +18393,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2914,
-          "selected_by_if": 2912,
+          "line": 2972,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         },
         {
@@ -18233,8 +18407,8 @@
             "str"
           ],
           "function": "dispatch_post",
-          "line": 2927,
-          "selected_by_if": 2927,
+          "line": 2985,
+          "selected_by_if": 2985,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18272,8 +18446,8 @@
             "type"
           ],
           "function": "dispatch_get",
-          "line": 920,
-          "selected_by_if": 920,
+          "line": 974,
+          "selected_by_if": 974,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18326,8 +18500,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2914,
-          "selected_by_if": 2912,
+          "line": 2972,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         },
         {
@@ -18340,8 +18514,8 @@
             "result.pop"
           ],
           "function": "dispatch_post",
-          "line": 2930,
-          "selected_by_if": 2930,
+          "line": 2988,
+          "selected_by_if": 2988,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18397,8 +18571,8 @@
             "type"
           ],
           "function": "dispatch_get",
-          "line": 903,
-          "selected_by_if": 903,
+          "line": 957,
+          "selected_by_if": 957,
           "source": "core/web/api/service.py"
         },
         {
@@ -18425,8 +18599,8 @@
             "native_notifications.send_test_notification"
           ],
           "function": "dispatch_post",
-          "line": 2913,
-          "selected_by_if": 2912,
+          "line": 2971,
+          "selected_by_if": 2970,
           "source": "core/web/api/service.py"
         },
         {
@@ -18439,8 +18613,8 @@
             "result.get"
           ],
           "function": "dispatch_post",
-          "line": 2975,
-          "selected_by_if": 2975,
+          "line": 3033,
+          "selected_by_if": 3033,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18493,8 +18667,8 @@
             "resolve_null_request"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6778,
-          "selected_by_if": 6778,
+          "line": 6861,
+          "selected_by_if": 6861,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18527,8 +18701,8 @@
             "oauth_callback.callback_status"
           ],
           "function": "dispatch_get",
-          "line": 1969,
-          "selected_by_if": 1969,
+          "line": 2027,
+          "selected_by_if": 2027,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18544,8 +18718,8 @@
             "_first_run_api.handle_pact_post"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5786,
-          "selected_by_if": 5786,
+          "line": 5869,
+          "selected_by_if": 5869,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18603,8 +18777,8 @@
             "_first_run_api.handle_provider_get"
           ],
           "function": "dispatch_get",
-          "line": 1570,
-          "selected_by_if": 1570,
+          "line": 1628,
+          "selected_by_if": 1628,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18840,8 +19014,8 @@
             "_first_run_api.handle_provider_get"
           ],
           "function": "dispatch_get",
-          "line": 1570,
-          "selected_by_if": 1570,
+          "line": 1628,
+          "selected_by_if": 1628,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18875,8 +19049,8 @@
             "read_plugin_catalog"
           ],
           "function": "dispatch_get",
-          "line": 1822,
-          "selected_by_if": 1822,
+          "line": 1880,
+          "selected_by_if": 1880,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18924,8 +19098,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5313,
-          "selected_by_if": 5313,
+          "line": 5396,
+          "selected_by_if": 5396,
           "source": "core/web/api/service.py"
         }
       ]
@@ -18945,7 +19119,8 @@
           "path": "/api/plugins/lifecycle",
           "permission": "OpenRead",
           "proof": [
-            "tests/repoops/test_repoops_served.py"
+            "tests/repoops/test_repoops_served.py",
+            "tests/test_vool_database_served_proof.py"
           ],
           "transport": "http"
         },
@@ -18960,7 +19135,8 @@
           "path": "/api/plugins/lifecycle",
           "permission": "OperatorAuthority",
           "proof": [
-            "tests/repoops/test_repoops_served.py"
+            "tests/repoops/test_repoops_served.py",
+            "tests/test_vool_database_served_proof.py"
           ],
           "transport": "http"
         }
@@ -18974,8 +19150,8 @@
             "lifecycle_snapshot"
           ],
           "function": "dispatch_get",
-          "line": 1794,
-          "selected_by_if": 1794,
+          "line": 1852,
+          "selected_by_if": 1852,
           "source": "core/web/api/service.py"
         },
         {
@@ -18989,8 +19165,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5273,
-          "selected_by_if": 5273,
+          "line": 5356,
+          "selected_by_if": 5356,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19025,8 +19201,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5288,
-          "selected_by_if": 5288,
+          "line": 5371,
+          "selected_by_if": 5371,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19075,8 +19251,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1578,
-          "selected_by_if": 1578,
+          "line": 1636,
+          "selected_by_if": 1636,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19111,14 +19287,14 @@
             "_str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5791,
-          "selected_by_if": 5791,
+          "line": 5874,
+          "selected_by_if": 5874,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 5814,
+          "line": 5897,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         }
@@ -19166,8 +19342,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1578,
-          "selected_by_if": 1578,
+          "line": 1636,
+          "selected_by_if": 1636,
           "source": "core/web/api/service.py"
         },
         {
@@ -19177,8 +19353,8 @@
             "operator_profile.export_profile"
           ],
           "function": "dispatch_get",
-          "line": 1589,
-          "selected_by_if": 1589,
+          "line": 1647,
+          "selected_by_if": 1647,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19233,8 +19409,8 @@
             "project_store.list_projects"
           ],
           "function": "dispatch_get",
-          "line": 1839,
-          "selected_by_if": 1839,
+          "line": 1897,
+          "selected_by_if": 1897,
           "source": "core/web/api/service.py"
         },
         {
@@ -19261,8 +19437,8 @@
             "list_chat_namespaces"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5014,
-          "selected_by_if": 5014,
+          "line": 5097,
+          "selected_by_if": 5097,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19315,8 +19491,8 @@
             "list_chat_namespaces"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5014,
-          "selected_by_if": 5014,
+          "line": 5097,
+          "selected_by_if": 5097,
           "source": "core/web/api/service.py"
         },
         {
@@ -19342,8 +19518,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5089,
-          "selected_by_if": 5089,
+          "line": 5172,
+          "selected_by_if": 5172,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19392,8 +19568,8 @@
             "list_chat_namespaces"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5014,
-          "selected_by_if": 5014,
+          "line": 5097,
+          "selected_by_if": 5097,
           "source": "core/web/api/service.py"
         },
         {
@@ -19413,8 +19589,8 @@
             "sorted"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5061,
-          "selected_by_if": 5061,
+          "line": 5144,
+          "selected_by_if": 5144,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19465,8 +19641,8 @@
             "list_chat_namespaces"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5014,
-          "selected_by_if": 5014,
+          "line": 5097,
+          "selected_by_if": 5097,
           "source": "core/web/api/service.py"
         },
         {
@@ -19484,8 +19660,8 @@
             "sorted"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5043,
-          "selected_by_if": 5043,
+          "line": 5126,
+          "selected_by_if": 5126,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19499,7 +19675,7 @@
         {
           "branch_calls": [],
           "function": "_stream_ollama_pull",
-          "line": 539,
+          "line": 573,
           "selected_by_if": null,
           "source": "core/web/api/runtime.py"
         }
@@ -19538,8 +19714,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 946,
-          "selected_by_if": 946,
+          "line": 1000,
+          "selected_by_if": 1000,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19576,8 +19752,8 @@
             "workspace_root_provider"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5218,
-          "selected_by_if": 5218,
+          "line": 5301,
+          "selected_by_if": 5301,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19617,8 +19793,8 @@
             "workspace_root_provider"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5198,
-          "selected_by_if": 5198,
+          "line": 5281,
+          "selected_by_if": 5281,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19655,8 +19831,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1815,
-          "selected_by_if": 1815,
+          "line": 1873,
+          "selected_by_if": 1873,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19690,8 +19866,8 @@
             "repo_sessions_payload"
           ],
           "function": "dispatch_get",
-          "line": 1810,
-          "selected_by_if": 1810,
+          "line": 1868,
+          "selected_by_if": 1868,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19727,8 +19903,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1206,
-          "selected_by_if": 1206,
+          "line": 1264,
+          "selected_by_if": 1264,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19768,8 +19944,8 @@
             "validate_workspace_change_session_id"
           ],
           "function": "dispatch_get",
-          "line": 2577,
-          "selected_by_if": 2577,
+          "line": 2635,
+          "selected_by_if": 2635,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19803,8 +19979,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 2761,
-          "selected_by_if": 2761,
+          "line": 2819,
+          "selected_by_if": 2819,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19849,8 +20025,8 @@
             "turn_execution_summary"
           ],
           "function": "dispatch_get",
-          "line": 2535,
-          "selected_by_if": 2535,
+          "line": 2593,
+          "selected_by_if": 2593,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19861,16 +20037,18 @@
       "method_routes": [
         {
           "census_id": "http:POST:/api/runtime/local-model/retry",
-          "classification": "LEGACY_UNMIGRATED",
+          "classification": "EXTERNAL_TRANSPORT_ONLY",
           "effects": "",
           "handler": "",
           "method": "POST",
-          "note": "",
+          "note": "local-model runtime operator action; RuntimeServices.local_model_setup_refresh owns failed local chat checks and policy/state/rate limits, never download; loopback, same-origin, empty body",
           "owning_command": "",
           "path": "/api/runtime/local-model/retry",
           "permission": "",
           "proof": [
+            "tests/command_registry/test_runtime_lane_ownership.py",
             "tests/test_local_model_door_and_probe_measurement.py",
+            "tests/test_vool_api_server.py",
             "tests/test_vool_settings_page.py"
           ],
           "transport": "http"
@@ -19899,8 +20077,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4168,
-          "selected_by_if": 4168,
+          "line": 4243,
+          "selected_by_if": 4243,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19911,15 +20089,16 @@
       "method_routes": [
         {
           "census_id": "http:POST:/api/runtime/model-pull/retry",
-          "classification": "LEGACY_UNMIGRATED",
+          "classification": "EXTERNAL_TRANSPORT_ONLY",
           "effects": "",
           "handler": "",
           "method": "POST",
-          "note": "",
+          "note": "local-model runtime operator action; RuntimeServices.model_pull_restart owns selected-model download retry and policy/state/rate limits; loopback, same-origin, empty body",
           "owning_command": "",
           "path": "/api/runtime/model-pull/retry",
           "permission": "",
           "proof": [
+            "tests/command_registry/test_runtime_lane_ownership.py",
             "tests/test_local_model_door_and_probe_measurement.py",
             "tests/test_vool_settings_page.py"
           ],
@@ -19944,8 +20123,8 @@
             "sorted"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4145,
-          "selected_by_if": 4145,
+          "line": 4220,
+          "selected_by_if": 4220,
           "source": "core/web/api/service.py"
         }
       ]
@@ -19987,8 +20166,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2764,
-          "selected_by_if": 2764,
+          "line": 2822,
+          "selected_by_if": 2822,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20035,8 +20214,8 @@
             "verify_honesty_chain"
           ],
           "function": "dispatch_get",
-          "line": 2673,
-          "selected_by_if": 2673,
+          "line": 2731,
+          "selected_by_if": 2731,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20076,8 +20255,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1210,
-          "selected_by_if": 1210,
+          "line": 1268,
+          "selected_by_if": 1268,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20117,8 +20296,8 @@
             "safe_error_text"
           ],
           "function": "dispatch_get",
-          "line": 1215,
-          "selected_by_if": 1215,
+          "line": 1273,
+          "selected_by_if": 1273,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20167,8 +20346,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4663,
-          "selected_by_if": 4663,
+          "line": 4746,
+          "selected_by_if": 4746,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20210,8 +20389,8 @@
             "usage_meter.usage_summary"
           ],
           "function": "dispatch_get",
-          "line": 2497,
-          "selected_by_if": 2497,
+          "line": 2555,
+          "selected_by_if": 2555,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20246,12 +20425,14 @@
             "callable",
             "contextlib.suppress",
             "dict",
+            "getattr",
             "json_response",
-            "refresh_local_status"
+            "refresh_local_status",
+            "refresh_provider_decision"
           ],
           "function": "dispatch_get",
-          "line": 1199,
-          "selected_by_if": 1199,
+          "line": 1253,
+          "selected_by_if": 1253,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20301,8 +20482,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4967,
-          "selected_by_if": 4967,
+          "line": 5050,
+          "selected_by_if": 5050,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20336,8 +20517,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1775,
-          "selected_by_if": 1775,
+          "line": 1833,
+          "selected_by_if": 1833,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20388,8 +20569,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4929,
-          "selected_by_if": 4929,
+          "line": 5012,
+          "selected_by_if": 5012,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20432,8 +20613,8 @@
             "unquote"
           ],
           "function": "dispatch_get",
-          "line": 1014,
-          "selected_by_if": 1014,
+          "line": 1068,
+          "selected_by_if": 1068,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20485,8 +20666,8 @@
             "sp_origin.split"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6034,
-          "selected_by_if": 6034,
+          "line": 6117,
+          "selected_by_if": 6117,
           "source": "core/web/api/service.py"
         },
         {
@@ -20501,8 +20682,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6063,
-          "selected_by_if": 6063,
+          "line": 6146,
+          "selected_by_if": 6146,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20554,8 +20735,8 @@
             "sp_origin.split"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6034,
-          "selected_by_if": 6034,
+          "line": 6117,
+          "selected_by_if": 6117,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20606,8 +20787,8 @@
             "sp_origin.split"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6034,
-          "selected_by_if": 6034,
+          "line": 6117,
+          "selected_by_if": 6117,
           "source": "core/web/api/service.py"
         },
         {
@@ -20618,8 +20799,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6059,
-          "selected_by_if": 6059,
+          "line": 6142,
+          "selected_by_if": 6142,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20670,8 +20851,8 @@
             "sp_origin.split"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6034,
-          "selected_by_if": 6034,
+          "line": 6117,
+          "selected_by_if": 6117,
           "source": "core/web/api/service.py"
         },
         {
@@ -20682,8 +20863,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6057,
-          "selected_by_if": 6057,
+          "line": 6140,
+          "selected_by_if": 6140,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20713,7 +20894,7 @@
         {
           "branch_calls": [],
           "function": "<module>",
-          "line": 3278,
+          "line": 3353,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
@@ -20737,8 +20918,8 @@
             "str"
           ],
           "function": "dispatch_upload",
-          "line": 3343,
-          "selected_by_if": 3343,
+          "line": 3418,
+          "selected_by_if": 3418,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20793,8 +20974,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1624,
-          "selected_by_if": 1624,
+          "line": 1682,
+          "selected_by_if": 1682,
           "source": "core/web/api/service.py"
         },
         {
@@ -20808,8 +20989,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4829,
-          "selected_by_if": 4829,
+          "line": 4912,
+          "selected_by_if": 4912,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20864,8 +21045,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1615,
-          "selected_by_if": 1615,
+          "line": 1673,
+          "selected_by_if": 1673,
           "source": "core/web/api/service.py"
         },
         {
@@ -20876,8 +21057,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5871,
-          "selected_by_if": 5871,
+          "line": 5954,
+          "selected_by_if": 5954,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20914,8 +21095,8 @@
             "setup_progress.snapshot"
           ],
           "function": "dispatch_get",
-          "line": 1135,
-          "selected_by_if": 1135,
+          "line": 1189,
+          "selected_by_if": 1189,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20935,8 +21116,10 @@
           "path": "/api/show",
           "permission": "",
           "proof": [
-            "tests/wallet/_rig_provider.py",
-            "tests/wallet/_rig_queue_provider.py"
+            "tests/_authorship_served_rig.py",
+            "tests/_blackbox_served_rig.py",
+            "tests/_ollama_metadata_server.py",
+            "tests/test_answer_integrity_consecutive_turns.py"
           ],
           "transport": "http"
         }
@@ -20955,8 +21138,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 7618,
-          "selected_by_if": 7618,
+          "line": 7694,
+          "selected_by_if": 7694,
           "source": "core/web/api/service.py"
         }
       ]
@@ -20991,8 +21174,8 @@
             "skill_inventory"
           ],
           "function": "dispatch_get",
-          "line": 1830,
-          "selected_by_if": 1830,
+          "line": 1888,
+          "selected_by_if": 1888,
           "source": "core/web/api/service.py"
         }
       ]
@@ -21044,8 +21227,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5351,
-          "selected_by_if": 5351,
+          "line": 5434,
+          "selected_by_if": 5434,
           "source": "core/web/api/service.py"
         }
       ]
@@ -21067,8 +21250,8 @@
           "proof": [
             "tests/_authorship_served_rig.py",
             "tests/_blackbox_served_rig.py",
-            "tests/_reader_served_rig.py",
-            "tests/_served_sufficiency_provider.py"
+            "tests/_ollama_metadata_server.py",
+            "tests/_reader_served_rig.py"
           ],
           "transport": "http"
         }
@@ -21083,8 +21266,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1174,
-          "selected_by_if": 1174,
+          "line": 1228,
+          "selected_by_if": 1228,
           "source": "core/web/api/service.py"
         }
       ]
@@ -21123,8 +21306,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4294,
-          "selected_by_if": 4294,
+          "line": 4369,
+          "selected_by_if": 4369,
           "source": "core/web/api/service.py"
         }
       ]
@@ -21164,8 +21347,8 @@
             "payload.setdefault"
           ],
           "function": "dispatch_post",
-          "line": 2896,
-          "selected_by_if": 2896,
+          "line": 2954,
+          "selected_by_if": 2954,
           "source": "core/web/api/service.py"
         }
       ]
@@ -21208,14 +21391,14 @@
             "str"
           ],
           "function": "dispatch_post",
-          "line": 2989,
-          "selected_by_if": 2989,
+          "line": 3047,
+          "selected_by_if": 3047,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "dispatch_post",
-          "line": 2997,
+          "line": 3055,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         }
@@ -21259,8 +21442,8 @@
             "str"
           ],
           "function": "dispatch_post",
-          "line": 2989,
-          "selected_by_if": 2989,
+          "line": 3047,
+          "selected_by_if": 3047,
           "source": "core/web/api/service.py"
         }
       ]
@@ -21296,8 +21479,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 2044,
-          "selected_by_if": 2044,
+          "line": 2102,
+          "selected_by_if": 2102,
           "source": "core/web/api/service.py"
         }
       ]
@@ -21316,8 +21499,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 985,
-          "selected_by_if": 985,
+          "line": 1039,
+          "selected_by_if": 1039,
           "source": "core/web/api/service.py"
         },
         {
@@ -21328,8 +21511,8 @@
             "json_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4048,
-          "selected_by_if": 4048,
+          "line": 4123,
+          "selected_by_if": 4123,
           "source": "core/web/api/service.py"
         },
         {
@@ -23080,8 +23263,8 @@
             "apply_runtime_headers"
           ],
           "function": "dispatch_get",
-          "line": 1165,
-          "selected_by_if": 1165,
+          "line": 1219,
+          "selected_by_if": 1219,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23095,8 +23278,8 @@
         {
           "branch_calls": [],
           "function": "_looks_like_runtime_version_question",
-          "line": 523,
-          "selected_by_if": 523,
+          "line": 524,
+          "selected_by_if": 524,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23124,14 +23307,14 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4638,
-          "selected_by_if": 4638,
+          "line": 4721,
+          "selected_by_if": 4721,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 4653,
+          "line": 4736,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         }
@@ -23167,8 +23350,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1066,
-          "selected_by_if": 1066,
+          "line": 1120,
+          "selected_by_if": 1120,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23200,8 +23383,8 @@
             "handle_chat_asset_get"
           ],
           "function": "dispatch_get",
-          "line": 870,
-          "selected_by_if": 870,
+          "line": 924,
+          "selected_by_if": 924,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23219,8 +23402,8 @@
             "str"
           ],
           "function": "_usepod_owner_action",
-          "line": 3767,
-          "selected_by_if": 3767,
+          "line": 3842,
+          "selected_by_if": 3842,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23231,11 +23414,11 @@
       "method_routes": [
         {
           "census_id": "http:GET:/companion",
-          "classification": "LEGACY_UNMIGRATED",
+          "classification": "EXTERNAL_TRANSPORT_ONLY",
           "effects": "",
           "handler": "",
           "method": "GET",
-          "note": "",
+          "note": "loopback-only presentation page; core.companion_world_fragment.render_desktop_companion_html owns the renderer; no query or action input",
           "owning_command": "",
           "path": "/companion",
           "permission": "",
@@ -23254,8 +23437,8 @@
             "render_desktop_companion_html"
           ],
           "function": "dispatch_get",
-          "line": 1046,
-          "selected_by_if": 1046,
+          "line": 1100,
+          "selected_by_if": 1100,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23290,8 +23473,8 @@
             "routing.forget_approved_bound"
           ],
           "function": "_usepod_owner_action",
-          "line": 3812,
-          "selected_by_if": 3812,
+          "line": 3887,
+          "selected_by_if": 3887,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23338,8 +23521,8 @@
             "web0_gate_key_store"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6931,
-          "selected_by_if": 6931,
+          "line": 7014,
+          "selected_by_if": 7014,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23387,8 +23570,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1184,
-          "selected_by_if": 1184,
+          "line": 1238,
+          "selected_by_if": 1238,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23412,14 +23595,14 @@
             "valid_procedure_id"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5238,
-          "selected_by_if": 5238,
+          "line": 5321,
+          "selected_by_if": 5321,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 5248,
+          "line": 5331,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
@@ -23434,8 +23617,8 @@
             "valid_procedure_id"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5257,
-          "selected_by_if": 5257,
+          "line": 5340,
+          "selected_by_if": 5340,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23502,8 +23685,8 @@
             "handle_media_editor_get"
           ],
           "function": "dispatch_get",
-          "line": 875,
-          "selected_by_if": 875,
+          "line": 929,
+          "selected_by_if": 929,
           "source": "core/web/api/service.py"
         },
         {
@@ -23511,8 +23694,8 @@
             "handle_media_editor_get"
           ],
           "function": "dispatch_get",
-          "line": 2251,
-          "selected_by_if": 2251,
+          "line": 2309,
+          "selected_by_if": 2309,
           "source": "core/web/api/service.py"
         },
         {
@@ -23520,8 +23703,8 @@
             "handle_media_editor_post"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4034,
-          "selected_by_if": 4034,
+          "line": 4109,
+          "selected_by_if": 4109,
           "source": "core/web/api/service.py"
         },
         {
@@ -23529,8 +23712,8 @@
             "handle_media_editor_post"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5500,
-          "selected_by_if": 5500,
+          "line": 5583,
+          "selected_by_if": 5583,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23546,8 +23729,8 @@
             "handle_media_editor_get"
           ],
           "function": "dispatch_get",
-          "line": 875,
-          "selected_by_if": 875,
+          "line": 929,
+          "selected_by_if": 929,
           "source": "core/web/api/service.py"
         },
         {
@@ -23555,8 +23738,8 @@
             "handle_media_editor_get"
           ],
           "function": "dispatch_get",
-          "line": 2251,
-          "selected_by_if": 2251,
+          "line": 2309,
+          "selected_by_if": 2309,
           "source": "core/web/api/service.py"
         },
         {
@@ -23564,8 +23747,8 @@
             "handle_media_editor_post"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4034,
-          "selected_by_if": 4034,
+          "line": 4109,
+          "selected_by_if": 4109,
           "source": "core/web/api/service.py"
         },
         {
@@ -23573,8 +23756,8 @@
             "handle_media_editor_post"
           ],
           "function": "_dispatch_post_inner",
-          "line": 5500,
-          "selected_by_if": 5500,
+          "line": 5583,
+          "selected_by_if": 5583,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23718,8 +23901,8 @@
             "render_null_browser_html"
           ],
           "function": "dispatch_get",
-          "line": 1146,
-          "selected_by_if": 1146,
+          "line": 1200,
+          "selected_by_if": 1200,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23735,8 +23918,8 @@
             "price_wait_sessions"
           ],
           "function": "_usepod_owner_action",
-          "line": 3769,
-          "selected_by_if": 3769,
+          "line": 3844,
+          "selected_by_if": 3844,
           "source": "core/web/api/service.py"
         },
         {
@@ -23745,8 +23928,8 @@
             "spend_approval.pending_spend_approval"
           ],
           "function": "_usepod_owner_action",
-          "line": 3841,
-          "selected_by_if": 3841,
+          "line": 3916,
+          "selected_by_if": 3916,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23768,8 +23951,8 @@
             "str"
           ],
           "function": "_usepod_owner_action",
-          "line": 3845,
-          "selected_by_if": 3845,
+          "line": 3920,
+          "selected_by_if": 3920,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23801,8 +23984,8 @@
             "price_wait.save_target"
           ],
           "function": "_usepod_owner_action",
-          "line": 3765,
-          "selected_by_if": 3765,
+          "line": 3840,
+          "selected_by_if": 3840,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23832,8 +24015,8 @@
             "handle_school_get"
           ],
           "function": "dispatch_get",
-          "line": 972,
-          "selected_by_if": 972,
+          "line": 1026,
+          "selected_by_if": 1026,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23849,8 +24032,8 @@
             "handle_school_api_post"
           ],
           "function": "_dispatch_post_inner",
-          "line": 4039,
-          "selected_by_if": 4039,
+          "line": 4114,
+          "selected_by_if": 4114,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23880,8 +24063,8 @@
             "handle_school_api_get"
           ],
           "function": "dispatch_get",
-          "line": 976,
-          "selected_by_if": 976,
+          "line": 1030,
+          "selected_by_if": 1030,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23911,8 +24094,8 @@
             "handle_school_get"
           ],
           "function": "dispatch_get",
-          "line": 972,
-          "selected_by_if": 972,
+          "line": 1026,
+          "selected_by_if": 1026,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23947,8 +24130,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1087,
-          "selected_by_if": 1087,
+          "line": 1141,
+          "selected_by_if": 1141,
           "source": "core/web/api/service.py"
         }
       ]
@@ -23983,8 +24166,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 1112,
-          "selected_by_if": 1112,
+          "line": 1166,
+          "selected_by_if": 1166,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24035,8 +24218,8 @@
             "render_runtime_task_rail_html"
           ],
           "function": "dispatch_get",
-          "line": 1001,
-          "selected_by_if": 1001,
+          "line": 1055,
+          "selected_by_if": 1055,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24068,8 +24251,8 @@
             "render_runtime_task_rail_html"
           ],
           "function": "dispatch_get",
-          "line": 1001,
-          "selected_by_if": 1001,
+          "line": 1055,
+          "selected_by_if": 1055,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24083,33 +24266,14 @@
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 6961,
+          "line": 7044,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 6964,
-          "selected_by_if": null,
-          "source": "core/web/api/service.py"
-        },
-        {
-          "branch_calls": [
-            "apply_runtime_headers",
-            "openai_sse_stream_from_ollama_chunks",
-            "str",
-            "stream_response"
-          ],
-          "function": "_dispatch_post_inner",
-          "line": 7267,
-          "selected_by_if": 7267,
-          "source": "core/web/api/service.py"
-        },
-        {
-          "branch_calls": [],
-          "function": "_dispatch_post_inner",
-          "line": 7281,
+          "line": 7047,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
@@ -24121,14 +24285,14 @@
             "stream_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 7359,
-          "selected_by_if": 7359,
+          "line": 7343,
+          "selected_by_if": 7343,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 7373,
+          "line": 7357,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         },
@@ -24140,14 +24304,33 @@
             "stream_response"
           ],
           "function": "_dispatch_post_inner",
-          "line": 7432,
-          "selected_by_if": 7432,
+          "line": 7435,
+          "selected_by_if": 7435,
           "source": "core/web/api/service.py"
         },
         {
           "branch_calls": [],
           "function": "_dispatch_post_inner",
-          "line": 7527,
+          "line": 7449,
+          "selected_by_if": null,
+          "source": "core/web/api/service.py"
+        },
+        {
+          "branch_calls": [
+            "apply_runtime_headers",
+            "openai_sse_stream_from_ollama_chunks",
+            "str",
+            "stream_response"
+          ],
+          "function": "_dispatch_post_inner",
+          "line": 7508,
+          "selected_by_if": 7508,
+          "source": "core/web/api/service.py"
+        },
+        {
+          "branch_calls": [],
+          "function": "_dispatch_post_inner",
+          "line": 7603,
           "selected_by_if": null,
           "source": "core/web/api/service.py"
         }
@@ -24187,8 +24370,26 @@
             "pin_lock.admit_chat_turn"
           ],
           "function": "dispatch_post",
-          "line": 3034,
-          "selected_by_if": 3034,
+          "line": 3092,
+          "selected_by_if": 3092,
+          "source": "core/web/api/service.py"
+        },
+        {
+          "branch_calls": [
+            ".strip",
+            "_chat_context.get",
+            "_inbound_source_context",
+            "body.get",
+            "is_loopback_host",
+            "list",
+            "normalize_chat_history_provider",
+            "stable_openclaw_session_id_provider",
+            "str",
+            "strip_reserved_trust_keys"
+          ],
+          "function": "dispatch_post",
+          "line": 3126,
+          "selected_by_if": 3126,
           "source": "core/web/api/service.py"
         },
         {
@@ -24215,8 +24416,8 @@
             "_human_size"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6948,
-          "selected_by_if": 6948,
+          "line": 7031,
+          "selected_by_if": 7031,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24256,8 +24457,8 @@
             "str"
           ],
           "function": "dispatch_get",
-          "line": 2845,
-          "selected_by_if": 2845,
+          "line": 2903,
+          "selected_by_if": 2903,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24294,8 +24495,8 @@
             "str"
           ],
           "function": "_dispatch_post_inner",
-          "line": 7647,
-          "selected_by_if": 7647,
+          "line": 7723,
+          "selected_by_if": 7723,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24316,6 +24517,7 @@
           "permission": "",
           "proof": [
             "tests/test_daemon_survives_concurrent_load.py",
+            "tests/test_health_snapshot_no_backend_refresh.py",
             "tests/test_install_surface_contracts.py"
           ],
           "transport": "http"
@@ -24339,8 +24541,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1184,
-          "selected_by_if": 1184,
+          "line": 1238,
+          "selected_by_if": 1238,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24378,8 +24580,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1179,
-          "selected_by_if": 1179,
+          "line": 1233,
+          "selected_by_if": 1233,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24430,8 +24632,8 @@
             "resolve_null_request"
           ],
           "function": "_dispatch_post_inner",
-          "line": 6778,
-          "selected_by_if": 6778,
+          "line": 6861,
+          "selected_by_if": 6861,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24463,8 +24665,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 1206,
-          "selected_by_if": 1206,
+          "line": 1264,
+          "selected_by_if": 1264,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24502,8 +24704,8 @@
             "validate_workspace_change_session_id"
           ],
           "function": "dispatch_get",
-          "line": 2577,
-          "selected_by_if": 2577,
+          "line": 2635,
+          "selected_by_if": 2635,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24542,8 +24744,8 @@
             "usage_meter.usage_summary"
           ],
           "function": "dispatch_get",
-          "line": 2497,
-          "selected_by_if": 2497,
+          "line": 2555,
+          "selected_by_if": 2555,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24574,12 +24776,14 @@
             "callable",
             "contextlib.suppress",
             "dict",
+            "getattr",
             "json_response",
-            "refresh_local_status"
+            "refresh_local_status",
+            "refresh_provider_decision"
           ],
           "function": "dispatch_get",
-          "line": 1199,
-          "selected_by_if": 1199,
+          "line": 1253,
+          "selected_by_if": 1253,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24615,8 +24819,8 @@
             "json_response"
           ],
           "function": "dispatch_get",
-          "line": 985,
-          "selected_by_if": 985,
+          "line": 1039,
+          "selected_by_if": 1039,
           "source": "core/web/api/service.py"
         },
         {
@@ -24637,8 +24841,8 @@
         {
           "branch_calls": [],
           "function": "_looks_like_runtime_version_question",
-          "line": 523,
-          "selected_by_if": 523,
+          "line": 524,
+          "selected_by_if": 524,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24670,8 +24874,8 @@
             "render_null_browser_html"
           ],
           "function": "dispatch_get",
-          "line": 1146,
-          "selected_by_if": 1146,
+          "line": 1200,
+          "selected_by_if": 1200,
           "source": "core/web/api/service.py"
         }
       ]
@@ -24694,5 +24898,5 @@
   ],
   "schema": "vool.windows_authority_audit.v1",
   "scope": "Current Windows source; static discovery and command census, not installed-artifact evidence.",
-  "source_fingerprint": "694f6152b053f493cad7d971205afac0d509f020b98fec9f0a5dd9ba8aac9d99"
+  "source_fingerprint": "bca1200acb07238529d749ecf35cef87bf1d080c8941d172411c4eea597fc541"
 }

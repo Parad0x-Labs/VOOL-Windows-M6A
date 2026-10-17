@@ -31,6 +31,20 @@ from __future__ import annotations
 import os as _bootstrap_os
 import sys as _bootstrap_sys
 
+
+def _windows_bootstrap_argument(argument: str) -> str:
+    """Quote one CRT argument without importing candidate-shadowable modules."""
+    quoted = '"'
+    backslashes = 0
+    for char in argument:
+        if char == "\\":
+            backslashes += 1
+            continue
+        quoted += "\\" * (2 * backslashes + 1 if char == '"' else backslashes) + char
+        backslashes = 0
+    return quoted + "\\" * (2 * backslashes) + '"'
+
+
 # A script directory is normally first on ``sys.path``. A hostile candidate proved that placing a
 # ``scripts/hashlib.py`` beside this file could therefore forge the corpus digest before the
 # controller had done any work. Re-exec the controller in isolated mode before importing any
@@ -39,11 +53,18 @@ if __name__ == "__main__" and not _bootstrap_sys.flags.isolated:
     _clean_env = dict(_bootstrap_os.environ)
     _clean_env.pop("PYTHONPATH", None)
     _clean_env.pop("PYTHONHOME", None)
-    _bootstrap_os.execve(
-        _bootstrap_sys.executable,
-        [_bootstrap_sys.executable, "-I", _bootstrap_os.path.abspath(__file__), *_bootstrap_sys.argv[1:]],
-        _clean_env,
-    )
+    _arguments = [_bootstrap_sys.executable, "-I", _bootstrap_os.path.abspath(__file__), *_bootstrap_sys.argv[1:]]
+    if _bootstrap_os.name == "nt":
+        # The native explicit-environment CRT launch crashes on the supported Windows
+        # interpreter. Inherit the cleaned bootstrap environment instead; -I remains mandatory.
+        _bootstrap_os.environ.pop("PYTHONPATH", None)
+        _bootstrap_os.environ.pop("PYTHONHOME", None)
+        _bootstrap_sys.exit(_bootstrap_os.spawnv(
+            _bootstrap_os.P_WAIT, _bootstrap_sys.executable,
+            [_windows_bootstrap_argument(arg) for arg in _arguments],
+        ))
+    else:
+        _bootstrap_os.execve(_bootstrap_sys.executable, _arguments, _clean_env)
 
 import _hashlib
 import argparse
@@ -178,6 +199,9 @@ def _run_corpus(tree: Path, label: str, texts: list[str]) -> list[dict]:
         env = {
             "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
             "HOME": home,
+            "TEMP": home,
+            "TMP": home,
+            "TMPDIR": home,
             "VOOL_HOME": home,
             "VOOL_CREDENTIAL_STORE": "vault",
             "VOOL_KEY_STORAGE_MODE": "file",
@@ -186,8 +210,12 @@ def _run_corpus(tree: Path, label: str, texts: list[str]) -> list[dict]:
             "VOOL_SKIP_TORCH_GPU_PROBE": "1",
             "PYTHONDONTWRITEBYTECODE": "1",
         }
+        if _bootstrap_os.name == "nt":
+            # Windows needs this OS path to initialize its socket library; no ambient
+            # credentials or other operator environment are inherited.
+            env["SystemRoot"] = _bootstrap_os.environ.get("SystemRoot", "C:\\Windows")
         script = (
-            _DRIVER.replace("__TREE__", str(tree))
+            _DRIVER.replace('"__TREE__"', repr(str(tree)))
             .replace("__FIELDS__", repr(list(PUBLIC_FIELDS)))
             .replace("__TEXTS__", repr(list(texts)))
         )
@@ -212,10 +240,10 @@ def _row_key(row: dict) -> tuple:
 #: obeyed. Regenerate deliberately (and say so in the commit) if the corpus is ever meant to change.
 FROZEN_CORPUS_SHA256 = "b9d1dfb5de50fd2cdaa41e0c82ebfba369a2df1150bf8f44b292acdf74783d02"
 FROZEN_CORPUS_COUNT = 252
-# The immutable git object that first froze this corpus. The candidate worktree is never read for
+# The original public object preserves the exact frozen corpus and its digest. The candidate worktree is never read for
 # corpus bytes, pins, loader code, or ids. Git's object id is content-addressed; replacing a worktree
 # file, symlink, import helper, or pin cannot change these bytes.
-FROZEN_CORPUS_SOURCE_SHA = "c23257da1afd53ed721aa01da529ef74bd6df45a"
+FROZEN_CORPUS_SOURCE_SHA = "78f818b802c57fe77bc138b92b78e0424c527b9b"
 FROZEN_CORPUS_OBJECT = "ops/semantic_phase0_frozen_corpus.json"
 
 
@@ -223,19 +251,29 @@ class CorpusIntegrityError(RuntimeError):
     """The turn universe is not the one this proof is defined over."""
 
 
+_TRUSTED_GIT_EXECUTABLES = (
+    (Path("C:/Program Files/Git/cmd/git.exe"), Path("C:/Program Files/Git/bin/git.exe"))
+    if _bootstrap_os.name == "nt"
+    else (Path("/usr/bin/git"), Path("/bin/git"), Path("/usr/local/bin/git"))
+)
+
+
+def _trusted_git_executable() -> Path:
+    # Never search candidate-controlled PATH or a candidate working directory.
+    for path in _TRUSTED_GIT_EXECUTABLES:
+        if path.is_absolute() and path.is_file():
+            return path
+    raise CorpusIntegrityError("trusted git executable is unavailable")
+
+
 def load_frozen_corpus(controller_tree: Path) -> tuple[list[str], str]:
     """Load the universe from an immutable git object in the trusted controller repository."""
     root = Path(controller_tree).resolve()
-    git = next(
-        (path for path in (Path("/usr/bin/git"), Path("/bin/git"), Path("/usr/local/bin/git")) if path.is_file()),
-        None,
-    )
-    if git is None:
-        raise CorpusIntegrityError("trusted git executable is unavailable")
+    git = _trusted_git_executable()
     completed = subprocess.run(
         [str(git), "-C", str(root), "show", f"{FROZEN_CORPUS_SOURCE_SHA}:{FROZEN_CORPUS_OBJECT}"],
-        cwd="/",
-        env={"PATH": "/usr/bin:/bin:/usr/local/bin", "LC_ALL": "C"},
+        cwd=root.anchor,
+        env={"PATH": _bootstrap_os.pathsep.join(str(path.parent) for path in _TRUSTED_GIT_EXECUTABLES), "LC_ALL": "C"},
         capture_output=True,
         check=False,
     )

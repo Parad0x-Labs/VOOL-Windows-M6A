@@ -449,7 +449,7 @@ footer { background:linear-gradient(transparent,var(--chat) 24%); padding:10px 2
   #voiceModeBtn { padding: 0 4px; }
   #send { padding: 0 10px; }
 }
-.perm-bar { display:flex; align-items:flex-start; gap:10px; margin:0 0 8px; padding:10px 12px; border:1px solid var(--warn); border-radius:12px; background:color-mix(in srgb, var(--warn) 10%, var(--field)); font-size:13px; color:var(--ink); }
+.perm-bar { display:grid; grid-template-columns:auto minmax(0,1fr); align-items:start; gap:10px; max-height:50vh; overflow:auto; margin:0 0 8px; padding:10px 12px; border:1px solid var(--warn); border-radius:12px; background:color-mix(in srgb, var(--warn) 10%, var(--field)); font-size:13px; color:var(--ink); }
 .perm-bar[hidden] { display:none; }
 /* OPERATOR-ANSWER SURFACES OUTRANK THE COMPANION LAYER. #companionLayer is a fixed overlay at
    z-index 30 whose 112px sprite takes pointer events, and `footer` (container-type) establishes
@@ -461,12 +461,13 @@ footer { background:linear-gradient(transparent,var(--chat) 24%); padding:10px 2
    draggable everywhere else. */
 body.answer-pending footer { position: relative; z-index: 35; }
 .perm-ico { font-size:15px; flex:0 0 auto; }
-.perm-copy { flex:1 1 auto; min-width:0; }
-.perm-msg { font-weight:650; }
-.perm-meta { color:var(--muted); font-size:11px; line-height:1.45; margin-top:2px; }
-.perm-detail { margin-top:7px; padding:7px 8px; border:1px solid var(--border); border-radius:8px; background:var(--bg); color:var(--muted); font-size:11px; white-space:pre-wrap; max-height:160px; overflow:auto; }
-.perm-actions { flex:0 0 auto; display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; }
-.perm-btn { font:inherit; font-size:12.5px; border:1px solid var(--border); background:var(--field); color:var(--ink); border-radius:8px; padding:5px 11px; cursor:pointer; white-space:nowrap; }
+.perm-copy { min-width:0; }
+.perm-msg { display:block; overflow-wrap:anywhere; font-weight:650; }
+.perm-meta { display:block; overflow-wrap:anywhere; color:var(--muted); font-size:11px; line-height:1.45; margin-top:2px; }
+.perm-detail { display:block; margin-top:7px; padding:7px 8px; border:1px solid var(--border); border-radius:8px; background:var(--bg); color:var(--muted); font-size:11px; white-space:pre-wrap; overflow-wrap:anywhere; max-height:160px; overflow:auto; overscroll-behavior:contain; }
+.perm-detail[hidden] { display:none; }
+.perm-actions { grid-column:2; min-width:0; display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; }
+.perm-btn { max-width:100%; font:inherit; font-size:12.5px; border:1px solid var(--border); background:var(--field); color:var(--ink); border-radius:8px; padding:5px 11px; cursor:pointer; white-space:normal; }
 .perm-btn:hover { border-color:var(--accent); }
 .perm-btn.primary { background:var(--grad); color:#fff; border:none; font-weight:600; }
 .perm-btn.ghost { background:transparent; color:var(--muted); }
@@ -990,7 +991,9 @@ body:not(.panel-open) #xpanel { display:none; }
   #xpanel { position:fixed; right:0; top:var(--app-header-h,54px); bottom:0; z-index:25; box-shadow:-2px 0 12px #0008; }
   /* A fixed box is out of flow, so `flex:0 0 5px` no longer sizes it and an empty div collapses
      to nothing. The width has to be stated again here or the handle becomes ungrabbable. */
-  #xpResize { position:fixed; width:5px; top:var(--app-header-h,54px); bottom:0; z-index:26; }
+  /* Only the drag rail outranks the answer-pending footer (35); its warning and Revoke control
+     still outrank the panel body and companion. Keep both the rail and operator controls usable. */
+  #xpResize { position:fixed; width:5px; top:var(--app-header-h,54px); bottom:0; z-index:36; }
 }
 
   /* --- Setup line: at most one small dismissible line on a fresh profile (opens /setup) --- */
@@ -1084,7 +1087,7 @@ body:not(.panel-open) #xpanel { display:none; }
   <div id="queue" aria-label="Queued messages" data-i18n-aria-label="chat.queue_aria"></div>
   <div id="permBar" class="perm-bar" role="alertdialog" aria-label="Permission needed" data-i18n-aria-label="permissions.bar_aria" hidden>
     <span class="perm-ico">&#128272;</span>
-    <span class="perm-copy"><span class="perm-msg" id="permMsg" data-i18n="permissions.bar_message">Permission needed</span><span class="perm-meta" id="permMeta"></span><span class="perm-detail" id="permDetail" hidden></span></span>
+    <span class="perm-copy"><span class="perm-msg" id="permMsg" data-i18n="permissions.bar_message">Permission needed</span><span class="perm-meta" id="permMeta"></span><span class="perm-detail" id="permDetail" tabindex="0" aria-labelledby="permReview" hidden></span></span>
     <span class="perm-actions">
       <button type="button" id="permOnce" class="perm-btn" data-i18n="permissions.allow_once">Allow once</button>
       <button type="button" id="permTask" class="perm-btn primary" data-i18n="permissions.allow_task">Allow for this task</button>
@@ -8234,6 +8237,7 @@ function initComposerControls() {
           // box, 2026-09-10: test green, Quick Pick empty). Re-read the credential NAMES on
           // open — the same cheap GET boot already does; setCloudConnected renders when it flips.
           refreshCredentials();
+          renderLocalModels();
         }
       }
     });
@@ -8585,10 +8589,15 @@ async function renderLocalModels() {
   if (!pop) return;
   let data;
   try {
-    const r = await fetch('/api/tags');
+    // Auto's runtime catalogue can be narrowed by its install profile. Exact local
+    // pins come from the same installed-and-registered inventory Settings exposes.
+    const r = await fetch('/api/models/local');
+    if (!r.ok) return;
     data = await r.json();
   } catch (e) { return; }   // fail-soft: leave the popover exactly as it was
-  const names = (data && Array.isArray(data.models)) ? data.models.map((m) => m && (m.name || m.model)) : [];
+  const names = (data && !data.local_models_disabled && Array.isArray(data.models))
+    ? data.models.filter((m) => m && m.registered === true && m.enabled === true).map((m) => m.model_name)
+    : [];
   const rows = localModelRows(names);
   localModelIds = new Set(rows.map((m) => m.id));
   try { localStorage.setItem('vool_local_models', JSON.stringify([...localModelIds])); } catch (e) {}
@@ -10903,9 +10912,16 @@ async function resolvePermission(decision, scope) {
   const chatId = displayedChat;
   const owner = chatState(chatId);
   const approval = owner.pendingApproval; if (!approval || !approval.approval_id) { toast(pageT('permissions.approval_gone', 'This approval is no longer available.')); return; }
+  const run = owner.run;
   try {
     const data = await postMode({ op: 'resolve_approval', approval_id: approval.approval_id, decision: decision, scope: scope || 'once' });
-    hidePermBar(); owner.pendingApproval = null;
+    if (decision === 'deny' && (!data || data.ok !== true || !data.approval
+        || data.approval.status !== 'denied' || data.approval.approval_id !== approval.approval_id
+        || data.approval.session_id !== chatId || data.approval.task_id !== approval.task_id)) {
+      throw new Error('Denial resolution did not match the original approval.');
+    }
+    const stillPending = owner.pendingApproval === approval;
+    if (stillPending) { if (isDisplayed(chatId)) hidePermBar(); owner.pendingApproval = null; }
     if (decision === 'allow') {
       setApprovalToken(chatId, approval.approval_id); owner.resumeApprovedTurn = true;
       owner.approvalResumeTurnId = (owner.run && owner.run.turnId) || approval.task_id || '';
@@ -10919,9 +10935,21 @@ async function resolvePermission(decision, scope) {
             : pageT('permissions.toast_once', 'Approved once for this exact action.'))));
       if (!isChatBusy(chatId)) resumeApprovedTurn(chatId);
     } else {
-      releaseApprovalTokenFor(chatId); owner.resumeApprovedTurn = false; owner.approvalResumeTurnId = '';
-      if (owner.run) { owner.run.permission = false; owner.run.permissionDenied = true; owner.run.action = pageT('run.permission_denied', 'Permission denied'); renderCard(owner.run); }
+      if (stillPending) { releaseApprovalTokenFor(chatId); owner.resumeApprovedTurn = false; owner.approvalResumeTurnId = ''; }
+      if (run && run.turnId === approval.task_id) {
+        const summary = pageT('run.permission_denied', 'Permission denied');
+        run.permission = false; run.permissionDenied = true; run.action = summary;
+        if (run.card) run.card.classList.remove('tc-hold');
+        // The preview stream already ended at awaiting_approval. Durable Deny
+        // settles that presentation; it neither replays the turn nor seals bytes.
+        if (run.ended && run.status === 'awaiting_approval') {
+          run.status = 'cancelled'; run.endSummary = summary;
+          run.endedAt = new Date().toISOString(); run.endedAtMs = Date.now();
+          paintFinishedCard(run);
+        } else if (!run.ended) { finishRun(run, 'cancelled', summary); }
+      }
       toast(pageT('permissions.denied_toast', 'Denied. The action did not run.'));
+      if (stillPending && isDisplayed(chatId)) await loadActivityHistory();
     }
   } catch (e) { toast(pageT('permissions.resolve_failed_prefix', 'Could not resolve approval: ') + e.message); }
 }

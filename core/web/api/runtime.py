@@ -3432,6 +3432,12 @@ def _final_task_event(result_payload: dict[str, Any], *, cancelled: bool = False
     never a `task.completed` that would paint a finished answer under a cancelled turn."""
     usage = result_payload.get("usage_summary") if isinstance(result_payload.get("usage_summary"), dict) else {}
     ok = not bool(result_payload.get("error")) and str(result_payload.get("status") or "ok").lower() not in {"failed", "error"}
+    if result_payload.get("task_outcome") == "pending_approval":
+        return {
+            "type": "permission.required", "raw_type": "task_pending_approval",
+            "stage": "Waiting for approval", "summary": "Waiting for approval",
+            "status": "pending_approval", "tool": result_payload.get("tool_name"),
+        }
     if cancelled:
         event: dict[str, Any] = {
             "type": "task.cancelled",
@@ -3487,7 +3493,7 @@ def ollama_stream_chunks(
     # A7 W4: replay EXACTLY the committed canonical bytes — no strip, no
     # normalization after the hash was taken.
     full_text = str(response_commit.get("canonical_content") if response_commit else "")
-    if not full_text:
+    if not full_text and result.get("task_outcome") != "pending_approval":
         # R-8 (K-11): the raw fallback is DELETED. Empty committed bytes are
         # typed no-answer truth — a single explicit no-answer frame, never a
         # raw unsealed .strip()'d payload.
@@ -3548,6 +3554,13 @@ def _response_commit(
     transport framing.
     """
     attached = result_payload.get("vool_response_commit")
+    if result_payload.get("task_outcome") == "pending_approval":
+        # A permission pause is not final answer truth. Sealing its notice here
+        # occupies the original request's immutable row before Deny can close it.
+        # An already sealed contradictory result must still fail closed.
+        if attached:
+            raise RuntimeError("pending approval cannot carry a finalized response")
+        return {}
     if isinstance(attached, dict) and attached.get("type") == "response.commit":
         # A sealed answer is immutable, so transport may not scrub it after the hash. If an
         # upstream lane somehow sealed foreign tool syntax, fail closed instead of faithfully

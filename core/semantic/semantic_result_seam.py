@@ -59,6 +59,7 @@ class SemanticResultRecord:
     Fields:
         semantic_result_id: Stable identity for this admitted result.
             Shape: ``sr:<turn_id>:<boot_nonce>-<admission_counter>``.
+            A typed denial uses ``sr:denial:<opaque retry-key digest>``.
             Minted by the A2 semantic admission authority at admission time.
         content: The semantic candidate bytes/content (response text).
         source: Which authority class produced this candidate.
@@ -325,6 +326,7 @@ def admit_semantic_result(
     source_override: SemanticSource | None = None,
     route_id_override: str = "",
     turn_id: str = "",
+    denial_approval_id: str = "",
 ) -> dict[str, Any]:
     """Admit a semantic result candidate through the seam.
 
@@ -344,7 +346,20 @@ def admit_semantic_result(
     """
     response = str(result.get("response") or "")
     if not response:
-        return result
+        # A typed policy terminal admits a referent, not zero-byte answer prose.
+        # Ordinary empty candidates still admit nothing.
+        if (result.get("type") != "no_answer.terminal" or not result.get("reason_code")
+                or source_override is not SemanticSource.REFUSAL_POLICY):
+            return result
+        from core.semantic.semantic_admissions import (
+            current_execution_identity,
+            current_request_id,
+            enforce_fence_if_onboarded,
+        )
+
+        if not current_request_id() or not current_execution_identity():
+            raise ValueError("a no-answer admission requires its governing request and execution")
+        enforce_fence_if_onboarded()
 
     route_id = route_id_override or str(
         result.get("route_reason") or result.get("reason") or ""
@@ -368,6 +383,22 @@ def admit_semantic_result(
     if resolved_turn_id == "turn-unknown" and bound_request_id:
         resolved_turn_id = f"req-turn:{bound_request_id}"
     semantic_result_id = f"sr:{resolved_turn_id}:{identity_suffix}"
+    if denial_approval_id:
+        # Only this typed zero-answer policy path has a durable retry key. The
+        # seam owns its identity across interruption/restart; A7 consumes it.
+        from core.conductor.obligation_ledger import active_set
+
+        owned_set = active_set()
+        if (response or result.get("type") != "no_answer.terminal"
+                or result.get("reason_code") != "permission_denied"
+                or source_override is not SemanticSource.REFUSAL_POLICY
+                or not bound_request_id or not owned_set):
+            raise ValueError("denial admission identity requires its typed policy terminal and original set")
+        import hashlib
+
+        semantic_result_id = "sr:denial:" + hashlib.sha256("\x1f".join((
+            bound_request_id, owned_set[0], owned_set[1], resolved_turn_id, denial_approval_id,
+        )).encode("utf-8")).hexdigest()
 
     record = SemanticResultRecord(
         semantic_result_id=semantic_result_id,
@@ -389,12 +420,20 @@ def admit_semantic_result(
     from core.semantic.semantic_admissions import record_admission
 
     _active_obset = _ob_for_version.active_set()
-    record_admission(
+    admission_outcome = record_admission(
         record.semantic_result_id,
         source_class=source.value,
         accepted=accepted,
         obligation_set_version=_active_obset[1] if _active_obset else "",
     )
+    if denial_approval_id:
+        from core.semantic.semantic_admissions import get_admission
+
+        stored = get_admission(record.semantic_result_id) or {}
+        if (admission_outcome == "REJECTED_DIFFERENT"
+                or stored.get("accepted") != 1
+                or stored.get("obligation_set_version") != owned_set[1]):
+            raise ValueError("denial admission conflicts with its durable policy referent")
 
     # Attach a lightweight telemetry stub to the result for downstream
     # consumers (receipts, UI). This is NOT the canonical record — it is

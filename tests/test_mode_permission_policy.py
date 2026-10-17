@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -404,7 +405,7 @@ def test_machine_write_file_overwrite_is_resolved_against_the_real_home_not_work
     desktop.mkdir(parents=True)
     real_file = desktop / "resume.txt"
     real_file.write_text("the user's real, pre-existing resume", encoding="utf-8")
-    monkeypatch.setenv("HOME", str(disposable_home))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: disposable_home))
 
     unrelated_workspace = tmp_path / "unrelated_workspace"
     unrelated_workspace.mkdir()
@@ -451,7 +452,7 @@ def test_machine_write_file_overwrite_approval_carries_a_real_diff_preview(tmp_p
     desktop = disposable_home / "Desktop"
     desktop.mkdir(parents=True)
     (desktop / "resume.txt").write_text("the user's real, pre-existing resume", encoding="utf-8")
-    monkeypatch.setenv("HOME", str(disposable_home))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: disposable_home))
 
     ctx = _context(mode="manual", workspace_root=str(tmp_path / "unrelated_workspace"))
     decision = _decision(

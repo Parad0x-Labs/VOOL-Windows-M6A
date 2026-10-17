@@ -18,6 +18,7 @@ from core.runtime_paths import configure_runtime_home
 from core.vool_memory import VoolMemory
 from storage.db import get_connection
 from storage.model_provider_manifest import ModelProviderManifest
+from tests.test_openai_compatible_adapter import local_metadata_for_payload_and_usage_tests
 
 
 @pytest.fixture

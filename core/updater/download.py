@@ -257,6 +257,8 @@ class StagedDownloader:
                     # declared size means the document does not describe this artifact.
                     extra = body.read(1)
                     if extra:
+                        # Windows cannot unlink a staged file while its writer is open.
+                        out.close()
                         part_path.unlink(missing_ok=True)
                         meta_path.unlink(missing_ok=True)
                         return DownloadResult(False, DownloadReason.SIZE_MISMATCH)

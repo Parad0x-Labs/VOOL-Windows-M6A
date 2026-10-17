@@ -11,6 +11,7 @@ from core.incomplete_answer import inspect_provider_completion
 from core.memory_first_router import MemoryFirstRouter
 from core.normalized_provider_result import normalize_model_response
 from storage.model_provider_manifest import ModelProviderManifest
+from tests.test_openai_compatible_adapter import local_metadata_for_payload_and_usage_tests
 
 SET5_01 = (
     '"I need a RUB script to parse a BAM file and output a CAD model." Define what RUB, BAM, '

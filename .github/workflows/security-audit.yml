@@ -16,29 +16,35 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: pip-audit (pinned requirements)
-        # Reaching the counts block proves both audits exited 0; pip-audit exits nonzero on any
-        # finding or on any crash, so this step cannot print a healthy zero over a failure.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12.13"
+
+      - name: Install Python auditor
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip pip-audit
-          python -m pip_audit -r requirements.txt --format=json -o /tmp/pip-audit-requirements.json
-          python -m pip_audit -r requirements-runtime.txt --format=json -o /tmp/pip-audit-requirements-runtime.json
-          python3 - <<'PY'
-          import json
-          for name in ("pip-audit-requirements.json", "pip-audit-requirements-runtime.json"):
-              with open(f"/tmp/{name}", encoding="utf-8") as handle:
-                  payload = json.load(handle)
-              dependencies = payload.get("dependencies", [])
-              vulns = sum(len(dep.get("vulns", [])) for dep in dependencies)
-              fixable = sum(
-                  1
-                  for dep in dependencies
-                  for vuln in dep.get("vulns", [])
-                  if vuln.get("fixes")
-              )
-              print(f"{name}: vulnerabilities={vulns} fixable={fixable}")
-          PY
+          mkdir -p .security-audit
+
+      - name: pip-audit (requirements)
+        run: |
+          set -euo pipefail
+          python -m pip_audit -r requirements.txt --format=json -o .security-audit/requirements.json
+
+      - name: pip-audit (runtime requirements)
+        if: always()
+        run: |
+          set -euo pipefail
+          python -m pip_audit -r requirements-runtime.txt --format=json -o .security-audit/runtime.json
+
+      - name: Upload Python audit evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-security-audit
+          path: .security-audit/*.json
+          include-hidden-files: true
+          if-no-files-found: error
 
       - name: npm audit (only when a package.json exists)
         if: ${{ hashFiles('package.json') != '' }}

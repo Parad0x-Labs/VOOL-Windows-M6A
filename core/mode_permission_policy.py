@@ -1613,8 +1613,8 @@ def restore_persisted_bypass_grants() -> int:
 
     Fail-closed at every doubt: a file that does not parse, does not carry a matching integrity
     MAC, or carries a structurally invalid entry restores NOTHING from that file (it is moved
-    aside as `.corrupt-<ts>` so it cannot keep poisoning restarts). An entry whose chat is gone,
-    deleted, no longer project-bound, or whose project root no longer equals the grant's bound
+    aside as `.corrupt-<ts>-<nonce>` so repeated quarantines do not collide). An entry whose chat is
+    gone, deleted, no longer project-bound, or whose project root no longer equals the grant's bound
     workspace is dropped: authority that outlived its binding is not restored. Revoked entries on
     disk stay revoked -- including grants the mirror still holds live but the revocation journal
     names: those restore as explicitly revoked, never executable.
@@ -1673,7 +1673,7 @@ def restore_persisted_bypass_grants() -> int:
             # Corrupt or tampered: quarantine so the NEXT restart does not read the same bytes,
             # and restore nothing. Dropping is safe -- the owner re-approves; forging is not.
             with contextlib.suppress(OSError):
-                path.rename(path.with_name(f"{path.name}.corrupt-{int(time.time())}"))
+                path.rename(path.with_name(f"{path.name}.corrupt-{int(time.time())}-{secrets.token_hex(16)}"))
             return 0
 
         def _quarantine_store() -> None:
@@ -1681,7 +1681,7 @@ def restore_persisted_bypass_grants() -> int:
                 if doomed is None:
                     continue
                 with contextlib.suppress(OSError):
-                    doomed.rename(doomed.with_name(f"{doomed.name}.corrupt-{int(time.time())}"))
+                    doomed.rename(doomed.with_name(f"{doomed.name}.corrupt-{int(time.time())}-{secrets.token_hex(16)}"))
 
         journal_path = _bypass_revocations_path()
         journal_exists = journal_path is not None and journal_path.exists()
@@ -2978,6 +2978,7 @@ def register_external_approval(request: dict[str, Any]) -> str:
     entry = {
         **dict(request or {}),
         "approval_id": token,
+        "approval_origin": "external",
         "status": "pending",
         "one_time": True,
         "expires_at": float(request.get("expires_at") or (time.time() + 86400)),
@@ -2990,6 +2991,27 @@ def register_external_approval(request: dict[str, Any]) -> str:
 
 
 def resolve_approval(token: str, *, decision: str, scope: str = "once") -> dict[str, Any] | None:
+    resolved = _resolve_approval_decision(token, decision=decision, scope=scope)
+    # A denied grant remains denied even if bookkeeping fails. A repeated Deny may
+    # finish that bookkeeping, but retains the existing stale-decision response.
+    denied = resolved
+    if denied is None and str(decision or "").strip().lower() == "deny":
+        with _LOCK:
+            denied = dict(_APPROVALS.get(str(token or "").strip()) or {})
+    # Settings-only consent has no runtime turn to close. The registration door
+    # owns this marker; any session or binding field still requires reconciliation,
+    # including incomplete identities. Unmarked legacy entries remain fail-closed.
+    if denied and denied.get("status") == "denied" and (
+        denied.get("approval_origin") != "external"
+        or "session_id" in denied or "runtime_binding" in denied
+    ):
+        from core.runtime_continuity import reconcile_denied_approval
+
+        reconcile_denied_approval(denied)
+    return resolved
+
+
+def _resolve_approval_decision(token: str, *, decision: str, scope: str = "once") -> dict[str, Any] | None:
     _ensure_approvals_restored()
     clean_token = str(token or "").strip()
     normalized = str(decision or "").strip().lower()
@@ -3189,6 +3211,22 @@ def _new_approval_request(
             "remaining_batch": (),
             "status": "pending",
         }
+        # Capture only the turn door's bound identity, never a caller-supplied
+        # source_context or the newer request handling the operator's click.
+        from core.semantic.semantic_admissions import current_execution_identity, current_request_id
+
+        identity = current_execution_identity()
+        if identity and current_request_id():
+            from core.conductor import obligation_ledger
+
+            _APPROVALS[token]["runtime_binding"] = {
+                "request_id": current_request_id(),
+                "attempt_id": str(identity.get("attempt_id") or ""),
+                "execution_id": str(identity.get("execution_id") or ""),
+                "generation": int(identity.get("generation") or 0),
+                "runtime_epoch": str(identity.get("runtime_epoch") or ""),
+                "obligation_set": obligation_ledger.active_set(),
+            }
         # Mirror the pending prompt durably so a restart cannot silently erase it.
         _persist_pending_approvals_locked()
     _record_approval_event(

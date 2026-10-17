@@ -1588,6 +1588,73 @@ _COMPARISON_HEAD_RE = re.compile(r"\b(?:compare|contrast|comparing|contrasting)\
 _FACET_LIST_RE = re.compile(r":\s*(?P<items>[^:.;!?]{4,240})(?=[.;!?]|$)")
 
 
+def _comparison_dimension_spans(clause: str) -> list[tuple[int, int]]:
+    """Named comparison facets are separate obligations, not separate dispatches.
+
+    Keep the comparison's subject with its first facet and exact source spans for
+    the others. A headless list with an explicit ellipsis ("..., ... and so on")
+    names slots too. Ordinary subject lists, literals and descriptions stay whole.
+    """
+    value = str(clause or "")
+    if is_prohibition_unit(value):
+        return []
+    quoted: set[int] = set()
+    closing: str | None = None
+    for index, char in enumerate(value):
+        if closing is not None:
+            quoted.add(index)
+            if char == closing:
+                closing = None
+        elif _opens_a_quote(value, index, char):
+            closing = _QUOTE_PAIRS[char]
+            quoted.add(index)
+    head = _COMPARISON_HEAD_RE.search(value)
+    ellipsis = re.search(r"(?:\band\s+so\s+(?:on|forth)|\betc\.?)\s*[.!?]?$", value, re.IGNORECASE)
+    start = 0
+    if head:
+        leaders = _unit_tokens(value[:head.start()])
+        if head.start() in quoted or any(
+            token not in _SPLIT_LEADERS | {"can", "could", "would", "will", "you"} for token in leaders
+        ):
+            return []
+        marker = next((match for match in re.finditer(r":|\b(?:on|by|across|in\s+terms\s+of)\b", value, re.IGNORECASE)
+                       if match.start() >= head.end() and match.start() not in quoted), None)
+        if marker is None:
+            return []
+        start = marker.end()
+    elif ellipsis is None:
+        return []
+    stop = ellipsis.start() if ellipsis and ellipsis.start() not in quoted else len(value)
+    pieces: list[tuple[int, int]] = []
+    cursor = start
+    for match in re.finditer(r",|\band\b", value[start:stop], re.IGNORECASE):
+        lo, hi = start + match.start(), start + match.end()
+        if lo in quoted or (value[lo] == "," and char_at(value, lo - 1).isdigit() and char_at(value, hi).isdigit()):
+            continue
+        pieces.append((cursor, lo))
+        cursor = hi if value[lo] == "," else lo
+    pieces.append((cursor, stop))
+    spans: list[tuple[int, int]] = []
+    for lo, hi in pieces:
+        part = value[lo:hi]
+        lo += len(part) - len(part.lstrip(" ,"))
+        hi = lo + len(value[lo:hi].rstrip(" ,"))
+        _leaders, tokens = _leader_split(_unit_tokens(value[lo:hi]))
+        if not tokens:
+            continue  # Oxford comma before "and".
+        if (len(tokens) > 8 or (len(tokens) > 1 and _opens_a_demand(value[lo:hi]))
+                or imperative_step(value[lo:hi]) or _subject_precedes_its_verb(tokens)
+                or is_prohibition_unit(value[lo:hi])
+                or _CONSTRAINT_OPENER_RE.match(value[lo:hi].lower())):
+            break  # A fresh instruction is not another nominal facet.
+        spans.append((0 if not spans else lo, hi))
+    if len(spans) < 2:
+        return []
+    if ellipsis and spans[-1][1] == len(value[:stop].rstrip(" ,")):
+        spans[-1] = (spans[-1][0], len(value))
+    return spans
+
+
 def _coordination_protected_ranges(clause: str) -> list[tuple[int, int]]:
     """Character ranges in `clause` whose "and"/comma coordination joins ONE request."""
     protected: list[tuple[int, int]] = []
@@ -1679,6 +1746,7 @@ def _unit_spans(clause: str) -> list[tuple[int, int]]:
     Both sides must carry content, so a trailing "and" or a list comma never splits.
     """
     value = str(clause or "")
+    dimensions = _comparison_dimension_spans(value)
     lowered = value.lower()
     quoted: set[int] = set()
     closing: str | None = None
@@ -1739,6 +1807,19 @@ def _unit_spans(clause: str) -> list[tuple[int, int]]:
         for edge in list(boundaries):
             if start < edge <= end:
                 del boundaries[edge]
+    dimension_edges: set[int] = set()
+    if dimensions:
+        # Preserve shared subjects and nominal phrases, but not the boundaries
+        # between separately named facets. Leave later instructions to the
+        # ordinary boundary rules; no recursive parsing of the suffix is needed.
+        for edge in list(boundaries):
+            if dimensions[0][0] < edge <= dimensions[-1][1]:
+                del boundaries[edge]
+        for position, (start, _end) in enumerate(dimensions[1:], start=1):
+            previous_end = dimensions[position - 1][1]
+            edge = previous_end + 1 if char_at(value, previous_end) == "," else start
+            dimension_edges.add(edge)
+            boundaries[edge] = False
     spans: list[tuple[int, int]] = []
     cursor = 0
     ordered = sorted(boundaries)
@@ -1766,10 +1847,10 @@ def _unit_spans(clause: str) -> list[tuple[int, int]]:
             _opens_a_demand(fragment) or _opens_a_phrase(fragment)
         ):
             continue
-        if _introduces_no_new_subject(fragment):
+        if boundary not in dimension_edges and _introduces_no_new_subject(fragment):
             # Nothing of its own to ask about: this continues the request it follows.
             continue
-        if not boundaries[boundary] and _is_bare_head_fragment(fragment):
+        if boundary not in dimension_edges and not boundaries[boundary] and _is_bare_head_fragment(fragment):
             # A sequence marker followed by a bare verb ("... and then explain", "then
             # summarize") names no step of its own: it is the same predicate applied to what the
             # request before it produced. Measured 2026-09-07 on new wording of the operator's
@@ -2233,6 +2314,11 @@ def imperative_step(text: str) -> bool:
 
 def _classify_fragments(value: str, fragments: list[tuple[str, int, int, str]]) -> list[DemandUnit]:
     literal_spans = _literal_spans(value)
+    dimensions = {
+        (item.start + start, item.start + end)
+        for item in turn_slices(value)
+        for start, end in _comparison_dimension_spans(item.text)
+    }
     units: list[DemandUnit] = []
     last_request: str | None = None
     pending: list[int] = []  # non-request fragments before the first request, attached to it once minted
@@ -2267,6 +2353,8 @@ def _classify_fragments(value: str, fragments: list[tuple[str, int, int, str]]) 
             colon_owner = None
         if _inside_literal(start, end, literal_spans) and not asks:
             kind = KIND_LITERAL
+        elif (start, end) in dimensions:
+            kind = KIND_REQUEST
         elif clarifies:
             kind = KIND_CONTEXT
         elif described_item:

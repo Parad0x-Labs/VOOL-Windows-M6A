@@ -1158,6 +1158,9 @@ def _run_model_build(
             ok=bool(getattr(result, "ok", False)),
             response_text=str(getattr(result, "response_text", "") or ""),
             details=dict(getattr(result, "details", {}) or {}),
+            mode=str(getattr(result, "mode", "") or ""),
+            status=str(getattr(result, "status", "") or ""),
+            tool_name=intent,
         )
 
     # "Prove the bug -- write the smallest failing test and run it" wants a test that FAILS. Without
@@ -1179,6 +1182,32 @@ def _run_model_build(
         subject_paths=_audited_subject_paths(ctx),
         scope=scope,
     )
+    pending = getattr(build_report, "pending_approval", None)
+    if pending is not None:
+        # Generation succeeded; permission is still pending. Preserve the controller's exact
+        # preview and stop before rendering a completed build or attributing unwritten files.
+        pending_context = {**ctx, "persist_memory": False}
+        details = {
+            **pending.details,
+            "builder_model_build": {
+                "target_dir": build_report.target_dir,
+                "files_written": list(build_report.files_written),
+                "tests_ran": build_report.tests_ran,
+                "tests_passed": build_report.tests_passed,
+                "mutation_scope": scope.as_dict(),
+                "generations": generation_budget.calls,
+            },
+        }
+        result = agent._action_fast_path_result(
+            task_id=task.task_id, session_id=session_id, user_input=effective_input,
+            response=pending.response_text or "Waiting for approval for the proposed action.",
+            confidence=0.95, source_context=pending_context,
+            reason="builder_model_build_pending_approval", success=False,
+            details=details, mode_override="tool_preview", task_outcome="pending_approval",
+        )
+        result["task_outcome"] = "pending_approval"
+        result["tool_name"] = pending.tool_name
+        return result
     response = app_builder.render_app_build_response(build_report)
     # Name the absolute destination: the operator must never have to ask where a build went.
     _ws_root = str(ctx.get("workspace") or ctx.get("workspace_root") or "").strip().rstrip("/")

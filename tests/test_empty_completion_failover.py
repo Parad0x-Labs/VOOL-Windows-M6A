@@ -207,14 +207,57 @@ def test_an_empty_completion_is_not_a_valid_contract_in_the_router() -> None:
     assert 'decision.validation_state = "contract_failed"' in source
 
 
-def test_the_streaming_surface_tracks_delivered_content_not_chunk_events() -> None:
-    """`saw_model_output` alone discarded a reply the runtime had already generated."""
+@pytest.mark.parametrize("streamed", [[], [""], ["", " \n", "uncommitted draft"]])
+@pytest.mark.parametrize("emit_task_events", [False, True])
+def test_the_streaming_surface_tracks_delivered_content_not_chunk_events(streamed, emit_task_events) -> None:
+    """Chunk events cannot discard the final reply or publish speculative answer bytes."""
+    import hashlib
+    import json
 
-    from pathlib import Path
+    from core.runtime_task_events import emit_runtime_event
+    from core.web.api.runtime import stream_agent_with_events
 
-    source = (Path(__file__).resolve().parents[1] / "core" / "web" / "api" / "runtime.py").read_text(
-        encoding="utf-8"
-    )
-    assert "yielded_content = False" in source
-    assert "if saw_model_output and yielded_content:" in source
-    assert "yielded_content = True" in source
+    final = "red\nblue — exact final"
+
+    def run_agent(_runtime, _text, *, session_id, source_context):
+        for chunk in streamed:
+            emit_runtime_event(source_context, event_type="model_output_chunk", message=chunk)
+        return {"response": final}
+
+    payloads = [json.loads(line) for chunk in stream_agent_with_events(
+        None, "two lines", session_id="openclaw:empty-completion-regression",
+        source_context={"surface": "openclaw"}, model="test",
+        emit_task_events=emit_task_events, run_agent_provider=run_agent,
+    ) for line in chunk.decode("utf-8").splitlines() if line]
+    assert "".join(p.get("message", {}).get("content", "") for p in payloads) == final
+    assert sum(p.get("done") is True for p in payloads) == 1
+    # Typed progress can follow the terminal answer frame; it is not answer content.
+    terminal = next(p for p in payloads if p.get("done") is True)
+    commit = terminal["vool_response_commit"]
+    assert commit["canonical_content"] == final
+    assert commit["content_hash"] == "sha256:" + hashlib.sha256(final.encode("utf-8")).hexdigest()
+    assert "uncommitted draft" not in json.dumps(payloads)
+
+
+@pytest.mark.parametrize("emit_task_events", [False, True])
+def test_streaming_worker_failure_never_publishes_its_draft(emit_task_events) -> None:
+    import json
+
+    from core.runtime_task_events import emit_runtime_event
+    from core.web.api.runtime import stream_agent_with_events
+
+    def run_agent(_runtime, _text, *, session_id, source_context):
+        emit_runtime_event(source_context, event_type="model_output_chunk", message="uncommitted draft")
+        raise RuntimeError("synthetic internal failure")
+
+    payloads = [json.loads(line) for chunk in stream_agent_with_events(
+        None, "answer", session_id="openclaw:empty-completion-error",
+        source_context={"surface": "openclaw"}, model="test",
+        emit_task_events=emit_task_events, run_agent_provider=run_agent,
+    ) for line in chunk.decode("utf-8").splitlines() if line]
+    assert not any(p.get("message", {}).get("content") for p in payloads)
+    terminals = [p["vool_terminal"] for p in payloads if "vool_terminal" in p]
+    assert len(terminals) == 1
+    assert terminals[0]["reason_code"] == "stream_error"
+    assert not any("vool_response_commit" in p for p in payloads)
+    assert "uncommitted draft" not in json.dumps(payloads)

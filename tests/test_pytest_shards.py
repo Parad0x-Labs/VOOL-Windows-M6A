@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
+from ops.process_tree import process_group_kwargs, stop_process_tree
+from ops.pytest_execution import _ExecutionPlugin
 from ops.pytest_shards import (
     GATE_ENV_VAR,
+    JOB_TARGETS_FILE,
     REQUIRED_EXECUTED_FILES,
     ShardAssignment,
     _execution_manifest_error,
@@ -18,6 +24,7 @@ from ops.pytest_shards import (
     partition_targets,
     run_collected_shards,
     run_shards,
+    select_job_targets,
     tracked_test_targets,
     validate_pytest_args,
 )
@@ -111,6 +118,21 @@ def test_collection_timeout_is_red(tmp_path: Path) -> None:
     assert manifest is None
 
 
+def test_collection_traceback_is_visible_before_warning_tail(tmp_path: Path, capsys) -> None:
+    def failed_collection(*_args, **kwargs):
+        kwargs["stdout"].write("E   UnicodeEncodeError: surrogate\nERROR test_broken.py\n")
+        kwargs["stdout"].write("warning noise\n" * 20)
+        return SimpleNamespace(returncode=2)
+
+    rc, manifest = collect_test_manifest(
+        repo_root=tmp_path, run_root=tmp_path, runner=failed_collection, tail_lines=2,
+    )
+    output = capsys.readouterr().out
+    assert rc == 1 and manifest is None
+    assert "E   UnicodeEncodeError: surrogate" in output
+    assert "ERROR test_broken.py" in output
+
+
 def test_partition_is_complete_and_unrelated_files_do_not_reshuffle(tmp_path: Path) -> None:
     repo_root = tmp_path / "repo"
     targets = tuple(f"tests/test_{name}.py" for name in ("a", "b", "c", "d"))
@@ -175,6 +197,10 @@ def test_build_shard_command_keeps_pytest_q_and_targets() -> None:
         "-m",
         "pytest",
         "-q",
+        "-o",
+        "faulthandler_timeout=60",
+        "-o",
+        "faulthandler_exit_on_timeout=false",
         "tests/test_alpha.py",
         "tests/test_beta.py",
         "--tb=short",
@@ -359,7 +385,9 @@ def test_child_launch_failure_is_red(tmp_path: Path) -> None:
     assert run_shards(_assignments(), repo_root=tmp_path, launcher=broken_launcher) == 1
 
 
-def test_hung_child_has_a_bounded_red_result_and_is_reaped(tmp_path: Path) -> None:
+def test_hung_child_has_a_bounded_red_result_and_is_reaped(
+    tmp_path: Path, capsys, monkeypatch,
+) -> None:
     process = _FakeProc(None)
     now = [0.0]
 
@@ -369,17 +397,205 @@ def test_hung_child_has_a_bounded_red_result_and_is_reaped(tmp_path: Path) -> No
     def advance(seconds: float) -> None:
         now[0] += seconds
 
+    def launch(*_args, **kwargs):
+        kwargs["stdout"].write("last pending shard output\n")
+        kwargs["stdout"].flush()
+        (tmp_path / "logs" / "shard-1-execution.progress.json").write_text("current phase\n")
+        return process
+
+    original_read = Path.read_text
+
+    def read_with_denied_progress(path, *args, **kwargs):
+        if path.suffixes == [".progress", ".json"]:
+            raise PermissionError("injected progress read denial")
+        return original_read(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_with_denied_progress)
+
     rc = run_shards(
         (_assignments()[0],),
         repo_root=tmp_path,
-        launcher=lambda *_args, **_kwargs: process,
+        launcher=launch,
         timeout_seconds=0.2,
         monotonic=clock,
         sleeper=advance,
+        run_root=tmp_path,
     )
 
     assert rc == 1
     assert process.terminated is True
+    output = capsys.readouterr().out
+    assert "last pending shard output" in output
+    assert "injected progress read denial" in output
+
+
+def test_progress_snapshot_preserves_current_phase_without_claiming_completion(tmp_path: Path) -> None:
+    output = tmp_path / "execution.json"
+    plugin = _ExecutionPlugin(output_path=output)
+    nodeid = "tests/test_probe.py::test_probe"
+    item = SimpleNamespace(nodeid=nodeid)
+    progress = output.with_suffix(".progress.json")
+    plugin.pytest_runtest_logstart(nodeid, None)
+    assert json.loads(progress.read_text())["phase"] == "setup"
+    plugin.pytest_runtest_call(item)
+    assert json.loads(progress.read_text())["phase"] == "call"
+    plugin.pytest_runtest_teardown(item)
+    assert json.loads(progress.read_text()) == {
+        "nodeid": nodeid, "phase": "teardown", "started_total": 1,
+    }
+    assert not output.exists()
+    assert not progress.with_suffix(".tmp").exists()
+
+
+def test_execution_wrapper_survives_test_path_stat_monkeypatch(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    output = tmp_path / "nested" / "logs" / "execution.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(repo_root / "ops" / "pytest_execution.py"),
+            "--output",
+            str(output),
+            "--",
+            "--tb=short",
+            "tests/updater/test_platforms_macos.py::TestAtomicSwap::test_cross_volume_swap_refused_not_copied",
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    execution = json.loads(output.read_text(encoding="utf-8"))
+    assert execution["exitstatus"] == 0
+    assert execution["collected_nodeids"] == [
+        "tests/updater/test_platforms_macos.py::TestAtomicSwap::test_cross_volume_swap_refused_not_copied"
+    ]
+    assert execution["summary"]["passed"] == 1
+
+
+def test_progress_snapshot_write_failure_does_not_interrupt_pytest(monkeypatch, tmp_path: Path) -> None:
+    output = tmp_path / "execution.json"
+    plugin = _ExecutionPlugin(output_path=output)
+
+    def deny_write(*_args, **_kwargs):
+        raise PermissionError("diagnostic evidence denied")
+
+    monkeypatch.setattr(Path, "write_text", deny_write)
+    plugin.pytest_runtest_logstart("tests/test_probe.py::test_probe", None)
+    assert plugin._started == ["tests/test_probe.py::test_probe"]
+
+
+def test_failure_evidence_is_written_before_session_completion(tmp_path: Path) -> None:
+    output = tmp_path / "execution.json"
+    plugin = _ExecutionPlugin(output_path=output)
+    for phase in ("setup", "call", "teardown"):
+        plugin.pytest_runtest_logreport(SimpleNamespace(
+            nodeid="tests/test_probe.py::test_probe", when=phase,
+            passed=False, failed=True, skipped=False,
+            longreprtext=f"failure in {phase}",
+            sections=[("Captured stdout", f"checkpoint {phase}")],
+        ))
+    records = [json.loads(line) for line in output.with_suffix(".failures.jsonl").read_text().splitlines()]
+    assert [row["when"] for row in records] == ["setup", "call", "teardown"]
+    assert [row["outcome"] for row in records] == ["errors", "failed", "errors"]
+    assert all(row["schema"] == "vool.pytest-failure.v1" for row in records)
+    assert all(row["nodeid"] == "tests/test_probe.py::test_probe" for row in records)
+    assert records[1]["longrepr"] == "failure in call"
+    assert records[1]["sections"] == [{"name": "Captured stdout", "content": "checkpoint call"}]
+    assert not output.exists()
+
+
+def test_pass_and_skip_do_not_create_failure_evidence(tmp_path: Path) -> None:
+    output = tmp_path / "execution.json"
+    plugin = _ExecutionPlugin(output_path=output)
+    for passed in (True, False):
+        plugin.pytest_runtest_logreport(SimpleNamespace(
+            nodeid="tests/test_probe.py::test_probe", when="call",
+            passed=passed, failed=False, skipped=not passed,
+            longrepr=("test_probe.py", 1, "Skipped: unavailable"),
+        ))
+    assert not output.with_suffix(".failures.jsonl").exists()
+
+
+def test_failure_evidence_write_refusal_is_not_hidden(tmp_path: Path, monkeypatch) -> None:
+    output = tmp_path / "execution.json"
+    plugin = _ExecutionPlugin(output_path=output)
+    original_open = Path.open
+
+    def refuse_journal(path, *args, **kwargs):
+        if path == output.with_suffix(".failures.jsonl"):
+            raise PermissionError("injected failure evidence write denial")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", refuse_journal)
+    try:
+        plugin.pytest_runtest_logreport(SimpleNamespace(
+            nodeid="tests/test_probe.py::test_probe", when="call",
+            passed=False, failed=True, skipped=False, longreprtext="failure", sections=[],
+        ))
+    except PermissionError as exc:
+        assert "injected failure evidence write denial" in str(exc)
+    else:
+        raise AssertionError("a failed evidence write must not be ignored")
+    assert not output.exists()
+
+
+def test_shards_dump_stalls_without_exiting_or_reducing_scope() -> None:
+    assignment = ShardAssignment(index=1, targets=("tests/test_one.py", "tests/test_two.py"), estimated_weight=1)
+    for output in (None, Path("execution.json")):
+        command = build_shard_command(assignment, execution_manifest_path=output)
+        assert "faulthandler_timeout=60" in command
+        assert "faulthandler_exit_on_timeout=false" in command
+        assert all(target in command for target in assignment.targets)
+
+
+def test_killed_worker_preserves_failure_and_stall_evidence(tmp_path: Path) -> None:
+    target = tmp_path / "test_interrupted.py"
+    target.write_text(
+        "import time\n"
+        "def test_a_failure():\n    assert False, 'retained-first-failure'\n"
+        "def test_b_wait():\n    time.sleep(300)\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "execution.json"
+    command = build_shard_command(
+        ShardAssignment(index=1, targets=(str(target),), estimated_weight=1),
+        execution_manifest_path=output,
+    )
+    command = tuple("faulthandler_timeout=0.1" if arg == "faulthandler_timeout=60" else arg for arg in command)
+    journal = output.with_suffix(".failures.jsonl")
+    log = tmp_path / "worker.log"
+    with log.open("w", encoding="utf-8") as stream:
+        process = subprocess.Popen(
+            command, cwd=tmp_path, stdout=stream, stderr=subprocess.STDOUT,
+            env={key: value for key, value in os.environ.items() if key not in (
+                "PYTEST_ADDOPTS", "PYTEST_PLUGINS", "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+            )},
+            **process_group_kwargs(),
+        )
+        try:
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                if journal.exists() and "test_b_wait" in log.read_text(encoding="utf-8"):
+                    break
+                assert process.poll() is None, log.read_text(encoding="utf-8")
+                time.sleep(0.05)
+            else:
+                raise AssertionError(log.read_text(encoding="utf-8"))
+            assert process.poll() is None
+        finally:
+            stop_process_tree(process)
+    records = [json.loads(line) for line in journal.read_text().splitlines()]
+    assert len(records) == 1
+    assert records[0]["when"] == "call"
+    assert records[0]["outcome"] == "failed"
+    assert "retained-first-failure" in records[0]["longrepr"]
+    assert "Timeout" in log.read_text(encoding="utf-8")
+    assert not output.exists()
+    assert process.poll() is not None
 
 
 def test_shard_node_inventory_must_match_canonical_collection(
@@ -709,3 +925,73 @@ def test_explicit_targets_stay_outside_the_gate_env(tmp_path: Path) -> None:
     )
 
     assert rc == 0, "focused/explicit-target runs remain dev-friendly (no VOOL_GATE)"
+
+
+def test_job_split_is_disjoint_complete_and_stable() -> None:
+    targets = tuple(f"tests/test_{index:03d}.py" for index in range(200))
+    slices = [select_job_targets(targets, job_index=index, job_count=10) for index in range(1, 11)]
+
+    assert sorted(target for part in slices for target in part) == sorted(targets)
+    assert sum(len(part) for part in slices) == len(targets)
+    assert all(part for part in slices), "200 files over 10 jobs must leave no job empty"
+    # Adding a file never moves an existing file to another job.
+    grown = select_job_targets((*targets, "tests/test_new.py"), job_index=3, job_count=10)
+    assert set(slices[2]) <= set(grown)
+    for index, count in ((0, 10), (11, 10), (1, 0)):
+        try:
+            select_job_targets(targets, job_index=index, job_count=count)
+        except ValueError:
+            continue
+        raise AssertionError(f"job {index}/{count} must be rejected")
+
+
+def _synthetic_split_repo(tmp_path: Path) -> Path:
+    repo_root = _synthetic_gate_repo(tmp_path, _REQUIRED_GATE_BODY)
+    for index in range(8):
+        (repo_root / "tests" / f"test_more_{index}.py").write_text(
+            "def test_more():\n    assert True\n", encoding="utf-8"
+        )
+    return repo_root
+
+
+def test_split_jobs_run_their_slices_and_cover_the_scope_once(tmp_path: Path) -> None:
+    repo_root = _synthetic_split_repo(tmp_path)
+    records = []
+    for index in (1, 2):
+        artifact_root = tmp_path / f"job-{index}"
+        rc = run_collected_shards(
+            repo_root=repo_root,
+            paths=(),
+            workers=1,
+            timeout_seconds=120,
+            collection_timeout_seconds=120,
+            tail_lines=20,
+            artifact_root=artifact_root,
+            job_index=index,
+            job_count=2,
+        )
+        assert rc == 0
+        (record_path,) = artifact_root.glob(f"*/{JOB_TARGETS_FILE}")
+        records.append(json.loads(record_path.read_text(encoding="utf-8")))
+
+    collected = records[0]["collected_targets"]
+    assert records[1]["collected_targets"] == collected
+    first, second = (set(record["job_targets"]) for record in records)
+    assert first and second and not first & second
+    assert first | second == set(collected)
+
+
+def test_split_job_refuses_explicit_targets_and_bad_positions(tmp_path: Path) -> None:
+    repo_root = _synthetic_split_repo(tmp_path)
+    for paths, index, count in ((("tests/test_extra.py",), 1, 2), ((), 3, 2), ((), 0, 2)):
+        rc = run_collected_shards(
+            repo_root=repo_root,
+            paths=paths,
+            workers=1,
+            timeout_seconds=120,
+            collection_timeout_seconds=120,
+            tail_lines=20,
+            job_index=index,
+            job_count=count,
+        )
+        assert rc == 1

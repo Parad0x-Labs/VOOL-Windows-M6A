@@ -767,9 +767,14 @@ def _store_mutation_records(session_key: str, records: list[dict[str, Any]]) -> 
     # This ledger holds `before_text` VERBATIM and must keep doing so: rollback_last_workspace_mutation
     # writes those exact bytes back to the user's file, so redacting them here would restore a
     # "[redacted]" placeholder over real content -- data loss dressed up as a security fix. The right
-    # control is access, not content: owner-only (0600) on both the directory and the file, since a
-    # rolled-back .env leaves real key material on disk by design.
+    # control is owner-only access (0700/0600 on POSIX, protected owner DACLs on Windows), since
+    # a rolled-back .env leaves real key material on disk by design.
     path = _mutation_log_path(session_key)
+    if os.name == "nt":
+        from core.execution.windows_private_ledger import write_owner_only_ledger
+
+        write_owner_only_ledger(path, json.dumps(records, indent=2, sort_keys=True))
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     with contextlib.suppress(OSError):
         os.chmod(path.parent, 0o700)

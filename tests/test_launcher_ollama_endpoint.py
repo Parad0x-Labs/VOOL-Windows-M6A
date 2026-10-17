@@ -52,7 +52,8 @@ def test_a_dead_port_launch_neither_probes_nor_starts_a_server(tmp_path):
 
 def test_the_default_endpoint_starts_the_bundled_server_only_when_nothing_answers(tmp_path):
     bin_dir, log = _fakes(tmp_path, curl_exit=22)
-    out = _bash(f'vool_ensure_bundled_ollama "{bin_dir}/ollama" "{tmp_path}/ollama.log"', {"PATH": f"{bin_dir}:/usr/bin:/bin"})
+    # Reap the one-shot fake before inspecting its log.
+    out = _bash(f'vool_ensure_bundled_ollama "{bin_dir}/ollama" "{tmp_path}/ollama.log"; wait', {"PATH": f"{bin_dir}:/usr/bin:/bin"})
     calls = log.read_text().splitlines()
     assert "starting bundled ollama" in out.stdout
     assert calls[0].startswith("curl") and "http://127.0.0.1:11434/api/tags" in calls[0], calls

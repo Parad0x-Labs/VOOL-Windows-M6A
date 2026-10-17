@@ -23,9 +23,30 @@ def _approved_repair(world, ctx, path):
     assert read.ok, read.response_text
     # The selected owner is exercised directly by a deterministic command. A
     # different file with the same basename is not the reproduction target.
-    command = "python -c " + __import__('shlex').quote(f"import runpy; assert runpy.run_path({path!r})['add'](2,3)==5")
-    repro = door('code.task.step', {'task_id': tid, 'step_id': 'repro', 'intent': 'workspace.run_tests', 'arguments': {'command': command}}, ctx)
-    assert repro.details['tool_result']['success'] is False
+    probe_dir = root / '.vool-test-probe'
+    probe_dir.mkdir(exist_ok=True)
+    probe_path = probe_dir / 'test_reproduction.py'
+    probe_path.write_text(
+        'import runpy\n\n'
+        'def test_addition_is_reproduced():\n'
+        f"    assert runpy.run_path({path!r})['add'](2, 3) == 5\n",
+        encoding='utf-8',
+    )
+    try:
+        repro = door(
+            'code.task.step',
+            {
+                'task_id': tid,
+                'step_id': 'repro',
+                'intent': 'workspace.run_tests',
+                'arguments': {'command': 'python -m pytest -q .vool-test-probe/test_reproduction.py'},
+            },
+            ctx,
+        )
+    finally:
+        probe_path.unlink(missing_ok=True)
+        probe_dir.rmdir()
+    assert repro.details.get('tool_result', {}).get('success') is False, repro.details
     identified = door('code.task.identify', {'task_id': tid, 'path': path, 'line': 2, 'reason': 'add subtracts instead of adding'}, ctx)
     assert identified.ok, identified.response_text
     args = {'path': path, 'content': FIXED, 'expected_hash': hashlib.sha256(target.read_bytes()).hexdigest()}

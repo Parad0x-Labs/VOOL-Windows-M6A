@@ -14,16 +14,15 @@ already existed later in `run_migrations()`, immediately after `_add_column_if_m
 the column exists.
 
 The legacy database fixture here is built from the REAL historical schema at the reviewed tip
-(`git show 7ff50e8d...:storage/migrations.py`), not a hand-approximated shape -- that file has ZERO
+(`storage/migrations.py` at 7ff50e8d...), not a hand-approximated shape -- that file has ZERO
 occurrences of `retry_idempotency_key`, confirmed directly, so this reproduces the exact upgrade
 path a real pre-existing installation goes through.
 """
 
 from __future__ import annotations
 
-import ast
+import hashlib
 import sqlite3
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -39,31 +38,23 @@ from storage.migrations import run_migrations
 
 _LEGACY_COMMIT = "7ff50e8d42ed13bbe9fc888ac649d6d942731202"
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-_legacy_schema_sql_cache: str | None = None
+_LEGACY_SCHEMA_PATH = _REPO_ROOT / "tests" / "fixtures" / "migrations" / "legacy_7ff50e8d.sql"
+_LEGACY_SCHEMA_SHA256 = "e2ab521f62ffbeae46b8dd367f606025fcc0d7395bf7471c62df084e2a5f52a3"
 
 
 def _legacy_schema_sql() -> str:
-    """The REAL `SCHEMA_SQL` string as it existed at the reviewed tip, extracted via `ast` (no
-    import, no execution of the historical file -- just its one string literal)."""
-    global _legacy_schema_sql_cache
-    if _legacy_schema_sql_cache is not None:
-        return _legacy_schema_sql_cache
-    result = subprocess.run(
-        ["git", "show", f"{_LEGACY_COMMIT}:storage/migrations.py"],
-        cwd=str(_REPO_ROOT), capture_output=True, text=True, check=True,
-    )
-    tree = ast.parse(result.stdout)
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "SCHEMA_SQL" for t in node.targets):
-            _legacy_schema_sql_cache = ast.literal_eval(node.value)
-            return _legacy_schema_sql_cache
-    raise RuntimeError("SCHEMA_SQL not found in the historical migrations.py")
+    """Load the exact historical string, without executing old code or requiring Git history."""
+    schema = _LEGACY_SCHEMA_PATH.read_text(encoding="utf-8")
+    if hashlib.sha256(schema.encode("utf-8")).hexdigest() != _LEGACY_SCHEMA_SHA256:
+        raise RuntimeError(f"historical migration fixture integrity mismatch: {_LEGACY_COMMIT}")
+    return schema
 
 
 def _build_legacy_database(db_path: Path) -> None:
+    schema = _legacy_schema_sql()
     conn = sqlite3.connect(str(db_path))
     try:
-        conn.executescript(_legacy_schema_sql())
+        conn.executescript(schema)
         conn.commit()
     finally:
         conn.close()

@@ -128,14 +128,20 @@ def collect_session(session_id: str) -> tuple[dict[str, Any], dict[str, bytes], 
         if str(row.get("session_id") or "") == session_id
     ][: bounds["summaries"]]
 
-    # Demand/obligation terminal states, keyed by the turns' governing request ids.
+    # A denied request need not have served an assistant turn. Its user dialogue
+    # is a scope anchor only when A0 independently binds it to this same session.
+    owned_requests = _owned_dialogue_requests(session_id, dialogue_turns)
+    finalizations = _collect_finalizations(turns, dialogue_turns, bounds["finalizations"], owned_requests)
+    terminal_versions = {str(row["request_id"]): str(row["obligation_set_version"])
+                         for row in finalizations if row.get("status") == "no_answer_terminal"}
+    # Demand/obligation terminal states, keyed by owned governing requests.
     obligation_sets: list[dict[str, Any]] = []
     seen_sets: set[tuple[str, str]] = set()
-    for row in turns:
-        request_id = str(row.get("request_id") or "")
+    request_ids = {str(row.get("request_id") or "") for row in turns} | owned_requests
+    for request_id in sorted(request_ids):
         if not request_id:
             continue
-        for set_id, version in _obligation_sets_for_request(request_id):
+        for set_id, version in _obligation_sets_for_request(request_id, version=terminal_versions.get(request_id, "")):
             if (set_id, version) in seen_sets:
                 continue
             seen_sets.add((set_id, version))
@@ -200,17 +206,6 @@ def collect_session(session_id: str) -> tuple[dict[str, Any], dict[str, bytes], 
 
     model_provider = _model_provider_projection(session_events)[: bounds["model_provider_records"]]
 
-    # Finalizations bound to the session's canonical turn ids.
-    turn_ids = [str(row.get("turn_id") or "") for row in dialogue_turns if row.get("turn_id")]
-    finalizations: list[dict[str, Any]] = []
-    if turn_ids:
-        marks = ",".join("?" for _ in turn_ids[: bounds["finalizations"]])
-        finalizations = _db_rows(
-            "SELECT finalization_id, turn_id, content_hash, status, delivery_status, created_at "
-            f"FROM a7_finalizations WHERE turn_id IN ({marks})",
-            tuple(turn_ids[: bounds["finalizations"]]),
-        )
-
     # Attachments: metadata for every one the session owns; bytes only for authorized
     # (staged/bound) states. Released attachments are receipts by design — their bytes were
     # already destroyed by the owning authority.
@@ -272,6 +267,79 @@ def collect_session(session_id: str) -> tuple[dict[str, Any], dict[str, bytes], 
     return payload, attachment_bytes, counts, report.total
 
 
+def _collect_finalizations(
+    turns: list[dict[str, Any]], dialogue_turns: list[dict[str, Any]], limit: int,
+    owned_requests: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    # Served transcripts stamp the seal's identity, hash and request. Dialogue turns
+    # can have a different identity from the client turn used by A7.
+    claimed_ids = {str(row["finalization_id"]) for row in turns if row.get("finalization_id")}
+    bindings = {
+        (str(row["finalization_id"]), str(row["content_hash"]), str(row["request_id"]))
+        for row in turns
+        if row.get("commit_state") == "committed" and row.get("finalization_id")
+        and row.get("content_hash") and row.get("request_id")
+    }
+    turn_ids = {str(row["turn_id"]) for row in dialogue_turns if row.get("turn_id")}
+    request_ids = set(owned_requests or ())
+    found: dict[str, dict[str, Any]] = {}
+    for column, identities in (("finalization_id", claimed_ids), ("turn_id", turn_ids), ("request_id", request_ids)):
+        ordered = sorted(identities)
+        # Keep each parameterized lookup below SQLite's legacy variable limit.
+        for offset in range(0, len(ordered), 500):
+            batch = ordered[offset:offset + 500]
+            marks = ",".join("?" for _ in batch)
+            rows = _db_rows(
+                "SELECT finalization_id, turn_id, content_hash, status, delivery_status, created_at, request_id, "
+                "canonical_content, terminal_reason, semantic_result_id "
+                f"FROM a7_finalizations WHERE {column} IN ({marks})",
+                tuple(batch),
+            )
+            for row in rows:
+                fid = str(row["finalization_id"])
+                if row["status"] == "no_answer_terminal":
+                    from core.semantic.semantic_admissions import get_admission
+
+                    admission = get_admission(str(row["semantic_result_id"])) or {}
+                    if (row["request_id"] not in request_ids or row["content_hash"] or row["canonical_content"]
+                            or row["terminal_reason"] != "permission_denied"
+                            or admission.get("request_id") != row["request_id"] or admission.get("accepted") != 1
+                            or admission.get("source_class") != "refusal_policy"
+                            or not admission.get("obligation_set_version")):
+                        continue
+                    row["obligation_set_version"] = admission["obligation_set_version"]
+                elif fid in claimed_ids:
+                    if (fid, str(row["content_hash"]), str(row["request_id"] or "")) not in bindings:
+                        continue
+                elif str(row["turn_id"]) not in turn_ids:
+                    continue
+                # Legacy canonical-dialogue binding remains available only when
+                # no explicit transcript claim conflicts with the stored seal.
+                row.pop("canonical_content")
+                if row["status"] != "no_answer_terminal":
+                    row.pop("request_id")
+                    row.pop("semantic_result_id")
+                    row.pop("terminal_reason")
+                found[fid] = row
+                if len(found) > limit:
+                    raise OverBound("finalizations", limit)
+    return sorted(found.values(), key=lambda row: (str(row["created_at"]), str(row["finalization_id"])))
+
+
+def _owned_dialogue_requests(session_id: str, turns: list[dict[str, Any]]) -> set[str]:
+    from core.invocation.ledger import get_invocation
+
+    owned = set()
+    for row in turns:
+        request_id = str(row.get("request_id") or "")
+        if not request_id or str(row.get("session_id") or "") != session_id:
+            continue
+        invocation = get_invocation(request_id)
+        if invocation and invocation.get("session_binding") == session_id:
+            owned.add(request_id)
+    return owned
+
+
 def _private_roots() -> list[Path]:
     from core.runtime_paths import active_data_dir, active_vool_home, active_workspace_dir
 
@@ -294,9 +362,15 @@ def _namespace_row(session_id: str) -> dict[str, Any] | None:
     return rows[0] if rows else None
 
 
-def _obligation_sets_for_request(request_id: str) -> list[tuple[str, str]]:
+def _obligation_sets_for_request(request_id: str, *, version: str = "") -> list[tuple[str, str]]:
     from core.conductor.obligation_ledger import set_for_request
 
+    if version:
+        # The denial cites its frozen set version, not a newer set under the
+        # same request. Both request and version must independently match.
+        return [(str(row["set_id"]), str(row["version"])) for row in _db_rows(
+            "SELECT set_id, version FROM obligation_sets WHERE version = ? "
+            "AND json_extract(snapshot_json, '$.request_id') = ?", (version, request_id))]
     try:
         found = set_for_request(request_id)
     except Exception:

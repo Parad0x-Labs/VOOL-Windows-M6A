@@ -187,8 +187,18 @@ def test_verified_free_byok_reasoning_model_gets_the_free_cloud_target(monkeypat
     assert sent["max_tokens"] == 1800 + 2048
 
 
-def test_non_reasoning_byok_model_keeps_the_callers_ceiling(monkeypatch, payload_server) -> None:
-    manifest = _byok_manifest("openai/gpt-4.1-mini")
+@pytest.mark.parametrize("requested,metadata,expected", [
+    (240, {}, 760),
+    (1024, {}, 1024),
+    (240, {"max_output_tokens": 512}, 512),
+    (240, {"context_window": 1024}, 512),
+    (1024, {"max_output_tokens": 400, "context_window": 1024}, 400),
+], ids=["paid-target", "larger-request", "provider-cap", "context-share", "tightest-cap"])
+def test_non_reasoning_byok_model_uses_paid_target_without_reasoning_reserve(
+    monkeypatch, payload_server, requested, metadata, expected,
+) -> None:
+    """The caller supplies a base budget, not an immutable ceiling; physical caps still win."""
+    manifest = _byok_manifest("openai/gpt-4.1-mini", metadata_overrides=metadata)
     monkeypatch.setattr(
         "core.openrouter_catalog.cached_catalog_row",
         lambda model_id: _catalog_row(model_id, supported_parameters=("tools",)),
@@ -197,9 +207,16 @@ def test_non_reasoning_byok_model_keeps_the_callers_ceiling(monkeypatch, payload
         {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
     ).encode("utf-8")
     adapter = _live_adapter(manifest, payload_server)
-    adapter.run_text_task(_request(240))
+    request = _request(requested)
+    assert manifest_declares_reasoning(manifest) is False
+    assert lane_resolved_output_tokens(manifest, base_tokens=requested) == expected
+    response = adapter.run_text_task(request)
+    assert len(_PayloadHandler.bodies) == 1
     sent = json.loads(_PayloadHandler.bodies[-1])
-    assert sent["max_tokens"] == 240
+    assert sent["max_tokens"] == expected
+    assert response.effective_max_output_tokens == expected
+    assert request.max_output_tokens == requested
+    assert response.output_text == "ok"
 
 
 def test_unclassified_lane_keeps_the_legacy_reserve_arithmetic(monkeypatch, payload_server) -> None:

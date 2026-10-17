@@ -8,6 +8,7 @@ server-created import grant.
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -60,8 +61,14 @@ def _clean_id(value: Any, *, field: str) -> str:
 def ensure_context_namespace_schema() -> None:
     conn = get_connection()
     try:
-        conn.executescript(
-            """
+        _ensure_context_namespace_schema(conn)
+    finally:
+        conn.close()
+
+
+def _ensure_context_namespace_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
             CREATE TABLE IF NOT EXISTS context_namespaces (
                 chat_id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL DEFAULT '',
@@ -91,11 +98,9 @@ def ensure_context_namespace_schema() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_context_import_grants_chat_active
                 ON context_import_grants(chat_id, revoked_at);
-            """
-        )
-        conn.commit()
-    finally:
-        conn.close()
+        """
+    )
+    conn.commit()
 
 
 def ensure_chat_namespace(
@@ -112,9 +117,9 @@ def ensure_chat_namespace(
     clean_project = str(project_id or "").strip()
     clean_parent = str(parent_chat_id or "").strip()
     now = _utcnow()
-    ensure_context_namespace_schema()
     conn = get_connection()
     try:
+        _ensure_context_namespace_schema(conn)
         conn.execute(
             """
             INSERT OR IGNORE INTO context_namespaces (
@@ -135,48 +140,44 @@ def ensure_chat_namespace(
                 (clean_project, now, clean_chat),
             )
         conn.commit()
+        namespace = _load_chat_namespace(conn, clean_chat)
+        if namespace is None:
+            raise RuntimeError("context namespace was not created")
+        if namespace.lifecycle_state == "active" and grant_confirmed_profile:
+            _grant_context_import(conn, clean_chat, "user_profile", "profile:confirmed", "")
+        if namespace.lifecycle_state == "active" and grant_current_receipts:
+            _grant_context_import(conn, clean_chat, "action_receipt", f"chat:{clean_chat}", "")
+        refreshed = _load_chat_namespace(conn, clean_chat)
+        if refreshed is None:
+            raise RuntimeError("context namespace disappeared")
+        return refreshed
     finally:
         conn.close()
-    namespace = load_chat_namespace(clean_chat)
-    if namespace is None:
-        raise RuntimeError("context namespace was not created")
-    if namespace.lifecycle_state == "active" and grant_confirmed_profile:
-        grant_context_import(
-            clean_chat,
-            scope="user_profile",
-            source_id="profile:confirmed",
-        )
-    if namespace.lifecycle_state == "active" and grant_current_receipts:
-        grant_context_import(
-            clean_chat,
-            scope="action_receipt",
-            source_id=f"chat:{clean_chat}",
-        )
-    refreshed = load_chat_namespace(clean_chat)
-    if refreshed is None:
-        raise RuntimeError("context namespace disappeared")
-    return refreshed
 
 
 def load_chat_namespace(chat_id: str) -> ContextNamespace | None:
     clean_chat = str(chat_id or "").strip()
     if not clean_chat:
         return None
-    ensure_context_namespace_schema()
     conn = get_connection()
     try:
-        row = conn.execute(
-            """
-            SELECT chat_id, project_id, lifecycle_state, parent_chat_id,
-                   branch_turn, created_at, updated_at
-            FROM context_namespaces
-            WHERE chat_id = ?
-            LIMIT 1
-            """,
-            (clean_chat,),
-        ).fetchone()
+        _ensure_context_namespace_schema(conn)
+        return _load_chat_namespace(conn, clean_chat)
     finally:
         conn.close()
+
+
+def _load_chat_namespace(conn: sqlite3.Connection, clean_chat: str) -> ContextNamespace | None:
+    row = conn.execute(
+        """
+        SELECT chat_id, project_id, lifecycle_state, parent_chat_id,
+               branch_turn, created_at, updated_at
+        FROM context_namespaces
+        WHERE chat_id = ?
+        LIMIT 1
+        """,
+        (clean_chat,),
+    ).fetchone()
     if not row:
         return None
     payload = dict(row)
@@ -399,7 +400,26 @@ def grant_context_import(
         raise ValueError("invalid context grant scope")
     clean_source = _clean_id(source_id, field="source_id")
     clean_project = str(source_project_id or "").strip()
-    namespace = load_chat_namespace(clean_chat)
+    conn = get_connection()
+    try:
+        _ensure_context_namespace_schema(conn)
+        return _grant_context_import(conn, clean_chat, clean_scope, clean_source, clean_project)
+    finally:
+        conn.close()
+
+
+def _grant_context_import(
+    conn: sqlite3.Connection,
+    clean_chat: str,
+    clean_scope: str,
+    clean_source: str,
+    clean_project: str,
+) -> ContextImportGrant:
+    # Derived receipt IDs must obey the same bound as public grant inputs.
+    clean_source = _clean_id(clean_source, field="source_id")
+    # Re-read lifecycle for every grant, even when the caller already read it.
+    # Writes commit separately; no transaction or cached verdict spans checks.
+    namespace = _load_chat_namespace(conn, clean_chat)
     if namespace is None:
         raise ValueError("chat namespace does not exist")
     if namespace.lifecycle_state != "active":
@@ -409,30 +429,19 @@ def grant_context_import(
         f"{clean_chat}\0{clean_scope}\0{clean_source}".encode()
     ).hexdigest()[:24]
     grant_id = f"grant-{stable}"
-    conn = get_connection()
-    try:
-        conn.execute(
-            """
-            INSERT INTO context_import_grants (
-                grant_id, chat_id, scope, source_id, source_project_id,
-                created_at, revoked_at
-            ) VALUES (?, ?, ?, ?, ?, ?, '')
-            ON CONFLICT(chat_id, scope, source_id) DO UPDATE SET
-                source_project_id = excluded.source_project_id,
-                revoked_at = ''
-            """,
-            (
-                grant_id,
-                clean_chat,
-                clean_scope,
-                clean_source,
-                clean_project,
-                now,
-            ),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    conn.execute(
+        """
+        INSERT INTO context_import_grants (
+            grant_id, chat_id, scope, source_id, source_project_id,
+            created_at, revoked_at
+        ) VALUES (?, ?, ?, ?, ?, ?, '')
+        ON CONFLICT(chat_id, scope, source_id) DO UPDATE SET
+            source_project_id = excluded.source_project_id,
+            revoked_at = ''
+        """,
+        (grant_id, clean_chat, clean_scope, clean_source, clean_project, now),
+    )
+    conn.commit()
     return ContextImportGrant(
         grant_id=grant_id,
         chat_id=clean_chat,
@@ -468,9 +477,9 @@ def list_context_imports(chat_id: str) -> tuple[ContextImportGrant, ...]:
     clean_chat = str(chat_id or "").strip()
     if not clean_chat:
         return ()
-    ensure_context_namespace_schema()
     conn = get_connection()
     try:
+        _ensure_context_namespace_schema(conn)
         rows = conn.execute(
             """
             SELECT grant_id, chat_id, scope, source_id, source_project_id,

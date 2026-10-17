@@ -30,8 +30,9 @@ dependencies = [
     "pynacl>=1.5",
     "keyring>=24.0",  # OS-keystore key protection (Windows DPAPI / macOS Keychain / Linux Secret Service)
     "psutil>=5.9",
+    "tzdata==2026.5",  # Windows has no system IANA timezone database for clocks/reminders.
     "pyyaml>=6.0",
-    "pypdf==6.16.2",  # Confined PDF text fallback; keep installer/bundle projections in sync.
+    "pypdf==6.19.0",  # Confined PDF text fallback; keep installer/bundle projections in sync.
     "reportlab==5.0.1",
     "markdown-it-py==4.2.0",
     "xlrd==2.0.1",  # Legacy XLS reader (pure Python, no native parts); keep installer/bundle projections in sync.
@@ -112,6 +113,10 @@ dev = [
     # are in flight. It was never declared, so it passed only on machines that happened to have it
     # and failed in CI with ModuleNotFoundError every run -- the test could never have gone green there.
     "httpx>=0.27",
+    # EVM remains optional for shipped installs, but the authoritative suite exercises that lane.
+    "eth-abi>=6.0",
+    "eth-utils>=6.0",
+    "eth-account>=0.13",
 ]
 
 [project.urls]

@@ -78,7 +78,7 @@ class ScriptedProvider:
                 if self.path.startswith("/api/version"):
                     return self._send({"version": "0.0.0-stub"})
                 if self.path.startswith("/api/tags"):
-                    return self._send({"models": [{"name": name} for name in rig.table]})
+                    return self._send({"models": [{"name": name, "digest": "sha256:stub"} for name in rig.table]})
                 if self.path.startswith("/api/ps"):
                     return self._send({"models": []})
                 return self._send({"ok": True})
@@ -91,6 +91,12 @@ class ScriptedProvider:
                 except Exception:
                     body = {}
                 model = str(body.get("model") or "")
+                if self.path == "/api/show":
+                    if model not in rig.table:
+                        return self._send({"error": "unknown scripted model"}, 404)
+                    # Non-generative metadata must not count as model/tool execution. Unknown
+                    # weight mode intentionally retains the legacy policy used by this rig.
+                    return self._send({"model_info": {"general.architecture": "scripted"}})
                 messages = body.get("messages") or []
                 prompt = " ".join(
                     str(m.get("content") or "") for m in messages if isinstance(m, dict)

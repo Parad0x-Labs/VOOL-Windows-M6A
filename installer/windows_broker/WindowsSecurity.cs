@@ -473,7 +473,8 @@ internal static class WindowsAcl
 
 internal sealed class WindowsPathGrants : IDisposable
 {
-    private sealed record AppliedGrant(string Path, FileSystemAccessRule Rule);
+    private sealed record AppliedGrant(string Path, SecurityIdentifier Sid,
+        IReadOnlyList<WindowsDacl> Objects, string ExpectedOwnedRules);
 
     private readonly List<AppliedGrant> applied = [];
     private bool disposed;
@@ -500,7 +501,8 @@ internal sealed class WindowsPathGrants : IDisposable
 
     internal static WindowsPathGrants CreateWithRules(
         SecurityIdentifier appContainerSid,
-        IEnumerable<WindowsPathGrantRequest> requestedRoots)
+        IEnumerable<WindowsPathGrantRequest> requestedRoots,
+        Action? afterGrantWriteTestHook = null)
     {
         var roots = new Dictionary<
             (string Path, InheritanceFlags Inheritance, PropagationFlags Propagation),
@@ -533,13 +535,18 @@ internal sealed class WindowsPathGrants : IDisposable
                     pair.Value,
                     pair.Key.Inheritance,
                     pair.Key.Propagation,
-                    appContainerSid);
+                    appContainerSid,
+                    afterGrantWriteTestHook);
             }
             return grants;
         }
-        catch
+        catch (Exception operationFailure)
         {
-            grants.Dispose();
+            try { grants.Dispose(); }
+            catch (Exception cleanupFailure)
+            {
+                throw new AggregateException("Grant application and cleanup both failed.", operationFailure, cleanupFailure);
+            }
             throw;
         }
     }
@@ -549,7 +556,8 @@ internal sealed class WindowsPathGrants : IDisposable
         FileSystemRights rights,
         InheritanceFlags inheritance,
         PropagationFlags propagation,
-        SecurityIdentifier appContainerSid)
+        SecurityIdentifier appContainerSid,
+        Action? afterGrantWriteTestHook)
     {
         var rule = new FileSystemAccessRule(
             appContainerSid,
@@ -557,12 +565,38 @@ internal sealed class WindowsPathGrants : IDisposable
             inheritance,
             propagation,
             AccessControlType.Allow);
-        var directory = new DirectoryInfo(path);
-        var security = directory.GetAccessControl(AccessControlSections.Access);
-        security.AddAccessRule(rule);
-        directory.SetAccessControl(security);
+        var objects = new List<WindowsDacl>();
+        try
+        {
+            CaptureGrantObjects(path, inheritance != InheritanceFlags.None, objects);
+            var descriptor = new RawSecurityDescriptor(objects[0].OriginalAcl);
+            var flags = AceFlags.None;
+            if ((inheritance & InheritanceFlags.ContainerInherit) != 0) flags |= AceFlags.ContainerInherit;
+            if ((inheritance & InheritanceFlags.ObjectInherit) != 0) flags |= AceFlags.ObjectInherit;
+            if ((propagation & PropagationFlags.InheritOnly) != 0) flags |= AceFlags.InheritOnly;
+            if ((propagation & PropagationFlags.NoPropagateInherit) != 0) flags |= AceFlags.NoPropagateInherit;
+            var acl = descriptor.DiscretionaryAcl!;
+            var insertion = 0;
+            while (insertion < acl.Count && !acl[insertion].IsInherited) insertion++;
+            acl.InsertAce(insertion, new CommonAce(flags, AceQualifier.AccessAllowed,
+                (int)rule.FileSystemRights, appContainerSid, isCallback: false, opaque: null));
+            var grant = new AppliedGrant(path, appContainerSid, objects, OwnedRules(descriptor, appContainerSid));
+            applied.Add(grant); // Custody precedes any write or verification failure.
+            objects[0].WritePropagating(descriptor.GetSddlForm(AccessControlSections.Access),
+                objects[0].OriginalAcl, objects[0].Original.Owner?.Value);
+            afterGrantWriteTestHook?.Invoke();
+        }
+        catch
+        {
+            // Registered grants unwind in CreateWithRules; unregistered captures
+            // have not changed anything and must still release their handles.
+            if (!applied.Any(grant => ReferenceEquals(grant.Objects, objects)))
+                foreach (var item in objects) item.Dispose();
+            throw;
+        }
 
-        var verified = directory.GetAccessControl(AccessControlSections.Access);
+        var verified = new DirectorySecurity();
+        verified.SetSecurityDescriptorSddlForm(objects[0].Read().GetSddlForm(AccessControlSections.Access), AccessControlSections.Access);
         var verifiedRule = verified
             .GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier))
             .OfType<FileSystemAccessRule>()
@@ -575,9 +609,36 @@ internal sealed class WindowsPathGrants : IDisposable
         if (verifiedRule is null)
             throw new BrokerSecurityException(
                 $"AppContainer filesystem grant could not be verified for {path}.");
-
-        applied.Add(new AppliedGrant(path, rule));
     }
+
+    private static void CaptureGrantObjects(string path, bool descendants, List<WindowsDacl> objects, int depth = 0)
+    {
+        if (objects.Count >= 4096 || depth > 128)
+            throw new BrokerSecurityException("Temporary grant metadata exceeds the bounded object limit.");
+        var captured = WindowsDacl.Capture(path);
+        objects.Add(captured);
+        var flags = captured.Original.ControlFlags;
+        if ((flags & (ControlFlags.DiscretionaryAclAutoInherited | ControlFlags.DiscretionaryAclProtected)) == 0
+            && captured.Original.DiscretionaryAcl!.Cast<GenericAce>().Any(ace => !ace.IsInherited))
+            throw new BrokerSecurityException("Unprotected legacy explicit DACL requires a separately reviewed inheritance migration; grant refused before mutation. "
+                + $"Path={captured.Path}; identity={captured.Identity}; owner={captured.Original.Owner?.Value}; DACL={captured.OriginalAcl}");
+        if (!descendants || !Directory.Exists(path))
+            return;
+        foreach (var child in Directory.EnumerateFileSystemEntries(path))
+            CaptureGrantObjects(child, descendants: true, objects, depth + 1);
+    }
+
+    private static bool IsExplicitOwnedAce(GenericAce ace, SecurityIdentifier sid) =>
+        !ace.IsInherited && ace is KnownAce known && known.SecurityIdentifier == sid;
+
+    private static string OwnedRules(RawSecurityDescriptor descriptor, SecurityIdentifier sid) =>
+        string.Join(';', descriptor.DiscretionaryAcl!.Cast<GenericAce>()
+            .Where(ace => IsExplicitOwnedAce(ace, sid)).Select(ace =>
+            {
+                var bytes = new byte[ace.BinaryLength];
+                ace.GetBinaryForm(bytes, 0);
+                return Convert.ToHexString(bytes);
+            }));
 
     public void Dispose()
     {
@@ -590,16 +651,44 @@ internal sealed class WindowsPathGrants : IDisposable
         {
             try
             {
-                var directory = new DirectoryInfo(grant.Path);
-                var security = directory.GetAccessControl(AccessControlSections.Access);
-                security.RemoveAccessRuleSpecific(grant.Rule);
-                directory.SetAccessControl(security);
+                var root = grant.Objects[0];
+                root.RequireBoundPath();
+                var live = root.Read();
+                var original = root.Original;
+                var owned = OwnedRules(live, grant.Sid);
+                if (owned != OwnedRules(original, grant.Sid))
+                {
+                    if (owned != grant.ExpectedOwnedRules)
+                        throw new BrokerSecurityException("Temporary grant rules changed; cleanup refuses ambiguous ownership.");
+                    var expectedLiveAcl = live.GetSddlForm(AccessControlSections.Access);
+                    var acl = live.DiscretionaryAcl!;
+                    for (var index = acl.Count - 1; index >= 0; index--)
+                        if (IsExplicitOwnedAce(acl[index], grant.Sid)) acl.RemoveAce(index);
+                    for (var index = 0; index < original.DiscretionaryAcl!.Count; index++)
+                        if (IsExplicitOwnedAce(original.DiscretionaryAcl[index], grant.Sid))
+                            acl.InsertAce(Math.Min(index, acl.Count), original.DiscretionaryAcl[index].Copy());
+                    root.WritePropagating(live.GetSddlForm(AccessControlSections.Access),
+                        expectedLiveAcl, live.Owner?.Value);
+                }
+                Exception? restorationFailure = null;
+                foreach (var item in grant.Objects.Reverse())
+                {
+                    try { item.RestoreMetadata(); }
+                    catch (Exception exception) { restorationFailure ??= exception; }
+                }
+                if (restorationFailure is not null)
+                    throw restorationFailure;
             }
             catch (Exception exception)
             {
                 failure ??= new BrokerSecurityException(
-                    $"Could not remove temporary AppContainer grant from {grant.Path}.",
+                    $"Could not remove temporary AppContainer grant from {grant.Path}: {exception.Message}",
                     exception);
+            }
+            finally
+            {
+                foreach (var item in grant.Objects)
+                    item.Dispose();
             }
         }
 
@@ -790,6 +879,12 @@ internal sealed class ScratchWorkspace : IDisposable
             catch (UnauthorizedAccessException) when (attempt < 39)
             {
                 // Windows can release an exited process's mapped EXE after its Job count reaches zero.
+                Thread.Sleep(50);
+            }
+            catch (IOException exception) when ((exception.HResult & 0xFFFF) == 32 && attempt < 39)
+            {
+                // An image-release sharing lock has the same bounded retry window.
+                // Persistent locks and every other I/O error remain cleanup failures.
                 Thread.Sleep(50);
             }
         }

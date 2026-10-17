@@ -11,6 +11,25 @@ from adapters.openai_compatible_adapter import OpenAICompatibleAdapter
 from core.cloud_tool_call_contract import build_cloud_tool_definitions
 
 
+@pytest.fixture(autouse=True)
+def local_metadata_for_payload_and_usage_tests(monkeypatch):
+    # These tests script the generation response, not metadata transport. Supply successful
+    # legacy metadata separately, while still running the production discovery and policy gate.
+    # Fresh discovery/failure cases are driven in test_ollama_fresh_serving_reasoning_policy.py.
+    prepare = OpenAICompatibleAdapter._prepare_ollama_reasoning
+
+    def with_metadata(adapter, request):
+        digest = adapter.manifest.metadata.get("model_digest") or "synthetic-legacy-digest"
+        tags = SimpleNamespace(ok=True, json=lambda: {"models": [{"name": adapter.manifest.model_name, "digest": digest}]})
+        show = SimpleNamespace(ok=True, json=lambda: {"model_info": {"general.architecture": "synthetic-legacy"}})
+        with mock.patch("adapters.openai_compatible_adapter.requests.get", return_value=tags), mock.patch(
+            "adapters.openai_compatible_adapter.requests.post", return_value=show,
+        ):
+            prepare(adapter, request)
+
+    monkeypatch.setattr(OpenAICompatibleAdapter, "_prepare_ollama_reasoning", with_metadata)
+
+
 def _ollama_adapter(*, provider_id: str = "ollama-local:qwen2.5:7b", model_name: str = "qwen2.5:7b") -> OpenAICompatibleAdapter:
     return OpenAICompatibleAdapter(
         SimpleNamespace(

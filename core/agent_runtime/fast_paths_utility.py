@@ -3,9 +3,11 @@ from __future__ import annotations
 import random
 import re
 import zoneinfo
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
+from importlib import resources
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -2336,10 +2338,15 @@ def _canonical_zone_leaves() -> dict[str, str]:
     """
 
     leaves: dict[str, list[str]] = {}
-    for base in zoneinfo.TZPATH:
+    roots = [Path(base) for base in zoneinfo.TZPATH]
+    with suppress(ModuleNotFoundError):
+        # Windows has no system tzdb. Read the same canonical tables from the
+        # declared data package, after giving system tables their usual priority.
+        roots.append(resources.files("tzdata.zoneinfo"))
+    for base in roots:
         for name in ("zone1970.tab", "zone.tab"):
-            path = Path(base) / name
-            if not path.exists():
+            path = base.joinpath(name)
+            if not path.is_file():
                 continue
             try:
                 text = path.read_text(encoding="utf-8", errors="replace")

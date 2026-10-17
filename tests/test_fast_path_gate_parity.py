@@ -36,6 +36,7 @@ receipt details; no route mints, widens or skips a decision.
 from __future__ import annotations
 
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -713,6 +714,7 @@ def _fx_context(mode: str, fetches: list[tuple[str, float | None]]) -> dict[str,
         mode,
         workspace="/tmp",
         fx_fetch_json=_fake_fetch,
+        fx_now=lambda: datetime(2026, 9, 1, 12, tzinfo=timezone.utc),
         live_lookup_timeout_s=4.0,
     )
 

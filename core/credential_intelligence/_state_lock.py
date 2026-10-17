@@ -18,18 +18,43 @@ between lock sections, never inside one).
 from __future__ import annotations
 
 import contextlib
+import errno
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
-from core.cross_process_lock import PublicationLock
+from core.cross_process_lock import LockUnavailable, PublicationLock
+
+_LOCK_TIMEOUT_S = 10.0
+_LOCK_POLL_S = 0.01
 
 
 @contextlib.contextmanager
 def state_lock(state_path: Path) -> Iterator[None]:
-    """Hold the exclusive lock guarding read-modify-write access to ``state_path``."""
+    """Serialize credential transactions, with bounded fail-closed contention waiting.
+
+    Publication authorities still use the shared non-blocking lock directly. Credential
+    writers must instead wait for an in-flight transaction, then re-read its committed
+    state. Retry acquisition only: a failed mutation must never be executed twice.
+    """
     path = Path(state_path)
     lock_path = path.with_name(path.name + ".lock")
-    with PublicationLock(lock_path):
+    deadline = time.monotonic() + _LOCK_TIMEOUT_S
+    with contextlib.ExitStack() as stack:
+        while True:
+            try:
+                stack.enter_context(PublicationLock(lock_path))
+                break
+            except LockUnavailable as exc:
+                cause = exc.__cause__
+                if not isinstance(cause, OSError) or cause.errno not in (
+                    errno.EACCES, errno.EAGAIN, errno.EDEADLK,
+                ):
+                    raise
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise
+                time.sleep(min(_LOCK_POLL_S, remaining))
         yield
 
 
