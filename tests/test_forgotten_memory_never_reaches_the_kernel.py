@@ -92,8 +92,15 @@ def test_after_the_forget_no_retrieval_surface_carries_the_value(home):
                 continue  # the forget law's own ledger: it holds the revoked token by design
             cols = [r[1] for r in con.execute(f"PRAGMA table_info({table})")]
             for col in cols:
+                # Text and blobs are searched for the bytes; numbers only count when they ARE the value, so a
+                # clock column such as recorded_at=1760744170.44172 is not mistaken for the forgotten code.
                 try:
-                    n = con.execute(f"SELECT COUNT(*) FROM {table} WHERE CAST({col} AS TEXT) LIKE ?", (f"%{SECRET}%",)).fetchone()[0]
+                    n = con.execute(
+                        f"SELECT COUNT(*) FROM {table} WHERE "
+                        f"(typeof({col}) IN ('text', 'blob') AND CAST({col} AS TEXT) LIKE ?) "
+                        f"OR (typeof({col}) IN ('integer', 'real') AND {col} = ?)",
+                        (f"%{SECRET}%", int(SECRET)),
+                    ).fetchone()[0]
                 except sqlite3.Error:
                     continue
                 if n:
