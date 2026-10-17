@@ -276,9 +276,11 @@ def test_public_hive_bridge_surfaces_http_error_body_for_write_failures() -> Non
 def test_public_hive_bridge_allows_seed_urls_without_token() -> None:
     # Public hive is opt-in since #75, so enable it explicitly here; this test's subject is that
     # discovered seed URLs are accepted without an auth token, not the enable default.
+    # No runtime agent-bootstrap.json: an earlier test that built an agent may have written one
+    # into the shared pytest home, and the runtime file outranks the mocked sample.
     with mock.patch.dict(os.environ, {"VOOL_PUBLIC_HIVE_ENABLED": "1"}), mock.patch(
         "core.public_hive_bridge.ensure_public_hive_agent_bootstrap", return_value=None
-    ), mock.patch(
+    ), mock.patch("core.public_hive_bridge._load_json_file", return_value={}), mock.patch(
         "core.public_hive_bridge._load_agent_bootstrap",
         return_value={
             "home_region": "eu",
@@ -461,7 +463,7 @@ def test_public_hive_bridge_ignores_discovered_auth_token_from_local_watch_confi
     # discovered auth token from the local watch config is ignored, not the enable default.
     with mock.patch.dict(os.environ, {"VOOL_PUBLIC_HIVE_ENABLED": "1"}), mock.patch(
         "core.public_hive_bridge.ensure_public_hive_agent_bootstrap", return_value=None
-    ), mock.patch(
+    ), mock.patch("core.public_hive_bridge._load_json_file", return_value={}), mock.patch(
         "core.public_hive_bridge._load_agent_bootstrap",
         return_value={},
     ), mock.patch(
