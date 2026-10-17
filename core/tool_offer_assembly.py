@@ -503,7 +503,13 @@ def assemble_tool_offer(
             if f
         )
     )
-    offer = ToolOffer(specs=tuple(specs), skill_guidance=guidance, families=families)
+    offer = ToolOffer(
+        specs=tuple(specs),
+        skill_guidance=guidance,
+        families=families,
+        expanded_families=tuple(expansions),
+        fingerprint=offer_fingerprint(specs),
+    )
     if isinstance(source_context, dict):
         source_context["_tool_offer"] = {
             "provenance": PROVENANCE,

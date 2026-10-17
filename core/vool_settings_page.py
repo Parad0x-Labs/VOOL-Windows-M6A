@@ -3300,7 +3300,9 @@ function usepodDisplayAmount(atomic, asset) {
 }
 function usepodRate(price) {
   if (!price) return null;
-  return usepodUsdc(price.input_microunits_per_million) + ' input / ' + usepodUsdc(price.output_microunits_per_million) + ' output USDC per 1M tokens';
+  // The decimal is display only; the integer microunits are the exact price that dispatch compares.
+  return usepodUsdc(price.input_microunits_per_million) + ' input / ' + usepodUsdc(price.output_microunits_per_million) + ' output USDC per 1M tokens'
+    + ' (in ' + price.input_microunits_per_million + ' + out ' + price.output_microunits_per_million + ' µUSDC per Mtok)';
 }
 async function usepodPost(path, body) {
   const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });

@@ -38,7 +38,11 @@ def test_shell_bootstrap_falls_back_to_canonical_installer() -> None:
     script = (PROJECT_ROOT / "installer" / "bootstrap_vool.sh").read_text(encoding="utf-8")
 
     assert 'REPO="${VOOL_GITHUB_REPO:-vool-local}"' in script
-    assert 'INSTALL_DIR="${VOOL_INSTALL_DIR:-$HOME/vool-local}"' in script
+    # VOOL_INSTALL_DIR wins, a pre-rename ~/nulla-local is reused, otherwise ~/vool-local.
+    assert 'INSTALL_DIR="$(__vool_pick_install_dir)"' in script
+    assert "printf '%s' \"$VOOL_INSTALL_DIR\"" in script
+    assert '[ -d "$HOME/nulla-local" ] && [ ! -d "$HOME/vool-local" ]' in script
+    assert "printf '%s' \"$HOME/vool-local\"" in script
     assert 'VOOL_GITHUB_REPO:-vool-hive-mind' not in script
     assert "--install-profile <id>" in script
     assert "ollama-only" in script

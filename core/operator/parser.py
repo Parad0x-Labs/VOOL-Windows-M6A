@@ -130,8 +130,10 @@ _PROPOSE_EVENT_RE = re.compile(
 _RENAME_EVENT_RE = re.compile(
     r"\b(?:rename|retitle)\b[^\n!?.]*\b(?:event|meeting|calendar|it)\b|\bchange\s+the\s+title\s+of\b", re.IGNORECASE
 )
+# `note` must be the word itself, not part of a file name: "save the summary to
+# orchard-delivery-note.txt" names a workspace file, not a note to save.
 _SAVE_NOTE_RE = re.compile(
-    r"\b(?:save|write|store|create|jot|take)\b[^\n!?.]*\bnote\b|\bsave\s+meeting\s+notes\b|\bnote\s+(?:this|that)\s+down\b", re.IGNORECASE
+    r"\b(?:save|write|store|create|jot|take)\b[^\n!?.]*(?<![\w./\\-])note(?![\w-]|\.\w)|\bsave\s+meeting\s+notes\b|\bnote\s+(?:this|that)\s+down\b", re.IGNORECASE
 )
 _FIND_NOTES_RE = re.compile(
     r"\b(?:find|search|look\s+(?:up|for)|list|show)\b[^\n!?.]*\bnotes?\b", re.IGNORECASE

@@ -272,7 +272,12 @@ class MeetAndGreetReplicationTests(unittest.TestCase):
             auth_token="global-token",
             auth_tokens_by_base_url={"https://seed-us.example.test": "seed-token"},
         )
-        with patch("core.meet_and_greet_replication.urllib.request.urlopen", side_effect=fake_urlopen):
+        from core.effect_gateway import named_background_effect_scope
+
+        # The outbound door denies unscoped callers; replication runs as a named background service.
+        with named_background_effect_scope("meet.replication"), patch(
+            "core.meet_and_greet_replication.urllib.request.urlopen", side_effect=fake_urlopen
+        ):
             client._get_json("https://seed-us.example.test/v1/index/snapshot")
             self.assertEqual(captured.get("X-vool-meet-token"), "seed-token")
             client._get_json("https://seed-eu.example.test/v1/index/snapshot")

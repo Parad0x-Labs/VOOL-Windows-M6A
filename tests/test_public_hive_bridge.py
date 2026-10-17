@@ -212,12 +212,17 @@ def test_public_hive_bridge_blocks_live_network_under_pytest() -> None:
         )
     )
 
-    result = bridge.sync_presence(
-        agent_name="VOOL",
-        capabilities=["persistent_memory"],
-        status="idle",
-        transport_mode="vool_agent",
-    )
+    from core.effect_gateway import named_background_effect_scope
+
+    # Inside a legitimate background scope the outbound door authorizes the attempt, so what
+    # stops the socket here is the pytest live-network guard itself (tests/conftest.py).
+    with named_background_effect_scope("public_hive.presence_sync"):
+        result = bridge.sync_presence(
+            agent_name="VOOL",
+            capabilities=["persistent_memory"],
+            status="idle",
+            transport_mode="vool_agent",
+        )
 
     assert result["ok"] is False
     assert result["status"] == "failed"
