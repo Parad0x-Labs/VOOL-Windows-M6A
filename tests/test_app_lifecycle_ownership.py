@@ -54,8 +54,27 @@ def _driver(tmp_path: Path, name: str, body: str, env: dict[str, str] | None = N
 
 
 def _open_log(home_name: str, tmp_path: Path) -> str:
-    log_file = tmp_path / home_name / "Library" / "Application Support" / "VOOL" / "open.log"
+    # Mirrors vool_window._state_dir for the isolated HOME the driver runs under.
+    home = tmp_path / home_name
+    if sys.platform == "darwin":
+        state = home / "Library" / "Application Support"
+    else:
+        state = home / ".local" / "state"
+    log_file = state / "VOOL" / "open.log"
     return log_file.read_text() if log_file.exists() else ""
+
+
+def _pid_alive(pid: int) -> bool:
+    """A killed process that nobody has reaped yet (a zombie) is dead, not a survivor."""
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except OSError:
+        return True
+    return stat.rpartition(")")[2].split()[0] != "Z"
 
 
 # ------------------------------------------------------------------------------------------
@@ -356,11 +375,7 @@ def test_supervisor_teardown_kills_grandchildren_of_the_owned_runtime(tmp_path: 
         pytest.fail("grandchild never started")
     supervisor.shutdown()
     time.sleep(0.3)
-    try:
-        os.kill(grandchild, 0)
-    except OSError:
-        pass
-    else:
+    if _pid_alive(grandchild):
         pytest.fail("grandchild survived the owned teardown")
 
 
