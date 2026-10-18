@@ -63,6 +63,15 @@ class BundleSupervisor:
             return {}
         return dict(payload) if isinstance(payload, dict) else {}
 
+    def _bundle_commit(self) -> str:
+        """The exact source commit build_bundle.ps1 stamped into this bundle, or empty."""
+        path = self.root / "app" / "config" / "build-source.json"
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError, TypeError):
+            return ""
+        return str(payload.get("commit_full") or "").strip() if isinstance(payload, dict) else ""
+
     def _model(self) -> str:
         payload = self._manifest()
         return str(payload.get("selected_model") or payload.get("model") or "").strip()
@@ -190,7 +199,7 @@ class BundleSupervisor:
         env["PYTHONPATH"] = app + os.pathsep + str(env.get("PYTHONPATH") or "")
         return env
 
-    def _start(self, name: str, argv: list[str], *, cwd: Path) -> None:
+    def _start(self, name: str, argv: list[str], *, cwd: Path, extra_env: dict[str, str] | None = None) -> None:
         now = time.time()
         if now < self.next_attempt[name]:
             return
@@ -205,7 +214,7 @@ class BundleSupervisor:
             child = subprocess.Popen(
                 argv,
                 cwd=str(cwd),
-                env=self._child_env(),
+                env={**self._child_env(), **(extra_env or {})},
                 stdin=subprocess.DEVNULL,
                 stdout=handle,
                 stderr=subprocess.STDOUT,
@@ -338,10 +347,15 @@ class BundleSupervisor:
         """Open the native UI once the API is reachable; closing the UI is user intent."""
         if self.window_started or not self._healthy("http://127.0.0.1:11435/healthz"):
             return
+        # This supervisor owns the API, so the window host attaches to it instead of trying to
+        # own one: it refuses an occupied port in owned mode, and refuses any runtime when it
+        # has no expected commit (a bundle has no .git to ask). It still checks that the API it
+        # attaches to serves exactly this bundle's stamped commit and runtime profile.
         self._start(
             "window",
             [str(self.root / "python" / "pythonw.exe"), str(self.root / "vool_window.py")],
             cwd=self.root,
+            extra_env={"VOOL_NATIVE_REQUIRE_OWNED_RUNTIME": "0", "VOOL_EXPECTED_COMMIT": self._bundle_commit()},
         )
         self.window_started = "window" in self.processes
 
