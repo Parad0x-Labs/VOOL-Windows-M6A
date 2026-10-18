@@ -26,12 +26,11 @@ class _FakeRun:
             for port, pid in self.port_pids.items():
                 if f"-LocalPort {port} " in joined:
                     out = str(pid)
-        elif cmd and cmd[0] == "tasklist":
-            for tok in cmd:
-                if tok.startswith("PID eq "):
-                    pid = int(tok.split()[-1])
-                    if pid in self.python_pids:
-                        out = f'"python.exe","{pid}","Console","1","10,000 K"'
+        elif "Get-CimInstance" in joined:
+            # The pidfile fallback asks whether the pid is this installation's API process.
+            for pid in self.python_pids:
+                if f"ProcessId={pid}" in joined:
+                    out = "owned"
         return types.SimpleNamespace(stdout=out, returncode=0)
 
     def joined(self) -> list[str]:
@@ -83,14 +82,14 @@ def test_pidfile_kill_refuses_a_non_python_pid(tmp_path) -> None:
     pidfile = tmp_path / "data" / "vool_api.pid"
     pidfile.parent.mkdir()
     pidfile.write_text("9999", encoding="utf-8")
-    run = _FakeRun(python_pids=set())  # tasklist reports 9999 is NOT python
-    assert kill_api_by_pidfile(run, pidfile) is None
+    run = _FakeRun(python_pids=set())  # the ownership query reports 9999 is NOT this install's API
+    assert kill_api_by_pidfile(run, pidfile, tmp_path) is None
     assert not any("taskkill /PID 9999" in c for c in run.joined())
 
 
 def test_kill_listener_returns_none_when_nothing_listens(tmp_path) -> None:
     run = _FakeRun(port_pids={})
-    assert kill_listener(run, 18789) is None
+    assert kill_listener(run, 18789, tmp_path) is None
     assert not any("taskkill" in c for c in run.joined())
 
 
