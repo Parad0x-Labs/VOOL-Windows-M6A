@@ -408,7 +408,13 @@ def registry_status(session: str) -> dict[str, Any] | None:
     if state in {"open", "ready", "opening", "navigated"}:
         pid = int(record.get("pid") or 0)
         alive = False
-        if pid > 0:
+        if pid > 0 and os.name == "nt":
+            # os.kill(pid, 0) is TerminateProcess on Windows: reading a stale record would kill
+            # the engine, or whatever unrelated process has since been given its pid.
+            from core.process_liveness import pid_alive
+
+            alive = pid_alive(pid)
+        elif pid > 0:
             try:
                 os.kill(pid, 0)
                 alive = True

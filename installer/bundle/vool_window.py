@@ -1187,13 +1187,10 @@ def _runtime_pidfile_path() -> Path | None:
 def _pid_alive(pid: int) -> bool:
     if pid <= 1:
         return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except OSError:
-        return True  # exists but not ours to signal
-    return True
+    # Never os.kill(pid, 0) here: on Windows that terminates the live API this sweep reads about.
+    from core.process_liveness import pid_alive
+
+    return pid_alive(pid)
 
 
 def _sweep_owned_runtime_pidfile(owned_pid: int | None) -> None:
