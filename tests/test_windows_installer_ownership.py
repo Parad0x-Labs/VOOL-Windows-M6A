@@ -25,8 +25,18 @@ def test_the_installer_never_stops_a_process_just_because_it_owns_the_api_port()
 
 def test_the_installer_still_stops_vools_own_python_processes() -> None:
     command = _stop_command()
-    assert "Programs\\VOOL" in command
-    # Path-boundary match: a sibling such as ...\Programs\VOOL-dev is not the install directory.
-    assert "$_.ExecutablePath -like ($r + ''\\*'')" in command
-    assert "vool_api_server.py" in command
-    assert "vool_window.py" in command
+    # The install root is the actual {app} directory, not a hard-coded Programs\VOOL path.
+    assert "InstallDir := ExpandConstant('{app}');" in ISS.read_text(encoding="utf-8")
+    assert "$r = ''' + InstallDir + '''" in command
+    # Literal, case-insensitive path-boundary match: a sibling such as ...\VOOL-dev, or a root
+    # that looks like a wildcard pattern, is not the install directory.
+    assert "$_.ExecutablePath -like" not in command
+    assert "$rootPrefix = $r.TrimEnd([char[]]@(92,47)) + [char]92" in command
+    assert (
+        "([string]$_.ExecutablePath).StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)"
+        in command
+    )
+    # VOOL's own scripts are matched only under the install root, regex-escaped.
+    assert "[regex]::Escape($rootPrefix)" in command
+    assert "vool_api_server\\.py" in command
+    assert "vool_window\\.py" in command
