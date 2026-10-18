@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, windows/v0.7.1-port]
   workflow_dispatch:
     inputs:
       focused_ci:
