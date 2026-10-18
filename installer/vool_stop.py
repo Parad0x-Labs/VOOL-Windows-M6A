@@ -40,13 +40,15 @@ WATCHDOG_TASK = "VOOL_Daemon"
 API_PORT = 11435
 GATEWAY_PORT = 18789
 STOPPED_MARKER = ".vool_stopped"
-_WINDOWS_SCRIPT_ARGUMENT_PREFIX = (
+_WINDOWS_PYTHON_ARGUMENT_PREFIX = (
     r'^(?:\x22(?:[^\x22]*\\)?pythonw?\.exe\x22|(?:[^\s\x22]*\\)?pythonw?\.exe)'
     r'(?:\s+-[bBdEhIiOPqRsSuvVx]+'
     r'|\s+-W(?:\s+\x22[^\x22]*\x22|\s+\S+|[^\s\x22]+)'
     r'|\s+-X(?:\s+\x22[^\x22]*\x22|\s+\S+|[^\s\x22]+)'
-    r'|\s+--check-hash-based-pycs\s+(?:\x22[^\x22]*\x22|\S+))*\s+\x22?'
+    r'|\s+--check-hash-based-pycs\s+(?:\x22[^\x22]*\x22|\S+))*'
 )
+_WINDOWS_SCRIPT_ARGUMENT_PREFIX = _WINDOWS_PYTHON_ARGUMENT_PREFIX + r'\s+\x22?'
+_WINDOWS_MODULE_ARGUMENT_PREFIX = _WINDOWS_PYTHON_ARGUMENT_PREFIX + r'\s+-m\s+apps\.vool_api_server(?:\s|$)'
 
 Runner = Callable[..., Any]
 
@@ -115,12 +117,16 @@ def kill_listener(run: Runner, port: int, install_root: Path) -> int | None:
         "$rootPrefix = $r.TrimEnd([char[]]@(92,47)) + [char]92; "
         "$script = [regex]::Escape($rootPrefix + 'apps\\vool_api_server.py'); "
         f"$scriptArgument = '{_WINDOWS_SCRIPT_ARGUMENT_PREFIX}' + $script + '(?:\\x22|\\s|$)'; "
+        f"$moduleCommand = '{_WINDOWS_MODULE_ARGUMENT_PREFIX}'; "
         f"$p = Get-NetTCPConnection -LocalPort {int(port)} -State Listen -ErrorAction SilentlyContinue "
         "| Select-Object -First 1 -ExpandProperty OwningProcess; "
         "$v = if ($p) { Get-CimInstance Win32_Process -Filter \"ProcessId=$p\" -ErrorAction SilentlyContinue "
         "| Where-Object { ($_.Name -ieq 'python.exe' -or $_.Name -ieq 'pythonw.exe') "
         "-and (([string]$_.ExecutablePath).StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase) "
-        "-or ([string]$_.CommandLine -match $scriptArgument)) } }; "
+        "-or ([string]$_.CommandLine -match $scriptArgument) "
+        "-or (([string]$_.CommandLine -match $moduleCommand) "
+        "-and ([string](Get-CimInstance Win32_Process -Filter \"ProcessId=$($_.ParentProcessId)\" "
+        "-ErrorAction SilentlyContinue).ExecutablePath).StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase))) } }; "
         "if ($v) { $p } else { '' }",
     ])
     out = _stdout(res).strip()
@@ -145,10 +151,14 @@ def kill_api_by_pidfile(run: Runner, pidfile: Path, install_root: Path) -> int |
         "$rootPrefix = $r.TrimEnd([char[]]@(92,47)) + [char]92; "
         "$script = [regex]::Escape($rootPrefix + 'apps\\vool_api_server.py'); "
         f"$scriptArgument = '{_WINDOWS_SCRIPT_ARGUMENT_PREFIX}' + $script + '(?:\\x22|\\s|$)'; "
+        f"$moduleCommand = '{_WINDOWS_MODULE_ARGUMENT_PREFIX}'; "
         f"$v = Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\" -ErrorAction SilentlyContinue "
         "| Where-Object { ($_.Name -ieq 'python.exe' -or $_.Name -ieq 'pythonw.exe') "
         "-and (([string]$_.ExecutablePath).StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase) "
-        "-or ([string]$_.CommandLine -match $scriptArgument)) }; "
+        "-or ([string]$_.CommandLine -match $scriptArgument) "
+        "-or (([string]$_.CommandLine -match $moduleCommand) "
+        "-and ([string](Get-CimInstance Win32_Process -Filter \"ProcessId=$($_.ParentProcessId)\" "
+        "-ErrorAction SilentlyContinue).ExecutablePath).StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase))) }; "
         "if ($v) { 'owned' } else { '' }"
     )
     result = _run(run, ["powershell", "-NoProfile", "-Command", command])
