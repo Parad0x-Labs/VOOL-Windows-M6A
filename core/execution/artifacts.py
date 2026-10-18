@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from core import fs_links
 from core.runtime_paths import data_path
 
 
@@ -126,7 +127,7 @@ def _open_pinned_directory(parent: Path) -> int:
         for part in parent.parts[1:]:
             current = current / part
             try:
-                is_link = stat.S_ISLNK(os.lstat(current).st_mode)
+                is_link = fs_links.is_link_stat(os.lstat(current))
             except FileNotFoundError as exc:
                 raise DestinationChangedError(f"`{current}` disappeared while it was being written") from exc
             if is_link:
@@ -190,7 +191,7 @@ def pinned_atomic_write_text(
         current = Path(target.anchor)
         for part in target.parts[1:]:
             current = current / part
-            if os.path.lexists(current) and stat.S_ISLNK(os.lstat(current).st_mode):
+            if os.path.lexists(current) and fs_links.is_link_stat(os.lstat(current)):
                 raise DestinationChangedError(f"`{current}` is a link, not the reviewed destination")
         if expected_prior_sha256 is not None:
             actual = hashlib.sha256(target.read_bytes()).hexdigest() if target.is_file() else ""
@@ -205,7 +206,7 @@ def pinned_atomic_write_text(
         existing_stat = None
         with contextlib.suppress(FileNotFoundError):
             existing_stat = os.stat(name, dir_fd=fd, follow_symlinks=False)
-        if existing_stat is not None and stat.S_ISLNK(existing_stat.st_mode):
+        if existing_stat is not None and fs_links.is_link_stat(existing_stat):
             raise DestinationChangedError(f"`{target}` is a link, not the reviewed file")
         if expected_prior_sha256 is not None and _pinned_entry_sha256(name, fd) != expected_prior_sha256:
             raise ReviewedBaseChangedError(f"`{target}` no longer holds the reviewed bytes")
@@ -245,7 +246,7 @@ def pinned_atomic_write_text(
 def _require_created_entry(target: Path, entry: os.stat_result, created_identity: tuple[int, int]) -> None:
     """Raise `DestinationChangedError` unless ``entry``, examined without following a link, is still the
     regular file identified by ``created_identity``."""
-    if stat.S_ISLNK(entry.st_mode):
+    if fs_links.is_link_stat(entry):
         raise DestinationChangedError(f"`{target}` is now a link, not the file this operation created")
     if not stat.S_ISREG(entry.st_mode):
         raise DestinationChangedError(f"`{target}` is no longer the regular file this operation created")
@@ -307,7 +308,7 @@ def pinned_remove_created_file(path: Path, *, created_identity: tuple[int, int],
         current = Path(target.anchor)
         for part in target.parts[1:-1]:
             current = current / part
-            if os.path.lexists(current) and stat.S_ISLNK(os.lstat(current).st_mode):
+            if os.path.lexists(current) and fs_links.is_link_stat(os.lstat(current)):
                 raise DestinationChangedError(f"`{current}` is a link, not the reviewed directory")
         try:
             entry = os.lstat(target)
@@ -543,7 +544,7 @@ def _diagnose_rollback_conflict(
     """
     if not _target_parent_within_workspace(raw_target, workspace_root=workspace_root):
         return "parent_directory_escapes_workspace"
-    if raw_target.is_symlink():
+    if fs_links.is_link(raw_target):
         return "target_replaced_by_symlink"
     exists = raw_target.exists()
     if expected_existed_after:
@@ -616,7 +617,7 @@ def rollback_last_workspace_mutation(
         if reason is None:
             continue
         current_hash = ""
-        if raw_target.exists() and not raw_target.is_symlink() and raw_target.is_file():
+        if raw_target.exists() and not fs_links.is_link(raw_target) and raw_target.is_file():
             with contextlib.suppress(OSError, UnicodeError):
                 current_hash = content_sha256(raw_target.read_bytes().decode("utf-8", errors="replace"))
         conflicts.append(
@@ -662,7 +663,7 @@ def rollback_last_workspace_mutation(
             _force_fresh_source_timestamp(target, minimum_mtime_ns=previous_mtime_ns)
             restored_paths.append(relative_path)
         else:
-            if target.exists() and not target.is_symlink():
+            if target.exists() and not fs_links.is_link(target):
                 target.unlink()
                 removed_paths.append(relative_path)
 
