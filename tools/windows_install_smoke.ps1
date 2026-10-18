@@ -96,7 +96,8 @@ function Stop-Vool {
         & $python $supervisor --stop --root $InstallRoot 2>&1 | Out-File -Append (Join-Path $ReportDir "stop.log")
     }
     $deadline = (Get-Date).AddSeconds(60)
-    while ((Get-Date) -lt $deadline -and ((Get-VoolProcesses).Count -gt 0 -or (Get-Listener $ApiPort))) { Start-Sleep -Seconds 2 }
+    # @(): a function's empty array returns as $null, and $null.Count throws under StrictMode.
+    while ((Get-Date) -lt $deadline -and (@(Get-VoolProcesses).Count -gt 0 -or (Get-Listener $ApiPort))) { Start-Sleep -Seconds 2 }
 }
 
 function Start-Vool {
@@ -156,7 +157,7 @@ try {
 
     # --- restart -------------------------------------------------------------------------
     Stop-Vool
-    $left = Get-VoolProcesses
+    $left = @(Get-VoolProcesses)
     Require "restart" "no_owned_process_after_stop" ($left.Count -eq 0) (($left | ForEach-Object { "$($_.ProcessId):$($_.Name)" }) -join ",")
     Require "restart" "api_port_free_after_stop" (-not (Get-Listener $ApiPort)) "$ApiPort"
     Start-Vool
@@ -173,7 +174,7 @@ try {
     while ((Get-Date) -lt $deadline -and (Test-Path (Join-Path $InstallRoot "app"))) { Start-Sleep -Seconds 2 }
     Require "uninstall" "foreign_listener_survived" ([bool](Get-Process -Id $Foreign.Id -ErrorAction SilentlyContinue)) "pid=$($Foreign.Id)"
     Require "uninstall" "program_files_removed" (-not (Test-Path (Join-Path $InstallRoot "app"))) $InstallRoot
-    $left = Get-VoolProcesses
+    $left = @(Get-VoolProcesses)
     Require "uninstall" "no_vool_process_left" ($left.Count -eq 0) (($left | ForEach-Object { "$($_.ProcessId):$($_.Name)" }) -join ",")
     Add-Check "uninstall" "user_data_preserved" (Test-Path $DataRoot) $DataRoot
 } catch {
