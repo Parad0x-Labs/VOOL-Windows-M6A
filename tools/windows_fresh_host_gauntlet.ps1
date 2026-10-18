@@ -169,6 +169,7 @@ function Invoke-WindowsRuntimeRegression {
         "tests\test_os_file_lock.py",
         "tests\test_windows_utf8_mode.py",
         "tests\test_windows_installer_ownership.py",
+        "tests\test_windows_installer_stops_only_this_install.py",
         "tests\test_windows_stop_spares_foreign_listeners.py",
         "tests\test_process_liveness_never_kills.py",
         "tests\test_windows_mutation_ledger_names.py",
