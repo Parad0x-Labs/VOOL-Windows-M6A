@@ -7332,12 +7332,16 @@ def windows_write_refusal(
     as defense in depth; the executor and the authorized execution boundary ask it BEFORE the
     permission decision (and the executor before the A6 reservation). Asked only at dispatch,
     Windows had the operator approve a write it then refused, and A6 had already recorded the
-    refused call as dispatched.
+    refused call as dispatched. Off Windows, or for an intent the gate never refuses, it returns
+    None before binding arguments or resolving the workspace.
     """
+    from core import windows_write_gate
+
+    if not windows_write_gate.may_refuse(intent):
+        return None
     contract = runtime_tool_contract_map().get(intent)
     if contract is None or str(getattr(contract, "handler", "runtime")) != "runtime":
         return None
-    from core import windows_write_gate
 
     bound = _bind_known_argument_aliases(
         {k: v for k, v in arguments.items() if not str(k).startswith("_")}, contract=contract

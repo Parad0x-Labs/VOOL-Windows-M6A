@@ -176,3 +176,34 @@ def test_a_council_seat_is_gated_on_the_workspace_it_is_re_rooted_to(tmp_path: P
         assert not (checkout / "a.txt").exists()
     finally:
         containment.release_run(run_id)
+
+
+@pytest.mark.parametrize("windows", [False, True])
+def test_a_call_the_gate_never_refuses_is_handled_exactly_as_before_the_early_gate(
+    tmp_path: Path, monkeypatch, windows: bool
+) -> None:
+    """The early gate has no say in an ungated call, on any platform, so it must not touch it.
+
+    A calendar event with a malformed duration reached the permission decision before the early
+    gate existed (an approval card). It must still do so, and the early gate must not build the
+    operator action (that build is what raised ValueError here) or bind runtime arguments.
+    """
+    monkeypatch.setattr(gate, "_IS_WINDOWS", windows)
+    monkeypatch.delenv(gate.ENV_VAR, raising=False)
+
+    def must_not_run(*_args, **_kwargs):
+        raise AssertionError("the early gate did work for a call it never refuses")
+
+    monkeypatch.setattr(executor, "_build_operator_action_intent", must_not_run)
+    from core import runtime_execution_tools
+
+    monkeypatch.setattr(runtime_execution_tools, "_bind_known_argument_aliases", must_not_run)
+    decisions = _spy(monkeypatch, "decide_tool_call")
+    arguments = {"title": "Sync", "start_iso": "2026-10-19T10:00:00", "duration_minutes": "abc"}
+
+    execution = _execute(
+        "operator.schedule_calendar_event", arguments, {"workspace": str(tmp_path), "operating_mode": "manual"}
+    )
+
+    assert execution.status == "pending_approval", (execution.status, execution.response_text)
+    assert len(decisions) == 1, "the call still reaches the permission decision"

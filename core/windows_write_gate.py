@@ -63,6 +63,18 @@ def _inside(path: str, roots: list[str]) -> bool:
     return False
 
 
+def may_refuse(intent: str, *, windows: bool | None = None) -> bool:
+    """False when `refusal` is certain to allow this intent: off Windows, or an intent it never gates.
+
+    Callers that ask the gate early (before the permission decision) check this first, so a call
+    the gate has no say in gets exactly the handling it got before the early check existed: its
+    arguments are not bound, its action is not built, and nothing about it can raise here.
+    """
+    if not (_IS_WINDOWS if windows is None else windows):
+        return False
+    return intent in _GATED or intent in _STEPS
+
+
 def refusal(
     intent: str,
     arguments: dict[str, Any],
@@ -101,4 +113,4 @@ def refusal(
     )
 
 
-__all__ = ["ENV_VAR", "STATUS", "flagged_roots", "refusal"]
+__all__ = ["ENV_VAR", "STATUS", "flagged_roots", "may_refuse", "refusal"]

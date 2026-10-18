@@ -890,10 +890,14 @@ def _windows_write_refusal(
 
     Each lane is asked its own gate: the runtime dispatcher's (over its bound arguments and
     `_workspace_root`, council seats left to the dispatch-time gate) and the operator lane's (over
-    the action it builds from these arguments).
+    the action it builds from these arguments). A call the gate never refuses (off Windows, or an
+    ungated intent such as a calendar event) returns None before any of that work.
     """
+    from core import windows_write_gate
+
+    if not windows_write_gate.may_refuse(intent):
+        return None
     if intent in _MUTATING_OPERATOR_INTENTS:
-        from core import windows_write_gate
         from core.local_operator_actions import windows_write_refusal as operator_refusal
 
         reason = operator_refusal(_build_operator_action_intent(intent.split(".", 1)[1], arguments))
