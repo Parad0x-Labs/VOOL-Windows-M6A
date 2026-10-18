@@ -5,6 +5,7 @@ import difflib
 import hashlib
 import json
 import os
+import re
 import secrets
 import stat
 import tempfile
@@ -749,8 +750,26 @@ def mark_workspace_mutation_promoted(
         _store_mutation_records(session_key, records)
 
 
+# A session id is caller text, and the served chat's carry colons ("openclaw:<session>"). Windows
+# refuses `<>:"|?*` in a file name, reads `\` as a separator and reserves device names, so the raw
+# key failed every ledger write AFTER the workspace file had changed: the write read as
+# outcome-unknown and rollback had nothing to restore. There, a key that is not a plain portable
+# name gets a digest name; `~` never starts a portable name, so the two cannot collide. POSIX
+# keeps the readable key it always had.
+_WINDOWS_LEDGER_NAMES = os.name == "nt"
+_PORTABLE_LEDGER_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
+_WINDOWS_DEVICE_NAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(10)), *(f"LPT{i}" for i in range(10))}
+)
+
+
 def _mutation_log_path(session_key: str) -> Path:
-    return data_path("runtime_execution", "mutations", f"{session_key}.json")
+    name = session_key
+    if _WINDOWS_LEDGER_NAMES and (
+        _PORTABLE_LEDGER_KEY.fullmatch(name) is None or name.upper() in _WINDOWS_DEVICE_NAMES
+    ):
+        name = "~" + hashlib.sha256(session_key.encode("utf-8")).hexdigest()[:40]
+    return data_path("runtime_execution", "mutations", f"{name}.json")
 
 
 def _load_mutation_records(session_key: str) -> list[dict[str, Any]]:
