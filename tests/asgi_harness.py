@@ -17,6 +17,14 @@ def asgi_request(
     sent_body = False
     messages: list[dict[str, Any]] = []
 
+    # An ASGI server never puts the query in "path": it splits the request target at "?" and
+    # hands the rest over as "query_string". Callers here pass "/route?x=1" for convenience, so
+    # split it the same way; Starlette 1.9 escapes a literal "?" left in "path".
+    path, sep, inline_query = path.partition("?")
+    if sep:
+        joined = inline_query.encode("latin-1")
+        query_string = joined + b"&" + query_string if query_string else joined
+
     scope = {
         "type": "http",
         "asgi": {"version": "3.0"},
