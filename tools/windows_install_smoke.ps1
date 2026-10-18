@@ -183,6 +183,10 @@ try {
 } finally {
     if ($Foreign) { Stop-Process -Id $Foreign.Id -Force -ErrorAction SilentlyContinue }
     if (Test-Path "$DataRoot\logs") { Copy-Item -Recurse -Force "$DataRoot\logs" (Join-Path $ReportDir "vool-data-logs") -ErrorAction SilentlyContinue }
+    # The window host logs to its native state dir (core.runtime_paths.native_state_dir), and the
+    # API routes its runtime log to data\logs\vool_api.log: neither lives in logs\.
+    if (Test-Path "$DataRoot\open.log") { Copy-Item -Force "$DataRoot\open.log" (Join-Path $ReportDir "window-open.log") -ErrorAction SilentlyContinue }
+    if (Test-Path "$DataRoot\data\logs") { Copy-Item -Recurse -Force "$DataRoot\data\logs" (Join-Path $ReportDir "vool-runtime-logs") -ErrorAction SilentlyContinue }
     $report = [ordered]@{
         schema = "vool.windows_install_smoke.v1"
         status = $status
