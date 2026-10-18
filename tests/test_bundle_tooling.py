@@ -310,14 +310,19 @@ def test_build_bundle_copies_every_runtime_package_and_stays_lean() -> None:
     assert 'Join-Path $appDir "config\\build-source.json"' in ps1
     for field in ("app_version", "source_commit", "source_dirty_state"):
         assert field in ps1
-    for canonical_source in (
-        "AGENT_HANDOVER.md",
-        "README.md",
-        "docs\\SYSTEM_SPINE.md",
-        "docs\\STATUS.md",
-        "docs\\PROOF_PATH.md",
-    ):
-        assert f'"{canonical_source}"' in ps1
+    # The bundle ships exactly the grounding allowlist the runtime reads, no more and no less. The
+    # previous hardcoded list named AGENT_HANDOVER.md (gitignored) and docs\PROOF_PATH.md (absent
+    # from the public tree), so it pinned a build that could never succeed from a clean checkout.
+    import re
+
+    from core.canonical_project_knowledge import _ALLOWLIST
+
+    loop = re.search(r"foreach \(\$relativePath in @\(([^)]*)\)\)", ps1)
+    assert loop, "the grounding copy loop is missing"
+    shipped = re.findall(r'"([^"]+)"', loop.group(1))
+    assert shipped == [path.replace("/", "\\") for path in _ALLOWLIST]
+    for path in _ALLOWLIST:
+        assert (Path(__file__).resolve().parent.parent / path).is_file(), f"{path} must exist in a clean checkout"
     assert "Canonical grounding source missing" in ps1
 
 
