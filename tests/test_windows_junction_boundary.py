@@ -29,7 +29,10 @@ def test_the_link_definition_covers_symlinks_and_junctions_but_not_cloud_placeho
     assert fs_links.is_link_stat(_entry(stat.S_IFLNK | 0o777))
     assert fs_links.is_link_stat(_entry(stat.S_IFDIR | 0o755, fs_links.IO_REPARSE_TAG_MOUNT_POINT))
     assert fs_links.is_link_stat(_entry(stat.S_IFREG | 0o644, fs_links.IO_REPARSE_TAG_SYMLINK))
+    assert fs_links.is_link_stat(_entry(stat.S_IFREG | 0o644, 0xA000001D))   # IO_REPARSE_TAG_LX_SYMLINK
+    assert fs_links.is_link_stat(_entry(stat.S_IFDIR | 0o755, 0xA0000027))   # IO_REPARSE_TAG_WCI_LINK
     assert not fs_links.is_link_stat(_entry(stat.S_IFDIR | 0o755, IO_REPARSE_TAG_CLOUD_6))
+    assert not fs_links.is_link_stat(_entry(stat.S_IFREG | 0o644, 0x80000013))  # IO_REPARSE_TAG_DEDUP
     assert not fs_links.is_link_stat(_entry(stat.S_IFREG | 0o644))
     assert not fs_links.is_link_stat(types.SimpleNamespace(st_mode=stat.S_IFREG | 0o644))  # POSIX stat
 
