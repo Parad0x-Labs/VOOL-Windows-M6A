@@ -59,6 +59,9 @@ _BASE_ENV_KEYS = ("PATH", "LANG", "LC_ALL", "TZ", "TMPDIR")
 _PATH_LIKE_PREFIXES = ("~", "/", "./", "../")
 
 CONFINEMENT_MODES = frozenset({"auto", "heuristic_only"})
+#: Windows policy: until a Windows confinement backend exists, `heuristic_only` is refused there
+#: too, because untrusted plugins and parsers never run bare. Patched by tests.
+_WINDOWS_REFUSES_BARE = os.name == "nt"
 
 
 class ConfinementUnavailableError(RuntimeError):
@@ -274,8 +277,14 @@ def confined_argv(
     )
     if wrapped is not None:
         return list(wrapped), _backend_label(list(wrapped), bare) or "kernel:unknown"
-    if clean_mode == "heuristic_only":
+    if clean_mode == "heuristic_only" and not _WINDOWS_REFUSES_BARE:
         return bare, "heuristic_only"
+    if _WINDOWS_REFUSES_BARE:
+        raise ConfinementUnavailableError(
+            "this Windows host has no kernel confinement backend yet, and Windows never runs a plugin "
+            "or MCP server unconfined (not even with confinement 'heuristic_only'), so the child was "
+            "not started."
+        )
     raise ConfinementUnavailableError(
         "this host has no usable kernel confinement backend (sandbox-exec on macOS; bwrap "
         "on Linux), so the child was not started. Set confinement to 'heuristic_only' "

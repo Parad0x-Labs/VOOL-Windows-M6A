@@ -43,6 +43,10 @@ from core.agent_team.overlap import Finding, OverlapWatch, ScopeScanner, diff_sn
 from core.agent_team.registry import END_STATES, LIVE_STATES, Registry
 from core.agent_team.report import RESULT_TOKEN_CAP, check_report, relay_line
 
+#: Windows policy: process agents run an arbitrary command bare, so Windows refuses them until a
+#: Windows confinement backend exists. Patched by tests.
+_WINDOWS_REFUSES_PROCESS_AGENTS = os.name == "nt"
+
 LEFTOVER_GRACE_SECONDS = 10.0
 STOP_GRACE_SECONDS = 3.0
 
@@ -255,6 +259,11 @@ class TeamCoordinator:
 
     def _launch_process(self, row: dict[str, Any], contract: AgentContract, adir: Path, decision: str = "") -> None:
         agent_id = row["agent_id"]
+        if _WINDOWS_REFUSES_PROCESS_AGENTS:
+            self._finish(agent_id, forced_state="refused",
+                         note="process agents run their command unconfined, and Windows has no confinement "
+                              "backend yet, so this agent was not started")
+            return
         self._root_exited_at.pop(agent_id, None)
         self._stopping.discard(agent_id)
         self._cap_hit.pop(agent_id, None)
