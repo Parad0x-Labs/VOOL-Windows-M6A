@@ -82,6 +82,15 @@ def dispatch_operator_action(
         return _handle_inspect_services(intent, task_id=task_id, session_id=session_id)
     if intent.kind == "inspect_disk_usage":
         return _handle_inspect_disk_usage(intent, task_id=task_id, session_id=session_id)
+    if intent.kind in {"cleanup_temp_files", "move_path"}:
+        from core import windows_write_gate
+
+        gated = ("operator.move_path", {"source_path": intent.target_path, "destination_path": intent.destination_path}) \
+            if intent.kind == "move_path" else ("operator.cleanup_temp_files", {"target_path": intent.target_path})
+        windows_refusal = windows_write_gate.refusal(gated[0], gated[1], None)
+        if windows_refusal:
+            return OperatorActionResult(ok=False, status=windows_write_gate.STATUS, response_text=windows_refusal,
+                                        details={"kind": intent.kind})
     if intent.kind == "cleanup_temp_files":
         return _handle_cleanup_temp_files(intent, task_id=task_id, session_id=session_id)
     if intent.kind == "move_path":

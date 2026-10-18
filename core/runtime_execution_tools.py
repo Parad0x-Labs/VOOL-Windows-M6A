@@ -3251,6 +3251,25 @@ def _dispatch_runtime_tool(
             },
         )
     workspace_root = _workspace_root(source_context)
+    from core import windows_write_gate
+
+    windows_refusal = windows_write_gate.refusal(intent, arguments, workspace_root)
+    if windows_refusal:
+        return RuntimeExecutionResult(
+            handled=True,
+            ok=False,
+            status=windows_write_gate.STATUS,
+            response_text=windows_refusal,
+            details={
+                "observation": _tool_observation(
+                    intent=intent,
+                    tool_surface=contract.tool_surface,
+                    ok=False,
+                    status=windows_write_gate.STATUS,
+                    reason=windows_refusal,
+                ),
+            },
+        )
     # Past every guard above, this IS the dispatch, so the turn can now say which tool it ran rather
     # than which lane claimed the message. A workspace read reports `workspace_runtime_fast_path` as
     # its route reason -- the name of the front-door family -- while the operation the user asked
