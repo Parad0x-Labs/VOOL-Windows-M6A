@@ -81,6 +81,12 @@ Filename: "{sys}\wscript.exe"; Parameters: """{app}\vool.vbs"""; Description: "L
 ; models, wallet, keys, memory and receipts in {localappdata}\VOOL are preserved (a reinstall
 ; reuses them, no multi-GB re-download and no lost wallet). A full reset stays a manual choice.
 
+[UninstallDelete]
+; Program files only. The bundle ships no bytecode, so the app writes __pycache__ under {app}\app
+; as it imports modules; those files were never installed, and without this every package folder
+; (and the install folder itself) stayed behind after uninstall.
+Type: filesandordirs; Name: "{app}\app"
+
 [Code]
 procedure StopNulla();
 var
