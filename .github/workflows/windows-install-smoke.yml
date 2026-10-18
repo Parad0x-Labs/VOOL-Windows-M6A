@@ -2,10 +2,15 @@ name: Windows Install Smoke
 
 # Builds the real Inno Setup installer on a disposable windows-latest runner, installs it,
 # launches it the way the desktop shortcut does and proves the lifecycle
-# (tools/windows_install_smoke.ps1). Manual only: it downloads a pinned, hash-verified Ollama
-# release (~1.5 GB) and binds 127.0.0.1:11435 on the runner.
+# (tools/windows_install_smoke.ps1). It downloads a pinned, hash-verified Ollama release
+# (~1.5 GB) and binds 127.0.0.1:11435 on the runner, so it never runs on ordinary pushes.
+# A manual dispatch needs the file on the default branch, which this Windows line never
+# touches, so the owner-approved way to run it is pushing the commit under test to the one
+# dedicated branch below.
 
 on:
+  push:
+    branches: [windows/install-smoke]
   workflow_dispatch:
 
 concurrency:
