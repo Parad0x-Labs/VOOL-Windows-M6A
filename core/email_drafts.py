@@ -24,7 +24,7 @@ A draft is a row of reviewable state under the runtime home, owned by the sessio
     identity does not.
   * RESERVE BEFORE DISPATCH: sending persists the full reservation — status
     `sending` plus the pre-generated Message-ID — BEFORE any socket work, under
-    an exclusive OS file lock (`fcntl.flock` on the store's lock file) that makes
+    an exclusive OS file lock (`core.os_file_lock` on the store's lock file) that makes
     the check-and-set atomic across threads AND processes. A second caller (or a
     restarted process, or a request after a crashed receipt write) sees `sending`
     and never dispatches again: an unresolved in-flight effect is not retryable.
@@ -54,7 +54,6 @@ beside it is an interrupted recovery: it holds sends too and never reads as empt
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import hashlib
 import json
 import os
@@ -67,7 +66,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from core import runtime_paths
+from core import os_file_lock, runtime_paths
 
 _DRAFTS_LOCK = threading.RLock()
 _MAX_DRAFTS = 200
@@ -172,6 +171,11 @@ def _write_synced(target: Path, data: bytes) -> None:
 
 
 def _fsync_directory(directory: Path) -> None:
+    # The Windows CRT cannot open a directory (PermissionError), so every store recovery failed
+    # there. Windows renames are not left pending in a directory cache the way POSIX ones can
+    # be; the file bytes themselves are still fsynced before publication.
+    if os.name == "nt":
+        return
     descriptor = os.open(str(directory), os.O_RDONLY)
     try:
         os.fsync(descriptor)
@@ -393,7 +397,7 @@ def _store_lock() -> Iterator[None]:
         deadline = time.monotonic() + _LOCK_TIMEOUT_SECONDS
         while True:
             try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                os_file_lock.try_lock_exclusive(handle.fileno())
                 break
             except OSError:
                 if time.monotonic() >= deadline:
@@ -405,7 +409,7 @@ def _store_lock() -> Iterator[None]:
         finally:
             _LOCK_DEPTH.value = 0
             with contextlib.suppress(OSError):
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                os_file_lock.unlock(handle.fileno())
 
 
 def _prune(state: dict[str, Any]) -> None:

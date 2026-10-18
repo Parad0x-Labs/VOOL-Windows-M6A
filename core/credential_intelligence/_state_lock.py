@@ -17,10 +17,11 @@ concurrent state changes between lock sections, never inside one).
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import os
 from collections.abc import Iterator
 from pathlib import Path
+
+from core import os_file_lock
 
 
 @contextlib.contextmanager
@@ -31,11 +32,11 @@ def state_lock(state_path: Path) -> Iterator[None]:
     lock_path = path.with_name(path.name + ".lock")
     fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        os_file_lock.lock_exclusive(fd)
         yield
     finally:
         with contextlib.suppress(OSError):
-            fcntl.flock(fd, fcntl.LOCK_UN)
+            os_file_lock.unlock(fd)
         os.close(fd)
 
 
