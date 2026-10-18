@@ -56,7 +56,9 @@ def test_every_target_must_be_inside_a_flagged_folder(tmp_path: Path) -> None:
     assert gate.refusal("workspace.write_file", {"path": "a.txt"}, elsewhere, windows=True, environ=env)
     assert gate.refusal("machine.move_path", {"source": str(workspace / "a"), "destination": str(elsewhere / "a")},
                         workspace, windows=True, environ=env)
-    assert gate.refusal("machine.write_file", {"path": "..\\real-documents\\x.txt"}, workspace,
+    # A climb out in this host's own separator: backslash on Windows; on the Linux CI shards a
+    # backslash is an ordinary filename character, not a climb.
+    assert gate.refusal("machine.write_file", {"path": os.sep.join(["..", "real-documents", "x.txt"])}, workspace,
                         windows=True, environ=env)
 
 
