@@ -98,6 +98,7 @@ def test_a_planted_hook_never_runs_when_status_reads_the_index(tmp_path: Path) -
 @pytest.mark.parametrize("key", [
     "remote.origin.uploadpack", "remote.origin.receivepack", "core.alternateRefsCommand",
     "core.askPass", "sequence.editor", "pager.status", "credential.https://example.test.helper",
+    "difftool.x.cmd", "submodule.sub.update", "protocol.ext.allow",
 ])
 def test_every_program_running_key_kind_in_repository_config_is_refused(tmp_path: Path, key: str) -> None:
     repo, marker = _repo(tmp_path)
@@ -128,7 +129,8 @@ def test_ordinary_repository_settings_are_not_treated_as_programs() -> None:
     from core import safe_git
 
     for key in ("user.name", "remote.origin.url", "remote.origin.fetch", "core.autocrlf", "core.excludesfile",
-                "filter.lfs.required", "branch.main.remote", "lfs.repositoryformatversion"):
+                "filter.lfs.required", "branch.main.remote", "lfs.repositoryformatversion", "submodule.sub.path",
+                "submodule.sub.url", "alias.st"):
         assert not safe_git.is_executable_key(key), key
     for key in ("core.fsmonitor", "filter.x.process", "diff.x.textconv", "merge.x.driver", "gpg.ssh.program",
                 "includeIf.gitdir:/x/.path", "include.path"):

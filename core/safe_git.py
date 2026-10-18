@@ -19,7 +19,9 @@ Three layers:
   (by its final name segment, so new keys of a known kind are caught too) is refused before git
   touches it.
 System and global config belong to the user (for example Git LFS's global filters) and are not
-second-guessed. Residual, documented rather than claimed closed: a process editing .git/config
+second-guessed. `alias.*` is not refused: an alias runs only when invoked by name, and VOOL
+never invokes one. VOOL launches no push/fetch today; adding one must revisit safe_env(), which
+also drops GIT_SSH/GIT_SSH_COMMAND, and `protocol.*.allow`. Residual, documented rather than claimed closed: a process editing .git/config
 between the check and the run (the same check/use class as the Windows filesystem race).
 """
 from __future__ import annotations
@@ -44,9 +46,11 @@ _EXECUTABLE_KEY_SUFFIXES = frozenset({
     "helper",             # credential.helper, credential.<url>.helper
     "uploadpack", "receivepack",    # remote.<x>.*: run locally for local-path remotes
     "fsmonitor", "hookspath",
+    "cmd",                # difftool/mergetool/browser/man.<x>.cmd
 })
 #: Whole keys (fnmatch, lowercase) that pull in configuration git would then obey.
-_EXECUTABLE_KEY_PATTERNS = ("include.path", "includeif.*.path", "pager.*")
+_EXECUTABLE_KEY_PATTERNS = ("include.path", "includeif.*.path", "pager.*", "submodule.*.update",
+                            "protocol.allow", "protocol.*.allow", "browser.*.path", "man.*.path")
 #: Inherited environment variables git may keep: identity only.
 _ALLOWED_GIT_ENV = frozenset({
     "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
