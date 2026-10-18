@@ -274,7 +274,9 @@ class SessionHandle:
             # navigation fails immediately instead of waiting out its timeout.
             import signal
 
-            for sig in (signal.SIGTERM, signal.SIGKILL):
+            # Windows has no SIGKILL (os.kill with SIGTERM already calls TerminateProcess there).
+            escalation = tuple(getattr(signal, name) for name in ("SIGTERM", "SIGKILL") if hasattr(signal, name))
+            for sig in escalation:
                 try:
                     os.kill(self._pid, sig)
                 except OSError:

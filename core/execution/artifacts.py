@@ -84,12 +84,14 @@ def atomic_write_text(path: Path, content: str, *, encoding: str = "utf-8", mode
 
     fd, tmp_name = tempfile.mkstemp(dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp")
     try:
-        with os.fdopen(fd, "w", encoding=encoding) as handle:
+        with os.fdopen(fd, "w", encoding=encoding, newline="") as handle:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
         os.chmod(tmp_name, target_mode)
-        if existing_stat is not None:
+        # Windows has no os.chown; the AttributeError escaped the OSError suppression and every
+        # overwrite of an existing file failed there. Ownership is a POSIX concern only.
+        if existing_stat is not None and hasattr(os, "chown"):
             with contextlib.suppress(OSError):
                 os.chown(tmp_name, existing_stat.st_uid, existing_stat.st_gid)
         os.replace(tmp_name, target)
@@ -217,7 +219,7 @@ def pinned_atomic_write_text(
             target_mode = 0o666 & ~current_umask
         tmp_name = f".{name}.{os.getpid()}.{secrets.token_hex(6)}.tmp"
         tmp_fd = os.open(tmp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0), 0o600, dir_fd=fd)
-        with os.fdopen(tmp_fd, "w", encoding=encoding) as handle:
+        with os.fdopen(tmp_fd, "w", encoding=encoding, newline="") as handle:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
