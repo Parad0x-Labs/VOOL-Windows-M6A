@@ -90,9 +90,10 @@ begin
     (libcrypto-3.dll is loaded by BOTH the server vool_api_server.py AND the window host
     vool_window.py). Targets only python/pythonw whose exe lives under the VOOL install dir, or that
     run one of VOOL's scripts -- never the user's own Python, and never this powershell itself. Then
-    waits for the OS to release the file handles before extraction begins. }
+    waits for the OS to release the file handles before extraction begins. A listener on 11435 that
+    is not one of those processes belongs to someone else and is never stopped. }
   Exec('powershell.exe',
-    '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$r = $env:LOCALAPPDATA + ''\Programs\VOOL''; Get-NetTCPConnection -LocalPort 11435 -State Listen -EA SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -EA SilentlyContinue }; Get-CimInstance Win32_Process -EA SilentlyContinue | Where-Object { ($_.Name -eq ''python.exe'' -or $_.Name -eq ''pythonw.exe'') -and (($_.ExecutablePath -like ($r + ''*'')) -or ($_.CommandLine -like ''*vool_api_server.py*'') -or ($_.CommandLine -like ''*vool_window.py*'')) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA SilentlyContinue }; Start-Sleep -Milliseconds 900"',
+    '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$r = $env:LOCALAPPDATA + ''\Programs\VOOL''; Get-CimInstance Win32_Process -EA SilentlyContinue | Where-Object { ($_.Name -eq ''python.exe'' -or $_.Name -eq ''pythonw.exe'') -and (($_.ExecutablePath -like ($r + ''*'')) -or ($_.CommandLine -like ''*vool_api_server.py*'') -or ($_.CommandLine -like ''*vool_window.py*'')) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA SilentlyContinue }; Start-Sleep -Milliseconds 900"',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Sleep(1500);
 end;
