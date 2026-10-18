@@ -298,7 +298,7 @@ def _git_verb(argv: list[str]) -> str:
     rest = argv[1:]
     while rest:
         head = rest[0]
-        if head == "-C":
+        if head in ("-C", "-c"):  # both take a value: -C <path>, -c <key=value>
             rest = rest[2:]
             continue
         if head.startswith("-"):
