@@ -1,9 +1,9 @@
 """Revision 5: the push lane honors the SAME durable dispatch contract as the forge lane.
 
 Every case drives a real push plan through the production door against a disposable local bare
-remote. Dispatch is counted on the REMOTE side: the worktree's `remote.origin.receivepack` is a
-logging wrapper around `git receive-pack`, so every push that actually reaches the remote leaves a
-line -- independent of what the runtime reports about itself. The operator authorization is minted
+remote. Dispatch is counted on the REMOTE side: `remote.origin.receivepack`, set in a test-scoped
+global git config, is a logging wrapper around `git receive-pack`, so every push that actually
+reaches the remote leaves a line -- independent of what the runtime reports about itself. The operator authorization is minted
 by the served operator surface (`repoops_api.authorize_push`), never hand-written into a turn.
 
 Data differs from the review's probes: pull request 12, a `release-candidate` ref, a different
@@ -13,6 +13,7 @@ commit. No live remote, forge or credential is used.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -26,12 +27,26 @@ OPEN = {"provider": "github", "namespace": "o/r", "reviewer_model": "anthropic/c
 REF = "release-candidate"
 
 
+@pytest.fixture(autouse=True)
+def _scoped_global_git_config(monkeypatch):
+    # _count_remote_pushes points XDG_CONFIG_HOME at a per-test global git config; undo restores it.
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+
 def _count_remote_pushes(root: Path, tmp_path: Path) -> Path:
+    # The wrapper is the operator's GLOBAL git config, not the worktree's: the runtime refuses a
+    # repository whose own config names a program for git to run (core/safe_git.py), and
+    # `remote.<name>.receivepack` is one. Global config is the operator's own and is honored.
     log = tmp_path / "receive-pack.log"
     wrapper = tmp_path / "receive-pack-counter.sh"
     wrapper.write_text(f'#!/bin/sh\necho "$$" >> "{log}"\nexec git receive-pack "$@"\n', encoding="utf-8")
     wrapper.chmod(0o755)
-    git(root, "config", "remote.origin.receivepack", str(wrapper))
+    xdg = tmp_path / "xdg"
+    (xdg / "git").mkdir(parents=True)
+    (xdg / "git" / "config").write_text(
+        f'[remote "origin"]\n\treceivepack = {wrapper.as_posix()}\n', encoding="utf-8"
+    )
+    os.environ["XDG_CONFIG_HOME"] = str(xdg)
     return log
 
 
