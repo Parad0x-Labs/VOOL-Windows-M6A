@@ -158,6 +158,31 @@ function Invoke-FocusedRegression {
     Invoke-Checked -Name "Focused Windows regression tests" -FilePath $python -Arguments (@("-m", "pytest") + $tests + @("-q", "--tb=short"))
 }
 
+function Invoke-WindowsRuntimeRegression {
+    # The runtime itself on Windows: the API server and window start, the forget authority,
+    # draft/credential locks, POSIX-only calls and the installer's process ownership. Run in
+    # UTF-8 mode, as the installed app's launcher runs every bundled Python.
+    $python = Resolve-Python
+    $tests = @(
+        "tests\test_windows_runtime_startup.py",
+        "tests\test_windows_posix_only_calls.py",
+        "tests\test_os_file_lock.py",
+        "tests\test_windows_utf8_mode.py",
+        "tests\test_windows_installer_ownership.py",
+        "tests\test_forgetting_is_applied_or_never_claimed_20261007.py",
+        "tests\test_forget_subject_readers_r9.py",
+        "tests\lifecycle\test_forget_revocation_law_20260929.py",
+        "tests\test_email_store_recovery_surface.py"
+    )
+    $previousUtf8 = $env:PYTHONUTF8
+    $env:PYTHONUTF8 = "1"
+    try {
+        Invoke-Checked -Name "Windows runtime regression tests" -FilePath $python -Arguments (@("-m", "pytest") + $tests + @("-q", "--tb=short"))
+    } finally {
+        $env:PYTHONUTF8 = $previousUtf8
+    }
+}
+
 function Invoke-ProviderProbe {
     $python = Resolve-Python
     Invoke-Checked -Name "Provider probe JSON" -FilePath $python -Arguments @("installer\provider_probe.py", "--json")
@@ -242,6 +267,7 @@ function Complete-Run {
 try {
     Invoke-Install
     Invoke-FocusedRegression
+    Invoke-WindowsRuntimeRegression
     Invoke-ProviderProbe
     Invoke-PackageBuild
     Invoke-OpenClawChecks
