@@ -132,6 +132,7 @@ try {
     # --- install with a foreign listener on the API port ------------------------------------
     $Foreign = Start-ForeignListener
     $installLog = Join-Path $ReportDir "install.log"
+    $installStart = Get-Date
     $p = Start-Process -FilePath $setup -ArgumentList @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=`"$installLog`"") -PassThru -Wait
     Require "install" "setup_exit_code" ($p.ExitCode -eq 0) "exit=$($p.ExitCode)"
     $stillThere = Get-Process -Id $Foreign.Id -ErrorAction SilentlyContinue
@@ -166,6 +167,12 @@ try {
     Stop-Vool
 
     # --- uninstall with a foreign listener ----------------------------------------------------
+    # The uninstaller deletes {app}\app outright (vool.iss [UninstallDelete]) to take the runtime's
+    # bytecode with it, so the runtime must keep its state out of the program folder: anything it
+    # wrote there besides .pyc would be destroyed. Installed files keep their source timestamps.
+    $runtimeWritten = @(Get-ChildItem -LiteralPath (Join-Path $InstallRoot "app") -Recurse -File -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Extension -ne ".pyc" -and $_.LastWriteTime -gt $installStart })
+    Require "uninstall" "program_dir_holds_no_runtime_state" ($runtimeWritten.Count -eq 0) (($runtimeWritten | Select-Object -First 10 | ForEach-Object { $_.FullName.Substring($InstallRoot.Length) }) -join ",")
     $Foreign = Start-ForeignListener
     $uninstaller = Join-Path $InstallRoot "unins000.exe"
     $u = Start-Process -FilePath $uninstaller -ArgumentList @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=`"$(Join-Path $ReportDir 'uninstall.log')`"") -PassThru -Wait
