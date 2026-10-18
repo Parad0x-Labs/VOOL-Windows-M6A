@@ -23,6 +23,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from core.process_liveness import pid_alive
 from core.runtime_paths import active_vool_home, runtime_home_identity
 
 
@@ -60,6 +61,7 @@ class NativeRuntimeSupervisor:
         startup_timeout: float = 90.0,
         poll_interval: float = 0.25,
         unhealthy_grace: float = 30.0,
+        vouching_pid: int | None = None,
         popen: Callable[..., Any] = subprocess.Popen,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
@@ -75,6 +77,9 @@ class NativeRuntimeSupervisor:
         self.startup_timeout = float(startup_timeout)
         self.poll_interval = float(poll_interval)
         self.unhealthy_grace = max(0.0, float(unhealthy_grace))
+        # The exact API process an outer supervisor started and vouches for (the Windows bundle
+        # supervisor). An attachment then binds to that process, and it vouches like an owned child.
+        self.vouching_pid = int(vouching_pid) if vouching_pid and int(vouching_pid) > 1 else None
         self._popen = popen
         self._sleep = sleep
         self._monotonic = monotonic
@@ -117,6 +122,7 @@ class NativeRuntimeSupervisor:
         require_owned = str(os.environ.get("VOOL_NATIVE_REQUIRE_OWNED_RUNTIME") or "1").strip().lower() not in {
             "0", "false", "no", "off",
         }
+        vouching = str(os.environ.get("VOOL_NATIVE_VOUCHING_PID") or "").strip()
         return cls(
             root,
             command,
@@ -125,6 +131,7 @@ class NativeRuntimeSupervisor:
             require_owned=require_owned,
             startup_timeout=timeout,
             unhealthy_grace=grace,
+            vouching_pid=int(vouching) if vouching.isdigit() else None,
         )
 
     @property
@@ -223,6 +230,11 @@ class NativeRuntimeSupervisor:
             if self._identity(existing).get("runtime_home_id") != self.runtime_home_id:
                 raise NativeRuntimeError("API port belongs to another or unproved runtime profile; no process was stopped")
             if self._identity_matches(existing) and not self.require_owned:
+                if self.vouching_pid is not None and self._identity(existing).get("pid") != self.vouching_pid:
+                    raise NativeRuntimeError(
+                        "API port is served by a process other than the one the supervisor started; "
+                        "no process was stopped"
+                    )
                 self.attached_existing = True
                 self.ready_identity = self._identity(existing)
                 return dict(self.ready_identity)
@@ -290,20 +302,31 @@ class NativeRuntimeSupervisor:
         background model pull on a slower Intel Mac measured a 2.3 s /healthz against the 1.5 s
         probe) answered late once and the whole app closed under the user. Such failures are
         tolerated for ``unhealthy_grace`` seconds of consecutive failure, then fatal. Without an
-        owned child to vouch for the runtime, an unreachable endpoint is fatal at once.
+        owned child to vouch for the runtime, an unreachable endpoint is fatal at once. An attachment
+        to the process an outer supervisor started (``vouching_pid``) is vouched for by that exact
+        live process the same way: its exit is fatal at once, and so is any other pid answering.
         """
         if self.process is not None and self.process.poll() is not None:
             raise NativeRuntimeError(f"owned runtime child exited (returncode={self.process.returncode})")
+        vouched = self.process is None and self.vouching_pid is not None
+        if vouched and not pid_alive(self.vouching_pid):
+            raise NativeRuntimeError(f"supervised runtime process exited (pid={self.vouching_pid})")
         payload = self._health()
         if payload is None:
             now = self._monotonic()
             if self._unhealthy_since is None:
                 self._unhealthy_since = now
-            if self.process is None or now - self._unhealthy_since >= self.unhealthy_grace:
+            if (self.process is None and not vouched) or now - self._unhealthy_since >= self.unhealthy_grace:
                 raise NativeRuntimeError("runtime health endpoint is unavailable")
             return
         self._unhealthy_since = None
-        if not (self._owned_identity_matches(payload) if self.process is not None else self._identity_matches(payload)):
+        if self.process is not None:
+            same_runtime = self._owned_identity_matches(payload)
+        else:
+            same_runtime = self._identity_matches(payload) and (
+                not vouched or self._identity(payload).get("pid") == self.vouching_pid
+            )
+        if not same_runtime:
             raise NativeRuntimeError("runtime identity changed while the native app was open")
 
     def _close_log(self) -> None:

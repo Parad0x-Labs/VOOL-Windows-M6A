@@ -350,14 +350,33 @@ class BundleSupervisor:
         # This supervisor owns the API, so the window host attaches to it instead of trying to
         # own one: it refuses an occupied port in owned mode, and refuses any runtime when it
         # has no expected commit (a bundle has no .git to ask). It still checks that the API it
-        # attaches to serves exactly this bundle's stamped commit and runtime profile.
+        # attaches to serves exactly this bundle's stamped commit and runtime profile, and -- when
+        # this supervisor started the API -- that it is that exact process, which then vouches for
+        # it through slow first-run health answers the way an owned child would.
+        window_env = {"VOOL_NATIVE_REQUIRE_OWNED_RUNTIME": "0", "VOOL_EXPECTED_COMMIT": self._bundle_commit()}
+        api = self.processes.get("api")
+        if api is not None and api.poll() is None:
+            window_env["VOOL_NATIVE_VOUCHING_PID"] = str(api.pid)
         self._start(
             "window",
             [str(self.root / "python" / "pythonw.exe"), str(self.root / "vool_window.py")],
             cwd=self.root,
-            extra_env={"VOOL_NATIVE_REQUIRE_OWNED_RUNTIME": "0", "VOOL_EXPECTED_COMMIT": self._bundle_commit()},
+            extra_env=window_env,
         )
         self.window_started = "window" in self.processes
+
+    def _reap_window(self) -> None:
+        """A window that closed because its runtime was lost (vool_window exit 3, e.g. the API was
+        restarted) reopens once the API answers again. Any other exit -- the user closing the
+        window included -- stays closed."""
+        child = self.processes.get("window")
+        if child is None or child.poll() is None:
+            return
+        returncode = child.poll()
+        self._stop_child("window")
+        self._log(f"window exited returncode={returncode}")
+        if returncode == 3:
+            self.window_started = False
 
     def _write_state(self) -> None:
         payload = {
@@ -392,6 +411,7 @@ class BundleSupervisor:
                 self._reap_dead("api")
                 self._ensure_ollama()
                 self._ensure_api()
+                self._reap_window()
                 self._ensure_window()
                 self._write_state()
                 if once:

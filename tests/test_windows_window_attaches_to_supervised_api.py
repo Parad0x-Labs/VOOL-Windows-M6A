@@ -12,6 +12,8 @@ import json
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 from installer.bundle import native_runtime_supervisor as nrs
 from installer.bundle.bundle_supervisor import BundleSupervisor
 
@@ -67,6 +69,28 @@ def test_an_unstamped_bundle_gives_the_window_no_commit_to_trust(tmp_path) -> No
     call = _started(supervisor, supervisor._ensure_window)
     assert call.kwargs["env"]["VOOL_EXPECTED_COMMIT"] == ""
     supervisor._stop_child("window")
+
+
+def test_the_window_is_told_the_exact_api_process_this_supervisor_started(tmp_path) -> None:
+    supervisor = _bundle(tmp_path)
+    api = mock.Mock(pid=4242)
+    api.poll.return_value = None
+    supervisor.processes["api"] = api
+    call = _started(supervisor, supervisor._ensure_window)
+    assert call.kwargs["env"]["VOOL_NATIVE_VOUCHING_PID"] == "4242"
+    supervisor.processes.pop("api")
+    supervisor._stop_child("window")
+
+
+@pytest.mark.parametrize(("returncode", "reopens"), [(3, True), (0, False), (1, False)])
+def test_only_a_runtime_lost_window_exit_reopens_the_window(tmp_path, returncode, reopens) -> None:
+    supervisor = _bundle(tmp_path)
+    _started(supervisor, supervisor._ensure_window)
+    assert supervisor.window_started
+    supervisor.processes["window"].poll.return_value = returncode
+    supervisor._reap_window()
+    assert "window" not in supervisor.processes
+    assert supervisor.window_started is (not reopens)
 
 
 def test_the_window_host_reads_that_environment_as_attach_to_the_stamped_commit(tmp_path, monkeypatch) -> None:
