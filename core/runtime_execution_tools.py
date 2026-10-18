@@ -3251,25 +3251,10 @@ def _dispatch_runtime_tool(
             },
         )
     workspace_root = _workspace_root(source_context)
-    from core import windows_write_gate
-
-    windows_refusal = windows_write_gate.refusal(intent, arguments, workspace_root)
-    if windows_refusal:
-        return RuntimeExecutionResult(
-            handled=True,
-            ok=False,
-            status=windows_write_gate.STATUS,
-            response_text=windows_refusal,
-            details={
-                "observation": _tool_observation(
-                    intent=intent,
-                    tool_surface=contract.tool_surface,
-                    ok=False,
-                    status=windows_write_gate.STATUS,
-                    reason=windows_refusal,
-                ),
-            },
-        )
+    # Defense in depth: the executor asked this same predicate before the permission decision.
+    windows_refusal = windows_write_refusal(intent, arguments, source_context=source_context)
+    if windows_refusal is not None:
+        return windows_refusal
     # Past every guard above, this IS the dispatch, so the turn can now say which tool it ran rather
     # than which lane claimed the message. A workspace read reports `workspace_runtime_fast_path` as
     # its route reason -- the name of the front-door family -- while the operation the user asked
@@ -7335,6 +7320,63 @@ def sandbox_cwd_refusal(raw_cwd: Any, *, workspace_root: Path) -> RuntimeExecuti
             },
         )
     return None
+
+
+def windows_write_refusal(
+    intent: str, arguments: dict[str, Any], *, source_context: dict[str, Any] | None
+) -> RuntimeExecutionResult | None:
+    """The Windows write gate's refusal for a call this dispatcher runs, or None.
+
+    One predicate over the arguments the dispatcher binds (underscore keys dropped, aliases bound
+    by the contract) and the workspace `_workspace_root` resolves. The dispatcher applies it last,
+    as defense in depth; the executor and the authorized execution boundary ask it BEFORE the
+    permission decision (and the executor before the A6 reservation). Asked only at dispatch,
+    Windows had the operator approve a write it then refused, and A6 had already recorded the
+    refused call as dispatched.
+    """
+    contract = runtime_tool_contract_map().get(intent)
+    if contract is None or str(getattr(contract, "handler", "runtime")) != "runtime":
+        return None
+    from core import windows_write_gate
+
+    bound = _bind_known_argument_aliases(
+        {k: v for k, v in arguments.items() if not str(k).startswith("_")}, contract=contract
+    )
+    reason = windows_write_gate.refusal(intent, bound, _workspace_root(source_context))
+    if not reason:
+        return None
+    return RuntimeExecutionResult(
+        handled=True,
+        ok=False,
+        status=windows_write_gate.STATUS,
+        response_text=reason,
+        details={
+            "executed": False,
+            "observation": _tool_observation(
+                intent=intent,
+                tool_surface=contract.tool_surface,
+                ok=False,
+                status=windows_write_gate.STATUS,
+                reason=reason,
+            ),
+        },
+    )
+
+
+def windows_write_refusal_before_decision(
+    intent: str, arguments: dict[str, Any], *, source_context: dict[str, Any] | None
+) -> RuntimeExecutionResult | None:
+    """`windows_write_refusal`, asked before a permission decision is taken for the call.
+
+    A council seat is left to the dispatch-time gate: `execute_runtime_tool` re-roots a seat onto
+    its own disposable workspace first, and only that gate sees the root the seat writes to.
+    """
+    refusal = windows_write_refusal(intent, arguments, source_context=source_context)
+    if refusal is None:
+        return None
+    from core.council.containment import binding_for_context
+
+    return None if binding_for_context(source_context) is not None else refusal
 
 
 def _run_command(

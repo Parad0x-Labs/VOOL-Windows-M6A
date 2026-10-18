@@ -174,6 +174,7 @@ function Invoke-WindowsRuntimeRegression {
         "tests\test_windows_mutation_ledger_names.py",
         "tests\test_windows_junction_boundary.py",
         "tests\test_windows_write_gate.py",
+        "tests\test_windows_write_gate_before_approval.py",
         "tests\test_git_tools_repository_config_cannot_run_programs.py",
         "tests\test_forgetting_is_applied_or_never_claimed_20261007.py",
         "tests\test_forget_subject_readers_r9.py",

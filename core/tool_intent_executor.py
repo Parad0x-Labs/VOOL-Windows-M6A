@@ -883,6 +883,48 @@ def _obligation_discharge_effect(logical_effect_id: str, *, applied: bool | None
     except Exception:
         raise
 
+def _windows_write_refusal(
+    intent: str, arguments: dict[str, Any], source_context: dict[str, Any] | None
+) -> ToolIntentExecution | None:
+    """The refusal the Windows write gate will give this call at dispatch, decided before it.
+
+    Each lane is asked its own gate: the runtime dispatcher's (over its bound arguments and
+    `_workspace_root`, council seats left to the dispatch-time gate) and the operator lane's (over
+    the action it builds from these arguments).
+    """
+    if intent in _MUTATING_OPERATOR_INTENTS:
+        from core import windows_write_gate
+        from core.local_operator_actions import windows_write_refusal as operator_refusal
+
+        reason = operator_refusal(_build_operator_action_intent(intent.split(".", 1)[1], arguments))
+        if not reason:
+            return None
+        status, text = windows_write_gate.STATUS, reason
+        details = {
+            "executed": False,
+            "observation": _tool_observation(
+                intent=intent, tool_surface="local_operator", ok=False, status=status, reason=reason
+            ),
+        }
+    else:
+        from core.runtime_execution_tools import windows_write_refusal_before_decision
+
+        refusal = windows_write_refusal_before_decision(intent, arguments, source_context=source_context)
+        if refusal is None:
+            return None
+        status, text, details = refusal.status, refusal.response_text, dict(refusal.details or {})
+    return ToolIntentExecution(
+        handled=True,
+        ok=False,
+        status=status,
+        response_text=text,
+        user_safe_response_text=text,
+        mode="tool_failed",
+        tool_name=intent,
+        details=details,
+    )
+
+
 def _a6_reserve_before_dispatch(
     *,
     intent: str,
@@ -1265,6 +1307,14 @@ def _execute_tool_intent_impl(
                     intent=intent, tool_surface="code_task", ok=False, status="invalid_arguments",
                 )},
             )
+    # On Windows a user-filesystem write outside the flagged disposable workspaces is refused HERE,
+    # before the permission decision and before the A6 reservation. Refused only at dispatch, the
+    # operator was asked to approve a write that could never run, and A6 recorded the refused call
+    # as dispatched. Same predicate, arguments and workspace root as the dispatch-time gate, which
+    # stays in place as defense in depth.
+    windows_refusal = _windows_write_refusal(intent, arguments, source_context)
+    if windows_refusal is not None:
+        return windows_refusal
     permission = decide_tool_call(
         intent=intent,
         arguments=arguments,
