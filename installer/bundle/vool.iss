@@ -65,7 +65,7 @@ Source: "{#Stage}\vool_protocol_handler.py"; DestDir: "{app}"; Flags: ignorevers
 Root: HKCU; Subkey: "Software\Classes\vool"; ValueType: string; ValueName: ""; ValueData: "URL:VOOL Protocol"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\vool"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\Classes\vool\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\python\pythonw.exe,0"; Flags: uninsdeletekeyifempty
-Root: HKCU; Subkey: "Software\Classes\vool\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\python\pythonw.exe"" ""{app}\vool_protocol_handler.py"" ""%1"""; Flags: uninsdeletekeyifempty
+Root: HKCU; Subkey: "Software\Classes\vool\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\python\pythonw.exe"" -X utf8 ""{app}\vool_protocol_handler.py"" ""%1"""; Flags: uninsdeletekeyifempty
 
 [Icons]
 ; Launch via wscript so the VBS runs windowless (no console flash) with no dependency on the

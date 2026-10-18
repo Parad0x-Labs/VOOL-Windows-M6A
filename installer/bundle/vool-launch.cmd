@@ -1,6 +1,9 @@
 @echo off
 rem VOOL bundle launcher: delegate child-process ownership to the bundled Windows supervisor.
 setlocal enableextensions
+rem UTF-8 mode for every bundled Python (supervisor, API server, window): without it Python on
+rem Windows reads and writes text as cp1252, and memories, notes or files with non-ASCII text fail.
+set "PYTHONUTF8=1"
 set "VOOL_ROOT=%~dp0"
 set "VOOL_BUNDLE_ROOT=%VOOL_ROOT%"
 set "VOOL_MANIFEST=%VOOL_ROOT%bundle_manifest.json"
