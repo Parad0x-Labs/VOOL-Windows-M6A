@@ -169,6 +169,7 @@ function Invoke-WindowsRuntimeRegression {
         "tests\test_os_file_lock.py",
         "tests\test_windows_utf8_mode.py",
         "tests\test_windows_installer_ownership.py",
+        "tests\test_windows_junction_boundary.py",
         "tests\test_forgetting_is_applied_or_never_claimed_20261007.py",
         "tests\test_forget_subject_readers_r9.py",
         "tests\lifecycle\test_forget_revocation_law_20260929.py",
