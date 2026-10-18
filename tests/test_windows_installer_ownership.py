@@ -26,6 +26,7 @@ def test_the_installer_never_stops_a_process_just_because_it_owns_the_api_port()
 def test_the_installer_still_stops_vools_own_python_processes() -> None:
     command = _stop_command()
     assert "Programs\\VOOL" in command
-    assert "$_.ExecutablePath -like ($r + ''*'')" in command
+    # Path-boundary match: a sibling such as ...\Programs\VOOL-dev is not the install directory.
+    assert "$_.ExecutablePath -like ($r + ''\\*'')" in command
     assert "vool_api_server.py" in command
     assert "vool_window.py" in command

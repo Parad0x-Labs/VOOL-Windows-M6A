@@ -76,6 +76,18 @@ def test_the_lock_does_not_block_reading_the_files_bytes(tmp_path: Path) -> None
         os.close(fd)
 
 
+def test_a_permanent_lock_failure_raises_instead_of_waiting_forever(tmp_path: Path) -> None:
+    """Only contention is retried; a bad descriptor must surface at once (run in a child with a
+    deadline so a regression fails this test instead of hanging the suite)."""
+    probe = (
+        f"import os, sys; sys.path.insert(0, {str(REPO)!r}); from core import os_file_lock;"
+        f"fd = os.open({str(tmp_path / 'x.lock')!r}, os.O_CREAT | os.O_RDWR); os.close(fd);"
+        "\ntry:\n    os_file_lock.lock_exclusive(fd)\nexcept OSError:\n    print('RAISED')"
+    )
+    done = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, timeout=30)
+    assert done.stdout.strip() == "RAISED", done.stdout + done.stderr
+
+
 def test_the_former_fcntl_only_modules_import_on_this_platform() -> None:
     import importlib
 

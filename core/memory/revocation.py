@@ -53,8 +53,13 @@ def _share_delete_opener(path, flags):
     handle = create(os.fspath(path), generic_read_write, share_all, None, create_new, 0x80, None)
     if handle is None or handle == wintypes.HANDLE(-1).value:
         raise ctypes.WinError(ctypes.get_last_error())
-    # CREATE_NEW already enforced the exclusive create; open_osfhandle accepts only these flags.
-    return msvcrt.open_osfhandle(handle, flags & (os.O_RDONLY | os.O_APPEND | os.O_NOINHERIT))
+    # CREATE_NEW already enforced the exclusive create. Binary mode is explicit, never the CRT
+    # default: the lease marker must stay exactly b'armed\n' for `_check_leases`.
+    try:
+        return msvcrt.open_osfhandle(handle, os.O_BINARY | (flags & (os.O_APPEND | os.O_NOINHERIT)))
+    except BaseException:
+        ctypes.WinDLL('kernel32').CloseHandle(wintypes.HANDLE(handle))
+        raise
 
 
 def _open_new_lease(path: Path):

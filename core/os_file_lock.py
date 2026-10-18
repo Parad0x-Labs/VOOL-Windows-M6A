@@ -7,6 +7,7 @@ never blocks a reader of the file's actual bytes.
 """
 from __future__ import annotations
 
+import errno
 import os
 import time
 
@@ -17,6 +18,7 @@ except ImportError:  # Windows
     import msvcrt
 
 _WINDOWS_LOCK_OFFSET = 0x7FFFFFFE
+_CONTENTION_ERRNOS = frozenset({errno.EACCES, errno.EDEADLK, getattr(errno, "EDEADLOCK", errno.EDEADLK)})
 
 
 def try_lock_exclusive(fd: int) -> None:
@@ -41,7 +43,11 @@ def lock_exclusive(fd: int) -> None:
         try:
             try_lock_exclusive(fd)
             return
-        except OSError:
+        except OSError as exc:
+            # Only contention is worth waiting out (measured: EACCES on Windows 11). Any other
+            # failure is permanent and surfaces instead of hanging the caller forever.
+            if exc.errno not in _CONTENTION_ERRNOS:
+                raise
             time.sleep(0.02)
 
 

@@ -93,7 +93,7 @@ begin
     waits for the OS to release the file handles before extraction begins. A listener on 11435 that
     is not one of those processes belongs to someone else and is never stopped. }
   Exec('powershell.exe',
-    '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$r = $env:LOCALAPPDATA + ''\Programs\VOOL''; Get-CimInstance Win32_Process -EA SilentlyContinue | Where-Object { ($_.Name -eq ''python.exe'' -or $_.Name -eq ''pythonw.exe'') -and (($_.ExecutablePath -like ($r + ''*'')) -or ($_.CommandLine -like ''*vool_api_server.py*'') -or ($_.CommandLine -like ''*vool_window.py*'')) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA SilentlyContinue }; Start-Sleep -Milliseconds 900"',
+    '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$r = $env:LOCALAPPDATA + ''\Programs\VOOL''; Get-CimInstance Win32_Process -EA SilentlyContinue | Where-Object { ($_.Name -eq ''python.exe'' -or $_.Name -eq ''pythonw.exe'') -and (($_.ExecutablePath -like ($r + ''\*'')) -or ($_.CommandLine -like ''*vool_api_server.py*'') -or ($_.CommandLine -like ''*vool_window.py*'')) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA SilentlyContinue }; Start-Sleep -Milliseconds 900"',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Sleep(1500);
 end;
