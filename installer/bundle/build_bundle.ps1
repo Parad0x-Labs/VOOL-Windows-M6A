@@ -83,9 +83,12 @@ foreach ($d in @("apps", "core", "adapters", "storage", "network", "relay", "ret
   if (-not (Test-Path $src)) { throw "staging list names a package absent from the repo: $d" }
   Copy-Item $src (Join-Path $appDir $d) -Recurse -Force
 }
-# Canonical project grounding reads only this small allowlist. Ship the same sources in the
-# installed bundle so a release build has the grounding that a source checkout has.
-foreach ($relativePath in @("AGENT_HANDOVER.md", "README.md", "docs\SYSTEM_SPINE.md", "docs\STATUS.md", "docs\PROOF_PATH.md")) {
+# Canonical project grounding reads only this small allowlist (core/canonical_project_knowledge.py
+# _ALLOWLIST; tests/test_bundle_tooling.py keeps the two lists identical). Ship the same sources in
+# the installed bundle so a release build has the grounding that a source checkout has. The old
+# list named AGENT_HANDOVER.md (gitignored, never in a clean checkout, and never read at runtime)
+# and docs\PROOF_PATH.md (absent since the 0.6.0 public tree), so no clean build could succeed.
+foreach ($relativePath in @("README.md", "docs\SYSTEM_SPINE.md", "docs\STATUS.md", "docs\RUNTIME_ARCHITECTURE_CONTRACT.md")) {
   $src = Join-Path $RepoRoot $relativePath
   if (-not (Test-Path -LiteralPath $src -PathType Leaf)) {
     throw "Canonical grounding source missing: $relativePath"
