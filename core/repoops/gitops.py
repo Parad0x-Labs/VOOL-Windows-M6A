@@ -124,7 +124,8 @@ class GitRunner:
             return -1, "", f"git was not run: {refusal}"
         command = safe_git.hardened_argv(self.root, *argv)
         try:
-            completed = subprocess.run(command, capture_output=True, text=True, timeout=self.timeout)
+            completed = subprocess.run(command, capture_output=True, text=True, timeout=self.timeout,
+                                       env=safe_git.safe_env())
         except subprocess.TimeoutExpired:
             self.log.append({"argv": list(argv), "returncode": -1, "timed_out": True})
             return -1, "", f"git {' '.join(argv[:2])} timed out after {self.timeout}s"

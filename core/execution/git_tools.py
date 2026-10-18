@@ -234,6 +234,7 @@ def _run_git(argv: list[str], *, cwd: Path) -> dict[str, Any]:
             capture_output=True,
             text=True,
             timeout=20,
+            env=safe_git.safe_env(),
         )
     except subprocess.TimeoutExpired:
         return {"status": "timed_out", "returncode": -1, "stdout": "", "stderr": "git probe timed out after 20s"}
@@ -248,7 +249,8 @@ def _run_git(argv: list[str], *, cwd: Path) -> dict[str, Any]:
         return {"status": "refused_repository_config", "returncode": -1, "stdout": "",
                 "stderr": "the repository's own git config names programs git would run: " + ", ".join(executable_keys)}
     try:
-        result = subprocess.run(safe_git.read_only_argv(cwd, *argv), capture_output=True, text=True, timeout=20)
+        result = subprocess.run(safe_git.read_only_argv(cwd, *argv), capture_output=True, text=True, timeout=20,
+                                env=safe_git.safe_env())
     except subprocess.TimeoutExpired:
         return {
             "status": "timed_out",

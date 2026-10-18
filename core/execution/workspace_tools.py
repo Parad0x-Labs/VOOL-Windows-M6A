@@ -396,7 +396,8 @@ def apply_unified_diff_workspace(
         git_cmd = [git_available, *safe_git.hardening_args(), "-C", str(workspace_root), "apply",
                    "--whitespace=nowarn", "--recount", "-"]
         try:
-            git_result = subprocess.run(git_cmd, input=patch_text, text=True, capture_output=True, timeout=60)
+            git_result = subprocess.run(git_cmd, input=patch_text, text=True, capture_output=True, timeout=60,
+                                        env=safe_git.safe_env())
         except subprocess.TimeoutExpired:
             errors.append("git apply timed out after 60s")
             git_result = None

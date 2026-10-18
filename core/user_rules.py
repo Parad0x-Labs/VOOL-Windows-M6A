@@ -1235,6 +1235,7 @@ def _git_text(root: Path, *argv: str) -> str:
         completed = subprocess.run(
             safe_git.hardened_argv(root, *argv),
             capture_output=True,
+            env=safe_git.safe_env(),
             timeout=GIT_SCAN_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired as exc:
@@ -1675,7 +1676,7 @@ def _commit_all(rest: list[str]) -> bool:
 
 def _is_inside_repo(path: Path) -> bool:
     try:
-        completed = subprocess.run(safe_git.hardened_argv(path, "rev-parse", "--git-dir"), capture_output=True,
+        completed = subprocess.run(safe_git.hardened_argv(path, "rev-parse", "--git-dir"), capture_output=True, env=safe_git.safe_env(),
                                    timeout=GIT_SCAN_TIMEOUT_SECONDS)
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return False
