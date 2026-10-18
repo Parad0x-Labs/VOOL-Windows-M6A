@@ -409,6 +409,10 @@ class BundleSupervisor:
 
 
 def main() -> int:
+    # The launcher sets VOOL_HOME; a direct run (`--stop` by hand, or an installer step) does not,
+    # and the runtime home then fell back to <app>\app\.vool_local -- the preflight wrote its record
+    # into the program folder, which uninstall deletes. Resolve the same home the launcher does.
+    os.environ.setdefault("VOOL_HOME", str(native_runtime_home()))
     # C15: the ONE bounded unattended preflight — the .app supervisor is an unattended boot.
     from core.unattended_preflight import preflight
 
