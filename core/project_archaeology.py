@@ -56,6 +56,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from core import safe_git
+
 SCHEMA = "vool.archaeology.v1"
 
 UNTRUSTED_BEGIN = "[untrusted-history:begin]"
@@ -1088,12 +1090,17 @@ _GIT_READONLY_TAIL = (
 
 def _git(repo_root: str | Path, *args: str, timeout: float = 20.0) -> tuple[bool, str]:
     """One bounded READ-ONLY git probe. Only inspection verbs are ever used;
-    the archaeology surface has no authority over the working tree."""
+    the archaeology surface has no authority over the working tree.
+
+    Every probe is hardened like every other git route (core/safe_git.py): a repository's
+    own config cannot point git's fsmonitor, hooks, external diff, textconv or pager at a
+    program, and the environment carries no GIT_* overrides."""
     completed = subprocess.run(
-        ["git", "-C", str(repo_root), *args],
+        safe_git.read_only_argv(Path(repo_root), *args),
         capture_output=True,
         text=True,
         timeout=timeout,
+        env=safe_git.safe_env(),
     )
     return completed.returncode == 0, completed.stdout.strip()
 
