@@ -33,6 +33,36 @@ _WINDOWS_LOCK_OFFSET = 0x7FFFFFFE
 _WINDOWS = os.name == 'nt'
 
 
+def _share_delete_opener(path, flags):
+    """Windows: open the lease so it can be unlinked while still held and locked.
+
+    The CRT opens files without FILE_SHARE_DELETE, so `_disarm` could not remove a
+    lease whose handle still carries the barrier lock (WinError 32). Closing first
+    would expose an existing, unlocked lease that `_check_leases` rightly calls unclean.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    create = ctypes.WinDLL('kernel32', use_last_error=True).CreateFileW
+    create.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                       wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE)
+    create.restype = wintypes.HANDLE
+    generic_read_write = 0x80000000 | 0x40000000
+    share_all = 0x1 | 0x2 | 0x4  # FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
+    create_new = 1
+    handle = create(os.fspath(path), generic_read_write, share_all, None, create_new, 0x80, None)
+    if handle is None or handle == wintypes.HANDLE(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    # CREATE_NEW already enforced the exclusive create; open_osfhandle accepts only these flags.
+    return msvcrt.open_osfhandle(handle, flags & (os.O_RDONLY | os.O_APPEND | os.O_NOINHERIT))
+
+
+def _open_new_lease(path: Path):
+    if not _WINDOWS:
+        return path.open('x+b')
+    return open(path, 'x+b', opener=_share_delete_opener)
+
+
 def _flock(handle, *, blocking: bool = True) -> None:
     """Exclusive advisory lock on ``handle``; ``BlockingIOError`` when ``blocking`` is false and it is held."""
     if fcntl is not None:
@@ -446,7 +476,7 @@ def prepare(runtime_home=None, *, allow_initialize=False, arm=True,
         _check_leases(directory)
         if arm and directory not in _LEASES:
             path = directory / ('lease-' + uuid.uuid4().hex)
-            lease = path.open('x+b')
+            lease = _open_new_lease(path)
             try:
                 _flock(lease)
                 lease.write(b'armed\n')
