@@ -1254,6 +1254,13 @@ def _teardown_owned_runtime_and_exit(supervisor: object, owned_pid: dict[str, in
     os._exit(0)
 
 
+#: Termination signals this platform actually defines. Windows has no SIGHUP, and naming it
+#: raised AttributeError before any handler was installed, so the host crashed at launch.
+_TERMINATION_SIGNALS = tuple(
+    getattr(signal, name) for name in ("SIGTERM", "SIGINT", "SIGHUP") if hasattr(signal, name)
+)
+
+
 def _install_termination_handlers(supervisor: object, owned_pid: dict[str, int | None]) -> None:
     """SIGTERM/SIGINT/SIGHUP run the same teardown the normal-quit finally-block runs, then exit.
     The default disposition kills this host without unwinding, which is exactly how an external
@@ -1276,7 +1283,7 @@ def _install_termination_handlers(supervisor: object, owned_pid: dict[str, int |
                 supervisor, owned_pid, f"{signal.Signals(signum).name} received; tearing down the owned runtime"
             )
 
-        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        for sig in _TERMINATION_SIGNALS:
             with contextlib.suppress(Exception):
                 signal.signal(sig, _terminate)
         return
@@ -1301,7 +1308,7 @@ def _install_termination_handlers(supervisor: object, owned_pid: dict[str, int |
                 supervisor, owned_pid, f"{signal.Signals(signum).name} received; tearing down the owned runtime"
             )
 
-        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        for sig in _TERMINATION_SIGNALS:
             with contextlib.suppress(Exception):
                 signal.signal(sig, _fallback_terminate)
         return
@@ -1313,7 +1320,7 @@ def _install_termination_handlers(supervisor: object, owned_pid: dict[str, int |
         # locks held.
         return
 
-    for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    for sig in _TERMINATION_SIGNALS:
         with contextlib.suppress(Exception):
             signal.signal(sig, _mark)
 

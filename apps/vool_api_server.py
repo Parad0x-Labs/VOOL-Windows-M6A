@@ -588,7 +588,10 @@ def main() -> int:
     import faulthandler
     import signal
 
-    faulthandler.register(signal.SIGUSR1, all_threads=True, file=sys.stderr)
+    # Windows has neither SIGUSR1 nor faulthandler.register; calling them killed the server
+    # before it could start. The stack-dump hook is a POSIX diagnostic, not a startup requirement.
+    if hasattr(faulthandler, "register") and hasattr(signal, "SIGUSR1"):
+        faulthandler.register(signal.SIGUSR1, all_threads=True, file=sys.stderr)
     # C15: the ONE bounded unattended preflight, before any bootstrap can reach an OS
     # credential API. A scratch/synthetic home gets non-interactive storage pinned; the
     # operator's established home is recorded, never rewritten.
