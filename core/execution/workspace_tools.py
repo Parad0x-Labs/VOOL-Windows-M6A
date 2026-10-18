@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from core import safe_git
+
 from .artifacts import (
     DestinationChangedError,
     ReviewedBaseChangedError,
@@ -383,7 +385,16 @@ def apply_unified_diff_workspace(
     errors: list[str] = []
     git_available = shutil.which("git")
     if git_available:
-        git_cmd = [git_available, "-C", str(workspace_root), "apply", "--whitespace=nowarn", "--recount", "-"]
+        # The repository's own config could make `git apply` run a filter program; such a
+        # repository skips git and uses the Python engine below (core/safe_git.py).
+        try:
+            if safe_git.executable_local_config(workspace_root):
+                git_available = None
+        except (OSError, RuntimeError, subprocess.TimeoutExpired):
+            git_available = None
+    if git_available:
+        git_cmd = [git_available, *safe_git.hardening_args(), "-C", str(workspace_root), "apply",
+                   "--whitespace=nowarn", "--recount", "-"]
         try:
             git_result = subprocess.run(git_cmd, input=patch_text, text=True, capture_output=True, timeout=60)
         except subprocess.TimeoutExpired:

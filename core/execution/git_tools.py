@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from core import safe_git
+
 from .artifacts import build_command_artifact, truncate_text
 from .workspace_tools import resolve_workspace_path
 
@@ -12,6 +14,8 @@ from .workspace_tools import resolve_workspace_path
 def git_status_workspace(arguments: dict[str, Any], *, workspace_root: Path) -> dict[str, Any]:
     target = _git_target(arguments, workspace_root=workspace_root)
     result = _run_git(["status", "--short", "--branch"], cwd=target)
+    if result["status"] == "refused_repository_config":
+        return _refused_repository_config(target, result)
     if result["status"] == "not_git_repo":
         return {
             "ok": False,
@@ -55,6 +59,8 @@ def git_diff_workspace(arguments: dict[str, Any], *, workspace_root: Path) -> di
     if path:
         command.extend(["--", path])
     result = _run_git(command, cwd=target)
+    if result["status"] == "refused_repository_config":
+        return _refused_repository_config(target, result)
     if result["status"] == "not_git_repo":
         return {
             "ok": False,
@@ -92,6 +98,8 @@ def git_diff_workspace(arguments: dict[str, Any], *, workspace_root: Path) -> di
 def git_summary_workspace(arguments: dict[str, Any], *, workspace_root: Path) -> dict[str, Any]:
     target = _git_target(arguments, workspace_root=workspace_root)
     probe = _run_git(["rev-parse", "--show-toplevel"], cwd=target)
+    if probe["status"] == "refused_repository_config":
+        return _refused_repository_config(target, probe)
     if probe["status"] == "not_git_repo":
         return {
             "ok": False,
@@ -202,13 +210,27 @@ def _git_target(arguments: dict[str, Any], *, workspace_root: Path) -> Path:
     return resolve_workspace_path(raw, workspace_root=workspace_root)
 
 
+def _refused_repository_config(target: Path, result: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "status": "refused_repository_config",
+        "response_text": (
+            f"Git was not run in `{target}`: {result['stderr']}. VOOL does not let a repository's own "
+            "configuration start programs. Remove those settings from the repository's .git/config "
+            "if you trust them."
+        ),
+        "details": {"cwd": str(target), "stdout": "", "stderr": str(result["stderr"])},
+    }
+
+
 def _run_git(argv: list[str], *, cwd: Path) -> dict[str, Any]:
     # Bounded like every other execution tool: an unbounded git on a pathological
     # repo (huge history, networked remote hints) hangs the tool call and the
     # turn, and the dispatch layer cannot cancel an in-flight subprocess.
+    # Hardened: a repository's own config must not make git run programs (core/safe_git.py).
     try:
         probe = subprocess.run(
-            ["git", "-C", str(cwd), "rev-parse", "--show-toplevel"],
+            safe_git.read_only_argv(cwd, "rev-parse", "--show-toplevel"),
             capture_output=True,
             text=True,
             timeout=20,
@@ -218,7 +240,15 @@ def _run_git(argv: list[str], *, cwd: Path) -> dict[str, Any]:
     if probe.returncode != 0:
         return {"status": "not_git_repo", "returncode": probe.returncode, "stdout": "", "stderr": probe.stderr}
     try:
-        result = subprocess.run(["git", "-C", str(cwd), *argv], capture_output=True, text=True, timeout=20)
+        executable_keys = safe_git.executable_local_config(cwd)
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+        return {"status": "refused_repository_config", "returncode": -1, "stdout": "",
+                "stderr": f"the repository's git config could not be checked ({type(exc).__name__})"}
+    if executable_keys:
+        return {"status": "refused_repository_config", "returncode": -1, "stdout": "",
+                "stderr": "the repository's own git config names programs git would run: " + ", ".join(executable_keys)}
+    try:
+        result = subprocess.run(safe_git.read_only_argv(cwd, *argv), capture_output=True, text=True, timeout=20)
     except subprocess.TimeoutExpired:
         return {
             "status": "timed_out",

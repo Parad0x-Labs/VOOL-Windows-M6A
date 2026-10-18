@@ -19,6 +19,8 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from core import safe_git
+
 #: A bounded git call. An unbounded git on a pathological repo hangs the tool call and the turn,
 #: and the dispatch layer cannot cancel an in-flight subprocess.
 GIT_TIMEOUT_SECONDS = 30
@@ -32,6 +34,12 @@ DEFAULT_DENIED = {
     "force_push": "a force push rewrites published history; it needs an explicit operator grant",
     "branch_delete": "deleting a branch discards work that may exist nowhere else; it needs an explicit operator grant",
 }
+
+#: Subcommands that only read. Anything else may run hooks, so it is refused when one would run.
+_READ_ONLY_SUBCOMMANDS = frozenset({
+    "rev-parse", "status", "diff", "log", "show", "merge-base", "for-each-ref", "ls-files",
+    "cat-file", "rev-list", "remote", "describe", "symbolic-ref",
+})
 
 
 @dataclass(frozen=True)
@@ -94,8 +102,27 @@ class GitRunner:
             return None
         return GitResult(operation, False, "refused_by_user_rule", (), head=self.head(), detail=verdict.refusal.reason)
 
+    def _repository_refusal(self, *, mutating: bool) -> str:
+        """Why git must not run in this repository at all ("" when it may). A repository's own
+        config must not make git start programs, and a mutation must not run hooks unsandboxed
+        (core/safe_git.py)."""
+        try:
+            keys = safe_git.executable_local_config(self.root, timeout=self.timeout)
+            hooks = safe_git.active_hooks(self.root, timeout=self.timeout) if mutating else []
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+            return f"the repository's git configuration could not be checked ({type(exc).__name__})"
+        if keys:
+            return "the repository's own git config names programs git would run: " + ", ".join(keys)
+        if hooks:
+            return "this repository has git hooks VOOL would have to run unsandboxed: " + ", ".join(hooks)
+        return ""
+
     def run(self, *argv: str) -> tuple[int, str, str]:
-        command = ["git", "-C", str(self.root), *argv]
+        refusal = self._repository_refusal(mutating=bool(argv) and argv[0] not in _READ_ONLY_SUBCOMMANDS)
+        if refusal:
+            self.log.append({"argv": list(argv), "returncode": -1, "refused": True})
+            return -1, "", f"git was not run: {refusal}"
+        command = safe_git.hardened_argv(self.root, *argv)
         try:
             completed = subprocess.run(command, capture_output=True, text=True, timeout=self.timeout)
         except subprocess.TimeoutExpired:

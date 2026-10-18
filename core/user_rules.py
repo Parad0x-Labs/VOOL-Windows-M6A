@@ -35,6 +35,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from core import safe_git
 from storage.db import get_connection
 
 __all__ = [
@@ -1222,9 +1223,17 @@ class _ScanIncomplete(RuntimeError):
 
 
 def _git_text(root: Path, *argv: str) -> str:
+    # The repository's own config must not make this scan start programs (core/safe_git.py); a
+    # repository whose config names any is an incomplete scan, which fails closed.
+    try:
+        executable_keys = safe_git.executable_local_config(root, timeout=GIT_SCAN_TIMEOUT_SECONDS)
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+        raise _ScanIncomplete("the repository's git config could not be checked") from exc
+    if executable_keys:
+        raise _ScanIncomplete("the repository's own git config names programs git would run: " + ", ".join(executable_keys))
     try:
         completed = subprocess.run(
-            ["git", "-C", str(root), *argv],
+            safe_git.hardened_argv(root, *argv),
             capture_output=True,
             timeout=GIT_SCAN_TIMEOUT_SECONDS,
         )
@@ -1666,7 +1675,7 @@ def _commit_all(rest: list[str]) -> bool:
 
 def _is_inside_repo(path: Path) -> bool:
     try:
-        completed = subprocess.run(["git", "-C", str(path), "rev-parse", "--git-dir"], capture_output=True,
+        completed = subprocess.run(safe_git.hardened_argv(path, "rev-parse", "--git-dir"), capture_output=True,
                                    timeout=GIT_SCAN_TIMEOUT_SECONDS)
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return False
