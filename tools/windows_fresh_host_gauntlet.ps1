@@ -160,8 +160,8 @@ function Invoke-FocusedRegression {
 
 function Invoke-WindowsRuntimeRegression {
     # The runtime itself on Windows: the API server and window start, the forget authority,
-    # draft/credential locks, POSIX-only calls and the installer's process ownership. Run in
-    # UTF-8 mode, as the installed app's launcher runs every bundled Python.
+    # draft/credential locks, POSIX-only calls and the installer's and hard stop's process
+    # ownership. Run in UTF-8 mode, as the installed app's launcher runs every bundled Python.
     $python = Resolve-Python
     $tests = @(
         "tests\test_windows_runtime_startup.py",
@@ -169,6 +169,7 @@ function Invoke-WindowsRuntimeRegression {
         "tests\test_os_file_lock.py",
         "tests\test_windows_utf8_mode.py",
         "tests\test_windows_installer_ownership.py",
+        "tests\test_windows_stop_spares_foreign_listeners.py",
         "tests\test_windows_junction_boundary.py",
         "tests\test_windows_write_gate.py",
         "tests\test_git_tools_repository_config_cannot_run_programs.py",

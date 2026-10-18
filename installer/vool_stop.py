@@ -98,11 +98,20 @@ def kill_watchdog_processes(run: Runner) -> None:
 
 
 def kill_listener(run: Runner, port: int) -> int | None:
-    """Tree-kill whatever process listens on ``port``. Returns the killed pid, or None."""
+    """Tree-kill the VOOL API process listening on ``port``. Returns the killed pid, or None.
+
+    Only a python/pythonw running VOOL's API server is VOOL's (the same filter Start_VOOL.bat and
+    the bundle supervisor use). Anything else holding the port -- a user's own OpenClaw gateway
+    on 18789 (OpenClaw is retired from VOOL) or an unrelated local server -- is left running.
+    """
     res = _run(run, [
         "powershell", "-NoProfile", "-Command",
         f"$p = Get-NetTCPConnection -LocalPort {int(port)} -State Listen -ErrorAction SilentlyContinue "
-        "| Select-Object -First 1 -ExpandProperty OwningProcess; if ($p) { $p } else { '' }",
+        "| Select-Object -First 1 -ExpandProperty OwningProcess; "
+        "$v = if ($p) { Get-CimInstance Win32_Process -Filter \"ProcessId=$p\" -ErrorAction SilentlyContinue "
+        "| Where-Object { ($_.Name -eq 'python.exe' -or $_.Name -eq 'pythonw.exe') "
+        "-and (($_.CommandLine -like '*apps.vool_api_server*') -or ($_.CommandLine -like '*vool_api_server.py*')) } }; "
+        "if ($v) { $p } else { '' }",
     ])
     out = _stdout(res).strip()
     pid = int(out) if out.isdigit() else 0
