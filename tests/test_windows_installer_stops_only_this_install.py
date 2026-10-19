@@ -1,17 +1,24 @@
 """The installer, Stop button and bundle supervisor stop only this installation's Python."""
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import os
 import re
 import shutil
+import socket
 import subprocess
+import sys
+import time
 from inspect import signature
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+
+from core.process_liveness import pid_alive
+from tests.test_windows_stop_root_quoting import installer_escaped_install_dir, installer_stop_parameters
 
 pytestmark = pytest.mark.skipif(
     os.name != "nt" or shutil.which("powershell.exe") is None,
@@ -56,8 +63,7 @@ def _installer_command(install_root: Path) -> str:
     root_setup = line.index("; $rootPrefix")
     command_end = line.rindex('"')
     production_tail = line[root_setup:command_end].replace("''", "'")
-    inno_escaped_root = str(install_root).replace("'", "''")
-    return "$r = '" + inno_escaped_root + "'" + production_tail
+    return "$r = '" + installer_escaped_install_dir(text, str(install_root)) + "'" + production_tail
 
 
 def _stop_button_command(project_root: Path) -> str:
@@ -554,3 +560,286 @@ def test_supervisor_stops_only_its_installation_api_and_excludes_ancestors(
         expected_window=False,
         supervisor=True,
     )
+
+
+# Real processes. The tests above evaluate each predicate against fake process rows. These start
+# stand-in VOOL processes in each layout and run the production stop commands for real: the Stop
+# button's listener and pidfile kills, the supervisor's stale-API cleanup and the installer's stop.
+_FAKE_VOOL_PROCESS = '''\
+"""Stands in for one VOOL process: it listens on a free loopback port until it is killed."""
+import os
+import socket
+import time
+
+server = socket.socket()
+server.bind(("127.0.0.1", 0))
+server.listen()
+ready = os.environ["VOOL_TEST_READY_FILE"]
+with open(ready + ".tmp", "w", encoding="utf-8") as handle:
+    handle.write(f"{os.getpid()} {server.getsockname()[1]}")
+os.replace(ready + ".tmp", ready)
+while True:
+    time.sleep(1)
+'''
+# A space, an ASCII apostrophe, curly quotes and [brackets] in both roots.
+REAL_CHECKOUT_NAME = "VOOL's \u2018checkout\u2019 [dev]"
+REAL_INSTALL_NAME = "VOOL\u2019s \u201aprod\u201b [x]"
+
+
+class _Running:
+    def __init__(self, label: str, popen: subprocess.Popen[bytes], log: Path) -> None:
+        self.label = label
+        self.popen = popen
+        self.log = log
+        self.pid = 0  # the process that listens: a venv launcher's child, not the launcher itself
+        self.port = 0
+
+
+class _FakeVool:
+    def __init__(self, directory: Path) -> None:
+        directory.mkdir(parents=True)
+        self.directory = directory
+        self.running: list[_Running] = []
+
+    def start(self, label: str, args: list[str], *, cwd: Path, env: dict[str, str]) -> _Running:
+        ready = self.directory / f"{len(self.running)}.ready"
+        log = self.directory / f"{len(self.running)}.log"
+        with log.open("wb") as output:
+            popen = subprocess.Popen(
+                args,
+                cwd=cwd,
+                env={**env, "VOOL_TEST_READY_FILE": str(ready)},
+                stdin=subprocess.DEVNULL,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+            )
+        running = _Running(label, popen, log)
+        self.running.append(running)
+        deadline = time.monotonic() + 60
+        while not ready.exists():
+            assert popen.poll() is None, f"{label} exited with {popen.returncode}: {_log_text(log)}"
+            assert time.monotonic() < deadline, f"{label} never started listening: {_log_text(log)}"
+            time.sleep(0.05)
+        running.pid, running.port = (int(part) for part in ready.read_text(encoding="utf-8").split())
+        return running
+
+    def close(self) -> None:
+        for running in self.running:
+            if running.popen.poll() is None:
+                subprocess.run(
+                    ["taskkill", "/PID", str(running.popen.pid), "/T", "/F"],
+                    capture_output=True,
+                    check=False,
+                )
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                running.popen.wait(timeout=15)
+
+
+@pytest.fixture
+def fake_vool(tmp_path: Path):
+    processes = _FakeVool(tmp_path / "processes")
+    try:
+        yield processes
+    finally:
+        processes.close()
+
+
+def _log_text(log: Path) -> str:
+    return log.read_bytes().decode("utf-8", "replace")[-2000:]
+
+
+def _environment(**extra: str) -> dict[str, str]:
+    inherited = {"PYTHONHOME", "PYTHONPATH", "__PYVENV_LAUNCHER__"}
+    environment = {key: value for key, value in os.environ.items() if key.upper() not in inherited}
+    environment.update(extra)
+    return environment
+
+
+def _describe(pid: int) -> str:
+    query = (
+        f"$p = Get-CimInstance Win32_Process -Filter 'ProcessId={pid}'; "
+        "if ($p) { $parent = Get-CimInstance Win32_Process -Filter \"ProcessId=$($p.ParentProcessId)\"; "
+        "'exe=' + $p.ExecutablePath + ' | command=' + $p.CommandLine + ' | parent=' + $parent.ExecutablePath } "
+        "else { 'no such process' }"
+    )
+    result = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", query],
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    return (result.stdout or result.stderr).strip()
+
+
+def _accepts(port: int) -> bool:
+    with socket.socket() as probe:
+        probe.settimeout(3)
+        return probe.connect_ex(("127.0.0.1", port)) == 0
+
+
+def _assert_still_running(*processes: _Running) -> None:
+    for running in processes:
+        assert pid_alive(running.pid) and _accepts(running.port), f"{running.label} was stopped"
+
+
+def _assert_stopped(running: _Running) -> None:
+    deadline = time.monotonic() + 20
+    while pid_alive(running.pid):
+        assert time.monotonic() < deadline, f"{running.label} is still running: {_describe(running.pid)}"
+        time.sleep(0.1)
+    assert not _accepts(running.port), f"{running.label} still listens on {running.port}"
+
+
+def _pidfile(tmp_path: Path, running: _Running) -> Path:
+    pidfile = tmp_path / "pidfiles" / f"{running.pid}.pid"
+    pidfile.parent.mkdir(exist_ok=True)
+    pidfile.write_text(str(running.pid), encoding="utf-8")
+    return pidfile
+
+
+def _copy_interpreter(destination: Path) -> None:
+    # The bundle embeds a real CPython, not a venv launcher: copy the base interpreter and its DLLs.
+    base = Path(sys.base_prefix)
+    assert (base / "python.exe").is_file() and (base / "pythonw.exe").is_file(), f"no CPython at {base}"
+    destination.mkdir(parents=True)
+    for source in (base / "python.exe", base / "pythonw.exe", *base.glob("*.dll")):
+        shutil.copy2(source, destination / source.name)
+
+
+def _bundle(root: Path) -> Path:
+    _copy_interpreter(root / "python")
+    for script in (
+        root / "app" / "apps" / "vool_api_server.py",
+        root / "vool_window.py",
+        root / "bundle_supervisor.py",
+    ):
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text(_FAKE_VOOL_PROCESS, encoding="utf-8")
+    return root
+
+
+def _start_bundle(fake_vool: _FakeVool, root: Path, role: str, *, label: str) -> _Running:
+    # The same command lines as VOOL.cmd and bundle_supervisor._start. The stand-in API listens on
+    # a free port, whatever its --port says.
+    python = root / "python"
+    commands = {
+        "supervisor": (
+            [str(python / "pythonw.exe"), str(root / "bundle_supervisor.py"), "--root", str(root)],
+            root,
+        ),
+        "api": (
+            [str(python / "python.exe"), str(root / "app" / "apps" / "vool_api_server.py"), "--port", "11435"],
+            root / "app",
+        ),
+        "window": ([str(python / "pythonw.exe"), str(root / "vool_window.py")], root),
+    }
+    args, cwd = commands[role]
+    return fake_vool.start(label, args, cwd=cwd, env=_environment(PYTHONHOME=sys.base_prefix))
+
+
+def _checkout(root: Path) -> Path:
+    (root / "apps").mkdir(parents=True)
+    (root / "apps" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "apps" / "vool_api_server.py").write_text(_FAKE_VOOL_PROCESS, encoding="utf-8")
+    subprocess.run(
+        [sys.executable, "-m", "venv", "--without-pip", str(root / ".venv")],
+        check=True,
+        capture_output=True,
+        env=_environment(),
+        timeout=300,
+    )
+    return root
+
+
+def _start_checkout_api(fake_vool: _FakeVool, root: Path, *, label: str) -> _Running:
+    # Start_VOOL.bat's start: the venv's pythonw.exe with -m, PYTHONPATH at the checkout.
+    running = fake_vool.start(
+        label,
+        [str(root / ".venv" / "Scripts" / "pythonw.exe"), "-m", "apps.vool_api_server"],
+        cwd=root,
+        env=_environment(PYTHONPATH=str(root)),
+    )
+    assert running.pid != running.popen.pid, (
+        f"{label}: the venv's pythonw.exe listened itself instead of starting the base interpreter: "
+        + _describe(running.pid)
+    )
+    return running
+
+
+def _run_installer_stop(install_root: Path) -> None:
+    iss = (ROOT / "installer" / "bundle" / "vool.iss").read_text(encoding="utf-8")
+    # Setup's Exec hands CreateProcess "<file>" <params>; only Setup's own Pascal is modelled here.
+    command_line = '"powershell.exe" ' + installer_stop_parameters(iss, str(install_root))
+    result = subprocess.run(command_line, capture_output=True, check=False, timeout=120)
+    assert result.returncode == 0, result.stderr.decode("utf-8", "replace") or result.stdout.decode("utf-8", "replace")
+
+
+def test_a_checkout_api_started_through_its_venv_launcher_is_stopped_for_real(
+    tmp_path: Path,
+    fake_vool: _FakeVool,
+) -> None:
+    checkout = _checkout(tmp_path / REAL_CHECKOUT_NAME)
+    sibling = _checkout(tmp_path / (REAL_CHECKOUT_NAME + "-dev"))
+    other = _start_checkout_api(fake_vool, sibling, label="sibling checkout api")
+
+    api = _start_checkout_api(fake_vool, checkout, label="checkout api")
+    assert vool_stop.kill_listener(subprocess.run, api.port, checkout) == api.pid, _describe(api.pid)
+    _assert_stopped(api)
+    api.popen.wait(timeout=15)  # the launcher ends with its child
+    assert vool_stop.kill_listener(subprocess.run, other.port, checkout) is None
+    _assert_still_running(other)
+
+    api = _start_checkout_api(fake_vool, checkout, label="checkout api, pidfile")
+    assert vool_stop.kill_api_by_pidfile(subprocess.run, _pidfile(tmp_path, api), checkout) == api.pid, (
+        _describe(api.pid)
+    )
+    _assert_stopped(api)
+    assert vool_stop.kill_api_by_pidfile(subprocess.run, _pidfile(tmp_path, other), checkout) is None
+    _assert_still_running(other)
+
+
+def test_every_bundle_stop_stops_only_this_install_for_real(tmp_path: Path, fake_vool: _FakeVool) -> None:
+    app = _bundle(tmp_path / "Programs" / REAL_INSTALL_NAME)
+    sibling = _bundle(tmp_path / "Programs" / (REAL_INSTALL_NAME + "-dev"))
+    worker = tmp_path / "elsewhere" / "worker.py"
+    worker.parent.mkdir()
+    worker.write_text(_FAKE_VOOL_PROCESS, encoding="utf-8")
+    supervisor = _start_bundle(fake_vool, app, "supervisor", label="supervisor")
+    window = _start_bundle(fake_vool, app, "window", label="window host")
+    sibling_api = _start_bundle(fake_vool, sibling, "api", label="sibling install api")
+    others = [
+        sibling_api,
+        _start_bundle(fake_vool, sibling, "supervisor", label="sibling install supervisor"),
+        _start_bundle(fake_vool, sibling, "window", label="sibling install window host"),
+        fake_vool.start("unrelated python", [sys.executable, str(worker)], cwd=worker.parent, env=_environment()),
+    ]
+
+    # The /stopall brake runs the Stop module at the bundle's code root, {app}\app.
+    api = _start_bundle(fake_vool, app, "api", label="api")
+    assert vool_stop.kill_listener(subprocess.run, api.port, app / "app") == api.pid, _describe(api.pid)
+    _assert_stopped(api)
+    assert vool_stop.kill_listener(subprocess.run, sibling_api.port, app / "app") is None
+    _assert_still_running(supervisor, window, *others)
+
+    api = _start_bundle(fake_vool, app, "api", label="api, pidfile")
+    assert vool_stop.kill_api_by_pidfile(subprocess.run, _pidfile(tmp_path, api), app / "app") == api.pid
+    _assert_stopped(api)
+    assert vool_stop.kill_api_by_pidfile(subprocess.run, _pidfile(tmp_path, sibling_api), app / "app") is None
+    _assert_still_running(supervisor, window, *others)
+
+    # The supervisor clears a stale API before each API start, at its own --root.
+    api = _start_bundle(fake_vool, app, "api", label="stale api")
+    cleaner = object.__new__(bundle_supervisor.BundleSupervisor)
+    cleaner.root = app
+    cleaner._log = lambda message: pytest.fail(message)
+    cleaner._clear_stale_api_processes()
+    _assert_stopped(api)
+    _assert_still_running(supervisor, window, *others)
+
+    # Setup stops every process of this install before it replaces any file.
+    api = _start_bundle(fake_vool, app, "api", label="api, installer")
+    _run_installer_stop(app)
+    for running in (api, window, supervisor):
+        _assert_stopped(running)
+    _assert_still_running(*others)
