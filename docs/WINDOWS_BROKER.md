@@ -193,12 +193,21 @@ Not covered by any broker file operation:
 This describes the contract Step 3 needs, not what the gate does today. At 1c26068 the gate's
 `refusal()` returns allow or refuse and hands over no roots, and for `repo.git` and
 `workspace.apply_unified_diff` it checks only the chat's workspace (`_GATED`:32, 35 are empty;
-contracts gaps 14 and 15). Job 6 is changing that gate now. Step 3 then needs a gate function that
-returns the exact roots it approved for a call, and the broker uses those and nothing wider:
+contracts gaps 14 and 15). Job 6 is changing that gate now: it makes its resolver a public
+function in core/windows_write_gate.py, called by `refusal()`, that returns for each call exactly
+where its writes land (for `repo.git`, the repository's top plus git's own folders; for a patch,
+every path touched, rename and copy sources included). Step 3 takes the broker's roots from that
+same function, with no second API, and the broker uses those and nothing wider:
 - `repo.git` in the launcher: write roots are the top folder (`git rev-parse --show-toplevel`),
   the git dir (`--absolute-git-dir`) and the common dir (`--git-common-dir`; a linked worktree
-  keeps its git dir and objects under the main repository's `.git`). Every one must be a root the
-  gate approved. Whether git runs at all inside an AppContainer is unknown (Git for Windows reads
+  keeps its git dir and objects under the main repository's `.git`), as git itself resolves them,
+  never inferred from where `.git` sits. A repository's own config (`core.worktree`) can move
+  git's top to any folder that contains the workspace even when `.git` is inside the flagged
+  folder, and in Auto mode VOOL can create such a `.git` with no ask; a rename patch then moved a
+  file from ~/Documents into the flagged folder (found in the contracts doc's seventh review, re-run
+  by Job 6). Every resolved folder must be a root the gate approved; Job 6 may also refuse a
+  repository whose work tree lies outside the workspace. Whether git runs at all inside an
+  AppContainer is unknown (Git for Windows reads
   `%USERPROFILE%\.gitconfig`, which an AppContainer cannot read, and needs its own folders under
   Program Files); a test must show it before Step 3 relies on it.
 - `workspace.apply_unified_diff`: proposed, apply the patch through `apply_batch` (the broker's
