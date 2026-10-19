@@ -209,8 +209,11 @@ def test_bundle_supervisor_clears_stale_api_processes_before_bundle_start(tmp_pa
     assert start.called
     command = run.call_args.args[0]
     assert command[0] == "powershell.exe"
-    assert "*apps.vool_api_server*" in command[-1]
-    assert "*vool_api_server.py*" in command[-1]
+    # Only this bundle's own API script, as python's script argument under the bundle root: the
+    # wildcard match on any command line that merely mentions the server is gone.
+    assert f"$r = '{root}'" in command[-1]
+    assert "[regex]::Escape($rootPrefix + 'app\\apps\\vool_api_server.py')" in command[-1]
+    assert "-like" not in command[-1]
     assert "Stop-Process" in command[-1]
 
 

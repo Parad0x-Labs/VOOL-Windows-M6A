@@ -40,6 +40,15 @@ WATCHDOG_TASK = "VOOL_Daemon"
 API_PORT = 11435
 GATEWAY_PORT = 18789
 STOPPED_MARKER = ".vool_stopped"
+_WINDOWS_PYTHON_ARGUMENT_PREFIX = (
+    r'^(?:\x22(?:[^\x22]*\\)?pythonw?\.exe\x22|(?:[^\s\x22]*\\)?pythonw?\.exe)'
+    r'(?:\s+-[bBdEhIiOPqRsSuvVx]+'
+    r'|\s+-W(?:\s+\x22[^\x22]*\x22|\s+\S+|[^\s\x22]+)'
+    r'|\s+-X(?:\s+\x22[^\x22]*\x22|\s+\S+|[^\s\x22]+)'
+    r'|\s+--check-hash-based-pycs\s+(?:\x22[^\x22]*\x22|\S+))*'
+)
+_WINDOWS_SCRIPT_ARGUMENT_PREFIX = _WINDOWS_PYTHON_ARGUMENT_PREFIX + r'\s+\x22?'
+_WINDOWS_MODULE_ARGUMENT_PREFIX = _WINDOWS_PYTHON_ARGUMENT_PREFIX + r'\s+-m\s+apps\.vool_api_server(?:\s|$)'
 
 Runner = Callable[..., Any]
 
@@ -58,12 +67,6 @@ def _stdout(res: Any) -> str:
 def _pidfile(project_root: Path, vool_home: Path | None) -> Path:
     data = (vool_home / "data") if vool_home else (project_root / "data")
     return data / "vool_api.pid"
-
-
-def _pid_is_python(run: Runner, pid: int) -> bool:
-    res = _run(run, ["tasklist", "/FI", f"PID eq {int(pid)}", "/FO", "CSV", "/NH"])
-    out = _stdout(res).lower()
-    return ("python.exe" in out) or ("pythonw.exe" in out)
 
 
 def disable_watchdog(run: Runner, *, task: str = WATCHDOG_TASK) -> None:
@@ -97,20 +100,41 @@ def kill_watchdog_processes(run: Runner) -> None:
     ])
 
 
-def kill_listener(run: Runner, port: int) -> int | None:
+# PowerShell ends a single-quoted string at the curly quotes U+2018, U+2019, U+201A and U+201B as
+# well as at the ASCII apostrophe, and reads any of them doubled as that one character.
+_POWERSHELL_SINGLE_QUOTES = "'\u2018\u2019\u201a\u201b"
+
+
+def _windows_install_root_literal(install_root: Path) -> str:
+    """Return a PowerShell single-quoted path literal for this VOOL installation."""
+    text = "".join(c + c if c in _POWERSHELL_SINGLE_QUOTES else c for c in str(install_root))
+    return "'" + text + "'"
+
+
+def kill_listener(run: Runner, port: int, install_root: Path) -> int | None:
     """Tree-kill the VOOL API process listening on ``port``. Returns the killed pid, or None.
 
-    Only a python/pythonw running VOOL's API server is VOOL's (the same filter Start_VOOL.bat and
-    the bundle supervisor use). Anything else holding the port -- a user's own OpenClaw gateway
-    on 18789 (OpenClaw is retired from VOOL) or an unrelated local server -- is left running.
+    Only this installation's Python is VOOL's: a python/pythonw whose exe lives under the install
+    root, or that runs the root's API script, or that runs ``-m apps.vool_api_server`` with a
+    parent under the root (a source checkout's venv launcher). Anything else holding the port -- a
+    user's own OpenClaw gateway on 18789 or an unrelated local server -- is left running.
     """
     res = _run(run, [
         "powershell", "-NoProfile", "-Command",
+        f"$r = {_windows_install_root_literal(Path(install_root))}; "
+        "$rootPrefix = $r.TrimEnd([char[]]@(92,47)) + [char]92; "
+        "$script = [regex]::Escape($rootPrefix + 'apps\\vool_api_server.py'); "
+        f"$scriptArgument = '{_WINDOWS_SCRIPT_ARGUMENT_PREFIX}' + $script + '(?:\\x22|\\s|$)'; "
+        f"$moduleCommand = '{_WINDOWS_MODULE_ARGUMENT_PREFIX}'; "
         f"$p = Get-NetTCPConnection -LocalPort {int(port)} -State Listen -ErrorAction SilentlyContinue "
         "| Select-Object -First 1 -ExpandProperty OwningProcess; "
         "$v = if ($p) { Get-CimInstance Win32_Process -Filter \"ProcessId=$p\" -ErrorAction SilentlyContinue "
-        "| Where-Object { ($_.Name -eq 'python.exe' -or $_.Name -eq 'pythonw.exe') "
-        "-and (($_.CommandLine -like '*apps.vool_api_server*') -or ($_.CommandLine -like '*vool_api_server.py*')) } }; "
+        "| Where-Object { ($_.Name -ieq 'python.exe' -or $_.Name -ieq 'pythonw.exe') "
+        "-and (([string]$_.ExecutablePath).StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase) "
+        "-or ([string]$_.CommandLine -match $scriptArgument) "
+        "-or (([string]$_.CommandLine -match $moduleCommand) "
+        "-and ([string](Get-CimInstance Win32_Process -Filter \"ProcessId=$($_.ParentProcessId)\" "
+        "-ErrorAction SilentlyContinue).ExecutablePath).StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase))) } }; "
         "if ($v) { $p } else { '' }",
     ])
     out = _stdout(res).strip()
@@ -121,7 +145,7 @@ def kill_listener(run: Runner, port: int) -> int | None:
     return None
 
 
-def kill_api_by_pidfile(run: Runner, pidfile: Path) -> int | None:
+def kill_api_by_pidfile(run: Runner, pidfile: Path, install_root: Path) -> int | None:
     if not pidfile.exists():
         return None
     try:
@@ -130,8 +154,24 @@ def kill_api_by_pidfile(run: Runner, pidfile: Path) -> int | None:
         return None
     if pid <= 0 or pid == os.getpid():
         return None
-    if not _pid_is_python(run, pid):
-        return None  # stale/reused pid -> never kill an unrelated process
+    command = (
+        f"$r = {_windows_install_root_literal(Path(install_root))}; "
+        "$rootPrefix = $r.TrimEnd([char[]]@(92,47)) + [char]92; "
+        "$script = [regex]::Escape($rootPrefix + 'apps\\vool_api_server.py'); "
+        f"$scriptArgument = '{_WINDOWS_SCRIPT_ARGUMENT_PREFIX}' + $script + '(?:\\x22|\\s|$)'; "
+        f"$moduleCommand = '{_WINDOWS_MODULE_ARGUMENT_PREFIX}'; "
+        f"$v = Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\" -ErrorAction SilentlyContinue "
+        "| Where-Object { ($_.Name -ieq 'python.exe' -or $_.Name -ieq 'pythonw.exe') "
+        "-and (([string]$_.ExecutablePath).StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase) "
+        "-or ([string]$_.CommandLine -match $scriptArgument) "
+        "-or (([string]$_.CommandLine -match $moduleCommand) "
+        "-and ([string](Get-CimInstance Win32_Process -Filter \"ProcessId=$($_.ParentProcessId)\" "
+        "-ErrorAction SilentlyContinue).ExecutablePath).StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase))) }; "
+        "if ($v) { 'owned' } else { '' }"
+    )
+    result = _run(run, ["powershell", "-NoProfile", "-Command", command])
+    if _stdout(result).strip() != "owned":
+        return None  # stale/reused pid or foreign process -> never kill it
     _run(run, ["taskkill", "/PID", str(pid), "/T", "/F"])
     return pid
 
@@ -151,10 +191,10 @@ def hard_stop(project_root: Path, vool_home: Path | None = None, *, run: Runner 
     kill_watchdog_processes(run)
 
     # 2) gateway, then the API (tree-kill takes child agent workers with it).
-    gateway_pid = kill_listener(run, GATEWAY_PORT)
-    api_pid = kill_listener(run, API_PORT)
+    gateway_pid = kill_listener(run, GATEWAY_PORT, project_root)
+    api_pid = kill_listener(run, API_PORT, project_root)
     if api_pid is None:
-        api_pid = kill_api_by_pidfile(run, _pidfile(project_root, vool_home))
+        api_pid = kill_api_by_pidfile(run, _pidfile(project_root, vool_home), project_root)
 
     # 3) marker (informational; a relaunch clears it).
     marker = project_root / STOPPED_MARKER

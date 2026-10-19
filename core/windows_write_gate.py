@@ -4,10 +4,11 @@ Until the handle-based Windows filesystem authority exists, a reviewed write on 
 checked by path and then performed by path, and that window can be raced, so it is not
 confinement. Owner decision (2026-10-18): on Windows, intents that change the user's files are
 refused unless every target lies inside a folder listed in VOOL_WINDOWS_DISPOSABLE_WORKSPACES
-(os.pathsep-separated absolute paths). The developer sets that variable when starting VOOL;
-nothing inside a workspace can set it. VOOL's own private stores (skills, media projects,
-browser profiles, notes) are not user-filesystem destinations and are not gated here. POSIX is
-unaffected.
+(os.pathsep-separated absolute paths), each path argument checked where its writer puts it
+(`_landing`); an intent that also changes folders its arguments do not name is refused outright
+(`_ALWAYS_REFUSED`). The developer sets that variable when starting VOOL; nothing inside a
+workspace can set it. VOOL's own private stores (skills, media projects, browser profiles,
+notes) are not user-filesystem destinations and are not gated here. POSIX is unaffected.
 """
 from __future__ import annotations
 
@@ -22,7 +23,8 @@ _IS_WINDOWS = os.name == "nt"
 STATUS = "windows_filesystem_authority_unavailable"
 
 #: Intents that change the user's filesystem, mapped to the argument keys naming their targets.
-#: An empty tuple means the target is the workspace itself.
+#: An empty tuple means the target is the workspace itself. `_landing` places each keyed path;
+#: a keyed intent it has no rule for is refused.
 _GATED: dict[str, tuple[str, ...]] = {
     "workspace.write_file": (),
     "workspace.ensure_directory": (),
@@ -40,6 +42,10 @@ _GATED: dict[str, tuple[str, ...]] = {
 }
 #: Step intents whose effect is the inner intent's (gated only when that inner intent is gated).
 _STEPS = frozenset({"code.task.step", "repo.step"})
+#: Gated intents refused on Windows whatever they name, because they also change folders their
+#: arguments do not name: a temp cleanup empties the folders TMPDIR, TMP and TEMP name, and its
+#: approval empties the plan a disk scan stored earlier (core.operator.handlers).
+_ALWAYS_REFUSED = frozenset({"operator.cleanup_temp_files"})
 
 
 def flagged_roots(environ: dict[str, str] | None = None) -> list[str]:
@@ -53,7 +59,14 @@ def flagged_roots(environ: dict[str, str] | None = None) -> list[str]:
 
 
 def _inside(path: str, roots: list[str]) -> bool:
-    candidate = os.path.normcase(os.path.realpath(path))
+    # No file can have a path holding a NUL. POSIX realpath raises on one, but Windows realpath
+    # returns it unresolved, so the text around the NUL would decide where it lies.
+    if "\x00" in path:
+        return False
+    try:
+        candidate = os.path.normcase(os.path.realpath(path))
+    except (OSError, ValueError):  # a path the OS cannot resolve
+        return False
     for root in roots:
         try:
             if os.path.commonpath([candidate, root]) == root:
@@ -61,6 +74,58 @@ def _inside(path: str, roots: list[str]) -> bool:
         except ValueError:  # different drives
             continue
     return False
+
+
+def _landing(intent: str, value: str) -> list[str] | None:
+    """The places the writer of `intent` changes for the path `value`, or None when the gate cannot
+    place it exactly.
+
+    The gate must check the folders a call really changes, so it places each path from the
+    argument exactly as that call's writer receives it, the way the writer does:
+    - machine.write_file and machine.ensure_directory: stripped, from the user's home
+      (`anchor_machine_path`);
+    - machine.move_path: stripped, from the process's working directory (`_canonicalize`);
+    - media.export: unstripped, from the working directory (`export_destination`), with the folder
+      that holds the output, where the export also writes its stage files;
+    - operator.move_path: stripped, with environment variables (`$VAR`, and `%VAR%` on Windows) and
+      `~` expanded as its handler expands them. The handler takes a relative path from VOOL's
+      working directory; the gate takes only a path that is absolute once expanded.
+    Joined onto the chat workspace instead, `Documents\\x.txt` passed as a workspace file while the
+    writer put it in the user's real Documents folder.
+    """
+    try:
+        if intent in {"machine.write_file", "machine.ensure_directory"}:
+            from core.runtime_execution_tools import anchor_machine_path
+
+            return [str(anchor_machine_path(value))]
+        if intent == "machine.move_path":
+            from core.machine_file_ops import _canonicalize
+
+            resolved = _canonicalize(value.strip())
+            return None if resolved is None else [str(resolved)]
+        if intent == "media.export":
+            from core.media_studio_service import export_destination
+
+            out = export_destination(value)
+            return [str(out), str(out.parent)]
+        if intent == "operator.move_path":
+            expanded = Path(os.path.expandvars(value.strip())).expanduser()
+            return [str(expanded)] if expanded.is_absolute() else None
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return None
+
+
+def may_refuse(intent: str, *, windows: bool | None = None) -> bool:
+    """False when `refusal` is certain to allow this intent: off Windows, or an intent it never gates.
+
+    Callers that ask the gate early (before the permission decision) check this first, so a call
+    the gate has no say in gets exactly the handling it got before the early check existed: its
+    arguments are not bound, its action is not built, and nothing about it can raise here.
+    """
+    if not (_IS_WINDOWS if windows is None else windows):
+        return False
+    return intent in _GATED or intent in _STEPS
 
 
 def refusal(
@@ -83,15 +148,25 @@ def refusal(
                        windows=True, environ=environ)
     if intent not in _GATED:
         return None
+    if intent in _ALWAYS_REFUSED:
+        return (
+            "On Windows, VOOL does not clean temp files until its Windows filesystem protection is "
+            "complete: a cleanup also empties the system temp folders and a plan stored earlier, which "
+            f"are not limited to the folders marked in {ENV_VAR}. Nothing was changed."
+        )
     roots = flagged_roots(environ)
     targets = [str(workspace_root)] if workspace_root else []
     for key in _GATED[intent]:
-        value = str(arguments.get(key) or "").strip()
-        if not value:
+        value = str(arguments.get(key) or "")
+        if not value.strip():
             return f"{intent} names no {key}, so its target cannot be checked"
-        if not os.path.isabs(value) and not workspace_root:
-            return f"{intent} names a relative {key} with no workspace to anchor it"
-        targets.append(value if os.path.isabs(value) else os.path.join(str(workspace_root), value))
+        landing = _landing(intent, value)
+        if landing is None:
+            if intent.startswith("operator."):
+                return (f"{intent} needs a {key} that is absolute once ~ and environment variables are expanded, "
+                        "so its target cannot be checked")
+            return f"{intent} names a {key} the gate cannot place exactly, so its target cannot be checked"
+        targets.extend(landing)
     if roots and targets and all(_inside(target, roots) for target in targets):
         return None
     return (
@@ -101,4 +176,4 @@ def refusal(
     )
 
 
-__all__ = ["ENV_VAR", "STATUS", "flagged_roots", "refusal"]
+__all__ = ["ENV_VAR", "STATUS", "flagged_roots", "may_refuse", "refusal"]

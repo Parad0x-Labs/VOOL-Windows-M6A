@@ -18,6 +18,16 @@ from core.runtime_paths import native_runtime_home
 _POLL_SECONDS = 2.0
 _STARTUP_TIMEOUT_SECONDS = 60.0
 _MAX_BACKOFF_SECONDS = 30.0
+_WINDOWS_SCRIPT_ARGUMENT_PREFIX = (
+    r'^(?:\x22(?:[^\x22]*\\)?pythonw?\.exe\x22|(?:[^\s\x22]*\\)?pythonw?\.exe)'
+    r'(?:\s+-[bBdEhIiOPqRsSuvVx]+'
+    r'|\s+-W(?:\s+\x22[^\x22]*\x22|\s+\S+|[^\s\x22]+)'
+    r'|\s+-X(?:\s+\x22[^\x22]*\x22|\s+\S+|[^\s\x22]+)'
+    r'|\s+--check-hash-based-pycs\s+(?:\x22[^\x22]*\x22|\S+))*\s+\x22?'
+)
+# PowerShell ends a single-quoted string at the curly quotes U+2018, U+2019, U+201A and U+201B as
+# well as at the ASCII apostrophe, and reads any of them doubled as that one character.
+_POWERSHELL_SINGLE_QUOTES = "'\u2018\u2019\u201a\u201b"
 
 
 def _is_windows_platform() -> bool:
@@ -316,11 +326,26 @@ class BundleSupervisor:
         """Stop only stale VOOL API Python processes before a bundle API start on Windows."""
         if not _is_windows_platform():
             return
+        root = "".join(c + c if c in _POWERSHELL_SINGLE_QUOTES else c for c in str(self.root))
+        supervisor_pid = os.getpid()
         command = (
-            "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | "
-            "Where-Object { ($_.Name -eq 'python.exe' -or $_.Name -eq 'pythonw.exe') "
-            "-and (($_.CommandLine -like '*apps.vool_api_server*') "
-            "-or ($_.CommandLine -like '*vool_api_server.py*')) } | "
+            f"$r = '{root}'; "
+            "$rootPrefix = $r.TrimEnd([char[]]@(92,47)) + [char]92; "
+            "$script = [regex]::Escape($rootPrefix + 'app\\apps\\vool_api_server.py'); "
+            f"$scriptArgument = '{_WINDOWS_SCRIPT_ARGUMENT_PREFIX}' + $script + '(?:\\x22|\\s|$)'; "
+            f"$supervisorPid = {supervisor_pid}; "
+            "$all = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue); "
+            "$protectedPids = New-Object 'System.Collections.Generic.HashSet[int]'; "
+            "[void]$protectedPids.Add([int]$PID); "
+            "$currentPid = [int]$supervisorPid; "
+            "while ($currentPid -gt 0 -and $protectedPids.Add($currentPid)) { "
+            "$current = $all | Where-Object { [int]$_.ProcessId -eq $currentPid } | Select-Object -First 1; "
+            "if (-not $current) { break }; "
+            "$currentPid = [int]$current.ParentProcessId "
+            "}; "
+            "$all | Where-Object { ($_.Name -ieq 'python.exe' -or $_.Name -ieq 'pythonw.exe') "
+            "-and (-not $protectedPids.Contains([int]$_.ProcessId)) "
+            "-and ([string]$_.CommandLine -match $scriptArgument) } | "
             "ForEach-Object { "
             "try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} "
             "}"
