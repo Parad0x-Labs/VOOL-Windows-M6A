@@ -162,6 +162,19 @@ _WORKSPACE_CONTENT_QUESTION_RE = re.compile(
 )
 _FILE_LINE_RE = re.compile(r"(?P<path>[A-Za-z0-9_./-]+\.[A-Za-z0-9_+-]+):(?P<line>\d+)")
 _SAFE_MACHINE_DIRECTORY_NAMES = ("Desktop", "Downloads", "Documents")
+#: Words a machine path may use for one of those folders in the user's home.
+_MACHINE_DIRECTORY_ALIASES = {
+    "desktop": "Desktop",
+    "my desktop": "Desktop",
+    "~/desktop": "Desktop",
+    "downloads": "Downloads",
+    "my downloads": "Downloads",
+    "~/downloads": "Downloads",
+    "documents": "Documents",
+    "my documents": "Documents",
+    "~/documents": "Documents",
+    "docs": "Documents",
+}
 
 
 @dataclass
@@ -4586,30 +4599,29 @@ def _resolve_machine_directory(raw_path: str | None, *, write: bool = False) -> 
     return target
 
 
-def _resolve_safe_machine_directory(raw_path: str | None) -> Path:
+def anchor_machine_path(raw_path: str | None) -> Path:
+    """Where a `machine.*` path lands, before the safe-folder check: an alias such as "documents" is
+    that folder in the user's home, a `~` path expands there, and any other relative path is taken
+    from the home, never from a chat workspace. The writer, the Windows write gate and the approval
+    ask all place a machine path here, so none of them describes a different file than the one the
+    writer changes."""
     raw = str(raw_path or "").strip()
     if not raw:
         return _safe_machine_roots()[0]
-    lowered = raw.lower().strip()
-    alias_map = {
-        "desktop": "Desktop",
-        "my desktop": "Desktop",
-        "~/desktop": "Desktop",
-        "downloads": "Downloads",
-        "my downloads": "Downloads",
-        "~/downloads": "Downloads",
-        "documents": "Documents",
-        "my documents": "Documents",
-        "~/documents": "Documents",
-        "docs": "Documents",
-    }
-    if lowered in alias_map:
-        return (_machine_home() / alias_map[lowered]).resolve()
+    alias = _MACHINE_DIRECTORY_ALIASES.get(raw.lower())
+    if alias:
+        return (_machine_home() / alias).resolve()
     candidate = _expand_machine_user(raw)
     if not candidate.is_absolute():
-        candidate = (_machine_home() / candidate).resolve()
-    else:
-        candidate = candidate.resolve()
+        return (_machine_home() / candidate).resolve()
+    return candidate.resolve()
+
+
+def _resolve_safe_machine_directory(raw_path: str | None) -> Path:
+    raw = str(raw_path or "").strip()
+    candidate = anchor_machine_path(raw)
+    if not raw or raw.lower() in _MACHINE_DIRECTORY_ALIASES:
+        return candidate
     for root in _safe_machine_roots():
         if candidate == root or root in candidate.parents:
             return candidate

@@ -4,10 +4,10 @@ Until the handle-based Windows filesystem authority exists, a reviewed write on 
 checked by path and then performed by path, and that window can be raced, so it is not
 confinement. Owner decision (2026-10-18): on Windows, intents that change the user's files are
 refused unless every target lies inside a folder listed in VOOL_WINDOWS_DISPOSABLE_WORKSPACES
-(os.pathsep-separated absolute paths). The developer sets that variable when starting VOOL;
-nothing inside a workspace can set it. VOOL's own private stores (skills, media projects,
-browser profiles, notes) are not user-filesystem destinations and are not gated here. POSIX is
-unaffected.
+(os.pathsep-separated absolute paths), each target checked where its writer puts it
+(`_landing`). The developer sets that variable when starting VOOL; nothing inside a workspace
+can set it. VOOL's own private stores (skills, media projects, browser profiles, notes) are not
+user-filesystem destinations and are not gated here. POSIX is unaffected.
 """
 from __future__ import annotations
 
@@ -63,6 +63,35 @@ def _inside(path: str, roots: list[str]) -> bool:
     return False
 
 
+def _landing(intent: str, value: str) -> str | None:
+    """Where the writer of `intent` puts the path `value`, or None when it cannot be placed.
+
+    The gate must check the folder a call really changes, so it places each path the way that
+    call's writer does: machine.write_file and machine.ensure_directory from the user's home
+    (`anchor_machine_path`), machine.move_path and media.export from the process's working
+    directory (`_canonicalize`, `export_destination`). The operator lane names absolute paths only.
+    Joined onto the chat workspace instead, `Documents\\x.txt` passed as a workspace file while the
+    writer put it in the user's real Documents folder.
+    """
+    try:
+        if intent in {"machine.write_file", "machine.ensure_directory"}:
+            from core.runtime_execution_tools import anchor_machine_path
+
+            return str(anchor_machine_path(value))
+        if intent == "machine.move_path":
+            from core.machine_file_ops import _canonicalize
+
+            resolved = _canonicalize(value)
+            return None if resolved is None else str(resolved)
+        if intent == "media.export":
+            from core.media_studio_service import export_destination
+
+            return os.path.abspath(export_destination(value))
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return value if os.path.isabs(value) else None
+
+
 def may_refuse(intent: str, *, windows: bool | None = None) -> bool:
     """False when `refusal` is certain to allow this intent: off Windows, or an intent it never gates.
 
@@ -101,9 +130,10 @@ def refusal(
         value = str(arguments.get(key) or "").strip()
         if not value:
             return f"{intent} names no {key}, so its target cannot be checked"
-        if not os.path.isabs(value) and not workspace_root:
-            return f"{intent} names a relative {key} with no workspace to anchor it"
-        targets.append(value if os.path.isabs(value) else os.path.join(str(workspace_root), value))
+        target = _landing(intent, value)
+        if target is None:
+            return f"{intent} names a {key} that does not resolve to one place, so its target cannot be checked"
+        targets.append(target)
     if roots and targets and all(_inside(target, roots) for target in targets):
         return None
     return (
