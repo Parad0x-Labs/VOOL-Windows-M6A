@@ -2,8 +2,9 @@
 
 It used to force-stop whatever process listened on 127.0.0.1:11435, with no ownership check, so
 installing or upgrading VOOL could kill an unrelated program that happened to use that port.
-VOOL's own API server is still stopped by the ownership-checked filter: a python/pythonw that
-lives under the install directory or runs one of VOOL's scripts.
+VOOL's own API server is still stopped by the ownership-checked filter: the bundle's own
+python.exe or pythonw.exe, or a python/pythonw running one of VOOL's scripts under the install
+directory.
 """
 from __future__ import annotations
 
@@ -28,14 +29,19 @@ def test_the_installer_still_stops_vools_own_python_processes() -> None:
     # The install root is the actual {app} directory, not a hard-coded Programs\VOOL path.
     assert "InstallDir := ExpandConstant('{app}');" in ISS.read_text(encoding="utf-8")
     assert "$r = ''' + InstallDir + '''" in command
-    # Literal, case-insensitive path-boundary match: a sibling such as ...\VOOL-dev, or a root
-    # that looks like a wildcard pattern, is not the install directory.
+    # Literal, case-insensitive path match: a sibling such as ...\VOOL-dev, or a root that looks
+    # like a wildcard pattern, is not the install directory.
     assert "$_.ExecutablePath -like" not in command
     assert "$rootPrefix = $r.TrimEnd([char[]]@(92,47)) + [char]92" in command
+    # By its exe only the bundle's own interpreter counts, at its exact path: a user's own Python
+    # inside the install folder is not VOOL's.
+    assert "$python = $rootPrefix + ''python\\python.exe''; $pythonw = $rootPrefix + ''python\\pythonw.exe''" in command
     assert (
-        "([string]$_.ExecutablePath).StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)"
+        "[string]::Equals([string]$_.ExecutablePath, $python, [System.StringComparison]::OrdinalIgnoreCase) "
+        "-or [string]::Equals([string]$_.ExecutablePath, $pythonw, [System.StringComparison]::OrdinalIgnoreCase)"
         in command
     )
+    assert "StartsWith($rootPrefix" not in command
     # VOOL's own scripts are matched only under the install root, regex-escaped.
     assert "[regex]::Escape($rootPrefix)" in command
     assert "vool_api_server\\.py" in command
