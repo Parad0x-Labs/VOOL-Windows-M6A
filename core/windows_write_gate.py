@@ -59,9 +59,13 @@ def flagged_roots(environ: dict[str, str] | None = None) -> list[str]:
 
 
 def _inside(path: str, roots: list[str]) -> bool:
+    # No file can have a path holding a NUL. POSIX realpath raises on one, but Windows realpath
+    # returns it unchanged, so the text around the NUL would decide where it lies.
+    if "\x00" in path:
+        return False
     try:
         candidate = os.path.normcase(os.path.realpath(path))
-    except (OSError, ValueError):  # a path no file can have, such as one holding a NUL
+    except (OSError, ValueError):  # a path the OS cannot resolve
         return False
     for root in roots:
         try:
