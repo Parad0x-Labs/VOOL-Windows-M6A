@@ -1,7 +1,7 @@
 # Windows broker: design (Step 2 of the Windows port)
 
 Status: design, not built. Read against windows/v0.7.1-port `1c26068`. Every file:line below was
-read at that commit. docs/WINDOWS_PORT_CONTRACTS.md (PR #21) is the source of truth for routes,
+read at that commit. docs/WINDOWS_PORT_CONTRACTS.md (PR #21, read at `637fc6a`) is the source of truth for routes,
 invariants, receipt states and gaps; this design redefines none of them, and section 11 lists the
 changes it proposes to that doc.
 
@@ -180,7 +180,7 @@ Operations (Step 2 set):
 | `ensure_directory(root, rel)` | create each missing component relative to its parent | workspace.ensure_directory, machine.ensure_directory |
 | `rename(root, rel_from, root2, rel_to, replace)` | open source with `DELETE`, `FileRenameInfoEx` (`POSIX_SEMANTICS`) onto the destination parent handle | machine.move_path, operator.move_path |
 | `delete(root, rel)` | open with `DELETE`, rename aside (journalled) | rollback |
-| `apply_batch(root, ops[])` | see below | workspace.apply_unified_diff (section 6.1), workspace.rollback_last_change, code.task.rollback |
+| `apply_batch(root, ops[])` | see below | workspace.apply_unified_diff (section 6.1), workspace.rollback_last_change, code.task.rollback (in its task's folder, section 6.1) |
 | `restore_batch(batch_id)` | see below | undoing a part-done batch |
 
 `write_file`:
@@ -227,46 +227,47 @@ Not covered by any broker file operation:
   windows_write_gate.py:48).
 - Operator notes: not gated today (contracts gap 13); the broker could serve them later.
 
-### 6.1 Git and patches (target for Step 3)
+### 6.1 Git, steps and patches (target for Step 3)
 
 This describes the contract Step 3 needs, not what the gate does today. At 1c26068 the gate's
 `refusal()` returns allow or refuse and hands over no roots, and for `repo.git` and
 `workspace.apply_unified_diff` it checks only the chat's workspace (`_GATED`:32, 35 are empty;
-contracts gaps 14 and 15). Job 6 plans (not merged at the time of writing) to make its resolver a
-public function in core/windows_write_gate.py, called by `refusal()`, that returns the folders a
-call writes in, refusing any call it cannot place. Step 3 takes the broker's roots from that same
-function, with no second API, passed as (flagged id, relative path) per section 4, and the broker
-uses those and nothing wider:
-- `repo.git` in the launcher: the write roots are the top folder (`git rev-parse
-  --show-toplevel`), the git dir (`--absolute-git-dir`) and the common dir (`--git-common-dir`; a
-  linked worktree keeps its git dir and objects under the main repository's `.git`), as git itself
-  resolves them, never inferred from where `.git` sits. Every folder that function returns must be
-  one the gate approved; Job 6 may also refuse a repository whose work tree lies outside the
-  workspace. The reason: a repository's own config (`core.worktree`) can move git's top to any
-  folder that contains the workspace even when `.git` is inside the flagged folder, and in Auto
-  mode VOOL can create such a `.git` with no ask; a rename patch then moved a file from
-  ~/Documents into the flagged folder. This was reported by the seventh review of PR #21 and re-run
-  by Job 6; it is not yet in the contracts doc (section 11, item 5).
-- The resolution happens at check time and the launch later, and the config can change between
-  them. So the enforcement is the launcher's grants: a git run with a changed config fails to
-  write outside the granted roots instead of following it. `rev-parse` runs only after
-  `safe_git.executable_local_config` (core/safe_git.py:89) has passed (contracts gap 9 leaves it
-  unverified whether `rev-parse` can run a configured program), with every `GIT_*` variable
-  removed from its environment and from the confined git's. `.git/config` lies inside a write
-  root, so a confined git or hook can rewrite `core.worktree` for the next call; each call
+contracts gaps 14 and 15). Job 6 (branch windows/port-landing-gate, not merged at the time of
+writing) plans a public resolver in core/windows_write_gate.py, called by `refusal()`, that
+places each call's writes and refuses any call it cannot place or that falls outside the flagged
+folders. Step 3 takes the broker's roots from that same function, with no second API, passed as
+(flagged id, relative path) per section 4, and the broker uses those and nothing wider.
+
+- **`repo.git`** (and `repo.step` when its inner call is like `repo.git`) runs in the launcher.
+  The write roots are the top folder (`git rev-parse --show-toplevel`), the git dir
+  (`--absolute-git-dir`) and the common dir (`--git-common-dir`; a linked worktree keeps its git
+  dir and objects under the main repository's `.git`), as git itself resolves them, never
+  inferred from where `.git` sits. Every folder that function returns must be one the gate
+  approved; Job 6 may also refuse a repository whose work tree lies outside the workspace. The
+  reason: a repository's own config (`core.worktree`) can move git's top to any folder that
+  contains the workspace even when `.git` is inside the flagged folder (contracts gap 15, at
+  `637fc6a`).
+- **Resolving safely.** `rev-parse` runs only after `safe_git.executable_local_config`
+  (core/safe_git.py:89) has passed, with `safe_git.hardening_args()` (78) and
+  `safe_git.safe_env()` (68-75, which removes every inherited `GIT_*` variable except the
+  identity ones). The resolver refuses when the config read fails (not a repository, or an
+  unreadable config) or the config has a program-running key. The resolution happens at check
+  time and the launch later, and the config can change between them, so the enforcement is the
+  launcher's grants: a git run with a changed config fails to write outside the granted roots
+  instead of following it. The confined git gets the same `safe_env()`. `.git/config` lies inside
+  a write root, so a confined git or hook can rewrite `core.worktree` for the next call; each call
   resolves and checks afresh and trusts nothing a previous run left.
+- **Steps and rollbacks.** The resolver maps `repo.step`, `code.task.step` and
+  `code.task.rollback` to the repo session's or code task's own folder, read from VOOL's own
+  journals, for both the early gate and the dispatch gate (contracts gap 2). The broker gets that
+  folder as the root, nothing wider.
+- **Patches.** After Job 6, `workspace.apply_unified_diff` on Windows uses no git at all (so no
+  `rev-parse` either): a patch goes through VOOL's own engine only, rename, copy, mode and binary
+  sections are refused, and paths are placed inside the workspace. In Step 3 that engine applies
+  the patch through `apply_batch`, so every path is walked by handle by the broker itself.
 - Whether git runs at all inside an AppContainer is unknown (Git for Windows reads
   `%USERPROFILE%\.gitconfig`, which an AppContainer cannot read, and needs its own folders under
   Program Files); a test must show it before Step 3 relies on it.
-- `workspace.apply_unified_diff`: proposed, apply the patch through `apply_batch` (the broker's
-  own engine) instead of git on Windows. Then every path is walked by handle by the broker itself,
-  and nothing depends on a parser predicting what git will touch. Rename and copy headers are
-  refused on Windows, as the code-task path already does (`_GIT_UNSUPPORTED_HEADERS`,
-  core/execution/workspace_tools.py:538). If git is kept, its roots are the folders the resolver
-  places (no parser of patch text can promise every path git touches, contracts gap 15), and they
-  cannot be single files: git writes a new file next to the target and renames it, and a rename
-  source needs delete rights in its folder, so each root is a parent folder, which is wider than
-  the paths named. Choosing between these is Job 6's and Step 3's call.
 
 ## 7. Confined launcher
 
@@ -284,8 +285,8 @@ uses those and nothing wider:
 3. Handle inheritance: every root and folder handle is created non-inheritable; the three stdio
    handles are made inheritable only inside a process-wide launch lock and closed in the broker
    right after `CreateProcessW`; the broker never calls .NET `Process.Start`.
-4. Environment: exactly the environment bound in the ticket (section 7.5), with the broker
-   removing `GIT_*` and other variables that redirect a program's configuration. TEMP and TMP point
+4. Environment: exactly the environment bound in the ticket (section 7.5). For git that is
+   `safe_git.safe_env()` (section 6.1); for other children, Python's per-job environment. TEMP and TMP point
    to the AppContainer profile's own `AC\Temp`, so scratch stays out of the user's folders.
 
 Limits: if VOOL itself runs inside a Job (a terminal, an IDE, the supervisor), the limits combine;
@@ -469,5 +470,4 @@ To be raised as a follow-up to that doc after PR #21 merges, not inside it:
    hard links inside a flagged folder are not recorded. Proposed: reference gap 11 for the first
    two and record the hard-link case as a new gap, all planned for Step 3. They count as closed
    only once Step 3 is proven on Windows.
-5. The `core.worktree` case (section 6.1), reported by the seventh review of PR #21 and re-run by
-   Job 6, is not recorded. Proposed: record it as an extension of gap 14, with that run's evidence.
+5. None needed for the `core.worktree` case: it is recorded in gap 15 at `637fc6a`.
