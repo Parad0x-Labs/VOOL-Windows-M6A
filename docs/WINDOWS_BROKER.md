@@ -349,6 +349,13 @@ Which existing state each outcome lands in (contracts §4 and §5); no new recei
    (smaller, but needs the C++ build tools on Steve, another install).
 4. Building and testing the broker in CI needs a workflow change, which needs the owner's named
    OK.
+5. User-visible behaviour changes Step 3 would bring, each needing the owner's OK before Step 3
+   ships: moves across volumes are refused (today they copy); only NTFS volumes are accepted; a
+   flagged folder that is itself a junction is refused (the gate accepts it today); reparse
+   points of every tag, OneDrive placeholders included, are refused (effect on OneDrive-backed
+   folders unknown until tested); hard-linked files are refused for reads as well as writes;
+   folders an operation holds cannot be renamed by the user while it runs; Windows older than
+   the pinned minimum build is not supported.
 
 ## 11. Proposed changes to the contracts doc
 
