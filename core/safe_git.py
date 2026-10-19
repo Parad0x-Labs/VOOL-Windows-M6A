@@ -85,7 +85,9 @@ def safe_env(base: dict[str, str] | None = None) -> dict[str, str]:
 
 
 def hardening_args() -> list[str]:
-    """Global git options that keep a command from running repository-chosen programs."""
+    """Global git options that keep a command from running repository-chosen programs. Run diff,
+    log, show, status and commit through hardened_argv(), which adds the submodule settings these
+    lack; ``git apply`` never diffs a submodule and may use these alone."""
     return [
         "--no-optional-locks",
         "-c", "core.fsmonitor=false",
