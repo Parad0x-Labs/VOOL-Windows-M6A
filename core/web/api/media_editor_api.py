@@ -9,7 +9,9 @@ These endpoints call core.media_studio_service — the SAME engine chat tools
 use. Export authorization on this operator-local surface requires an explicit
 policy flag (``media.editor_export_enabled``, default True for local operator)
 AND is additionally gated in chat by the runtime permission lane; capability
-availability alone never authorizes anything.
+availability alone never authorizes anything. On Windows an export also asks
+the Windows write gate (core.windows_write_gate) about its output and that file's
+folder, as for the media.export tool; the editor has no chat workspace to check.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ import html
 from pathlib import Path
 from typing import Any
 
-from core import policy_engine
+from core import policy_engine, windows_write_gate
 from core.media_studio_service import (
     MediaStudioServiceError,
     apply_edit,
@@ -307,9 +309,16 @@ def handle_media_editor_post(path: str, body: dict[str, Any]) -> Any:
 
             if not policy_engine.get("media.editor_export_enabled", True):
                 return _fail("export_disabled", "editor export disabled by policy", 403)
+            out_path = str(body.get("output_path") or "")
+            # On Windows the editor exports only into the flagged folders: the gate checks the output and
+            # the folder holding its stage files, placed as export_project places them. There is no chat
+            # workspace here, so none is checked.
+            windows_refusal = windows_write_gate.refusal("media.export", {"output_path": out_path}, None)
+            if windows_refusal:
+                return _fail(windows_write_gate.STATUS, windows_refusal, 403)
             receipt = export_project(
                 project_id,
-                out_path=str(body.get("output_path") or ""),
+                out_path=out_path,
                 profile=str(body.get("profile") or "social"),
             )
             return json_response(200, {"ok": receipt.ok, "receipt": receipt.to_dict()})
