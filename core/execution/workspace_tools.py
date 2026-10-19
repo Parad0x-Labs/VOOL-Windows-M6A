@@ -594,8 +594,8 @@ def _destinations_as_found(patch_text: str, touched_paths: list[str], *, workspa
                            ) -> list[dict[str, Any]] | dict[str, Any]:
     """Each file a patch names, placed inside the workspace and paired with the bytes it holds now, in the
     shape `_apply_protected_unified_diff` takes for reviewed destinations: the patch is then applied to
-    these files as they are, or to nothing. A file the patch creates (`--- /dev/null`) must not exist yet,
-    as for a reviewed creation; otherwise the refusal is returned instead."""
+    these files as they are, or to nothing. A file the patch creates (`--- /dev/null`) must not exist yet;
+    otherwise the refusal is returned instead."""
     lines = patch_text.splitlines()
     created = {
         _normalize_patch_path(lines[index + 1][4:])
@@ -622,17 +622,9 @@ def _protected_patch_text(patch_text: str) -> tuple[str, str]:
     -- names no content and is dropped; the Python engine stops a hunk at any line it cannot place, so
     leaving these in splits a multi-file git patch mid-hunk. Headers that change something the engine does
     not apply (renames, copies, modes, binary content, deletions) are reported instead. Hunk lines always
-    carry a one-character prefix, so no content line can match a header. A `git format-patch` mail ends with
-    a signature, "-- " and a version line, which no hunk can end with (a hunk line carries a prefix), so it
-    is dropped too rather than read as a removed line."""
-    lines = str(patch_text or "").splitlines(keepends=True)
-    last = len(lines)
-    while last and not lines[last - 1].strip():
-        last -= 1
-    if last >= 2 and lines[last - 2].rstrip("\n") == "-- " and not lines[last - 1].startswith((" ", "+", "-", "\\", "@")):
-        lines = lines[: last - 2]
+    carry a one-character prefix, so no content line can match a header."""
     kept: list[str] = []
-    for line in lines:
+    for line in str(patch_text or "").splitlines(keepends=True):
         header = line.rstrip("\n")
         if header.startswith(_GIT_UNSUPPORTED_HEADERS) or (
             header.startswith("new file mode ") and header != "new file mode 100644"
