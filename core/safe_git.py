@@ -21,7 +21,8 @@ Three layers:
   ``config`` and, when ``extensions.worktreeConfig`` is on, the worktree's ``config.worktree``.
   Reproduced 2026-10-19: a ``filter.<x>.clean`` set with ``git config --worktree`` passed a
   ``--local``-only check and ran during a repo.git commit, on every platform. Any scope git may
-  add later is checked too (fail closed).
+  add later is checked too (fail closed). Each checked-out submodule's own config is checked the
+  same way, since git runs inside those submodules too (also reproduced 2026-10-19).
 System and global config belong to the user (for example Git LFS's global filters) and are not
 second-guessed. `alias.*` is not refused: an alias runs only when invoked by name, and VOOL
 never invokes one. repo.push is VOOL's one transport command; safe_env() also drops
@@ -96,7 +97,18 @@ def executable_local_config(cwd: Path, *, timeout: float = 20) -> list[str]:
     """The program-running keys the repository's own config defines (empty when none).
 
     "Own" covers every config scope git reads here except the user's system and global files, so
-    a key set in ``config.worktree`` is caught exactly like one in ``config``."""
+    a key set in ``config.worktree`` is caught exactly like one in ``config``. It also covers each
+    checked-out submodule's config, reported as ``<submodule path>:<key>``: status, diff and commit
+    in the superproject run git inside every checked-out submodule, and that git obeys the
+    submodule's own config."""
+    return _executable_config(Path(cwd), timeout=timeout, depth=0)
+
+
+#: Nested submodules deeper than this are refused rather than checked.
+_MAX_SUBMODULE_DEPTH = 8
+
+
+def _executable_config(cwd: Path, *, timeout: float, depth: int) -> list[str]:
     # --local fails outside a repository, which the callers already treat as "not checked".
     local = _config_entries(cwd, ["--local"], timeout=timeout)
     scoped = _config_entries(cwd, ["--show-scope"], timeout=timeout)
@@ -107,7 +119,43 @@ def executable_local_config(cwd: Path, *, timeout: float = 20) -> list[str]:
         scope, key = scoped[index], scoped[index + 1]
         if scope not in _USER_CONFIG_SCOPES and is_executable_key(key):
             keys.append(key)
+    for path, submodule in _checked_out_submodules(cwd, timeout=timeout):
+        if depth >= _MAX_SUBMODULE_DEPTH:
+            raise RuntimeError("submodules are nested too deeply to check")
+        keys.extend(f"{path}:{key}" for key in _executable_config(submodule, timeout=timeout, depth=depth + 1))
     return sorted(set(keys))
+
+
+def _checked_out_submodules(cwd: Path, *, timeout: float) -> list[tuple[str, Path]]:
+    """``(path, folder)`` of each gitlink in the index whose folder holds a checkout (git recurses
+    into exactly those). Empty for a repository without a work tree."""
+    inside = _rev_parse(cwd, "--is-inside-work-tree", timeout=timeout)
+    if inside != "true":
+        return []  # bare, or inside the git directory: there is no work tree to recurse from
+    toplevel = Path(_rev_parse(cwd, "--show-toplevel", timeout=timeout))
+    listing = subprocess.run(hardened_argv(toplevel, "ls-files", "--stage", "-z"),
+                             capture_output=True, timeout=timeout, env=safe_env())
+    if listing.returncode != 0:
+        raise RuntimeError(f"git index could not be read ({listing.returncode})")
+    found = []
+    for entry in listing.stdout.split(b"\0"):
+        meta, _, name = entry.partition(b"\t")
+        if not meta.startswith(b"160000 "):
+            continue
+        path = name.decode("utf-8", "surrogateescape")
+        folder = toplevel / path
+        if (folder / ".git").exists():
+            found.append((path, folder))
+    return found
+
+
+def _rev_parse(cwd: Path, option: str, *, timeout: float) -> str:
+    probe = subprocess.run(hardened_argv(cwd, "rev-parse", option), capture_output=True, timeout=timeout,
+                           env=safe_env())
+    answer = probe.stdout.decode("utf-8", "surrogateescape").strip()
+    if probe.returncode != 0 or not answer:
+        raise RuntimeError(f"git rev-parse {option} failed ({probe.returncode})")
+    return answer
 
 
 #: Config scopes that belong to the user, not to the repository (``git config --show-scope``).
