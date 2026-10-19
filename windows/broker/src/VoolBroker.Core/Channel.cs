@@ -13,6 +13,8 @@ public sealed class Channel(int apiPid, long apiCreationTime, byte[] secret, str
     private readonly object _nonceLock = new();
     private readonly byte[] _secret = secret;
     private const int MaxInstances = 16;
+    // ERROR_NO_DATA: the client connected and closed before ConnectNamedPipe; drop that instance.
+    private const int ErrorNoData = 232;
 
     public string PipeName { get; } = @"\\.\pipe\vool-broker-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
     public string JournalDirectory { get; } = journalDirectory;
@@ -37,11 +39,16 @@ public sealed class Channel(int apiPid, long apiCreationTime, byte[] secret, str
             first = false;
             try
             {
-                var connect = Task.Run(() => Native.ConnectNamedPipe(pipe, 0));
+                // The last error is read on the thread that called ConnectNamedPipe: it is per thread,
+                // and reading it after the await saw another thread's value, so a client that connected
+                // before ConnectNamedPipe (ERROR_PIPE_CONNECTED) stopped the whole server.
+                var connect = Task.Run(() => Native.ConnectNamedPipe(pipe, 0) ? 0 : Marshal.GetLastWin32Error());
                 var canceled = Task.Delay(Timeout.Infinite, cancellationToken);
                 if (await Task.WhenAny(connect, canceled).ConfigureAwait(false) != connect) { pipe.Dispose(); break; }
-                if (!connect.Result && Marshal.GetLastWin32Error() != Native.ErrorPipeConnected)
-                    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+                var error = connect.Result;
+                if (error == ErrorNoData) { pipe.Dispose(); continue; }
+                if (error != 0 && error != Native.ErrorPipeConnected)
+                    throw new System.ComponentModel.Win32Exception(error);
             }
             catch
             {

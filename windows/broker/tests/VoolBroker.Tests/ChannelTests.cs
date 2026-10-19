@@ -329,4 +329,122 @@ public sealed class ChannelTests
         using var truncated = new MemoryStream(new byte[] { 3, 0, 0, 0, (byte)'{', (byte)'}' });
         await Assert.ThrowsAsync<EndOfStreamException>(async () => await Protocol.ReadFrameAsync(truncated, TestContext.Current.CancellationToken));
     }
+
+    [Fact]
+    public async Task Broker_pipe_handles_are_not_inheritable()
+    {
+        // The broker inherits some handles at birth (its stdio, and any inheritable handle the test
+        // host held then). Those are in its table before it reads the bootstrap and creates its pipe.
+        // Every handle the broker creates afterwards, its pipe instances included, must be
+        // non-inheritable. Only the handle table is read; no broker handle is queried.
+        var fileType = TestSupport.FileObjectTypeIndex();
+        var bootstrap = TestSupport.DefaultBootstrap();
+        var secret = (string)bootstrap.GetType().GetProperty("secret")!.GetValue(bootstrap)!;
+        using var broker = TestSupport.StartBrokerWithoutBootstrap();
+        try
+        {
+            // Wait until the runtime has started and the broker sits reading its bootstrap: handles the
+            // runtime makes while starting are not the broker's own (one inheritable event appeared there).
+            var atBirth = await TestSupport.SettledHandleTable(broker.Id, TestContext.Current.CancellationToken);
+            Assert.Contains(atBirth.Values, entry => entry.Inheritable);
+
+            TestSupport.SendBootstrap(broker, TestSupport.Frame(bootstrap));
+            using var ready = JsonDocument.Parse((await broker.StandardOutput.ReadLineAsync(TestContext.Current.CancellationToken))!);
+            var pipeName = ready.RootElement.GetProperty("pipe").GetString()!;
+            await using var pipe = await TestSupport.Connect(pipeName, TestContext.Current.CancellationToken);
+            await TestSupport.Authenticate(pipe, secret);
+
+            var created = TestSupport.ReadHandleTable(broker.Id)
+                .Where(entry => !atBirth.TryGetValue(entry.Value, out var old) || old.GrantedAccess != entry.GrantedAccess || old.TypeIndex != entry.TypeIndex)
+                .ToList();
+            var pipeServers = created.Count(entry => entry.TypeIndex == fileType && entry.GrantedAccess == TestSupport.DuplexPipeServerAccess);
+            Assert.True(pipeServers >= 1,
+                $"Expected the broker's pipe instances among its new handles; found {pipeServers} duplex file handles among: "
+                + string.Join(", ", created.Select(e => $"0x{e.Value:x} access 0x{e.GrantedAccess:x} type {e.TypeIndex}")) + $" (file type {fileType}).");
+            var inheritable = created.Where(entry => entry.Inheritable).ToList();
+            Assert.True(inheritable.Count == 0,
+                "Handles the broker created are inheritable: " + string.Join(", ", inheritable.Select(e => $"0x{e.Value:x} access 0x{e.GrantedAccess:x} type {e.TypeIndex}")));
+        }
+        finally { broker.Kill(true); await broker.WaitForExitAsync(TestContext.Current.CancellationToken); }
+    }
+
+    [Fact]
+    public async Task Broker_keeps_serving_clients_that_connect_before_it_waits()
+    {
+        // Each client connects as soon as the next instance exists, often before the broker calls
+        // ConnectNamedPipe, which then reports ERROR_PIPE_CONNECTED. Every one must be served.
+        var bootstrap = TestSupport.DefaultBootstrap();
+        var secret = (string)bootstrap.GetType().GetProperty("secret")!.GetValue(bootstrap)!;
+        using var broker = TestSupport.StartBroker(bootstrap);
+        try
+        {
+            using var ready = JsonDocument.Parse((await broker.StandardOutput.ReadLineAsync(TestContext.Current.CancellationToken))!);
+            var pipeName = ready.RootElement.GetProperty("pipe").GetString()!;
+            for (var i = 0; i < 40; i++)
+            {
+                await using var client = await TestSupport.Connect(pipeName, TestContext.Current.CancellationToken);
+                try { await TestSupport.Authenticate(client, secret); }
+                catch (EndOfStreamException error)
+                {
+                    throw new InvalidOperationException($"The broker dropped client {i + 1} of 40 before its challenge.", error);
+                }
+                await TestSupport.WriteFrame(client, new { id = $"early-{i}", op = "ping" }, TestContext.Current.CancellationToken);
+                using var response = await TestSupport.ReadFrame(client, TestContext.Current.CancellationToken);
+                Assert.True(response.RootElement.GetProperty("ok").GetBoolean());
+            }
+            Assert.False(broker.HasExited);
+        }
+        finally { broker.Kill(true); await broker.WaitForExitAsync(TestContext.Current.CancellationToken); }
+    }
+
+    [Fact]
+    public async Task Broker_enforces_sixteen_concurrent_instances_and_reuses_a_closed_instance()
+    {
+        var bootstrap = TestSupport.DefaultBootstrap();
+        var secret = (string)bootstrap.GetType().GetProperty("secret")!.GetValue(bootstrap)!;
+        using var broker = TestSupport.StartBroker(bootstrap);
+        var clients = new List<System.IO.Pipes.NamedPipeClientStream>();
+        try
+        {
+            using var ready = JsonDocument.Parse((await broker.StandardOutput.ReadLineAsync(TestContext.Current.CancellationToken))!);
+            var pipeName = ready.RootElement.GetProperty("pipe").GetString()!;
+            for (var i = 0; i < 16; i++)
+            {
+                try
+                {
+                    var client = await TestSupport.Connect(pipeName, TestContext.Current.CancellationToken);
+                    clients.Add(client);
+                    await TestSupport.Authenticate(client, secret);
+                }
+                catch (Exception error)
+                {
+                    throw new InvalidOperationException($"Could not authenticate client {i + 1} of the required 16.", error);
+                }
+            }
+
+            Assert.True(TestSupport.IsPipeBusy(pipeName), "The seventeenth connection was not refused with ERROR_PIPE_BUSY.");
+            for (var i = 0; i < clients.Count; i++)
+            {
+                await TestSupport.WriteFrame(clients[i], new { id = $"cap-{i}", op = "ping" }, TestContext.Current.CancellationToken);
+                using var response = await TestSupport.ReadFrame(clients[i], TestContext.Current.CancellationToken);
+                Assert.Equal($"cap-{i}", response.RootElement.GetProperty("id").GetString());
+                Assert.True(response.RootElement.GetProperty("ok").GetBoolean());
+            }
+
+            await clients[0].DisposeAsync();
+            clients.RemoveAt(0);
+            await using var replacement = await TestSupport.Connect(pipeName, TestContext.Current.CancellationToken);
+            await TestSupport.Authenticate(replacement, secret);
+            await TestSupport.WriteFrame(replacement, new { id = "replacement", op = "ping" }, TestContext.Current.CancellationToken);
+            using var replacementResponse = await TestSupport.ReadFrame(replacement, TestContext.Current.CancellationToken);
+            Assert.Equal("replacement", replacementResponse.RootElement.GetProperty("id").GetString());
+            Assert.True(replacementResponse.RootElement.GetProperty("ok").GetBoolean());
+        }
+        finally
+        {
+            broker.Kill(true);
+            await broker.WaitForExitAsync(TestContext.Current.CancellationToken);
+            foreach (var client in clients) await client.DisposeAsync();
+        }
+    }
 }
