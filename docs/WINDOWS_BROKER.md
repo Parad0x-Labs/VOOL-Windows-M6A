@@ -407,7 +407,8 @@ Which existing state each outcome lands in (contracts §4 and §5); no new recei
   launcher, journal, protocol), `VoolConfine` (exe), `VoolBroker.Tests` (xunit).
 - .NET 10 LTS, x64. On Steve the SDK is in VOOL Windows\toolchain\dotnet, called by full path.
 - `core/windows_broker/client.py`: the Python client. Nothing imports it before Step 3.
-- Tests on real Windows (Steve, then the hosted Windows runner once the workflow OK is given),
+- Tests on real Windows (Steve, then the hosted Windows runner in windows-broker.yml once the
+  workflow OK is given),
   each against the real broker, never mocks:
   - escapes: `..`; a junction and a symlink inside a root pointing out; one swapped in between
     `stat` and `write_file` by a racing thread; renaming an ancestor folder (and a flagged folder)
@@ -434,16 +435,23 @@ Which existing state each outcome lands in (contracts §4 and §5); no new recei
 - Linux CI: the Python client's protocol tests against a fake server, and a test that nothing
   outside tests imports `core.windows_broker` before Step 3.
 
-## 10. Open questions (the owner's decisions; nothing is built for them until made)
+## 10. Decisions and open questions
 
-1. How confined children get their folders: staged copy (A), per-object grants (B), Low integrity
-   (C), or A for plugins, decoders and MCP servers with B only for in-place work (proposed).
+Decided by the owner on 19 Oct 2026:
+- Folder access (section 7.3): staged copy (A) for plugins, decoders and MCP servers; per-object
+  grants (B) only for process agents and git. Phase A builds A; B is a second build.
+- Packaging (item 3 below): self-contained publish.
+
+Still open (nothing is built for them until decided):
+
+1. (Decided above.)
 2. Whether a later step should run VOOL's Python under a separate identity so the broker becomes
    a real privilege boundary.
-3. Self-contained publish (about 70 MB, proposed: users need no .NET runtime) or NativeAOT
-   (smaller, but needs the C++ build tools on Steve, another install).
-4. Building and testing the broker in CI needs a workflow change, which needs the owner's named
-   OK.
+3. (Decided above: self-contained, about 70 MB, so users need no .NET runtime. NativeAOT, which
+   needs the C++ build tools, was not chosen.)
+4. Building and testing the broker in CI needs a new workflow, windows-broker.yml (dispatch, and
+   pull requests that touch only the broker's folders), kept apart from the gauntlet so broker
+   failures and build time never block other merges. It needs the owner's named OK.
 5. User-visible behaviour changes Step 3 would bring, each needing the owner's OK before Step 3
    ships:
    - moves across volumes are refused (today they copy);
