@@ -3028,7 +3028,7 @@ def _affected_resources(arguments: dict[str, Any]) -> list[str]:
 
 
 def _affected_resources_display(
-    arguments: dict[str, Any], source_context: dict[str, Any]
+    arguments: dict[str, Any], source_context: dict[str, Any], *, intent: str = ""
 ) -> list[str]:
     """`_affected_resources` with workspace-relative FILE paths resolved to absolute locations.
 
@@ -3037,10 +3037,16 @@ def _affected_resources_display(
     the folder was created inside VOOL's internal workspace and the operator only found out
     by asking (measured live 2026-09-18). Only the filesystem fields (path/paths/cwd) are
     resolved; url/recipient/channel are not paths and pass through untouched.
+
+    A machine write's path is resolved where the machine writer puts it
+    (`core.runtime_execution_tools.anchor_machine_path`): "Documents/x.txt" is in the user's
+    home. Placed under the chat workspace, the ask named "<workspace>/Documents/x.txt" while the
+    write changed the real Documents folder.
     """
+    machine = str(intent or "").strip() in {"machine.write_file", "machine.ensure_directory"}
     root = _trusted_write_root(source_context).rstrip("/")
     raw = _affected_resources(arguments)
-    if not root:
+    if not root and not machine:
         return raw
     path_like: set[str] = set()
     for key in ("path", "paths", "cwd"):
@@ -3052,11 +3058,22 @@ def _affected_resources_display(
     displayed: list[str] = []
     for item in raw:
         value = str(item).strip()
-        if value in path_like and value and not value.startswith(("/", "~")):
+        if value in path_like and value and machine:
+            displayed.append(_machine_path_display(value))
+        elif value in path_like and value and not value.startswith(("/", "~")):
             displayed.append(f"{root}/{value}")
         else:
             displayed.append(value)
     return displayed
+
+
+def _machine_path_display(value: str) -> str:
+    try:
+        from core.runtime_execution_tools import anchor_machine_path
+
+        return str(anchor_machine_path(value))
+    except (OSError, RuntimeError, ValueError):
+        return value
 
 
 def _edit_preview(intent: str, arguments: dict[str, Any], source_context: dict[str, Any]) -> str:
@@ -3474,7 +3491,7 @@ def _new_approval_request(
         "task_id": task_id,
         "intent": intent,
         "action": f"Run {display_intent}" + (" through code.task.step" if display_intent != intent else ""),
-        "affected_resources": _affected_resources_display(display_arguments, display_context),
+        "affected_resources": _affected_resources_display(display_arguments, display_context, intent=display_intent),
         "expected_side_effects": _approval_effect_summary(actions),
         "reversible": bool(edit_batch or PermissionAction.GIT_COMMIT in actions),
         "scope_options": scope_options,

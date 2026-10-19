@@ -63,7 +63,7 @@ def test_the_stop_leaves_a_foreign_listener_running(tmp_path) -> None:
     port = _free_port()
     foreign = _listen(tmp_path / "someone_elses_server.py", port)
     try:
-        assert kill_listener(subprocess.run, port) is None
+        assert kill_listener(subprocess.run, port, tmp_path / "app") is None
         time.sleep(1)
         assert foreign.poll() is None, "the hard stop killed a process VOOL does not own"
     finally:
@@ -75,7 +75,7 @@ def test_the_stop_still_kills_vools_own_api_listener(tmp_path) -> None:
     port = _free_port()
     vool_api = _listen(tmp_path / "app" / "apps" / "vool_api_server.py", port)
     try:
-        assert kill_listener(subprocess.run, port) == vool_api.pid
+        assert kill_listener(subprocess.run, port, tmp_path / "app") == vool_api.pid
         assert _wait_exit(vool_api) is not None, "the VOOL API listener survived the hard stop"
     finally:
         if vool_api.poll() is None:

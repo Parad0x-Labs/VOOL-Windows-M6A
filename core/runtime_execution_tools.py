@@ -162,6 +162,19 @@ _WORKSPACE_CONTENT_QUESTION_RE = re.compile(
 )
 _FILE_LINE_RE = re.compile(r"(?P<path>[A-Za-z0-9_./-]+\.[A-Za-z0-9_+-]+):(?P<line>\d+)")
 _SAFE_MACHINE_DIRECTORY_NAMES = ("Desktop", "Downloads", "Documents")
+#: Words a machine path may use for one of those folders in the user's home.
+_MACHINE_DIRECTORY_ALIASES = {
+    "desktop": "Desktop",
+    "my desktop": "Desktop",
+    "~/desktop": "Desktop",
+    "downloads": "Downloads",
+    "my downloads": "Downloads",
+    "~/downloads": "Downloads",
+    "documents": "Documents",
+    "my documents": "Documents",
+    "~/documents": "Documents",
+    "docs": "Documents",
+}
 
 
 @dataclass
@@ -3251,25 +3264,10 @@ def _dispatch_runtime_tool(
             },
         )
     workspace_root = _workspace_root(source_context)
-    from core import windows_write_gate
-
-    windows_refusal = windows_write_gate.refusal(intent, arguments, workspace_root)
-    if windows_refusal:
-        return RuntimeExecutionResult(
-            handled=True,
-            ok=False,
-            status=windows_write_gate.STATUS,
-            response_text=windows_refusal,
-            details={
-                "observation": _tool_observation(
-                    intent=intent,
-                    tool_surface=contract.tool_surface,
-                    ok=False,
-                    status=windows_write_gate.STATUS,
-                    reason=windows_refusal,
-                ),
-            },
-        )
+    # Defense in depth: the executor asked this same predicate before the permission decision.
+    windows_refusal = windows_write_refusal(intent, arguments, source_context=source_context)
+    if windows_refusal is not None:
+        return windows_refusal
     # Past every guard above, this IS the dispatch, so the turn can now say which tool it ran rather
     # than which lane claimed the message. A workspace read reports `workspace_runtime_fast_path` as
     # its route reason -- the name of the front-door family -- while the operation the user asked
@@ -4601,30 +4599,30 @@ def _resolve_machine_directory(raw_path: str | None, *, write: bool = False) -> 
     return target
 
 
-def _resolve_safe_machine_directory(raw_path: str | None) -> Path:
+def anchor_machine_path(raw_path: str | None) -> Path:
+    """Where a path for the safe machine-directory lane lands, before the safe-folder check: an
+    alias such as "documents" is that folder in the user's home, a `~` path expands there, and any
+    other relative path is taken from the home, never from a chat workspace. For machine.write_file
+    and machine.ensure_directory, the writer, the Windows write gate and the approval ask all place
+    the path here, so none of them describes a different file than the one the writer changes.
+    machine.move_path is not in this lane: it takes a relative path from the working directory."""
     raw = str(raw_path or "").strip()
     if not raw:
         return _safe_machine_roots()[0]
-    lowered = raw.lower().strip()
-    alias_map = {
-        "desktop": "Desktop",
-        "my desktop": "Desktop",
-        "~/desktop": "Desktop",
-        "downloads": "Downloads",
-        "my downloads": "Downloads",
-        "~/downloads": "Downloads",
-        "documents": "Documents",
-        "my documents": "Documents",
-        "~/documents": "Documents",
-        "docs": "Documents",
-    }
-    if lowered in alias_map:
-        return (_machine_home() / alias_map[lowered]).resolve()
+    alias = _MACHINE_DIRECTORY_ALIASES.get(raw.lower())
+    if alias:
+        return (_machine_home() / alias).resolve()
     candidate = _expand_machine_user(raw)
     if not candidate.is_absolute():
-        candidate = (_machine_home() / candidate).resolve()
-    else:
-        candidate = candidate.resolve()
+        return (_machine_home() / candidate).resolve()
+    return candidate.resolve()
+
+
+def _resolve_safe_machine_directory(raw_path: str | None) -> Path:
+    raw = str(raw_path or "").strip()
+    candidate = anchor_machine_path(raw)
+    if not raw or raw.lower() in _MACHINE_DIRECTORY_ALIASES:
+        return candidate
     for root in _safe_machine_roots():
         if candidate == root or root in candidate.parents:
             return candidate
@@ -7335,6 +7333,67 @@ def sandbox_cwd_refusal(raw_cwd: Any, *, workspace_root: Path) -> RuntimeExecuti
             },
         )
     return None
+
+
+def windows_write_refusal(
+    intent: str, arguments: dict[str, Any], *, source_context: dict[str, Any] | None
+) -> RuntimeExecutionResult | None:
+    """The Windows write gate's refusal for a call this dispatcher runs, or None.
+
+    One predicate over the arguments the dispatcher binds (underscore keys dropped, aliases bound
+    by the contract) and the workspace `_workspace_root` resolves. The dispatcher applies it last,
+    as defense in depth; the executor and the authorized execution boundary ask it BEFORE the
+    permission decision (and the executor before the A6 reservation). Asked only at dispatch,
+    Windows had the operator approve a write it then refused, and A6 had already recorded the
+    refused call as dispatched. Off Windows, or for an intent the gate never refuses, it returns
+    None before binding arguments or resolving the workspace.
+    """
+    from core import windows_write_gate
+
+    if not windows_write_gate.may_refuse(intent):
+        return None
+    contract = runtime_tool_contract_map().get(intent)
+    if contract is None or str(getattr(contract, "handler", "runtime")) != "runtime":
+        return None
+
+    bound = _bind_known_argument_aliases(
+        {k: v for k, v in arguments.items() if not str(k).startswith("_")}, contract=contract
+    )
+    reason = windows_write_gate.refusal(intent, bound, _workspace_root(source_context))
+    if not reason:
+        return None
+    return RuntimeExecutionResult(
+        handled=True,
+        ok=False,
+        status=windows_write_gate.STATUS,
+        response_text=reason,
+        details={
+            "executed": False,
+            "observation": _tool_observation(
+                intent=intent,
+                tool_surface=contract.tool_surface,
+                ok=False,
+                status=windows_write_gate.STATUS,
+                reason=reason,
+            ),
+        },
+    )
+
+
+def windows_write_refusal_before_decision(
+    intent: str, arguments: dict[str, Any], *, source_context: dict[str, Any] | None
+) -> RuntimeExecutionResult | None:
+    """`windows_write_refusal`, asked before a permission decision is taken for the call.
+
+    A council seat is left to the dispatch-time gate: `execute_runtime_tool` re-roots a seat onto
+    its own disposable workspace first, and only that gate sees the root the seat writes to.
+    """
+    refusal = windows_write_refusal(intent, arguments, source_context=source_context)
+    if refusal is None:
+        return None
+    from core.council.containment import binding_for_context
+
+    return None if binding_for_context(source_context) is not None else refusal
 
 
 def _run_command(

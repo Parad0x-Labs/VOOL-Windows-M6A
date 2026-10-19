@@ -227,6 +227,13 @@ def execute_authorized_runtime_tool(
     if permission_decision is not None:
         decision: PermissionDecision | None = permission_decision
     else:
+        # A write Windows refuses at dispatch is refused before this decision, so no approval is
+        # asked for it. A caller handing in a decision asked this before taking it.
+        windows_refusal = _runtime_execution_tools().windows_write_refusal_before_decision(
+            intent, arguments, source_context=context
+        )
+        if windows_refusal is not None:
+            return windows_refusal
         decision = authorize_runtime_tool(
             intent,
             arguments,

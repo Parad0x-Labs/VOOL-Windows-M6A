@@ -225,6 +225,13 @@ def ensure_proxy(project_id: str) -> dict[str, Any]:
 
 # ---------------------------------------------------------------- export
 
+def export_destination(out_path: str) -> Path:
+    """The file an export writes: `out_path` with `~` expanded and a relative path made absolute
+    from VOOL's working directory here, so the media worker, a process of its own, writes this
+    same file. The Windows write gate checks this path and the folder holding it."""
+    return Path(out_path).expanduser().absolute()
+
+
 def export_project(project_id: str, *, out_path: str, profile: str = "social",
                    use_working_range: bool = True) -> MediaExportReceipt:
     """Render SOURCE + EDIT GRAPH to a NEW output file via the isolated worker.
@@ -247,7 +254,7 @@ def export_project(project_id: str, *, out_path: str, profile: str = "social",
 
     ops = [op for op in project.effective_ops()
            if op.kind != "split"]  # split markers don't change rendered output
-    out = Path(out_path).expanduser()
+    out = export_destination(out_path)
 
     def _fail(code: str, message: str, *, unavailable: bool = False) -> MediaExportReceipt:
         status = "worker_unavailable" if unavailable else "failed"
@@ -325,7 +332,7 @@ def export_project(project_id: str, *, out_path: str, profile: str = "social",
 
 __all__ = [
     "MediaExportReceipt", "MediaStudioServiceError", "apply_edit", "ensure_proxy",
-    "export_project", "get_project", "inspect", "list_projects", "open_project",
+    "export_destination", "export_project", "get_project", "inspect", "list_projects", "open_project",
     "persist", "redo", "render_preview_frame", "undo", "update_selection",
     "validate_operation", "verify_source_intact",
 ]
