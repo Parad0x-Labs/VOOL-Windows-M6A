@@ -1,4 +1,4 @@
-"""The Media Studio editor's export asks the Windows write gate, as the media.export tool does.
+"""The Media Studio editor's export asks the Windows write gate about the files it writes.
 
 The editor (`/media-editor`, core.web.api.media_editor_api) exports through POST /media-editor/export,
 whose export_project writes the output, a stage file beside it for each edit, and the folders that
@@ -166,20 +166,50 @@ def test_a_home_editor_export_path_is_checked_where_the_export_writes_it(
     assert Path(editor.asked[-1]).resolve() == (editor.flagged / "exports" / "clip.mp4").resolve()
 
 
-def test_an_editor_export_path_is_checked_as_typed_spaces_included(
-    editor: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("output_path", "home", "cwd"),
+    [
+        # A leading space: a folder named " ~" in VOOL's working directory, not the home.
+        (" ~/exports/clip.mp4", "flagged", "outside"),
+        # A dollar sign: a folder named "$HOME" in VOOL's working directory, not the variable.
+        ("$HOME/exports/clip.mp4", "flagged", "outside"),
+        # A parent step after `~` climbs out of the home, not out of the working directory.
+        ("~/../exports/clip.mp4", "outside/home", "flagged"),
+    ],
+    ids=["leading-space", "dollar-sign", "parent-of-home"],
+)
+def test_an_editor_export_path_is_checked_as_typed(
+    editor: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, output_path: str, home: str, cwd: str
 ) -> None:
-    # export_project does not strip the path: " ~/exports/clip.mp4" is a folder named " ~" in VOOL's
-    # working directory, not the home, so it is checked there.
+    # export_project neither strips the path, expands environment variables nor folds "..", so the gate
+    # must place the same text the same way. Each of these lands outside the flagged folder.
+    root = editor.flagged.parent
+    (root / home).mkdir(parents=True, exist_ok=True)
     _on_windows(monkeypatch, editor.flagged)
-    _home(monkeypatch, editor.flagged)
-    monkeypatch.chdir(editor.outside)
+    _home(monkeypatch, root / home)
+    monkeypatch.chdir(root / cwd)
+    before = sorted(editor.outside.rglob("*")) + sorted(editor.flagged.rglob("*"))
 
-    status, payload = _export(editor, " ~/exports/clip.mp4")
+    status, payload = _export(editor, output_path)
 
     assert status == 403 and payload["error"] == gate.STATUS, payload
     assert editor.asked == []
-    assert not (editor.outside / " ~").exists()
+    assert sorted(editor.outside.rglob("*")) + sorted(editor.flagged.rglob("*")) == before
+
+
+@pytest.mark.parametrize("output_path", ["", "   "], ids=["empty", "blank"])
+def test_an_editor_export_with_no_output_path_is_refused(
+    editor: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, output_path: str
+) -> None:
+    # An empty path places the export at VOOL's working directory itself, its stage files in the folder above.
+    _on_windows(monkeypatch, editor.flagged)
+    monkeypatch.chdir(editor.flagged)
+
+    status, payload = _export(editor, output_path)
+
+    assert status == 403 and payload["error"] == gate.STATUS, payload
+    assert "names no output_path" in payload["message"], payload
+    assert editor.asked == []
 
 
 def test_off_windows_the_editor_export_is_unchanged(editor: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> None:
