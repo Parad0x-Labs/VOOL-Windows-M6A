@@ -11,6 +11,7 @@ checked-out submodule, which obeys the submodule's own config.
 """
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -200,3 +201,46 @@ def test_a_superproject_with_a_plain_submodule_still_commits(tmp_path: Path) -> 
 
     assert result.ok is True, result.to_dict()
     assert safe_git.executable_local_config(superproject) == []
+
+
+def _submodule_without_a_checkout(tmp_path: Path, marker: Path) -> Path:
+    # A gitlink bumped in HEAD whose folder is gone; its git folder under .git/modules names a diff
+    # driver program for its files.
+    superproject, sub, _ = _superproject(tmp_path)
+    upstream = tmp_path / "upstream" / "repo"
+    (upstream / "notes.txt").write_text("two\n", encoding="utf-8")
+    _git(upstream, "commit", "-q", "-a", "-m", "two")
+    _git(sub, "pull", "-q")
+    _git(superproject, "commit", "-q", "-a", "-m", "bump sub")
+    modules = superproject / ".git" / "modules" / "sub"
+    _git(modules, "config", "diff.planted.command", _planted_program(tmp_path, marker))
+    (modules / "info").mkdir(exist_ok=True)
+    (modules / "info" / "attributes").write_text("*.txt diff=planted\n", encoding="utf-8")
+    _git(superproject, "config", "diff.submodule", "diff")
+    shutil.rmtree(sub)
+    return superproject
+
+
+def test_control_a_submodule_without_a_checkout_diffs_under_its_git_folders_config(tmp_path: Path) -> None:
+    superproject = _submodule_without_a_checkout(tmp_path, tmp_path / "MARKER")
+
+    subprocess.run(["git", *safe_git.hardening_args(), "-C", str(superproject), "log", "--no-ext-diff",
+                    "--no-textconv", "-p", "-1"], capture_output=True, timeout=60, env=safe_git.safe_env())
+
+    assert (tmp_path / "MARKER").exists(), "the planted driver did not run even without diff.submodule=short"
+
+
+def test_a_submodule_without_a_checkout_runs_nothing_in_diff_or_the_rules_scans(tmp_path: Path) -> None:
+    from core import user_rules
+
+    marker = tmp_path / "MARKER"
+    superproject = _submodule_without_a_checkout(tmp_path, marker)
+
+    diff = git_diff_workspace({}, workspace_root=superproject)
+    pushed = user_rules._git_text(superproject, "log", "--no-color", "--format=", "-p", "-U0", "HEAD~1..HEAD")
+    _git(superproject, "add", "-A")
+    staged = user_rules._git_text(superproject, "diff", "--cached", "--no-color", "-U0")
+
+    assert diff["ok"] is True
+    assert "sub" in pushed and "sub" in staged
+    assert not marker.exists(), "git ran a diff driver named in a submodule's git folder"
