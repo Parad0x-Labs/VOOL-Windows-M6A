@@ -1,17 +1,25 @@
-# Versions CI installs, so a new upstream release cannot turn every PR red overnight.
+# Versions CI installs, so a new release of a runtime or test dependency cannot turn every PR red
+# overnight.
 #
-# ci.yml passes this file to pip with -c on every install. It only caps what pip may pick; it adds
-# no packages. Packages pyproject.toml already pins exactly (pytest, ruff, idna, pypdf, reportlab,
-# markdown-it-py, xlrd) are left out, so pyproject stays their one source of truth.
+# ci.yml and wallet-order-replay.yml pass this file to pip with -c on every install. It only caps
+# what pip may pick; it adds no packages. Packages pyproject.toml already pins exactly (pytest,
+# ruff, idna, pypdf, reportlab, markdown-it-py, xlrd) are left out so pyproject keeps their
+# version; their own dependencies (pluggy, iniconfig, packaging, pygments, ...) are pinned here.
 #
-# Source: the green CI run 39169340865 on 4a440b6 (merged head of PR #15) (pip 26.2.1, CPython 3.12.13, Linux), the
-# "Successfully installed" list of `pip install -e ".[dev,browser,companion,evm]"`.
-# Linux-only entries (jeepney, SecretStorage) are ignored where pip does not need them.
+# Not covered: -c does not reach pip's isolated build environment, so the build backend
+# (setuptools, wheel from [build-system]) and pip itself (`pip install --upgrade pip`) still float.
 #
-# To bump: change the version here (and in pyproject.toml if its floor moves), push, and let CI
-# prove it. To regenerate all of it, install the extras above into a clean 3.12 venv without -c,
-# run the suite, and replace the list with that venv's `pip freeze --exclude-editable`, minus the
-# exact pins named above.
+# Source: the green CI run 39169340865 on 4a440b6, the merged head of PR #15 (pip 26.2.1,
+# CPython 3.12.13, Linux): the "Successfully installed" list of
+# `pip install -e ".[dev,browser,companion,evm]"`. Linux-only entries (jeepney, SecretStorage) are
+# ignored where pip does not need them; Windows-only dependencies are not listed.
+#
+# To bump: change the version here, push, and let CI prove it. A pyproject floor raised above a
+# version here, or an exact-pinned package whose new release needs a newer dependency than the
+# one here, fails the install with ResolutionImpossible until this file is bumped too.
+# To regenerate all of it, install the extras above into a clean 3.12 venv without -c, run the
+# suite, and replace the list with that venv's `pip freeze --exclude-editable`, minus the exact
+# pins named above.
 annotated-types==0.8.0
 anyio==4.15.1
 ast-serialize==0.13.1
