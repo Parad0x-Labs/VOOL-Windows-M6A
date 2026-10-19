@@ -60,7 +60,7 @@ def flagged_roots(environ: dict[str, str] | None = None) -> list[str]:
 
 def _inside(path: str, roots: list[str]) -> bool:
     # No file can have a path holding a NUL. POSIX realpath raises on one, but Windows realpath
-    # returns it unchanged, so the text around the NUL would decide where it lies.
+    # returns it unresolved, so the text around the NUL would decide where it lies.
     if "\x00" in path:
         return False
     try:
@@ -87,9 +87,9 @@ def _landing(intent: str, value: str) -> list[str] | None:
     - machine.move_path: stripped, from the process's working directory (`_canonicalize`);
     - media.export: unstripped, from the working directory (`export_destination`), with the folder
       that holds the output, where the export also writes its stage files;
-    - operator.move_path: stripped, with `$VAR` and `~` expanded as its handler expands them. The
-      handler takes a relative path from VOOL's working directory; the gate takes only a path
-      that is absolute once expanded.
+    - operator.move_path: stripped, with environment variables (`$VAR`, and `%VAR%` on Windows) and
+      `~` expanded as its handler expands them. The handler takes a relative path from VOOL's
+      working directory; the gate takes only a path that is absolute once expanded.
     Joined onto the chat workspace instead, `Documents\\x.txt` passed as a workspace file while the
     writer put it in the user's real Documents folder.
     """
@@ -163,7 +163,8 @@ def refusal(
         landing = _landing(intent, value)
         if landing is None:
             if intent.startswith("operator."):
-                return f"{intent} needs a {key} that is absolute once ~ and $VAR are expanded, so its target cannot be checked"
+                return (f"{intent} needs a {key} that is absolute once ~ and environment variables are expanded, "
+                        "so its target cannot be checked")
             return f"{intent} names a {key} the gate cannot place exactly, so its target cannot be checked"
         targets.extend(landing)
     if roots and targets and all(_inside(target, roots) for target in targets):

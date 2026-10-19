@@ -4600,11 +4600,12 @@ def _resolve_machine_directory(raw_path: str | None, *, write: bool = False) -> 
 
 
 def anchor_machine_path(raw_path: str | None) -> Path:
-    """Where a `machine.*` path lands, before the safe-folder check: an alias such as "documents" is
-    that folder in the user's home, a `~` path expands there, and any other relative path is taken
-    from the home, never from a chat workspace. The writer, the Windows write gate and the approval
-    ask all place a machine path here, so none of them describes a different file than the one the
-    writer changes."""
+    """Where a path for the safe machine-directory lane lands, before the safe-folder check: an
+    alias such as "documents" is that folder in the user's home, a `~` path expands there, and any
+    other relative path is taken from the home, never from a chat workspace. For machine.write_file
+    and machine.ensure_directory, the writer, the Windows write gate and the approval ask all place
+    the path here, so none of them describes a different file than the one the writer changes.
+    machine.move_path is not in this lane: it takes a relative path from the working directory."""
     raw = str(raw_path or "").strip()
     if not raw:
         return _safe_machine_roots()[0]
