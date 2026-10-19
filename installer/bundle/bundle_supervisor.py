@@ -10,6 +10,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -69,21 +70,25 @@ def _copy_notes_tree(source: Path, target: Path) -> dict[str, Any]:
                 report["skipped"].append(relative)
                 continue
             destination = destination_dir / name
-            try:
-                writer = destination.open("xb")
-            except FileExistsError:
+            if destination.exists() or destination.is_symlink():
                 report["kept"].append(relative)
                 continue
+            # Copy to a temporary name, then link it into place: a crash mid-copy can leave only the
+            # temporary file, never a truncated note that the retry would keep as already present.
+            temporary = destination_dir / f".{name}.{uuid.uuid4().hex}.vool-copy.tmp"
             try:
-                with writer, item.open("rb") as reader:
+                with temporary.open("xb") as writer, item.open("rb") as reader:
                     writer.write(reader.read())
-            except OSError:
-                # A half-written copy would be kept as "already present" by the retry.
                 with contextlib.suppress(OSError):
-                    destination.unlink()
-                raise
-            with contextlib.suppress(OSError):
-                os.utime(destination, ns=(item.stat().st_atime_ns, item.stat().st_mtime_ns))
+                    os.utime(temporary, ns=(item.stat().st_atime_ns, item.stat().st_mtime_ns))
+                try:
+                    os.link(temporary, destination)  # never replaces an existing file
+                except FileExistsError:
+                    report["kept"].append(relative)
+                    continue
+            finally:
+                with contextlib.suppress(OSError):
+                    temporary.unlink()
             report["copied"].append(relative)
     return report
 
@@ -182,8 +187,16 @@ class BundleSupervisor:
         """The workspace the API this supervisor starts keeps its notes under (core.operator.notes.
         _workspace_root with VOOL_BUNDLE_ROOT set): VOOL_WORKSPACE_ROOT when the user set it, else
         the workspace folder under the VOOL home."""
-        override = str(self.env.get("VOOL_WORKSPACE_ROOT") or self.env.get("NULLA_WORKSPACE_ROOT") or "").strip()
+        override = self._workspace_override()
         return Path(override).expanduser() if override else self.home / "workspace"
+
+    def _workspace_override(self) -> str:
+        """VOOL_WORKSPACE_ROOT, else the legacy NULLA_WORKSPACE_ROOT, as core.runtime_paths.vool_env reads them."""
+        for name in ("VOOL_WORKSPACE_ROOT", "NULLA_WORKSPACE_ROOT"):
+            value = str(self.env.get(name) or "").strip()
+            if value:
+                return value
+        return ""
 
     def _copy_program_folder_notes_once(self) -> None:
         """Copy notes an earlier build kept in {app}\\app\\notes to the workspace in the VOOL home.
@@ -196,6 +209,11 @@ class BundleSupervisor:
         """
         marker = self.run_dir / _NOTES_COPY_MARKER
         if marker.exists():
+            return
+        if self._workspace_override():
+            # The API keeps notes in the user's own chosen folder, where an earlier build kept them
+            # too; old program-folder notes are not copied into that project. No marker, so the copy
+            # still runs if the override is removed.
             return
         source = self.root / "app" / "notes"
         target = self._notes_workspace_root() / "notes"
