@@ -1,13 +1,14 @@
-# Windows port contracts (Step 0)
+# Windows port contracts
 
 Frozen at windows/v0.7.1-port e8f607d. Every file:function:line below was read at that commit.
 **VERIFIED** means checked by hand in source at e8f607d. **UNVERIFIED** means not confirmed.
 **FALSE** means an earlier inventory claim (taken at 0ac9f35) that source contradicts.
 This is a description of what exists today. Nothing here is a fix.
 
-Plan step expected to close each gap (section 6): 1 -> Step 3; 2 -> Step 3; 3 -> unassigned;
+This is Step 0 of the Windows port plan, which is kept outside this repository. The plan step
+expected to close each gap (section 6): 1 -> Step 3; 2 -> Step 3; 3 -> unassigned;
 4 -> unassigned; 5 -> Step 2; 6 -> unassigned; 7 -> Step 3; 8 -> unassigned; 9 -> unassigned;
-10 -> closed by PR #18; 11 -> closed by PR #20.
+10 -> closed by PR #18; 11 -> closed by PR #20 for the intents the gate covers; 12 -> unassigned.
 
 ## 1. Frozen SHAs
 
@@ -29,12 +30,13 @@ loopback check; request_trust.py:19 says so ("any local process is treated as th
 | Tool executor: runtime/operator/web/hive tools (files, processes, network) | core/tool_intent_executor.py:execute_tool_intent:239 -> _execute_tool_intent_impl:1062 | Windows write gate 1319, then mode controller `decide_tool_call` 1322 (core/mode_permission_policy.py:3586), then A6 reserve 1435 | tests/test_windows_write_gate_before_approval.py, tests/test_a6_effect_reconciliation.py |
 | Fast paths and Blackbox rollback (files) | core/authorized_tool_execution.py:execute_authorized_runtime_tool:190 | Windows gate 232, then `authorize_runtime_tool` 237 when no decision is handed in | test_windows_write_gate_before_approval.py::test_a_fast_path_write_is_gated_before_the_boundary_takes_its_decision |
 | Runtime dispatcher (files, network) | core/runtime_execution_tools.py:execute_runtime_tool:3610 -> _dispatch_runtime_tool:3112 | agent-team write gate (3640) and council seat fence (containment.evaluate, 3663) first, Windows gate again at 3268 | tests/test_windows_write_gate.py::test_the_real_dispatch_refuses_a_workspace_write_and_writes_nothing |
-| Operator lane typed turns (move, temp cleanup, calendar) | core/agent_runtime/turn_dispatch.py:352 -> core/local_operator_actions.py:dispatch_operator_action:70 | parsed approval words plus a stored pending action id; Windows gate at 100, which refuses every temp cleanup (PR #20) | test_windows_write_gate.py::test_an_operator_move_is_refused_outside_flagged_folders |
+| Operator lane typed turns (move, temp cleanup, calendar) | core/agent_runtime/turn_dispatch.py:352 -> core/local_operator_actions.py:dispatch_operator_action:70 | parsed approval words plus a stored pending action: the one whose id is typed, or with no id the session's latest (core/operator/approvals.py:load_pending_action:105, 124-134); Windows gate at 100, which refuses every temp cleanup (PR #20) and a move approval that names no paths | test_windows_write_gate.py::test_an_operator_move_is_refused_outside_flagged_folders |
 | sandbox.run_command (process) | runtime_execution_tools.py:_run_command:7399 | mode controller, cwd check `sandbox_cwd_refusal`:7296, kernel sandbox. On Windows sandbox/job_runner.py:_no_kernel_isolation_message:775 says no backend exists, so it fails closed (UNVERIFIED end to end) | the message only: tests/test_job_runner.py::JobRunnerTests::test_windows_missing_backend_error_names_heuristic_only_and_wsl2; none for the refusal end to end |
 | Plugins and MCP servers (process) | core/plugin_executor.py:confined_argv:254 | Windows refuses bare and heuristic_only (`_WINDOWS_REFUSES_BARE`:64, 280) | tests/test_windows_never_runs_unconfined_children.py::test_windows_refuses_heuristic_only |
 | Process agents (process) | core/agent_team/coordinator.py:_launch_process:260 | Windows refuses (`_WINDOWS_REFUSES_PROCESS_AGENTS`:48) | test_windows_never_runs_unconfined_children.py::test_windows_refuses_to_start_a_process_agent |
 | vool-browser lane (process, network, downloads) | runtime_execution_tools.py:3171 -> core/vool_browser/sessions.py:open_session:346 | mode controller only; no Windows check (gap 8) | none for Windows |
 | Media worker (process) | core/media_worker_client.py:NebulaWorkerClient._spawn:121 | none on Windows (gap 8) | none for Windows |
+| Media Studio editor export over HTTP (files) | service.py:_dispatch_post_inner:4203, branch 4222-4225 -> core/web/api/media_editor_api.py:handle_media_editor_post:280 (export 305-315) -> core/media_studio_service.py:export_project:235 | the policy flag `media.editor_export_enabled` only (308, default True); no loopback check and no Windows write gate (gap 12) | none for Windows |
 | Git on user repos (process) | core/safe_git.py:hardened_argv:125 (also named `read_only_argv`, 134), used by execution/git_tools, repoops/gitops, user_rules, project_archaeology; workspace_tools builds its `git apply` from `hardening_args`:78 | refuses repo-config programs and hooks | tests/test_git_tools_repository_config_cannot_run_programs.py, tests/test_archaeology_git_is_hardened.py |
 | /api/commands/dispatch (updates, approvals, team control, settings) | service.py:dispatch_post:3025, branch 3056-3060 -> core/command_registry/api.py:handle_commands_dispatch:36 | NO peer check; body `approval_context`; principal defaults to "operator" (gap 1) | none for a non-loopback peer |
 | /api/update/install, restart, rollback | service.py:3167, loopback 3171 | loopback plus server-made press | tests/updater/test_final_p1.py::TestNoUpdateFromProseRemoteOrForgery::test_remote_host_cannot_press_install_or_restart |
@@ -72,7 +74,7 @@ Each enforcement point was read at e8f607d. Each test file and function exists t
 
 | Invariant | Enforcement (file:function) | Named test |
 |---|---|---|
-| Windows: user-file writes only inside VOOL_WINDOWS_DISPOSABLE_WORKSPACES | core/windows_write_gate.py:refusal:131 (`_GATED`:28); each keyed path is checked where its writer puts it (`_landing`:79), and a temp cleanup is refused outright (`_ALWAYS_REFUSED`:48) (gap 11, closed) | tests/test_windows_write_gate.py::test_no_flagged_folder_refuses_every_user_filesystem_write; tests/test_machine_writes_are_checked_where_they_land.py::test_a_flagged_chat_workspace_no_longer_lets_a_write_into_the_real_documents_folder, ::test_windows_refuses_a_temp_cleanup_even_from_a_flagged_folder |
+| Windows: user-file writes only inside VOOL_WINDOWS_DISPOSABLE_WORKSPACES | core/windows_write_gate.py:refusal:131 (`_GATED`:28); each keyed path is checked where its writer puts it (`_landing`:79), and a temp cleanup is refused outright (`_ALWAYS_REFUSED`:48) (gap 11, closed). The Media Studio editor's HTTP export never asks it (gap 12, open) | tests/test_windows_write_gate.py::test_no_flagged_folder_refuses_every_user_filesystem_write; tests/test_machine_writes_are_checked_where_they_land.py::test_a_flagged_chat_workspace_no_longer_lets_a_write_into_the_real_documents_folder, ::test_windows_refuses_a_temp_cleanup_even_from_a_flagged_folder |
 | ...refused before the permission decision and before A6 (PR #15) | core/tool_intent_executor.py:_windows_write_refusal:886 (called 1319); core/runtime_execution_tools.py:windows_write_refusal:7338, windows_write_refusal_before_decision:7383; core/local_operator_actions.py:windows_write_refusal:55 | tests/test_windows_write_gate_before_approval.py::test_a_write_outside_the_flagged_folders_is_refused_before_approval_and_a6, ::test_an_operator_move_outside_the_flagged_folders_is_refused_before_approval |
 | ...fast paths gated before the boundary decides | core/authorized_tool_execution.py:execute_authorized_runtime_tool:232 | test_windows_write_gate_before_approval.py::test_a_fast_path_write_is_gated_before_the_boundary_takes_its_decision |
 | ...inside a flagged folder the write still reaches approval | same | test_windows_write_gate_before_approval.py::test_inside_a_flagged_workspace_the_write_still_reaches_approval |
@@ -202,7 +204,9 @@ tests/test_a6_resolution_surface.py::test_user_resolution_releases_the_block.
    core/agent_runtime/turn_dispatch.py:352. No `owner_local` / `request_is_owner_local` reference exists
    in turn_dispatch.py, operator/parser.py, operator/handlers.py or local_operator_actions.py. The
    inventory path core/turn_dispatch.py is FALSE (the file is core/agent_runtime/turn_dispatch.py).
-   Whether a non-owner turn is filtered before this lane was not traced.
+   Whether a non-owner turn is filtered before this lane was not traced. On Windows the write gate now
+   refuses `approve cleanup <id>` (it refuses every temp cleanup) and an `approve move <id>` that names
+   no paths, before either handler runs (core/local_operator_actions.py:100; gap 11).
 8. **VERIFIED in source.** core/media_worker_client.py:_spawn:121-136 starts `python -m nebula.worker`
    with no Windows confinement check. `vool-browser.*` is dispatched at runtime_execution_tools.py:3171,
    before the Windows gate at 3268. core/vool_browser/engine.py:find_engine_binary:145 accepts any
@@ -254,7 +258,9 @@ tests/test_a6_resolution_surface.py::test_user_resolution_releases_the_block.
     `{app}\ollama\ollama.exe`, which the supervisor starts (bundle_supervisor.py:306). Start_VOOL.bat:95
     still stops every python.exe or pythonw.exe whose command line contains `apps.vool_api_server` or
     `vool_api_server.py`, from any folder, when the API on 11435 fails its health check (89-94).
-11. **Closed by PR #20. VERIFIED in source; the new tests also run on Windows (the gauntlet).** At
+11. **Closed by PR #20 for the intents the gate covers; the Media Studio editor's HTTP export never
+    asks the gate (gap 12). VERIFIED in source; the new tests passed on Windows at e8f607d (Windows
+    Release Gauntlet run 39221752745).** At
     c86d013 the gate joined every relative keyed target onto the chat workspace, while the writers
     place the same arguments elsewhere. With the chat workspace inside a flagged folder,
     `machine.write_file` with path `Documents\x.txt` passed the gate and was written to the user's
@@ -280,16 +286,48 @@ tests/test_a6_resolution_surface.py::test_user_resolution_releases_the_block.
     `_affected_resources_display`:3030). The writers' own checks still apply on top: the machine
     writers accept only Desktop, Downloads and Documents in the home (runtime_execution_tools.py:4626-4630),
     machine.move_path needs both paths in those folders or the workspace (machine_file_ops.py:176-185)
-    plus an OS consent (191-200), and media.export's writer has no root check of its own. Tests, also
-    run on Windows by tools/windows_fresh_host_gauntlet.ps1:
+    plus an OS consent (191-200), and media.export's writer has no root check of its own. Tests,
+    which tools/windows_fresh_host_gauntlet.ps1:179 also runs on Windows:
     tests/test_machine_writes_are_checked_where_they_land.py::test_a_flagged_chat_workspace_no_longer_lets_a_write_into_the_real_documents_folder,
     ::test_an_export_writes_only_where_the_gate_checked, ::test_windows_refuses_a_temp_cleanup_even_from_a_flagged_folder,
     ::test_the_approval_ask_names_the_file_a_machine_write_changes.
+    The gauntlet runs on a PR into windows/v0.7.1-port only when dispatched. On PR #20's heads, run
+    39214703029 at adff1d5 failed 2 of 201 tests on Windows (the NUL cases, fixed in 6e17623), and
+    run 39221752745 at e8f607d passed.
     Known residuals, not fixed (VERIFIED in source, impact UNVERIFIED): the gate checks paths, not
     handles. On Windows it judges by its text a path `realpath` cannot resolve, such as a DOS device
     name inside a flagged folder or a path over 32,767 characters. Temp cleanup, and an operator move
-    approved by its id alone (which carries no paths), are refused on Windows. The flight recorder
-    (core/blackbox/coverage/recorder.py:declared_paths_for:206) still joins a relative path onto the
-    workspace, so it can journal a file the write never touched. The approval ask shows no path for
-    machine.move_path or media.export, and shows an absolute Windows path for a workspace write as
-    `<workspace>/C:\...`.
+    approved by its id alone (which carries no paths), are refused on Windows. A move approved with
+    paths typed is checked on those paths but runs the ones its stored preview holds
+    (core/operator/handlers.py:538-570), and with no id typed it takes the session's latest preview
+    (core/operator/approvals.py:124-134). The preview passed the gate when it was made (the gate at
+    core/local_operator_actions.py:100 runs before handlers.py:487 stores it), so the two differ only
+    if the flagged folders changed in between (a restart with another
+    VOOL_WINDOWS_DISPOSABLE_WORKSPACES) or the preview was stored by a build without the gate. The
+    flight recorder (core/blackbox/coverage/recorder.py:declared_paths_for:206-215) still joins a
+    relative path onto the workspace. For a machine write given a relative or `~` path (a
+    declared-path capability, core/blackbox/coverage/registry.py:58-63, 85), it snapshots and journals
+    that workspace path (442-452, 705-741), never the file in the user's home that the write changes,
+    so the Blackbox keeps no before-image of that file, yet the record says the effect can be rolled
+    back (741). The same paths feed its high-risk check (`_high_risk_gate`, 328-331). The approval ask
+    shows no path for machine.move_path or media.export, and shows an absolute Windows path for a
+    workspace write as `<workspace>/C:\...`.
+12. **VERIFIED in source; run at e8f607d on Linux with the gate switched on, not on Windows.** The
+    Media Studio editor's export, `POST /media-editor/export` (core/web/api/service.py:
+    _dispatch_post_inner:4203, branch 4222-4225 -> core/web/api/media_editor_api.py:
+    handle_media_editor_post:280, export 305-315 -> core/media_studio_service.py:export_project:235),
+    writes the request's `output_path`, a stage file beside it for each edit, and the folders that
+    hold them (VOOL creates those itself, 271 and 312), without asking the Windows write gate. Only
+    the policy flag `media.editor_export_enabled` (308, default True) and the Host and Origin checks
+    every POST gets apply; there is no loopback check. The same export through the `media.export`
+    tool is gated (gap 11). In the run (the gate switched on by patching `_IS_WINDOWS`, one flagged
+    folder, a stand-in media worker), the tool was refused with
+    `windows_filesystem_authority_unavailable` and wrote nothing, while this route answered 200
+    `exported`, created a folder outside the flagged one and asked the worker to write a stage file
+    and the output there. An export needs a project, and `open_project` (91) makes one only after the
+    media worker probes the source (96), so this matters wherever the worker runs on Windows (gap 8).
+    The action is also registered as the command `media.editor.export`
+    (core/command_registry/groups/delegated_routes.py:505, handler `_media_editor_action`:455), but
+    that handler passes `client_host` (461), which handle_media_editor_post does not accept, so
+    through /api/commands/dispatch it fails with a TypeError (500) and writes nothing (same run). No
+    test covers either route on Windows.
