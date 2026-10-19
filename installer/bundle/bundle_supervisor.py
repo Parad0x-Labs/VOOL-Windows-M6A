@@ -30,6 +30,64 @@ _WINDOWS_SCRIPT_ARGUMENT_PREFIX = (
 _POWERSHELL_SINGLE_QUOTES = "'\u2018\u2019\u201a\u201b"
 
 
+_NOTES_COPY_MARKER = "notes-copied-from-program-folder.json"
+
+
+def _is_link(path: Path) -> bool:
+    is_junction = getattr(path, "is_junction", None)  # Python 3.12+
+    return path.is_symlink() or bool(is_junction and is_junction())
+
+
+def _copy_notes_tree(source: Path, target: Path) -> dict[str, Any]:
+    """Copy the regular files under `source` into `target`, keeping relative paths.
+
+    Links and junctions (the folder itself, a subfolder or a file) are skipped, so nothing outside
+    the old notes folder is copied. A file `target` already has is kept as it is. Raises OSError on
+    a failed copy, or when `target` (or a folder on the way into it) is a link.
+    """
+    report: dict[str, Any] = {"copied": [], "kept": [], "skipped": []}
+    if _is_link(source):
+        report["skipped"].append(".")
+        return report
+    if not source.is_dir():
+        return report
+    for current, dirs, files in os.walk(source, followlinks=False):
+        here = Path(current)
+        relative_dir = here.relative_to(source)
+        for name in list(dirs):
+            if _is_link(here / name):
+                dirs.remove(name)
+                report["skipped"].append(str(relative_dir / name))
+        destination_dir = target / relative_dir
+        for part in [target, *[target / Path(*relative_dir.parts[: i + 1]) for i in range(len(relative_dir.parts))]]:
+            if _is_link(part):
+                raise OSError(f"{part} is a link, not a folder in the VOOL home")
+        destination_dir.mkdir(parents=True, exist_ok=True)
+        for name in files:
+            item, relative = here / name, str(relative_dir / name)
+            if _is_link(item) or not item.is_file():
+                report["skipped"].append(relative)
+                continue
+            destination = destination_dir / name
+            try:
+                writer = destination.open("xb")
+            except FileExistsError:
+                report["kept"].append(relative)
+                continue
+            try:
+                with writer, item.open("rb") as reader:
+                    writer.write(reader.read())
+            except OSError:
+                # A half-written copy would be kept as "already present" by the retry.
+                with contextlib.suppress(OSError):
+                    destination.unlink()
+                raise
+            with contextlib.suppress(OSError):
+                os.utime(destination, ns=(item.stat().st_atime_ns, item.stat().st_mtime_ns))
+            report["copied"].append(relative)
+    return report
+
+
 def _is_windows_platform() -> bool:
     """Indirection over ``os.name == "nt"`` so tests can simulate "running on Windows" for one
     call without mutating the real ``os.name`` -- ``pathlib.Path`` itself branches on ``os.name``
@@ -118,6 +176,42 @@ class BundleSupervisor:
             self.env["VOOL_OLLAMA_MODEL"] = model
         model_store.mkdir(parents=True, exist_ok=True)
         self._write_model_status("delegated_to_api", "The API owns the non-blocking model pull.")
+        self._copy_program_folder_notes_once()
+
+    def _notes_workspace_root(self) -> Path:
+        """The workspace the API this supervisor starts keeps its notes under (core.operator.notes.
+        _workspace_root with VOOL_BUNDLE_ROOT set): VOOL_WORKSPACE_ROOT when the user set it, else
+        the workspace folder under the VOOL home."""
+        override = str(self.env.get("VOOL_WORKSPACE_ROOT") or self.env.get("NULLA_WORKSPACE_ROOT") or "").strip()
+        return Path(override).expanduser() if override else self.home / "workspace"
+
+    def _copy_program_folder_notes_once(self) -> None:
+        """Copy notes an earlier build kept in {app}\\app\\notes to the workspace in the VOOL home.
+
+        Before notes moved to the VOOL home, the installed API kept them in {app}\\app\\notes, which
+        uninstall deletes. This runs once (a marker in run\\ records it) before the first API start.
+        It copies regular files only, never follows a link or junction, never replaces a file the
+        new location already has, and never deletes or changes the old copy. A failed copy leaves
+        no marker, so the next start tries again.
+        """
+        marker = self.run_dir / _NOTES_COPY_MARKER
+        if marker.exists():
+            return
+        source = self.root / "app" / "notes"
+        target = self._notes_workspace_root() / "notes"
+        try:
+            report = _copy_notes_tree(source, target)
+        except OSError as exc:
+            self._log(f"notes copy from the program folder failed, will retry next start: {exc}")
+            return
+        report.update({"source": str(source), "target": str(target), "copied_at_epoch": time.time()})
+        with contextlib.suppress(OSError):
+            marker.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        if report["copied"] or report["kept"] or report["skipped"]:
+            self._log(
+                f"notes from the program folder: {len(report['copied'])} copied, "
+                f"{len(report['kept'])} already present, {len(report['skipped'])} skipped (links)"
+            )
 
     def _write_model_status(self, status: str, detail: str = "") -> None:
         payload = {
