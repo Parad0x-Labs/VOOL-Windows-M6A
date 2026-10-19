@@ -191,56 +191,173 @@ def update_note(*, title: str, new_body: str | None = None, append: str | None =
     return {"ok": True, "status": "updated", "note_path": str(path), "title": final_title}
 
 
+_ARCHIVE = ".archive"
+
+
+class _Unconfined(ValueError):
+    """A notes path that is a link, or does not stay where it is named, so no note is moved through it."""
+
+
+def _is_link(path: Path) -> bool:
+    from core import fs_links
+
+    try:
+        return fs_links.is_link(path)
+    except OSError as exc:  # examined but not examinable: treated as unconfined, never as a plain folder
+        raise _Unconfined(f"`{path.name}` cannot be examined ({exc})") from exc
+
+
+def _archive_dir(*, create: bool) -> Path:
+    """``notes/.archive`` as a real folder inside the notes folder, never through a link.
+
+    `_confined` resolves links and accepts one that stays inside the workspace, and the pinned writers
+    refuse a path with any link in it; so the archive must be the plain, unlinked entry the notes folder
+    names. A link there (a junction on Windows needs no privilege) would have archived notes into, and
+    restored and deleted files from, wherever it points."""
+    raw = notes_root() / _ARCHIVE
+    if _is_link(raw) or _confined(f"notes/{_ARCHIVE}") != raw:
+        raise _Unconfined("notes/.archive is a link, not a folder inside the notes folder")
+    if create and not raw.exists():
+        raw.mkdir()
+        if _is_link(raw) or _confined(f"notes/{_ARCHIVE}") != raw:
+            raise _Unconfined("notes/.archive is a link, not a folder inside the notes folder")
+    return raw
+
+
+def _read_entry(path: Path) -> tuple[bytes, str, tuple[int, int]] | None:
+    """A regular, unlinked UTF-8 file's bytes, its text (newlines as `read_text` gives them) and its
+    identity; None for anything else."""
+    import stat
+
+    try:
+        entry = os.lstat(path)
+        if _is_link(path) or not stat.S_ISREG(entry.st_mode):
+            return None
+        raw = path.read_bytes()
+        text = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    except (OSError, ValueError):
+        return None
+    return raw, text, (entry.st_dev, entry.st_ino)
+
+
+def _move_note(source: Path, source_entry: tuple[bytes, str, tuple[int, int]], target: Path, content: str) -> str:
+    """Write ``content`` as the new file ``target``, then remove ``source`` while it is still the file that was
+    read. "" when both happened; otherwise the status of what stopped it, with the note left where it was
+    (the new copy is removed again) -- or "move_incomplete" when neither the source nor the copy could be
+    put back in order."""
+    from core.execution.artifacts import (
+        DestinationChangedError,
+        ReviewedBaseChangedError,
+        pinned_atomic_write_text,
+        pinned_remove_created_file,
+    )
+
+    raw, _text, identity = source_entry
+    try:
+        created = pinned_atomic_write_text(target, content, expected_prior_sha256="")
+    except ReviewedBaseChangedError:
+        return "name_taken"
+    except DestinationChangedError:
+        return "unconfined"
+    except OSError:
+        return "write_failed"
+    try:
+        pinned_remove_created_file(source, created_identity=identity, expected_sha256=hashlib.sha256(raw).hexdigest())
+    except OSError:
+        try:
+            pinned_remove_created_file(target, created_identity=created,
+                                       expected_sha256=hashlib.sha256(content.encode("utf-8")).hexdigest())
+        except OSError:
+            return "move_incomplete"
+        return "note_changed"
+    return ""
+
+
 def archive_note(*, title: str) -> dict[str, Any]:
     """A reviewed, recoverable delete: the note moves to notes/.archive/ and stops being
     listed, read, searched or linked; nothing is erased.
 
     Archived notes keep their front matter (title, session, event links) plus an archived
-    timestamp, so a restore returns exactly what was archived.
+    timestamp, so a restore returns exactly what was archived. Only a note that is a plain file in
+    the notes folder moves, and only into a plain ``.archive`` folder there: the copy is written
+    first and the note removed only while it is still the file that was read, so nothing outside the
+    notes folder is written or removed through a link, and a stopped move leaves the note in place.
     """
-    candidates = [path for path in _iter_note_files() if _split_front_matter(path.read_text(encoding="utf-8"))[0].get("title", "").casefold() == str(title).casefold()]
-    if len(candidates) != 1:
-        if not candidates:
+    try:
+        root = notes_root()
+        matches = [path for path in _iter_note_files()
+                   if _split_front_matter(path.read_text(encoding="utf-8"))[0].get("title", "").casefold() == str(title).casefold()]
+    except ValueError as exc:
+        return {"ok": False, "status": "archive_unconfined", "detail": str(exc)}
+    if len(matches) != 1:
+        if not matches:
             return {"ok": False, "status": "not_found"}
-        return {"ok": False, "status": "ambiguous", "matches": [str(path) for path in candidates]}
-    path = candidates[0]
-    meta, body = _split_front_matter(path.read_text(encoding="utf-8"))
+        return {"ok": False, "status": "ambiguous", "matches": [str(path) for path in matches]}
+    # `_iter_note_files` lists a link by where it leads: a note linked to another file in the
+    # workspace is that file, which an archive would then delete.
+    path = root / matches[0].name
+    entry = _read_entry(path) if matches[0] == path else None
+    if entry is None:
+        return {"ok": False, "status": "not_a_plain_note",
+                "detail": f"{path.name} is a link or not a plain UTF-8 file in the notes folder; nothing was moved"}
+    meta, body = _split_front_matter(entry[1])
     meta["archived_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     front = "\n".join(f"{key}: {value}" for key, value in meta.items() if value != "")
-    archive_dir = notes_root() / ".archive"
-    archive_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        archive_dir = _archive_dir(create=True)
+    except (ValueError, OSError) as exc:
+        return {"ok": False, "status": "archive_unconfined", "detail": str(exc)}
     target = archive_dir / path.name
-    if target.exists():
+    if os.path.lexists(target):
         return {"ok": False, "status": "archive_name_taken", "detail": f"an archived note already occupies {target.name}"}
-    from core.execution.artifacts import atomic_write_text
-
-    atomic_write_text(target, f"---\n{front}\n---\n\n{body.strip()}\n")
-    path.unlink()
+    stopped = _move_note(path, entry, target, f"---\n{front}\n---\n\n{body.strip()}\n")
+    if stopped:
+        return {"ok": False, "status": f"archive_{stopped}", "detail": f"{path.name} stays in the notes folder"
+                if stopped != "move_incomplete" else f"{path.name} and its archived copy {target.name} both remain"}
     return {"ok": True, "status": "archived", "note_path": str(target), "title": str(meta.get("title") or title),
             "recovery": f"say: restore the note \"{title}\" to bring it back unchanged"}
 
 
 def restore_note(*, title: str) -> dict[str, Any]:
-    """Bring an archived note back: same front matter (minus the archive stamp), same body."""
-    archive_dir = notes_root() / ".archive"
+    """Bring an archived note back: same front matter (minus the archive stamp), same body.
+
+    Only plain files in a plain ``notes/.archive`` folder are read, restored and removed."""
+    try:
+        archive_dir = _archive_dir(create=False)
+    except (ValueError, OSError) as exc:
+        return {"ok": False, "status": "archive_unconfined", "detail": str(exc)}
     if not archive_dir.is_dir():
         return {"ok": False, "status": "not_found"}
-    candidates = [path for path in sorted(archive_dir.glob("*.md"))
-                  if _split_front_matter(path.read_text(encoding="utf-8"))[0].get("title", "").casefold() == str(title).casefold()]
+    candidates: list[tuple[Path, tuple[bytes, str, tuple[int, int]]]] = []
+    for path in sorted(archive_dir.glob("*.md")):
+        entry = _read_entry(path)
+        if entry is None:
+            continue  # a link or anything but a plain file is not an archived note
+        try:
+            if _confined(f"notes/{_ARCHIVE}/{path.name}") != path:
+                continue
+        except ValueError:
+            continue
+        if _split_front_matter(entry[1])[0].get("title", "").casefold() == str(title).casefold():
+            candidates.append((path, entry))
     if len(candidates) != 1:
         if not candidates:
             return {"ok": False, "status": "not_found"}
-        return {"ok": False, "status": "ambiguous", "matches": [str(path) for path in candidates]}
-    path = candidates[0]
-    meta, body = _split_front_matter(path.read_text(encoding="utf-8"))
+        return {"ok": False, "status": "ambiguous", "matches": [str(path) for path, _entry in candidates]}
+    path, entry = candidates[0]
+    meta, body = _split_front_matter(entry[1])
     meta.pop("archived_at", None)
     meta["updated"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     front = "\n".join(f"{key}: {value}" for key, value in meta.items() if value != "")
-    restored = _note_path(str(meta.get("title") or title))
-    from core.execution.artifacts import atomic_write_text
-
-    atomic_write_text(restored, f"---\n{front}\n---\n\n{body.strip()}\n")
-    path.unlink()
+    try:
+        restored = _note_path(str(meta.get("title") or title))
+    except ValueError as exc:
+        return {"ok": False, "status": "restore_unconfined", "detail": str(exc)}
+    restored = notes_root() / restored.name
+    stopped = _move_note(path, entry, restored, f"---\n{front}\n---\n\n{body.strip()}\n")
+    if stopped:
+        return {"ok": False, "status": f"restore_{stopped}", "detail": f"{path.name} stays archived"
+                if stopped != "move_incomplete" else f"{path.name} and its restored copy {restored.name} both remain"}
     return {"ok": True, "status": "restored", "note_path": str(restored), "title": str(meta.get("title") or title)}
 
 
@@ -274,24 +391,34 @@ def link_note_to_event(note_path: str, *, event_uid: str, action_id: str = "") -
     """Write the provider receipt into the note AFTER the event verifiably exists.
 
     Called only from the calendar execution path that just verified the event, so the link
-    is evidence, not hope. The stored path is re-confined to the active project before any
-    byte is written — a path that resolves outside the workspace is refused, not written.
+    is evidence, not hope. The stored path must still be a note: a plain ``.md`` file directly in
+    the active project's notes folder, not a link. Anything else -- a path outside the workspace, or
+    another file inside it -- is refused, not written, and the note is rewritten only while it still
+    holds the bytes just read.
     """
+    from core.execution.artifacts import pinned_atomic_write_text
+
     try:
-        path = _confined(str(Path(str(note_path or "")).expanduser()))
+        root = notes_root()
+        path = root / Path(str(note_path or "")).expanduser().name
+        if path.suffix != ".md" or _confined(str(Path(str(note_path or "")).expanduser())) != path:
+            return False
     except ValueError:
         return False
-    if not path.is_file():
+    entry = _read_entry(path)
+    if entry is None:
         return False
-    from core.execution.artifacts import atomic_write_text
-
-    meta, body = _split_front_matter(path.read_text(encoding="utf-8"))
+    meta, body = _split_front_matter(entry[1])
     meta["linked_event_uid"] = str(event_uid)
     if action_id:
         meta["linked_action_id"] = str(action_id)
     meta["updated"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     front = "\n".join(f"{key}: {value}" for key, value in meta.items() if value != "")
-    atomic_write_text(path, f"---\n{front}\n---\n\n{body.strip()}\n")
+    try:
+        pinned_atomic_write_text(path, f"---\n{front}\n---\n\n{body.strip()}\n",
+                                 expected_prior_sha256=hashlib.sha256(entry[0]).hexdigest())
+    except OSError:
+        return False
     return True
 
 
