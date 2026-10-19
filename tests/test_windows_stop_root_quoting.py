@@ -19,6 +19,7 @@ import pytest
 
 from installer import vool_stop
 from installer.bundle import bundle_supervisor
+from tests.test_windows_installer_setup_initializes import scan_code
 
 ISS = Path(__file__).resolve().parent.parent / "installer" / "bundle" / "vool.iss"
 POWERSHELL_SINGLE_QUOTES = "'\u2018\u2019\u201a\u201b"
@@ -60,11 +61,10 @@ def pascal_string_value(expression: str) -> str:
 
 def installer_escaped_install_dir(iss_text: str, install_dir: str) -> str:
     """Return ``install_dir`` after StopNulla's StringChangeEx calls, applied in order as Setup runs them."""
-    code_section = re.search(r"^\[Code\]\s*$", iss_text, flags=re.MULTILINE)
-    assert code_section is not None
+    code, _ = scan_code(iss_text)  # comments blanked: Setup never runs a call that is commented out
     calls = re.findall(
         r"StringChangeEx\(InstallDir,\s*(" + _PASCAL_STRING + r"),\s*(" + _PASCAL_STRING + r"),\s*True\);",
-        iss_text[code_section.end():],
+        code,
     )
     assert calls, "StopNulla no longer escapes the install folder"
     for old, new in calls:
@@ -74,7 +74,8 @@ def installer_escaped_install_dir(iss_text: str, install_dir: str) -> str:
 
 def installer_stop_parameters(iss_text: str, install_dir: str) -> str:
     """Return the parameters StopNulla's Exec hands powershell.exe when Setup installs to ``install_dir``."""
-    line = next(line for line in iss_text.splitlines() if "Stop-Process" in line).strip()
+    code, _ = scan_code(iss_text)
+    line = next(line for line in code.splitlines() if "Stop-Process" in line).strip()
     assert line.endswith("',"), line
     before, after = line[:-1].split(" + InstallDir + ")
     return (

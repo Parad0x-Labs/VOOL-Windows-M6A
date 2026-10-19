@@ -19,14 +19,13 @@ BEFORE_DESTINATION = ("InitializeSetup", "InitializeWizard")
 ROUTINE = re.compile(r"^\s*(?:procedure|function)\s+(\w+)", re.IGNORECASE | re.MULTILINE)
 
 
-def _scan_code() -> tuple[str, str]:
-    """The [Code] section with comments blanked: once with string literals kept, once blanked.
+def scan_code(text: str) -> tuple[str, str]:
+    """The [Code] section of ``text`` with comments blanked: once with string literals kept, once blanked.
 
     Both copies keep every offset, so a routine found in one slices the same text in the other.
     The literals hold PowerShell braces, and the comments hold apostrophes, so neither can be
     stripped with a plain pattern.
     """
-    text = ISS.read_text(encoding="utf-8")
     start = re.search(r"^\[Code\]\s*$", text, re.MULTILINE)
     assert start, "vool.iss has no [Code] section"
     following = re.search(r"^\[\w+\]\s*$", text[start.end() :], re.MULTILINE)
@@ -67,7 +66,7 @@ def _scan_code() -> tuple[str, str]:
 
 def _routines() -> dict[str, tuple[str, str]]:
     """Each [Code] routine by lower-case name: (its text with literals, its text without)."""
-    kept, blank = _scan_code()
+    kept, blank = scan_code(ISS.read_text(encoding="utf-8"))
     headers = list(ROUTINE.finditer(blank))
     routines: dict[str, tuple[str, str]] = {}
     for index, header in enumerate(headers):

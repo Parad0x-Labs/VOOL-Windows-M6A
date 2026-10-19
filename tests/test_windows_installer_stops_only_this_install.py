@@ -591,9 +591,10 @@ os.replace(ready + ".tmp", ready)
 while True:
     time.sleep(1)
 '''
-# A space, an ASCII apostrophe, curly quotes and [brackets] in both roots.
-REAL_CHECKOUT_NAME = "VOOL's \u2018checkout\u2019 [dev]"
-REAL_INSTALL_NAME = "VOOL\u2019s \u201aprod\u201b [x]"
+# A space, [brackets] and every quote PowerShell honours (', U+2018, U+2019, U+201A, U+201B) in
+# both roots.
+REAL_CHECKOUT_NAME = "VOOL's \u2018checkout\u2019 \u201adev\u201b [x]"
+REAL_INSTALL_NAME = "VOOL's \u2018prod\u2019 \u201ax\u201b [x]"
 
 
 class _Running:
@@ -781,8 +782,44 @@ def _run_installer_stop(install_root: Path) -> None:
     iss = (ROOT / "installer" / "bundle" / "vool.iss").read_text(encoding="utf-8")
     # Setup's Exec hands CreateProcess "<file>" <params>; only Setup's own Pascal is modelled here.
     command_line = '"powershell.exe" ' + installer_stop_parameters(iss, str(install_root))
-    result = subprocess.run(command_line, capture_output=True, check=False, timeout=120)
+    result = subprocess.run(
+        command_line,
+        capture_output=True,
+        check=False,
+        timeout=120,
+        creationflags=subprocess.CREATE_NO_WINDOW,  # -WindowStyle Hidden would hide pytest's console
+    )
     assert result.returncode == 0, result.stderr.decode("utf-8", "replace") or result.stdout.decode("utf-8", "replace")
+
+
+def _start_script_api(fake_vool: _FakeVool, root: Path, *, label: str) -> _Running:
+    # A Python outside the install running its API script: the script rule alone makes it VOOL's.
+    return fake_vool.start(
+        label,
+        [sys.executable, str(root / "app" / "apps" / "vool_api_server.py"), "--port", "11435"],
+        cwd=root / "app",
+        env=_environment(),
+    )
+
+
+def _run_supervisor_cleanup(install_root: Path) -> None:
+    # In the bundle the supervisor is a console-less pythonw; run its cleanup the same way, so its
+    # -WindowStyle Hidden powershell never hides pytest's console.
+    helper = (
+        "import sys; from pathlib import Path; from installer.bundle import bundle_supervisor; "
+        "cleaner = object.__new__(bundle_supervisor.BundleSupervisor); cleaner.root = Path(sys.argv[1]); "
+        "cleaner._log = lambda message: sys.exit(message); cleaner._clear_stale_api_processes()"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", helper, str(install_root)],
+        cwd=ROOT,
+        env=_environment(),
+        capture_output=True,
+        check=False,
+        timeout=120,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    assert result.returncode == 0, result.stderr.decode("utf-8", "replace")
 
 
 def test_a_checkout_api_started_through_its_venv_launcher_is_stopped_for_real(
@@ -824,6 +861,7 @@ def test_every_bundle_stop_stops_only_this_install_for_real(tmp_path: Path, fake
         _start_bundle(fake_vool, sibling, "supervisor", label="sibling install supervisor"),
         _start_bundle(fake_vool, sibling, "window", label="sibling install window host"),
         fake_vool.start("unrelated python", [sys.executable, str(worker)], cwd=worker.parent, env=_environment()),
+        _start_script_api(fake_vool, sibling, label="a plain python running the sibling install's api script"),
         fake_vool.start(
             "the user's own python inside the install folder",
             [str(app / "Python312" / "python.exe"), str(worker)],
@@ -847,16 +885,16 @@ def test_every_bundle_stop_stops_only_this_install_for_real(tmp_path: Path, fake
 
     # The supervisor clears a stale API before each API start, at its own --root.
     api = _start_bundle(fake_vool, app, "api", label="stale api")
-    cleaner = object.__new__(bundle_supervisor.BundleSupervisor)
-    cleaner.root = app
-    cleaner._log = lambda message: pytest.fail(message)
-    cleaner._clear_stale_api_processes()
+    script_api = _start_script_api(fake_vool, app, label="stale api in a plain python")
+    _run_supervisor_cleanup(app)
     _assert_stopped(api)
+    _assert_stopped(script_api)
     _assert_still_running(supervisor, window, *others)
 
     # Setup stops every process of this install before it replaces any file.
     api = _start_bundle(fake_vool, app, "api", label="api, installer")
+    script_api = _start_script_api(fake_vool, app, label="api in a plain python, installer")
     _run_installer_stop(app)
-    for running in (api, window, supervisor):
+    for running in (api, script_api, window, supervisor):
         _assert_stopped(running)
     _assert_still_running(*others)
