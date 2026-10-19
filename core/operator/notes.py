@@ -240,10 +240,23 @@ def _read_entry(path: Path) -> tuple[bytes, str, tuple[int, int]] | None:
     return raw, text, (entry.st_dev, entry.st_ino)
 
 
+def _entry_is_gone(path: Path) -> bool | None:
+    """True when nothing is at ``path`` (or its folder is gone), False when an entry is there, None when that
+    cannot be checked (a folder on the way that this process may no longer search, say)."""
+    try:
+        os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return True
+    except OSError:
+        return None
+    return False
+
+
 def _move_note(source: Path, source_entry: tuple[bytes, str, tuple[int, int]], target: Path, content: str) -> str:
     """Write ``content`` as the new file ``target``, then remove ``source`` while it is still the file that was
-    read. "" when both happened. "note_gone" when nothing is at ``source`` any more (another program moved or
-    removed it, or its folder): the copy may then be the only one left, so it stays. Otherwise the new copy
+    read. "" when both happened. When ``source`` was not removed, the new copy is left where it is if it may be
+    the only one left: "note_gone" when nothing is at ``source`` any more (it, or its folder, was moved or
+    removed), "note_unchecked" when whether anything is still there cannot be checked. Otherwise the new copy
     is removed again and the answer says why the note stayed: "note_changed" (another file or other bytes are
     at ``source`` now), "remove_failed" (``source`` could not be removed), or "move_incomplete" when the copy
     cannot be removed either (both remain)."""
@@ -274,7 +287,12 @@ def _move_note(source: Path, source_entry: tuple[bytes, str, tuple[int, int]], t
         if removed == "removed":
             return ""
         stopped = "note_gone"
-    if stopped == "note_gone" or not os.path.lexists(source):
+    if stopped == "note_gone":
+        return "note_gone"
+    gone = _entry_is_gone(source)
+    if gone is None:
+        return "note_unchecked"
+    if gone:
         return "note_gone"
     try:
         pinned_remove_created_file(target, created_identity=created,
@@ -328,8 +346,10 @@ def archive_note(*, title: str) -> dict[str, Any]:
     if stopped:
         detail = {
             "move_incomplete": f"{path.name} and its archived copy {target.name} both remain",
-            "note_gone": f"{path.name} was moved or removed by another program meanwhile; its archived copy "
-                         f"{target.name} is kept",
+            "note_gone": f"{path.name} was no longer in the notes folder when VOOL went to remove it; VOOL did not "
+                         f"remove its archived copy {target.name}",
+            "note_unchecked": f"VOOL could not check whether {path.name} is still in the notes folder after writing "
+                              f"its archived copy {target.name}; it did not remove that copy",
         }.get(stopped, f"{path.name} stays in the notes folder")
         return {"ok": False, "status": f"archive_{stopped}", "detail": detail}
     return {"ok": True, "status": "archived", "note_path": str(target), "title": str(meta.get("title") or title),
@@ -376,8 +396,10 @@ def restore_note(*, title: str) -> dict[str, Any]:
     if stopped:
         detail = {
             "move_incomplete": f"{path.name} and its restored copy {restored.name} both remain",
-            "note_gone": f"{path.name} was moved or removed from the archive by another program meanwhile; its "
-                         f"restored copy {restored.name} is kept",
+            "note_gone": f"{path.name} was no longer in the archive when VOOL went to remove it; VOOL did not "
+                         f"remove its restored copy {restored.name}",
+            "note_unchecked": f"VOOL could not check whether {path.name} is still in the archive after writing its "
+                              f"restored copy {restored.name}; it did not remove that copy",
         }.get(stopped, f"{path.name} stays archived")
         return {"ok": False, "status": f"restore_{stopped}", "detail": detail}
     return {"ok": True, "status": "restored", "note_path": str(restored), "title": str(meta.get("title") or title)}
