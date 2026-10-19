@@ -1,9 +1,10 @@
-"""A machine write is checked and shown where its writer puts it, never under the chat workspace.
+"""A write is checked and shown where its writer puts it, never under the chat workspace.
 
 machine.write_file and machine.ensure_directory take a relative path ("Documents\\x.txt"), an alias
 ("documents") and a `~` path from the user's home; machine.move_path and media.export take a
-relative path from the process's working directory. Two decisions about these writes placed every
-relative path under the chat workspace instead:
+relative path from VOOL's working directory, and an export also writes stage files in the folder
+that holds its output; the operator lane expands `$VAR` and `~` in its paths. Two decisions about
+these writes placed a path somewhere other than its writer does:
 
 - The Windows write gate (core.windows_write_gate), which allows a user-filesystem write only inside
   the folders listed in VOOL_WINDOWS_DISPOSABLE_WORKSPACES. With the chat workspace flagged,
@@ -29,7 +30,14 @@ from core.hive_activity_tracker import HiveActivityTracker, HiveActivityTrackerC
 
 # A file in the user's Documents folder, named the ways a model names one, in this host's separator.
 IN_DOCUMENTS = "Documents" + os.sep + "x.txt"
-HOME_FORMS = (IN_DOCUMENTS, "~" + os.sep + IN_DOCUMENTS, "documents", "My Documents", "x.txt")
+#: A machine path as a model names it, and the folder of the home its writer puts it in ("" is the home).
+HOME_FORMS = (
+    (IN_DOCUMENTS, "Documents"),
+    ("~" + os.sep + IN_DOCUMENTS, "Documents"),
+    ("documents", "Documents"),
+    ("My Documents", "Documents"),
+    ("x.txt", ""),
+)
 
 
 def _env(*roots: Path) -> dict[str, str]:
@@ -42,7 +50,8 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     from core import runtime_execution_tools
 
     home = tmp_path / "home"
-    (home / "Documents").mkdir(parents=True)
+    for folder in ("Documents", "Downloads"):
+        (home / folder).mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
     # A redirect that did not take would let a write below land in the real Documents folder.
@@ -57,6 +66,15 @@ def workspace(tmp_path: Path) -> Path:
     return workspace
 
 
+@pytest.fixture
+def elsewhere(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """VOOL's working directory, outside the chat workspace."""
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    return elsewhere
+
+
 def _execute(intent: str, arguments: dict, source_context: dict):
     return executor.execute_tool_intent(
         {"intent": intent, "arguments": dict(arguments)},
@@ -69,23 +87,40 @@ def _execute(intent: str, arguments: dict, source_context: dict):
     )
 
 
-@pytest.mark.parametrize("path", HOME_FORMS)
+@pytest.mark.parametrize(("path", "folder"), HOME_FORMS)
 @pytest.mark.parametrize("intent", ["machine.write_file", "machine.ensure_directory"])
-def test_the_gate_checks_a_relative_machine_path_in_the_home_it_lands_in(home, workspace, intent, path) -> None:
+def test_the_gate_checks_a_relative_machine_path_in_the_home_folder_it_lands_in(
+    home: Path, workspace: Path, intent: str, path: str, folder: str
+) -> None:
     arguments = {"path": path, "content": "x"}
+    neighbour = home / ("Downloads" if folder else "Documents")
     assert gate.refusal(intent, arguments, workspace, windows=True, environ=_env(workspace)), path
-    # Flagging the home folder the path really lands in lets the same call through.
-    assert gate.refusal(intent, arguments, workspace, windows=True, environ=_env(workspace, home)) is None, path
+    assert gate.refusal(intent, arguments, workspace, windows=True, environ=_env(workspace, neighbour)), path
+    # Flagging the folder the path really lands in, and only that folder, lets the same call through.
+    assert gate.refusal(intent, arguments, workspace, windows=True, environ=_env(workspace, home / folder)) is None, path
 
 
-@pytest.mark.skipif(os.name != "nt", reason="a drive-relative path such as C:x.txt exists only on Windows")
-def test_the_gate_checks_a_drive_relative_machine_path_in_the_home_it_lands_in(home, workspace) -> None:
-    # The writer joins "C:x.txt" onto the home on the same drive; joined onto the workspace it read as
-    # a workspace file.
-    arguments = {"path": home.drive + "x.txt", "content": "x"}
+def test_a_machine_path_that_climbs_is_checked_where_it_climbs_to(home: Path, workspace: Path) -> None:
+    # "Documents/../x.txt" is x.txt in the home, not in Documents; "../x.txt" is beside the home.
+    up_to_home = {"path": os.sep.join(["Documents", "..", "x.txt"]), "content": "x"}
+    assert gate.refusal("machine.write_file", up_to_home, workspace, windows=True,
+                        environ=_env(workspace, home / "Documents"))
+    assert gate.refusal("machine.write_file", up_to_home, workspace, windows=True,
+                        environ=_env(workspace, home)) is None
+    out_of_home = {"path": os.sep.join(["..", "x.txt"]), "content": "x"}
+    assert gate.refusal("machine.write_file", out_of_home, workspace, windows=True, environ=_env(workspace, home))
+
+
+@pytest.mark.skipif(os.name != "nt", reason="a drive-relative path such as C:Documents\\x.txt exists only on Windows")
+def test_the_gate_checks_a_drive_relative_machine_path_in_the_home_folder_it_lands_in(home: Path, workspace: Path) -> None:
+    # The writer joins "C:Documents\\x.txt" onto the home, on the same drive; joined onto the
+    # workspace it read as a workspace file.
+    arguments = {"path": home.drive + IN_DOCUMENTS, "content": "x"}
     assert gate.refusal("machine.write_file", arguments, workspace, windows=True, environ=_env(workspace))
     assert gate.refusal("machine.write_file", arguments, workspace, windows=True,
-                        environ=_env(workspace, home)) is None
+                        environ=_env(workspace, home / "Downloads"))
+    assert gate.refusal("machine.write_file", arguments, workspace, windows=True,
+                        environ=_env(workspace, home / "Documents")) is None
 
 
 @pytest.mark.parametrize(
@@ -96,27 +131,98 @@ def test_the_gate_checks_a_drive_relative_machine_path_in_the_home_it_lands_in(h
     ],
 )
 def test_the_gate_checks_a_relative_move_or_export_in_the_working_directory_it_lands_in(
-    tmp_path: Path, workspace: Path, monkeypatch: pytest.MonkeyPatch, intent: str, arguments: dict
+    workspace: Path, elsewhere: Path, intent: str, arguments: dict
 ) -> None:
-    elsewhere = tmp_path / "elsewhere"
-    elsewhere.mkdir()
-    monkeypatch.chdir(elsewhere)
     assert gate.refusal(intent, arguments, workspace, windows=True, environ=_env(workspace))
-    monkeypatch.chdir(workspace)
-    assert gate.refusal(intent, arguments, workspace, windows=True, environ=_env(workspace)) is None
+    assert gate.refusal(intent, arguments, workspace, windows=True, environ=_env(workspace, elsewhere)) is None
 
 
-def test_a_code_task_step_is_checked_where_its_machine_write_lands(home, workspace) -> None:
+def test_an_export_path_is_checked_unstripped_as_the_export_reads_it(home: Path, workspace: Path, elsewhere: Path) -> None:
+    # The export does not strip its path, so " ~/clip.mp4" is in a folder named " ~" in the working
+    # directory. Stripped first, the gate checked it in the home.
+    arguments = {"project_id": "clip", "output_path": " ~" + os.sep + "clip.mp4"}
+    assert gate.refusal("media.export", arguments, workspace, windows=True, environ=_env(workspace, home))
+    assert gate.refusal("media.export", arguments, workspace, windows=True, environ=_env(workspace, elsewhere)) is None
+
+
+def test_an_export_must_name_a_file_inside_a_flagged_folder_not_the_folder(workspace: Path) -> None:
+    # An export writes its stage files in the folder that holds its output, so naming the flagged
+    # folder itself would put them in the folder above it.
+    the_folder = {"project_id": "clip", "output_path": str(workspace)}
+    assert gate.refusal("media.export", the_folder, workspace, windows=True, environ=_env(workspace))
+    a_file_in_it = {"project_id": "clip", "output_path": str(workspace / "clip.mp4")}
+    assert gate.refusal("media.export", a_file_in_it, workspace, windows=True, environ=_env(workspace)) is None
+
+
+def test_an_export_writes_only_where_the_gate_checked(
+    tmp_path: Path, workspace: Path, elsewhere: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real export, through the dispatcher and its gate. The media worker is a process of its own
+    that needs ffmpeg, so a recorder of the files VOOL asks it to write stands in for it."""
+    from core import media_studio_service as service
+    from core.runtime_execution_tools import _dispatch_runtime_tool
+
+    asked: list[str] = []
+
+    def worker(op: str, params: dict, *, timeout: float | None = None) -> dict:
+        if "dst" in params:
+            asked.append(params["dst"])
+        return {"duration": 6.0, "width": 320, "height": 240} if op == "probe" else {}
+
+    monkeypatch.setattr(service, "_worker_call", worker)
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"source")
+    project = service.open_project(str(source))
+    service.apply_edit(project.project_id, "trim", {"start": 1.0, "end": 2.0}, actor="chat")
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    arguments = {"project_id": project.project_id, "output_path": "clip.mp4"}
+
+    monkeypatch.setenv(gate.ENV_VAR, str(workspace))
+    refused = _dispatch_runtime_tool("media.export", dict(arguments), source_context={"workspace_root": str(workspace)})
+    assert refused is not None and refused.status == gate.STATUS
+    assert asked == []
+
+    monkeypatch.setenv(gate.ENV_VAR, os.pathsep.join([str(workspace), str(elsewhere)]))
+    exported = _dispatch_runtime_tool("media.export", dict(arguments), source_context={"workspace_root": str(workspace)})
+    assert exported is not None and exported.ok, exported and exported.response_text
+    # A stage file and then the output, each named absolute, so the worker writes them in the folder the
+    # gate checked whatever its own working directory is.
+    assert len(asked) == 2, asked
+    assert all(Path(dst).is_absolute() and Path(dst).parent.resolve() == elsewhere.resolve() for dst in asked), asked
+    assert Path(asked[-1]).resolve() == (elsewhere / "clip.mp4").resolve()
+    assert exported.details["export_receipt"]["output_path"] == asked[-1]
+
+
+def test_a_code_task_step_is_checked_where_its_machine_write_lands(home: Path, workspace: Path) -> None:
     step = {"intent": "machine.write_file", "arguments": {"path": IN_DOCUMENTS, "content": "x"}}
     assert gate.refusal("code.task.step", step, workspace, windows=True, environ=_env(workspace))
-    assert gate.refusal("code.task.step", step, workspace, windows=True, environ=_env(workspace, home)) is None
+    assert gate.refusal("code.task.step", step, workspace, windows=True, environ=_env(workspace, home / "Downloads"))
+    assert gate.refusal("code.task.step", step, workspace, windows=True,
+                        environ=_env(workspace, home / "Documents")) is None
+
+
+def test_an_operator_path_is_checked_where_its_variables_and_home_expand_to(
+    home: Path, workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The operator lane expands `$VAR` and `~` in a path before it moves anything (core.operator.storage).
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.setenv("VOOL_TEST_CLIMB", os.sep.join(["..", "outside"]))
+    climbs = {"source_path": str(workspace / "a.txt"), "destination_path": str(workspace / "$VOOL_TEST_CLIMB")}
+    assert gate.refusal("operator.move_path", climbs, None, windows=True, environ=_env(workspace))
+    assert gate.refusal("operator.move_path", climbs, None, windows=True, environ=_env(workspace, outside)) is None
+    in_home = {"source_path": "~" + os.sep + "a.txt", "destination_path": "~" + os.sep + "Documents"}
+    assert gate.refusal("operator.move_path", in_home, None, windows=True, environ=_env(workspace))
+    assert gate.refusal("operator.move_path", in_home, None, windows=True, environ=_env(home)) is None
 
 
 def test_an_operator_path_must_still_be_absolute(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # The operator lane names absolute paths. A relative one is refused even from inside a flagged folder.
+    # The operator lane would take a relative path from VOOL's working directory. The gate does not
+    # place it there, so it refuses one even from inside a flagged folder.
     monkeypatch.chdir(workspace)
     arguments = {"source_path": "a.txt", "destination_path": "b.txt"}
-    assert gate.refusal("operator.move_path", arguments, None, windows=True, environ=_env(workspace))
+    reason = gate.refusal("operator.move_path", arguments, None, windows=True, environ=_env(workspace))
+    assert reason and "needs an absolute source_path" in reason
 
 
 @pytest.mark.parametrize("mode", ["manual", "auto"])
@@ -157,3 +263,16 @@ def test_the_approval_ask_names_the_file_a_machine_write_changes(
     assert execution.status == "pending_approval", (execution.status, execution.response_text)
     assert execution.details["approval_request"]["affected_resources"] == [str(home.joinpath(*lands_at).resolve())]
     assert not home.joinpath(*lands_at).exists()
+
+
+def test_the_approval_ask_for_a_code_task_step_names_the_file_its_machine_write_changes(
+    home: Path, workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(gate.ENV_VAR, os.pathsep.join([str(workspace), str(home)]))
+    step = {"task_id": "ct-landing", "intent": "machine.write_file", "arguments": {"path": IN_DOCUMENTS, "content": "x"}}
+
+    execution = _execute("code.task.step", step, {"workspace": str(workspace), "operating_mode": "manual"})
+
+    assert execution.status == "pending_approval", (execution.status, execution.response_text)
+    assert execution.details["approval_request"]["affected_resources"] == [str((home / IN_DOCUMENTS).resolve())]
+    assert not (home / IN_DOCUMENTS).exists()
