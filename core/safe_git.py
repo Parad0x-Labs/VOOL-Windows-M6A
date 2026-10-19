@@ -22,7 +22,9 @@ Three layers:
   Reproduced 2026-10-19: a ``filter.<x>.clean`` set with ``git config --worktree`` passed a
   ``--local``-only check and ran during a repo.git commit, on every platform. Any scope git may
   add later is checked too (fail closed). Each checked-out submodule's own config is checked the
-  same way, since git runs inside those submodules too (also reproduced 2026-10-19).
+  same way, since git runs inside those submodules too (also reproduced 2026-10-19); a submodule
+  with no checkout runs nothing because hardened_argv() keeps git from diffing inside its git
+  folder.
 System and global config belong to the user (for example Git LFS's global filters) and are not
 second-guessed. `alias.*` is not refused: an alias runs only when invoked by name, and VOOL
 never invokes one. repo.push is VOOL's one transport command; safe_env() also drops
@@ -109,40 +111,43 @@ _MAX_SUBMODULE_DEPTH = 8
 
 
 def _executable_config(cwd: Path, *, timeout: float, depth: int) -> list[str]:
-    # --local fails outside a repository, which the callers already treat as "not checked".
-    local = _config_entries(cwd, ["--local"], timeout=timeout)
+    # Fails outside a repository, which the callers already treat as "not checked".
+    inside_work_tree = _rev_parse(cwd, "--is-inside-work-tree", timeout=timeout) == "true"
     scoped = _config_entries(cwd, ["--show-scope"], timeout=timeout)
     if len(scoped) % 2:
         raise RuntimeError("git config scopes could not be read")
-    keys = [key for key in local if is_executable_key(key)]
+    keys = []
     for index in range(0, len(scoped) - 1, 2):
         scope, key = scoped[index], scoped[index + 1]
         if scope not in _USER_CONFIG_SCOPES and is_executable_key(key):
             keys.append(key)
-    for path, submodule in _checked_out_submodules(cwd, timeout=timeout):
+    # Bare, or inside the git directory: there is no work tree, so git recurses into no submodule.
+    submodules = _checked_out_submodules(cwd, timeout=timeout) if inside_work_tree else []
+    for path, submodule in submodules:
         if depth >= _MAX_SUBMODULE_DEPTH:
-            raise RuntimeError("submodules are nested too deeply to check")
+            raise RuntimeError("submodules are nested too deeply, or a submodule's git folder does not resolve")
         keys.extend(f"{path}:{key}" for key in _executable_config(submodule, timeout=timeout, depth=depth + 1))
     return sorted(set(keys))
 
 
 def _checked_out_submodules(cwd: Path, *, timeout: float) -> list[tuple[str, Path]]:
-    """``(path, folder)`` of each gitlink in the index whose folder holds a checkout (git recurses
-    into exactly those). Empty for a repository without a work tree."""
-    inside = _rev_parse(cwd, "--is-inside-work-tree", timeout=timeout)
-    if inside != "true":
-        return []  # bare, or inside the git directory: there is no work tree to recurse from
-    toplevel = Path(_rev_parse(cwd, "--show-toplevel", timeout=timeout))
-    listing = subprocess.run(hardened_argv(toplevel, "ls-files", "--stage", "-z"),
+    """``(path, folder)`` of each gitlink in the index whose folder holds a checkout (git runs
+    status and diff inside exactly those; a gitlink without one is covered by hardened_argv's
+    ``diff.submodule=short``). ``cwd`` must be inside a work tree."""
+    listing = subprocess.run(hardened_argv(cwd, "ls-files", "--stage", "--full-name", "-z", "--", ":/"),
                              capture_output=True, timeout=timeout, env=safe_env())
     if listing.returncode != 0:
         raise RuntimeError(f"git index could not be read ({listing.returncode})")
-    found = []
+    gitlinks = []
     for entry in listing.stdout.split(b"\0"):
         meta, _, name = entry.partition(b"\t")
-        if not meta.startswith(b"160000 "):
-            continue
-        path = name.decode("utf-8", "surrogateescape")
+        if meta.startswith(b"160000 "):
+            gitlinks.append(name.decode("utf-8", "surrogateescape"))
+    if not gitlinks:
+        return []
+    toplevel = Path(_rev_parse(cwd, "--show-toplevel", timeout=timeout))
+    found = []
+    for path in gitlinks:
         folder = toplevel / path
         if (folder / ".git").exists():
             found.append((path, folder))
@@ -199,7 +204,11 @@ def active_hooks(cwd: Path, *, timeout: float = 20) -> list[str]:
 def hardened_argv(cwd: Path, *argv: str) -> list[str]:
     """A hardened ``git -C <cwd> <argv>``. Diff-family commands also get ``--no-ext-diff --no-textconv``.
     Run it with ``env=safe_env()``."""
-    command = ["git", *hardening_args(), "-C", str(cwd), *argv]
+    # A changed gitlink whose folder is missing makes `diff.submodule=diff` (the user's or the
+    # repository's) run a child diff in .git/modules/<name>, under that folder's own config and
+    # attributes, out of reach of --no-ext-diff. `short` and no status summary run nothing there.
+    command = ["git", *hardening_args(), "-c", "diff.submodule=short", "-c", "status.submoduleSummary=false",
+               "-C", str(cwd), *argv]
     if argv and argv[0] in {"diff", "log", "show"}:
         command[len(command) - len(argv) + 1:len(command) - len(argv) + 1] = ["--no-ext-diff", "--no-textconv"]
     return command
