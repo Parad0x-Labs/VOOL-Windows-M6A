@@ -8,7 +8,7 @@ not have today:
 
 1. **File operations by handle.** Every write, create, rename and delete is done relative to an
    open handle on an allowed root, and checked on the object actually opened, not on a path
-   string. This closes the check-then-write race the Windows write gate admits
+   string. It is designed to close the check-then-write race the Windows write gate admits
    (core/windows_write_gate.py:3-5) and the cases the gate cannot judge by text: hard links into
    a flagged folder, DOS device names, junctions and symlinks swapped in after the check, 8.3
    short names, and paths over 32,767 characters.
@@ -118,10 +118,18 @@ leaves a temp file behind; a temp file left by a crash has a fixed prefix and is
 broker at the next `open_root`.
 
 Git (`repo.git`, `workspace.apply_unified_diff` through git) cannot be moved inside the broker:
-git does its own file I/O. Those run in the launcher (section 6) with the root the gate approved
-as the only write root. The broker does not choose that root: if the gate refuses a git call
-(for example, only a subfolder of a repository is flagged), nothing reaches the broker, and the
-broker never turns a subfolder into the repository's top folder.
+git does its own file I/O. Those run in the launcher (section 6), whose write roots are exactly
+the roots the gate approved for that call, and nothing wider. The broker does not choose them:
+- `repo.git`: git writes in the work tree and in its own folders, so the write roots are the top
+  folder (`git rev-parse --show-toplevel`) together with the git dir (`--absolute-git-dir`) and
+  the common dir (`--git-common-dir`; a linked worktree keeps its git dir and objects under the
+  main repository's `.git`). Every one of them must be a root the gate approved. The top folder
+  alone is never enough, and a call where any of them is not approved never reaches the broker.
+- `workspace.apply_unified_diff`: the launcher gets exactly the per-path roots the gate approved
+  for that call (every path git will touch, rename and copy sources included). It never widens
+  them to the repository's top folder.
+If the gate refuses a git call (for example, only a subfolder of a repository is flagged),
+nothing reaches the broker.
 
 ## 6. Confined launcher
 
@@ -221,10 +229,11 @@ states and gaps. This design redefines none of them. Proposed changes to it, to 
 follow-up to that doc after PR #21 merges, not inside it:
 
 1. Its gap-to-step map assigns gap 5 (the wallet UI capability hash is never set) to Step 2.
-   This design does not address gap 5. Proposed: move gap 5 to the step that owns the wallet
-   doors, or say what the broker would have to do for it.
+   This design does not address gap 5. Proposed: move gap 5 to Step 3's approval ingress, or
+   mark it unassigned.
 2. Gap 8 (the media worker and the browser engine start unconfined) is currently unassigned.
-   Proposed: assign it to Step 3, which would use the launcher in section 6.
+   Proposed: plan it for Step 3, which would use the launcher in section 6.
 3. The Job 3 follow-up (DOS device names and over-long paths judged by text) and the Job 5
    follow-up (hard links inside a flagged folder) are not numbered gaps. Proposed: record them
-   as gaps closed by Step 3 through section 5.
+   as new gaps planned for Step 3 through section 5. They count as closed only once Step 3 is
+   proven on Windows.
