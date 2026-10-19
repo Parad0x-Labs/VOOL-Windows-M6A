@@ -363,6 +363,19 @@ def apply_unified_diff_workspace(
             session_id=session_id,
             reviewed_destinations=list(reviewed_destinations),
         )
+    for relative in touched_paths:
+        # Every file the patch names is placed before any engine runs, so a path that escapes the
+        # workspace or names VOOL's own state is refused with nothing written, not raised mid-dispatch
+        # (where it would read as an outcome that may or may not have happened).
+        try:
+            resolve_workspace_path(relative, workspace_root=workspace_root, write=True)
+        except (ValueError, OSError) as exc:
+            return {
+                "ok": False,
+                "status": "invalid_arguments",
+                "response_text": f"The patch names `{relative}`, which cannot be changed here: {exc} Nothing was written.",
+                "details": {"paths": touched_paths, "changed_paths": []},
+            }
     if windows_write_gate.active():
         # Windows: VOOL's own engine only, through the pinned writer, on the files as they are now.
         # `git apply` places a git-format patch's paths from the work tree's top, which the
