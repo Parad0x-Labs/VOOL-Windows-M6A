@@ -50,13 +50,25 @@ internal static class Program
             var journalDirectory = root.GetProperty("journal_dir").GetString()!;
             try { roots.ValidateJournalOutsideFlagged(journalDirectory); }
             catch (BrokerRefusal refusal) { return RefuseEntry(journalDirectory, refusal.Code); }
+            // The journal folder is created if needed. Without it the broker still starts, and every
+            // file change is refused journal_unavailable. Batches a crash left are finished or undone
+            // now, before the pipe exists; any it cannot finish stay in the journal and are reported.
+            BatchRunner.PauseAtFromEnvironment();
+            var journal = Journal.Open(journalDirectory);
+            var recovered = journal.RecoverAll(roots);
+            var journalReport = new
+            {
+                available = journal.Available,
+                recovered = recovered.Count(outcome => outcome.Complete),
+                pending = recovered.Where(outcome => !outcome.Complete).Select(outcome => new { batch_id = outcome.BatchId, left = outcome.Left }).ToArray()
+            };
             var secret = Convert.FromHexString(secretText);
-            channel = new Channel(pid, creationTime, secret, journalDirectory, roots, IdleTimeoutFromEnvironment());
+            channel = new Channel(pid, creationTime, secret, journalDirectory, roots, IdleTimeoutFromEnvironment(), journal);
             using var initialPipe = channel.CreateInitialPipe();
             using var lifetime = new CancellationTokenSource();
             var brokerPid = Environment.ProcessId;
             var brokerCreationTime = Channel.ReadCreationTime((uint)brokerPid);
-            Console.Out.WriteLine(JsonSerializer.Serialize(new { pipe = channel.PipeName, broker_pid = brokerPid, broker_creation_time = brokerCreationTime, flagged = reported }));
+            Console.Out.WriteLine(JsonSerializer.Serialize(new { pipe = channel.PipeName, broker_pid = brokerPid, broker_creation_time = brokerCreationTime, flagged = reported, journal = journalReport }));
             Console.Out.Flush();
             var stdinClosed = WaitForStdinCloseAsync(lifetime.Token);
             var apiExited = WaitForApiExitAsync(pid, creationTime, lifetime.Token);

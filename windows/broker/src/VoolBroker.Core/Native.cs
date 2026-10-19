@@ -38,6 +38,9 @@ internal static class Native
     internal const uint FileAttributeReparsePoint = 0x400;
     internal const uint FileOpenReparsePoint = 0x00200000;
     internal const uint FileOpen = 1;
+    internal const uint FileCreate = 2;
+    internal const uint FileAttributeReadOnly = 0x1;
+    internal const uint FileAttributeNormal = 0x80;
     internal const uint FileDirectoryFile = 0x1;
     internal const uint FileSynchronousIoNonAlert = 0x20;
     internal const uint FileNonDirectoryFile = 0x40;
@@ -53,6 +56,13 @@ internal static class Native
     internal const int FileIdInfoClass = 18;
     internal const uint VolumeNameDos = 0;
     internal const uint VolumeNameGuid = 1;
+    private const int FileRenameInformationClass = 10;
+    private const int FileDispositionInformationExClass = 64;
+    private const int FileFullDirectoryInfoClass = 14;
+    private const int FileFullDirectoryRestartInfoClass = 15;
+    // FILE_DISPOSITION_DELETE | FILE_DISPOSITION_POSIX_SEMANTICS | FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE
+    private const uint DispositionDeleteNow = 0x1 | 0x2 | 0x10;
+    private const int ErrorNoMoreFiles = 18;
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct FileAttributeTagInfo { public uint FileAttributes; public uint ReparseTag; }
@@ -138,6 +148,21 @@ internal static class Native
     private static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int infoClass,
         out FileAttributeTagInfo info, uint size);
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileIdDescriptor { public uint Size; public int Type; public ulong IdLow; public ulong IdHigh; }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern SafeFileHandle OpenFileById(SafeFileHandle volumeHint, ref FileIdDescriptor id, uint access,
+        uint share, nint security, uint flags);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool FlushFileBuffers(SafeFileHandle handle);
+
+    [DllImport("ntdll.dll")]
+    private static extern int NtSetInformationFile(SafeFileHandle handle, out IoStatusBlock ioStatus, nint info,
+        uint length, int infoClass);
+
     [DllImport("ntdll.dll")]
     private static extern int NtCreateFile(out SafeFileHandle handle, uint access, nint objectAttributes,
         out IoStatusBlock ioStatus, nint allocationSize, uint fileAttributes, uint shareAccess,
@@ -217,7 +242,14 @@ internal static class Native
     /// NTFS records share access only for opens with data or delete access, so a handle with
     /// attribute access alone would not stop a rename or delete of the object it holds.
     /// </summary>
-    internal static SafeFileHandle OpenRelative(SafeFileHandle parent, string name, uint access, uint createOptions)
+    internal static SafeFileHandle OpenRelative(SafeFileHandle parent, string name, uint access, uint createOptions) =>
+        OpenRelative(parent, name, access, createOptions, ShareRead | ShareWrite, FileOpen);
+
+    /// <summary>
+    /// OpenRelative with a chosen share mode and disposition (FILE_OPEN, or FILE_CREATE for a new
+    /// temp file or folder). Delete is never shared, whatever the caller passes.
+    /// </summary>
+    internal static SafeFileHandle OpenRelative(SafeFileHandle parent, string name, uint access, uint createOptions, uint share, uint disposition)
     {
         var nameMemory = Marshal.StringToHGlobalUni(name);
         var unicodeMemory = Marshal.AllocHGlobal(Marshal.SizeOf<UnicodeString>());
@@ -228,8 +260,9 @@ internal static class Native
             parent.DangerousAddRef(ref added);
             Marshal.StructureToPtr(new UnicodeString { Length = checked((ushort)(name.Length * 2)), MaximumLength = checked((ushort)(name.Length * 2)), Buffer = nameMemory }, unicodeMemory, false);
             Marshal.StructureToPtr(new ObjectAttributes { Length = Marshal.SizeOf<ObjectAttributes>(), RootDirectory = parent.DangerousGetHandle(), ObjectName = unicodeMemory, Attributes = ObjectCaseInsensitive | ObjectDontReparse }, attributesMemory, false);
+            var attributes = disposition == FileCreate && (createOptions & FileDirectoryFile) == 0 ? FileAttributeNormal : 0;
             var status = NtCreateFile(out var handle, access | FileReadData | FileReadAttributes | Synchronize, attributesMemory, out _, 0,
-                0, ShareRead | ShareWrite, FileOpen, createOptions | FileOpenReparsePoint | FileSynchronousIoNonAlert, 0, 0);
+                attributes, share & (ShareRead | ShareWrite), disposition, createOptions | FileOpenReparsePoint | FileSynchronousIoNonAlert, 0, 0);
             if (status < 0)
             {
                 handle.Dispose();
@@ -246,6 +279,10 @@ internal static class Native
 
     private static BrokerRefusal OpenFailure(string name, uint status) => status switch
     {
+        0xC0000035 => new BrokerRefusal("destination_exists", $"Component '{name}' already exists."),
+        0xC0000101 => new BrokerRefusal("not_empty", $"Folder '{name}' is not empty."),
+        0xC0000121 => new BrokerRefusal("read_only", $"Component '{name}' is read-only."),
+        0xC00000D4 => new BrokerRefusal("cross_volume", $"Component '{name}' is on another volume."),
         0xC0000043 or 0xC0000056 => new BrokerRefusal("in_use", $"Component '{name}' is held by another program."),
         0xC0000034 or 0xC000003A => new BrokerRefusal("not_found", $"Component '{name}' does not exist."),
         0xC0000103 => new BrokerRefusal("not_a_directory", $"Component '{name}' is not a directory."),
@@ -257,6 +294,105 @@ internal static class Native
         0xC0000033 => new BrokerRefusal("invalid_name", $"Component '{name}' is not a valid name."),
         _ => new BrokerRefusal("authority_check_failed", $"Cannot open component '{name}' (NTSTATUS 0x{status:x8}).")
     };
+
+    /// <summary>
+    /// Renames the object handle holds (it needs DELETE access) to newName in the folder newParent
+    /// holds, never replacing an existing object (FileRenameInformation, ReplaceIfExists false).
+    /// </summary>
+    internal static void RenameInto(SafeFileHandle handle, SafeFileHandle newParent, string newName)
+    {
+        var nameBytes = checked(newName.Length * 2);
+        var size = 20 + nameBytes + 2;
+        var memory = Marshal.AllocHGlobal(size);
+        var added = false;
+        try
+        {
+            newParent.DangerousAddRef(ref added);
+            Marshal.Copy(new byte[size], 0, memory, size);
+            Marshal.WriteIntPtr(memory, 8, newParent.DangerousGetHandle());
+            Marshal.WriteInt32(memory, 16, nameBytes);
+            Marshal.Copy(newName.ToCharArray(), 0, memory + 20, newName.Length);
+            var status = NtSetInformationFile(handle, out _, memory, (uint)size, FileRenameInformationClass);
+            if (status < 0) throw OpenFailure(newName, unchecked((uint)status));
+        }
+        finally
+        {
+            if (added) newParent.DangerousRelease();
+            Marshal.FreeHGlobal(memory);
+        }
+    }
+
+    /// <summary>Deletes the object handle holds (it needs DELETE access) at once, read-only or not.</summary>
+    internal static void DeleteNow(SafeFileHandle handle, string name)
+    {
+        var memory = Marshal.AllocHGlobal(sizeof(uint));
+        try
+        {
+            Marshal.WriteInt32(memory, unchecked((int)DispositionDeleteNow));
+            var status = NtSetInformationFile(handle, out _, memory, sizeof(uint), FileDispositionInformationExClass);
+            if (status < 0) throw OpenFailure(name, unchecked((uint)status));
+        }
+        finally { Marshal.FreeHGlobal(memory); }
+    }
+
+    internal static void Flush(SafeFileHandle handle)
+    {
+        if (!FlushFileBuffers(handle)) throw new IOException("Flushing a temp file failed.", Marshal.GetLastWin32Error());
+    }
+
+    /// <summary>True when the folder handle holds has no entry but "." and "..".</summary>
+    internal static bool IsDirectoryEmpty(SafeFileHandle handle)
+    {
+        const int size = 65536;
+        var memory = Marshal.AllocHGlobal(size);
+        try
+        {
+            for (var infoClass = FileFullDirectoryRestartInfoClass; ; infoClass = FileFullDirectoryInfoClass)
+            {
+                if (!GetFileInformationByHandleEx(handle, infoClass, memory, size))
+                {
+                    var error = Marshal.GetLastWin32Error();
+                    if (error == ErrorNoMoreFiles) return true;
+                    throw new BrokerRefusal("authority_check_failed", new Win32Exception(error).Message);
+                }
+                for (var offset = 0; ;)
+                {
+                    var entry = memory + offset;
+                    var nameLength = Marshal.ReadInt32(entry, 60);
+                    var name = Marshal.PtrToStringUni(entry + 68, nameLength / 2);
+                    if (name is not ("." or "..")) return false;
+                    var next = Marshal.ReadInt32(entry);
+                    if (next == 0) break;
+                    offset += next;
+                }
+            }
+        }
+        finally { Marshal.FreeHGlobal(memory); }
+    }
+
+    /// <summary>
+    /// Opens the object with the given 128-bit file id on the volume hint is on, without following
+    /// a reparse point and without delete sharing. Any failure refuses: a caller cannot tell a
+    /// deleted object from another error here, so it never treats a failure as "already gone".
+    /// </summary>
+    internal static SafeFileHandle OpenById(SafeFileHandle volumeHint, byte[] fileId, uint access)
+    {
+        if (fileId.Length != 16) throw new BrokerRefusal("authority_check_failed", "A file id must be 16 bytes.");
+        var descriptor = new FileIdDescriptor
+        {
+            Size = (uint)Marshal.SizeOf<FileIdDescriptor>(), Type = 2,
+            IdLow = BitConverter.ToUInt64(fileId, 0), IdHigh = BitConverter.ToUInt64(fileId, 8)
+        };
+        var handle = OpenFileById(volumeHint, ref descriptor, access | FileReadAttributes | Synchronize, ShareRead | ShareWrite, 0,
+            FileFlagBackupSemantics | FileFlagOpenReparsePoint);
+        if (handle.IsInvalid)
+        {
+            var error = Marshal.GetLastWin32Error();
+            handle.Dispose();
+            throw new BrokerRefusal("authority_check_failed", $"Opening a journalled folder by its file id failed (Win32 error {error}).");
+        }
+        return handle;
+    }
 
     internal static string GetObjectName(SafeFileHandle handle)
     {

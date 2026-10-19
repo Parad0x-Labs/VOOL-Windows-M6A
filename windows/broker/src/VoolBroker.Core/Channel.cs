@@ -2,11 +2,12 @@ using Microsoft.Win32.SafeHandles;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Principal;
+using System.Text.Unicode;
 using System.Text.Json;
 
 namespace VoolBroker.Core;
 
-public sealed class Channel(int apiPid, long apiCreationTime, byte[] secret, string journalDirectory, RootRegistry? roots = null, TimeSpan? idleTimeout = null)
+public sealed class Channel(int apiPid, long apiCreationTime, byte[] secret, string journalDirectory, RootRegistry? roots = null, TimeSpan? idleTimeout = null, Journal? journal = null)
 {
     private readonly HashSet<string> _nonces = new(StringComparer.Ordinal);
     private readonly object _nonceLock = new();
@@ -19,11 +20,17 @@ public sealed class Channel(int apiPid, long apiCreationTime, byte[] secret, str
     public static readonly TimeSpan DefaultIdleTimeout = TimeSpan.FromSeconds(30);
     /// <summary>Requests one connection may make; the next one is refused and the connection closed.</summary>
     public const int MaxRequestsPerConnection = 4096;
+    /// <summary>Roots one connection may hold open at once; each holds a handle on every folder on its way.</summary>
+    public const int MaxRootsPerConnection = 64;
 
     public string PipeName { get; } = @"\\.\pipe\vool-broker-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
     public string JournalDirectory { get; } = journalDirectory;
     public RootRegistry Roots { get; } = roots ?? new RootRegistry();
     public TimeSpan IdleTimeout { get; } = idleTimeout is { } value && value > TimeSpan.Zero && value <= DefaultIdleTimeout ? value : DefaultIdleTimeout;
+    /// <summary>File changes; without a journal (none given) every change is refused journal_unavailable.</summary>
+    private BatchRunner Batches { get { lock (_batchesLock) return _batches ??= new BatchRunner(Roots, journal ?? Journal.Unavailable(JournalDirectory)); } }
+    private BatchRunner? _batches;
+    private readonly object _batchesLock = new();
 
     public SafeFileHandle CreateInitialPipe() => CreatePipe(true);
 
@@ -181,10 +188,13 @@ public sealed class Channel(int apiPid, long apiCreationTime, byte[] secret, str
             switch (op.GetString())
             {
                 case "ping":
+                    ExpectFields(request);
                     return new { id = idValue, ok = true };
                 case "open_root":
                 {
                     ExpectFields(request, "flagged_id", "rel");
+                    if (connectionRoots.Count >= MaxRootsPerConnection)
+                        throw new BrokerRefusal("too_many_roots", $"A connection may hold at most {MaxRootsPerConnection} roots open; close one first.");
                     var rootId = Roots.OpenRoot(StringField(request, "flagged_id"), StringField(request, "rel"));
                     connectionRoots.Add(rootId);
                     return new { id = idValue, ok = true, root_id = rootId };
@@ -197,11 +207,50 @@ public sealed class Channel(int apiPid, long apiCreationTime, byte[] secret, str
                     Roots.CloseRoot(rootId);
                     return new { id = idValue, ok = true };
                 }
+                case "stat":
+                {
+                    ExpectFields(request, "root_id", "rel");
+                    var stat = FileOps.Stat(RootOf(request, "root_id", connectionRoots), StringField(request, "rel"));
+                    return new { id = idValue, ok = true, kind = stat.Kind, size = stat.Size, file_id = stat.FileId, read_only = stat.ReadOnly };
+                }
+                case "read":
+                {
+                    ExpectFields(request, "root_id", "rel", "max_bytes");
+                    var (data, sha256) = FileOps.Read(RootOf(request, "root_id", connectionRoots), StringField(request, "rel"), IntField(request, "max_bytes"));
+                    return new { id = idValue, ok = true, data = Convert.ToBase64String(data), size = data.Length, sha256 };
+                }
+                case "write_file" or "ensure_directory" or "delete" or "rename":
+                {
+                    var root = RootOf(request, "root_id", connectionRoots);
+                    return Applied(idValue, Batches.Apply([ChangeFrom(request, root, connectionRoots, inBatch: false)]));
+                }
+                case "apply_batch":
+                {
+                    ExpectFields(request, "root_id", "ops");
+                    var root = RootOf(request, "root_id", connectionRoots);
+                    if (!request.TryGetProperty("ops", out var ops) || ops.ValueKind != JsonValueKind.Array)
+                        throw new BrokerRefusal("invalid_request", "Field 'ops' must be an array.");
+                    if (ops.GetArrayLength() is 0 or > BatchRunner.MaxOperations)
+                        throw new BrokerRefusal("invalid_request", $"A batch holds 1 to {BatchRunner.MaxOperations} operations.");
+                    var changes = ops.EnumerateArray().Select(element => element.ValueKind == JsonValueKind.Object
+                        ? ChangeFrom(element, root, connectionRoots, inBatch: true)
+                        : throw new BrokerRefusal("invalid_request", "Each batch operation must be an object.")).ToArray();
+                    return Applied(idValue, Batches.Apply(changes));
+                }
+                case "restore_batch":
+                {
+                    ExpectFields(request, "batch_id");
+                    var outcome = Batches.Restore(StringField(request, "batch_id"));
+                    if (!outcome.Complete)
+                        return new { id = idValue, ok = false, error = new { code = "restore_incomplete", message = "Some objects could not be put back." }, batch = new { batch_id = outcome.BatchId, ran = (int?)null, restored = false, left = outcome.Left } };
+                    return new { id = idValue, ok = true, batch_id = outcome.BatchId, committed = outcome.Committed };
+                }
                 default:
                     return Refusal(idValue, "unknown_op", "Operation is not available.");
             }
         }
         catch (BrokerRefusal refusal) { return Refusal(idValue, refusal.Code, refusal.Message); }
+        catch (BatchStopped stopped) { return StoppedReply(idValue, stopped); }
         catch (Exception error) when (error is not OutOfMemoryException)
         {
             // Fail closed: an unexpected error refuses the request and changes nothing.
@@ -210,6 +259,85 @@ public sealed class Channel(int apiPid, long apiCreationTime, byte[] secret, str
     }
 
     private static object Refusal(JsonElement id, string code, string message) => new { id, ok = false, error = new { code, message } };
+
+    /// <summary>
+    /// A batch that made changes and then stopped: not a plain refusal. Restored, the code is what
+    /// stopped it and nothing it changed is left changed. Not fully restored, the code is
+    /// restore_incomplete (cause holds what stopped it): the workspace is not as it was, so the
+    /// caller must not treat it as refused or retry it, and restore_batch can finish the restore.
+    /// </summary>
+    internal static object StoppedReply(JsonElement id, BatchStopped stopped) => new
+    {
+        id,
+        ok = false,
+        error = new
+        {
+            code = stopped.Restored ? stopped.Code : "restore_incomplete",
+            message = stopped.Restored ? stopped.Message : $"The batch stopped ({stopped.Code}: {stopped.Message}) and could not be fully restored.",
+            cause = stopped.Code
+        },
+        batch = new { batch_id = stopped.BatchId, ran = (int?)stopped.Ran, restored = stopped.Restored, left = stopped.Left }
+    };
+
+    private static object Applied(JsonElement id, BatchResult result) =>
+        new { id, ok = true, batch_id = result.BatchId, results = result.Results, cleanup_left = result.CleanupLeft };
+
+    /// <summary>A root this connection opened; another connection's root id is unknown here.</summary>
+    private OpenedRoot RootOf(JsonElement request, string field, HashSet<string> connectionRoots)
+    {
+        var rootId = StringField(request, field);
+        if (!connectionRoots.Contains(rootId)) throw new BrokerRefusal("unknown_root", "Root id is not open on this connection.");
+        return Roots.GetOpenedRoot(rootId);
+    }
+
+    /// <summary>One change from a request (a single operation) or from an element of apply_batch's ops.</summary>
+    private FileChange ChangeFrom(JsonElement element, OpenedRoot root, HashSet<string> connectionRoots, bool inBatch)
+    {
+        var op = StringField(element, "op");
+        var common = inBatch ? new[] { "op", "rel" } : ["root_id", "rel"];
+        switch (op)
+        {
+            case "write_file":
+                ExpectFields(element, inBatch, [.. common, "data", "expect"]);
+                return new FileChange(op, root, StringField(element, "rel"), Base64Field(element, "data"), StringField(element, "expect"));
+            case "ensure_directory" or "delete":
+                ExpectFields(element, inBatch, common);
+                return new FileChange(op, root, StringField(element, "rel"));
+            case "rename":
+            {
+                string[] fields = inBatch ? [.. common, "to", "replace"] : [.. common, "to", "replace", "to_root_id"];
+                ExpectFields(element, inBatch, fields);
+                var toRoot = !inBatch && element.TryGetProperty("to_root_id", out _) ? RootOf(element, "to_root_id", connectionRoots) : null;
+                return new FileChange(op, root, StringField(element, "rel"), ToRoot: toRoot, ToPath: StringField(element, "to"), Replace: BoolField(element, "replace"));
+            }
+            default:
+                throw new BrokerRefusal("invalid_request", $"Unknown batch operation '{op}'.");
+        }
+    }
+
+    /// <summary>A batch element has no id; a single request's id and op are checked by Dispatch.</summary>
+    private static void ExpectFields(JsonElement element, bool inBatch, string[] fields)
+    {
+        if (!inBatch) { ExpectFields(element, fields); return; }
+        foreach (var property in element.EnumerateObject())
+            if (!fields.Contains(property.Name, StringComparer.Ordinal)) throw new BrokerRefusal("invalid_request", $"Unexpected field '{property.Name}'.");
+    }
+
+    private static int IntField(JsonElement request, string name) =>
+        request.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number)
+            ? number
+            : throw new BrokerRefusal("invalid_request", $"Field '{name}' must be an integer.");
+
+    private static bool BoolField(JsonElement request, string name) =>
+        request.TryGetProperty(name, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? value.GetBoolean()
+            : throw new BrokerRefusal("invalid_request", $"Field '{name}' must be true or false.");
+
+    private static byte[] Base64Field(JsonElement request, string name)
+    {
+        try { return Convert.FromBase64String(StringField(request, name)); }
+        catch (FormatException) { throw new BrokerRefusal("invalid_request", $"Field '{name}' must be base64."); }
+    }
 
     private static void ExpectFields(JsonElement request, params string[] fields)
     {
@@ -220,10 +348,53 @@ public sealed class Channel(int apiPid, long apiCreationTime, byte[] secret, str
         }
     }
 
-    private static string StringField(JsonElement request, string name) =>
-        request.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
-            ? value.GetString()!
-            : throw new BrokerRefusal("invalid_request", $"Field '{name}' must be a string.");
+    /// <summary>
+    /// A string field, exactly as sent. Bytes that are not UTF-8, or an escape for a UTF-16
+    /// surrogate that is not half of a pair, are refused invalid_name, never decoded to U+FFFD:
+    /// a name changed that way could name a different file.
+    /// </summary>
+    private static string StringField(JsonElement request, string name)
+    {
+        if (!request.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.String)
+            throw new BrokerRefusal("invalid_request", $"Field '{name}' must be a string.");
+        var raw = JsonMarshal.GetRawUtf8Value(value);
+        if (!Utf8.IsValid(raw) || HasUnpairedSurrogateEscape(raw))
+            throw new BrokerRefusal("invalid_name", $"Field '{name}' is not valid Unicode.");
+        string text;
+        try { text = value.GetString()!; }
+        catch (InvalidOperationException) { throw new BrokerRefusal("invalid_name", $"Field '{name}' is not valid Unicode."); }
+        for (var index = 0; index < text.Length; index++)
+        {
+            if (char.IsHighSurrogate(text[index]) && index + 1 < text.Length && char.IsLowSurrogate(text[index + 1])) { index++; continue; }
+            if (char.IsSurrogate(text[index])) throw new BrokerRefusal("invalid_name", $"Field '{name}' is not valid Unicode.");
+        }
+        return text;
+    }
+
+    /// <summary>True when the raw JSON string holds an escaped high surrogate not followed by an escaped low one, or a low one on its own.</summary>
+    private static bool HasUnpairedSurrogateEscape(ReadOnlySpan<byte> raw)
+    {
+        var pendingHigh = false;
+        for (var index = 0; index < raw.Length; index++)
+        {
+            if (raw[index] != (byte)'\\') { if (pendingHigh) return true; continue; }
+            if (index + 1 >= raw.Length) return true;
+            if (raw[index + 1] != (byte)'u')
+            {
+                if (pendingHigh) return true;
+                index++;
+                continue;
+            }
+            if (index + 5 >= raw.Length || !int.TryParse(raw.Slice(index + 2, 4), System.Globalization.NumberStyles.AllowHexSpecifier, System.Globalization.CultureInfo.InvariantCulture, out var unit))
+                return true;
+            index += 5;
+            var high = unit is >= 0xD800 and <= 0xDBFF;
+            var low = unit is >= 0xDC00 and <= 0xDFFF;
+            if (pendingHigh != low) return true;
+            pendingHigh = high;
+        }
+        return pendingHigh;
+    }
 
     private static bool HasCreationTime(uint pid, long expected)
     {

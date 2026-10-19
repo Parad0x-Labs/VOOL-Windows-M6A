@@ -27,10 +27,15 @@ public static class HandleWalk
     private static readonly HashSet<string> devices = BuildDevices();
     private static readonly char[] invalidNameChars = Path.GetInvalidFileNameChars();
 
+    // The test hooks are per async flow, so one test's hook never runs in another test's walk
+    // (test classes run in parallel, and the file-change tests walk too).
+    private static readonly AsyncLocal<Action<int, string>?> afterComponentOpen = new();
+    private static readonly AsyncLocal<Action?> beforeOpen = new();
+
     /// <summary>Test hook: runs after component index is opened and checked, before the next open.</summary>
-    internal static Action<int, string>? AfterComponentOpenForTests { get; set; }
+    internal static Action<int, string>? AfterComponentOpenForTests { get => afterComponentOpen.Value; set => afterComponentOpen.Value = value; }
     /// <summary>Test hook: runs before every component open, so a test can count opens.</summary>
-    internal static Action? BeforeOpenForTests { get; set; }
+    internal static Action? BeforeOpenForTests { get => beforeOpen.Value; set => beforeOpen.Value = value; }
 
     /// <summary>
     /// The lexical rules (RULES-3b P1, P2, P6, P10-P13). They run before anything is opened.
@@ -60,10 +65,21 @@ public static class HandleWalk
     public static HandleWalkResult Open(RootEntry root, string relativePath, WalkTarget target, WalkAccess access = WalkAccess.Read)
     {
         ArgumentNullException.ThrowIfNull(root);
+        return Open(root, root.Handle, relativePath, target, access);
+    }
+
+    /// <summary>
+    /// The same walk, starting from start: a folder held under root (an opened root). Every
+    /// component is still checked against root, the flagged folder.
+    /// </summary>
+    public static HandleWalkResult Open(RootEntry root, SafeFileHandle start, string relativePath, WalkTarget target, WalkAccess access = WalkAccess.Read)
+    {
+        ArgumentNullException.ThrowIfNull(root);
+        ArgumentNullException.ThrowIfNull(start);
         var parts = ValidateRelativePath(relativePath);
-        var rootPath = Native.GetFinalPath(root.Handle, Native.VolumeNameGuid).TrimEnd('\\');
+        var rootPath = RootPath(root);
         var handles = new List<SafeFileHandle>();
-        var parent = root.Handle;
+        var parent = start;
         try
         {
             for (var index = 0; index < parts.Length; index++)
@@ -76,7 +92,7 @@ public static class HandleWalk
                 BeforeOpenForTests?.Invoke();
                 var handle = Native.OpenRelative(parent, parts[index], extra, options);
                 handles.Add(handle);
-                Check(root, rootPath, handle, parts[index], last);
+                CheckComponent(root, rootPath, handle, parts[index], last);
                 AfterComponentOpenForTests?.Invoke(index, parts[index]);
                 parent = handle;
             }
@@ -89,7 +105,14 @@ public static class HandleWalk
         }
     }
 
-    private static void Check(RootEntry root, string rootPath, SafeFileHandle handle, string component, bool last)
+    /// <summary>The flagged folder's final path by volume GUID, the prefix every component must have (P16).</summary>
+    internal static string RootPath(RootEntry root) => Native.GetFinalPath(root.Handle, Native.VolumeNameGuid).TrimEnd('\\');
+
+    /// <summary>
+    /// Every check one opened component must pass (P3-P5, P7-P9, P14, P16). File operations call it
+    /// on the objects they open themselves, so those meet the same rules as the walk.
+    /// </summary>
+    internal static void CheckComponent(RootEntry root, string rootPath, SafeFileHandle handle, string component, bool last)
     {
         var attribute = Native.GetAttributeTag(handle);
         // P3, P4: a reparse point of any tag, on the way or at the end.

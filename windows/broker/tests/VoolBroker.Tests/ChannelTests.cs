@@ -180,8 +180,9 @@ public sealed class ChannelTests
         var channel = new VoolBroker.Core.Channel(Environment.ProcessId, TestSupport.CurrentCreationTime, secret, flagged, roots, TimeSpan.FromMilliseconds(300));
         using var lifetime = new CancellationTokenSource();
         var initial = channel.CreateInitialPipe();
-        var serving = channel.ServeAsync(initial, lifetime.Token);
+        // Set before ServeAsync: the hook is per async flow, and connection threads take ServeAsync's.
         VoolBroker.Core.HandleWalk.AfterComponentOpenForTests = (_, _) => Thread.Sleep(1500);
+        var serving = channel.ServeAsync(initial, lifetime.Token);
         try
         {
             await using var client = await TestSupport.Connect(channel.PipeName, TestContext.Current.CancellationToken);

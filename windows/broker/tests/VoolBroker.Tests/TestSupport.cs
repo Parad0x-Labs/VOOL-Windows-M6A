@@ -10,6 +10,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Security.Principal;
+using System.Diagnostics.CodeAnalysis;
+using VoolBroker.Core;
 using Xunit;
 
 internal static class TestSupport
@@ -367,8 +369,20 @@ internal static class TestSupport
     public static async Task<JsonDocument> StartRefused(object bootstrap)
     {
         using var broker = StartBroker(bootstrap);
-        var output = await broker.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
-        await broker.WaitForExitAsync(TestContext.Current.CancellationToken);
+        // A broker that starts instead of refusing never closes its output; fail, never hang.
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        string output;
+        try
+        {
+            output = await broker.StandardOutput.ReadToEndAsync(timeout.Token);
+            await broker.WaitForExitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException) when (!TestContext.Current.CancellationToken.IsCancellationRequested)
+        {
+            broker.Kill(true);
+            throw new InvalidOperationException("The broker did not refuse to start within 30 s.");
+        }
         Assert.NotEqual(0, broker.ExitCode);
         var line = Assert.Single(output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
         var document = JsonDocument.Parse(line);
@@ -393,6 +407,16 @@ internal static class TestSupport
     public static async Task<JsonDocument> Request(Stream stream, object request)
     {
         await WriteFrame(stream, request, TestContext.Current.CancellationToken);
+        return await ReadFrame(stream, TestContext.Current.CancellationToken);
+    }
+
+    /// <summary>Sends body as one frame exactly as given (for bytes a serializer would never write) and reads the reply.</summary>
+    public static async Task<JsonDocument> RawRequest(Stream stream, byte[] body)
+    {
+        var frame = new byte[4 + body.Length];
+        BinaryPrimitives.WriteUInt32LittleEndian(frame, (uint)body.Length);
+        body.CopyTo(frame.AsSpan(4));
+        await stream.WriteAsync(frame, TestContext.Current.CancellationToken);
         return await ReadFrame(stream, TestContext.Current.CancellationToken);
     }
 
@@ -491,6 +515,21 @@ internal static class TestSupport
         }
     }
 
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetVolumeNameForVolumeMountPointW(string volumeMountPoint, StringBuilder volumeName, uint bufferLength);
+
+    /// <summary>The volume-GUID spelling of an existing folder on a drive letter (\\?\Volume{...}\rest); it opens the same folder.</summary>
+    public static string VolumeGuidSpelling(string folder)
+    {
+        var root = Path.GetPathRoot(folder)!;
+        var name = new StringBuilder(64);
+        if (!GetVolumeNameForVolumeMountPointW(root, name, (uint)name.Capacity)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        var spelling = name.ToString() + folder[root.Length..];
+        Assert.True(Directory.Exists(spelling), $"{spelling} does not open {folder}.");
+        return spelling;
+    }
+
     /// <summary>The 8.3 short form of an existing path, or null when the volume made no short name.</summary>
     public static string? ShortPath(string path)
     {
@@ -544,6 +583,31 @@ internal static class TestSupport
         return Convert.ToHexString(hash.GetHashAndReset());
     }
 
+    /// <summary>
+    /// TreeHash without folder times: a restore puts every object back with its own bytes, name,
+    /// attributes and file times, but the folders it renamed things in get new last-write times.
+    /// </summary>
+    public static string ContentHash(string root)
+    {
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        void Add(string text) => hash.AppendData(Encoding.UTF8.GetBytes(text + "\n"));
+        void Walk(string directory)
+        {
+            foreach (var path in Directory.EnumerateFileSystemEntries(directory).Order(StringComparer.Ordinal))
+            {
+                var info = new FileInfo(path);
+                var attributes = info.Attributes & ~FileAttributes.Archive;
+                var directoryEntry = (attributes & FileAttributes.Directory) != 0;
+                Add($"{Path.GetRelativePath(root, path)}|{attributes}|{(directoryEntry ? 0 : info.LastWriteTimeUtc.Ticks)}");
+                if ((attributes & FileAttributes.ReparsePoint) != 0) { Add("link:" + (info.LinkTarget ?? "")); continue; }
+                if (directoryEntry) Walk(path);
+                else hash.AppendData(File.ReadAllBytes(path));
+            }
+        }
+        Walk(root);
+        return Convert.ToHexString(hash.GetHashAndReset());
+    }
+
     /// <summary>Deletes a test tree; junctions and symlinks are removed, never followed.</summary>
     public static void DeleteTree(string path)
     {
@@ -559,5 +623,77 @@ internal static class TestSupport
         if ((attributes & FileAttributes.ReadOnly) != 0) File.SetAttributes(path, attributes & ~FileAttributes.ReadOnly);
         if (isDirectory) Directory.Delete(path, recursive: false);
         else File.Delete(path);
+    }
+}
+
+/// <summary>
+/// In process: a flagged folder with an opened root on itself, a journal folder outside it, and a
+/// batch runner, as the broker sets them up. Restart releases everything and opens it again, as a
+/// broker restart does.
+/// </summary>
+internal sealed class Workspace : IDisposable
+{
+    public Workspace()
+    {
+        JournalFolder = Path.Combine(Outside, "journal");
+        Start();
+    }
+
+    public string Root { get; } = TestSupport.NewTempDirectory();
+    public string Outside { get; } = TestSupport.NewTempDirectory();
+    public string JournalFolder { get; }
+    public RootRegistry Registry { get; private set; }
+    public OpenedRoot Opened { get; private set; }
+    public Journal Journal { get; private set; }
+    public BatchRunner Runner { get; private set; }
+
+    [MemberNotNull(nameof(Registry), nameof(Opened), nameof(Journal), nameof(Runner))]
+    private void Start()
+    {
+        Registry = new RootRegistry();
+        Opened = Registry.GetOpenedRoot(Registry.OpenRoot(Registry.AddFlaggedRoot(Root), ""));
+        Journal = Journal.Open(JournalFolder);
+        Runner = new BatchRunner(Registry, Journal);
+    }
+
+    public void Restart()
+    {
+        Registry.Dispose();
+        Start();
+    }
+
+    /// <summary>Restart with the flagged folder emptied; the registry holds the folder, so it is released first.</summary>
+    public void Reset()
+    {
+        Registry.Dispose();
+        TestSupport.DeleteTree(Root);
+        Directory.CreateDirectory(Root);
+        Start();
+    }
+
+    public string In(params string[] parts) => Path.Combine([Root, .. parts]);
+
+    public FileChange Write(string rel, string text, string expect = "any") => new("write_file", Opened, rel, Encoding.UTF8.GetBytes(text), expect);
+    public FileChange Ensure(string rel) => new("ensure_directory", Opened, rel);
+    public FileChange Delete(string rel) => new("delete", Opened, rel);
+    public FileChange Rename(string from, string to, bool replace = false) => new("rename", Opened, from, ToPath: to, Replace: replace);
+
+    public string Refusal(params FileChange[] changes) => Assert.Throws<BrokerRefusal>(() => Runner.Apply(changes)).Code;
+    public BatchStopped Stopped(params FileChange[] changes) => Assert.Throws<BatchStopped>(() => Runner.Apply(changes));
+
+    public string[] JournalFiles() => Directory.Exists(JournalFolder) ? Directory.GetFiles(JournalFolder) : [];
+
+    /// <summary>Temp and aside names the broker uses, anywhere under the flagged folder.</summary>
+    public string[] BrokerNames() => Directory.EnumerateFileSystemEntries(Root, ".vool-broker-*", SearchOption.AllDirectories).ToArray();
+
+    public static string Sha256(string text) => "sha256:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
+
+    public void Dispose()
+    {
+        BatchRunner.BeforeStepForTests = null;
+        BatchRunner.AfterPlanForTests = null;
+        Registry.Dispose();
+        TestSupport.DeleteTree(Root);
+        TestSupport.DeleteTree(Outside);
     }
 }

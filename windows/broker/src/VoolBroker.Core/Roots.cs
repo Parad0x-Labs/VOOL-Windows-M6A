@@ -8,6 +8,9 @@ namespace VoolBroker.Core;
 
 public sealed record FlaggedRoot(string Id, string Path);
 
+/// <summary>A root open_root returned: the folder it holds, and the flagged folder it lies in.</summary>
+public sealed record OpenedRoot(RootEntry Flagged, SafeFileHandle Handle);
+
 /// <summary>
 /// The flagged folders, opened once at start and held for the broker's lifetime (RULES-3b F1-F10),
 /// and the roots opened from them by OpenRoot.
@@ -15,7 +18,7 @@ public sealed record FlaggedRoot(string Id, string Path);
 public sealed class RootRegistry : IDisposable
 {
     private readonly Dictionary<string, RootEntry> flagged = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, HandleWalkResult> opened = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (HandleWalkResult Walk, RootEntry Flagged)> opened = new(StringComparer.Ordinal);
     private readonly object sync = new();
 
     public IReadOnlyCollection<FlaggedRoot> Flagged => flagged.Values.Select(value => new FlaggedRoot(value.Id, value.Path)).ToArray();
@@ -37,6 +40,11 @@ public sealed class RootRegistry : IDisposable
             path.StartsWith("\\\\", StringComparison.Ordinal) && !path.StartsWith("\\\\?\\", StringComparison.Ordinal) ||
             path.StartsWith("\\\\?\\UNC\\", StringComparison.OrdinalIgnoreCase))
             throw new BrokerRefusal("unsupported_filesystem", "Network and device roots are unsupported.");
+        // F1: a drive letter, plain or after \\?\. A volume-GUID or GLOBALROOT spelling is fully
+        // qualified too, but it is not a form VOOL's settings use, so it is refused.
+        var lexical = path.StartsWith("\\\\?\\", StringComparison.Ordinal) ? path[4..] : path;
+        if (lexical.Length < 3 || !char.IsAsciiLetter(lexical[0]) || lexical[1] != ':' || lexical[2] is not ('\\' or '/'))
+            throw new BrokerRefusal("invalid_flagged", "Flagged folders must start with a drive letter.");
         // FILE_LIST_DIRECTORY, not attribute access alone: NTFS records share access only for opens
         // with data or delete access, and this handle is what stops the folder being renamed or
         // deleted while the broker runs. No FILE_SHARE_DELETE; not inheritable (no security attributes).
@@ -122,29 +130,58 @@ public sealed class RootRegistry : IDisposable
                 while (true)
                 {
                     var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
-                    if (opened.TryAdd(token, walk)) return token;
+                    if (opened.TryAdd(token, (walk, entry))) return token;
                 }
             }
         }
         catch { walk.Dispose(); throw; }
     }
 
-    public SafeFileHandle GetOpenedRoot(string id)
+    public OpenedRoot GetOpenedRoot(string id)
     {
-        lock (sync) return opened.TryGetValue(id, out var walk)
-            ? walk.FinalHandle : throw new BrokerRefusal("unknown_root", "Root id is not registered.");
+        lock (sync) return opened.TryGetValue(id, out var root)
+            ? new OpenedRoot(root.Flagged, root.Walk.FinalHandle) : throw new BrokerRefusal("unknown_root", "Root id is not registered.");
     }
 
     public void CloseRoot(string id)
     {
-        HandleWalkResult? walk;
-        lock (sync) if (!opened.Remove(id, out walk)) throw new BrokerRefusal("unknown_root", "Root id is not registered.");
-        walk!.Dispose();
+        (HandleWalkResult Walk, RootEntry Flagged) root;
+        lock (sync) if (!opened.Remove(id, out root)) throw new BrokerRefusal("unknown_root", "Root id is not registered.");
+        root.Walk.Dispose();
+    }
+
+    /// <summary>
+    /// Opens a folder by its volume serial and 128-bit file id, for journal recovery, and returns it
+    /// with the flagged folder it lies in. It is refused unless it is a folder (not a reparse point)
+    /// inside, or equal to, a folder flagged at this start; nothing outside is ever touched.
+    /// </summary>
+    internal (SafeFileHandle Handle, RootEntry Flagged) OpenFlaggedFolderById(ulong volumeSerial, byte[] fileId)
+    {
+        var hint = flagged.Values.FirstOrDefault(entry => entry.VolumeSerial == volumeSerial)
+            ?? throw new BrokerRefusal("unknown_root", "No flagged folder is on the journalled volume.");
+        var handle = Native.OpenById(hint.Handle, fileId, Native.FileListDirectory);
+        try
+        {
+            var attribute = Native.GetAttributeTag(handle);
+            if ((attribute.FileAttributes & Native.FileAttributeReparsePoint) != 0 || attribute.ReparseTag != 0)
+                throw new BrokerRefusal("reparse_point", "A journalled folder is now a reparse point.");
+            if ((attribute.FileAttributes & Native.FileAttributeDirectory) == 0)
+                throw new BrokerRefusal("not_a_directory", "A journalled folder id now names a file.");
+            var path = Native.GetFinalPath(handle, Native.VolumeNameGuid).TrimEnd('\\');
+            foreach (var entry in flagged.Values)
+            {
+                var rootPath = HandleWalk.RootPath(entry);
+                if (path.Equals(rootPath, StringComparison.OrdinalIgnoreCase) || path.StartsWith(rootPath + "\\", StringComparison.OrdinalIgnoreCase))
+                    return (handle, entry);
+            }
+            throw new BrokerRefusal("path_escapes_root", "A journalled folder is not inside any flagged folder.");
+        }
+        catch { handle.Dispose(); throw; }
     }
 
     public void Dispose()
     {
-        lock (sync) { foreach (var walk in opened.Values) walk.Dispose(); opened.Clear(); }
+        lock (sync) { foreach (var root in opened.Values) root.Walk.Dispose(); opened.Clear(); }
         foreach (var entry in flagged.Values) entry.Handle.Dispose();
         flagged.Clear();
     }

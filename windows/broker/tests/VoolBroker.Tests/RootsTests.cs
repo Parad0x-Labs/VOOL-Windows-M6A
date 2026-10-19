@@ -43,6 +43,7 @@ public sealed class RootsTests : IDisposable
     [InlineData("long_unc", "unsupported_filesystem")]
     [InlineData("device", "unsupported_filesystem")]
     [InlineData("case_sensitive", "case_sensitive_dir")]
+    [InlineData("volume_guid", "invalid_flagged")]
     public async Task Refused_flagged_entry_stops_the_start_without_a_pipe(string kind, string code)
     {
         var target = NewFolder("target");
@@ -57,6 +58,8 @@ public sealed class RootsTests : IDisposable
             "long_unc" => "\\\\?\\UNC\\localhost\\" + temp[0] + "$" + temp[2..],
             "device" => "\\\\.\\" + temp,
             "case_sensitive" => NewFolder("cs"),
+            // F1: fully qualified and it opens the folder, but has no drive letter.
+            "volume_guid" => TestSupport.VolumeGuidSpelling(target),
             _ => throw new ArgumentOutOfRangeException(nameof(kind))
         };
         if (kind == "file") File.WriteAllText(entry, "x");
@@ -358,6 +361,7 @@ public sealed class RootsTests : IDisposable
                 (new { id = "10", op = "open_root", flagged_id = flaggedId, rel = "a", extra = true }, "invalid_request"),
                 (new { id = "11", op = "close_root", root_id = "not-a-root" }, "unknown_root"),
                 (new { id = "12", op = "close_root", root_id = othersRootId }, "unknown_root"),
+                (new { id = "13", op = "ping", extra = true }, "invalid_request"),
             };
             foreach (var (request, code) in cases)
             {
@@ -392,6 +396,40 @@ public sealed class RootsTests : IDisposable
             }
             using var opened = await TestSupport.Request(client, new { id = "free", op = "open_root", flagged_id = flaggedId, rel = "a\\b" });
             Assert.True(opened.RootElement.GetProperty("ok").GetBoolean());
+        }
+        finally { ready.Dispose(); await TestSupport.Kill(broker); }
+    }
+
+    // A connection holds at most 64 roots: the next open_root is refused, the roots it holds stay
+    // open and usable, and closing one frees a place.
+    [Fact]
+    public async Task A_connection_holds_at_most_64_roots()
+    {
+        var flagged = NewFolder("flagged");
+        var a = Path.Combine(flagged, "a");
+        Directory.CreateDirectory(a);
+        var bootstrap = TestSupport.DefaultBootstrap([flagged], journal);
+        var (broker, ready) = await TestSupport.StartReady(bootstrap);
+        try
+        {
+            var flaggedId = ready.RootElement.GetProperty("flagged")[0].GetProperty("id").GetString()!;
+            await using var client = await TestSupport.ConnectAuthenticated(ready, TestSupport.SecretOf(bootstrap));
+            var roots = new List<string>();
+            for (var index = 0; index < Channel.MaxRootsPerConnection; index++)
+            {
+                using var opened = await TestSupport.Request(client, new { id = "open" + index, op = "open_root", flagged_id = flaggedId, rel = "a" });
+                Assert.True(opened.RootElement.GetProperty("ok").GetBoolean(), opened.RootElement.GetRawText());
+                roots.Add(opened.RootElement.GetProperty("root_id").GetString()!);
+            }
+            using var refused = await TestSupport.Request(client, new { id = "over", op = "open_root", flagged_id = flaggedId, rel = "a" });
+            Assert.Equal("too_many_roots", TestSupport.ErrorCode(refused));
+            Assert.False(TestSupport.TryRename(a, a + "-moved"));
+            using var stat = await TestSupport.Request(client, new { id = "stat", op = "stat", root_id = roots[0], rel = "" });
+            Assert.True(stat.RootElement.GetProperty("ok").GetBoolean(), stat.RootElement.GetRawText());
+            using var closed = await TestSupport.Request(client, new { id = "close", op = "close_root", root_id = roots[0] });
+            Assert.True(closed.RootElement.GetProperty("ok").GetBoolean());
+            using var again = await TestSupport.Request(client, new { id = "again", op = "open_root", flagged_id = flaggedId, rel = "a" });
+            Assert.True(again.RootElement.GetProperty("ok").GetBoolean(), again.RootElement.GetRawText());
         }
         finally { ready.Dispose(); await TestSupport.Kill(broker); }
     }
