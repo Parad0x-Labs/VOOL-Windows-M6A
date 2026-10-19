@@ -17,8 +17,15 @@ another editor's change, and that ``link_note_to_event`` refuses every path the 
   change, and the new copy is removed (``archive_note_changed`` / ``restore_note_changed``); when the new
   copy is changed too, both files stay with their changes and the answer names both
   (``archive_move_incomplete`` / ``restore_move_incomplete``);
+* a note (or an archived note) that another program moves or removes while it is moved is never reported
+  as archived or restored: the new copy is removed (``archive_note_gone`` / ``restore_note_gone``), or,
+  when the copy was changed too, kept and named (``archive_copy_left``);
+* on Windows a note another program holds open cannot be removed, so it stays and its copy is removed
+  (``archive_remove_failed``); elsewhere it archives;
+* a file in the notes folder that is not UTF-8 stops an archive with ``archive_unreadable``, nothing moved;
 * ``link_note_to_event`` writes no receipt into a ``.txt`` file, a note in a subfolder or in ``.archive``,
-  a path that climbs out of the notes folder, or a note outside the workspace;
+  a path that climbs out of the notes folder, or a note outside the workspace, and writes one into a note
+  exactly when the notes folder lists it (``Plan.MD`` on Windows, not elsewhere);
 * a plain note still archives and restores with the same bytes.
 
 The receipt the calendar route writes after an approved event is pinned, with a real loopback CalDAV
@@ -492,6 +499,102 @@ def test_an_archived_note_and_its_restored_copy_both_changed_during_the_move_bot
                                       "notes/.archive/kickoff.md": archived + EDIT, f"notes/{restored.name}": kept}
 
 
+
+# --- another program moves the note away, or holds it open, while it is moved ---------------------------
+
+
+def test_a_note_moved_away_while_it_is_archived_is_not_reported_archived_and_no_copy_is_left(world, monkeypatch) -> None:
+    original = _note_bytes("Kickoff", "agenda: intro and goals")
+    note, copy = world.notes / "kickoff.md", world.notes / ".archive" / "kickoff.md"
+    note.write_bytes(original)
+    renamed = world.notes / "kickoff-renamed.md"
+    fired = _stage_edits(monkeypatch, after_write=(lambda path: path == copy, lambda _path: note.rename(renamed)))
+
+    result = _archive("Kickoff")
+
+    assert fired == ["after_write"], "the note was renamed right after its archived copy was written"
+    assert _tree(world.workspace) == {"docs": "dir", "notes": "dir", "notes/.archive": "dir",
+                                      "notes/kickoff-renamed.md": original}, \
+        "the renamed note stays as it is and the archived copy is removed again"
+    _refused(result, "archive_note_gone")
+    assert result.details["detail"] == "kickoff.md was moved or removed by another program meanwhile; nothing was archived"
+
+
+def test_an_archived_note_moved_away_while_it_is_restored_is_not_reported_restored_and_no_copy_is_left(world, monkeypatch) -> None:
+    archived = _note_bytes("Kickoff", "agenda: intro and goals", extra=f"archived_at: {CREATED}\n")
+    (world.notes / ".archive").mkdir()
+    entry = world.notes / ".archive" / "kickoff.md"
+    entry.write_bytes(archived)
+    elsewhere = world.notes / ".archive" / "kickoff-kept.md"
+    fired = _stage_edits(monkeypatch, after_write=(lambda path: path.parent == world.notes,
+                                                   lambda _path: entry.rename(elsewhere)))
+
+    result = _restore("Kickoff")
+
+    assert fired == ["after_write"], "the archived note was renamed right after its restored copy was written"
+    assert _tree(world.workspace) == {"docs": "dir", "notes": "dir", "notes/.archive": "dir",
+                                      "notes/.archive/kickoff-kept.md": archived}, \
+        "the renamed archived note stays as it is and the restored copy is removed again"
+    _refused(result, "restore_note_gone")
+    assert result.details["detail"] == ("kickoff.md was moved or removed from the archive by another program meanwhile; "
+                                        "nothing was restored")
+
+
+def test_a_note_removed_while_it_is_archived_whose_copy_is_changed_too_keeps_the_copy_and_says_so(world, monkeypatch) -> None:
+    original = _note_bytes("Kickoff", "agenda: intro and goals")
+    note, copy = world.notes / "kickoff.md", world.notes / ".archive" / "kickoff.md"
+    note.write_bytes(original)
+    fired = _stage_edits(monkeypatch,
+                         after_write=(lambda path: path == copy, lambda _path: note.unlink()),
+                         before_remove=(lambda path: path == copy, lambda path: _append(path, COPY_EDIT)))
+
+    result = _archive("Kickoff")
+
+    assert fired == ["after_write", "before_remove"], \
+        "the note was removed after its copy was written, and the copy was changed before it was removed again"
+    kept = copy.read_bytes()
+    assert kept == _as_archived(original, _stamp_line(kept, "archived_at")) + COPY_EDIT, "the changed copy is kept"
+    assert _tree(world.workspace) == {"docs": "dir", "notes": "dir", "notes/.archive": "dir",
+                                      "notes/.archive/kickoff.md": kept}
+    _refused(result, "archive_copy_left")
+    assert result.details["detail"] == ("kickoff.md was moved or removed by another program meanwhile; "
+                                        "its archived copy kickoff.md remains")
+
+
+def test_a_note_another_program_holds_open_stays_in_place_on_windows_and_archives_elsewhere(world) -> None:
+    """Windows does not remove a file another program holds open without delete sharing (Python's own
+    `open` shares only reading and writing); POSIX removes the name and the open file lives on."""
+    original = _note_bytes("Kickoff", "agenda: intro and goals")
+    note, copy = world.notes / "kickoff.md", world.notes / ".archive" / "kickoff.md"
+    note.write_bytes(original)
+
+    with note.open("rb"):
+        result = _archive("Kickoff")
+
+    if os.name == "nt":
+        assert _tree(world.workspace) == {"docs": "dir", "notes": "dir", "notes/.archive": "dir",
+                                          "notes/kickoff.md": original}, "the note stays and its copy is removed again"
+        _refused(result, "archive_remove_failed")
+        assert result.details["detail"] == "kickoff.md stays in the notes folder"
+    else:
+        assert result.ok and result.status == "executed", result.response_text
+        assert not os.path.lexists(note)
+        stamped = copy.read_bytes()
+        assert stamped == _as_archived(original, _stamp_line(stamped, "archived_at"))
+
+
+def test_a_file_in_the_notes_folder_that_is_not_utf8_stops_an_archive_and_says_why(world) -> None:
+    (world.notes / "kickoff.md").write_bytes(_note_bytes("Kickoff", "agenda: intro and goals"))
+    (world.notes / "legacy.md").write_bytes("---\ntitle: Legacy\n---\n\ncaf\u00e9 from an old editor\n".encode("latin-1"))
+    workspace_before = _tree(world.workspace)
+
+    result = _archive("Kickoff")
+
+    assert _tree(world.workspace) == workspace_before, "nothing moves"
+    _refused(result, "archive_unreadable")
+    assert result.details["detail"].startswith("a file in the notes folder is not UTF-8 text"), result.details
+
+
 # --- link_note_to_event on paths the calendar route never stores ---------------------------------------
 # The calendar route stores the path `find_named_action` returned, which is always a resolved `.md`
 # directly in the notes folder; a `.txt` there, a note one folder down or a path that climbs out of the
@@ -541,6 +644,27 @@ def test_linking_an_event_refuses_a_path_that_climbs_out_of_the_notes_folder(wor
         assert _tree(world.workspace) == workspace_before, "neither the docs file nor the same-named note changed"
         assert linked is False, climbing
 
+
+def test_linking_an_event_writes_into_a_note_exactly_when_the_notes_folder_lists_it(world) -> None:
+    """A note named with an upper-case extension is listed (read, searched, offered for an event) on
+    Windows, where file names ignore case, and not elsewhere; its receipt follows the same rule."""
+    from core.operator.notes import link_note_to_event, search_notes
+
+    original = _note_bytes("Plan", "[action] call the venue")
+    upper = world.notes / "Plan.MD"
+    upper.write_bytes(original)
+
+    listed = [Path(row["note_path"]).name for row in search_notes(query="")]
+    linked = link_note_to_event(str(upper), event_uid="evt-5", action_id="act-5")
+
+    assert listed == (["Plan.MD"] if os.name == "nt" else []), listed
+    assert linked is (os.name == "nt")
+    written = upper.read_bytes()
+    if linked:
+        assert written == _as_restored(original, _stamp_line(written, "updated")).replace(
+            b"session: notes-owner\n", b"session: notes-owner\nlinked_event_uid: evt-5\nlinked_action_id: act-5\n")
+    else:
+        assert written == original
 
 def test_linking_an_event_refuses_a_note_outside_the_workspace(world) -> None:
     from core.operator.notes import link_note_to_event
