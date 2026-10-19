@@ -381,12 +381,15 @@ def apply_unified_diff_workspace(
         # `git apply` places a git-format patch's paths from the work tree's top, which the
         # repository's own config can move, and GNU patch and the engine below write as they go;
         # either can change files VOOL did not compare, and then report `no_change`.
+        destinations = _destinations_as_found(patch_text, touched_paths, workspace_root=workspace_root)
+        if isinstance(destinations, dict):
+            return destinations
         return _apply_protected_unified_diff(
             patch_text=patch_text,
             touched_paths=touched_paths,
             workspace_root=workspace_root,
             session_id=session_id,
-            reviewed_destinations=_destinations_as_found(touched_paths, workspace_root=workspace_root),
+            reviewed_destinations=destinations,
             unreviewed=True,
         )
     snapshots: list[dict[str, Any]] = []
@@ -587,13 +590,26 @@ def _workspace_is_work_tree_top(workspace_root: Path) -> bool:
     return os.path.normcase(os.path.realpath(top)) == os.path.normcase(os.path.realpath(str(workspace_root)))
 
 
-def _destinations_as_found(touched_paths: list[str], *, workspace_root: Path) -> list[dict[str, Any]]:
+def _destinations_as_found(patch_text: str, touched_paths: list[str], *, workspace_root: Path
+                           ) -> list[dict[str, Any]] | dict[str, Any]:
     """Each file a patch names, placed inside the workspace and paired with the bytes it holds now, in the
     shape `_apply_protected_unified_diff` takes for reviewed destinations: the patch is then applied to
-    these files as they are, or to nothing."""
+    these files as they are, or to nothing. A file the patch creates (`--- /dev/null`) must not exist yet,
+    as for a reviewed creation; otherwise the refusal is returned instead."""
+    lines = patch_text.splitlines()
+    created = {
+        _normalize_patch_path(lines[index + 1][4:])
+        for index, line in enumerate(lines[:-1])
+        if line.startswith("--- ") and line[4:].strip() == "/dev/null" and lines[index + 1].startswith("+++ ")
+    }
     rows: list[dict[str, Any]] = []
     for relative in touched_paths:
         target = resolve_workspace_path(relative, workspace_root=workspace_root, write=True)
+        if relative in created and (target.exists() or target.is_symlink()):
+            return {"ok": False, "status": "stale_base",
+                    "response_text": (f"This patch creates `{relative}`, which already exists; nothing was written. "
+                                      "Re-read it and patch it as an edit."),
+                    "details": {"paths": touched_paths, "changed_paths": [], "engine": "protected_python"}}
         prior = hashlib.sha256(target.read_bytes()).hexdigest() if target.is_file() else ""
         rows.append({"path": relative, "target": str(target), "prior_sha256": prior})
     return rows
@@ -606,9 +622,17 @@ def _protected_patch_text(patch_text: str) -> tuple[str, str]:
     -- names no content and is dropped; the Python engine stops a hunk at any line it cannot place, so
     leaving these in splits a multi-file git patch mid-hunk. Headers that change something the engine does
     not apply (renames, copies, modes, binary content, deletions) are reported instead. Hunk lines always
-    carry a one-character prefix, so no content line can match a header."""
+    carry a one-character prefix, so no content line can match a header. A `git format-patch` mail ends with
+    a signature, "-- " and a version line, which no hunk can end with (a hunk line carries a prefix), so it
+    is dropped too rather than read as a removed line."""
+    lines = str(patch_text or "").splitlines(keepends=True)
+    last = len(lines)
+    while last and not lines[last - 1].strip():
+        last -= 1
+    if last >= 2 and lines[last - 2].rstrip("\n") == "-- " and not lines[last - 1].startswith((" ", "+", "-", "\\", "@")):
+        lines = lines[: last - 2]
     kept: list[str] = []
-    for line in str(patch_text or "").splitlines(keepends=True):
+    for line in lines:
         header = line.rstrip("\n")
         if header.startswith(_GIT_UNSUPPORTED_HEADERS) or (
             header.startswith("new file mode ") and header != "new file mode 100644"
