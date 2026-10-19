@@ -58,11 +58,15 @@ def editor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     )
 
 
-def _post(editor: SimpleNamespace, path: str, payload: dict) -> tuple[int, dict]:
+def _request(editor: SimpleNamespace, method: str, path: str, payload: dict) -> tuple[int, dict]:
     status, _headers, raw = asgi_request(
-        editor.app, method="POST", path=path, headers=HEADERS, body=json.dumps(payload).encode()
+        editor.app, method=method, path=path, headers=HEADERS, body=json.dumps(payload).encode()
     )
     return status, json.loads(raw)
+
+
+def _post(editor: SimpleNamespace, path: str, payload: dict) -> tuple[int, dict]:
+    return _request(editor, "POST", path, payload)
 
 
 def _export(editor: SimpleNamespace, output_path: str) -> tuple[int, dict]:
@@ -75,6 +79,12 @@ def _on_windows(monkeypatch: pytest.MonkeyPatch, *flagged: Path) -> None:
         monkeypatch.setenv(gate.ENV_VAR, os.pathsep.join(str(root) for root in flagged))
     else:
         monkeypatch.delenv(gate.ENV_VAR, raising=False)
+
+
+def _home(monkeypatch: pytest.MonkeyPatch, folder: Path) -> None:
+    # `~` is the user's home: HOME on POSIX, USERPROFILE on Windows.
+    monkeypatch.setenv("HOME", str(folder))
+    monkeypatch.setenv("USERPROFILE", str(folder))
 
 
 def test_an_editor_export_outside_the_flagged_folders_is_refused_and_writes_nothing(
@@ -136,6 +146,42 @@ def test_a_relative_editor_export_path_is_checked_where_the_export_writes_it(
     assert Path(editor.asked[-1]).resolve() == (editor.flagged / "clip.mp4").resolve()
 
 
+def test_a_home_editor_export_path_is_checked_where_the_export_writes_it(
+    editor: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # export_project expands `~` in the user's home, wherever VOOL's working directory is.
+    _on_windows(monkeypatch, editor.flagged)
+
+    _home(monkeypatch, editor.outside)
+    monkeypatch.chdir(editor.flagged)
+    status, payload = _export(editor, "~/exports/clip.mp4")
+    assert status == 403 and payload["error"] == gate.STATUS, payload
+    assert editor.asked == []
+    assert not (editor.outside / "exports").exists()
+
+    _home(monkeypatch, editor.flagged)
+    monkeypatch.chdir(editor.outside)
+    status, payload = _export(editor, "~/exports/clip.mp4")
+    assert status == 200 and payload["receipt"]["status"] == "exported", payload
+    assert Path(editor.asked[-1]).resolve() == (editor.flagged / "exports" / "clip.mp4").resolve()
+
+
+def test_an_editor_export_path_is_checked_as_typed_spaces_included(
+    editor: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # export_project does not strip the path: " ~/exports/clip.mp4" is a folder named " ~" in VOOL's
+    # working directory, not the home, so it is checked there.
+    _on_windows(monkeypatch, editor.flagged)
+    _home(monkeypatch, editor.flagged)
+    monkeypatch.chdir(editor.outside)
+
+    status, payload = _export(editor, " ~/exports/clip.mp4")
+
+    assert status == 403 and payload["error"] == gate.STATUS, payload
+    assert editor.asked == []
+    assert not (editor.outside / " ~").exists()
+
+
 def test_off_windows_the_editor_export_is_unchanged(editor: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(gate, "_IS_WINDOWS", False)
     monkeypatch.delenv(gate.ENV_VAR, raising=False)
@@ -150,13 +196,33 @@ def test_the_editor_export_command_writes_nothing_outside_the_flagged_folders(
     editor: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The same export is registered as the command media.editor.export, served at /api/commands/dispatch.
-    Whatever that door answers, on Windows it must not write outside the flagged folders."""
+    Whatever that door answers, on Windows it must not write outside the flagged folders. Today it fails
+    before the export (its handler passes `client_host`, which handle_media_editor_post does not take), so
+    this passes without the gate too: it guards the day that door is fixed."""
     _on_windows(monkeypatch, editor.flagged)
     new_folder = editor.outside / "exports"
 
     status, payload = _post(editor, "/api/commands/dispatch", {
         "command_id": "media.editor.export",
         "input": {"body": {"project_id": editor.project_id, "output_path": str(new_folder / "clip.mp4")}},
+    })
+
+    assert payload.get("ok") is not True, (status, payload)
+    assert editor.asked == []
+    assert not new_folder.exists()
+
+
+def test_a_delete_to_the_editor_export_writes_nothing_outside_the_flagged_folders(
+    editor: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The served app hands a DELETE to the same dispatcher as a POST (core/web/api/app.py), so a DELETE to
+    /media-editor/export reaches the export too. Whatever it answers, on Windows it must not write outside
+    the flagged folders."""
+    _on_windows(monkeypatch, editor.flagged)
+    new_folder = editor.outside / "exports"
+
+    status, payload = _request(editor, "DELETE", "/media-editor/export", {
+        "project_id": editor.project_id, "output_path": str(new_folder / "clip.mp4"),
     })
 
     assert payload.get("ok") is not True, (status, payload)
