@@ -258,6 +258,8 @@ def test_windows_refuses_a_temp_cleanup_even_from_a_flagged_folder(
     monkeypatch.setattr(gate, "_IS_WINDOWS", True)
     refused = say(f'clean all temp files in "{workspace}"')
     assert refused.status == gate.STATUS, (refused.status, refused.response_text)
+    # Refused as a cleanup, not for a path the gate could not read: the path named is absolute.
+    assert "does not clean temp files" in refused.response_text, refused.response_text
     assert emptied == []
     # Off Windows the same words empty the stored plan, so the refusal above is the gate's.
     monkeypatch.setattr(gate, "_IS_WINDOWS", False)
