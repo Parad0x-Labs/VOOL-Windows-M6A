@@ -10,8 +10,8 @@ This is Step 0 of the Windows port plan, which is kept outside this repository. 
 expected to close each gap (section 6): 1 -> Step 3; 2 -> Step 3; 3 -> unassigned;
 4 -> unassigned; 5 -> Step 2; 6 -> unassigned; 7 -> Step 3; 8 -> unassigned; 9 -> unassigned;
 10 -> closed by PR #18; 11 -> closed by PR #20 for the intents the gate covers, except repo.git
-(gap 14) and workspace.apply_unified_diff (gap 15); 12 -> unassigned; 13 -> unassigned;
-14 -> unassigned; 15 -> unassigned.
+(gap 14) and workspace.apply_unified_diff (gap 15); 12 -> closed after this freeze by PR #22;
+13 -> unassigned; 14 -> unassigned; 15 -> unassigned.
 
 ## 1. Frozen SHAs
 
@@ -77,7 +77,7 @@ Each enforcement point was read at e8f607d. Each test file and function exists t
 
 | Invariant | Enforcement (file:function) | Named test |
 |---|---|---|
-| Windows: user-file writes only inside VOOL_WINDOWS_DISPOSABLE_WORKSPACES | core/windows_write_gate.py:refusal:131 (`_GATED`:28); each keyed path is checked where its writer puts it (`_landing`:79), and a temp cleanup is refused outright (`_ALWAYS_REFUSED`:48) (gap 11, closed). The Media Studio editor's HTTP export (gap 12) and operator notes (gap 13) never ask it, and it checks repo.git (gap 14) and workspace.apply_unified_diff (gap 15) on the chat's workspace, not on the repository git changes | tests/test_windows_write_gate.py::test_no_flagged_folder_refuses_every_user_filesystem_write; tests/test_machine_writes_are_checked_where_they_land.py::test_a_flagged_chat_workspace_no_longer_lets_a_write_into_the_real_documents_folder, ::test_windows_refuses_a_temp_cleanup_even_from_a_flagged_folder |
+| Windows: user-file writes only inside VOOL_WINDOWS_DISPOSABLE_WORKSPACES | core/windows_write_gate.py:refusal:131 (`_GATED`:28); each keyed path is checked where its writer puts it (`_landing`:79), and a temp cleanup is refused outright (`_ALWAYS_REFUSED`:48) (gap 11, closed). The Media Studio editor's HTTP export (gap 12, closed after this freeze by PR #22) and operator notes (gap 13) never ask it, and it checks repo.git (gap 14) and workspace.apply_unified_diff (gap 15) on the chat's workspace, not on the repository git changes | tests/test_windows_write_gate.py::test_no_flagged_folder_refuses_every_user_filesystem_write; tests/test_machine_writes_are_checked_where_they_land.py::test_a_flagged_chat_workspace_no_longer_lets_a_write_into_the_real_documents_folder, ::test_windows_refuses_a_temp_cleanup_even_from_a_flagged_folder |
 | ...refused before the permission decision and before A6 (PR #15), except a council seat and a repo.step from a flagged chat on a session folder that is not flagged (gap 2) | core/tool_intent_executor.py:_windows_write_refusal:886 (called 1319); core/runtime_execution_tools.py:windows_write_refusal:7338, windows_write_refusal_before_decision:7383; core/local_operator_actions.py:windows_write_refusal:55 | tests/test_windows_write_gate_before_approval.py::test_a_write_outside_the_flagged_folders_is_refused_before_approval_and_a6, ::test_an_operator_move_outside_the_flagged_folders_is_refused_before_approval |
 | ...fast paths gated before the boundary decides | core/authorized_tool_execution.py:execute_authorized_runtime_tool:232 | test_windows_write_gate_before_approval.py::test_a_fast_path_write_is_gated_before_the_boundary_takes_its_decision |
 | ...inside a flagged folder the write still reaches approval | same | test_windows_write_gate_before_approval.py::test_inside_a_flagged_workspace_the_write_still_reaches_approval |
@@ -329,7 +329,9 @@ tests/test_a6_resolution_surface.py::test_user_resolution_releases_the_block.
     back (741). The same paths feed its high-risk check (`_high_risk_gate`, 328-331). The approval ask
     shows no path for machine.move_path or media.export, and shows an absolute Windows path for a
     workspace write as `<workspace>/C:\...`.
-12. **VERIFIED in source; run at e8f607d on Linux with the gate switched on, not on Windows.** The
+12. **Closed after this freeze by PR #22 (merged 19 Oct 2026 by fast-forward to `1c26068`); below is
+    the route as it stood at e8f607d. VERIFIED in source; run at e8f607d on Linux with the gate
+    switched on, not on Windows.** The
     Media Studio editor's export, `POST /media-editor/export` (or a DELETE there: core/web/api/app.py:136
     hands both methods to the same dispatcher; core/web/api/service.py:_dispatch_post_inner:4203,
     branch 4222-4225 -> core/web/api/media_editor_api.py:handle_media_editor_post:280, export 305-315
