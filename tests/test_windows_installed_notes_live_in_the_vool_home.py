@@ -388,3 +388,26 @@ def test_the_copy_leaves_no_temporary_files_behind(tmp_path: Path) -> None:
     BundleSupervisor(app, env={**_base_env(tmp_path), "VOOL_BUNDLE_ROOT": str(app), "VOOL_HOME": str(home)})._prepare()
 
     assert sorted(p.name for p in (home / "workspace" / "notes").iterdir()) == ["a.md"]
+
+
+def test_without_hard_links_the_copy_still_lands_and_never_replaces(tmp_path: Path, monkeypatch) -> None:
+    """FAT, exFAT and some network shares have no hard links: a VOOL_HOME there still migrates."""
+    app, home = _install(tmp_path), _native_home(tmp_path)
+    old = app / "app" / "notes"
+    old.mkdir(parents=True)
+    (old / "a.md").write_text("a\n", encoding="utf-8")
+    (old / "b.md").write_text("old b\n", encoding="utf-8")
+    new = home / "workspace" / "notes"
+    new.mkdir(parents=True)
+    (new / "b.md").write_text("new b\n", encoding="utf-8")
+
+    def no_hard_links(src, dst, *args, **kwargs):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(bundle_supervisor.os, "link", no_hard_links)
+    BundleSupervisor(app, env={**_base_env(tmp_path), "VOOL_BUNDLE_ROOT": str(app), "VOOL_HOME": str(home)})._prepare()
+
+    assert (new / "a.md").read_text(encoding="utf-8") == "a\n"
+    assert (new / "b.md").read_text(encoding="utf-8") == "new b\n"
+    assert sorted(p.name for p in new.iterdir()) == ["a.md", "b.md"]
+    assert (home / "run" / bundle_supervisor._NOTES_COPY_MARKER).is_file()
