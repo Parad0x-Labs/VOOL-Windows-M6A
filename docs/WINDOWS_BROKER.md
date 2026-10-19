@@ -236,7 +236,9 @@ contracts gaps 14 and 15). Job 6 (branch windows/port-landing-gate, not merged a
 writing) plans a public resolver in core/windows_write_gate.py, called by `refusal()`, that
 places each call's writes and refuses any call it cannot place or that falls outside the flagged
 folders. Step 3 takes the broker's roots from that same function, with no second API, passed as
-(flagged id, relative path) per section 4, and the broker uses those and nothing wider.
+(flagged id, relative path) per section 4, and the broker uses those and nothing wider. Switching
+the gate to the broker's list of flagged folders (section 4) is a Step 3 change, not part of
+Job 6.
 
 - **`repo.git`** (and `repo.step` when its inner call is like `repo.git`) runs in the launcher.
   The write roots are the top folder (`git rev-parse --show-toplevel`), the git dir
@@ -334,7 +336,7 @@ Read roots outside the flagged folders (Python, the VOOL program folder, plugin 
 opened by handle with the section 5 rules and refused if it is a reparse point. Folders already
 readable by `ALL APPLICATION PACKAGES` need no grant; any other (a venv or plugin folder under the
 user profile) needs a grant by option B, so ACLs then change outside the flagged folders too.
-Which folders those are is listed when phase A is built.
+Which folders those are, and how each is granted, is decided in phase C (section 10, item 6); phase A builds and tests the mechanism on folders the tests choose.
 
 ### 7.4 Journal and recovery
 
@@ -371,7 +373,10 @@ Linux and macOS confine a child by wrapping its argv (sandbox/job_runner.py
 4. Lifetime: the broker closes the launch's Job as soon as vool-confine's launch connection drops,
    so when job_runner kills vool-confine on a timeout or cancel (`_terminate_process_group`:439),
    the child dies too. When the child exits, the broker sends its exit code on the launch
-   connection and vool-confine exits with it.
+   connection and vool-confine exits with it. Ctrl-C: vool-confine handles a console Ctrl-C or
+   Ctrl-Break itself by closing its launch connection and exiting with code 130, so the broker
+   closes the Job and the child is killed at once, with no graceful signal; a child that needs a
+   graceful stop is out of scope for Step 2.
 5. What the checks are worth: the ticket is on vool-confine's command line, which any process of
    the same user can read; it is single-use, bound to the argv and environment, and short-lived,
    so a stolen ticket allows at most that one launch. The broker also checks that vool-confine's
@@ -390,9 +395,10 @@ Which existing state each outcome lands in (contracts §4 and §5); no new recei
 |---|---|
 | Refused by the broker (any section 5 rule, unknown root, bad ticket, `in_use` before the commit rename) | refused, nothing changed: `windows_filesystem_authority_unavailable` with the broker's code, except `blocked_by_hard_link`, which keeps its own status (sandbox/sandbox_runner.py:209); launch refusals `confinement_unavailable` (core/plugin_executor.py:384) |
 | Broker absent, or the channel fails before the request is written | refused, same statuses |
-| A file request was written and no response came (broker died, pipe broke, timeout) | the client raises `EffectOutcomeUnknown` (core/effect_reconciliation.py:61); it never returns `ok=False` for this. That becomes A6 `unknown` only for an A6-reserved intent holding a claim (`a6_reserved_intent`:53, contracts §4 and §5); every other intent ends as today's plain `error`, which is contracts gap 6. Mechanical resolvers exist only for workspace.write_file and machine.write_file (effect_reconciliation.py:219-220). Which of the broker's intents (the moves, the patch, the rollbacks) are A6-reserved is listed when phase C is designed |
+| A file request was written and no response came (broker died, pipe broke, timeout) | the client raises `EffectOutcomeUnknown` (core/effect_reconciliation.py:61); it never returns `ok=False` for this. That becomes A6 `unknown` only for an A6-reserved intent holding a claim (`a6_reserved_intent`:53, contracts §4 and §5); every other case (an intent that is not reserved, or a reserved one with no `checkpoint_id`) ends as today's plain `error`, which is contracts gap 6. Mechanical resolvers exist only for workspace.write_file and machine.write_file (effect_reconciliation.py:219-220). Phase C fixes the list of which broker-backed intents (the moves, the patch, the rollbacks) are A6-reserved; Step 2 does not. A broker change takes effect at its commit rename (section 6), so "written, no response" may mean it happened |
 | A launched child ran and the broker died | the child is dead (its Job closed); its result goes through `PluginToolResult` (or the process agent's own result), not A6, as `ok=False` with the reason, naming that its effects are unknown. No receipt state says "unknown" there today; that is recorded as part of gap 6 |
 | `apply_batch` stopped part way by an I/O error | `ok=False` with the ops that ran and whether the broker's own restore (section 6) completed. If the restore did not complete, the entry stays in the journal and the result says what is left (gap 6) |
+| A handler returns `ok=False` after the broker changed files (a part-done batch whose restore did not complete) | as today: the executor ack records it as A6 `failed_safe_to_retry` / `dispatch_ack` (tool_intent_executor.py:1538-1549), the third outcome of contracts gap 6 |
 | Executed | `executed`, with file ids and new hashes |
 
 ## 9. Code layout and tests
@@ -454,7 +460,11 @@ Which existing state each outcome lands in (contracts §4 and §5); no new recei
    - a developer who flags the folder holding a source checkout must set VOOL_HOME elsewhere;
    - permission changes left by a crash followed by an uninstall stay in place, because uninstall
      touches only the program folder;
+   - the flagged-folder list is fixed when the broker starts, so changing
+     VOOL_WINDOWS_DISPOSABLE_WORKSPACES takes a VOOL restart;
    - Windows older than the pinned minimum build is not supported.
+6. The read roots outside the flagged folders (section 7.3): which folders, and how each is
+   granted. Decided in phase C.
 
 ## 11. Proposed changes to the contracts doc
 
