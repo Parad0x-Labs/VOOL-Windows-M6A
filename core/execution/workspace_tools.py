@@ -875,9 +875,15 @@ def _apply_protected_unified_diff(
             "reviewed_sha256": str(entry["record"].get("prior_sha256") or ""),
         }
 
+    # A file whose rendered text is the bytes it already holds is not written at all, so `no_change` means
+    # nothing on disk was touched (no new file identity, no new timestamp) and no record claims a write.
+    unchanged = {str(path) for path, text in rendered
+                 if planned[str(path)]["bytes"] is not None and str(text) == verified_text[str(path)]}
     written: list[tuple[Path, str, tuple[int, int]]] = []
     for path, text in rendered:
         snapshot = snapshots[str(path)]
+        if str(path) in unchanged:
+            continue
         try:
             identity = pinned_atomic_write_text(path, str(text), expected_prior_sha256=snapshot["reviewed_sha256"])
         except OSError as exc:
@@ -899,10 +905,12 @@ def _apply_protected_unified_diff(
     for path, text in rendered:
         snapshot = snapshots[str(path)]
         after_text = str(text)
-        force_fresh_source_timestamp(path, minimum_mtime_ns=int(snapshot.get("before_mtime_ns") or 0))
         action = "updated" if snapshot["existed_before"] else "created"
         artifacts.append(build_file_diff_artifact(path=snapshot["path"], action=action, before=snapshot["before_text"],
                                                   after=after_text, extra={"engine": "protected_python"}))
+        if str(path) in unchanged:
+            continue
+        force_fresh_source_timestamp(path, minimum_mtime_ns=int(snapshot.get("before_mtime_ns") or 0))
         if snapshot["before_text"] != after_text or not snapshot["existed_before"]:
             changed_paths.append(snapshot["path"])
         mutation_changes.append({"path": snapshot["path"], "action": action, "existed_before": bool(snapshot["existed_before"]),
