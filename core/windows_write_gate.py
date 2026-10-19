@@ -6,8 +6,11 @@ confinement. Owner decision (2026-10-18): on Windows, intents that change the us
 refused unless every target lies inside a folder listed in VOOL_WINDOWS_DISPOSABLE_WORKSPACES
 (os.pathsep-separated absolute paths), each path argument checked where its writer puts it
 (`_landing`), and every folder the call really runs in checked too: a step's or a code-task rollback's
-task or session folder, and the places git writes for a git operation (`_places_beyond_workspace`). An
-intent that also changes folders its arguments do not name is refused outright (`_ALWAYS_REFUSED`).
+task or session folder, and for a git operation the top of the repository's work tree, its git folder and
+its shared git folder, as git reports them (`_places_beyond_workspace`). Only those folders are placed: a
+link or junction inside the git folder, or a repository-local `lfs.storage` setting, can still send some
+of git's writes elsewhere. An intent that also changes folders its arguments do not name is refused
+outright (`_ALWAYS_REFUSED`).
 The developer sets that variable when starting VOOL; nothing inside a
 workspace can set it. VOOL's own private stores (skills, media projects, browser profiles,
 notes) are not user-filesystem destinations and are not gated here. POSIX is unaffected.
@@ -195,7 +198,8 @@ def _git_places(folder: str) -> list[tuple[str, str]] | str:
     any of them outside the folder (`core.worktree`, a `.git` file pointing elsewhere, a linked
     worktree), so they are asked of git, never derived from where `.git` sits. git is asked only when
     the operation's own runner would run git there (`GitRunner._repository_refusal`, which asks
-    core/safe_git.py), and a refusal is given in that runner's words."""
+    core/safe_git.py), and a refusal is given in that runner's words. Folders below these three (a link
+    in place of `.git/objects`) and a local `lfs.storage` setting are not placed."""
     import subprocess
 
     from core import safe_git
