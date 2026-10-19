@@ -3,8 +3,10 @@
 A note is a Markdown FILE under the active workspace's ``notes/`` directory — the same
 workspace authority the runtime's file tools resolve (`core.runtime_paths.
 resolve_workspace_root`), so project isolation is the workspace root's own boundary and no
-second notes framework exists. What this module adds on top of the file is only the honest
-metadata: title, creating session, timestamps, and — when a note backs a calendar event —
+second notes framework exists. One exception: the installed Windows app keeps notes in the VOOL
+home's workspace while its file tools keep {app}\\app (`_workspace_root`), so there the file
+tools cannot open a note by its path; the note operations here still can. What this module
+adds on top of the file is only the honest metadata: title, creating session, timestamps, and — when a note backs a calendar event —
 the REAL provider receipt (uid/etag) of that event, written only after the event verifiably
 exists.
 
