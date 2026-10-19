@@ -120,6 +120,9 @@ What a "committed, then cleanup or recording failed" case collapses into, by pat
   (core/execution/workspace_tools.py:_apply_protected_unified_diff:754-764,
   _compensate_protected_writes:596). If that result crosses the executor ack with a claim, it is
   recorded **failed_safe_to_retry**. Whether this path reaches the ack with a claim is UNVERIFIED.
+  Other patches that changed files did reach it with a claim and were recorded
+  **failed_safe_to_retry**: one git applied in a subfolder of a repository while VOOL answered
+  `no_change`, and one GNU patch applied in part while VOOL answered `stale_base` (gap 15).
 - Closest existing equivalents: operator lane `effect_unrecorded` (effect verified, receipt not
   recorded; core/operator/approvals.py:55, 167, release:343-349) and the "moved aside ... preserved
   for recovery" error (core/execution/artifacts.py:pinned_remove_created_file:288, raised 346-359).
@@ -203,7 +206,10 @@ tests/test_a6_resolution_surface.py::test_user_resolution_releases_the_block.
    wrote nothing. Auto mode refused a step after its decision and asked to approve the rollback
    first. From a chat working in the unflagged folder each was refused before any decision. No test
    covers these: the executor-level step cases (tests/test_windows_write_gate_before_approval.py:
-   56-57) use an unflagged chat and a task or session that does not exist. UNVERIFIED: other
+   56-57) name a task or session that does not exist, and both are refused from a chat working in an
+   unflagged folder (63-80). The code.task.step case is also run from a chat working in the flagged
+   folder (101, 108-121); there it reaches the approval ask after one decision and stops, so that test
+   pins the decision this residual takes first without reaching the refusal. UNVERIFIED: other
    `decide_tool_call` callers
    (core/semantic/admission.py:124, core/live_data_plan.py:863) do not ask the Windows predicate first;
    whether they can carry a gated write intent was not traced. The remaining callers decide fixed
@@ -475,27 +481,72 @@ tests/test_a6_resolution_surface.py::test_user_resolution_releases_the_block.
     `core.editor` or `core.hooksPath` skips git too (391-392). When the workspace is a subfolder of the
     repository, git reads a git-format patch's paths from the repository's top. Second, VOOL's own
     engine (408-413), which joins each path onto the workspace and refuses one outside it
-    (`_apply_unified_diff_python`:850, 870). Third, GNU `patch -d <workspace>` when `patch` is on the
-    PATH (414-433); whether a Windows install has it is UNVERIFIED. VOOL strips the patch (341), so a
-    patch whose last line is a hunk line loses its final newline and git rejects it as corrupt; such a
-    patch goes to the other two engines.
+    (`_apply_unified_diff_python`:850, 870). It writes or removes each file as soon as it renders it
+    (927-931), so in a patch with more than one file and no `diff --git` line between them, a later file
+    that does not match (909-910, 913-915) or has no hunk (922-923) leaves the earlier files changed;
+    VOOL then answers `stale_base` or `invalid_patch_syntax` (`_classify_patch_apply_failure`:821,
+    834-837) with no mutation record (434-441, before 509). It refuses a `diff --git` line that follows
+    a hunk before writing that hunk's file (919-920), so a patch with such a line before every file
+    after the first changes nothing through it. Third, GNU `patch -d <workspace>` when `patch` is on the
+    PATH (414-433); whether a Windows install has it is UNVERIFIED. VOOL strips the patch (341), so its
+    last line loses its newline. git rejects the patch when that line is a hunk line (as corrupt) or the
+    `rename to` line of a last section that renames with no hunk (its header lacks filename
+    information); such a patch goes to the other two engines. git still applied patches whose last line
+    was a `\ No newline at end of file` line, the version line under the `-- ` signature that ends
+    `git format-patch` output, a line of plain text after the last hunk, or a closing code fence.
     In the runs (one flagged folder that is a subfolder of a repository; Manual mode with the ask
     allowed, and Auto mode with no ask), a rename from a file at the repository's top into the flagged
     folder, in a patch ending with a `\ No newline at end of file` line, was applied by git: the file
-    outside the flagged folder was removed and its content landed inside. This happened with and
-    without `---`/`+++` lines for the rename, and with the file tracked or untracked. VOOL answered
-    `no_change` (ok False, engine `git_apply`) and wrote no mutation record (487-507, before 509). The
-    Manual ask named no file (`affected_resources` empty, no diff preview), as for any patch. git
-    skipped a section deleting the outside file, and a copy left it in place (its content was copied
-    in). The same rename ending in a hunk line was not applied: git rejected it as corrupt, and VOOL's
-    engine and GNU patch, joining its paths onto the workspace, could not place it. With `core.editor`
-    or `core.hooksPath` set in the repository's own config, git did not run and the outside file
-    stayed. With git off the PATH, GNU patch 2.7.6 refused renames and copies from `../`, from an
-    absolute path and into or out of a linked folder, and looked up a name from the repository's top
-    inside the workspace; it still applied the patch's other hunks, leaving a changed file and a
-    `.orig` copy in the flagged folder while VOOL answered `stale_base` with no mutation record
-    (434-441). An ordinary patch ending in a hunk line applied through VOOL's own engine. The same
-    rename from a chat working at the repository's top was refused. repo.step reaches the same writer
-    (gap 14). The code-task path that passes reviewed destinations uses VOOL's own engine and refuses
-    renames and copies (`_apply_protected_unified_diff`:647, `_GIT_UNSUPPORTED_HEADERS`:538). No test
-    runs a patch with a folder flagged.
+    outside the flagged folder was removed and its content landed inside. This happened with and without
+    `---`/`+++` lines for the rename, and with the file tracked or untracked. VOOL answered `no_change`
+    (ok False, engine `git_apply`) and wrote no mutation record (487-507, before 509). The Manual ask
+    named no file (`affected_resources` empty, no diff preview), as for any patch. git skipped a section
+    deleting the outside file, and a copy left it in place (its content was copied in). In Auto mode git
+    also applied the rename, and VOOL answered `no_change`, when the patch ended with a `-- ` signature,
+    a line of plain text or a closing code fence, and when it was a whole `git format-patch` output; in
+    that output VOOL's pattern (regex 40) crossed the line break after the `---` that ends the commit
+    message and took the diffstat line below it as a path. The same rename ending in a hunk line was not
+    applied: git rejected it as corrupt, and VOOL's engine and GNU patch, joining its paths onto the
+    workspace, could not place it. Run directly with VOOL's git arguments (396-397), git 2.43.0 also
+    rejected a stripped patch whose last section was a rename with no hunk, alone or after an edit as
+    `git diff -M` writes it. With `core.editor` or `core.hooksPath` set in the repository's own config,
+    git did not run and the outside file stayed.
+    The `no_change` comes from where VOOL looks: it reads each `---`/`+++` path joined onto the
+    workspace before and after (368, 446-449) and compares the two (474), while git places the paths
+    from the repository's top, so the files git changed are not the ones VOOL compared. The same happens
+    to an edit that stays inside the flagged folder. A patch changing the flagged folder's `keep.txt`,
+    named `scratch/keep.txt` from the repository's top, with or without a `diff --git` line, and ending
+    in a line git accepts, was applied by git, and VOOL answered `no_change` with no mutation record
+    (Manual mode with the ask allowed, and Auto mode); the rename runs' own edit of `keep.txt` landed
+    the same way. The executor's ack then recorded the A6 row `failed_safe_to_retry` (reason
+    `dispatch_ack`; tool_intent_executor.py:1538-1549), though its comment says every ordinary failure
+    result was produced before any physical mutation could be attributed to it (1536-1537).
+    `workspace.rollback_last_change` then answered `no_tracked_change`, or, after an earlier tracked
+    write in the same session, rolled back that write and left the patched file changed
+    (runtime_execution_tools.py:_rollback_last_change:6830, 6853). The same edit ending in a hunk line
+    was not applied (`stale_base`), and a git-format patch naming `keep.txt` from the workspace was not
+    applied either and also answered `no_change`.
+    With git off the PATH, GNU patch 2.7.6 refused renames and copies from `../` and into or out of a
+    linked folder, and looked up a name from the repository's top inside the workspace; it still applied
+    the patch's other hunks, leaving a changed file and a `.orig` copy in the flagged folder while VOOL
+    answered `stale_base` with no mutation record (434-441), and the executor's ack recorded that run
+    `failed_safe_to_retry`. VOOL's own engine leaves the same kind of result. A plain two-file patch
+    whose second file did not match left the first file changed, with `stale_base` and no mutation
+    record, both with neither git nor patch on the PATH and with git in a repository (git applied
+    nothing); a second file with no hunk did the same with `invalid_patch_syntax`; with GNU patch on the
+    PATH, patch then also ran and added a `.rej` file for the already changed first file. With neither
+    on the PATH, the same two files with a `diff --git` line before each changed nothing. An ordinary
+    patch ending in a hunk line applied through VOOL's own engine. The same rename from a chat working
+    at the repository's top was refused. repo.step reaches the same writer (gap 14).
+    The code-task path that passes reviewed destinations uses VOOL's own engine and refuses renames and
+    copies (`_apply_protected_unified_diff`:647, `_GIT_UNSUPPORTED_HEADERS`:538). An approval migrated
+    from an older runtime's code-task journal is bound from that journal's own read evidence
+    (core/code_assistant/journal_schema.py:upgrade_payload:181, `mutation_target_paths`:105-111) and
+    records no destinations; it is let through (task_runtime.py:_destination_drift:4217-4233) and
+    dispatched without them (`_run_mutation`:3591-3598), so its patch goes to the three engines above.
+    In a run with the recorded schema-2 journal
+    (tests/fixtures/code_task_journals/v2_e064/approved_without_hash) changed so that it approved the
+    rename patch after a read of the file the patch's `---`/`+++` lines name, git applied it (Auto mode,
+    and Manual mode with the ask allowed): the outside file was removed, its content landed in the
+    flagged folder, and VOOL answered `no_change` (engine `git_apply`). Whether an older runtime ever
+    wrote an approved patch proposal is UNVERIFIED. No test runs a patch with a folder flagged.
