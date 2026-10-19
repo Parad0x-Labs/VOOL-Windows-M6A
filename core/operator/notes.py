@@ -242,11 +242,11 @@ def _read_entry(path: Path) -> tuple[bytes, str, tuple[int, int]] | None:
 
 def _move_note(source: Path, source_entry: tuple[bytes, str, tuple[int, int]], target: Path, content: str) -> str:
     """Write ``content`` as the new file ``target``, then remove ``source`` while it is still the file that was
-    read. "" when both happened; otherwise the status of what stopped it, and the new copy is removed again:
-    "note_changed" (another file or other bytes are at ``source`` now, and stay), "remove_failed" (``source``
-    could not be removed, and stays), "note_gone" (nothing is at ``source`` any more: another program moved
-    or removed it). When the copy cannot be removed either: "move_incomplete" (both remain) or "copy_left"
-    (``source`` is gone and the copy remains)."""
+    read. "" when both happened. "note_gone" when nothing is at ``source`` any more (another program moved or
+    removed it, or its folder): the copy may then be the only one left, so it stays. Otherwise the new copy
+    is removed again and the answer says why the note stayed: "note_changed" (another file or other bytes are
+    at ``source`` now), "remove_failed" (``source`` could not be removed), or "move_incomplete" when the copy
+    cannot be removed either (both remain)."""
     from core.execution.artifacts import (
         DestinationChangedError,
         ReviewedBaseChangedError,
@@ -274,11 +274,13 @@ def _move_note(source: Path, source_entry: tuple[bytes, str, tuple[int, int]], t
         if removed == "removed":
             return ""
         stopped = "note_gone"
+    if stopped == "note_gone" or not os.path.lexists(source):
+        return "note_gone"
     try:
         pinned_remove_created_file(target, created_identity=created,
                                    expected_sha256=hashlib.sha256(content.encode("utf-8")).hexdigest())
     except OSError:
-        return "copy_left" if stopped == "note_gone" else "move_incomplete"
+        return "move_incomplete"
     return stopped
 
 
@@ -326,9 +328,8 @@ def archive_note(*, title: str) -> dict[str, Any]:
     if stopped:
         detail = {
             "move_incomplete": f"{path.name} and its archived copy {target.name} both remain",
-            "note_gone": f"{path.name} was moved or removed by another program meanwhile; nothing was archived",
-            "copy_left": f"{path.name} was moved or removed by another program meanwhile; its archived copy "
-                         f"{target.name} remains",
+            "note_gone": f"{path.name} was moved or removed by another program meanwhile; its archived copy "
+                         f"{target.name} is kept",
         }.get(stopped, f"{path.name} stays in the notes folder")
         return {"ok": False, "status": f"archive_{stopped}", "detail": detail}
     return {"ok": True, "status": "archived", "note_path": str(target), "title": str(meta.get("title") or title),
@@ -375,10 +376,8 @@ def restore_note(*, title: str) -> dict[str, Any]:
     if stopped:
         detail = {
             "move_incomplete": f"{path.name} and its restored copy {restored.name} both remain",
-            "note_gone": f"{path.name} was moved or removed from the archive by another program meanwhile; "
-                         "nothing was restored",
-            "copy_left": f"{path.name} was moved or removed from the archive by another program meanwhile; its "
-                         f"restored copy {restored.name} remains",
+            "note_gone": f"{path.name} was moved or removed from the archive by another program meanwhile; its "
+                         f"restored copy {restored.name} is kept",
         }.get(stopped, f"{path.name} stays archived")
         return {"ok": False, "status": f"restore_{stopped}", "detail": detail}
     return {"ok": True, "status": "restored", "note_path": str(restored), "title": str(meta.get("title") or title)}
