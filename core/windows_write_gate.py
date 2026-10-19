@@ -4,7 +4,7 @@ Until the handle-based Windows filesystem authority exists, a reviewed write on 
 checked by path and then performed by path, and that window can be raced, so it is not
 confinement. Owner decision (2026-10-18): on Windows, intents that change the user's files are
 refused unless every target lies inside a folder listed in VOOL_WINDOWS_DISPOSABLE_WORKSPACES
-(os.pathsep-separated absolute paths), each target checked where its writer puts it
+(os.pathsep-separated absolute paths), each path argument checked where its writer puts it
 (`_landing`). The developer sets that variable when starting VOOL; nothing inside a workspace
 can set it. VOOL's own private stores (skills, media projects, browser profiles, notes) are not
 user-filesystem destinations and are not gated here. POSIX is unaffected.
@@ -22,7 +22,8 @@ _IS_WINDOWS = os.name == "nt"
 STATUS = "windows_filesystem_authority_unavailable"
 
 #: Intents that change the user's filesystem, mapped to the argument keys naming their targets.
-#: An empty tuple means the target is the workspace itself.
+#: An empty tuple means the target is the workspace itself. `_landing` places each keyed path;
+#: a keyed intent it has no rule for is refused.
 _GATED: dict[str, tuple[str, ...]] = {
     "workspace.write_file": (),
     "workspace.ensure_directory": (),
@@ -63,13 +64,21 @@ def _inside(path: str, roots: list[str]) -> bool:
     return False
 
 
-def _landing(intent: str, value: str) -> str | None:
-    """Where the writer of `intent` puts the path `value`, or None when it cannot be placed.
+def _landing(intent: str, value: str) -> list[str] | None:
+    """The places the writer of `intent` changes for the path `value`, or None when the gate cannot
+    place it exactly.
 
-    The gate must check the folder a call really changes, so it places each path the way that
-    call's writer does: machine.write_file and machine.ensure_directory from the user's home
-    (`anchor_machine_path`), machine.move_path and media.export from the process's working
-    directory (`_canonicalize`, `export_destination`). The operator lane names absolute paths only.
+    The gate must check the folders a call really changes, so it places each path from the
+    argument exactly as that call's writer receives it, the way the writer does:
+    - machine.write_file and machine.ensure_directory: stripped, from the user's home
+      (`anchor_machine_path`);
+    - machine.move_path: stripped, from the process's working directory (`_canonicalize`);
+    - media.export: unstripped, from the working directory (`export_destination`), with the folder
+      that holds the output, where the export also writes its stage files;
+    - the operator lane: `$VAR` and `~` expanded as its handlers expand them (move_path strips the
+      path first, cleanup_temp_files does not). Its handlers take a relative path from VOOL's
+      working directory; the gate takes only one that is absolute. For cleanup_temp_files this is
+      the folder named, not the temp folders its plan also empties.
     Joined onto the chat workspace instead, `Documents\\x.txt` passed as a workspace file while the
     writer put it in the user's real Documents folder.
     """
@@ -77,19 +86,24 @@ def _landing(intent: str, value: str) -> str | None:
         if intent in {"machine.write_file", "machine.ensure_directory"}:
             from core.runtime_execution_tools import anchor_machine_path
 
-            return str(anchor_machine_path(value))
+            return [str(anchor_machine_path(value))]
         if intent == "machine.move_path":
             from core.machine_file_ops import _canonicalize
 
-            resolved = _canonicalize(value)
-            return None if resolved is None else str(resolved)
+            resolved = _canonicalize(value.strip())
+            return None if resolved is None else [str(resolved)]
         if intent == "media.export":
             from core.media_studio_service import export_destination
 
-            return os.path.abspath(export_destination(value))
+            out = export_destination(value)
+            return [str(out), str(out.parent)]
+        if intent in {"operator.move_path", "operator.cleanup_temp_files"}:
+            raw = value.strip() if intent == "operator.move_path" else value
+            expanded = Path(os.path.expandvars(raw)).expanduser()
+            return [str(expanded)] if expanded.is_absolute() else None
     except (OSError, RuntimeError, ValueError):
         return None
-    return value if os.path.isabs(value) else None
+    return None
 
 
 def may_refuse(intent: str, *, windows: bool | None = None) -> bool:
@@ -127,13 +141,15 @@ def refusal(
     roots = flagged_roots(environ)
     targets = [str(workspace_root)] if workspace_root else []
     for key in _GATED[intent]:
-        value = str(arguments.get(key) or "").strip()
-        if not value:
+        value = str(arguments.get(key) or "")
+        if not value.strip():
             return f"{intent} names no {key}, so its target cannot be checked"
-        target = _landing(intent, value)
-        if target is None:
-            return f"{intent} names a {key} that does not resolve to one place, so its target cannot be checked"
-        targets.append(target)
+        landing = _landing(intent, value)
+        if landing is None:
+            if intent.startswith("operator."):
+                return f"{intent} needs an absolute {key}, so its target cannot be checked"
+            return f"{intent} names a {key} the gate cannot place exactly, so its target cannot be checked"
+        targets.extend(landing)
     if roots and targets and all(_inside(target, roots) for target in targets):
         return None
     return (

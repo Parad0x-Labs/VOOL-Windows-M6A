@@ -226,9 +226,10 @@ def ensure_proxy(project_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------- export
 
 def export_destination(out_path: str) -> Path:
-    """The file an export writes: `out_path` with `~` expanded, a relative path taken from the
-    working directory. The Windows write gate checks this same path."""
-    return Path(out_path).expanduser()
+    """The file an export writes: `out_path` with `~` expanded and a relative path made absolute
+    from VOOL's working directory here, so the media worker, a process of its own, writes this
+    same file. The Windows write gate checks this path and the folder holding it."""
+    return Path(out_path).expanduser().absolute()
 
 
 def export_project(project_id: str, *, out_path: str, profile: str = "social",
@@ -331,7 +332,7 @@ def export_project(project_id: str, *, out_path: str, profile: str = "social",
 
 __all__ = [
     "MediaExportReceipt", "MediaStudioServiceError", "apply_edit", "ensure_proxy",
-    "export_project", "get_project", "inspect", "list_projects", "open_project",
+    "export_destination", "export_project", "get_project", "inspect", "list_projects", "open_project",
     "persist", "redo", "render_preview_frame", "undo", "update_selection",
     "validate_operation", "verify_source_intact",
 ]
