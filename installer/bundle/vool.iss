@@ -95,8 +95,9 @@ var
 begin
   { Stop EVERY VOOL-owned python before touching files, so install/uninstall never hit a locked DLL
     (libcrypto-3.dll is loaded by BOTH the server vool_api_server.py AND the window host
-    vool_window.py). Targets only python/pythonw whose exe or VOOL script lives under the install
-    dir -- never a source checkout, the user's own Python, or this powershell itself. Then
+    vool_window.py). Targets only the bundle's own python.exe/pythonw.exe by their exact paths, or
+    a python/pythonw running one of VOOL's scripts under the install dir -- never a source checkout,
+    the user's own Python (even one inside the install dir), or this powershell itself. Then
     waits for the OS to release the file handles before extraction begins. A listener on 11435 that
     is not one of those processes belongs to someone else and is never stopped. }
   { PowerShell also ends a single-quoted string at the curly quotes U+2018, U+2019, U+201A and
@@ -108,7 +109,7 @@ begin
   StringChangeEx(InstallDir, #$201A, #$201A#$201A, True);
   StringChangeEx(InstallDir, #$201B, #$201B#$201B, True);
   Exec('powershell.exe',
-    '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$r = ''' + InstallDir + '''; $rootPrefix = $r.TrimEnd([char[]]@(92,47)) + [char]92; $script = [regex]::Escape($rootPrefix) + ''(?:app\\apps\\vool_api_server\.py|vool_window\.py)''; $scriptArgument = ''^(?:\x22(?:[^\x22]*\\)?pythonw?\.exe\x22|(?:[^\s\x22]*\\)?pythonw?\.exe)(?:\s+-[bBdEhIiOPqRsSuvVx]+|\s+-W(?:\s+\x22[^\x22]*\x22|\s+\S+|[^\s\x22]+)|\s+-X(?:\s+\x22[^\x22]*\x22|\s+\S+|[^\s\x22]+)|\s+--check-hash-based-pycs\s+(?:\x22[^\x22]*\x22|\S+))*\s+\x22?'' + $script + ''(?:\x22|\s|$)''; Get-CimInstance Win32_Process -EA SilentlyContinue | Where-Object { ($_.Name -ieq ''python.exe'' -or $_.Name -ieq ''pythonw.exe'') -and (([string]$_.ExecutablePath).StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase) -or ([string]$_.CommandLine -match $scriptArgument)) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA SilentlyContinue }; Start-Sleep -Milliseconds 900"',
+    '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$r = ''' + InstallDir + '''; $rootPrefix = $r.TrimEnd([char[]]@(92,47)) + [char]92; $python = $rootPrefix + ''python\python.exe''; $pythonw = $rootPrefix + ''python\pythonw.exe''; $script = [regex]::Escape($rootPrefix) + ''(?:app\\apps\\vool_api_server\.py|vool_window\.py)''; $scriptArgument = ''^(?:\x22(?:[^\x22]*\\)?pythonw?\.exe\x22|(?:[^\s\x22]*\\)?pythonw?\.exe)(?:\s+-[bBdEhIiOPqRsSuvVx]+|\s+-W(?:\s+\x22[^\x22]*\x22|\s+\S+|[^\s\x22]+)|\s+-X(?:\s+\x22[^\x22]*\x22|\s+\S+|[^\s\x22]+)|\s+--check-hash-based-pycs\s+(?:\x22[^\x22]*\x22|\S+))*\s+\x22?'' + $script + ''(?:\x22|\s|$)''; Get-CimInstance Win32_Process -EA SilentlyContinue | Where-Object { ($_.Name -ieq ''python.exe'' -or $_.Name -ieq ''pythonw.exe'') -and ([string]::Equals([string]$_.ExecutablePath, $python, [System.StringComparison]::OrdinalIgnoreCase) -or [string]::Equals([string]$_.ExecutablePath, $pythonw, [System.StringComparison]::OrdinalIgnoreCase) -or ([string]$_.CommandLine -match $scriptArgument)) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA SilentlyContinue }; Start-Sleep -Milliseconds 900"',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Sleep(1500);
 end;

@@ -300,6 +300,16 @@ def _evaluate(
                 False,
             ),
         ])
+    if layout == "installer":
+        # Setup stops every matching Python on the machine: only the bundle's own interpreter, by
+        # its exact path, is VOOL's, not any Python a user keeps inside the install folder.
+        cases.append((
+            "users-own-python-in-the-install-folder",
+            "python.exe",
+            root + r"\Python312\python.exe",
+            fr'"{root}\Python312\python.exe" -m jupyter lab',
+            False,
+        ))
     if case_labels is not None:
         cases = [case for case in cases if case[0] in case_labels]
 
@@ -805,6 +815,7 @@ def test_every_bundle_stop_stops_only_this_install_for_real(tmp_path: Path, fake
     worker = tmp_path / "elsewhere" / "worker.py"
     worker.parent.mkdir()
     worker.write_text(_FAKE_VOOL_PROCESS, encoding="utf-8")
+    _copy_interpreter(app / "Python312")
     supervisor = _start_bundle(fake_vool, app, "supervisor", label="supervisor")
     window = _start_bundle(fake_vool, app, "window", label="window host")
     sibling_api = _start_bundle(fake_vool, sibling, "api", label="sibling install api")
@@ -813,6 +824,12 @@ def test_every_bundle_stop_stops_only_this_install_for_real(tmp_path: Path, fake
         _start_bundle(fake_vool, sibling, "supervisor", label="sibling install supervisor"),
         _start_bundle(fake_vool, sibling, "window", label="sibling install window host"),
         fake_vool.start("unrelated python", [sys.executable, str(worker)], cwd=worker.parent, env=_environment()),
+        fake_vool.start(
+            "the user's own python inside the install folder",
+            [str(app / "Python312" / "python.exe"), str(worker)],
+            cwd=worker.parent,
+            env=_environment(PYTHONHOME=sys.base_prefix),
+        ),
     ]
 
     # The /stopall brake runs the Stop module at the bundle's code root, {app}\app.
