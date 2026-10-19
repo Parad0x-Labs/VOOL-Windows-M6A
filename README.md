@@ -1,59 +1,76 @@
 # VOOL for Windows
 
-> **Windows-port repository.** A local-first personal agent runtime with a native Windows host, local model serving, memory, tools, receipts, and security-gated effects.
-
-> **Status: internal development and qualification.** This repository does not claim a public signed Windows release.
-
 <p align="center">
-  <img src="./docs/assets/github-header-vool-windows.png" alt="VOOL for Windows" width="100%" />
+  <img src="docs/assets/vool-flag-banner.png" alt="VOOL flag — your machine, your agent" width="100%" />
 </p>
 
-## **What this repository is**
+<p align="center"><strong>Your machine. Your models. An agent that gets things done, coming to Windows.</strong></p>
 
-This checkout is dedicated to the Windows runtime and its qualification tooling. It contains the source, native host, staged-bundle pipeline, local Ollama path, WebView2 integration, lifecycle controls, and Windows broker coverage needed to develop and evaluate VOOL on Windows.
+<p align="center">
+  <a href="https://github.com/Parad0x-Labs/VOOL-Windows-M6A/actions/workflows/ci.yml"><img src="https://github.com/Parad0x-Labs/VOOL-Windows-M6A/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-eee8d5" alt="MIT license" /></a>
+  <a href="pyproject.toml"><img src="https://img.shields.io/badge/base-0.6.0-eee8d5" alt="Based on VOOL 0.6.0" /></a>
+  <a href="docs/WINDOWS_QUALIFICATION_STATUS.md"><img src="https://img.shields.io/badge/status-work_in_progress-eee8d5" alt="Status: work in progress" /></a>
+</p>
 
-VOOL runs locally by default. The Windows diagnostic path is designed to keep the API and local model server on loopback, isolate writable runtime state, and make provider, model, approval, and process evidence inspectable.
+> **Work in progress.** This is the Windows port of VOOL, under active development. There is no Windows download yet, and nothing here is a signed or release-qualified build. If you want VOOL today, use the macOS or Linux release.
 
-## **Current state**
+**VOOL is a local-first personal agent from Parad0x Labs.** This repository brings it to Windows: a native Windows host, a local model on your own machine, memory, tools, receipts, and actions that wait for your approval.
+
+**[Where it stands](#where-it-stands) · [Try the diagnostic build](#try-the-diagnostic-build) · [Documentation](#documentation) · [Qualification status](docs/WINDOWS_QUALIFICATION_STATUS.md)**
+
+## What the Windows build has today
+
+### A native Windows home
+
+`VOOL.exe` finds its own bundle and starts everything it needs: a supervisor that owns the app's processes, the Python runtime behind the API, and a WebView2 window for the desktop UI. When the window closes, the processes and ports it used are released.
+
+### Local by default
+
+The diagnostic path runs on **Local Only**: a bundled Ollama serves your model on your machine, and remote fallback is off. The API and the model server listen only on loopback (`127.0.0.1:11435` and `127.0.0.1:11434`), and the isolated runtime blocks Ollama's cloud models.
+
+### Actions that ask first
+
+Changes to your workspace and databases go through a Windows broker. Each one needs an exact approval tied to what it will change. A replayed approval, a changed target, or a path that escapes the workspace is refused.
+
+### Results you can check
+
+Receipts record what was asked, what ran, which model answered, and what came back. They record identities and outcomes, never secret values.
+
+## Where it stands
 
 | Area | Status |
 | --- | --- |
-| Branch | `windows-port` |
-| Runtime | Native Windows host plus bundled Python/API and WebView2-facing process |
-| Local API | `127.0.0.1:11435` |
-| Local model server | Bundled Ollama on `127.0.0.1:11434` |
-| Diagnostic provider mode | Local Only; remote fallback disabled |
-| Qualification model | `qwen2.5:7b` when provisioned in an isolated model store |
-| M6-A source milestone | Accepted and published |
-| M6-B source corrections | Accepted in source; installed qualification still requires a clean-baseline proof |
-| Public release | Not release-qualified or publicly signed |
+| Native host, path isolation and lifecycle cleanup | Working, tested live on Windows |
+| Local model answers through bundled Ollama (`qwen2.5:7b`) | Working, tested live on Windows |
+| Local Only provider mode | Working, tested live on Windows |
+| Database plugin and workspace write broker | Working in disposable test setups |
+| M6-A source milestone | Frozen source checkpoint |
+| M6-B source corrections | In source; installed check on a clean machine still to do |
+| Clean installed qualification | Planned, not done yet |
+| Installer, updates and code signing | Planned, not released yet |
+| Plugins with network access | Not supported in this scope |
+| Public Windows download | Planned, not released yet |
 
-## **Runtime architecture**
+Known open gaps: the native `/api/skills` database projection, a test that assumes POSIX permission bits, and an unrelated served-chat plugin-family failure. The full evidence matrix is in [Windows Qualification Status](docs/WINDOWS_QUALIFICATION_STATUS.md).
 
 ```text
-native VOOL.exe
+VOOL.exe (native host)
     |
-    +--> bundle supervisor
+    +--> supervisor
             |
-            +--> embedded Python/API runtime
-            |       |
-            |       +--> loopback API :11435
-            |       +--> bundled Ollama :11434
+            +--> Python/API runtime ---> loopback API      127.0.0.1:11435
+            |                       \--> bundled Ollama    127.0.0.1:11434
             |
-            +--> WebView2-facing window host
+            +--> WebView2 window
 ```
 
-The supported diagnostic process tree includes:
+## Try the diagnostic build
 
-- **Native host:** locates its own bundle and starts the Windows runtime.
-- **Supervisor:** owns the application children and records lifecycle evidence.
-- **Python/API runtime:** serves the product path, receipts, skills, provider state, and local endpoints.
-- **WebView2-facing process:** presents the desktop UI with an isolated user-data path when `VOOL_HOME` is explicit.
-- **Bundled Ollama:** serves the exact local model from the isolated model store.
+This path is for development and testing. It builds a staged bundle and runs it in throwaway folders, so it never touches your normal VOOL profile.
 
-## **Build and stage**
-
-There is no public Windows installer claim on this page. For development and qualification, use the existing stage-only bundle pipeline:
+<details>
+<summary><strong>1. Stage a bundle</strong></summary>
 
 ```powershell
 $stage = "C:\vool-build\bundle-<run-id>"
@@ -67,15 +84,16 @@ powershell -NoProfile -ExecutionPolicy Bypass `
   -BuildMode Internal
 ```
 
-`-IncludeModel` is intentionally not part of the normal staging command. Provision required model data into a separate isolated model store only after the bundle identity has been recorded and the local-model gate has passed.
+`-IncludeModel` is left out on purpose. Put model data in a separate, isolated model store only after you have recorded the bundle's identity and the local-model check has passed.
 
-Keep all generated output, profiles, model stores, logs, and databases outside the checkout. Record the bundle manifest and SHA-256 values for the native host, Python entrypoints, Ollama, and other lifecycle executables.
+Keep all output, profiles, model stores, logs and databases outside the checkout. Record the bundle manifest and the SHA-256 of the native host, the Python entry points, Ollama and the other lifecycle executables.
 
-For complete prerequisites, provenance checks, and packaging notes, read [Windows Build and Test](docs/WINDOWS_BUILD_AND_TEST.md).
+Prerequisites and packaging notes: [Windows Build and Test](docs/WINDOWS_BUILD_AND_TEST.md).
 
-## **Safe diagnostic path**
+</details>
 
-Resolve the disposable paths before launching anything:
+<details>
+<summary><strong>2. Check the run folders</strong></summary>
 
 ```powershell
 python tools\windows_lifecycle_preflight.py `
@@ -85,14 +103,16 @@ python tools\windows_lifecycle_preflight.py `
 
 The preflight must confirm:
 
-- **`launch_ready=true`;**
-- native `VOOL.exe` exists at the staged bundle path;
-- `VOOL_HOME`, workspace, WebView2, `TEMP`, `TMP`, and Ollama model store are disposable;
-- API and Ollama remain on `127.0.0.1:11435` and `127.0.0.1:11434`;
-- both ports are free;
-- no writable path overlaps `C:\NULLA` or the normal VOOL profile.
+- `launch_ready=true`;
+- the native `VOOL.exe` exists in the staged bundle;
+- `VOOL_HOME`, the workspace, WebView2, `TEMP`, `TMP` and the Ollama model store are all disposable;
+- the API and Ollama stay on `127.0.0.1:11435` and `127.0.0.1:11434`, and both ports are free;
+- no writable path overlaps your normal VOOL profile.
 
-Launch only through the explicit-action diagnostic launcher:
+</details>
+
+<details>
+<summary><strong>3. Launch</strong></summary>
 
 ```powershell
 python tools\windows_lifecycle_launcher.py check `
@@ -104,22 +124,26 @@ python tools\windows_lifecycle_launcher.py launch `
   --run-root "<run-root>"
 ```
 
-`check` is read-only and never starts VOOL. `launch` fails closed unless all isolation, Local Only, credential-scrubbing, proxy, path, and port guards pass.
+`check` only reads and never starts VOOL. `launch` refuses to start unless every isolation, Local Only, credential-scrubbing, proxy, path and port check passes.
 
-## **Security boundaries**
+</details>
 
-- **Local Only:** remote fallback is disabled for the diagnostic local-model path.
+## Boundaries
+
+- **Local Only:** remote fallback is off for the diagnostic local-model path.
 - **No cloud model traffic:** the isolated runtime requires `OLLAMA_NO_CLOUD=true`.
-- **Loopback only:** the API and Ollama endpoints are bound to the documented loopback ports.
-- **Disposable state:** bundle, profile, workspace, WebView2, temporary directories, and model store remain under the run root.
-- **Exact firewall scope:** optional diagnostic rules are outbound blocks for exact staged executable paths, preserve loopback, change no global defaults, and clean up by run ID.
-- **Approval-gated effects:** database and workspace mutations require exact policy/approval/broker handling; replay, changed targets, and path escapes fail closed.
-- **No secret publication:** receipts and documentation record identities and outcomes, never ambient secret values.
-- **No wallet-key access:** Phantom private keys are not exposed by this Windows project.
+- **Loopback only:** the API and Ollama bind to the loopback ports above.
+- **Throwaway state:** bundle, profile, workspace, WebView2, temp folders and model store all stay under the run folder.
+- **Narrow firewall rules:** optional diagnostic rules block outbound traffic for the exact staged executables only, keep loopback working, change no global defaults, and are cleaned up by run ID.
+- **Approval before changes:** database and workspace changes need an exact approval through the broker; replays, changed targets and path escapes are refused.
+- **No secrets in records:** receipts and docs record identities and outcomes, never secret values.
+- **No wallet keys:** this Windows project does not read or expose wallet private keys.
 
-## **Validation**
+More detail: [Windows Security Boundaries](docs/WINDOWS_SECURITY_BOUNDARIES.md).
 
-Run the focused lifecycle checks:
+## Run the tests
+
+Lifecycle checks:
 
 ```powershell
 python -m pytest `
@@ -128,7 +152,7 @@ python -m pytest `
   tests\test_windows_lifecycle_firewall_helpers.py
 ```
 
-Run broker/native-control regressions when those paths are in scope:
+Broker and native-control checks, when you touch those paths:
 
 ```powershell
 python -m pytest `
@@ -137,44 +161,31 @@ python -m pytest `
   tests\test_windows_host_native_control.py
 ```
 
-Run static checks:
+Static checks:
 
 ```powershell
 python -m ruff check .
 git diff --check
 ```
 
-Always report known baseline failures separately. A focused green test does not establish installed-machine, signing, VM, or release qualification.
+Report known baseline failures separately. A green focused test does not prove an installed machine, signing, a VM or a release.
 
-## **Qualification boundary**
+## Documentation
 
-Accepted Windows evidence currently covers native path isolation, lifecycle cleanup, Local Only provider truth, local Ollama authorship, attempt-safe model finalization, residency-aware memory admission, confined plugin/database operations, and `workspace_write_v1`.
-
-Remaining release boundaries include:
-
-- **Clean installed qualification:** the baseline must be proven clean before VOOL is installed or launched.
-- **Installer and upgrade qualification:** source/build evidence is not installer or update evidence.
-- **Broker publication:** the Windows broker remains an internal security artifact until packaging and signing are separately qualified.
-- **Network-enabled plugins:** intentionally unsupported in this diagnostic scope.
-- **Known open gaps:** invalid native `/api/skills` database projection, the Windows POSIX permission-bit test assumption, and the unrelated served-chat plugin-family expansion failure.
-
-See [Windows Qualification Status](docs/WINDOWS_QUALIFICATION_STATUS.md) for the evidence matrix and current blockers.
-
-## **Documentation**
-
-| Document | Purpose |
+| Read | For |
 | --- | --- |
-| [Windows Port Overview](docs/WINDOWS_PORT_OVERVIEW.md) | Runtime shape and Windows scope |
-| [Windows Build and Test](docs/WINDOWS_BUILD_AND_TEST.md) | Stage-only build, preflight, launcher, and tests |
-| [Windows Qualification Status](docs/WINDOWS_QUALIFICATION_STATUS.md) | Accepted evidence and remaining gates |
-| [Windows Security Boundaries](docs/WINDOWS_SECURITY_BOUNDARIES.md) | Isolation, provider, firewall, model, and broker rules |
-| [Windows Capability Matrix](docs/WINDOWS_CAPABILITY_MATRIX.md) | Historical/source capability detail |
+| [Windows Port Overview](docs/WINDOWS_PORT_OVERVIEW.md) | How the Windows runtime is shaped and what it covers |
+| [Windows Build and Test](docs/WINDOWS_BUILD_AND_TEST.md) | Staging, preflight, launcher and tests |
+| [Windows Qualification Status](docs/WINDOWS_QUALIFICATION_STATUS.md) | What is proven and what is still open |
+| [Windows Security Boundaries](docs/WINDOWS_SECURITY_BOUNDARIES.md) | Isolation, provider, firewall, model and broker rules |
+| [Windows Capability Matrix](docs/WINDOWS_CAPABILITY_MATRIX.md) | Capability detail, including older evidence |
 | [Windows One-Click Readiness](docs/WINDOWS_ONE_CLICK_READINESS.md) | Packaging and release-readiness boundary |
-| [Security policy](SECURITY.md) | Reporting and security expectations |
-| [Contributing](CONTRIBUTING.md) | Development workflow |
+| [Security policy](SECURITY.md) · [Contributing](CONTRIBUTING.md) | Reporting issues and the development workflow |
 
-> **Reading note:** The capability and readiness documents contain historical evidence. Always check the evidence date and status before treating a row as current or release-ready.
+The capability and readiness pages include older evidence. Check each row's date and status before treating it as current.
 
-## **License**
+## License
 
-MIT — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
+
+Built by **[Parad0x Labs](https://github.com/Parad0x-Labs)**.
