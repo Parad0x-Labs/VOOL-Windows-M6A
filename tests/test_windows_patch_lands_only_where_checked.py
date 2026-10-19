@@ -21,8 +21,9 @@ What this file pins:
   (`workspace.replace_in_file` still edits it); a patch that creates a file must name one that does not
   exist yet; a multi-file patch is all or nothing, and a file already written is put back when a later
   one changed under the patch; two sections for one file are applied in turn; a file whose section
-  changes nothing is not rewritten (same file identity, same timestamp); a `git format-patch` mail
-  applies; `changed_paths` and the mutation record name exactly the files written, and rolling the
+  changes nothing is not rewritten (same file identity, same timestamp); a `git format-patch` mail, and a
+  patch whose last removed line is followed by text that is not a hunk line, are refused whole rather than
+  cut short; `changed_paths` and the mutation record name exactly the files written, and rolling the
   change back restores only those.
 - With the gate off (off Windows), `git apply` runs only when the workspace is the top of its work tree.
 
@@ -64,8 +65,8 @@ PATCH = "workspace.apply_unified_diff"
 
 # `git format-patch` ends a patch with its signature. VOOL strips a patch's final newline, and git refuses
 # a patch that then ends inside a hunk, so this ending is what let `git apply` take the rename below (and
-# move the outside file) before the fix. VOOL's own engine drops the signature, so the rename header is
-# what it refuses.
+# move the outside file) before the fix. VOOL's own engine refuses the rename header before it reads any
+# hunk.
 SIGNATURE = "-- \n2.43.0\n"
 
 
@@ -317,7 +318,7 @@ def test_a_rename_from_the_repository_top_into_a_flagged_subfolder_moves_nothing
     assert _git(top, "rev-parse", "HEAD").strip() == head
     assert execution.status == "unsupported_patch", (execution.status, execution.response_text)
     assert execution.details.get("engine") == "protected_python"
-    # Refused for the rename it carries (the format-patch signature is read, not refused).
+    # Refused for the rename it carries, before any hunk is read.
     assert "`similarity index 80%`" in execution.response_text, execution.response_text
     _assert_refused_without_a_record(execution, chat, PATCH, arguments)
 
@@ -475,11 +476,12 @@ def test_a_one_file_edit_inside_the_flagged_workspace_lands_exactly_and_is_recor
 
 
 @pytest.mark.parametrize("mode", ["manual", "auto"])
-def test_a_git_format_patch_mail_applies_to_the_file_it_names(
+def test_a_git_format_patch_mail_is_refused_whole_with_nothing_written(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, windows: None, mode: str
 ) -> None:
     """The patch is `git format-patch --stdout` output, exactly as git writes it: mail headers, a
-    diffstat and the signature that ends it."""
+    diffstat and the signature that ends it. VOOL's engine reads the signature's "-- " line as a hunk line
+    (cutting it off could also cut a real removed line), so the mail is refused and nothing is written."""
     source = tmp_path.resolve() / "source"
     _init_repo(source)
     (source / "notes.txt").write_bytes(NOTES)
@@ -495,10 +497,38 @@ def test_a_git_format_patch_mail_applies_to_the_file_it_names(
     _flag(monkeypatch, workspace)
     chat = _Chat(workspace, mode)
 
-    execution = chat.run(PATCH, {"patch": mail}, untouched=(workspace,))
+    arguments = {"patch": mail}
+    identity = _identity(workspace / "notes.txt")
 
-    assert _tree(workspace) == {"notes.txt": NOTES_EDITED, "other.txt": b"other\n"}
-    _assert_recorded(execution, chat, [("notes.txt", "updated", NOTES, NOTES_EDITED)])
+    execution = chat.run(PATCH, arguments, untouched=(workspace,))
+
+    assert _tree(workspace) == {"notes.txt": NOTES, "other.txt": b"other\n"}
+    assert _identity(workspace / "notes.txt") == identity
+    assert "Nothing was written" in execution.response_text, execution.response_text
+    _assert_refused_without_a_record(execution, chat, PATCH, arguments)
+
+
+@pytest.mark.parametrize("mode", ["manual", "auto"])
+def test_a_last_removed_line_that_reads_like_a_mail_signature_is_never_cut_from_the_patch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, windows: None, mode: str
+) -> None:
+    """A Markdown list whose last item is empty ("- ") loses that item, and a closing code fence follows the
+    patch. The removal reads "-- ", like the first line of a mail signature; it is a hunk line, so the fence
+    after it is refused and the file keeps every line, never patched with the removal dropped."""
+    workspace = tmp_path.resolve() / "scratch"
+    workspace.mkdir()
+    listing = workspace / "list.md"
+    listing.write_bytes(b"# items\n- one\n- \n")
+    _flag(monkeypatch, workspace)
+    chat = _Chat(workspace, mode)
+    arguments = {"patch": "--- a/list.md\n+++ b/list.md\n@@ -1,3 +1,2 @@\n-# items\n+# Items\n - one\n-- \n```\n"}
+    identity = _identity(listing)
+
+    execution = chat.run(PATCH, arguments, untouched=(workspace,))
+
+    assert listing.read_bytes() == b"# items\n- one\n- \n" and _identity(listing) == identity
+    assert "Nothing was written" in execution.response_text, execution.response_text
+    _assert_refused_without_a_record(execution, chat, PATCH, arguments)
 
 
 CREATIONS = {
