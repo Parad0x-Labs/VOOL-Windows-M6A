@@ -117,14 +117,21 @@ def _resolved(path: Path) -> str:
 
 def test_the_installed_app_keeps_notes_in_the_vool_home_and_the_unbound_default_where_it_was(tmp_path: Path) -> None:
     app, home = _install(tmp_path), _native_home(tmp_path)
+    before = set((REPO / "notes").glob("groceries-*.md"))
 
-    seen = _probe(REPO, _installed_api_env(tmp_path, app, home))
+    try:
+        seen = _probe(REPO, _installed_api_env(tmp_path, app, home))
+    finally:
+        # A regression writes the probe's note into the code root (the bug this file covers):
+        # remove it so a failed run leaves the checkout as it found it.
+        for leftover in set((REPO / "notes").glob("groceries-*.md")) - before:
+            leftover.unlink()
 
     notes_dir = home / "workspace" / "notes"
     assert seen["notes_root"] == _resolved(notes_dir)
     assert Path(seen["note_path"]).parent == notes_dir.resolve() and Path(seen["note_path"]).is_file()
     assert seen["read_back"] == "milk and eggs"
-    assert not (REPO / "notes").exists() or not any((REPO / "notes").glob("groceries-*.md"))
+    assert set((REPO / "notes").glob("groceries-*.md")) == before
     # Unchanged: the API's working directory ({app}\app) is still the workspace and the unbound default.
     assert seen["workspace_root"] == _resolved(REPO)
     assert seen["default_workspace_root"] == _resolved(REPO)
@@ -324,3 +331,60 @@ def test_the_stop_module_leaves_the_vool_home_notes_alone(tmp_path: Path) -> Non
     assert sorted(p.relative_to(home).as_posix() for p in home.rglob("*") if p.is_file()) == [
         "run/stop", "workspace/notes/keep.md"
     ]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="junctions are a Windows filesystem feature")
+def test_the_copy_never_follows_a_junction_out_of_the_old_notes_folder(tmp_path: Path) -> None:
+    import _winapi
+
+    app, home = _install(tmp_path), _native_home(tmp_path)
+    old, elsewhere = app / "app" / "notes", tmp_path / "elsewhere"
+    old.mkdir(parents=True)
+    elsewhere.mkdir()
+    (elsewhere / "private.md").write_text("not a note\n", encoding="utf-8")
+    (old / "real.md").write_text("real\n", encoding="utf-8")
+    _winapi.CreateJunction(str(elsewhere), str(old / "junctioned"))  # needs no symlink privilege
+
+    env = {**_base_env(tmp_path), "VOOL_BUNDLE_ROOT": str(app), "VOOL_HOME": str(home)}
+    BundleSupervisor(app, env=env)._prepare()
+
+    new = home / "workspace" / "notes"
+    assert (new / "real.md").is_file()
+    assert not (new / "junctioned").exists()
+    assert (elsewhere / "private.md").read_text(encoding="utf-8") == "not a note\n"
+
+
+@pytest.mark.parametrize(
+    "override",
+    [{"VOOL_WORKSPACE_ROOT": "chosen"}, {"VOOL_WORKSPACE_ROOT": "   ", "NULLA_WORKSPACE_ROOT": "chosen"}],
+    ids=["vool", "blank-vool-then-legacy-nulla"],
+)
+def test_with_a_chosen_workspace_the_old_notes_are_not_copied_into_it(tmp_path: Path, override) -> None:
+    app, home, chosen = _install(tmp_path), _native_home(tmp_path), tmp_path / "chosen"
+    chosen.mkdir()
+    old = app / "app" / "notes"
+    old.mkdir(parents=True)
+    (old / "a.md").write_text("a\n", encoding="utf-8")
+    env = {**_base_env(tmp_path), "VOOL_BUNDLE_ROOT": str(app), "VOOL_HOME": str(home)}
+    env.update({k: (str(chosen) if v == "chosen" else v) for k, v in override.items()})
+
+    supervisor = BundleSupervisor(app, env=env)
+    supervisor._prepare()
+
+    # The supervisor reads the override as the API does (core.runtime_paths.vool_env) ...
+    assert supervisor._notes_workspace_root() == chosen
+    # ... and leaves the user's chosen folder alone, with no marker, so the copy still runs later.
+    assert not (chosen / "notes").exists() and not (home / "workspace" / "notes" / "a.md").exists()
+    assert not (home / "run" / bundle_supervisor._NOTES_COPY_MARKER).exists()
+    assert (old / "a.md").is_file()
+
+
+def test_the_copy_leaves_no_temporary_files_behind(tmp_path: Path) -> None:
+    app, home = _install(tmp_path), _native_home(tmp_path)
+    old = app / "app" / "notes"
+    old.mkdir(parents=True)
+    (old / "a.md").write_text("a\n", encoding="utf-8")
+
+    BundleSupervisor(app, env={**_base_env(tmp_path), "VOOL_BUNDLE_ROOT": str(app), "VOOL_HOME": str(home)})._prepare()
+
+    assert sorted(p.name for p in (home / "workspace" / "notes").iterdir()) == ["a.md"]
