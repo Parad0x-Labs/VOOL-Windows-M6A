@@ -15,13 +15,19 @@ Three layers:
 - every invocation runs with a scrubbed environment: no inherited ``GIT_*`` variable except the
   author/committer identity, so ``GIT_CONFIG_COUNT``/``GIT_CONFIG_PARAMETERS`` cannot inject a
   program and ``GIT_DIR``/``GIT_INDEX_FILE`` cannot redirect git away from the checked repository;
-- a repository whose LOCAL config (includes expanded) defines any key of a program-running KIND
+- a repository whose own config (includes expanded) defines any key of a program-running KIND
   (by its final name segment, so new keys of a known kind are caught too) is refused before git
-  touches it.
+  touches it. "Its own config" is every scope git reports other than system and global: the local
+  ``config`` and, when ``extensions.worktreeConfig`` is on, the worktree's ``config.worktree``.
+  Reproduced 2026-10-19: a ``filter.<x>.clean`` set with ``git config --worktree`` passed a
+  ``--local``-only check and ran during a repo.git commit, on every platform. Any scope git may
+  add later is checked too (fail closed).
 System and global config belong to the user (for example Git LFS's global filters) and are not
 second-guessed. `alias.*` is not refused: an alias runs only when invoked by name, and VOOL
-never invokes one. VOOL launches no push/fetch today; adding one must revisit safe_env(), which
-also drops GIT_SSH/GIT_SSH_COMMAND, and `protocol.*.allow`. Residual, documented rather than claimed closed: a process editing .git/config
+never invokes one. repo.push is VOOL's one transport command; safe_env() also drops
+GIT_SSH/GIT_SSH_COMMAND. Not closed here: a push to a local-path remote runs that other
+repository's receive hooks (git clears the -c hardening for its local receive-pack); tracked in
+the TDL. Residual, documented rather than claimed closed: a process editing .git/config
 between the check and the run (the same check/use class as the Windows filesystem race).
 """
 from __future__ import annotations
@@ -87,21 +93,41 @@ def hardening_args() -> list[str]:
 
 
 def executable_local_config(cwd: Path, *, timeout: float = 20) -> list[str]:
-    """The program-running keys the repository's own config defines (empty when none)."""
-    probe = subprocess.run(
-        ["git", "-C", str(cwd), "config", "--local", "--includes", "--null", "--list"],
-        capture_output=True, timeout=timeout, env=safe_env(),
-    )
-    if probe.returncode not in (0, 1):  # 1: no local config entries at all
-        raise RuntimeError(f"git config could not be read ({probe.returncode})")
-    keys = []
-    for entry in probe.stdout.split(b"\0"):
-        if not entry:
-            continue
-        key = entry.split(b"\n", 1)[0].decode("utf-8", "replace").strip().lower()
-        if is_executable_key(key):
+    """The program-running keys the repository's own config defines (empty when none).
+
+    "Own" covers every config scope git reads here except the user's system and global files, so
+    a key set in ``config.worktree`` is caught exactly like one in ``config``."""
+    # --local fails outside a repository, which the callers already treat as "not checked".
+    local = _config_entries(cwd, ["--local"], timeout=timeout)
+    scoped = _config_entries(cwd, ["--show-scope"], timeout=timeout)
+    if len(scoped) % 2:
+        raise RuntimeError("git config scopes could not be read")
+    keys = [key for key in local if is_executable_key(key)]
+    for index in range(0, len(scoped) - 1, 2):
+        scope, key = scoped[index], scoped[index + 1]
+        if scope not in _USER_CONFIG_SCOPES and is_executable_key(key):
             keys.append(key)
     return sorted(set(keys))
+
+
+#: Config scopes that belong to the user, not to the repository (``git config --show-scope``).
+_USER_CONFIG_SCOPES = frozenset({"system", "global"})
+
+
+def _config_entries(cwd: Path, options: list[str], *, timeout: float) -> list[str]:
+    """``git config --list --includes --null`` with ``options``, split into lowercase fields: with
+    ``--show-scope`` each entry is a scope field followed by its key."""
+    probe = subprocess.run(
+        ["git", "-C", str(cwd), "config", *options, "--includes", "--null", "--list"],
+        capture_output=True, timeout=timeout, env=safe_env(),
+    )
+    if probe.returncode not in (0, 1):  # 1: no entries at all
+        raise RuntimeError(f"git config could not be read ({probe.returncode})")
+    fields = []
+    for entry in probe.stdout.split(b"\0"):
+        if entry:
+            fields.append(entry.split(b"\n", 1)[0].decode("utf-8", "replace").strip().lower())
+    return fields
 
 
 def active_hooks(cwd: Path, *, timeout: float = 20) -> list[str]:
