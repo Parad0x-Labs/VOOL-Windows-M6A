@@ -86,6 +86,18 @@ def _copy_notes_tree(source: Path, target: Path) -> dict[str, Any]:
                 except FileExistsError:
                     report["kept"].append(relative)
                     continue
+                except OSError:
+                    # No hard links on this volume (FAT, exFAT, some network shares): rename instead.
+                    # On Windows a rename never replaces a file; elsewhere the check just before it
+                    # keeps an existing note.
+                    if destination.exists() or destination.is_symlink():
+                        report["kept"].append(relative)
+                        continue
+                    try:
+                        os.rename(temporary, destination)
+                    except FileExistsError:
+                        report["kept"].append(relative)
+                        continue
             finally:
                 with contextlib.suppress(OSError):
                     temporary.unlink()
