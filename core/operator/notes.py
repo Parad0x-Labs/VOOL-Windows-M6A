@@ -240,26 +240,37 @@ def _read_entry(path: Path) -> tuple[bytes, str, tuple[int, int]] | None:
     return raw, text, (entry.st_dev, entry.st_ino)
 
 
-def _entry_is_gone(path: Path) -> bool | None:
-    """True when nothing is at ``path`` (or its folder is gone), False when an entry is there, None when that
-    cannot be checked (a folder on the way that this process may no longer search, say)."""
+def _what_is_at(path: Path, identity: tuple[int, int], raw: bytes) -> str:
+    """What is at ``path`` now, against the file ``identity`` names as it held ``raw``: "same" (that file, with
+    those bytes), "gone" (nothing, or its folder is gone), "unchecked" (it cannot be looked at, in a folder this
+    process may no longer search, say), or "other" (other bytes, another file, a link or a folder; a file
+    another program wrote under the same name can even reuse the old file's identity)."""
+    import stat
+
+    from core import fs_links
+
     try:
-        os.lstat(path)
+        entry = os.lstat(path)
     except (FileNotFoundError, NotADirectoryError):
-        return True
+        return "gone"
     except OSError:
-        return None
-    return False
+        return "unchecked"
+    if fs_links.is_link_stat(entry) or not stat.S_ISREG(entry.st_mode) or (entry.st_dev, entry.st_ino) != identity:
+        return "other"
+    try:
+        return "same" if path.read_bytes() == raw else "other"
+    except OSError:
+        return "unchecked"
 
 
 def _move_note(source: Path, source_entry: tuple[bytes, str, tuple[int, int]], target: Path, content: str) -> str:
     """Write ``content`` as the new file ``target``, then remove ``source`` while it is still the file that was
-    read. "" when both happened. When ``source`` was not removed, the new copy is left where it is if it may be
-    the only one left: "note_gone" when nothing is at ``source`` any more (it, or its folder, was moved or
-    removed), "note_unchecked" when whether anything is still there cannot be checked. Otherwise the new copy
-    is removed again and the answer says why the note stayed: "note_changed" (another file or other bytes are
-    at ``source`` now), "remove_failed" (``source`` could not be removed), or "move_incomplete" when the copy
-    cannot be removed either (both remain)."""
+    read. "" when both happened. When ``source`` was not removed, the new copy is removed again only while
+    ``source`` still holds the note exactly as it was read, so the note's text is never left nowhere; the
+    answer is then "remove_failed" (``source`` could not be removed), or "move_incomplete" when the copy cannot
+    be removed either. Otherwise the new copy is left where it is: "note_gone" when nothing is at ``source`` any
+    more, "note_changed" when other bytes, another file, a link or a folder are there, "note_unchecked" when
+    that cannot be checked."""
     from core.execution.artifacts import (
         DestinationChangedError,
         ReviewedBaseChangedError,
@@ -284,21 +295,16 @@ def _move_note(source: Path, source_entry: tuple[bytes, str, tuple[int, int]], t
     except OSError:
         stopped = "remove_failed"
     else:
-        if removed == "removed":
-            return ""
-        stopped = "note_gone"
-    if stopped == "note_gone":
-        return "note_gone"
-    gone = _entry_is_gone(source)
-    if gone is None:
-        return "note_unchecked"
-    if gone:
-        return "note_gone"
+        return "" if removed == "removed" else "note_gone"
+    left = _what_is_at(source, identity, raw)
+    if left != "same":
+        return {"gone": "note_gone", "other": "note_changed", "unchecked": "note_unchecked"}[left]
+    written = content.encode("utf-8")
     try:
-        pinned_remove_created_file(target, created_identity=created,
-                                   expected_sha256=hashlib.sha256(content.encode("utf-8")).hexdigest())
+        pinned_remove_created_file(target, created_identity=created, expected_sha256=hashlib.sha256(written).hexdigest())
     except OSError:
-        return "move_incomplete"
+        if _what_is_at(target, created, written) != "gone":
+            return "move_incomplete"
     return stopped
 
 
@@ -310,7 +316,8 @@ def archive_note(*, title: str) -> dict[str, Any]:
     timestamp, so a restore returns exactly what was archived. Only a note that is a plain file in
     the notes folder moves, and only into a plain ``.archive`` folder there: the copy is written
     first and the note removed only while it is still the file that was read, so nothing outside the
-    notes folder is written or removed through a link, and a stopped move leaves the note in place.
+    notes folder is written or removed through a link, and a stopped move never removes the note, nor a
+    copy that may be the only one left.
     """
     try:
         root = notes_root()
@@ -345,9 +352,12 @@ def archive_note(*, title: str) -> dict[str, Any]:
     stopped = _move_note(path, entry, target, f"---\n{front}\n---\n\n{body.strip()}\n")
     if stopped:
         detail = {
-            "move_incomplete": f"{path.name} and its archived copy {target.name} both remain",
-            "note_gone": f"{path.name} was no longer in the notes folder when VOOL went to remove it; VOOL did not "
-                         f"remove its archived copy {target.name}",
+            "move_incomplete": f"{path.name} stays in the notes folder, and VOOL could not remove its archived copy "
+                               f"{target.name}",
+            "note_gone": f"nothing is at {path.name} in the notes folder any more; VOOL did not remove its archived "
+                         f"copy {target.name}",
+            "note_changed": f"{path.name} changed or was replaced in the notes folder meanwhile and was left as it is; "
+                            f"VOOL did not remove its archived copy {target.name}, the note as VOOL read it",
             "note_unchecked": f"VOOL could not check whether {path.name} is still in the notes folder after writing "
                               f"its archived copy {target.name}; it did not remove that copy",
         }.get(stopped, f"{path.name} stays in the notes folder")
@@ -395,9 +405,12 @@ def restore_note(*, title: str) -> dict[str, Any]:
     stopped = _move_note(path, entry, restored, f"---\n{front}\n---\n\n{body.strip()}\n")
     if stopped:
         detail = {
-            "move_incomplete": f"{path.name} and its restored copy {restored.name} both remain",
-            "note_gone": f"{path.name} was no longer in the archive when VOOL went to remove it; VOOL did not "
-                         f"remove its restored copy {restored.name}",
+            "move_incomplete": f"{path.name} stays archived, and VOOL could not remove its restored copy "
+                               f"{restored.name}",
+            "note_gone": f"nothing is at {path.name} in the archive any more; VOOL did not remove its restored copy "
+                         f"{restored.name}",
+            "note_changed": f"{path.name} changed or was replaced in the archive meanwhile and was left as it is; VOOL "
+                            f"did not remove its restored copy {restored.name}, the note as VOOL read it",
             "note_unchecked": f"VOOL could not check whether {path.name} is still in the archive after writing its "
                               f"restored copy {restored.name}; it did not remove that copy",
         }.get(stopped, f"{path.name} stays archived")
