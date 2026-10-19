@@ -9,8 +9,9 @@ reading the source and from reviews of this document; they do not prove that no 
 This is Step 0 of the Windows port plan, which is kept outside this repository. The plan step
 expected to close each gap (section 6): 1 -> Step 3; 2 -> Step 3; 3 -> unassigned;
 4 -> unassigned; 5 -> Step 2; 6 -> unassigned; 7 -> Step 3; 8 -> unassigned; 9 -> unassigned;
-10 -> closed by PR #18; 11 -> closed by PR #20 for the intents the gate covers; 12 -> unassigned;
-13 -> unassigned; 14 -> unassigned.
+10 -> closed by PR #18; 11 -> closed by PR #20 for the intents the gate covers, except repo.git
+(gap 14) and workspace.apply_unified_diff (gap 15); 12 -> unassigned; 13 -> unassigned;
+14 -> unassigned; 15 -> unassigned.
 
 ## 1. Frozen SHAs
 
@@ -39,7 +40,7 @@ loopback check; request_trust.py:19 says so ("any local process is treated as th
 | vool-browser lane (process, network, downloads) | runtime_execution_tools.py:3171 -> core/vool_browser/sessions.py:open_session:346 | mode controller only; no Windows check (gap 8) | none for Windows |
 | Media worker (process) | core/media_worker_client.py:NebulaWorkerClient._spawn:121 | none on Windows (gap 8) | none for Windows |
 | Media Studio editor export over HTTP (files) | POST or DELETE (core/web/api/app.py:136) -> service.py:_dispatch_post_inner:4203, branch 4222-4225 -> core/web/api/media_editor_api.py:handle_media_editor_post:280 (export 305-315) -> core/media_studio_service.py:export_project:235 | the policy flag `media.editor_export_enabled` only (media_editor_api.py:308, default True); no loopback check and no Windows write gate (gap 12) | none for Windows |
-| Git on user repos (process) | core/safe_git.py:hardened_argv:125 (also named `read_only_argv`, 134), used by execution/git_tools, repoops/gitops, user_rules, project_archaeology; workspace_tools builds its `git apply` from `hardening_args`:78 | refuses repo-config programs and hooks; on Windows the write gate checks repo.git on the chat's workspace, not the repository it changes (gap 14) | tests/test_git_tools_repository_config_cannot_run_programs.py, tests/test_archaeology_git_is_hardened.py |
+| Git on user repos (process) | core/safe_git.py:hardened_argv:125 (also named `read_only_argv`, 134), used by execution/git_tools, repoops/gitops, user_rules, project_archaeology; workspace_tools builds its `git apply` from `hardening_args`:78 | refuses repo-config programs and hooks; on Windows the write gate checks repo.git (gap 14) and workspace.apply_unified_diff's `git apply` (gap 15) on the chat's workspace, not on the repository git changes | tests/test_git_tools_repository_config_cannot_run_programs.py, tests/test_archaeology_git_is_hardened.py |
 | /api/commands/dispatch (updates, approvals, team control, settings) | service.py:dispatch_post:3025, branch 3056-3060 -> core/command_registry/api.py:handle_commands_dispatch:36 | NO peer check; body `approval_context`; principal defaults to "operator" (gap 1) | none for a non-loopback peer |
 | /api/update/install, restart, rollback | service.py:3167, loopback 3171 | loopback plus server-made press | tests/updater/test_final_p1.py::TestNoUpdateFromProseRemoteOrForgery::test_remote_host_cannot_press_install_or_restart |
 | /api/mode: bypass, grant_chat_workspace, resolve_approval | service.py:4427, loopback 4431; bypass confirmation id single use, 60 s (4447, 4483); grant 4621; resolve 4720 | loopback | grant: tests/test_coding_approval_workflow_repairs.py::test_the_grant_still_requires_a_pending_ask (loopback only); a non-loopback peer, shown with a mode change: tests/test_mode_permission_policy.py::test_mode_endpoint_is_loopback_only_and_bypass_cannot_be_set_without_grant |
@@ -76,12 +77,12 @@ Each enforcement point was read at e8f607d. Each test file and function exists t
 
 | Invariant | Enforcement (file:function) | Named test |
 |---|---|---|
-| Windows: user-file writes only inside VOOL_WINDOWS_DISPOSABLE_WORKSPACES | core/windows_write_gate.py:refusal:131 (`_GATED`:28); each keyed path is checked where its writer puts it (`_landing`:79), and a temp cleanup is refused outright (`_ALWAYS_REFUSED`:48) (gap 11, closed). The Media Studio editor's HTTP export (gap 12) and operator notes (gap 13) never ask it, and it checks repo.git on the chat's workspace, not the repository git changes (gap 14) | tests/test_windows_write_gate.py::test_no_flagged_folder_refuses_every_user_filesystem_write; tests/test_machine_writes_are_checked_where_they_land.py::test_a_flagged_chat_workspace_no_longer_lets_a_write_into_the_real_documents_folder, ::test_windows_refuses_a_temp_cleanup_even_from_a_flagged_folder |
-| ...refused before the permission decision and before A6 (PR #15) | core/tool_intent_executor.py:_windows_write_refusal:886 (called 1319); core/runtime_execution_tools.py:windows_write_refusal:7338, windows_write_refusal_before_decision:7383; core/local_operator_actions.py:windows_write_refusal:55 | tests/test_windows_write_gate_before_approval.py::test_a_write_outside_the_flagged_folders_is_refused_before_approval_and_a6, ::test_an_operator_move_outside_the_flagged_folders_is_refused_before_approval |
+| Windows: user-file writes only inside VOOL_WINDOWS_DISPOSABLE_WORKSPACES | core/windows_write_gate.py:refusal:131 (`_GATED`:28); each keyed path is checked where its writer puts it (`_landing`:79), and a temp cleanup is refused outright (`_ALWAYS_REFUSED`:48) (gap 11, closed). The Media Studio editor's HTTP export (gap 12) and operator notes (gap 13) never ask it, and it checks repo.git (gap 14) and workspace.apply_unified_diff (gap 15) on the chat's workspace, not on the repository git changes | tests/test_windows_write_gate.py::test_no_flagged_folder_refuses_every_user_filesystem_write; tests/test_machine_writes_are_checked_where_they_land.py::test_a_flagged_chat_workspace_no_longer_lets_a_write_into_the_real_documents_folder, ::test_windows_refuses_a_temp_cleanup_even_from_a_flagged_folder |
+| ...refused before the permission decision and before A6 (PR #15), except a council seat and a repo.step from a flagged chat on a session folder that is not flagged (gap 2) | core/tool_intent_executor.py:_windows_write_refusal:886 (called 1319); core/runtime_execution_tools.py:windows_write_refusal:7338, windows_write_refusal_before_decision:7383; core/local_operator_actions.py:windows_write_refusal:55 | tests/test_windows_write_gate_before_approval.py::test_a_write_outside_the_flagged_folders_is_refused_before_approval_and_a6, ::test_an_operator_move_outside_the_flagged_folders_is_refused_before_approval |
 | ...fast paths gated before the boundary decides | core/authorized_tool_execution.py:execute_authorized_runtime_tool:232 | test_windows_write_gate_before_approval.py::test_a_fast_path_write_is_gated_before_the_boundary_takes_its_decision |
 | ...inside a flagged folder the write still reaches approval | same | test_windows_write_gate_before_approval.py::test_inside_a_flagged_workspace_the_write_still_reaches_approval |
 | ...a council seat is gated on its re-rooted workspace | runtime_execution_tools.py:execute_runtime_tool:3707-3716 then _dispatch_runtime_tool:3268 | test_windows_write_gate_before_approval.py::test_a_council_seat_is_gated_on_the_workspace_it_is_re_rooted_to |
-| ...a step is gated by its inner intent | windows_write_gate.py:refusal (`_STEPS`:44) | test_windows_write_gate.py::test_a_step_is_gated_by_its_inner_intent |
+| ...a step is gated by its inner intent | windows_write_gate.py:refusal (`_STEPS`:44), on the chat's workspace (143-148); a repo.step's inner call is gated again on its session folder at dispatch (core/repoops/plane.py:_session_context:458-465; gap 14) | test_windows_write_gate.py::test_a_step_is_gated_by_its_inner_intent |
 | Junctions and name-surrogate links are links | core/fs_links.py:is_link_stat:26, is_link:33; core/execution/artifacts.py:_open_pinned_directory:116 | tests/test_windows_junction_boundary.py::test_a_reviewed_write_through_a_junction_is_refused_and_writes_nothing |
 | Git never runs a program named by repo config, hooks or env | core/safe_git.py:executable_local_config:89, active_hooks:107, hardened_argv:125 | tests/test_git_tools_repository_config_cannot_run_programs.py::test_fsmonitor_in_repository_config_is_refused_and_never_runs; tests/test_archaeology_git_is_hardened.py::test_every_archaeology_git_call_is_hardened_and_a_plain_repository_still_compares |
 | No unconfined plugins, MCP servers or process agents on Windows | core/plugin_executor.py:confined_argv:254; core/agent_team/coordinator.py:_launch_process:260 | tests/test_windows_never_runs_unconfined_children.py::test_windows_still_refuses_the_default_mode, ::test_windows_refuses_to_start_a_process_agent |
@@ -180,7 +181,15 @@ tests/test_a6_resolution_surface.py::test_user_resolution_releases_the_block.
    the seat onto its own workspace (3707-3716). For a seat the decision and A6 reserve/claim happen
    first; the gate runs at dispatch (3268). If the seat's workspace is not flagged, the refusal comes
    back `ok=False` and the A6 row is classified `failed_safe_to_retry` / `dispatch_ack` (1538-1549).
-   Only the allowed seat case is tested. UNVERIFIED: other `decide_tool_call` callers
+   Only the allowed seat case is tested. A second residual: a repo.step from a chat working in a
+   flagged folder, on a session whose folder is not flagged. The early gate checks the step's inner
+   intent on the chat's workspace (windows_write_gate.py:143-148, root from
+   runtime_execution_tools.py:7362), so the decision runs first and Manual mode asks to approve
+   `Run repo.step`, naming no affected folder; the dispatch-time gate then refuses the inner write
+   on the session folder (gap 14). repo.step is not A6-reserved
+   (core/effect_reconciliation.py:a6_reserved_intent:53), so no A6 row is made. No test covers it:
+   the executor-level repo.step case (tests/test_windows_write_gate_before_approval.py:57) uses an
+   unflagged chat and a session that does not exist. UNVERIFIED: other `decide_tool_call` callers
    (core/semantic/admission.py:124, core/live_data_plan.py:863) do not ask the Windows predicate first;
    whether they can carry a gated write intent was not traced. The remaining callers decide fixed
    intents the gate does not cover: core/effect_gateway.py:2215 (`web.research`) and, through
@@ -261,9 +270,9 @@ tests/test_a6_resolution_surface.py::test_user_resolution_releases_the_block.
     still stops every python.exe or pythonw.exe whose command line contains `apps.vool_api_server` or
     `vool_api_server.py`, from any folder, when the API on 11435 fails its health check (89-94).
 11. **Closed by PR #20 for the intents the gate covers; the Media Studio editor's HTTP export (gap 12)
-    and operator notes (gap 13) never ask the gate, and it checks repo.git on the wrong folder (gap 14).
-    VERIFIED in source; the new tests passed on Windows at e8f607d (Windows Release Gauntlet run
-    39221752745).** At
+    and operator notes (gap 13) never ask the gate, and it checks repo.git (gap 14) and
+    workspace.apply_unified_diff (gap 15) on the wrong folder. VERIFIED in source; the new tests passed
+    on Windows at e8f607d (Windows Release Gauntlet run 39221752745).** At
     c86d013 the gate joined every relative keyed target onto the chat workspace, while the writers
     place the same arguments elsewhere. With the chat workspace inside a flagged folder,
     `machine.write_file` with path `Documents\x.txt` passed the gate and was written to the user's
@@ -397,16 +406,52 @@ tests/test_a6_resolution_surface.py::test_user_resolution_releases_the_block.
     inspecting and binding a session only read and are not gated (core/repoops/contracts.py:87, 108,
     131), and an HTTP chat turn names its own workspace in the request (service.py:7423-7432). Every
     repo.git operation writes (core/repoops/gitops.py): a new branch it switches to (237), a commit that
-    stages every change with `git add -A` unless paths are named (251, 260), a cherry-pick, revert or
-    merge (273, 281, 292), a tag (303) and an abort (318). Git acts on the whole repository, so a
-    session opened in a subfolder of a repository changes files outside that subfolder. In the runs
+    stages every change in the repository with `git add -A` (251; repo.git names no paths,
+    plane.py:3302, and its schema takes none, contracts.py:309-322) and commits it (260), a
+    cherry-pick, revert or merge (273, 281, 292), a tag (303), and `restore`, which aborts a merge,
+    cherry-pick, revert or rebase in progress (318). Git acts on the whole repository, so a session
+    opened in a subfolder of a repository changes files outside that subfolder. In the runs
     (one flagged folder, a repository outside it, Auto and Manual mode): repo.git merge from a chat
     working in the repository was refused;
     the same session from a chat working in the flagged folder asked for approval, naming no affected
     folder, and once allowed merged in the outside repository. With only a subfolder of a repository
-    flagged, an allowed merge from a chat working there changed a file at the repository's top level.
-    repo.step is not affected: its inner call is dispatched with the session folder as the workspace
-    (plane.py:_session_context:458-465), and the gate refused an inner write there in the same run.
+    flagged, an allowed merge from a chat working there changed a file at the repository's top level,
+    and an allowed commit committed a tracked edit and an untracked file at the top level.
+    repo.step does not write outside the flagged folders, but its two folders are checked at
+    different points. The early gate and the dispatch-time gate for the step itself check its inner
+    intent on the chat's workspace (windows_write_gate.py:refusal:143-148, root from
+    runtime_execution_tools.py:7362; tool_intent_executor.py:1319, runtime_execution_tools.py:3268).
+    The step then dispatches its inner call with the session folder as the workspace
+    (plane.py:_execute:3172-3174, _session_context:458-465), and the dispatch-time gate checks that
+    folder. So a step writes only when both are flagged. In the runs (the session's diagnosis and Gate 0
+    write verdict set directly, since a real diagnosis needs a command run): from a chat working in the
+    repository, a repo.step write was refused with no permission decision; from a chat working in the
+    flagged folder, Manual mode asked to approve `Run repo.step`, naming no affected folder, and once
+    allowed the inner write was refused and wrote nothing (Auto mode refused it after its decision);
+    with the session opened inside the flagged folder, a chat working outside it was refused and a
+    chat working in it wrote the file (gap 2).
     repo.push is not in `_GATED`; it pushes from the session folder after an owner-local authorization
     (plane.py:push:3703, git run at 3966-3967). No test runs repo.git with a folder flagged
     (tests/test_windows_write_gate.py:31 flags none).
+15. **VERIFIED in source; run at e8f607d on Linux with the gate switched on, not on Windows.** The gate
+    checks `workspace.apply_unified_diff` on the chat's workspace only, while `git apply` can move a file
+    into it from outside. The intent's `_GATED` entry is empty (windows_write_gate.py:32), so `refusal`
+    checks only the workspace root (158). A patch with no reviewed destinations
+    (core/execution/workspace_tools.py:apply_unified_diff_workspace:334, reviewed branch 357) is applied
+    by `git -C <workspace> apply` when git is on the PATH (386, 396-399). VOOL first checks each
+    `---`/`+++` path by joining it onto the workspace (`_extract_patch_paths`:807, regex 40;
+    `resolve_workspace_path`:66, called at 368), but when the workspace is a subfolder of a git
+    repository, git reads a git-format patch's paths from the repository's top. When git is not on the
+    PATH or fails, VOOL's own engine joins each path onto the workspace and refuses one outside it
+    (`_apply_unified_diff_python`:850, 870). In the runs (one flagged folder that is a subfolder of a
+    repository; Manual mode with the ask allowed, and Auto mode with no ask), a rename from a file at the
+    repository's top into the flagged folder was applied: the file outside the flagged folder was removed
+    and its content landed inside. This happened with and without `---`/`+++` lines for the rename, and
+    with the file tracked or untracked. VOOL answered `no_change` (ok False, engine `git_apply`) and
+    wrote no mutation record (487-507, before 509). The Manual ask named no file (`affected_resources`
+    empty, no diff preview), as for any patch. git skipped a section deleting the outside file, and a
+    copy left it in place (its content was copied in). A patch whose last line is a hunk line failed in
+    every engine, since the patch is stripped (341). The same patch from a chat working at the
+    repository's top was refused. The code-task path that passes reviewed destinations uses VOOL's own
+    engine and refuses renames and copies (`_apply_protected_unified_diff`:647,
+    `_GIT_UNSUPPORTED_HEADERS`:538). No test runs a patch with a folder flagged.
