@@ -1,11 +1,13 @@
-"""A program named in a repository's ``config.worktree`` must never run, exactly like one in its
-``config`` (core/safe_git.py).
+"""A program named in a repository's ``config.worktree``, or in a checked-out submodule's config,
+must never run, exactly like one in its ``config`` (core/safe_git.py).
 
 Reproduced 2026-10-19: with ``extensions.worktreeConfig`` on, a ``filter.<x>.clean`` set by
 ``git config --worktree`` was missed by the ``--local``-only check, and a repo.git commit
 (GitRunner.commit, the path repo.git takes) ran it, on every platform. Each case plants a program
 that leaves a marker file if git runs it. A control first proves git really would run the planted
 program on this platform, so a missing marker means VOOL refused it, not that the plant was inert.
+Found in review the same day: status, diff and commit in a superproject run git inside each
+checked-out submodule, which obeys the submodule's own config.
 """
 from __future__ import annotations
 
@@ -100,7 +102,8 @@ def test_workspace_git_status_and_diff_refuse_a_filter_set_in_config_worktree(tm
 def test_an_include_in_config_worktree_is_followed_and_refused(tmp_path: Path) -> None:
     repo, marker = _repo(tmp_path)
     included = tmp_path / "included.cfg"
-    included.write_text(f"[filter \"planted\"]\n\tclean = {_planted_program(tmp_path, marker)}\n", encoding="utf-8")
+    subprocess.run(["git", "config", "-f", str(included), "filter.planted.clean", _planted_program(tmp_path, marker)],
+                   check=True, capture_output=True)
     _git(repo, "config", "--worktree", "include.path", included.as_posix())
     (repo / ".gitattributes").write_text("*.txt filter=planted\n", encoding="utf-8")
     (repo / "notes.txt").write_text("two\n", encoding="utf-8")
@@ -145,3 +148,55 @@ def test_the_check_still_fails_outside_a_repository(tmp_path: Path) -> None:
     # Callers treat this as "could not be checked" and refuse.
     with pytest.raises(RuntimeError):
         safe_git.executable_local_config(tmp_path)
+
+
+def _superproject(tmp_path: Path) -> tuple[Path, Path, Path]:
+    (tmp_path / "upstream").mkdir()
+    upstream, _ = _repo(tmp_path / "upstream")
+    superproject, marker = _repo(tmp_path)
+    _git(superproject, "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(upstream), "sub")
+    _git(superproject, "commit", "-q", "-m", "add sub")
+    return superproject, superproject / "sub", marker
+
+
+@pytest.mark.parametrize("scope", ["--local", "--worktree"])
+def test_a_filter_in_a_submodules_config_is_refused_in_the_superproject(tmp_path: Path, scope: str) -> None:
+    superproject, sub, marker = _superproject(tmp_path)
+    _git(sub, "config", "extensions.worktreeConfig", "true")
+    _git(sub, "config", scope, "filter.planted.clean", _planted_program(tmp_path, marker))
+    (sub / ".gitattributes").write_text("*.txt filter=planted\n", encoding="utf-8")
+    (sub / "notes.txt").write_text("two\n", encoding="utf-8")
+    (superproject / "notes.txt").write_text("two\n", encoding="utf-8")
+    head = _git(superproject, "rev-parse", "HEAD").strip()
+
+    status = git_status_workspace({}, workspace_root=superproject)
+    diff = git_diff_workspace({}, workspace_root=superproject)
+    commit = GitRunner(root=superproject).commit(message="planted")
+
+    assert status["status"] == "refused_repository_config"
+    assert "sub:filter.planted.clean" in status["response_text"]
+    assert diff["status"] == "refused_repository_config"
+    assert commit.ok is False and _git(superproject, "rev-parse", "HEAD").strip() == head
+    assert not marker.exists(), "git ran a program named in a submodule's config"
+
+
+def test_control_hardened_status_in_the_superproject_runs_a_submodules_filter(tmp_path: Path) -> None:
+    superproject, sub, marker = _superproject(tmp_path)
+    _git(sub, "config", "filter.planted.clean", _planted_program(tmp_path, marker))
+    (sub / ".gitattributes").write_text("*.txt filter=planted\n", encoding="utf-8")
+    (sub / "notes.txt").write_text("two\n", encoding="utf-8")
+
+    subprocess.run(safe_git.hardened_argv(superproject, "status", "--porcelain"),
+                   capture_output=True, timeout=60, env=safe_git.safe_env())
+
+    assert marker.exists(), "the submodule's filter did not run even without the check; the case above proves nothing"
+
+
+def test_a_superproject_with_a_plain_submodule_still_commits(tmp_path: Path) -> None:
+    superproject, _sub, _marker = _superproject(tmp_path)
+    (superproject / "notes.txt").write_text("two\n", encoding="utf-8")
+
+    result = GitRunner(root=superproject).commit(message="ordinary")
+
+    assert result.ok is True, result.to_dict()
+    assert safe_git.executable_local_config(superproject) == []
