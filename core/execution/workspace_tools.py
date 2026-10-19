@@ -816,13 +816,26 @@ def _apply_protected_unified_diff(
                        f"This approved patch carries `{unsupported_header}`, which the protected writer does not apply; "
                        "nothing was written. Propose the change as `workspace.write_file` (the full reviewed content) "
                        "or `workspace.replace_in_file`, and approve that.")
-    rendered: list[tuple[Path, str | None]] = []
+    # One final text per file: a second section for a file already rendered applies to what the first
+    # rendered (as git and GNU patch apply it), so the file is written once, never from the original twice.
+    latest: dict[str, str] = {}
+    order: list[Path] = []
+    deletes: list[Path] = []
+
+    def collect(path: Path, text: str | None) -> None:
+        if str(path) not in latest and path not in deletes:
+            order.append(path)
+        if text is None:
+            deletes.append(path)
+        else:
+            latest[str(path)] = text
+
     try:
         _apply_unified_diff_python(
             renderable,
             workspace_root=workspace_root,
-            sink=lambda path, text: rendered.append((path, text)),
-            source=lambda path: verified_text.get(str(path), ""),
+            sink=collect,
+            source=lambda path: latest.get(str(path), verified_text.get(str(path), "")),
         )
     except ValueError as exc:
         if unreviewed:
@@ -832,6 +845,7 @@ def _apply_protected_unified_diff(
                        f"This approved patch cannot be applied exactly as reviewed ({exc}); nothing was written. "
                        "Propose the same change as `workspace.write_file` (the full reviewed content) or "
                        "`workspace.replace_in_file`, and approve that.")
+    rendered: list[tuple[Path, str | None]] = [(path, None if path in deletes else latest[str(path)]) for path in order]
     if any(text is None for _path, text in rendered) and unreviewed:
         return refusal("unsupported_patch",
                        "On Windows, VOOL's patch tool does not delete files; nothing was written. Make the other "
