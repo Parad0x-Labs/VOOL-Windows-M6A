@@ -1,4 +1,4 @@
-"""On Windows, a git operation runs only when every place git writes is inside a marked folder.
+"""On Windows, a git operation runs only when its work tree's top and its git folders are inside marked folders.
 
 repo.git runs git in the repo session's folder, and git writes under the top of that repository's
 work tree, in its git folder and in its shared git folder. The repository's own layout can put each
@@ -16,7 +16,9 @@ journal is gone or cannot be read or parsed, from the runtime's cached copy. The
 a repository whose own config names a program for git to run, as core/safe_git.py reads it, is not
 asked at all, and one whose config cannot be read or that git cannot place is refused too. A
 repository wholly inside a marked folder still reaches the approval ask in Manual and Auto, and the
-approved commit runs.
+approved commit runs. Folders below those three places (a link in place of `.git/objects`) and a
+repository-local `lfs.storage` setting are not placed, so git can still write some objects elsewhere
+through them; this file does not cover them.
 
 Sessions are opened, inspected and bound through the production tool door, every repository is real
 (made with the git binary; the global git config is out of reach because HOME, USERPROFILE and
@@ -430,6 +432,9 @@ def test_a_marked_linked_worktree_whose_own_git_folder_alone_is_outside_is_refus
     private = tmp_path / "elsewhere" / "linked"
     private.parent.mkdir()
     (main / ".git" / "worktrees" / "linked").rename(private)
+    # Removed before it is written again: Git for Windows marks a `.git` file it creates hidden, and
+    # Windows refuses to overwrite a hidden file in place.
+    (linked / ".git").unlink()
     (linked / ".git").write_bytes(f"gitdir: {private.as_posix()}\n".encode())
     (private / "commondir").write_bytes(f"{(main / '.git').as_posix()}\n".encode())
     places = _git(linked, "rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir")
