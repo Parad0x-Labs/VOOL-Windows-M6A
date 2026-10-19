@@ -4,7 +4,8 @@ machine.write_file and machine.ensure_directory take a relative path ("Documents
 ("documents") and a `~` path from the user's home; machine.move_path and media.export take a
 relative path from VOOL's working directory, and an export also writes stage files in the folder
 that holds its output; the operator lane expands `$VAR` and `~` in its paths. Two decisions about
-these writes placed a path somewhere other than its writer does:
+these writes placed a path somewhere other than its writer does, and a temp cleanup also empties
+folders its request does not name:
 
 - The Windows write gate (core.windows_write_gate), which allows a user-filesystem write only inside
   the folders listed in VOOL_WINDOWS_DISPOSABLE_WORKSPACES. With the chat workspace flagged,
@@ -30,6 +31,8 @@ from core.hive_activity_tracker import HiveActivityTracker, HiveActivityTrackerC
 
 # A file in the user's Documents folder, named the ways a model names one, in this host's separator.
 IN_DOCUMENTS = "Documents" + os.sep + "x.txt"
+#: The home folders a machine write may land in (runtime_execution_tools._SAFE_MACHINE_DIRECTORY_NAMES).
+SAFE_FOLDERS = ("Desktop", "Documents", "Downloads")
 #: A machine path as a model names it, and the folder of the home its writer puts it in ("" is the home).
 HOME_FORMS = (
     (IN_DOCUMENTS, "Documents"),
@@ -50,7 +53,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     from core import runtime_execution_tools
 
     home = tmp_path / "home"
-    for folder in ("Documents", "Downloads"):
+    for folder in SAFE_FOLDERS:
         (home / folder).mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
@@ -93,9 +96,10 @@ def test_the_gate_checks_a_relative_machine_path_in_the_home_folder_it_lands_in(
     home: Path, workspace: Path, intent: str, path: str, folder: str
 ) -> None:
     arguments = {"path": path, "content": "x"}
-    neighbour = home / ("Downloads" if folder else "Documents")
+    # Every other folder of the home is flagged, so a path placed in any wrong one is let through.
+    neighbours = [home / name for name in SAFE_FOLDERS if name != folder]
     assert gate.refusal(intent, arguments, workspace, windows=True, environ=_env(workspace)), path
-    assert gate.refusal(intent, arguments, workspace, windows=True, environ=_env(workspace, neighbour)), path
+    assert gate.refusal(intent, arguments, workspace, windows=True, environ=_env(workspace, *neighbours)), path
     # Flagging the folder the path really lands in, and only that folder, lets the same call through.
     assert gate.refusal(intent, arguments, workspace, windows=True, environ=_env(workspace, home / folder)) is None, path
 
@@ -222,7 +226,58 @@ def test_an_operator_path_must_still_be_absolute(workspace: Path, monkeypatch: p
     monkeypatch.chdir(workspace)
     arguments = {"source_path": "a.txt", "destination_path": "b.txt"}
     reason = gate.refusal("operator.move_path", arguments, None, windows=True, environ=_env(workspace))
-    assert reason and "needs an absolute source_path" in reason
+    assert reason and "needs a source_path that is absolute" in reason
+
+
+def test_windows_refuses_a_temp_cleanup_even_from_a_flagged_folder(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cleanup also empties the system temp folders, and its approval empties the plan a disk scan
+    stored earlier (core.operator.handlers), so naming a flagged folder does not hold it there."""
+    import tempfile
+
+    from core import local_operator_actions as ops
+
+    temp = tmp_path / "temp"  # the system temp folder, outside the flagged one
+    temp.mkdir()
+    for name in ("TMPDIR", "TMP", "TEMP"):
+        monkeypatch.setenv(name, str(temp))
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(temp))
+    # A regression must not be able to empty a real folder, so emptying is recorded, not done.
+    emptied: list[str] = []
+    monkeypatch.setattr(ops, "_delete_children",
+                        lambda root: emptied.append(str(root)) or {"deleted_files": 0, "deleted_dirs": 0, "errors": []})
+    monkeypatch.setenv(gate.ENV_VAR, str(workspace))
+    session = f"cleanup-{uuid.uuid4().hex}"
+
+    def say(text: str):
+        return ops.dispatch_operator_action(ops.parse_operator_action_intent(text), task_id=f"t-{uuid.uuid4().hex}",
+                                            session_id=session)
+
+    say(f'find disk bloat in "{workspace}"')  # stores a cleanup plan of the temp folder
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    refused = say(f'clean all temp files in "{workspace}"')
+    assert refused.status == gate.STATUS, (refused.status, refused.response_text)
+    assert emptied == []
+    # Off Windows the same words empty the stored plan, so the refusal above is the gate's.
+    monkeypatch.setattr(gate, "_IS_WINDOWS", False)
+    say(f'clean all temp files in "{workspace}"')
+    assert emptied == [str(temp)]
+
+
+@pytest.mark.parametrize(
+    ("intent", "arguments"),
+    [
+        ("machine.write_file", {"path": "{workspace}/a\x00.txt"}),
+        ("machine.move_path", {"source": "{workspace}/a\x00.txt", "destination": "{workspace}/b.txt"}),
+        ("media.export", {"project_id": "clip", "output_path": "{workspace}/a\x00.mp4"}),
+        ("operator.move_path", {"source_path": "{workspace}/a\x00.txt", "destination_path": "{workspace}"}),
+    ],
+)
+def test_a_path_no_file_can_have_is_refused_not_raised(workspace: Path, intent: str, arguments: dict) -> None:
+    # A NUL inside a flagged folder: placing it raised in the gate instead of refusing the call.
+    named = {key: value.replace("{workspace}", str(workspace)) for key, value in arguments.items()}
+    assert gate.refusal(intent, named, workspace, windows=True, environ=_env(workspace))
 
 
 @pytest.mark.parametrize("mode", ["manual", "auto"])
