@@ -242,9 +242,11 @@ def _read_entry(path: Path) -> tuple[bytes, str, tuple[int, int]] | None:
 
 def _move_note(source: Path, source_entry: tuple[bytes, str, tuple[int, int]], target: Path, content: str) -> str:
     """Write ``content`` as the new file ``target``, then remove ``source`` while it is still the file that was
-    read. "" when both happened; otherwise the status of what stopped it, with the note left where it was
-    (the new copy is removed again) -- or "move_incomplete" when neither the source nor the copy could be
-    put back in order."""
+    read. "" when both happened; otherwise the status of what stopped it, and the new copy is removed again:
+    "note_changed" (another file or other bytes are at ``source`` now, and stay), "remove_failed" (``source``
+    could not be removed, and stays), "note_gone" (nothing is at ``source`` any more: another program moved
+    or removed it). When the copy cannot be removed either: "move_incomplete" (both remain) or "copy_left"
+    (``source`` is gone and the copy remains)."""
     from core.execution.artifacts import (
         DestinationChangedError,
         ReviewedBaseChangedError,
@@ -262,15 +264,22 @@ def _move_note(source: Path, source_entry: tuple[bytes, str, tuple[int, int]], t
     except OSError:
         return "write_failed"
     try:
-        pinned_remove_created_file(source, created_identity=identity, expected_sha256=hashlib.sha256(raw).hexdigest())
+        removed = pinned_remove_created_file(source, created_identity=identity,
+                                             expected_sha256=hashlib.sha256(raw).hexdigest())
+    except (DestinationChangedError, ReviewedBaseChangedError):
+        stopped = "note_changed"
     except OSError:
-        try:
-            pinned_remove_created_file(target, created_identity=created,
-                                       expected_sha256=hashlib.sha256(content.encode("utf-8")).hexdigest())
-        except OSError:
-            return "move_incomplete"
-        return "note_changed"
-    return ""
+        stopped = "remove_failed"
+    else:
+        if removed == "removed":
+            return ""
+        stopped = "note_gone"
+    try:
+        pinned_remove_created_file(target, created_identity=created,
+                                   expected_sha256=hashlib.sha256(content.encode("utf-8")).hexdigest())
+    except OSError:
+        return "copy_left" if stopped == "note_gone" else "move_incomplete"
+    return stopped
 
 
 def archive_note(*, title: str) -> dict[str, Any]:
@@ -287,6 +296,9 @@ def archive_note(*, title: str) -> dict[str, Any]:
         root = notes_root()
         matches = [path for path in _iter_note_files()
                    if _split_front_matter(path.read_text(encoding="utf-8"))[0].get("title", "").casefold() == str(title).casefold()]
+    except UnicodeDecodeError as exc:
+        return {"ok": False, "status": "archive_unreadable",
+                "detail": f"a file in the notes folder is not UTF-8 text ({exc.reason}); nothing was moved"}
     except ValueError as exc:
         return {"ok": False, "status": "archive_unconfined", "detail": str(exc)}
     if len(matches) != 1:
@@ -312,8 +324,13 @@ def archive_note(*, title: str) -> dict[str, Any]:
         return {"ok": False, "status": "archive_name_taken", "detail": f"an archived note already occupies {target.name}"}
     stopped = _move_note(path, entry, target, f"---\n{front}\n---\n\n{body.strip()}\n")
     if stopped:
-        return {"ok": False, "status": f"archive_{stopped}", "detail": f"{path.name} stays in the notes folder"
-                if stopped != "move_incomplete" else f"{path.name} and its archived copy {target.name} both remain"}
+        detail = {
+            "move_incomplete": f"{path.name} and its archived copy {target.name} both remain",
+            "note_gone": f"{path.name} was moved or removed by another program meanwhile; nothing was archived",
+            "copy_left": f"{path.name} was moved or removed by another program meanwhile; its archived copy "
+                         f"{target.name} remains",
+        }.get(stopped, f"{path.name} stays in the notes folder")
+        return {"ok": False, "status": f"archive_{stopped}", "detail": detail}
     return {"ok": True, "status": "archived", "note_path": str(target), "title": str(meta.get("title") or title),
             "recovery": f"say: restore the note \"{title}\" to bring it back unchanged"}
 
@@ -356,8 +373,14 @@ def restore_note(*, title: str) -> dict[str, Any]:
     restored = notes_root() / restored.name
     stopped = _move_note(path, entry, restored, f"---\n{front}\n---\n\n{body.strip()}\n")
     if stopped:
-        return {"ok": False, "status": f"restore_{stopped}", "detail": f"{path.name} stays archived"
-                if stopped != "move_incomplete" else f"{path.name} and its restored copy {restored.name} both remain"}
+        detail = {
+            "move_incomplete": f"{path.name} and its restored copy {restored.name} both remain",
+            "note_gone": f"{path.name} was moved or removed from the archive by another program meanwhile; "
+                         "nothing was restored",
+            "copy_left": f"{path.name} was moved or removed from the archive by another program meanwhile; its "
+                         f"restored copy {restored.name} remains",
+        }.get(stopped, f"{path.name} stays archived")
+        return {"ok": False, "status": f"restore_{stopped}", "detail": detail}
     return {"ok": True, "status": "restored", "note_path": str(restored), "title": str(meta.get("title") or title)}
 
 
@@ -401,7 +424,8 @@ def link_note_to_event(note_path: str, *, event_uid: str, action_id: str = "") -
     try:
         root = notes_root()
         path = root / Path(str(note_path or "")).expanduser().name
-        if path.suffix != ".md" or _confined(str(Path(str(note_path or "")).expanduser())) != path:
+        # `*.md` as the notes folder lists notes (any case of the extension on Windows).
+        if not path.match("*.md") or _confined(str(Path(str(note_path or "")).expanduser())) != path:
             return False
     except ValueError:
         return False
