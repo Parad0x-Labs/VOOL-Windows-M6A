@@ -17,8 +17,8 @@ a repository whose own config names a program for git to run, as core/safe_git.p
 asked at all, and one whose config cannot be read or that git cannot place is refused too. A
 repository wholly inside a marked folder still reaches the approval ask in Manual and Auto, and the
 approved commit runs. Folders below those three places (a link in place of `.git/objects`) and a
-repository-local `lfs.storage` setting are not placed, so git can still write some objects elsewhere
-through them; this file does not cover them.
+repository-local `lfs.storage` setting are not placed, so some of git's writes (objects, refs, logs)
+can still land elsewhere through them; this file does not cover them.
 
 Sessions are opened, inspected and bound through the production tool door, every repository is real
 (made with the git binary; the global git config is out of reach because HOME, USERPROFILE and

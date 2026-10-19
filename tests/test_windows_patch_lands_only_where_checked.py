@@ -21,10 +21,10 @@ What this file pins:
   (`workspace.replace_in_file` still edits it); a patch that creates a file must name one that does not
   exist yet; a multi-file patch is all or nothing, and a file already written is put back when a later
   one changed under the patch; two sections for one file are applied in turn; a file whose section
-  changes nothing is not rewritten (same file identity, same timestamp); a `git format-patch` mail, and a
-  patch whose last removed line is followed by text that is not a hunk line, are refused whole rather than
-  cut short; `changed_paths` and the mutation record name exactly the files written, and rolling the
-  change back restores only those.
+  changes nothing is not rewritten (same file identity, same timestamp); a `git format-patch` mail is
+  refused whole, and a last removed line that reads like its signature ("-- ") is never cut off (with a
+  closing code fence after it, the patch is refused); `changed_paths` and the mutation record name exactly
+  the files written, and rolling the change back restores only those.
 - With the gate off (off Windows), `git apply` runs only when the workspace is the top of its work tree.
 
 Every case drives the real executor (`execute_tool_intent`) in Manual and in Auto, with real git
@@ -65,8 +65,8 @@ PATCH = "workspace.apply_unified_diff"
 
 # `git format-patch` ends a patch with its signature. VOOL strips a patch's final newline, and git refuses
 # a patch that then ends inside a hunk, so this ending is what let `git apply` take the rename below (and
-# move the outside file) before the fix. VOOL's own engine refuses the rename header before it reads any
-# hunk.
+# move the outside file) before the fix. On Windows the protected engine refuses the rename header before
+# it reads any hunk; off Windows VOOL's Python engine reads the hunks and finds they do not match.
 SIGNATURE = "-- \n2.43.0\n"
 
 
