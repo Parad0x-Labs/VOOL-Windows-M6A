@@ -6,9 +6,9 @@ resolve_workspace_root`), so project isolation is the workspace root's own bound
 second notes framework exists. One exception: the installed Windows app keeps notes in the VOOL
 home's workspace while its file tools keep {app}\\app (`_workspace_root`), so there the file
 tools cannot open a note by its path; the note operations here still can. What this module
-adds on top of the file is only the honest metadata: title, creating session, timestamps, and — when a note backs a calendar event —
-the REAL provider receipt (uid/etag) of that event, written only after the event verifiably
-exists.
+adds on top of the file is only the honest metadata: title, creating session, timestamps, and
+— when a note backs a calendar event — the REAL provider receipt (uid/etag) of that event,
+written only after the event verifiably exists.
 
 Truth rules this module keeps:
 
