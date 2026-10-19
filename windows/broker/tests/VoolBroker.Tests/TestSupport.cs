@@ -1,3 +1,5 @@
+[assembly: Xunit.v3.Parallelization(Mode = Xunit.Sdk.ParallelMode.None)]
+
 namespace VoolBroker.Tests;
 
 using System.Buffers.Binary;
@@ -223,8 +225,12 @@ internal static class TestSupport
         Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../src/VoolBroker/bin/Debug/net10.0-windows/VoolBroker.exe"));
 
     /// <summary>Starts the broker and leaves it waiting for its bootstrap frame on stdin.</summary>
-    public static Process StartBrokerWithoutBootstrap() =>
-        Process.Start(new ProcessStartInfo(BrokerExe()) { UseShellExecute = false, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true })!;
+    public static Process StartBrokerWithoutBootstrap(IReadOnlyDictionary<string, string>? environment = null)
+    {
+        var start = new ProcessStartInfo(BrokerExe()) { UseShellExecute = false, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
+        foreach (var (name, value) in environment ?? new Dictionary<string, string>()) start.Environment[name] = value;
+        return Process.Start(start)!;
+    }
 
     public static void SendBootstrap(Process process, byte[] raw)
     {
@@ -232,20 +238,20 @@ internal static class TestSupport
         process.StandardInput.BaseStream.Flush();
     }
 
-    public static Process StartBroker(object? bootstrap = null, byte[]? raw = null)
+    public static Process StartBroker(object? bootstrap = null, byte[]? raw = null, IReadOnlyDictionary<string, string>? environment = null)
     {
-        var process = StartBrokerWithoutBootstrap();
+        var process = StartBrokerWithoutBootstrap(environment);
         SendBootstrap(process, raw ?? Frame(bootstrap ?? DefaultBootstrap()));
         return process;
     }
 
-    public static object DefaultBootstrap() => new
+    public static object DefaultBootstrap(string[]? flagged = null, string? journalDirectory = null) => new
     {
         secret = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)).ToLowerInvariant(),
         api_pid = Environment.ProcessId,
         api_creation_time = CurrentCreationTime,
-        flagged = Array.Empty<string>(),
-        journal_dir = Path.GetTempPath()
+        flagged = flagged ?? Array.Empty<string>(),
+        journal_dir = journalDirectory ?? Path.GetTempPath()
     };
 
     public static byte[] Frame(object value)
@@ -305,5 +311,253 @@ internal static class TestSupport
             if (count == 0) throw new EndOfStreamException();
             offset += count;
         }
+    }
+
+    // ---- Build 3b: roots, the walk and the channel limits ----
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool MoveFileExW(string existingFileName, string newFileName, uint flags);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool RemoveDirectoryW(string pathName);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateHardLinkW(string newFileName, string existingFileName, nint securityAttributes);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetShortPathNameW(string longPath, StringBuilder shortPath, uint length);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeviceIoControl(Microsoft.Win32.SafeHandles.SafeFileHandle device, uint code, byte[] input, uint inputSize,
+        nint output, uint outputSize, out uint returned, nint overlapped);
+
+    private const uint FileListDirectory = 0x1;
+    private const uint FileReadData = 0x1;
+    private const uint GenericWrite = 0x40000000;
+    private const uint BackupSemantics = 0x02000000;
+    private const uint OpenReparsePoint = 0x00200000;
+    private const uint FsctlSetReparsePoint = 0x000900A4;
+
+    public static string SecretOf(object bootstrap) => (string)bootstrap.GetType().GetProperty("secret")!.GetValue(bootstrap)!;
+
+    /// <summary>The broker pipes that exist now (names only), to show a refused start created none.</summary>
+    public static HashSet<string> BrokerPipes() =>
+        Directory.GetFiles(@"\\.\pipe\").Select(path => Path.GetFileName(path)).Where(name => name.StartsWith("vool-broker-", StringComparison.Ordinal)).ToHashSet(StringComparer.Ordinal);
+
+    /// <summary>Starts a broker and reads its start line; the caller kills it.</summary>
+    public static async Task<(Process Broker, JsonDocument Ready)> StartReady(object bootstrap, IReadOnlyDictionary<string, string>? environment = null)
+    {
+        var broker = StartBroker(bootstrap, environment: environment);
+        var line = await broker.StandardOutput.ReadLineAsync(TestContext.Current.CancellationToken);
+        if (line is null) { broker.Kill(true); throw new InvalidOperationException("The broker wrote no start line."); }
+        var ready = JsonDocument.Parse(line);
+        if (!ready.RootElement.TryGetProperty("pipe", out _))
+        {
+            broker.Kill(true);
+            throw new InvalidOperationException($"The broker refused to start: {line}");
+        }
+        return (broker, ready);
+    }
+
+    /// <summary>Starts a broker that must refuse; returns its one stdout line and checks it exited non-zero.</summary>
+    public static async Task<JsonDocument> StartRefused(object bootstrap)
+    {
+        using var broker = StartBroker(bootstrap);
+        var output = await broker.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
+        await broker.WaitForExitAsync(TestContext.Current.CancellationToken);
+        Assert.NotEqual(0, broker.ExitCode);
+        var line = Assert.Single(output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+        var document = JsonDocument.Parse(line);
+        Assert.False(document.RootElement.TryGetProperty("pipe", out _));
+        return document;
+    }
+
+    public static async Task Kill(Process broker)
+    {
+        if (!broker.HasExited) broker.Kill(true);
+        await broker.WaitForExitAsync(TestContext.Current.CancellationToken);
+        broker.Dispose();
+    }
+
+    public static async Task<NamedPipeClientStream> ConnectAuthenticated(JsonDocument ready, string secret)
+    {
+        var client = await Connect(ready.RootElement.GetProperty("pipe").GetString()!, TestContext.Current.CancellationToken);
+        await Authenticate(client, secret);
+        return client;
+    }
+
+    public static async Task<JsonDocument> Request(Stream stream, object request)
+    {
+        await WriteFrame(stream, request, TestContext.Current.CancellationToken);
+        return await ReadFrame(stream, TestContext.Current.CancellationToken);
+    }
+
+    public static string? ErrorCode(JsonDocument response) =>
+        response.RootElement.TryGetProperty("error", out var error) ? error.GetProperty("code").GetString() : null;
+
+    /// <summary>True when the broker has closed the connection: the next read ends or fails.</summary>
+    public static async Task<bool> IsClosedByServer(Stream stream, TimeSpan wait)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        timeout.CancelAfter(wait);
+        var buffer = new byte[1];
+        try { return await stream.ReadAsync(buffer, timeout.Token) == 0; }
+        catch (IOException) { return true; }
+        catch (OperationCanceledException) when (!TestContext.Current.CancellationToken.IsCancellationRequested) { return false; }
+    }
+
+    public static bool TryRename(string source, string destination) => MoveFileExW(source, destination, 0);
+
+    public static void Rename(string source, string destination)
+    {
+        if (!MoveFileExW(source, destination, 0))
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), $"Rename {source} -> {destination} failed.");
+    }
+
+    public static bool TryRemoveDirectory(string path) => RemoveDirectoryW(path);
+
+    public static void HardLink(string newName, string existing)
+    {
+        if (!CreateHardLinkW(newName, existing, 0))
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), $"CreateHardLink {newName} failed.");
+    }
+
+    /// <summary>A handle on path with data access and no sharing at all.</summary>
+    public static Microsoft.Win32.SafeHandles.SafeFileHandle HoldExclusively(string path)
+    {
+        var handle = CreateFileW(path, FileReadData, 0, 0, OpenExisting, BackupSemantics, 0);
+        if (handle.IsInvalid) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), $"Cannot hold {path} exclusively.");
+        return handle;
+    }
+
+    /// <summary>
+    /// Turns an existing empty folder into a junction to target in place, as mklink /J does after it
+    /// creates the folder. Opened with read and write sharing, so it works while the walk holds the folder.
+    /// </summary>
+    public static void TurnIntoJunction(string folder, string target)
+    {
+        using var handle = CreateFileW(folder, GenericWrite, 1 | 2, 0, OpenExisting, BackupSemantics | OpenReparsePoint, 0);
+        if (handle.IsInvalid) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        var substitute = Encoding.Unicode.GetBytes(@"\??\" + target);
+        var print = Encoding.Unicode.GetBytes(target);
+        var pathBytes = substitute.Length + 2 + print.Length + 2;
+        var buffer = new byte[8 + 8 + pathBytes];
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer, 0xA0000003);
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(4), checked((ushort)(8 + pathBytes)));
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(8), 0);
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(10), checked((ushort)substitute.Length));
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(12), checked((ushort)(substitute.Length + 2)));
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(14), checked((ushort)print.Length));
+        substitute.CopyTo(buffer.AsSpan(16));
+        print.CopyTo(buffer.AsSpan(16 + substitute.Length + 2));
+        if (!DeviceIoControl(handle, FsctlSetReparsePoint, buffer, (uint)buffer.Length, 0, 0, out _, 0))
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+    }
+
+    /// <summary>A directory junction (mount point tag; no privilege needed), made by cmd's mklink /J.</summary>
+    public static void CreateJunction(string link, string target)
+    {
+        using var mklink = Process.Start(new ProcessStartInfo("cmd.exe") { ArgumentList = { "/d", "/c", "mklink", "/J", link, target }, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true })!;
+        var output = mklink.StandardOutput.ReadToEnd() + mklink.StandardError.ReadToEnd();
+        mklink.WaitForExit();
+        if (mklink.ExitCode != 0 || (File.GetAttributes(link) & FileAttributes.ReparsePoint) == 0)
+            throw new InvalidOperationException($"mklink /J failed ({mklink.ExitCode}): {output}");
+    }
+
+    /// <summary>A directory symlink, or a skip with the reason when this host refuses to create one.</summary>
+    public static void CreateDirectorySymlinkOrSkip(string link, string target)
+    {
+        try { Directory.CreateSymbolicLink(link, target); }
+        catch (Exception error) when (error is UnauthorizedAccessException or IOException)
+        {
+            Assert.Skip($"Creating a directory symlink was refused on this host ({error.Message}); it needs Developer Mode or SeCreateSymbolicLinkPrivilege.");
+        }
+    }
+
+    /// <summary>Sets or clears FILE_CS_FLAG_CASE_SENSITIVE_DIR with fsutil (no admin needed on NTFS), or skips with the reason.</summary>
+    public static void SetCaseSensitiveOrSkip(string directory, bool enable)
+    {
+        using var fsutil = Process.Start(new ProcessStartInfo("fsutil.exe") { ArgumentList = { "file", "setCaseSensitiveInfo", directory, enable ? "enable" : "disable" }, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true })!;
+        var output = fsutil.StandardOutput.ReadToEnd() + fsutil.StandardError.ReadToEnd();
+        fsutil.WaitForExit();
+        if (fsutil.ExitCode != 0)
+        {
+            if (enable) Assert.Skip($"fsutil setCaseSensitiveInfo was refused on this host ({fsutil.ExitCode}): {output.Trim()}");
+            throw new InvalidOperationException($"fsutil could not clear the case-sensitive flag on {directory}: {output}");
+        }
+    }
+
+    /// <summary>The 8.3 short form of an existing path, or null when the volume made no short name.</summary>
+    public static string? ShortPath(string path)
+    {
+        var buffer = new StringBuilder(32768);
+        var length = GetShortPathNameW(path, buffer, (uint)buffer.Capacity);
+        if (length == 0 || length >= buffer.Capacity) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        var result = buffer.ToString();
+        return string.Equals(Path.GetFileName(result), Path.GetFileName(path), StringComparison.OrdinalIgnoreCase) ? null : result;
+    }
+
+    /// <summary>
+    /// Puts a reparse point with a non-Microsoft, non-name-surrogate tag on an empty file, or skips
+    /// with the reason when this account may not set one.
+    /// </summary>
+    public static void SetCustomReparsePointOrSkip(string file)
+    {
+        using var handle = CreateFileW(file, GenericWrite, 0, 0, OpenExisting, BackupSemantics | OpenReparsePoint, 0);
+        if (handle.IsInvalid) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        var buffer = new byte[24 + 4];
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer, 0x00001234);
+        BinaryPrimitives.WriteUInt16LittleEndian(buffer.AsSpan(4), 4);
+        Guid.NewGuid().TryWriteBytes(buffer.AsSpan(8));
+        if (!DeviceIoControl(handle, FsctlSetReparsePoint, buffer, (uint)buffer.Length, 0, 0, out _, 0))
+        {
+            var error = Marshal.GetLastWin32Error();
+            Assert.Skip($"Setting a third-party reparse tag was refused on this host (Win32 error {error}: {new System.ComponentModel.Win32Exception(error).Message}).");
+        }
+    }
+
+    /// <summary>
+    /// A hash of a tree: every entry's relative path, kind, attributes and last-write time, each
+    /// file's bytes and each link's target. Reparse points are never followed.
+    /// </summary>
+    public static string TreeHash(string root)
+    {
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        void Add(string text) => hash.AppendData(Encoding.UTF8.GetBytes(text + "\n"));
+        void Walk(string directory)
+        {
+            foreach (var path in Directory.EnumerateFileSystemEntries(directory).Order(StringComparer.Ordinal))
+            {
+                var info = new FileInfo(path);
+                var attributes = info.Attributes & ~FileAttributes.Archive;
+                Add($"{Path.GetRelativePath(root, path)}|{attributes}|{info.LastWriteTimeUtc.Ticks}");
+                if ((attributes & FileAttributes.ReparsePoint) != 0) { Add("link:" + (info.LinkTarget ?? "")); continue; }
+                if ((attributes & FileAttributes.Directory) != 0) Walk(path);
+                else hash.AppendData(File.ReadAllBytes(path));
+            }
+        }
+        Walk(root);
+        return Convert.ToHexString(hash.GetHashAndReset());
+    }
+
+    /// <summary>Deletes a test tree; junctions and symlinks are removed, never followed.</summary>
+    public static void DeleteTree(string path)
+    {
+        // Directory.Delete(recursive) calls DeleteVolumeMountPoint on every junction it meets, which a
+        // standard user is denied: it removes the junction but then throws. So each link is removed
+        // by itself, without recursion, and only real folders are descended into.
+        FileAttributes attributes;
+        try { attributes = File.GetAttributes(path); }
+        catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException) { return; }
+        var isDirectory = (attributes & FileAttributes.Directory) != 0;
+        if ((attributes & FileAttributes.ReparsePoint) == 0 && isDirectory)
+            foreach (var child in Directory.GetFileSystemEntries(path)) DeleteTree(child);
+        if ((attributes & FileAttributes.ReadOnly) != 0) File.SetAttributes(path, attributes & ~FileAttributes.ReadOnly);
+        if (isDirectory) Directory.Delete(path, recursive: false);
+        else File.Delete(path);
     }
 }

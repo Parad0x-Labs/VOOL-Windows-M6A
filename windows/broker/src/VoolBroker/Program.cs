@@ -14,6 +14,7 @@ internal static class Program
     private static async Task<int> Main()
     {
         Channel? channel = null;
+        RootRegistry? roots = null;
         try
         {
             var bootstrap = await ReadBootstrapAsync().ConfigureAwait(false);
@@ -30,14 +31,32 @@ internal static class Program
                 root.GetProperty("flagged").ValueKind != JsonValueKind.Array || root.GetProperty("journal_dir").ValueKind != JsonValueKind.String ||
                 string.IsNullOrWhiteSpace(root.GetProperty("journal_dir").GetString()))
                 return Refuse("invalid_bootstrap");
-            if (root.GetProperty("flagged").GetArrayLength() != 0) return Refuse("roots_not_implemented");
+            roots = new RootRegistry();
+            RootRegistry.ValidatePlatform();
+            // One start-line entry per bootstrap entry, in bootstrap order (two spellings of one
+            // folder share an id), so the API can map each of its entries to the broker's id.
+            var reported = new List<Dictionary<string, string>>();
+            foreach (var flagged in root.GetProperty("flagged").EnumerateArray())
+            {
+                if (flagged.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(flagged.GetString())) return RefuseEntry("", "invalid_flagged");
+                var entry = flagged.GetString()!;
+                try
+                {
+                    var id = roots.AddFlaggedRoot(entry);
+                    reported.Add(new Dictionary<string, string> { ["id"] = id, ["path"] = roots.GetEntry(id).Path });
+                }
+                catch (BrokerRefusal refusal) { return RefuseEntry(entry, refusal.Code); }
+            }
+            var journalDirectory = root.GetProperty("journal_dir").GetString()!;
+            try { roots.ValidateJournalOutsideFlagged(journalDirectory); }
+            catch (BrokerRefusal refusal) { return RefuseEntry(journalDirectory, refusal.Code); }
             var secret = Convert.FromHexString(secretText);
-            channel = new Channel(pid, creationTime, secret, root.GetProperty("journal_dir").GetString()!);
+            channel = new Channel(pid, creationTime, secret, journalDirectory, roots, IdleTimeoutFromEnvironment());
             using var initialPipe = channel.CreateInitialPipe();
             using var lifetime = new CancellationTokenSource();
             var brokerPid = Environment.ProcessId;
             var brokerCreationTime = Channel.ReadCreationTime((uint)brokerPid);
-            Console.Out.WriteLine(JsonSerializer.Serialize(new { pipe = channel.PipeName, broker_pid = brokerPid, broker_creation_time = brokerCreationTime }));
+            Console.Out.WriteLine(JsonSerializer.Serialize(new { pipe = channel.PipeName, broker_pid = brokerPid, broker_creation_time = brokerCreationTime, flagged = reported }));
             Console.Out.Flush();
             var stdinClosed = WaitForStdinCloseAsync(lifetime.Token);
             var apiExited = WaitForApiExitAsync(pid, creationTime, lifetime.Token);
@@ -51,6 +70,20 @@ internal static class Program
         {
             return Refuse("invalid_bootstrap");
         }
+        catch (BrokerRefusal refusal) { return Refuse(refusal.Code); }
+        finally { roots?.Dispose(); }
+    }
+
+    /// <summary>
+    /// VOOL_BROKER_IDLE_TIMEOUT_MS can only shorten the idle timeout (tests use it); a missing,
+    /// malformed or longer value keeps the 30-second default.
+    /// </summary>
+    private static TimeSpan? IdleTimeoutFromEnvironment()
+    {
+        var text = Environment.GetEnvironmentVariable("VOOL_BROKER_IDLE_TIMEOUT_MS");
+        return int.TryParse(text, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var milliseconds)
+            && milliseconds >= 100 && milliseconds < Channel.DefaultIdleTimeout.TotalMilliseconds
+            ? TimeSpan.FromMilliseconds(milliseconds) : null;
     }
 
     private static async Task<byte[]> ReadBootstrapAsync()
@@ -85,6 +118,13 @@ internal static class Program
     private static int Refuse(string code)
     {
         Console.Out.WriteLine(JsonSerializer.Serialize(new { error = new { code } }));
+        Console.Out.Flush();
+        return 2;
+    }
+
+    private static int RefuseEntry(string entry, string code)
+    {
+        Console.Out.WriteLine(JsonSerializer.Serialize(new { error = new { entry, code } }));
         Console.Out.Flush();
         return 2;
     }

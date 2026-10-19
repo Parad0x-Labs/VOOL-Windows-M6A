@@ -36,20 +36,190 @@ public sealed class ChannelTests
     }
 
     [Fact]
-    public async Task Bootstrap_refuses_nonempty_roots_without_starting_pipe()
+    public async Task Bootstrap_refuses_a_journal_inside_a_flagged_folder_without_starting_pipe()
     {
-        var value = new
+        // F9. The journal folder is the flagged folder itself; the start is refused before any pipe exists.
+        var flagged = TestSupport.NewTempDirectory();
+        try
         {
-            secret = new string('a', 64), api_pid = Environment.ProcessId,
-            api_creation_time = TestSupport.CurrentCreationTime,
-            flagged = new[] { Path.GetTempPath() }, journal_dir = Path.GetTempPath()
-        };
-        using var broker = TestSupport.StartBroker(value);
-        var line = await broker.StandardOutput.ReadLineAsync(TestContext.Current.CancellationToken);
-        using var refusal = JsonDocument.Parse(line!);
-        Assert.Equal("roots_not_implemented", refusal.RootElement.GetProperty("error").GetProperty("code").GetString());
-        await broker.WaitForExitAsync(TestContext.Current.CancellationToken);
-        Assert.NotEqual(0, broker.ExitCode);
+            var value = new
+            {
+                secret = new string('a', 64), api_pid = Environment.ProcessId,
+                api_creation_time = TestSupport.CurrentCreationTime,
+                flagged = new[] { flagged }, journal_dir = flagged
+            };
+            var pipes = TestSupport.BrokerPipes();
+            using var broker = TestSupport.StartBroker(value);
+            var line = await broker.StandardOutput.ReadLineAsync(TestContext.Current.CancellationToken);
+            using var refusal = JsonDocument.Parse(line!);
+            Assert.Equal("journal_inside_flagged", refusal.RootElement.GetProperty("error").GetProperty("code").GetString());
+            Assert.False(refusal.RootElement.TryGetProperty("pipe", out _));
+            await broker.WaitForExitAsync(TestContext.Current.CancellationToken);
+            Assert.NotEqual(0, broker.ExitCode);
+            Assert.Empty(TestSupport.BrokerPipes().Except(pipes));
+        }
+        finally { TestSupport.DeleteTree(flagged); }
+    }
+
+    [Fact]
+    public async Task A_request_sent_before_authentication_closes_the_connection()
+    {
+        var bootstrap = TestSupport.DefaultBootstrap();
+        var (broker, ready) = await TestSupport.StartReady(bootstrap);
+        try
+        {
+            await using (var early = await TestSupport.Connect(ready.RootElement.GetProperty("pipe").GetString()!, TestContext.Current.CancellationToken))
+            {
+                using var challenge = await TestSupport.ReadFrame(early, TestContext.Current.CancellationToken);
+                Assert.Equal("challenge", challenge.RootElement.GetProperty("type").GetString());
+                await TestSupport.WriteFrame(early, new { id = "early", op = "ping" }, TestContext.Current.CancellationToken);
+                Assert.True(await TestSupport.IsClosedByServer(early, TimeSpan.FromSeconds(10)), "The broker answered a request sent before authentication.");
+            }
+            await using var client = await TestSupport.ConnectAuthenticated(ready, TestSupport.SecretOf(bootstrap));
+            using var ping = await TestSupport.Request(client, new { id = "after", op = "ping" });
+            Assert.True(ping.RootElement.GetProperty("ok").GetBoolean());
+        }
+        finally { ready.Dispose(); await TestSupport.Kill(broker); }
+    }
+
+    [Fact]
+    public async Task A_request_id_is_accepted_once_per_connection()
+    {
+        var bootstrap = TestSupport.DefaultBootstrap();
+        var (broker, ready) = await TestSupport.StartReady(bootstrap);
+        try
+        {
+            await using (var client = await TestSupport.ConnectAuthenticated(ready, TestSupport.SecretOf(bootstrap)))
+            {
+                using var first = await TestSupport.Request(client, new { id = "same", op = "ping" });
+                Assert.True(first.RootElement.GetProperty("ok").GetBoolean());
+                using var replay = await TestSupport.Request(client, new { id = "same", op = "ping" });
+                Assert.Equal("same", replay.RootElement.GetProperty("id").GetString());
+                Assert.Equal("replayed_request", TestSupport.ErrorCode(replay));
+                using var replayOtherOp = await TestSupport.Request(client, new { id = "same", op = "open_root", flagged_id = "x", rel = "a" });
+                Assert.Equal("replayed_request", TestSupport.ErrorCode(replayOtherOp));
+                using var next = await TestSupport.Request(client, new { id = "next", op = "ping" });
+                Assert.True(next.RootElement.GetProperty("ok").GetBoolean());
+            }
+            await using var second = await TestSupport.ConnectAuthenticated(ready, TestSupport.SecretOf(bootstrap));
+            using var fresh = await TestSupport.Request(second, new { id = "same", op = "ping" });
+            Assert.True(fresh.RootElement.GetProperty("ok").GetBoolean());
+        }
+        finally { ready.Dispose(); await TestSupport.Kill(broker); }
+    }
+
+    [Fact]
+    public async Task A_connection_is_closed_after_its_request_cap()
+    {
+        var bootstrap = TestSupport.DefaultBootstrap();
+        var (broker, ready) = await TestSupport.StartReady(bootstrap);
+        try
+        {
+            await using (var client = await TestSupport.ConnectAuthenticated(ready, TestSupport.SecretOf(bootstrap)))
+            {
+                for (var i = 0; i < VoolBroker.Core.Channel.MaxRequestsPerConnection; i++)
+                {
+                    using var ping = await TestSupport.Request(client, new { id = $"p{i}", op = "ping" });
+                    Assert.True(ping.RootElement.GetProperty("ok").GetBoolean(), $"Request {i + 1} was refused.");
+                }
+                using var over = await TestSupport.Request(client, new { id = "over", op = "ping" });
+                Assert.Equal("too_many_requests", TestSupport.ErrorCode(over));
+                Assert.True(await TestSupport.IsClosedByServer(client, TimeSpan.FromSeconds(10)));
+            }
+            await using var next = await TestSupport.ConnectAuthenticated(ready, TestSupport.SecretOf(bootstrap));
+            using var fresh = await TestSupport.Request(next, new { id = "fresh", op = "ping" });
+            Assert.True(fresh.RootElement.GetProperty("ok").GetBoolean());
+        }
+        finally { ready.Dispose(); await TestSupport.Kill(broker); }
+    }
+
+    [Fact]
+    public async Task Idle_connections_are_closed_and_free_their_instances()
+    {
+        // The broker's idle timeout, shortened for the test (the variable can only shorten it).
+        var bootstrap = TestSupport.DefaultBootstrap();
+        var environment = new Dictionary<string, string> { ["VOOL_BROKER_IDLE_TIMEOUT_MS"] = "2000" };
+        var (broker, ready) = await TestSupport.StartReady(bootstrap, environment);
+        var clients = new List<System.IO.Pipes.NamedPipeClientStream>();
+        try
+        {
+            var pipeName = ready.RootElement.GetProperty("pipe").GetString()!;
+            // Fifteen authenticated clients and one that never answers the challenge fill all 16 instances.
+            for (var i = 0; i < 15; i++) clients.Add(await TestSupport.ConnectAuthenticated(ready, TestSupport.SecretOf(bootstrap)));
+            var silent = await TestSupport.Connect(pipeName, TestContext.Current.CancellationToken);
+            clients.Add(silent);
+            await Task.Delay(200, TestContext.Current.CancellationToken);
+            Assert.True(TestSupport.IsPipeBusy(pipeName), "Sixteen open connections did not fill the broker's instances.");
+            foreach (var client in clients.Take(15))
+                Assert.True(await TestSupport.IsClosedByServer(client, TimeSpan.FromSeconds(10)), "An idle authenticated connection was not closed.");
+            using (var challenge = await TestSupport.ReadFrame(silent, TestContext.Current.CancellationToken))
+                Assert.Equal("challenge", challenge.RootElement.GetProperty("type").GetString());
+            Assert.True(await TestSupport.IsClosedByServer(silent, TimeSpan.FromSeconds(10)), "A connection that never authenticated was not closed.");
+            await using var next = await TestSupport.ConnectAuthenticated(ready, TestSupport.SecretOf(bootstrap));
+            using var ping = await TestSupport.Request(next, new { id = "after-idle", op = "ping" });
+            Assert.True(ping.RootElement.GetProperty("ok").GetBoolean());
+            Assert.False(broker.HasExited);
+        }
+        finally
+        {
+            foreach (var client in clients) await client.DisposeAsync();
+            ready.Dispose();
+            await TestSupport.Kill(broker);
+        }
+    }
+
+    [Fact]
+    public async Task A_slow_request_outlives_the_idle_timeout()
+    {
+        // In process, so the walk's test hook can make open_root take longer than the idle timeout.
+        var flagged = TestSupport.NewTempDirectory();
+        Directory.CreateDirectory(Path.Combine(flagged, "a"));
+        var secret = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+        using var roots = new VoolBroker.Core.RootRegistry();
+        var flaggedId = roots.AddFlaggedRoot(flagged);
+        var channel = new VoolBroker.Core.Channel(Environment.ProcessId, TestSupport.CurrentCreationTime, secret, flagged, roots, TimeSpan.FromMilliseconds(300));
+        using var lifetime = new CancellationTokenSource();
+        var initial = channel.CreateInitialPipe();
+        var serving = channel.ServeAsync(initial, lifetime.Token);
+        VoolBroker.Core.HandleWalk.AfterComponentOpenForTests = (_, _) => Thread.Sleep(1500);
+        try
+        {
+            await using var client = await TestSupport.Connect(channel.PipeName, TestContext.Current.CancellationToken);
+            await TestSupport.Authenticate(client, Convert.ToHexString(secret).ToLowerInvariant());
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            using var opened = await TestSupport.Request(client, new { id = "slow", op = "open_root", flagged_id = flaggedId, rel = "a" });
+            Assert.True(opened.RootElement.GetProperty("ok").GetBoolean());
+            Assert.True(watch.Elapsed > TimeSpan.FromMilliseconds(1000), "The request was not slow; the hook did not run.");
+            VoolBroker.Core.HandleWalk.AfterComponentOpenForTests = null;
+            using var ping = await TestSupport.Request(client, new { id = "after-slow", op = "ping" });
+            Assert.True(ping.RootElement.GetProperty("ok").GetBoolean());
+            // Idle again: now the timeout closes the connection, and its root is released.
+            Assert.True(await TestSupport.IsClosedByServer(client, TimeSpan.FromSeconds(10)));
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            while (roots.OpenedCount != 0)
+            {
+                Assert.True(DateTime.UtcNow < deadline, "The idle connection's root was not released.");
+                await Task.Delay(50, TestContext.Current.CancellationToken);
+            }
+        }
+        finally
+        {
+            VoolBroker.Core.HandleWalk.AfterComponentOpenForTests = null;
+            lifetime.Cancel();
+            // The server thread waiting in ConnectNamedPipe on the next instance ends only when a
+            // client connects; connect one so this test leaves no blocked thread or pipe behind.
+            try
+            {
+                await using var wake = new System.IO.Pipes.NamedPipeClientStream(".", channel.PipeName[@"\\.\pipe\".Length..], System.IO.Pipes.PipeDirection.InOut);
+                await wake.ConnectAsync(2000, TestContext.Current.CancellationToken);
+            }
+            catch (Exception error) when (error is TimeoutException or IOException) { }
+            try { await serving.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken); }
+            catch (OperationCanceledException) { }
+            initial.Dispose();
+            roots.Dispose();
+            TestSupport.DeleteTree(flagged);
+        }
     }
 
     [Fact]
