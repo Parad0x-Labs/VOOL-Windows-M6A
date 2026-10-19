@@ -99,8 +99,14 @@ begin
     dir -- never a source checkout, the user's own Python, or this powershell itself. Then
     waits for the OS to release the file handles before extraction begins. A listener on 11435 that
     is not one of those processes belongs to someone else and is never stopped. }
+  { PowerShell also ends a single-quoted string at the curly quotes U+2018, U+2019, U+201A and
+    U+201B, and reads any of them doubled as that one character. }
   InstallDir := ExpandConstant('{app}');
   StringChangeEx(InstallDir, '''', '''''', True);
+  StringChangeEx(InstallDir, #$2018, #$2018#$2018, True);
+  StringChangeEx(InstallDir, #$2019, #$2019#$2019, True);
+  StringChangeEx(InstallDir, #$201A, #$201A#$201A, True);
+  StringChangeEx(InstallDir, #$201B, #$201B#$201B, True);
   Exec('powershell.exe',
     '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$r = ''' + InstallDir + '''; $rootPrefix = $r.TrimEnd([char[]]@(92,47)) + [char]92; $script = [regex]::Escape($rootPrefix) + ''(?:app\\apps\\vool_api_server\.py|vool_window\.py)''; $scriptArgument = ''^(?:\x22(?:[^\x22]*\\)?pythonw?\.exe\x22|(?:[^\s\x22]*\\)?pythonw?\.exe)(?:\s+-[bBdEhIiOPqRsSuvVx]+|\s+-W(?:\s+\x22[^\x22]*\x22|\s+\S+|[^\s\x22]+)|\s+-X(?:\s+\x22[^\x22]*\x22|\s+\S+|[^\s\x22]+)|\s+--check-hash-based-pycs\s+(?:\x22[^\x22]*\x22|\S+))*\s+\x22?'' + $script + ''(?:\x22|\s|$)''; Get-CimInstance Win32_Process -EA SilentlyContinue | Where-Object { ($_.Name -ieq ''python.exe'' -or $_.Name -ieq ''pythonw.exe'') -and (([string]$_.ExecutablePath).StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase) -or ([string]$_.CommandLine -match $scriptArgument)) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA SilentlyContinue }; Start-Sleep -Milliseconds 900"',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);

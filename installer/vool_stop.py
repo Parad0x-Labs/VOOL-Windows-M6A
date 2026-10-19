@@ -100,16 +100,24 @@ def kill_watchdog_processes(run: Runner) -> None:
     ])
 
 
+# PowerShell ends a single-quoted string at the curly quotes U+2018, U+2019, U+201A and U+201B as
+# well as at the ASCII apostrophe, and reads any of them doubled as that one character.
+_POWERSHELL_SINGLE_QUOTES = "'\u2018\u2019\u201a\u201b"
+
+
 def _windows_install_root_literal(install_root: Path) -> str:
     """Return a PowerShell single-quoted path literal for this VOOL installation."""
-    return "'" + str(install_root).replace("'", "''") + "'"
+    text = "".join(c + c if c in _POWERSHELL_SINGLE_QUOTES else c for c in str(install_root))
+    return "'" + text + "'"
 
 
 def kill_listener(run: Runner, port: int, install_root: Path) -> int | None:
     """Tree-kill the VOOL API process listening on ``port``. Returns the killed pid, or None.
 
-    Only a python/pythonw running this installation's API script is VOOL's. Anything else holding
-    the port -- a user's own OpenClaw gateway on 18789 or an unrelated local server -- is left running.
+    Only this installation's Python is VOOL's: a python/pythonw whose exe lives under the install
+    root, or that runs the root's API script, or that runs ``-m apps.vool_api_server`` with a
+    parent under the root (a source checkout's venv launcher). Anything else holding the port -- a
+    user's own OpenClaw gateway on 18789 or an unrelated local server -- is left running.
     """
     res = _run(run, [
         "powershell", "-NoProfile", "-Command",

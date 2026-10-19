@@ -25,6 +25,9 @@ _WINDOWS_SCRIPT_ARGUMENT_PREFIX = (
     r'|\s+-X(?:\s+\x22[^\x22]*\x22|\s+\S+|[^\s\x22]+)'
     r'|\s+--check-hash-based-pycs\s+(?:\x22[^\x22]*\x22|\S+))*\s+\x22?'
 )
+# PowerShell ends a single-quoted string at the curly quotes U+2018, U+2019, U+201A and U+201B as
+# well as at the ASCII apostrophe, and reads any of them doubled as that one character.
+_POWERSHELL_SINGLE_QUOTES = "'\u2018\u2019\u201a\u201b"
 
 
 def _is_windows_platform() -> bool:
@@ -323,7 +326,7 @@ class BundleSupervisor:
         """Stop only stale VOOL API Python processes before a bundle API start on Windows."""
         if not _is_windows_platform():
             return
-        root = str(self.root).replace("'", "''")
+        root = "".join(c + c if c in _POWERSHELL_SINGLE_QUOTES else c for c in str(self.root))
         supervisor_pid = os.getpid()
         command = (
             f"$r = '{root}'; "
