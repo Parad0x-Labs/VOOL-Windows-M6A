@@ -1,0 +1,81 @@
+# Versions CI installs, so a new upstream release cannot turn every PR red overnight.
+#
+# ci.yml passes this file to pip with -c on every install. It only caps what pip may pick; it adds
+# no packages. Packages pyproject.toml already pins exactly (pytest, ruff, idna, pypdf, reportlab,
+# markdown-it-py, xlrd) are left out, so pyproject stays their one source of truth.
+#
+# Source: the green CI run 39169340865 on 4a440b6 (merged head of PR #15) (pip 26.2.1, CPython 3.12.13, Linux), the
+# "Successfully installed" list of `pip install -e ".[dev,browser,companion,evm]"`.
+# Linux-only entries (jeepney, SecretStorage) are ignored where pip does not need them.
+#
+# To bump: change the version here (and in pyproject.toml if its floor moves), push, and let CI
+# prove it. To regenerate all of it, install the extras above into a clean 3.12 venv without -c,
+# run the suite, and replace the list with that venv's `pip freeze --exclude-editable`, minus the
+# exact pins named above.
+annotated-types==0.8.0
+anyio==4.15.1
+ast-serialize==0.13.1
+bitarray==3.12.2
+build==1.6.1
+certifi==2026.10.18
+cffi==2.1.1
+charset-normalizer==3.5.2
+ckzg==2.1.8
+click==8.5.0
+cryptography==50.0.2
+cytoolz==1.2.0
+eth-abi==6.0.0
+eth-account==0.14.0
+eth-hash==0.8.0
+eth-keyfile==0.10.0
+eth-keys==0.8.0
+eth-rlp==3.0.0
+eth-typing==6.0.0
+eth-utils==6.0.0
+greenlet==3.5.6
+h11==0.16.0
+hexbytes==2.0.0
+httpcore==1.0.9
+httpx==0.28.1
+iniconfig==2.3.1
+jaraco.classes==3.4.0
+jaraco.context==6.1.2
+jaraco.functools==4.6.0
+jeepney==0.9.0
+jsonalias==0.1.1
+keyring==25.7.0
+librt==0.16.0
+mdurl==0.1.2
+more-itertools==11.2.1
+mypy==2.4.0
+mypy_extensions==1.1.0
+packaging==26.3
+parsimonious==0.10.0
+pathspec==1.1.1
+pillow==13.0.0
+playwright==1.64.0
+pluggy==1.7.0
+psutil==7.2.2
+pycparser==3.11
+pycryptodome==3.24.1
+pydantic-core==2.50.1
+pydantic==2.14.1
+pyee==14.0.0
+pygments==2.21.0
+pynacl==1.6.2
+pyproject_hooks==1.3.3
+pyyaml==6.0.3
+py_ecc==8.0.0
+regex==2026.9.29
+requests==2.34.2
+rlp==5.0.0
+SecretStorage==3.5.0
+solders==0.29.0
+starlette==1.9.0
+toolz==1.2.0
+typing-extensions==4.16.0
+typing-inspection==0.4.4
+urllib3==2.8.0
+uvicorn==0.54.0
+xxhash==4.0.1
+zstandard==0.25.0
