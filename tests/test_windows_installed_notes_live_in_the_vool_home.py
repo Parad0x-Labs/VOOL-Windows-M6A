@@ -123,7 +123,9 @@ def _resolved(path: Path) -> str:
     return str(path.resolve())
 
 
-def test_the_installed_app_keeps_notes_in_the_vool_home_and_gives_unbound_chats_the_desktop(tmp_path: Path) -> None:
+def test_the_installed_app_keeps_notes_in_the_vool_home_and_gives_unbound_chats_the_desktop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     app, home = _install(tmp_path), _native_home(tmp_path)
     before = set((REPO / "notes").glob("groceries-*.md"))
 
@@ -150,6 +152,9 @@ def test_the_installed_app_keeps_notes_in_the_vool_home_and_gives_unbound_chats_
     if sys.platform == "win32":
         from core.web.api.runtime import _windows_desktop
 
+        # The shell expands a Desktop stored as %USERPROFILE%\Desktop from the process environment,
+        # so ask it under the child's USERPROFILE (a redirected Desktop stays where it is either way).
+        monkeypatch.setenv("USERPROFILE", str(tmp_path / "user"))
         assert seen["default_workspace_root"] == str(_windows_desktop())
     else:
         assert seen["default_workspace_root"] == str(tmp_path / "user" / "Desktop")
