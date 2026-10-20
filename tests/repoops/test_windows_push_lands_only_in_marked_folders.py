@@ -213,3 +213,19 @@ def test_a_push_from_a_repository_outside_the_marked_folders_is_refused(world, t
     assert code == -1 and err.startswith("git was not run:") and "which is outside them" in err, err
     assert _refs(destination) == before, "nothing lands in the destination"
     assert not (source / ".git" / "refs" / "remotes").exists(), "nothing is written in the outside repository"
+
+
+def test_a_push_between_a_housekept_repository_and_its_local_clone_lands(world) -> None:
+    """A local clone hard-links the source's whole object store, `objects/info/` included after a gc,
+    so both repositories hold hard-linked files that git only ever replaces by renaming."""
+    _git(world["source"], "gc", "-q")
+    clone = world["marked"] / "clone"
+    _git(world["marked"], "clone", "-q", str(world["source"]), str(clone))
+    _git(world["source"], "checkout", "-q", "-b", "side")  # the clone pushes to main, which the source no longer has checked out
+    _git(clone, "commit", "-q", "--allow-empty", "-m", "from the clone")
+
+    assert GitRunner(root=clone).push_destination_refusal("origin") == ""
+    code, err = _push(clone, "origin")
+
+    assert code == 0, err
+    assert _git(world["source"], "rev-parse", "refs/heads/main").strip() == _git(clone, "rev-parse", "HEAD").strip()
