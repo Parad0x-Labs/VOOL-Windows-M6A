@@ -110,13 +110,19 @@ def safe_env(base: dict[str, str] | None = None) -> dict[str, str]:
 def hardening_args() -> list[str]:
     """Global git options that keep a command from running repository-chosen programs. Run diff,
     log, show, status and commit through hardened_argv(), which adds the submodule settings these
-    lack; ``git apply`` never diffs a submodule and may use these alone."""
+    lack; ``git apply`` never diffs a submodule and may use these alone.
+
+    VOOL's git also runs no automatic housekeeping: a commit, merge or cherry-pick would otherwise
+    start ``git maintenance run --auto`` (``gc --auto`` before git 2.29), whose gc or repack can run
+    ``gc.recentObjectsHook``. The user's own git and scheduled maintenance are unaffected."""
     return [
         "--no-optional-locks",
         "-c", "core.fsmonitor=false",
         "-c", f"core.hooksPath={os.devnull}",
         "-c", "diff.external=",
         "-c", "core.pager=cat",
+        "-c", "maintenance.auto=false",
+        "-c", "gc.auto=0",
     ]
 
 
