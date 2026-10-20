@@ -345,6 +345,23 @@ def test_a_submodule_added_from_a_local_folder_with_hard_linked_objects_still_co
 
 
 @pytest.mark.parametrize("mode", MODES)
+def test_a_submodule_added_from_a_local_folder_in_a_linked_worktree_still_commits(
+    tmp_path: Path, monkeypatch, world, mode: str
+) -> None:
+    """A linked worktree keeps its submodules' git folders in its own git folder
+    (`.git/worktrees/<name>/modules/<submodule>`), with the objects a local clone hard-links."""
+    marked, repo, _ = _marked_repo(tmp_path, monkeypatch)
+    worktree = marked / "linked"
+    _git(repo, "worktree", "add", "-q", "-b", "side", str(worktree))
+    _add_submodule(worktree, _source_repo(tmp_path / "sources" / "lib"))
+    modules = repo / ".git" / "worktrees" / "linked" / "modules" / "lib"
+    assert any(os.stat(path).st_nlink > 1 for path in (modules / "objects").rglob("*") if path.is_file())
+    session = _bound_session(worktree)
+
+    _approved_commit_runs(session, marked, worktree, mode, world)
+
+
+@pytest.mark.parametrize("mode", MODES)
 def test_a_git_lfs_object_hard_linked_elsewhere_still_commits(tmp_path: Path, monkeypatch, world, mode: str) -> None:
     """`git lfs pull` from a local folder hard-links `.git/lfs/objects/<aa>/<bb>/<oid>`; git-lfs never rewrites it."""
     marked, repo, outside = _marked_repo(tmp_path, monkeypatch)
