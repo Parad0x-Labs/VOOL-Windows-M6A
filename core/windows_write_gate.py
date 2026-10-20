@@ -7,10 +7,11 @@ refused unless every target lies inside a folder listed in VOOL_WINDOWS_DISPOSAB
 (os.pathsep-separated absolute paths), each path argument checked where its writer puts it
 (`_landing`), and every folder the call really runs in checked too: a step's or a code-task rollback's
 task or session folder, and for a git operation the top of the repository's work tree, its git folder and
-its shared git folder, as git reports them (`_places_beyond_workspace`). Only those folders are placed: a
-link or junction inside the git folder, or a repository-local `lfs.storage` setting, can still send some
-of git's writes elsewhere. An intent that also changes folders its arguments do not name is refused
-outright (`_ALWAYS_REFUSED`).
+its shared git folder, as git reports them (`_places_beyond_workspace`); a repository whose git folders
+hold a link or hard link, or whose own config sets keys that move git's writes (Git LFS keys,
+`gc.repackFilterTo`), is refused, since git's writes can then land outside those folders
+(core/git_write_redirects.py). An intent that also changes folders its arguments do not name is
+refused outright (`_ALWAYS_REFUSED`).
 The developer sets that variable when starting VOOL; nothing inside a
 workspace can set it. VOOL's own private stores (skills, media projects, browser profiles,
 notes) are not user-filesystem destinations and are not gated here. POSIX is unaffected.
@@ -208,11 +209,13 @@ def _git_places(folder: str) -> list[tuple[str, str]] | str:
     any of them outside the folder (`core.worktree`, a `.git` file pointing elsewhere, a linked
     worktree), so they are asked of git, never derived from where `.git` sits. git is asked only when
     the operation's own runner would run git there (`GitRunner._repository_refusal`, which asks
-    core/safe_git.py), and a refusal is given in that runner's words. Folders below these three (a link
-    in place of `.git/objects`) and a local `lfs.storage` setting are not placed."""
+    core/safe_git.py), and a refusal is given in that runner's words. A link below these three (in place
+    of `.git/objects`), a hard link there, or a repository-set key that moves writes (Git LFS keys,
+    `gc.repackFilterTo`) would send them elsewhere, so such a repository is refused
+    (core/git_write_redirects.py)."""
     import subprocess
 
-    from core import safe_git
+    from core import git_write_redirects, safe_git
     from core.repoops.gitops import GitRunner
 
     unplaceable = "git cannot say where this repository's work tree and git folders are, so where it writes cannot be checked"
@@ -230,6 +233,12 @@ def _git_places(folder: str) -> list[tuple[str, str]] | str:
     lines = probe.stdout.splitlines()
     if probe.returncode != 0 or len(lines) != 3 or not all(_placeable(line) for line in lines):
         return unplaceable
+    try:
+        redirected = git_write_redirects.refusal(lines[1], lines[2], Path(folder))
+    except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired):
+        return "the repository's git folder or config could not be checked for links and settings that move its writes"
+    if redirected:
+        return f"{redirected}, so where it writes cannot be checked"
     return list(zip(("the repository's work tree", "the repository's git folder", "the repository's shared git folder"),
                     lines, strict=True))
 

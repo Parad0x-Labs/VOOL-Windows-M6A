@@ -191,6 +191,9 @@ class GitRunner:
         url = _shown(url)
         if git_dir is None:
             return f"{url!r} is not a git repository VOOL can check"
+        outside = _windows_destination_refusal(url, git_dir, timeout=self.timeout)
+        if outside:
+            return outside
         try:
             keys = _destination_program_keys(git_dir, timeout=self.timeout)
             hooks = safe_git.active_hooks(git_dir, timeout=self.timeout)
@@ -502,6 +505,38 @@ def _local_push_path(url: str) -> Path | None:
     if _has_drive_prefix(rest[1:]):
         rest = rest[1:]  # file:///C:/repo
     return Path(rest)
+
+
+def _windows_destination_refusal(url: str, git_dir: Path, *, timeout: float) -> str:
+    """On Windows, a push writes into a repository on this computer only when that repository's git
+    folders are inside the folders marked in VOOL_WINDOWS_DISPOSABLE_WORKSPACES (owner decision,
+    2026-10-20); a push to an online server is not affected. receive-pack writes objects and refs in
+    the destination's git folder and, for a linked worktree, its shared git folder, so both are
+    placed, and a link or hard link inside them, which would send those writes elsewhere, is refused
+    too (core/git_write_redirects.py). Reproduced 2026-10-20: a push to a local bare repository
+    outside the marked folders wrote its objects and branch there. Off Windows this returns ""."""
+    from core import git_write_redirects, windows_write_gate
+
+    if not windows_write_gate.active():
+        return ""
+    probe = subprocess.run(
+        ["git", "--git-dir", str(git_dir), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        capture_output=True, text=True, timeout=timeout, env=safe_git.safe_env(),
+    )
+    common = probe.stdout.strip()
+    if probe.returncode != 0 or not common:
+        return f"VOOL cannot tell where the push destination {url!r} keeps its git folder, so it does not push there"
+    roots = windows_write_gate.flagged_roots()
+    for place in dict.fromkeys((str(git_dir), common)):
+        if not windows_write_gate._inside(place, roots):
+            return (f"On Windows, VOOL pushes to a repository on this computer only inside the folders marked in "
+                    f"{windows_write_gate.ENV_VAR}; the push destination {url!r} keeps its git folder at {place}, "
+                    "which is outside them")
+    try:
+        found = git_write_redirects.link_refusal(str(git_dir), common)
+    except OSError as exc:
+        return f"the push destination {url!r} could not be checked ({type(exc).__name__})"
+    return f"the push destination {url!r}: {found}" if found else ""
 
 
 def _receiving_git_dir(path: Path, *, timeout: float) -> Path | None:
