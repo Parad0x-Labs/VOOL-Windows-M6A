@@ -412,6 +412,10 @@ def apply_unified_diff_workspace(
 
     applied_with = ""
     errors: list[str] = []
+    # The engines get the patch's exact UTF-8 bytes: a text pipe would encode it in the locale's
+    # encoding and, on Windows, write each newline as CRLF, so the child would not read the patch
+    # VOOL checked.
+    patch_bytes = patch_text.encode("utf-8")
     git_available = shutil.which("git")
     if git_available:
         # The repository's own config could make `git apply` run a filter program; such a
@@ -431,15 +435,15 @@ def apply_unified_diff_workspace(
         git_cmd = [git_available, *safe_git.hardening_args(), "-C", str(workspace_root), "apply",
                    "--whitespace=nowarn", "--recount", "-"]
         try:
-            git_result = subprocess.run(git_cmd, input=patch_text, text=True, capture_output=True, timeout=60,
+            git_result = subprocess.run(git_cmd, input=patch_bytes, capture_output=True, timeout=60,
                                         env=safe_git.safe_env())
         except subprocess.TimeoutExpired:
             errors.append("git apply timed out after 60s")
             git_result = None
         if git_result is not None and git_result.returncode == 0:
             applied_with = "git_apply"
-        else:
-            errors.append((git_result.stderr or git_result.stdout or "").strip())
+        elif git_result is not None:
+            errors.append(_engine_output(git_result))
     if not applied_with:
         try:
             _apply_unified_diff_python(patch_text, workspace_root=workspace_root)
@@ -458,14 +462,14 @@ def apply_unified_diff_workspace(
             # silent wrong-location write.
             patch_cmd = [patch_available, f"-p{strip}", "-d", str(workspace_root), "--forward", "--batch", "--fuzz=0"]
             try:
-                patch_result = subprocess.run(patch_cmd, input=patch_text, text=True, capture_output=True, timeout=60)
+                patch_result = subprocess.run(patch_cmd, input=patch_bytes, capture_output=True, timeout=60)
             except subprocess.TimeoutExpired:
                 errors.append("patch timed out after 60s")
                 patch_result = None
             if patch_result is not None and patch_result.returncode == 0:
                 applied_with = "patch"
-            else:
-                errors.append((patch_result.stderr or patch_result.stdout or "").strip())
+            elif patch_result is not None:
+                errors.append(_engine_output(patch_result))
     if not applied_with:
         error_text = "; ".join(item for item in errors if item) or "No supported patch engine was available."
         return {
@@ -574,6 +578,12 @@ _GIT_UNSUPPORTED_HEADERS = (
     "rename from ", "rename to ", "copy from ", "copy to ", "similarity index ", "dissimilarity index ",
     "old mode ", "new mode ", "deleted file mode ", "GIT binary patch", "Binary files ",
 )
+
+
+def _engine_output(result: Any) -> str:
+    """What a patch engine printed (its stderr, else its stdout), as text."""
+    output = result.stderr or result.stdout or b""
+    return (output.decode("utf-8", "replace") if isinstance(output, bytes) else str(output)).strip()
 
 
 def _workspace_is_work_tree_top(workspace_root: Path) -> bool:
