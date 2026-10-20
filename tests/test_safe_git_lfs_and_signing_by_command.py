@@ -77,8 +77,9 @@ def _forged_signature_commit(repo: Path) -> str:
     body = (f"tree {tree}\nparent {_git(repo, 'rev-parse', 'HEAD').strip()}\n"
             "author T <t@example.test> 1 +0000\ncommitter T <t@example.test> 1 +0000\n"
             "gpgsig -----BEGIN PGP SIGNATURE-----\n \n AAAA\n -----END PGP SIGNATURE-----\n\nforged\n")
-    sha = subprocess.run(["git", "-C", str(repo), "hash-object", "-t", "commit", "-w", "--stdin"], input=body,
-                         check=True, capture_output=True, text=True).stdout.strip()
+    # Bytes: a text-mode pipe on Windows would turn every "\n" into "\r\n", which git refuses.
+    sha = subprocess.run(["git", "-C", str(repo), "hash-object", "-t", "commit", "-w", "--stdin"],
+                         input=body.encode(), check=True, capture_output=True).stdout.decode().strip()
     _git(repo, "branch", "forged", sha)
     return sha
 
@@ -565,8 +566,8 @@ def _commit_tree_on(repo: Path, branch: str, entries: list[tuple[str, str, bytes
                               capture_output=True).stdout.decode().strip()
     listing = _git(repo, "ls-tree", "HEAD")
     listing += "".join(f"{mode} blob {blob(content)}\t{name}\n" for mode, name, content in entries)
-    tree = subprocess.run(["git", "-C", str(repo), "mktree"], input=listing, check=True, capture_output=True,
-                          text=True).stdout.strip()
+    tree = subprocess.run(["git", "-C", str(repo), "mktree"], input=listing.encode(), check=True,
+                          capture_output=True).stdout.decode().strip()  # bytes: no "\r\n" on Windows
     commit = _git(repo, "commit-tree", tree, "-p", "HEAD", "-m", "planted").strip()
     _git(repo, "branch", branch, commit)
 
