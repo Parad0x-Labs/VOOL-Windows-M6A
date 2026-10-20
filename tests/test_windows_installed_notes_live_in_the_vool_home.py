@@ -123,14 +123,26 @@ def _resolved(path: Path) -> str:
     return str(path.resolve())
 
 
-def test_the_installed_app_keeps_notes_in_the_vool_home_and_gives_unbound_chats_the_desktop(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def _shell_desktop(env: dict[str, str]) -> str:
+    """The Windows shell's own Desktop under ``env``, read by PowerShell, not by VOOL's code."""
+    powershell = Path(env.get("SYSTEMROOT") or env["SystemRoot"]) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    shell = subprocess.run(
+        [str(powershell), "-NoProfile", "-Command",
+         "[Console]::OutputEncoding = [Text.Encoding]::UTF8; [Environment]::GetFolderPath('Desktop')"],
+        env=env, capture_output=True, text=True, encoding="utf-8", timeout=60,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    assert shell.returncode == 0 and shell.stdout.strip(), shell.stderr[-4000:]
+    return shell.stdout.strip()
+
+
+def test_the_installed_app_keeps_notes_in_the_vool_home_and_gives_unbound_chats_the_desktop(tmp_path: Path) -> None:
     app, home = _install(tmp_path), _native_home(tmp_path)
     before = set((REPO / "notes").glob("groceries-*.md"))
+    env = _installed_api_env(tmp_path, app, home)
 
     try:
-        seen = _probe(REPO, _installed_api_env(tmp_path, app, home))
+        seen = _probe(REPO, env)
     finally:
         # A regression writes the probe's note into the code root (the bug this file covers):
         # remove it so a failed run leaves the checkout as it found it.
@@ -150,12 +162,9 @@ def test_the_installed_app_keeps_notes_in_the_vool_home_and_gives_unbound_chats_
     # Desktop (owner's choice, 2026-10-20): the shell's known folder on Windows, ~/Desktop elsewhere.
     assert seen["workspace_root"] == _resolved(REPO)
     if sys.platform == "win32":
-        from core.web.api.runtime import _windows_desktop
-
-        # The shell expands a Desktop stored as %USERPROFILE%\Desktop from the process environment,
-        # so ask it under the child's USERPROFILE (a redirected Desktop stays where it is either way).
-        monkeypatch.setenv("USERPROFILE", str(tmp_path / "user"))
-        assert seen["default_workspace_root"] == str(_windows_desktop())
+        # Asked under the API's own environment: the shell expands a Desktop stored as
+        # %USERPROFILE%\Desktop from it, while a redirected Desktop stays where it is.
+        assert seen["default_workspace_root"] == _shell_desktop(env)
     else:
         assert seen["default_workspace_root"] == str(tmp_path / "user" / "Desktop")
 
