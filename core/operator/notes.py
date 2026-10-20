@@ -218,7 +218,8 @@ def _archive_dir(*, create: bool) -> Path:
     if _is_link(raw) or _confined(f"notes/{_ARCHIVE}") != raw:
         raise _Unconfined("notes/.archive is a link, not a folder inside the notes folder")
     if create and not raw.exists():
-        raw.mkdir()
+        # Another archive, or another program, may make it meanwhile: the check below still refuses a link.
+        raw.mkdir(exist_ok=True)
         if _is_link(raw) or _confined(f"notes/{_ARCHIVE}") != raw:
             raise _Unconfined("notes/.archive is a link, not a folder inside the notes folder")
     return raw
