@@ -51,7 +51,9 @@ internal static class Native
     internal const uint FileCaseSensitiveSearch = 0x1;
     internal const int FileAttributeTagInfoClass = 9;
     internal const int FileStandardInfoClass = 1;
-    internal const int FileNameInfoClass = 2;
+    // FileNameInfo (2) returns the path as it was opened, an 8.3 alias included; the normalized
+    // form returns the long names as they are on disk.
+    internal const int FileNormalizedNameInfoClass = 24;
     internal const int FileCaseSensitiveInfoClass = 23;
     internal const int FileIdInfoClass = 18;
     internal const uint VolumeNameDos = 0;
@@ -399,7 +401,7 @@ internal static class Native
         var memory = Marshal.AllocHGlobal(65540);
         try
         {
-            if (!GetFileInformationByHandleEx(handle, FileNameInfoClass, memory, 65540))
+            if (!GetFileInformationByHandleEx(handle, FileNormalizedNameInfoClass, memory, 65540))
                 throw new BrokerRefusal("authority_check_failed", new Win32Exception(Marshal.GetLastWin32Error()).Message);
             var length = Marshal.ReadInt32(memory);
             if (length < 0 || length > 65532 || (length & 1) != 0) throw new BrokerRefusal("authority_check_failed", "Invalid file name information.");

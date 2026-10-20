@@ -61,7 +61,6 @@ public sealed class RootRegistry : IDisposable
             var attribute = Native.GetAttributeTag(handle);
             if ((attribute.FileAttributes & Native.FileAttributeReparsePoint) != 0) throw new BrokerRefusal("reparse_point", "Flagged folder is a reparse point.");
             if ((attribute.FileAttributes & Native.FileAttributeDirectory) == 0) throw new BrokerRefusal("invalid_flagged", "Flagged entry is not a directory.");
-            if ((Native.GetCaseFlags(handle) & Native.FileCaseSensitiveSearch) != 0) throw new BrokerRefusal("case_sensitive_dir", "Case-sensitive directories are refused.");
             var finalPath = Native.GetFinalPath(handle, Native.VolumeNameDos);
             // The start line reports this path. A real path holding an unpaired surrogate (reached,
             // say, through a junction above the entry) cannot be written as JSON without changing
@@ -77,6 +76,8 @@ public sealed class RootRegistry : IDisposable
                 throw new BrokerRefusal("authority_check_failed", "Cannot identify the flagged volume.");
             if (!string.Equals(fileSystem.ToString(), "NTFS", StringComparison.OrdinalIgnoreCase))
                 throw new BrokerRefusal("unsupported_filesystem", $"Flagged folder is on {fileSystem}, not NTFS.");
+            // After the file system check: FAT, exFAT and network volumes cannot answer this query.
+            if ((Native.GetCaseFlags(handle) & Native.FileCaseSensitiveSearch) != 0) throw new BrokerRefusal("case_sensitive_dir", "Case-sensitive directories are refused.");
             var identity = Native.GetFileIdentity(handle);
             var id = $"{identity.VolumeSerial:x16}{Convert.ToHexString(identity.FileId).ToLowerInvariant()}";
             if (flagged.ContainsKey(id)) { handle.Dispose(); return id; }
