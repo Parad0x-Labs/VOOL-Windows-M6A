@@ -1188,7 +1188,42 @@ def _git_dirs_within(repo: Path, ceiling: str) -> bool:
     lines = probe.stdout.splitlines()
     if probe.returncode != 0 or len(lines) != 2:
         return False
-    return all(_within(os.path.realpath(os.path.join(repo, line)), ceiling) for line in lines)
+    git_dir, common_dir = (os.path.realpath(os.path.join(repo, line)) for line in lines)
+    if not (_within(git_dir, ceiling) and _within(common_dir, ceiling)):
+        return False
+    return _alternates_within(os.path.join(common_dir, "objects"), ceiling, depth=0)
+
+
+#: Git follows alternates no deeper than this; deeper chains are refused rather than checked.
+_MAX_ALTERNATES_DEPTH = 5
+
+
+def _alternates_within(objects_dir: str, ceiling: str, *, depth: int) -> bool:
+    """Whether every object store ``objects_dir`` borrows from (objects/info/alternates, followed
+    the way git follows it) lies under ``ceiling``. Unknown is outside; http-alternates is refused."""
+    info = os.path.join(objects_dir, "info")
+    if os.path.lexists(os.path.join(info, "http-alternates")):
+        return False
+    alternates = os.path.join(info, "alternates")
+    if not os.path.lexists(alternates):
+        return True
+    if depth >= _MAX_ALTERNATES_DEPTH:
+        return False
+    try:
+        with open(alternates, encoding="utf-8") as handle:
+            entries = handle.read().splitlines()
+    except (OSError, UnicodeDecodeError):
+        return False
+    for entry in entries:
+        entry = entry.strip()
+        if not entry or entry.startswith("#"):
+            continue
+        if entry.startswith('"'):
+            return False  # a C-quoted path; refused rather than unquoted
+        target = os.path.realpath(os.path.join(objects_dir, entry))
+        if not _within(target, ceiling) or not _alternates_within(target, ceiling, depth=depth + 1):
+            return False
+    return True
 
 
 def _git_commit_item(repo: str, reference: str, confidence: str, scan: _Scan) -> dict | None:
