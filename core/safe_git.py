@@ -56,17 +56,26 @@ _EXECUTABLE_KEY_SUFFIXES = frozenset({
     "uploadpack", "receivepack",    # remote.<x>.*: run locally for local-path remotes
     "fsmonitor", "hookspath",
     "cmd",                # difftool/mergetool/browser/man.<x>.cmd
+    "vcs",                # remote.<x>.vcs: runs git-remote-<vcs>
+    "difffilter",         # interactive.diffFilter
 })
+#: Final-segment endings that name a program however the key is spelled before them:
+#: gpg.ssh.defaultKeyCommand, gc.recentObjectsHook, uploadpack.packObjectsHook, sendemail.<x>Cmd.
+_EXECUTABLE_KEY_ENDINGS = ("command", "cmd", "hook")
 #: Whole keys (fnmatch, lowercase) that pull in configuration git would then obey.
 _EXECUTABLE_KEY_PATTERNS = ("include.path", "includeif.*.path", "pager.*", "submodule.*.update",
                             "protocol.allow", "protocol.*.allow", "browser.*.path", "man.*.path",
+                            "difftool.*.path", "mergetool.*.path",
                             # Signing or signature checks switched on make git run gpg, gpgsm or
                             # ssh-keygen without the repository naming a program, and gpg.format picks
                             # which; only the values in _SAFE_VALUES pass.
                             "commit.gpgsign", "tag.gpgsign", "tag.forcesignannotated", "push.gpgsign",
                             "log.showsignature", "merge.verifysignatures", "gpg.format",
                             # Git LFS runs a custom transfer agent's program for push and fetch.
-                            "lfs.customtransfer.*", "lfs.standalonetransferagent")
+                            "lfs.customtransfer.*", "lfs.standalonetransferagent",
+                            # Config-defined hooks (hook.<name>.command, .event, .enabled; git 2.5x):
+                            # hardening's core.hooksPath does not reach them.
+                            "hook.*")
 #: Inherited environment variables git may keep: identity only.
 _ALLOWED_GIT_ENV = frozenset({
     "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
@@ -76,8 +85,11 @@ _ALLOWED_GIT_ENV = frozenset({
 
 def is_executable_key(key: str) -> bool:
     lowered = key.strip().lower()
-    if lowered.rsplit(".", 1)[-1] in _EXECUTABLE_KEY_SUFFIXES:
+    last = lowered.rsplit(".", 1)[-1]
+    if last in _EXECUTABLE_KEY_SUFFIXES:
         return True
+    if last.endswith(_EXECUTABLE_KEY_ENDINGS) and not lowered.startswith("advice."):
+        return True  # advice.<x>Hook and the like only toggle a message
     return any(fnmatch.fnmatchcase(lowered, pattern) for pattern in _EXECUTABLE_KEY_PATTERNS)
 
 
