@@ -278,3 +278,30 @@ def test_a_new_branch_from_a_local_start_point_ignores_a_remotes_branch_of_that_
     assert proc.returncode == 0, proc.stderr
     assert _git(repo, "symbolic-ref", "--short", "HEAD") == "new"
     assert not (repo / ".lfsconfig").exists()
+
+
+@pytest.mark.parametrize("command", [("switch", "--detach", "feat"), ("switch", "-d", "feat"),
+                                     ("switch", "-c", "new", "feat")])
+def test_a_start_point_with_a_tag_of_the_same_name_still_checks_the_branch(repo, command) -> None:
+    # git takes the branch here too (switch -c even writes it before calling the name ambiguous).
+    _git(repo, "tag", "feat")
+    _branch_with(repo, "feat", HOSTILE)
+
+    proc = local_lifecycle._run(str(repo), *command, mutating=True)
+
+    assert proc.returncode != 0 and "evil.example" in proc.stderr, proc.stderr
+    assert not (repo / ".lfsconfig").exists()
+
+
+def test_a_remote_branch_fetched_somewhere_unusual_is_checked_too(repo) -> None:
+    # The repository's fetch refspec decides where git looks for origin's rb, not refs/remotes/origin.
+    sha = _branch_with(repo, "rb", HOSTILE)
+    _git(repo, "update-ref", "refs/hidden/rb", sha)
+    _git(repo, "update-ref", "refs/remotes/origin/rb", _git(repo, "rev-parse", "main"))
+    _git(repo, "branch", "-D", "rb")
+    _git(repo, "config", "--replace-all", "remote.origin.fetch", "+refs/heads/*:refs/hidden/*")
+
+    proc = local_lifecycle._run(str(repo), "switch", "rb", mutating=True)
+
+    assert proc.returncode != 0 and "evil.example" in proc.stderr, proc.stderr
+    assert not (repo / ".lfsconfig").exists()
