@@ -486,19 +486,35 @@ def _resolve_commit(cwd: Path, revision: str, *, timeout: float) -> str:
     return _rev_parse(cwd, f"{probe.stdout.strip()}^{{commit}}", timeout=timeout)
 
 
-def _checkout_target_commits(cwd: Path, name: str, *, timeout: float) -> list[str]:
-    """Every commit ``git switch <name>`` or ``git worktree add <path> <name>`` may check out. git reads
-    the name as a branch first (``rev-parse`` prefers a tag of the same name), then creates a
-    tracking branch from a remote's branch of that name; a start point (``-c <new> <name>``) is read
-    by ``rev-parse``. All of them are checked, and a name that is none of them refuses."""
+#: Options with which switch and worktree add read their target as a start point, not a branch.
+_START_POINT_OPTIONS = frozenset({"-c", "-C", "--create", "--force-create", "--orphan", "-d", "--detach",
+                                  "-b", "-B"})
+
+
+def _checkout_target_commits(cwd: Path, name: str, *, as_branch: bool, timeout: float) -> list[str]:
+    """Every commit ``git switch <name>`` or ``git worktree add <path> <name>`` may check out. As a
+    branch (``as_branch``), git reads the name as a local branch first (``rev-parse`` would prefer a
+    tag of the same name) and, when there is none, creates a tracking branch from a remote's branch
+    of that name; a start point (``-c <new> <name>``, ``--detach``) is read by ``rev-parse``. All of
+    them are checked, and a name that is none of them refuses."""
     found: list[str] = []
-    if name != "-" and not name.startswith("refs/"):
-        listing = subprocess.run(hardened_argv(cwd, "for-each-ref", "--format=%(objectname)", f"refs/heads/{name}",
-                                               f"refs/remotes/*/{name}"),
-                                 capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
-        if listing.returncode != 0:
-            raise RuntimeError(f"git for-each-ref failed ({listing.returncode})")
-        found = [_rev_parse(cwd, f"{oid}^{{commit}}", timeout=timeout) for oid in listing.stdout.split()]
+    if as_branch and name != "-" and not name.startswith("refs/"):
+        local = subprocess.run(hardened_argv(cwd, "rev-parse", "--verify", "--quiet", f"refs/heads/{name}^{{commit}}"),
+                               capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
+        if local.returncode == 0 and local.stdout.strip():
+            found.append(local.stdout.strip())
+        else:
+            remotes = subprocess.run(hardened_argv(cwd, "remote"), capture_output=True, encoding="utf-8",
+                                     errors="surrogateescape", timeout=timeout, env=safe_env())
+            if remotes.returncode != 0:
+                raise RuntimeError(f"git remote failed ({remotes.returncode})")
+            for remote in remotes.stdout.split():
+                probe = subprocess.run(hardened_argv(cwd, "rev-parse", "--verify", "--quiet",
+                                                     f"refs/remotes/{remote}/{name}^{{commit}}"),
+                                       capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout,
+                                       env=safe_env())
+                if probe.returncode == 0 and probe.stdout.strip():
+                    found.append(probe.stdout.strip())
     try:
         found.append(_resolve_commit(cwd, name, timeout=timeout))
     except RuntimeError:
@@ -536,9 +552,15 @@ def _incoming_commits(cwd: Path, argv: Sequence[str], *, timeout: float) -> list
         return found
     targets = _revision_args(argv)
     if argv[0] == "switch" or tuple(argv[:2]) == ("worktree", "add"):
+        as_branch = not any(arg in _START_POINT_OPTIONS or arg.startswith(("-b", "-B")) for arg in argv[1:])
         if argv[0] == "worktree":
+            # worktree add <path> alone checks out a branch guessed from the folder's name (or, with
+            # worktree.guessRemote, a remote's); -b/-B/--detach without a commit start at HEAD.
+            if "--" in argv or (as_branch and len(targets) < 3):
+                raise RuntimeError("git worktree add without an explicit commit cannot be checked")
             targets = targets[2:]  # after "add" and the new worktree's path
-        return [(arg, commit) for arg in targets for commit in _checkout_target_commits(cwd, arg, timeout=timeout)]
+        return [(arg, commit) for arg in targets
+                for commit in _checkout_target_commits(cwd, arg, as_branch=as_branch, timeout=timeout)]
     if argv[0] in _BRINGING_COMMANDS:
         if argv[0] != "switch" and not targets:
             raise RuntimeError(f"git {argv[0]} without a commit cannot be checked")
