@@ -4,8 +4,9 @@ A note is a Markdown FILE under the active workspace's ``notes/`` directory — 
 workspace authority the runtime's file tools resolve (`core.runtime_paths.
 resolve_workspace_root`), so project isolation is the workspace root's own boundary and no
 second notes framework exists. One exception: the installed Windows app keeps notes in the VOOL
-home's workspace while its file tools keep {app}\\app (`_workspace_root`), so there the file
-tools cannot open a note by its path; the note operations here still can. What this module
+home's workspace while its file tools work in {app}\\app or, for a chat with no project, the
+Desktop (`_workspace_root`), so there the file tools cannot open a note by its path; the note
+operations here still can. What this module
 adds on top of the file is only the honest metadata: title, creating session, timestamps, and
 — when a note backs a calendar event — the REAL provider receipt (uid/etag) of that event,
 written only after the event verifiably exists.
@@ -46,8 +47,9 @@ def _workspace_root() -> Path:
     supervisor) runs its API with the working directory {app}\\app, which resolve_workspace_root
     falls back to, and uninstall deletes that folder. There, notes live in the VOOL home's
     workspace folder instead, where the macOS app and a source checkout already keep them. Only
-    notes move: the unbound chat's workspace and resolve_workspace_root stay as they are. An
-    explicit VOOL_WORKSPACE_ROOT still wins.
+    notes move: resolve_workspace_root stays as it is (an unbound chat gets the Desktop, see
+    core.web.api.runtime.default_workspace_root). An explicit VOOL_WORKSPACE_ROOT (or the legacy
+    NULLA_ name) still wins.
     """
     from core.runtime_paths import active_vool_home, resolve_workspace_root, vool_env
 

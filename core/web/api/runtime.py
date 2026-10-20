@@ -1306,7 +1306,7 @@ def default_workspace_root() -> str:
     across the beta: finalbot, pocketbot, stashbot all landed invisible to the operator).
 
     Precedence, all preserved: an explicit VOOL_WORKSPACE_ROOT override wins (test rigs
-    and isolated homes rely on it), a chat bound to a project resolves to that project's
+    and isolated homes rely on it; in the installed Windows app the legacy NULLA_ name too), a chat bound to a project resolves to that project's
     folder upstream of this default, and a request that names its own location is honored
     by the planners. Development runs (no VOOL_PROJECT_ROOT) keep the working-directory
     workspace exactly as before. macOS folder privacy (TCC): the first Desktop write
