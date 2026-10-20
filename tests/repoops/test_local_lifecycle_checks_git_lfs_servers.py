@@ -241,3 +241,40 @@ def test_a_worktree_can_still_be_removed_while_the_work_tree_names_another_lfs_s
 
     assert receipt.status == "applied", receipt
     assert not target.exists()
+
+
+def test_a_branch_of_a_remote_whose_name_has_a_slash_is_still_switched_to(repo) -> None:
+    sha = _branch_with(repo, "x", "")
+    _git(repo, "remote", "add", "my/fork", "https://github.com/example/fork.git")
+    _git(repo, "update-ref", "refs/remotes/my/fork/x", sha)
+    _git(repo, "branch", "-D", "x")
+    lc, fork, broker = _lifecycle(repo)
+
+    receipt = lc.switch_branch(fork, broker, "x")
+
+    assert receipt.status == "applied", receipt
+    assert _git(repo, "symbolic-ref", "--short", "HEAD") == "x"
+
+
+def test_a_worktree_added_without_a_commit_is_refused(repo, tmp_path) -> None:
+    # git guesses the branch from the folder's name, and "--" ends the arguments the check reads.
+    _branch_with(repo, "feat", HOSTILE)
+
+    guessed = local_lifecycle._run(str(repo), "worktree", "add", str(tmp_path / "feat"), mutating=True)
+    dashed = local_lifecycle._run(str(repo), "worktree", "add", "--", str(tmp_path / "wt"), "feat", mutating=True)
+
+    assert guessed.returncode != 0 and "without an explicit commit" in guessed.stderr, guessed.stderr
+    assert dashed.returncode != 0 and "without an explicit commit" in dashed.stderr, dashed.stderr
+    assert not (tmp_path / "feat").exists() and not (tmp_path / "wt").exists()
+
+
+def test_a_new_branch_from_a_local_start_point_ignores_a_remotes_branch_of_that_name(repo) -> None:
+    # git starts it from the local main; another remote's main naming another server plays no part.
+    sha = _branch_with(repo, "theirs", HOSTILE)
+    _git(repo, "update-ref", "refs/remotes/origin/main", sha)
+
+    proc = local_lifecycle._run(str(repo), "switch", "-c", "new", "main", mutating=True)
+
+    assert proc.returncode == 0, proc.stderr
+    assert _git(repo, "symbolic-ref", "--short", "HEAD") == "new"
+    assert not (repo / ".lfsconfig").exists()
