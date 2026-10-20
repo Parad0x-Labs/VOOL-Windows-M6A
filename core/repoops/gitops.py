@@ -547,10 +547,12 @@ def _windows_destination_refusal(url: str, git_dir: Path, *, timeout: float) -> 
 def _windows_push_source_refusal(root: Path, *, timeout: float) -> str:
     """On Windows, why a push from the repository at `root` could write outside the marked folders
     ("" when it cannot): every push updates this repository's own refs (where the remote's branch now
-    is), so a link or hard link in its git folders, or a key its config sets that moves writes, is
-    refused as for repo.git (core/git_write_redirects.py), whatever the destination. Reproduced
-    2026-10-20: with `.git/refs/remotes` linked to an outside folder, a push to a marked destination
-    wrote the remote's branch there. Off Windows this returns ""."""
+    is), so its git folder and shared git folder must be inside the folders marked in
+    VOOL_WINDOWS_DISPOSABLE_WORKSPACES (owner card, 2026-10-20, "Marked repos only"), and a link or
+    hard link in them, or a key its config sets that moves writes, is refused as for repo.git
+    (core/git_write_redirects.py), whatever the destination. Reproduced 2026-10-20: from a repository
+    outside the marked folders, or with `.git/refs/remotes` linked to an outside folder, a push to a
+    marked destination wrote the remote's branch outside. Off Windows this returns ""."""
     from core import git_write_redirects, windows_write_gate
 
     if not windows_write_gate.active():
@@ -560,8 +562,14 @@ def _windows_push_source_refusal(root: Path, *, timeout: float) -> str:
         capture_output=True, text=True, timeout=timeout, env=safe_git.safe_env(),
     )
     lines = probe.stdout.splitlines()
-    if probe.returncode != 0 or len(lines) != 2:
+    if probe.returncode != 0 or len(lines) != 2 or not all(os.path.isabs(line) for line in lines):
         return "VOOL cannot tell where this repository keeps its git folder, so it does not push from it"
+    roots = windows_write_gate.flagged_roots()
+    for place in dict.fromkeys(lines):
+        if not windows_write_gate._inside(place, roots):
+            return (f"On Windows, VOOL pushes only from a repository inside the folders marked in "
+                    f"{windows_write_gate.ENV_VAR}, since a push updates the pushing repository's own refs; "
+                    f"this repository keeps its git folder at {place}, which is outside them")
     try:
         found = git_write_redirects.refusal_for([("the repository", Path(root), lines[0], lines[1])], timeout=timeout)
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
