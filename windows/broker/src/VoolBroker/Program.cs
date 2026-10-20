@@ -45,7 +45,7 @@ internal static class Program
                     var id = roots.AddFlaggedRoot(entry);
                     reported.Add(new Dictionary<string, string> { ["id"] = id, ["path"] = roots.GetEntry(id).Path });
                 }
-                catch (BrokerRefusal refusal) { return RefuseEntry(entry, refusal.Code); }
+                catch (BrokerRefusal refusal) { return RefuseEntry(entry, refusal.Code, refusal.Message); }
             }
             var journalDirectory = root.GetProperty("journal_dir").GetString()!;
             try { roots.ValidateJournalOutsideFlagged(journalDirectory); }
@@ -140,9 +140,9 @@ internal static class Program
         return 2;
     }
 
-    private static int RefuseEntry(string entry, string code)
+    private static int RefuseEntry(string entry, string code, string? message = null)
     {
-        Console.Out.WriteLine(JsonSerializer.Serialize(new { error = new { entry, code } }));
+        Console.Out.WriteLine(JsonSerializer.Serialize(new { error = new { entry, code, message } }));
         Console.Out.Flush();
         return 2;
     }

@@ -58,6 +58,13 @@ public sealed class RootRegistry : IDisposable
         if (handle.IsInvalid) { var error = Marshal.GetLastWin32Error(); handle.Dispose(); throw FlaggedOpenFailure(path, error); }
         try
         {
+            // The file system first, from the opened handle: FAT and exFAT cannot answer some of
+            // the queries below, and their failure would hide the reason for the refusal.
+            var fileSystem = new StringBuilder(64);
+            if (!Native.GetVolumeInformationByHandleW(handle, null, 0, out _, out _, out _, fileSystem, (uint)fileSystem.Capacity))
+                throw new BrokerRefusal("authority_check_failed", $"Cannot identify the flagged volume: {new Win32Exception(Marshal.GetLastWin32Error()).Message}");
+            if (!string.Equals(fileSystem.ToString(), "NTFS", StringComparison.OrdinalIgnoreCase))
+                throw new BrokerRefusal("unsupported_filesystem", $"Flagged folder is on {fileSystem}, not NTFS.");
             var attribute = Native.GetAttributeTag(handle);
             if ((attribute.FileAttributes & Native.FileAttributeReparsePoint) != 0) throw new BrokerRefusal("reparse_point", "Flagged folder is a reparse point.");
             if ((attribute.FileAttributes & Native.FileAttributeDirectory) == 0) throw new BrokerRefusal("invalid_flagged", "Flagged entry is not a directory.");
@@ -71,11 +78,6 @@ public sealed class RootRegistry : IDisposable
             var volumePath = Native.GetVolumePath(finalPath);
             if (DisplayPath(finalPath).TrimEnd('\\').Equals(DisplayPath(volumePath).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
                 throw new BrokerRefusal("invalid_flagged", "A volume root cannot be flagged.");
-            var fileSystem = new StringBuilder(64);
-            if (!Native.GetVolumeInformationW(volumePath, null, 0, out _, out _, out _, fileSystem, (uint)fileSystem.Capacity))
-                throw new BrokerRefusal("authority_check_failed", "Cannot identify the flagged volume.");
-            if (!string.Equals(fileSystem.ToString(), "NTFS", StringComparison.OrdinalIgnoreCase))
-                throw new BrokerRefusal("unsupported_filesystem", $"Flagged folder is on {fileSystem}, not NTFS.");
             // After the file system check: FAT, exFAT and network volumes cannot answer this query.
             if ((Native.GetCaseFlags(handle) & Native.FileCaseSensitiveSearch) != 0) throw new BrokerRefusal("case_sensitive_dir", "Case-sensitive directories are refused.");
             var identity = Native.GetFileIdentity(handle);

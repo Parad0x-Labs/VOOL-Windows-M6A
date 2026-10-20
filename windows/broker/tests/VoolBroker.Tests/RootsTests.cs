@@ -248,6 +248,7 @@ public sealed class RootsTests : IDisposable
         }
         var pipes = TestSupport.BrokerPipes();
         using var refusal = await TestSupport.StartRefused(TestSupport.DefaultBootstrap([flagged], journal));
+        Console.WriteLine($"{variable}: {refusal.RootElement.GetRawText()}");
         Assert.Equal("unsupported_filesystem", Code(refusal));
         Assert.Equal(flagged, refusal.RootElement.GetProperty("error").GetProperty("entry").GetString());
         Assert.Empty(TestSupport.BrokerPipes().Except(pipes));

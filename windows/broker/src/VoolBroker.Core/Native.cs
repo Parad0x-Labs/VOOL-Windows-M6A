@@ -136,7 +136,7 @@ internal static class Native
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    internal static extern bool GetVolumeInformationW(string root, System.Text.StringBuilder? volumeName,
+    internal static extern bool GetVolumeInformationByHandleW(SafeFileHandle handle, System.Text.StringBuilder? volumeName,
         uint volumeNameSize, out uint serial, out uint maxComponentLength, out uint flags,
         System.Text.StringBuilder filesystem, uint filesystemSize);
 
