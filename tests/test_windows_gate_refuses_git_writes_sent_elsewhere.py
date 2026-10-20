@@ -230,3 +230,125 @@ def test_git_lfs_keys_that_move_no_write_still_commit(tmp_path: Path, monkeypatc
     session = _bound_session(repo)
 
     _approved_commit_runs(session, marked, repo, mode, world)
+
+
+def _source_repo(folder: Path) -> Path:
+    """A repository with one LFS-free commit, to be added as a submodule."""
+    folder.mkdir(parents=True)
+    _git(folder, "init", "-q", "-b", "main")
+    _git(folder, "config", "user.name", "fx")
+    _git(folder, "config", "user.email", "fx@local")
+    (folder / "lib.txt").write_bytes(b"lib\n")
+    _git(folder, "add", "-A")
+    _git(folder, "commit", "-q", "-m", "lib")
+    return folder
+
+
+def _add_submodule(repo: Path, source: Path, name: str = "lib") -> Path:
+    """`git submodule add` from a local folder (git clones it into `.git/modules/<name>`, hard-linking its objects)."""
+    _git(repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(source), name)
+    _git(repo, "commit", "-q", "-m", f"add {name}")
+    return repo / ".git" / "modules" / name
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_a_git_lfs_key_in_a_submodule_s_config_is_refused(tmp_path: Path, monkeypatch, world, mode: str) -> None:
+    """git and git-lfs run inside a checked-out submodule under the submodule's own config."""
+    def prepare(repo: Path, outside: Path) -> None:
+        modules = _add_submodule(repo, _source_repo(tmp_path / "sources" / "lib"))
+        _git(modules, "config", "lfs.storage", str(outside / "lfs"))
+
+    _refused(tmp_path, monkeypatch, world, mode, prepare,
+             says="submodule lib's own git config sets keys that can move git's writes elsewhere: lfs.storage")
+
+
+@pytest.mark.parametrize("mode", MODES)
+@pytest.mark.parametrize("kind", _DIR_LINKS)
+def test_a_link_in_a_submodule_s_own_git_folder_is_refused(
+    tmp_path: Path, monkeypatch, world, kind: str, mode: str
+) -> None:
+    """A submodule added from a repository already in the work tree keeps its git folder inside it
+    (`lib/.git` is a folder), outside the superproject's git folder."""
+    def prepare(repo: Path, outside: Path) -> None:
+        embedded = _source_repo(repo / "lib")
+        _git(repo, "submodule", "add", "-q", "./lib", "lib")
+        _git(repo, "commit", "-q", "-m", "add lib")
+        assert (embedded / ".git").is_dir()
+        (outside / "lfs").mkdir()
+        _dir_link(kind, embedded / ".git" / "lfs", outside / "lfs")
+
+    _refused(tmp_path, monkeypatch, world, mode, prepare, says="the repository's git folder holds a link (lfs)")
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_a_submodule_whose_git_folder_is_outside_the_marked_folders_is_refused(
+    tmp_path: Path, monkeypatch, world, mode: str
+) -> None:
+    def prepare(repo: Path, outside: Path) -> None:
+        modules = _add_submodule(repo, _source_repo(tmp_path / "sources" / "lib"))
+        moved = outside / "lib-git"
+        shutil.move(str(modules), str(moved))
+        _git(repo, "config", "--file", str(moved / "config"), "core.worktree", str(repo / "lib"))
+        (repo / "lib" / ".git").write_text(f"gitdir: {moved}\n", encoding="utf-8")
+
+    _refused(tmp_path, monkeypatch, world, mode, prepare, says="This call also changes submodule lib's git folder")
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_a_submodule_added_from_a_local_folder_with_hard_linked_objects_still_commits(
+    tmp_path: Path, monkeypatch, world, mode: str
+) -> None:
+    marked, repo, _ = _marked_repo(tmp_path, monkeypatch)
+    modules = _add_submodule(repo, _source_repo(tmp_path / "sources" / "lib"))
+    objects = [path for path in (modules / "objects").rglob("*") if path.is_file()]
+    assert any(os.stat(path).st_nlink > 1 for path in objects), "git submodule add hard-links a local folder's objects"
+    session = _bound_session(repo)
+
+    _approved_commit_runs(session, marked, repo, mode, world)
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_a_git_lfs_object_hard_linked_elsewhere_still_commits(tmp_path: Path, monkeypatch, world, mode: str) -> None:
+    """`git lfs pull` from a local folder hard-links `.git/lfs/objects/<aa>/<bb>/<oid>`; git-lfs never rewrites it."""
+    marked, repo, outside = _marked_repo(tmp_path, monkeypatch)
+    oid = "ab" * 32
+    store = repo / ".git" / "lfs" / "objects" / oid[:2] / oid[2:4]
+    store.mkdir(parents=True)
+    (outside / "object").write_bytes(b"lfs object\n")
+    os.link(outside / "object", store / oid)
+    session = _bound_session(repo)
+
+    _approved_commit_runs(session, marked, repo, mode, world)
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_the_user_s_own_git_lfs_settings_still_commit(tmp_path: Path, monkeypatch, world, mode: str) -> None:
+    """System and global config belong to the user (as in core/safe_git.py), so a global `lfs.storage` is theirs."""
+    marked, repo, _ = _marked_repo(tmp_path, monkeypatch)
+    home = Path(os.environ["HOME"])
+    (home / ".gitconfig").write_text(f"[lfs]\n\tstorage = {home / 'lfs'}\n", encoding="utf-8")
+    session = _bound_session(repo)
+
+    _approved_commit_runs(session, marked, repo, mode, world)
+
+
+def test_an_entry_another_git_process_removes_during_the_walk_is_skipped(tmp_path: Path, monkeypatch) -> None:
+    """A lock or temporary pack another git process removes between the listing and the look is not a
+    refusal; a link put in its place would still be seen."""
+    from core import git_write_redirects
+
+    git_dir = tmp_path / "repo.git"
+    (git_dir / "objects" / "pack").mkdir(parents=True)
+    (git_dir / "index.lock").write_bytes(b"")
+    (git_dir / "objects" / "pack" / "tmp_pack_x").write_bytes(b"")
+    real_scandir = os.scandir
+
+    def vanishing(folder):
+        entries = list(real_scandir(folder))
+        for entry in entries:
+            if entry.name in {"index.lock", "tmp_pack_x"}:
+                os.unlink(entry.path)
+        return iter(entries)
+
+    monkeypatch.setattr(git_write_redirects.os, "scandir", vanishing)
+    assert git_write_redirects.link_refusal(str(git_dir)) == ""

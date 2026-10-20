@@ -151,3 +151,41 @@ def test_off_windows_a_push_to_a_repository_anywhere_still_lands(world, monkeypa
 
     assert code == 0, err
     assert _git(destination, "rev-parse", "refs/heads/main").strip() == _git(world["source"], "rev-parse", "HEAD").strip()
+
+
+def test_a_marked_destination_whose_gc_writes_elsewhere_is_refused(world) -> None:
+    """receive-pack runs the destination's own auto gc, which writes the objects `gc.repackFilter`
+    selects into the destination's `gc.repackFilterTo`, wherever it is."""
+    destination = _bare(world["marked"] / "dest.git")
+    filtered = world["elsewhere"] / "filtered"
+    filtered.mkdir()
+    for key, value in (("gc.auto", "1"), ("gc.autoPackLimit", "1"), ("gc.autoDetach", "false"),
+                       ("gc.repackFilter", "blob:none"), ("gc.repackFilterTo", str(filtered / "pack"))):
+        _git(destination, "config", key, value)
+
+    _assert_refused(world, str(destination), destination,
+                    says="the push destination's own git config sets keys that can move git's writes elsewhere: "
+                         "gc.repackfilterto")
+    assert list(filtered.iterdir()) == []
+
+
+def test_a_push_from_a_repository_whose_git_folder_holds_a_link_is_refused(world) -> None:
+    """Every push writes the remote's branch into the pushing repository's own refs."""
+    destination = _bare(world["marked"] / "dest.git")
+    _git(world["source"], "remote", "add", "dest", str(destination))
+    remotes = world["elsewhere"] / "remotes"
+    remotes.mkdir()
+    _dir_link(world["source"] / ".git" / "refs" / "remotes", remotes)
+
+    _assert_refused(world, "dest", destination, says="the repository's git folder holds a link (refs/remotes)")
+    assert list(remotes.iterdir()) == []
+
+
+@pytest.mark.parametrize("key", ("http.cookieFile", "http.https://example.invalid/.cookieFile"))
+def test_a_push_from_a_repository_that_saves_cookies_to_a_file_of_its_choosing_is_refused(world, key: str) -> None:
+    _git(world["source"], "config", key, str(world["elsewhere"] / "cookies.txt"))
+    _git(world["source"], "config", "http.saveCookies", "true")
+
+    refusal = GitRunner(root=world["source"]).push_destination_refusal("https://example.invalid/project.git")
+
+    assert "sets keys that can move git's writes elsewhere: http." in refusal and refusal.endswith("cookiefile"), refusal
