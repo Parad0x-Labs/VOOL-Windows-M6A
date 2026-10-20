@@ -12,8 +12,10 @@ bound to the folder that is not flagged. A step whose inner intent carried a spa
 
 Such a call is now refused before the permission decision, with nothing journaled or written, and the
 refusal names the folder. The gate reads that folder the way each runtime reads it: a task's from its
-journal, also after VOOL restarts; a session's from its journal, after a restart too, or, while that
-journal is missing or cannot be read, from the copy the repo runtime still holds and would run. A task
+journal, also after VOOL restarts, or, while that journal cannot be read but keeps its size and time
+(another program holding it open), from the copy the task runtime still holds and would run; a session's
+from its journal, after a restart too, or, while that journal is missing or cannot be read, from the copy
+the repo runtime still holds and would run. A task
 journal whose folder is not an absolute path is refused as one whose folder cannot be checked. A task
 or session in a flagged folder reaches the approval as before; once allowed, a repo step's patch lands
 through VOOL's own engine and names exactly the file it changed. A task or session the runtime cannot
@@ -29,7 +31,9 @@ Every case drives the real executor (`execute_tool_intent`) in Manual and in Aut
 and repo sessions opened through the production tool door, in real git repositories made with the git
 binary. Approvals go through the real approval authority (`resolve_approval`) and the call is resumed
 with its token, as the chat resumes a turn. The gate is switched on through
-`windows_write_gate._IS_WINDOWS`, and the file is written to run on Windows as well.
+`windows_write_gate._IS_WINDOWS`, and the file is written to run on Windows as well. The one fault
+injected is a task journal another program holds open: reading it raises the PermissionError Windows
+gives for such a file.
 """
 from __future__ import annotations
 
@@ -68,15 +72,17 @@ _OUTSIDE = re.compile(
 
 
 def _git(cwd: Path, *args: str) -> str:
-    environment = {
-        **os.environ,
+    # An inherited GIT_DIR, GIT_WORK_TREE or GIT_INDEX_FILE (git exports them to hooks) would send these
+    # calls into another repository, so none of git's own variables is passed on (as core.safe_git does).
+    environment = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+    environment.update({
         "GIT_CONFIG_GLOBAL": os.devnull,
         "GIT_CONFIG_SYSTEM": os.devnull,
         "GIT_AUTHOR_NAME": "fx",
         "GIT_AUTHOR_EMAIL": "fx@local",
         "GIT_COMMITTER_NAME": "fx",
         "GIT_COMMITTER_EMAIL": "fx@local",
-    }
+    })
     out = subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True, timeout=60, env=environment)
     assert out.returncode == 0, f"git {' '.join(args)} failed: {out.stderr}"
     return out.stdout
@@ -452,9 +458,10 @@ def test_a_task_journal_the_runtime_cannot_load_is_checked_on_the_chats_folder_a
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, decisions: list[dict], damage, intent: str, mode: str
 ) -> None:
     """The gate finds no folder for a task the runtime would not load either (`CodeTaskRuntime._load` reads
-    the journal through `CodeTask.from_json` and keeps no copy of one it cannot read), so it checks the
-    chat's folder as it always did, and the runtime answers that no such task exists without writing. The
-    journal is a real task's, opened in a folder that is not flagged, then damaged."""
+    a journal whose size or time changed through `CodeTask.from_json`, and finds no task in one it cannot
+    read), so it checks the chat's folder as it always did, and the runtime answers that no such task
+    exists without writing. The journal is a real task's, opened in a folder that is not flagged, then
+    damaged."""
     from core.code_assistant.task_runtime import code_task_runtime, task_dir
 
     scratch, project = tmp_path.resolve() / "scratch", tmp_path.resolve() / "project"
@@ -489,6 +496,53 @@ def test_a_task_journal_the_runtime_cannot_load_is_checked_on_the_chats_folder_a
     assert _tree(scratch) == {"calc.py": BUGGY}
     assert _tree(project) == project_before and _head(project) == head
     assert _rollback_authorizations() == []
+
+
+@pytest.mark.parametrize("mode", MODES)
+@pytest.mark.parametrize("intent", ["code.task.step", "code.task.rollback"])
+def test_a_task_whose_journal_cannot_be_read_while_vool_holds_the_task_is_still_checked_on_its_own_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, decisions: list[dict], intent: str, mode: str
+) -> None:
+    """Another program holds the task's journal open without letting others read it (an indexer or a virus
+    scanner on Windows): reading it fails, and its size and time stay as they were. The task runtime then
+    serves the task it holds, so the call would run in the task's folder, and the gate places that folder
+    too. The fault injected: reading that one journal raises the PermissionError Windows gives for a file
+    another program holds open."""
+    from core.code_assistant.task_runtime import code_task_runtime
+
+    scratch, project = tmp_path.resolve() / "scratch", tmp_path.resolve() / "project"
+    scratch.mkdir()
+    _repository(project)
+    _flag(monkeypatch, scratch)
+    chat = _Chat(scratch, mode)
+    task_id = _open_task(chat, project)
+    journal = _task_journal(task_id)
+    journal_before, project_before, head = journal.read_bytes(), _tree(project), _head(project)
+    real_read_text = Path.read_text
+
+    def held_open(self: Path, *args, **kwargs) -> str:
+        if self == journal:
+            raise PermissionError(13, "The process cannot access the file because it is being used by another process",
+                                  str(self))
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", held_open)
+    with pytest.raises(PermissionError):
+        journal.read_text(encoding="utf-8")
+    assert code_task_runtime()._load(task_id) is not None, "the task runtime still serves the task it holds"
+    arguments = (
+        {"task_id": task_id, "step_id": "repair", "intent": "workspace.write_file",
+         "arguments": dict(REPAIRS["workspace.write_file"])}
+        if intent == "code.task.step" else {"task_id": task_id}
+    )
+
+    execution = chat.ask(intent, arguments)
+
+    _assert_refused_before_approval(execution, decisions, TASK_FOLDER, project)
+    assert _rollback_authorizations() == []
+    assert journal.read_bytes() == journal_before
+    assert _tree(project) == project_before and _head(project) == head
+    assert _tree(scratch) == {}
 
 
 @pytest.mark.parametrize("mode", MODES)
