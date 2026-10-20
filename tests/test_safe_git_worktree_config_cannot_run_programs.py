@@ -329,3 +329,55 @@ def test_a_git_lfs_transfer_agent_set_by_the_repository_is_refused(tmp_path: Pat
     assert status["status"] == "refused_repository_config", key
     assert key.lower() in status["response_text"]
     assert not marker.exists()
+
+
+@pytest.mark.parametrize("value", ["false", "FALSE", "No", "off", "0"])
+def test_a_repository_that_switches_signing_off_still_commits(tmp_path: Path, monkeypatch, value: str) -> None:
+    repo, marker = _repo(tmp_path)
+    _user_signing_program(tmp_path, monkeypatch, marker)
+    subprocess.run(["git", "config", "-f", str(tmp_path / "home" / ".gitconfig"), "commit.gpgSign", "true"],
+                   check=True, capture_output=True)
+    for key in ("commit.gpgSign", "tag.gpgSign", "tag.forceSignAnnotated", "push.gpgSign"):
+        _git(repo, "config", key, value)
+    (repo / "notes.txt").write_text("two\n", encoding="utf-8")
+
+    result = GitRunner(root=repo).commit(message="unsigned by the repository's choice")
+
+    assert safe_git.executable_local_config(repo) == []
+    assert result.ok is True, result.to_dict()
+    assert not marker.exists(), "signing switched off by the repository still ran the signing program"
+
+
+@pytest.mark.parametrize("raw", [
+    "[commit]\n\tgpgSign\n",                   # a bare key is true
+    "[commit]\n\tgpgSign =\n",                 # empty
+    "[commit]\n\tgpgSign = 00\n",              # git reads it as false; not a definite spelling here
+    "[commit]\n\tgpgSign = \" false\"\n",      # quoted leading space
+    "[commit]\n\tgpgSign = 1\n",
+    "[commit]\n\tgpgSign = falsey\n",
+    "[push]\n\tgpgSign = if-asked\n",
+    "[tag]\n\tgpgSign = false\n\tgpgSign = true\n",   # every value must be false
+])
+def test_signing_values_that_are_not_a_definite_false_are_refused(tmp_path: Path, raw: str) -> None:
+    repo, _marker = _repo(tmp_path)
+    with (repo / ".git" / "config").open("a", encoding="utf-8") as config:
+        config.write(raw)
+
+    assert safe_git.executable_local_config(repo), raw
+    assert GitRunner(root=repo).commit(message="x").ok is False
+
+
+def test_signing_switched_on_in_config_worktree_is_refused_even_when_local_says_false(tmp_path: Path) -> None:
+    repo, _marker = _repo(tmp_path)
+    _git(repo, "config", "commit.gpgSign", "false")
+    _git(repo, "config", "--worktree", "commit.gpgSign", "true")
+
+    assert safe_git.executable_local_config(repo) == ["commit.gpgsign"]
+
+
+@pytest.mark.parametrize("key", ["lfs.customtransfer.planted.path", "lfs.standalonetransferagent"])
+def test_a_git_lfs_transfer_agent_is_refused_even_with_a_false_looking_value(tmp_path: Path, key: str) -> None:
+    repo, _marker = _repo(tmp_path)
+    _git(repo, "config", key, "false")
+
+    assert safe_git.executable_local_config(repo) == [key]
