@@ -4392,6 +4392,11 @@ def _dispatch_post_inner(
                 json_response(500, {"error": "registration did not persist", "model_name": model_name}),
                 runtime,
             )
+        # Boot records measured sizes only for the lanes it registered; size this one now, so its
+        # turns are not judged by the parameter estimate until the next start.
+        from core.web.api.runtime import record_installed_ollama_artifact_sizes
+
+        record_installed_ollama_artifact_sizes(registry)
         return apply_runtime_headers(
             json_response(
                 200,
@@ -5282,6 +5287,12 @@ def _dispatch_post_inner(
                 return apply_runtime_headers(json_response(404, {"error": "project folder not found"}), runtime)
             import subprocess as _subprocess
 
+            from core import generated_files
+
+            if generated_files.host_is_windows():
+                # Windows has no `open`: File Explorer shows the folder, only while it still resolves to itself.
+                opened = generated_files.open_folder_in_explorer(root)
+                return apply_runtime_headers(json_response(200, {"ok": opened, "id": pid.strip()}), runtime)
             opened = False
             with contextlib.suppress(Exception):
                 _subprocess.Popen(["open", root])  # macOS Finder; path is a validated project root, not user input
@@ -5385,8 +5396,9 @@ def _dispatch_post_inner(
         return apply_runtime_headers(json_response(200, {"project": result}), runtime)
 
     if normalized_path == "/api/files/open":
-        # Reveal a generated file in Finder. Owner-local; the path MUST resolve under a known Files root
-        # (generated_files.path_is_allowed), so this can never be used to reach an arbitrary file.
+        # Reveal a generated file in Finder (File Explorer on Windows). Owner-local; the path MUST resolve
+        # under a known Files root (generated_files.path_is_allowed), so this can never be used to reach an
+        # arbitrary file.
         import json as _json
 
         from core import generated_files
@@ -5422,6 +5434,11 @@ def _dispatch_post_inner(
             return apply_runtime_headers(json_response(400, {"error": "reveal must be a boolean"}), runtime)
         if not generated_files.path_is_allowed(path):
             return apply_runtime_headers(json_response(403, {"error": "that file is not under a known Files folder"}), runtime)
+        if not reveal and generated_files.host_is_windows():
+            # Only Show in folder exists on Windows: opening would run a .bat/.exe/.lnk/.ps1 artifact.
+            return apply_runtime_headers(
+                json_response(501, {"ok": False, "error": "opening a file is not available on Windows yet"}), runtime
+            )
         opened = generated_files.open_file(path, reveal=reveal)
         return apply_runtime_headers(json_response(200 if opened else 500, {"ok": opened}), runtime)
 

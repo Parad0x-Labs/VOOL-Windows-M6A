@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
-from collections.abc import Mapping, MutableMapping
+from collections.abc import Iterable, Mapping, MutableMapping
 from pathlib import Path
 from typing import Any
 
@@ -812,11 +812,45 @@ def _ensure_local_ollama_provider(
             **context_sizing,
             "tool_support": list(manifest_profile.get("tool_support") or ()),
             "max_safe_concurrency": 1,
+            # Measured by Ollama for this exact tag; a rewrite for another contract keeps it.
+            **(
+                {"artifact_size_gb": existing_metadata["artifact_size_gb"]}
+                if existing_metadata.get("artifact_size_gb")
+                else {}
+            ),
         },
         enabled=True,
     )
     registry.register_manifest(manifest)
     return True
+
+
+def record_ollama_artifact_sizes(registry: ModelRegistry, inventory: Iterable[Any]) -> tuple[str, ...]:
+    """Stamp Ollama's measured artifact size on each registered ``ollama-local`` lane.
+
+    Boot's residency pick already sizes installed models from ``/api/tags`` bytes, while every
+    turn's hardware-fit gate only had the parameter-count estimate (qwen3:8b: 7.5 GB against a
+    measured ~6.3 GB resident), so one model could be judged to fit at boot and refused on every
+    turn. With the size on the manifest both read the same number. Only lanes already registered
+    are touched; nothing is registered, enabled or re-enabled here.
+    """
+    stamped: list[str] = []
+    for item in inventory or ():
+        name = str(getattr(item, "name", "") or "").strip()
+        size_bytes = int(getattr(item, "size_bytes", 0) or 0)
+        if not name or size_bytes <= 0:
+            continue
+        manifest = registry.get_manifest("ollama-local", name)
+        if not isinstance(manifest, ModelProviderManifest):
+            continue
+        size_gb = round(size_bytes / (1024.0**3), 3)
+        if (manifest.metadata or {}).get("artifact_size_gb") == size_gb:
+            continue
+        registry.register_manifest(
+            manifest.model_copy(update={"metadata": {**(manifest.metadata or {}), "artifact_size_gb": size_gb}})
+        )
+        stamped.append(manifest.provider_id)
+    return tuple(stamped)
 
 
 def _ensure_kimi_provider(
@@ -2049,4 +2083,5 @@ __all__ = [
     "default_runtime_model_tag",
     "ensure_default_runtime_providers",
     "preferred_fast_local_model",
+    "record_ollama_artifact_sizes",
 ]
