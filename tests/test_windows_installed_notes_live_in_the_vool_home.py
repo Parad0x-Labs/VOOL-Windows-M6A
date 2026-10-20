@@ -40,10 +40,17 @@ from core.operator import notes
 
 made = notes.create_note(title="Groceries", body="milk and eggs", session_id="probe")
 back = notes.read_note(title="Groceries") or {}
+archived = notes.archive_note(title="Groceries")
+archived_path = next((str(p) for p in (notes.notes_root() / ".archive").glob("groceries-*.md")), "")
+restored = notes.restore_note(title="Groceries")
 print(json.dumps({
     "note_path": made["note_path"],
     "notes_root": str(notes.notes_root()),
     "read_back": back.get("body", ""),
+    "archived_ok": bool(archived.get("ok")),
+    "archived_path": archived_path,
+    "restored_ok": bool(restored.get("ok")),
+    "restored_path": str(restored.get("note_path") or ""),
     "workspace_root": str(resolve_workspace_root()),
     "default_workspace_root": str(default_workspace_root()),
 }))
@@ -129,8 +136,12 @@ def test_the_installed_app_keeps_notes_in_the_vool_home_and_the_unbound_default_
 
     notes_dir = home / "workspace" / "notes"
     assert seen["notes_root"] == _resolved(notes_dir)
-    assert Path(seen["note_path"]).parent == notes_dir.resolve() and Path(seen["note_path"]).is_file()
+    assert Path(seen["note_path"]).parent == notes_dir.resolve()
     assert seen["read_back"] == "milk and eggs"
+    # The archive and restore (notes/.archive) follow the same root.
+    assert seen["archived_ok"] and seen["restored_ok"], seen
+    assert Path(seen["archived_path"]).parent == (notes_dir / ".archive").resolve()
+    assert Path(seen["restored_path"]).parent == notes_dir.resolve() and Path(seen["restored_path"]).is_file()
     assert set((REPO / "notes").glob("groceries-*.md")) == before
     # Unchanged: the API's working directory ({app}\app) is still the workspace and the unbound default.
     assert seen["workspace_root"] == _resolved(REPO)
