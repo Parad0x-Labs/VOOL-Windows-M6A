@@ -504,8 +504,7 @@ def _destination_program_keys(git_dir: Path, *, timeout: float) -> list[str]:
     for (scope, _), (key, value) in zip(fields[0::2], fields[1::2], strict=True):
         if scope in {"system", "global"} or not safe_git.is_executable_key(key):
             continue
-        safe = safe_git._SAFE_VALUES.get(key)
-        if safe is not None and value is not None and safe(value):
+        if safe_git.is_safe_value(key, value):
             continue  # signing switched off, or the default format, runs nothing
         keys.add(key)
     return sorted(keys)
