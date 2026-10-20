@@ -172,17 +172,36 @@ class SandboxResult:
     network_confined: bool = True
 
 
+def _host_is_macos() -> bool:
+    """The one place this module asks whether it runs on macOS, the only host it can confine on."""
+    return platform.system() == "Darwin"
+
+
 def confinement_available() -> bool:
     """Whether this machine can actually confine a decoder. Nothing external runs without it."""
-    return platform.system() == "Darwin" and os.path.exists(_SANDBOX_EXEC) and os.access(_SHELL, os.X_OK)
+    return _host_is_macos() and os.path.exists(_SANDBOX_EXEC) and os.access(_SHELL, os.X_OK)
 
 
 def confinement_unavailable_reason() -> str:
     if confinement_available():
         return ""
-    if platform.system() != "Darwin":
+    if not _host_is_macos():
         return f"process confinement for untrusted decoders is implemented for macOS only; this host is {platform.system()}"
     return "the macOS sandbox (/usr/bin/sandbox-exec) is not available on this machine"
+
+
+def confinement_unavailable_remediation() -> str:
+    """What the operator can do about that refusal, true on the host it is shown on.
+
+    On a Mac whose sandbox is missing, a Mac that has it is a real alternative. On any other host
+    that advice would send the operator to change computers to attach a file, so only the action
+    that works there is offered.
+    """
+    if confinement_available():
+        return ""
+    if not _host_is_macos():
+        return "Paste or attach the text you need instead."
+    return "Use a macOS host where the sandbox is available, or attach the content as text."
 
 
 def require_confinement(fmt: str = "") -> None:
@@ -193,7 +212,7 @@ def require_confinement(fmt: str = "") -> None:
         f"Reading this file needs an external decoder, and {confinement_unavailable_reason()}. "
         f"It was not read: this runtime does not run untrusted document parsers unconfined.",
         code="confinement_unavailable",
-        remediation="Use a macOS host where the sandbox is available, or attach the content as text.",
+        remediation=confinement_unavailable_remediation(),
         fmt=fmt,
     )
 
@@ -569,6 +588,7 @@ __all__ = [
     "Scratch",
     "confinement_available",
     "confinement_unavailable_reason",
+    "confinement_unavailable_remediation",
     "current_budget",
     "extraction_budget",
     "require_confinement",

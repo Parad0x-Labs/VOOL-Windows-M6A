@@ -46,6 +46,7 @@ import errno
 import hashlib
 import json
 import os
+import platform
 import re
 import secrets
 import stat
@@ -607,13 +608,30 @@ def _reader_spec_for(name: str, declared: str, data: bytes) -> Any:
             f"{name} was sent as {declared} but its bytes are {detected.label}; the file was not accepted.",
         )
     if not detected.available():
-        raise AttachmentRefused(
-            f"{detected.fmt}_decoder_unavailable",
-            f"{name} is {detected.label}, and this machine is missing {' and '.join(detected.requires) or 'a decoder for it'}, "
-            f"so it cannot be read. It was not accepted.",
-            http_status=415,
-        )
+        raise _decoder_unavailable(readers, detected, name)
     return detected
+
+
+def _decoder_unavailable(readers: Any, spec: Any, name: str) -> AttachmentRefused:
+    """The refusal for a recognised format this machine cannot read. Code and status never vary.
+
+    On Windows the decoder is often installed (pypdf ships with VOOL); what that host lacks is the
+    confinement every untrusted decoder must run under. When that is why, the refusal there is the
+    reader's own, reason and remedy, instead of a decoder to install. `platform.system` is the
+    probe the confinement layer names the host by, so this check and that reason cannot disagree.
+    Every other host and every other cause keeps the sentence below, byte for byte.
+    """
+    code = f"{spec.fmt}_decoder_unavailable"
+    if platform.system() == "Windows":
+        unconfined = readers.confinement_refusal(spec, name=name)
+        if unconfined is not None:
+            return AttachmentRefused(code, f"{unconfined.message} {unconfined.remediation}".strip(), http_status=415)
+    return AttachmentRefused(
+        code,
+        f"{name} is {spec.label}, and this machine is missing {' and '.join(spec.requires) or 'a decoder for it'}, "
+        f"so it cannot be read. It was not accepted.",
+        http_status=415,
+    )
 
 
 def _reader_media_type(spec: Any, extension: str) -> str:

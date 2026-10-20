@@ -10,6 +10,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,9 @@ from core.runtime_paths import native_runtime_home
 _POLL_SECONDS = 2.0
 _STARTUP_TIMEOUT_SECONDS = 60.0
 _MAX_BACKOFF_SECONDS = 30.0
+# A relaunch that arrives while the window is still closing (the user clicked X, then the
+# shortcut) still reopens it if that window exits within this many seconds.
+_REOPEN_GRACE_SECONDS = 10.0
 _WINDOWS_SCRIPT_ARGUMENT_PREFIX = (
     r'^(?:\x22(?:[^\x22]*\\)?pythonw?\.exe\x22|(?:[^\s\x22]*\\)?pythonw?\.exe)'
     r'(?:\s+-[bBdEhIiOPqRsSuvVx]+'
@@ -28,6 +32,80 @@ _WINDOWS_SCRIPT_ARGUMENT_PREFIX = (
 # PowerShell ends a single-quoted string at the curly quotes U+2018, U+2019, U+201A and U+201B as
 # well as at the ASCII apostrophe, and reads any of them doubled as that one character.
 _POWERSHELL_SINGLE_QUOTES = "'\u2018\u2019\u201a\u201b"
+
+
+_NOTES_COPY_MARKER = "notes-copied-from-program-folder.json"
+
+
+def _is_link(path: Path) -> bool:
+    is_junction = getattr(path, "is_junction", None)  # Python 3.12+
+    return path.is_symlink() or bool(is_junction and is_junction())
+
+
+def _copy_notes_tree(source: Path, target: Path) -> dict[str, Any]:
+    """Copy the regular files under `source` into `target`, keeping relative paths.
+
+    Links and junctions (the folder itself, a subfolder or a file) are skipped, so nothing outside
+    the old notes folder is copied. A file `target` already has is kept as it is. Raises OSError on
+    a failed copy, or when `target` (or a folder on the way into it) is a link.
+    """
+    report: dict[str, Any] = {"copied": [], "kept": [], "skipped": []}
+    if _is_link(source):
+        report["skipped"].append(".")
+        return report
+    if not source.is_dir():
+        return report
+    for current, dirs, files in os.walk(source, followlinks=False):
+        here = Path(current)
+        relative_dir = here.relative_to(source)
+        for name in list(dirs):
+            if _is_link(here / name):
+                dirs.remove(name)
+                report["skipped"].append(str(relative_dir / name))
+        destination_dir = target / relative_dir
+        for part in [target, *[target / Path(*relative_dir.parts[: i + 1]) for i in range(len(relative_dir.parts))]]:
+            if _is_link(part):
+                raise OSError(f"{part} is a link, not a folder in the VOOL home")
+        destination_dir.mkdir(parents=True, exist_ok=True)
+        for name in files:
+            item, relative = here / name, str(relative_dir / name)
+            if _is_link(item) or not item.is_file():
+                report["skipped"].append(relative)
+                continue
+            destination = destination_dir / name
+            if destination.exists() or destination.is_symlink():
+                report["kept"].append(relative)
+                continue
+            # Copy to a temporary name, then link it into place: a crash mid-copy can leave only the
+            # temporary file, never a truncated note that the retry would keep as already present.
+            temporary = destination_dir / f".{name}.{uuid.uuid4().hex}.vool-copy.tmp"
+            try:
+                with temporary.open("xb") as writer, item.open("rb") as reader:
+                    writer.write(reader.read())
+                with contextlib.suppress(OSError):
+                    os.utime(temporary, ns=(item.stat().st_atime_ns, item.stat().st_mtime_ns))
+                try:
+                    os.link(temporary, destination)  # never replaces an existing file
+                except FileExistsError:
+                    report["kept"].append(relative)
+                    continue
+                except OSError:
+                    # No hard links on this volume (FAT, exFAT, some network shares): rename instead.
+                    # On Windows a rename never replaces a file; elsewhere the check just before it
+                    # keeps an existing note.
+                    if destination.exists() or destination.is_symlink():
+                        report["kept"].append(relative)
+                        continue
+                    try:
+                        os.rename(temporary, destination)
+                    except FileExistsError:
+                        report["kept"].append(relative)
+                        continue
+            finally:
+                with contextlib.suppress(OSError):
+                    temporary.unlink()
+            report["copied"].append(relative)
+    return report
 
 
 def _is_windows_platform() -> bool:
@@ -51,6 +129,7 @@ class BundleSupervisor:
         self.state_path = self.run_dir / "bundle-supervisor.json"
         self.lock_path = self.run_dir / "bundle-supervisor.lock"
         self.stop_path = self.run_dir / "stop"
+        self.window_reopen_path = self.run_dir / "window-reopen"
         self.model_status_path = self.run_dir / "model-pull.json"
         self.processes: dict[str, subprocess.Popen[Any]] = {}
         self.handles: dict[str, Any] = {}
@@ -63,6 +142,7 @@ class BundleSupervisor:
         self.supervisor_started_at = time.time()
         self._lock_handle: Any | None = None
         self.window_started = False
+        self.window_reopen_until = 0.0
 
     def _manifest(self) -> dict[str, Any]:
         path = self.root / "bundle_manifest.json"
@@ -118,6 +198,55 @@ class BundleSupervisor:
             self.env["VOOL_OLLAMA_MODEL"] = model
         model_store.mkdir(parents=True, exist_ok=True)
         self._write_model_status("delegated_to_api", "The API owns the non-blocking model pull.")
+        self._copy_program_folder_notes_once()
+
+    def _notes_workspace_root(self) -> Path:
+        """The workspace the API this supervisor starts keeps its notes under (core.operator.notes.
+        _workspace_root with VOOL_BUNDLE_ROOT set): VOOL_WORKSPACE_ROOT when the user set it, else
+        the workspace folder under the VOOL home."""
+        override = self._workspace_override()
+        return Path(override).expanduser() if override else self.home / "workspace"
+
+    def _workspace_override(self) -> str:
+        """VOOL_WORKSPACE_ROOT, else the legacy NULLA_WORKSPACE_ROOT, as core.runtime_paths.vool_env reads them."""
+        for name in ("VOOL_WORKSPACE_ROOT", "NULLA_WORKSPACE_ROOT"):
+            value = str(self.env.get(name) or "").strip()
+            if value:
+                return value
+        return ""
+
+    def _copy_program_folder_notes_once(self) -> None:
+        """Copy notes an earlier build kept in {app}\\app\\notes to the workspace in the VOOL home.
+
+        Before notes moved to the VOOL home, the installed API kept them in {app}\\app\\notes, which
+        uninstall deletes. This runs once (a marker in run\\ records it) before the first API start.
+        It copies regular files only, never follows a link or junction, never replaces a file the
+        new location already has, and never deletes or changes the old copy. A failed copy leaves
+        no marker, so the next start tries again.
+        """
+        marker = self.run_dir / _NOTES_COPY_MARKER
+        if marker.exists():
+            return
+        if self._workspace_override():
+            # The API keeps notes in the user's own chosen folder, where an earlier build kept them
+            # too; old program-folder notes are not copied into that project. No marker, so the copy
+            # still runs if the override is removed.
+            return
+        source = self.root / "app" / "notes"
+        target = self._notes_workspace_root() / "notes"
+        try:
+            report = _copy_notes_tree(source, target)
+        except OSError as exc:
+            self._log(f"notes copy from the program folder failed, will retry next start: {exc}")
+            return
+        report.update({"source": str(source), "target": str(target), "copied_at_epoch": time.time()})
+        with contextlib.suppress(OSError):
+            marker.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        if report["copied"] or report["kept"] or report["skipped"]:
+            self._log(
+                f"notes from the program folder: {len(report['copied'])} copied, "
+                f"{len(report['kept'])} already present, {len(report['skipped'])} skipped (links)"
+            )
 
     def _write_model_status(self, status: str, detail: str = "") -> None:
         payload = {
@@ -393,7 +522,7 @@ class BundleSupervisor:
     def _reap_window(self) -> None:
         """A window that closed because its runtime was lost (vool_window exit 3, e.g. the API was
         restarted) reopens once the API answers again. Any other exit -- the user closing the
-        window included -- stays closed."""
+        window included -- stays closed until the user launches VOOL again."""
         child = self.processes.get("window")
         if child is None or child.poll() is None:
             return
@@ -402,6 +531,30 @@ class BundleSupervisor:
         self._log(f"window exited returncode={returncode}")
         if returncode == 3:
             self.window_started = False
+
+    def _request_window_reopen(self) -> None:
+        """A second launch while this home's supervisor runs asks that supervisor to show the
+        window again, the way reopening the Mac app shows its hidden window. The request is a
+        file in this home's own run folder, like the stop request: it reaches only the
+        supervisor that holds this home's lease, and no other program."""
+        with contextlib.suppress(OSError):
+            self.window_reopen_path.write_text("reopen\n", encoding="utf-8")
+
+    def _consume_window_reopen(self) -> None:
+        """Honor a reopen request: a window the user closed opens again once the API answers. A
+        window that is still open is left as it is, unless it exits within the grace period --
+        it was closing when the request came."""
+        now = time.monotonic()
+        try:
+            self.window_reopen_path.unlink()
+        except OSError:
+            pass
+        else:
+            self._log("window reopen requested")
+            self.window_reopen_until = now + _REOPEN_GRACE_SECONDS
+        if "window" not in self.processes and now < self.window_reopen_until:
+            self.window_started = False
+            self.window_reopen_until = 0.0
 
     def _write_state(self) -> None:
         payload = {
@@ -425,10 +578,12 @@ class BundleSupervisor:
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         if not self._acquire_lease():
-            self._log("supervisor already running; duplicate launch ignored")
+            self._request_window_reopen()
+            self._log("supervisor already running; window reopen requested")
             return 0
         self._prepare()
         self.stop_path.unlink(missing_ok=True)
+        self.window_reopen_path.unlink(missing_ok=True)
         self._log("supervisor started")
         try:
             while not self.stop_path.exists():
@@ -437,6 +592,7 @@ class BundleSupervisor:
                 self._ensure_ollama()
                 self._ensure_api()
                 self._reap_window()
+                self._consume_window_reopen()
                 self._ensure_window()
                 self._write_state()
                 if once:
