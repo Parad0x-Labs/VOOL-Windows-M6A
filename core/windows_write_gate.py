@@ -128,23 +128,33 @@ def active(*, windows: bool | None = None) -> bool:
 
 
 def _code_task_folder(task_id: Any) -> list[tuple[str, str]] | str:
-    """The folder a code task writes in, read from its journal the way the task runtime reads it.
+    """The folder a code task writes in, found the way the task runtime finds the task.
 
-    `CodeTaskRuntime._load` takes the journal on disk, parsed by `CodeTask.from_json`, or nothing (it
-    keeps no copy of a journal it cannot read), so an id it would not find gives no place here
-    either: the call is then checked on the chat's workspace as before, and the runtime answers
-    `unknown_task` without writing. A task it would load whose folder is not an absolute path cannot
-    be placed and is refused. Read directly, never through `_load`, which refreshes the runtime's
-    cache."""
-    from core.code_assistant.task_runtime import _TASK_ID_RE, CodeTask, task_dir
+    `CodeTaskRuntime._load` serves its cached copy while the journal's size and time are the ones it
+    last read or wrote, even when the journal cannot be read now (another program holding it open);
+    otherwise it takes the journal on disk, parsed by `CodeTask.from_json`, or nothing. An id it would
+    not find gives no place here either: the call is then checked on the chat's workspace as before,
+    and the runtime answers `unknown_task` without writing. A task it would load whose folder is not an
+    absolute path cannot be placed and is refused. Never through `_load` itself, which refreshes the
+    runtime's cache."""
+    from core.code_assistant.task_runtime import _TASK_ID_RE, CodeTask, code_task_runtime, task_dir
 
     clean = str(task_id or "").strip()
     if not _TASK_ID_RE.match(clean):
         return []
-    try:
-        task = CodeTask.from_json(json.loads((task_dir() / f"{clean}.json").read_text(encoding="utf-8")))
-    except (OSError, ValueError, TypeError):  # exactly what `_load` reads as no task
-        return []
+    runtime = code_task_runtime()
+    stat = runtime._journal_stat(clean)
+    if stat is None:
+        return []  # no journal: `_load` finds no task
+    # Read without the runtime's lock, which a running step can hold. A pair caught mid-update either
+    # fails the comparison (the journal is then read) or holds an older copy of the same task, and a
+    # task's folder never changes once it is opened.
+    task = runtime._tasks.get(clean) if runtime._stats.get(clean) == stat else None
+    if task is None:
+        try:
+            task = CodeTask.from_json(json.loads((task_dir() / f"{clean}.json").read_text(encoding="utf-8")))
+        except (OSError, ValueError, TypeError):  # exactly what `_load` reads as no task
+            return []
     folder = str(task.workspace_root or "").strip()
     if not _placeable(folder):
         return f"code task `{clean}` names no folder VOOL can place, so where it writes cannot be checked"
