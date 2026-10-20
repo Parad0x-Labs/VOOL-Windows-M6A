@@ -157,13 +157,27 @@ public sealed class Journal
                 }
                 catch (BrokerRefusal refusal) { left.Add($"{Describe(step)}: {refusal.Code}"); continue; }
                 catch (Exception error) when (error is not OutOfMemoryException) { left.Add($"{Describe(step)}: {error.GetType().Name}: {error.Message}"); continue; }
-                log.Append(new Dictionary<string, object?> { ["t"] = "undone", ["i"] = index });
+                try { log.Append(new Dictionary<string, object?> { ["t"] = "undone", ["i"] = index }); }
+                catch (Exception error) when (error is not OutOfMemoryException)
+                {
+                    // The step is made but not recorded. Objects have already changed, so this is
+                    // never a plain refusal: it is reported as left, and nothing more is changed
+                    // without a record. A later attempt finds the step already made and records it.
+                    var code = error is BrokerRefusal refusal ? refusal.Code : error.GetType().Name;
+                    left.Add($"{Describe(step)}: made, but its journal record failed ({code}); the restore stopped here");
+                    break;
+                }
                 finished.Add(index);
             }
         }
         if (left.Count == 0)
         {
-            File.Delete(PathOf(batchId));
+            try { File.Delete(PathOf(batchId)); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                // Everything is finished, but the batch stays pending until its file is removed.
+                return new RecoveryOutcome(batchId, committed, false, [$"the batch's journal file could not be removed: {error.Message}"], torn);
+            }
             return new RecoveryOutcome(batchId, committed, true, [], torn);
         }
         return new RecoveryOutcome(batchId, committed, false, left, torn);

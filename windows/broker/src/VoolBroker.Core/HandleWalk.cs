@@ -120,6 +120,10 @@ public static class HandleWalk
             throw new BrokerRefusal("reparse_point", $"Component '{component}' is a reparse point.");
         var isDirectory = (attribute.FileAttributes & Native.FileAttributeDirectory) != 0;
         if (!last && !isDirectory) throw new BrokerRefusal("not_a_directory", $"Component '{component}' is not a directory.");
+        // P5, for a read walk and a write walk alike. Before the name check: a file
+        // with several names may report another of them.
+        if (!isDirectory && Native.GetStandardInfo(handle).NumberOfLinks > 1)
+            throw new BrokerRefusal("blocked_by_hard_link", $"File '{component}' has more than one name.");
         // P7, P8: the object's own name, compared case-insensitively. An 8.3 alias opens the same
         // object under a different name, so it does not match.
         var objectName = Native.GetObjectName(handle);
@@ -133,9 +137,6 @@ public static class HandleWalk
         // P14.
         if (Native.GetFileIdentity(handle).VolumeSerial != root.VolumeSerial)
             throw new BrokerRefusal("path_escapes_root", $"Component '{component}' is on another volume.");
-        // P5, for a read walk and a write walk alike.
-        if (!isDirectory && Native.GetStandardInfo(handle).NumberOfLinks > 1)
-            throw new BrokerRefusal("blocked_by_hard_link", $"File '{component}' has more than one name.");
         // P16: defence in depth; the held handles are the real check.
         var finalPath = Native.GetFinalPath(handle, Native.VolumeNameGuid).TrimEnd('\\');
         if (!finalPath.StartsWith(rootPath + "\\", StringComparison.OrdinalIgnoreCase))

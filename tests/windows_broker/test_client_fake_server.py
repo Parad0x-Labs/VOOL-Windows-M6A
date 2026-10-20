@@ -174,6 +174,21 @@ def test_a_plain_refusal_is_a_broker_refusal(secret: bytes) -> None:
     broker.join()
 
 
+def test_a_plain_refusal_leaves_the_connection_usable(secret: bytes) -> None:
+    def script(stream: Any, request: dict[str, Any]) -> None:
+        stream.write(encode_frame({"id": request["id"], "ok": False, "error": {"code": "not_found", "message": "x"}}))
+        second = read_frame(stream)
+        stream.write(encode_frame({"id": second["id"], "ok": True}))
+
+    broker = FakeBroker(secret, script)
+    client = _request(broker, secret)
+    with pytest.raises(BrokerRefusal):
+        client.request("stat", root_id="r", rel="a")
+    assert client.request("ping")["ok"] is True
+    client.close()
+    broker.join()
+
+
 def test_a_batch_put_back_in_full_is_a_refusal_that_keeps_its_report(secret: bytes) -> None:
     batch = {"batch_id": "b" * 32, "ran": 2, "restored": True, "left": []}
     broker = FakeBroker(

@@ -154,6 +154,42 @@ public sealed class JournalTests : IDisposable
         Assert.Single(work.JournalFiles());
     }
 
+    // A step put back whose "undone" record cannot be written is reported as left, never as a plain
+    // refusal: objects have changed. The batch stays pending, and a later restore finishes it.
+    [Fact]
+    public void A_restore_whose_journal_record_fails_is_incomplete_and_finishes_later()
+    {
+        File.WriteAllText(work.In("f.txt"), "original");
+        BatchRunner.BeforeStepForTests = (_, kind) => { if (kind == "place") throw new BatchCrashForTests(); };
+        Assert.Throws<BatchCrashForTests>(() => work.Runner.Apply([work.Write("f.txt", "new", Workspace.Sha256("original"))]));
+        BatchRunner.BeforeStepForTests = null;
+        var batchId = Path.GetFileNameWithoutExtension(Assert.Single(work.JournalFiles()))["batch-".Length..];
+
+        var failed = 0;
+        BatchLog.FaultForTests = point =>
+        {
+            if (point == "after_write" && LastRecord().GetProperty("t").GetString() == "undone") { failed++; throw new IOException("injected flush failure"); }
+        };
+        RecoveryOutcome first;
+        try { first = work.Runner.Restore(batchId); }
+        finally { BatchLog.FaultForTests = null; }
+        Assert.Equal(1, failed);
+        Assert.False(first.Complete);
+        var line = Assert.Single(first.Left);
+        Assert.StartsWith("aside f.txt", line, StringComparison.Ordinal);
+        Assert.Contains("journal_unavailable", line, StringComparison.Ordinal);
+        // The aside step was made: f.txt is back. The temp step after it was not attempted.
+        Assert.Equal("original", File.ReadAllText(work.In("f.txt")));
+        Assert.Single(work.BrokerNames(), name => Path.GetFileName(name).StartsWith(".vool-broker-tmp-", StringComparison.Ordinal));
+        Assert.Single(work.JournalFiles());
+
+        var second = work.Runner.Restore(batchId);
+        Assert.True(second.Complete, string.Join("; ", second.Left));
+        Assert.Equal("original", File.ReadAllText(work.In("f.txt")));
+        Assert.Empty(work.BrokerNames());
+        Assert.Empty(work.JournalFiles());
+    }
+
     // Recovery by a broker whose flagged folders do not include the batch's folder changes nothing
     // there; once that folder is flagged again, the same journal finishes the job.
     [Fact]
