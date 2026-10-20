@@ -1,0 +1,153 @@
+# Builds and tests the native Windows broker (windows/broker) on a hosted Windows runner, and
+# exercises the rows that need admin and are skipped on Steve ("Not yet exercised": P7, P14, F7,
+# F5 mapped drive). Hosted runners are throwaway VMs, so the volumes, share and drive
+# mapping made here exist only for the job. This workflow is separate from the release gauntlet.
+name: windows-broker
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [windows/v0.7.1-port]
+    paths:
+      - windows/broker/**
+      - core/windows_broker/**
+      - tests/windows_broker/**
+      - .github/workflows/windows-broker.yml
+      # Build inputs outside the broker folders that MSBuild or NuGet would pick up.
+      - global.json
+      - NuGet.config
+      - nuget.config
+      - Directory.Build.props
+      - Directory.Build.targets
+      - Directory.Packages.props
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-broker-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  TESTINGPLATFORM_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1"
+  # The admin rows must run here: a missing volume or share fails the test instead of skipping.
+  VOOL_BROKER_TEST_REQUIRE_ADMIN_ROWS: "1"
+
+jobs:
+  broker:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.402
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: 3.12.13
+
+      - name: Make the test volumes, the share and the mapped drive
+        # Changes the machine: only on a throwaway hosted runner.
+        if: runner.environment == 'github-hosted'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP 'vool-broker-volumes'
+          New-Item -ItemType Directory -Path $root | Out-Null
+
+          function New-TestVolume([string]$name, [int]$megabytes, [string]$fs, [string]$target) {
+            $file = Join-Path $root "$name.vhdx"
+            $assign = if ($target.Length -eq 1) { "assign letter=$target" } else { "assign mount=`"$target`"" }
+            $script = Join-Path $root "$name.txt"
+            Set-Content -Path $script -Encoding ascii -Value @(
+              "create vdisk file=`"$file`" maximum=$megabytes type=expandable",
+              "select vdisk file=`"$file`"",
+              'attach vdisk',
+              'create partition primary',
+              "format fs=$fs quick label=$name",
+              $assign
+            )
+            $out = diskpart /s $script
+            $code = $LASTEXITCODE
+            $out | Write-Host
+            return $code
+          }
+
+          # P7: an NTFS volume with 8.3 names on, set before any folder is made.
+          fsutil 8dot3name set 2
+          if ($LASTEXITCODE -ne 0) { throw 'fsutil 8dot3name set 2 failed' }
+          if ((New-TestVolume 'vool83' 1024 'ntfs' 'V') -ne 0) { throw 'NTFS test volume failed' }
+          fsutil 8dot3name set V: 0
+          if ($LASTEXITCODE -ne 0) { throw 'fsutil 8dot3name set V: 0 failed' }
+          $query = fsutil 8dot3name query V:
+          $query | Write-Host
+          New-Item -ItemType Directory -Path 'V:\short-name-probe-folder' | Out-Null
+          $short = cmd /c dir /x V:\
+          if (-not ($short -match 'SHORT-~1')) { throw 'V: made no 8.3 name for a new folder' }
+          Remove-Item 'V:\short-name-probe-folder'
+
+          # P14: a second NTFS volume mounted as a folder inside a flagged folder on V:.
+          New-Item -ItemType Directory -Path 'V:\flagged\mnt' | Out-Null
+          if ((New-TestVolume 'voolmnt' 256 'ntfs' 'V:\flagged\mnt') -ne 0) { throw 'mounted-volume folder failed' }
+          Set-Content -Path 'V:\flagged\mnt\on-other-volume.txt' -Value 'other volume'
+
+          # F7: flagged folders on file systems that are not NTFS.
+          if ((New-TestVolume 'voolfat' 512 'fat32' 'F') -ne 0) { throw 'FAT32 test volume failed' }
+          if ((New-TestVolume 'voolexf' 512 'exfat' 'E') -ne 0) { throw 'exFAT test volume failed' }
+          New-Item -ItemType Directory -Path 'F:\flagged', 'E:\flagged' | Out-Null
+          if ((New-TestVolume 'voolrefs' 2048 'refs' 'R') -ne 0) { throw 'ReFS test volume failed' }
+          New-Item -ItemType Directory -Path 'R:\flagged' | Out-Null
+
+          # F5: a mapped network drive onto a local share.
+          New-Item -ItemType Directory -Path 'V:\share\flagged' | Out-Null
+          New-SmbShare -Name 'vooltest' -Path 'V:\share' -FullAccess $env:USERNAME | Out-Null
+          net use M: \\localhost\vooltest /persistent:no
+          if ($LASTEXITCODE -ne 0) { throw 'net use M: failed' }
+
+          New-Item -ItemType Directory -Path 'V:\tests' | Out-Null
+          Add-Content -Path $env:GITHUB_ENV -Encoding utf8 -Value @(
+            'VOOL_BROKER_TEST_8DOT3_ROOT=V:\tests',
+            'VOOL_BROKER_TEST_MOUNTED_FOLDER=V:\flagged',
+            'VOOL_BROKER_TEST_FAT32_ROOT=F:\flagged',
+            'VOOL_BROKER_TEST_EXFAT_ROOT=E:\flagged',
+            'VOOL_BROKER_TEST_MAPPED_ROOT=M:\flagged',
+            'VOOL_BROKER_TEST_REFS_ROOT=R:\flagged'
+          )
+
+      - name: Restore
+        # The only download: NuGet packages from nuget.org, at the versions Directory.Packages.props
+        # pins (there are no lock files to restore in locked mode).
+        working-directory: windows/broker
+        run: dotnet restore VoolBroker.sln
+
+      - name: Build
+        working-directory: windows/broker
+        run: dotnet build VoolBroker.sln --no-restore
+
+      - name: Test
+        working-directory: windows/broker
+        run: dotnet test --solution VoolBroker.sln --no-build
+
+      - name: Python client against the real broker
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # test_client_windows.py looks for the Debug build at this fixed path and skips when it
+          # is missing, so its presence is checked here and no skip is accepted below.
+          $exe = 'windows/broker/src/VoolBroker/bin/Debug/net10.0-windows/VoolBroker.exe'
+          if (-not (Test-Path $exe)) { throw "built broker not found at $exe" }
+          # pytest at the repo's own pin (pyproject.toml dev extra).
+          python -m pip install pytest==9.1.1
+          python -m pytest tests/windows_broker -q -rs -p no:cacheprovider --junitxml="$env:RUNNER_TEMP/pytest-broker.xml"
+          if ($LASTEXITCODE -ne 0) { throw 'pytest failed' }
+          [xml]$report = Get-Content "$env:RUNNER_TEMP/pytest-broker.xml"
+          $skipped = ($report.testsuites.testsuite | Measure-Object -Property skipped -Sum).Sum
+          if ($skipped -ne 0) { throw "$skipped broker client test(s) skipped on Windows" }
