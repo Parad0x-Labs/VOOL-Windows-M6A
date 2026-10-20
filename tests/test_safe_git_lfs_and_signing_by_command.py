@@ -444,3 +444,9 @@ def test_vool_commits_run_no_automatic_housekeeping(tmp_path: Path, strategy: st
 
     assert result.ok is True, result.to_dict()
     assert _loose_objects(repo) >= before, "VOOL's commit ran automatic housekeeping"
+
+
+def test_only_a_leading_alias_section_is_exempt_from_the_program_endings() -> None:
+    assert not safe_git.is_executable_key("alias.lastcommand")
+    assert safe_git.is_executable_key("foo.alias.xcommand")
+    assert safe_git.is_executable_key("alias.x.command")

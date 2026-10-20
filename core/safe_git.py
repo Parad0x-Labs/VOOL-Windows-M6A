@@ -26,9 +26,9 @@ Three layers:
   with no checkout runs nothing because hardened_argv() keeps git from diffing in or rebuilding from its git
   folder.
 System and global config belong to the user (for example Git LFS's global filters) and are not
-second-guessed. `alias.*` is not refused: an alias runs only when invoked by name, and VOOL
-never invokes one. repo.push is VOOL's one transport command; safe_env() also drops
-GIT_SSH/GIT_SSH_COMMAND. Not closed here: a push to a local-path remote runs that other
+second-guessed. An alias is not refused for a name like ``alias.subcmd``: it runs only when
+invoked by name, and VOOL never invokes one (``alias.command``, ``alias.cmd`` and ``alias.<x>.command``
+still are). repo.push is VOOL's one transport command; safe_env() also drops GIT_SSH/GIT_SSH_COMMAND. Not closed here: a push to a local-path remote runs that other
 repository's receive hooks (git clears the -c hardening for its local receive-pack); tracked in
 the TDL. Residual, documented rather than claimed closed: a process editing .git/config
 between the check and the run (the same check/use class as the Windows filesystem race).
