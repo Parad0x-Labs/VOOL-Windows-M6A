@@ -26,13 +26,18 @@ What this file pins:
   closing code fence after it, the patch is refused); `changed_paths` and the mutation record name exactly
   the files written, and rolling the change back restores only those.
 - With the gate off (off Windows), `git apply` runs only when the workspace is the top of its work tree.
+  `git apply` and GNU patch read the patch's own UTF-8 bytes, and only they need them: a patch VOOL's
+  Python engine applies is never encoded. An engine stopped at its time limit leaves the outcome
+  unknown (it may have written some files), and no other engine runs after it.
 
 Every case drives the real executor (`execute_tool_intent`) in Manual and in Auto, with real git
 repositories made by the git binary and real files. A call that stops for approval (every write in
 Manual, a rollback in Auto too) is approved through the real approval authority (`resolve_approval`)
 and then resumed with its token, as the chat resumes a turn. The gate is switched through
-`windows_write_gate._IS_WINDOWS`, which also selects the Windows patch engine. The one fault injected is
-another program's write: a wrapper that edits a file and then calls the real pinned writer.
+`windows_write_gate._IS_WINDOWS`, which also selects the Windows patch engine. Two faults are injected:
+another program's write (a wrapper that edits a file and then calls the real pinned writer), and, off
+Windows, a patch engine stopped at its time limit (the real engine runs, then `subprocess.run` raises the
+timeout it raises for a child that outlives it).
 
 This file belongs on the Windows gauntlet's runtime list (tools/windows_fresh_host_gauntlet.ps1), where
 the gate is on for real. On Linux the pinned writer takes its directory-descriptor branch; real Windows
@@ -877,3 +882,93 @@ def test_off_windows_a_patch_in_a_workspace_that_is_the_repository_top_still_goe
     assert record is not None and [change["path"] for change in record["changes"]] == ["notes.txt"]
     assert _git(workspace, "status", "--porcelain", "--untracked-files=all") == " M notes.txt\n"
     assert _git(workspace, "rev-parse", "HEAD").strip() == head
+
+
+# ---------------------------------------------------------------------------
+# Off Windows: what the engines read, and an engine stopped at its time limit
+# ---------------------------------------------------------------------------
+
+# A section GNU patch places one line above where it says (VOOL's Python engine places sections only where
+# they say, so it refuses this one). The signature ends the patch outside the section, as a mail does.
+OFFSET_PATCH = "--- a/notes.txt\n+++ b/notes.txt\n@@ -2,3 +2,3 @@\n one\n-two\n+TWO\n three\n" + SIGNATURE
+
+
+def _engines_stopped_at_their_time_limit(monkeypatch: pytest.MonkeyPatch, stopped: str) -> list[str]:
+    """Each patch engine VOOL starts, in order ("git apply", "python", "patch"). The engine named `stopped`
+    really runs, and writes, and is then stopped at its time limit: `subprocess.run` raises the timeout it
+    raises for a child that outlives it. Every other subprocess runs as it is."""
+    started: list[str] = []
+    git, patch = shutil.which("git"), shutil.which("patch")
+    real_run, real_python_engine = subprocess.run, workspace_tools._apply_unified_diff_python
+
+    def run(argv, *args, **kwargs):
+        engine = ("git apply" if argv[0] == git and "apply" in argv else "patch" if argv[0] == patch else "")
+        if engine:
+            started.append(engine)
+        result = real_run(argv, *args, **kwargs)
+        if engine == stopped:
+            raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"), output=result.stdout, stderr=result.stderr)
+        return result
+
+    def python_engine(*args, **kwargs):
+        started.append("python")
+        return real_python_engine(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(workspace_tools, "_apply_unified_diff_python", python_engine)
+    return started
+
+
+@pytest.mark.parametrize("engine", ["git apply", "patch"])
+@pytest.mark.parametrize("mode", ["manual", "auto"])
+def test_off_windows_an_engine_stopped_at_its_time_limit_leaves_the_outcome_unknown_and_starts_no_other_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, off_windows: None, mode: str, engine: str
+) -> None:
+    # An engine stopped part way may have written some of the files, so VOOL can neither say the patch
+    # failed (a retry would apply it twice) nor let another engine run over what it left.
+    workspace = tmp_path.resolve() / "repo"
+    if engine == "git apply":
+        _init_repo(workspace)
+        (workspace / "notes.txt").write_bytes(NOTES)
+        _commit_all(workspace)
+        patch = NOTES_PATCH + SIGNATURE
+        left = {"notes.txt": NOTES_EDITED}
+    else:
+        assert shutil.which("patch"), "this case needs GNU patch: what it pins is VOOL's last engine stopped"
+        workspace.mkdir()
+        (workspace / "notes.txt").write_bytes(NOTES)
+        patch = OFFSET_PATCH
+        # GNU patch keeps the file as it was beside it when it places a section somewhere else.
+        left = {"notes.txt": NOTES_EDITED, "notes.txt.orig": NOTES}
+    chat = _Chat(workspace, mode)
+    started = _engines_stopped_at_their_time_limit(monkeypatch, engine)
+    arguments = {"patch": patch}
+
+    execution = chat.run(PATCH, arguments, untouched=(workspace,))
+
+    assert execution.ok is False, (execution.status, execution.response_text)
+    assert execution.status == "unknown_reconciliation_required", (execution.status, execution.response_text)
+    assert started == (["git apply"] if engine == "git apply" else ["python", "patch"])
+    assert _tree(workspace) == left
+    assert _ledger_state(arguments) == "unknown"
+
+
+@pytest.mark.parametrize("mode", ["manual", "auto"])
+def test_off_windows_a_patch_vools_own_engine_applies_is_never_encoded_for_an_engine(
+    tmp_path: Path, off_windows: None, mode: str
+) -> None:
+    # A tool call's JSON can carry half of a surrogate pair ("\ud83d"), which has no UTF-8 bytes. Outside
+    # the patch's sections VOOL's Python engine never reads it, so the patch applies; only an engine that
+    # reads the patch on its stdin needs the bytes.
+    workspace = tmp_path.resolve() / "scratch"
+    workspace.mkdir()
+    (workspace / "notes.txt").write_bytes(NOTES)
+    chat = _Chat(workspace, mode)
+    patch = "Fix the second line \ud83d\n" + NOTES_PATCH
+
+    execution = chat.run(PATCH, {"patch": patch}, untouched=(workspace,))
+
+    assert execution.ok is True and execution.status == "executed", (execution.status, execution.response_text)
+    assert execution.details["engine"] == "python_fallback"
+    assert _tree(workspace) == {"notes.txt": NOTES_EDITED}
+    assert execution.details["changed_paths"] == ["notes.txt"]
