@@ -11,6 +11,7 @@ checked-out submodule, which obeys the submodule's own config.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -487,3 +488,64 @@ def test_a_branch_switch_never_rebuilds_a_submodule_from_its_git_folder(tmp_path
 
     assert result.ok is True, result.to_dict()
     assert not marker.exists(), "a recursive switch ran a filter named in a submodule's git folder"
+
+
+def _auto_gc_runs_the_recent_objects_hook(tmp_path: Path, marker: Path) -> Path:
+    # The repository makes its next commit's automatic gc prune at once, and names a program for
+    # gc to ask which objects are recent. Two loose unreachable objects in objects/17 trip gc.auto=1.
+    repo, _ = _repo(tmp_path)
+    found = 0
+    for index in range(100000):
+        content = f"loose {index}\n".encode()
+        if hashlib.sha1(b"blob %d\0" % len(content) + content).hexdigest().startswith("17"):
+            subprocess.run(["git", "-C", str(repo), "hash-object", "-w", "--stdin"], input=content,
+                           check=True, capture_output=True)
+            found += 1
+            if found == 2:
+                break
+    for key, value in (("gc.auto", "1"), ("gc.autoDetach", "false"), ("gc.pruneExpire", "now"),
+                       ("gc.recentObjectsHook", _planted_program(tmp_path, marker))):
+        _git(repo, "config", key, value)
+    (repo / "notes.txt").write_text("two\n", encoding="utf-8")
+    return repo
+
+
+def test_control_a_commits_automatic_gc_runs_the_repositorys_recent_objects_hook(tmp_path: Path) -> None:
+    marker = tmp_path / "MARKER"
+    repo = _auto_gc_runs_the_recent_objects_hook(tmp_path, marker)
+
+    subprocess.run(safe_git.hardened_argv(repo, "commit", "-q", "-a", "-m", "gc"), capture_output=True,
+                   timeout=60, env=safe_git.safe_env())
+
+    assert marker.exists(), "the commit's gc did not run the hook; the case below proves nothing"
+
+
+def test_a_repositorys_recent_objects_hook_is_refused_and_never_runs(tmp_path: Path) -> None:
+    marker = tmp_path / "MARKER"
+    repo = _auto_gc_runs_the_recent_objects_hook(tmp_path, marker)
+
+    result = GitRunner(root=repo).commit(message="gc")
+
+    assert result.ok is False
+    assert safe_git.executable_local_config(repo) == ["gc.recentobjectshook"]
+    assert not marker.exists(), "a commit's automatic gc ran the repository's gc.recentObjectsHook"
+
+
+@pytest.mark.parametrize("key", [
+    "gc.recentObjectsHook", "uploadpack.packObjectsHook", "gpg.ssh.defaultKeyCommand", "remote.origin.vcs",
+    "interactive.diffFilter", "sendemail.sendmailCmd", "hook.planted.command", "hook.planted.event",
+    "difftool.planted.path", "mergetool.planted.path",
+])
+def test_every_program_naming_key_from_the_config_sweep_is_refused(tmp_path: Path, key: str) -> None:
+    repo, marker = _repo(tmp_path)
+    _git(repo, "config", key, _planted_program(tmp_path, marker))
+
+    status = git_status_workspace({}, workspace_root=repo)
+
+    assert status["status"] == "refused_repository_config", key
+    assert key.lower() in status["response_text"]
+
+
+def test_advice_toggles_named_like_hooks_are_not_programs() -> None:
+    assert not safe_git.is_executable_key("advice.ignoredHook")
+    assert not safe_git.is_executable_key("core.fsmonitorHookVersion")
