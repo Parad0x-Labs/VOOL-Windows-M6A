@@ -54,7 +54,9 @@ jobs:
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: 3.12.13
+          # actions/python-versions has no Windows build of 3.12.13 (security-only releases ship
+          # source only), so this uses the newest 3.12 for Windows, like the repo's other Windows lanes.
+          python-version: "3.12"
 
       - name: Make the test volumes, the share and the mapped drive
         # Changes the machine: only on a throwaway hosted runner.
@@ -144,8 +146,10 @@ jobs:
           # is missing, so its presence is checked here and no skip is accepted below.
           $exe = 'windows/broker/src/VoolBroker/bin/Debug/net10.0-windows/VoolBroker.exe'
           if (-not (Test-Path $exe)) { throw "built broker not found at $exe" }
-          # pytest at the repo's own pin (pyproject.toml dev extra).
-          python -m pip install pytest==9.1.1
+          # tests/conftest.py imports VOOL itself, so VOOL is installed with its dev extra (pytest at the
+          # repo's pin), under the versions CI pins.
+          python -m pip install -e ".[dev]" -c .github/ci-constraints.txt
+          if ($LASTEXITCODE -ne 0) { throw 'pip install failed' }
           python -m pytest tests/windows_broker -q -rs -p no:cacheprovider --junitxml="$env:RUNNER_TEMP/pytest-broker.xml"
           if ($LASTEXITCODE -ne 0) { throw 'pytest failed' }
           [xml]$report = Get-Content "$env:RUNNER_TEMP/pytest-broker.xml"
