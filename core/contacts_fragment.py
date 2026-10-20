@@ -17,6 +17,8 @@ messages or pays.
 """
 from __future__ import annotations
 
+import sys
+
 _CSS = r"""
 #vcOverlay .vc-modal { width:min(920px,95vw); max-height:90vh; display:flex; flex-direction:column; }
 #vcOverlay .vc-head-actions { display:flex; align-items:center; gap:8px; }
@@ -1012,9 +1014,24 @@ _JS = r"""
 })();
 """
 
+#: What Protection says about the operating system's own confirmation, swapped in on Windows only (every other host is
+#: served the text above). core.os_consent_gate picks the prompt by sys.platform; the Windows bundle carries no Windows
+#: Hello bridge, so Windows shows its credential window, which needs OK and does not check what is typed in it. (A source
+#: install with a Hello bridge asks Windows Hello first; this text describes the bundle.)
+_WINDOWS_WORDING: tuple[tuple[str, str], ...] = (
+    ("'This Mac asks you to confirm it is you in its own window.'",
+     "'Windows shows a confirmation window; choose OK to continue.'"),
+    ("Setting, changing or resetting it asks this Mac to confirm it is you in its own window.'",
+     "When you set, change or reset it, Windows shows a confirmation window; choose OK to continue.'"),
+)
+
 
 def render_contacts_fragment() -> str:
-    return "<style>" + _CSS + "</style>\n<script>" + _JS + "</script>\n"
+    js = _JS
+    if sys.platform == "win32":
+        for mac, windows in _WINDOWS_WORDING:
+            js = js.replace(mac, windows)
+    return "<style>" + _CSS + "</style>\n<script>" + js + "</script>\n"
 
 
 __all__ = ["render_contacts_fragment"]

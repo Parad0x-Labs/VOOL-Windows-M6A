@@ -17,6 +17,7 @@ import hashlib
 import hmac
 import json
 import os
+import sys
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -504,6 +505,14 @@ def _unseal_signing_secret_with_device(wallet_id: str, *, reason: str) -> bytes:
     return _solana_secret_from(kind, material)
 
 
+def _not_device_bound_remediation() -> str:
+    """What to do about a wallet with no device-protected copy. Device authentication exists only on a Mac (device_auth),
+    so on Windows the text says export is not available there instead of pointing at "this Mac"."""
+    if sys.platform == "win32":
+        return "This wallet has no device-protected copy, and export unlocks only with device approval on a Mac, which is not available on Windows. Your recovery phrase still restores this wallet."
+    return "This wallet was created on a machine without device authentication (Touch ID or password). Restore it from its recovery phrase on this Mac to enable export."
+
+
 def _unseal_with_device(wallet_id: str, *, reason: str) -> tuple[str, bytes, str]:
     """The DEVICE path: Touch ID or the Mac password releases the Keychain unlock secret, which opens the device
     seal. Returns (kind, material, public_key). The only door to a private-key export."""
@@ -513,7 +522,7 @@ def _unseal_with_device(wallet_id: str, *, reason: str) -> tuple[str, bytes, str
         raise wallet_fault("wallet_not_found", authority=AUTHORITY, context={"wallet_id": wallet_id})
     if not row[0]:
         raise wallet_fault("wallet_device_auth_unavailable", authority=AUTHORITY, context={"wallet_id": wallet_id, "reason": "wallet_not_device_bound",
-                           "remediation": "This wallet was created on a machine without device authentication (Touch ID or password). Restore it from its recovery phrase on this Mac to enable export."})
+                           "remediation": _not_device_bound_remediation()})
     authority = device_auth.current_authority()
     if not authority.available():
         raise wallet_fault("wallet_device_auth_unavailable", authority=AUTHORITY, context={"wallet_id": wallet_id, "reason": "no_device_authentication_on_this_machine"})

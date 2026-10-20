@@ -32,6 +32,7 @@ import hmac
 import json
 import math
 import secrets
+import sys
 import time
 import unicodedata
 from collections.abc import Iterator
@@ -218,13 +219,22 @@ def _sealed_recovery() -> tuple[str, dict[str, Any]]:
 
 # --- consent ------------------------------------------------------------------------------------------------------------
 
+def _consent_denied_message() -> str:
+    """What a refused confirmation says. core.os_consent_gate picks the prompt by sys.platform: the Windows bundle carries
+    no Windows Hello bridge, so its prompt is the credential window, whose only refusal is Cancel; a source install with a
+    bridge asks Windows Hello first, which can also fail or be busy."""
+    if sys.platform == "win32":
+        return "The Windows confirmation was cancelled or failed; nothing changed."
+    return "The Mac's own confirmation was declined or failed; nothing changed."
+
+
 def _require_consent(reason: str) -> None:
     from core import os_consent_gate
 
     try:
         granted = os_consent_gate.require_os_user_consent(reason)
     except os_consent_gate.ConsentDeniedError:
-        raise CredentialError("consent_denied", "The Mac's own confirmation was declined or failed; nothing changed.", status=403) from None
+        raise CredentialError("consent_denied", _consent_denied_message(), status=403) from None
     except Exception:
         raise CredentialError(
             "consent_unavailable",
@@ -232,7 +242,7 @@ def _require_consent(reason: str) -> None:
             status=409, details={"setup_path": SETUP_PATH},
         ) from None
     if not granted:
-        raise CredentialError("consent_denied", "The Mac's own confirmation was declined or failed; nothing changed.", status=403)
+        raise CredentialError("consent_denied", _consent_denied_message(), status=403)
 
 
 # --- the durable throttle -----------------------------------------------------------------------------------------------
