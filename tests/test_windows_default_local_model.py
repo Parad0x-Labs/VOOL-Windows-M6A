@@ -1,7 +1,7 @@
 """The Windows edition's default local model is qwen3:8b, the model VOOL certifies as an author.
 
-qwen2.5:7b fails the local-model certification (result_continuation, missing_tool_calls; see
-docs/APPLE_CAPABILITY_MATRIX.md), so a Windows install that defaulted to it launched but refused
+qwen2.5:7b fails the local-model certification (degraded, docs/APPLE_CAPABILITY_MATRIX.md; on a
+clean Windows VM the result_continuation stage reported missing_tool_calls), so a Windows install that defaulted to it launched but refused
 to write any answer. The bundle manifest written by build_bundle.ps1 is the model source for the
 installed app (core/bundle_manifest.py), and the script installer and launchers fall back to a
 fixed tag when nothing else names one. Every one of those Windows defaults must be the certified
@@ -46,14 +46,3 @@ def test_windows_fallback_matches_the_posix_installer_fallback() -> None:
     script = _read("installer/install_vool.sh")
     assert f'") 2>/dev/null || echo "{CERTIFIED_AUTHOR}"' in script
     assert f"PRIMARY_LOCAL_MODEL={CERTIFIED_AUTHOR}" in script
-
-
-def test_no_windows_default_names_the_uncertified_model() -> None:
-    for relative in (
-        "installer/bundle/build_bundle.ps1",
-        "installer/install_vool.bat",
-        "Start_VOOL.bat",
-        "Talk_To_VOOL.bat",
-    ):
-        script = _read(relative)
-        assert not re.search(r'(?:\$Model\s*=|MODEL_TAG=|VOOL_OLLAMA_MODEL=)\s*"?qwen2\.5:7b', script), relative

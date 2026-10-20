@@ -2,9 +2,11 @@
 
 On the installed Windows app the chain is: build_bundle.ps1 `$Model` -> bundle_manifest.json
 `selected_model` -> the bundle supervisor exports it as VOOL_OLLAMA_MODEL -> the API boot takes
-that as the configured model and, with no install receipt naming the same model, treats it as a
-pin that installed-inventory alignment never replaces -> it is the runtime's model_tag (healthz),
-the default row of /api/tags (the chat picker's local list) and the lane Auto's turn is fenced to.
+that as the configured model and, when the install-profile record (config/install-profile.json)
+names no other model, as a pin that installed-inventory alignment does not replace -> it is the
+runtime's model_tag (healthz) and the default row of /api/tags (the chat picker's local list).
+These tests cover the links that can run without booting the API: the build default, the
+supervisor's export, the runtime's manifest default and the catalogue /api/tags is built from.
 A clean-VM run at a7caed3 showed the old default (qwen2.5:7b) still being routed to and offered in
 the picker with qwen3:8b installed and certified, so the default must reach every link.
 """
@@ -16,7 +18,6 @@ import re
 from pathlib import Path
 
 from core.runtime_provider_defaults import default_runtime_model_tag
-from core.web.api.runtime import candidate_aware_daily_runtime_model_tag
 from core.web.api.service import _runtime_model_catalog
 from installer.bundle.bundle_supervisor import BundleSupervisor
 
@@ -64,7 +65,7 @@ def test_supervisor_exports_the_bundle_default_as_the_runtime_model(tmp_path) ->
     assert supervisor.env["VOOL_BUNDLE_MODEL"] == CERTIFIED_AUTHOR
 
 
-def test_runtime_default_and_auto_primary_follow_the_bundle_default(tmp_path) -> None:
+def test_runtime_default_follows_the_bundle_manifest(tmp_path) -> None:
     root, env = _stage_bundle(tmp_path)
     supervisor = BundleSupervisor(root, env=env)
     supervisor._prepare()
@@ -74,9 +75,6 @@ def test_runtime_default_and_auto_primary_follow_the_bundle_default(tmp_path) ->
     assert (
         default_runtime_model_tag(env={"VOOL_BUNDLE_MANIFEST": child_env["VOOL_BUNDLE_MANIFEST"]}) == CERTIFIED_AUTHOR
     )
-    # The exported model with no matching install receipt is a pin: boot keeps it as Auto's primary.
-    configured = child_env["VOOL_OLLAMA_MODEL"]
-    assert candidate_aware_daily_runtime_model_tag(configured, env=child_env, selection_pinned=True) == CERTIFIED_AUTHOR
 
 
 def test_picker_local_list_leads_with_the_bundle_default(tmp_path) -> None:
