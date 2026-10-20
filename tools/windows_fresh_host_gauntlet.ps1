@@ -179,10 +179,16 @@ function Invoke-WindowsRuntimeRegression {
         "tests\test_machine_writes_are_checked_where_they_land.py",
         "tests\test_media_editor_export_asks_the_windows_gate.py",
         "tests\test_git_tools_repository_config_cannot_run_programs.py",
+        "tests\test_windows_gate_checks_where_git_writes.py",
+        "tests\test_windows_gate_checks_the_task_and_session_folder.py",
+        "tests\test_windows_patch_lands_only_where_checked.py",
+        "tests\test_notes_archive_stays_in_the_notes_folder.py",
         "tests\test_forgetting_is_applied_or_never_claimed_20261007.py",
         "tests\test_forget_subject_readers_r9.py",
         "tests\lifecycle\test_forget_revocation_law_20260929.py",
-        "tests\test_email_store_recovery_surface.py"
+        "tests\test_email_store_recovery_surface.py",
+        "tests\test_windows_default_local_model.py",
+        "tests\test_windows_bundle_default_reaches_auto.py"
     )
     $previousUtf8 = $env:PYTHONUTF8
     $env:PYTHONUTF8 = "1"

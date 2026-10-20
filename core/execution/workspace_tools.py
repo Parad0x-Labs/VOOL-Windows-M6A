@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from core import safe_git
+from core import safe_git, windows_write_gate
 
 from .artifacts import (
     DestinationChangedError,
@@ -363,6 +363,35 @@ def apply_unified_diff_workspace(
             session_id=session_id,
             reviewed_destinations=list(reviewed_destinations),
         )
+    for relative in touched_paths:
+        # Every file the patch names is placed before any engine runs, so a path that escapes the
+        # workspace or names VOOL's own state is refused with nothing written, not raised mid-dispatch
+        # (where it would read as an outcome that may or may not have happened).
+        try:
+            resolve_workspace_path(relative, workspace_root=workspace_root, write=True)
+        except (ValueError, OSError) as exc:
+            return {
+                "ok": False,
+                "status": "invalid_arguments",
+                "response_text": f"The patch names `{relative}`, which cannot be changed here: {exc} Nothing was written.",
+                "details": {"paths": touched_paths, "changed_paths": []},
+            }
+    if windows_write_gate.active():
+        # Windows: VOOL's own engine only, through the pinned writer, on the files as they are now.
+        # `git apply` places a git-format patch's paths from the work tree's top, which the
+        # repository's own config can move, and GNU patch and the engine below write as they go;
+        # either can change files VOOL did not compare, and then report `no_change`.
+        destinations = _destinations_as_found(patch_text, touched_paths, workspace_root=workspace_root)
+        if isinstance(destinations, dict):
+            return destinations
+        return _apply_protected_unified_diff(
+            patch_text=patch_text,
+            touched_paths=touched_paths,
+            workspace_root=workspace_root,
+            session_id=session_id,
+            reviewed_destinations=destinations,
+            unreviewed=True,
+        )
     snapshots: list[dict[str, Any]] = []
     for relative in touched_paths:
         target = resolve_workspace_path(relative, workspace_root=workspace_root, write=True)
@@ -392,19 +421,25 @@ def apply_unified_diff_workspace(
                 git_available = None
         except (OSError, RuntimeError, subprocess.TimeoutExpired):
             git_available = None
+    if git_available and not _workspace_is_work_tree_top(workspace_root):
+        # git reads a git-format patch's paths from the top of the work tree, not from the
+        # workspace. When the workspace is anywhere else (a subfolder of a repository, or a
+        # repository whose own config moves its work tree with `core.worktree`), a patch could
+        # change files outside the workspace, and the comparison below would miss them.
+        git_available = None
     if git_available:
         git_cmd = [git_available, *safe_git.hardening_args(), "-C", str(workspace_root), "apply",
                    "--whitespace=nowarn", "--recount", "-"]
-        try:
-            git_result = subprocess.run(git_cmd, input=patch_text, text=True, capture_output=True, timeout=60,
-                                        env=safe_git.safe_env())
-        except subprocess.TimeoutExpired:
-            errors.append("git apply timed out after 60s")
-            git_result = None
-        if git_result is not None and git_result.returncode == 0:
+        # The engines read the patch's exact UTF-8 bytes: a text pipe would encode it in the locale's
+        # encoding and, on Windows, write each newline as CRLF, so the engine would not read the patch
+        # VOOL checked. An engine stopped at its time limit may already have written some files, so a
+        # timeout is not caught: no other engine runs, and the dispatch reports the outcome as unknown.
+        git_result = subprocess.run(git_cmd, input=patch_text.encode("utf-8"), capture_output=True, timeout=60,
+                                    env=safe_git.safe_env())
+        if git_result.returncode == 0:
             applied_with = "git_apply"
         else:
-            errors.append((git_result.stderr or git_result.stdout or "").strip())
+            errors.append(_engine_output(git_result))
     if not applied_with:
         try:
             _apply_unified_diff_python(patch_text, workspace_root=workspace_root)
@@ -422,15 +457,12 @@ def apply_unified_diff_workspace(
             # the last-resort engine, so a bad match surfaces as a clean apply_failed instead of a
             # silent wrong-location write.
             patch_cmd = [patch_available, f"-p{strip}", "-d", str(workspace_root), "--forward", "--batch", "--fuzz=0"]
-            try:
-                patch_result = subprocess.run(patch_cmd, input=patch_text, text=True, capture_output=True, timeout=60)
-            except subprocess.TimeoutExpired:
-                errors.append("patch timed out after 60s")
-                patch_result = None
-            if patch_result is not None and patch_result.returncode == 0:
+            # The patch's UTF-8 bytes, and a timeout not caught, as for `git apply` above.
+            patch_result = subprocess.run(patch_cmd, input=patch_text.encode("utf-8"), capture_output=True, timeout=60)
+            if patch_result.returncode == 0:
                 applied_with = "patch"
             else:
-                errors.append((patch_result.stderr or patch_result.stdout or "").strip())
+                errors.append(_engine_output(patch_result))
     if not applied_with:
         error_text = "; ".join(item for item in errors if item) or "No supported patch engine was available."
         return {
@@ -539,6 +571,51 @@ _GIT_UNSUPPORTED_HEADERS = (
     "rename from ", "rename to ", "copy from ", "copy to ", "similarity index ", "dissimilarity index ",
     "old mode ", "new mode ", "deleted file mode ", "GIT binary patch", "Binary files ",
 )
+
+
+def _engine_output(result: Any) -> str:
+    """What a patch engine printed (its stderr, else its stdout), as text."""
+    output = result.stderr or result.stdout or b""
+    return (output.decode("utf-8", "replace") if isinstance(output, bytes) else str(output)).strip()
+
+
+def _workspace_is_work_tree_top(workspace_root: Path) -> bool:
+    """Whether git, run in the workspace, takes the workspace itself as the top of its work tree
+    (so a patch's paths mean the same files to git as to VOOL). False when git cannot say."""
+    try:
+        probe = subprocess.run(safe_git.hardened_argv(workspace_root, "rev-parse", "--show-toplevel"),
+                               capture_output=True, text=True, timeout=20, env=safe_git.safe_env())
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return False
+    top = probe.stdout.strip()
+    if probe.returncode != 0 or not top:
+        return False
+    return os.path.normcase(os.path.realpath(top)) == os.path.normcase(os.path.realpath(str(workspace_root)))
+
+
+def _destinations_as_found(patch_text: str, touched_paths: list[str], *, workspace_root: Path
+                           ) -> list[dict[str, Any]] | dict[str, Any]:
+    """Each file a patch names, placed inside the workspace and paired with the bytes it holds now, in the
+    shape `_apply_protected_unified_diff` takes for reviewed destinations: the patch is then applied to
+    these files as they are, or to nothing. A file the patch creates (`--- /dev/null`) must not exist yet;
+    otherwise the refusal is returned instead."""
+    lines = patch_text.splitlines()
+    created = {
+        _normalize_patch_path(lines[index + 1][4:])
+        for index, line in enumerate(lines[:-1])
+        if line.startswith("--- ") and line[4:].strip() == "/dev/null" and lines[index + 1].startswith("+++ ")
+    }
+    rows: list[dict[str, Any]] = []
+    for relative in touched_paths:
+        target = resolve_workspace_path(relative, workspace_root=workspace_root, write=True)
+        if relative in created and (target.exists() or target.is_symlink()):
+            return {"ok": False, "status": "stale_base",
+                    "response_text": (f"This patch creates `{relative}`, which already exists; nothing was written. "
+                                      "Re-read it and patch it as an edit."),
+                    "details": {"paths": touched_paths, "changed_paths": [], "engine": "protected_python"}}
+        prior = hashlib.sha256(target.read_bytes()).hexdigest() if target.is_file() else ""
+        rows.append({"path": relative, "target": str(target), "prior_sha256": prior})
+    return rows
 
 
 def _protected_patch_text(patch_text: str) -> tuple[str, str]:
@@ -651,6 +728,7 @@ def _apply_protected_unified_diff(
     workspace_root: Path,
     session_id: str | None,
     reviewed_destinations: list[dict[str, Any]],
+    unreviewed: bool = False,
 ) -> dict[str, Any]:
     """Apply an APPROVED patch to exactly the destinations its proposal recorded.
 
@@ -665,7 +743,11 @@ def _apply_protected_unified_diff(
     would not reproduce (`_protected_render_obstacle`), which takes `workspace.write_file`. Rendering reads
     the bytes verified here, never the path again. If a later file is refused or fails part-way, every file
     already written is returned to its state before the patch (`_compensate_protected_writes`), and the
-    result names each file restored or removed and each one left changed."""
+    result names each file restored or removed and each one left changed.
+
+    ``unreviewed``: a patch no proposal recorded, applied on Windows to its files as they are now
+    (`_destinations_as_found`); the same checks and writes, with answers that do not speak of a review,
+    and an engine refusal reported as `stale_base` or `invalid_patch_syntax` like the other engines'."""
     by_path = {str(row.get("path") or ""): row for row in reviewed_destinations if isinstance(row, dict)}
 
     def refusal(status: str, text: str, **extra: Any) -> dict[str, Any]:
@@ -684,12 +766,20 @@ def _apply_protected_unified_diff(
         except ValueError:
             target = None
         if target is None or str(target) != str(record.get("target") or ""):
+            if unreviewed:
+                return refusal("destination_changed",
+                               f"`{relative}` changed while the patch was being prepared; nothing was written. "
+                               "Re-read it before patching it again.")
             return refusal("destination_changed",
                            f"`{relative}` no longer resolves to the file that was reviewed; nothing was written. "
                            "Re-propose against the files as they are now.")
         reviewed_bytes = target.read_bytes() if target.is_file() else None
         actual = hashlib.sha256(reviewed_bytes).hexdigest() if reviewed_bytes is not None else ""
         if actual != str(record.get("prior_sha256") or ""):
+            if unreviewed:
+                return refusal("stale_base",
+                               f"`{relative}` changed while the patch was being prepared; nothing was written. "
+                               "Re-read it before patching it again.")
             return refusal("stale_base",
                            f"`{relative}` no longer holds the bytes that were reviewed; nothing was written. "
                            "Re-read it and re-propose.")
@@ -698,6 +788,10 @@ def _apply_protected_unified_diff(
     obstacle = _protected_render_obstacle(
         patch_text, [(str(entry["relative"]), entry["bytes"]) for entry in planned.values()]
     )
+    if obstacle and unreviewed:
+        return refusal("unsupported_patch",
+                       f"On Windows, VOOL applies a patch only when it can reproduce it byte for byte: {obstacle}. "
+                       "Nothing was written. Make the change with `workspace.replace_in_file` or `workspace.write_file`.")
     if obstacle:
         return refusal("protected_patch_unsupported",
                        f"The protected writer cannot apply this approved patch byte for byte: {obstacle}. Nothing was "
@@ -707,29 +801,58 @@ def _apply_protected_unified_diff(
     verified_text = {key: (entry["bytes"] or b"").decode("utf-8") for key, entry in planned.items()}
 
     renderable, unsupported_header = _protected_patch_text(patch_text)
+    if unsupported_header and unreviewed:
+        return refusal("unsupported_patch",
+                       f"This patch carries `{unsupported_header}`. On Windows, VOOL's patch tool does not rename, copy, "
+                       "delete or change the mode of files, or apply binary changes; nothing was written. Make the "
+                       "change with `workspace.write_file` or `workspace.replace_in_file`, or move the file.")
     if unsupported_header:
         return refusal("protected_patch_unsupported",
                        f"This approved patch carries `{unsupported_header}`, which the protected writer does not apply; "
                        "nothing was written. Propose the change as `workspace.write_file` (the full reviewed content) "
                        "or `workspace.replace_in_file`, and approve that.")
-    rendered: list[tuple[Path, str | None]] = []
+    # One final text per file: a second section for a file already rendered applies to what the first
+    # rendered (as git and GNU patch apply it), so the file is written once, never from the original twice.
+    latest: dict[str, str] = {}
+    order: list[Path] = []
+    deletes: list[Path] = []
+
+    def collect(path: Path, text: str | None) -> None:
+        if str(path) not in latest and path not in deletes:
+            order.append(path)
+        if text is None:
+            deletes.append(path)
+        else:
+            latest[str(path)] = text
+
     try:
         _apply_unified_diff_python(
             renderable,
             workspace_root=workspace_root,
-            sink=lambda path, text: rendered.append((path, text)),
-            source=lambda path: verified_text.get(str(path), ""),
+            sink=collect,
+            source=lambda path: latest.get(str(path), verified_text.get(str(path), "")),
         )
     except ValueError as exc:
+        if unreviewed:
+            return refusal(_classify_patch_apply_failure([str(exc)]),
+                           f"I could not apply the unified diff: {exc} Nothing was written.", errors=[str(exc)])
         return refusal("protected_patch_unsupported",
                        f"This approved patch cannot be applied exactly as reviewed ({exc}); nothing was written. "
                        "Propose the same change as `workspace.write_file` (the full reviewed content) or "
                        "`workspace.replace_in_file`, and approve that.")
+    rendered: list[tuple[Path, str | None]] = [(path, None if path in deletes else latest[str(path)]) for path in order]
+    if any(text is None for _path, text in rendered) and unreviewed:
+        return refusal("unsupported_patch",
+                       "On Windows, VOOL's patch tool does not delete files; nothing was written. Make the other "
+                       "changes with `workspace.write_file` or `workspace.replace_in_file`.")
     if any(text is None for _path, text in rendered):
         return refusal("protected_patch_unsupported",
                        "An approved patch that deletes a file is not applied through the protected writer; nothing "
                        "was written. Propose the remaining changes as `workspace.write_file` or "
                        "`workspace.replace_in_file`, and remove the file through a reviewed action.")
+    if any(str(path) not in planned for path, _text in rendered) and unreviewed:
+        return refusal("invalid_patch_syntax",
+                       "The patch changes a file its `---`/`+++` headers do not name; nothing was written.")
     if any(str(path) not in planned for path, _text in rendered):
         return refusal("destination_changed",
                        "The patch renders a file that is not one of its reviewed destinations; nothing was written.")
@@ -747,16 +870,23 @@ def _apply_protected_unified_diff(
             "reviewed_sha256": str(entry["record"].get("prior_sha256") or ""),
         }
 
+    # A file whose rendered text is the bytes it already holds is not written at all, so `no_change` means
+    # nothing on disk was touched (no new file identity, no new timestamp) and no record claims a write.
+    unchanged = {str(path) for path, text in rendered
+                 if planned[str(path)]["bytes"] is not None and str(text) == verified_text[str(path)]}
     written: list[tuple[Path, str, tuple[int, int]]] = []
     for path, text in rendered:
         snapshot = snapshots[str(path)]
+        if str(path) in unchanged:
+            continue
         try:
             identity = pinned_atomic_write_text(path, str(text), expected_prior_sha256=snapshot["reviewed_sha256"])
         except OSError as exc:
             compensation = _compensate_protected_writes(written, snapshots=snapshots, verified_text=verified_text)
             if isinstance(exc, (DestinationChangedError, ReviewedBaseChangedError)):
                 status = "stale_base" if isinstance(exc, ReviewedBaseChangedError) else "destination_changed"
-                cause = f"`{snapshot['path']}` changed while the approved patch was being written; the patch was stopped."
+                patch_kind = "patch" if unreviewed else "approved patch"
+                cause = f"`{snapshot['path']}` changed while the {patch_kind} was being written; the patch was stopped."
             else:
                 status = "write_failed"
                 cause = f"`{snapshot['path']}` could not be written ({exc.strerror or exc}); the patch was stopped."
@@ -770,10 +900,12 @@ def _apply_protected_unified_diff(
     for path, text in rendered:
         snapshot = snapshots[str(path)]
         after_text = str(text)
-        force_fresh_source_timestamp(path, minimum_mtime_ns=int(snapshot.get("before_mtime_ns") or 0))
         action = "updated" if snapshot["existed_before"] else "created"
         artifacts.append(build_file_diff_artifact(path=snapshot["path"], action=action, before=snapshot["before_text"],
                                                   after=after_text, extra={"engine": "protected_python"}))
+        if str(path) in unchanged:
+            continue
+        force_fresh_source_timestamp(path, minimum_mtime_ns=int(snapshot.get("before_mtime_ns") or 0))
         if snapshot["before_text"] != after_text or not snapshot["existed_before"]:
             changed_paths.append(snapshot["path"])
         mutation_changes.append({"path": snapshot["path"], "action": action, "existed_before": bool(snapshot["existed_before"]),
