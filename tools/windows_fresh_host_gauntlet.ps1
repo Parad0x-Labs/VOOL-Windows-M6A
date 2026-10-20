@@ -171,6 +171,7 @@ function Invoke-WindowsRuntimeRegression {
         "tests\test_windows_installer_ownership.py",
         "tests\test_windows_installer_stops_only_this_install.py",
         "tests\test_windows_installed_notes_live_in_the_vool_home.py",
+        "tests\test_windows_installed_unbound_chat_uses_the_desktop.py",
         "tests\test_windows_stop_spares_foreign_listeners.py",
         "tests\test_process_liveness_never_kills.py",
         "tests\test_windows_mutation_ledger_names.py",
