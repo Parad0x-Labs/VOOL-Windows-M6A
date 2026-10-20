@@ -549,3 +549,10 @@ def test_every_program_naming_key_from_the_config_sweep_is_refused(tmp_path: Pat
 def test_advice_toggles_named_like_hooks_are_not_programs() -> None:
     assert not safe_git.is_executable_key("advice.ignoredHook")
     assert not safe_git.is_executable_key("core.fsmonitorHookVersion")
+
+
+def test_aliases_named_like_programs_are_not_refused() -> None:
+    # An alias runs only when invoked by name and VOOL never invokes one (module docstring).
+    assert not safe_git.is_executable_key("alias.subcmd")
+    assert not safe_git.is_executable_key("alias.prehook")
+    assert not safe_git.is_executable_key("alias.lastcommand")
