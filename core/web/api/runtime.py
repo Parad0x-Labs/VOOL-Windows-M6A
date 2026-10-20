@@ -1322,6 +1322,12 @@ def default_workspace_root() -> str:
     # (2026-10-20). The Windows write gate still refuses the Desktop until it is a flagged folder.
     installed_windows = bool(str(_os.environ.get("VOOL_BUNDLE_ROOT") or "").strip())
     override = str(_os.environ.get("VOOL_WORKSPACE_ROOT") or "").strip()
+    if installed_windows and not override:
+        # The installed app reads its chosen workspace the way its notes and resolve_workspace_root
+        # do, legacy NULLA_ name included, so all three agree on the folder.
+        from core.runtime_paths import vool_env
+
+        override = str(vool_env("WORKSPACE_ROOT") or "").strip()
     if override or not (packaged or installed_windows):
         return str(resolve_workspace_root())
     if installed_windows and _os.name == "nt":
