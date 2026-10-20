@@ -115,14 +115,14 @@ class GitRunner:
             keys = (safe_git.executable_config_for(self.root, argv, timeout=self.timeout) if argv
                     else safe_git.executable_local_config(self.root, timeout=self.timeout))
             hooks = safe_git.active_hooks(self.root, timeout=self.timeout) if mutating else []
-            lfs = safe_git.lfs_endpoint_refusal(self.root, argv, timeout=self.timeout) if mutating and argv else ""
         except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
             return f"the repository's git configuration could not be checked ({type(exc).__name__})"
         if keys:
             return "the repository's own git config names programs git would run: " + ", ".join(keys)
         if hooks:
             return "this repository has git hooks VOOL would have to run unsandboxed: " + ", ".join(hooks)
-        return lfs
+        # Only now: working out a merge's result runs git on content the checks above have cleared.
+        return safe_git.lfs_endpoint_refusal(self.root, argv, timeout=self.timeout) if mutating and argv else ""
 
     def push_destination_refusal(self, remote: str) -> str:
         """Why a push to ``remote`` must not run ("" when it may).

@@ -145,7 +145,8 @@ def executable_config_for(cwd: Path, argv: Sequence[str], *, timeout: float = 20
     (_SAFE_VALUES) are left out when ``argv`` can neither sign nor verify: a repository that signs
     its own commits can still be read. Any other command, and an empty ``argv``, keeps them."""
     signs = _may_sign_or_verify(argv)
-    found = {f"{key} ({_where(scope)})" for key, scope in _executable_config(Path(cwd), timeout=timeout, depth=0)
+    found = {f"{key} ({_where(scope, submodule=':' in key)})"
+             for key, scope in _executable_config(Path(cwd), timeout=timeout, depth=0)
              if signs or key.rpartition(":")[2] not in _SAFE_VALUES}
     return sorted(found)
 
@@ -165,9 +166,10 @@ def _may_sign_or_verify(argv: Sequence[str]) -> bool:
     return any(arg == option or arg.startswith(option) for arg in argv[1:] for option in _SIGNING_OPTIONS)
 
 
-def _where(scope: str) -> str:
-    return {"local": "set in .git/config", "worktree": "set in config.worktree",
-            "command": "set by a -c option"}.get(scope, f"set in git's {scope} config")
+def _where(scope: str, *, submodule: bool = False) -> str:
+    owner = "the submodule's " if submodule else ""
+    return {"local": f"set in {owner}.git/config", "worktree": f"set in {owner}config.worktree",
+            "command": "set by a -c option"}.get(scope, f"set in {owner}git {scope} config")
 
 
 #: Nested submodules deeper than this are refused rather than checked.
@@ -349,6 +351,9 @@ def _lfsconfig_files(cwd: Path, argv: Sequence[str], *, timeout: float) -> list[
     for arg in list(argv)[1:]:
         if arg and not arg.startswith("-") and "\n" not in arg:
             specs.setdefault(f"{arg}:.lfsconfig", f"the .lfsconfig in {arg}")
+    result = _merge_result_tree(cwd, argv, timeout=timeout)
+    if result:  # what the merge, cherry-pick or revert writes, which neither side may hold as such
+        specs[f"{result}:.lfsconfig"] = f"the .lfsconfig {argv[0]} would write"
     probe = subprocess.run(hardened_argv(cwd, "cat-file", "--batch-check"), input="".join(f"{spec}\n" for spec in specs),
                            capture_output=True, text=True, timeout=timeout, env=safe_env())
     if probe.returncode != 0:
@@ -362,8 +367,48 @@ def _lfsconfig_files(cwd: Path, argv: Sequence[str], *, timeout: float) -> list[
     return found
 
 
+#: Options of the merging commands VOOL runs that take a value.
+_MERGE_VALUE_OPTIONS = frozenset({"-m", "--message", "-s", "--strategy", "-X", "--strategy-option"})
+
+
+def _merge_result_tree(cwd: Path, argv: Sequence[str], *, timeout: float) -> str:
+    """The tree a merge, cherry-pick or revert of one commit would write ("" for other commands, and
+    for --abort/--continue, which write HEAD's or the index's content)."""
+    if not argv or argv[0] not in {"merge", "cherry-pick", "revert"}:
+        return ""
+    targets, skip_value = [], False
+    for arg in argv[1:]:
+        if skip_value:
+            skip_value = False
+        elif arg in _MERGE_VALUE_OPTIONS:
+            skip_value = True
+        elif not arg.startswith("-"):
+            targets.append(arg)
+    if not targets:
+        return ""
+    if len(targets) != 1:
+        raise RuntimeError(f"git {argv[0]} of more than one commit cannot be checked")
+    target = _rev_parse(cwd, f"{targets[0]}^{{commit}}", timeout=timeout)
+    if argv[0] == "merge":
+        sides = ["HEAD", target]
+    else:
+        parent = _rev_parse(cwd, f"{target}^1", timeout=timeout)  # raises for a root commit
+        base, theirs = (parent, target) if argv[0] == "cherry-pick" else (target, parent)
+        sides = ["--merge-base", base, "HEAD", theirs]
+    # merge.renormalize would run the user's filters (git-lfs among them) on both sides.
+    command = ["git", *hardening_args(), "-c", "merge.renormalize=false", "-C", str(cwd),
+               "merge-tree", "--write-tree", "--no-messages", *sides]
+    probe = subprocess.run(command, capture_output=True, text=True, timeout=timeout, env=safe_env())
+    tree = probe.stdout.split("\n", 1)[0].strip()
+    if probe.returncode not in (0, 1) or len(tree) not in (40, 64):  # 1: the result has conflicts
+        raise RuntimeError(f"git merge-tree failed ({probe.returncode})")
+    return tree
+
+
 def _expanded_url(cwd: Path, url: str, *, timeout: float) -> str:
     """``url`` after git's ``url.<base>.insteadOf`` rewriting (which git-lfs applies too)."""
+    if url.startswith("-"):
+        raise ValueError("an LFS server URL starts with '-'")
     if "://" not in url and not _scp_like(url):
         return url  # a local path; a bare word would be read as a remote's name
     probe = subprocess.run(hardened_argv(cwd, "ls-remote", "--get-url", url), capture_output=True, text=True,
