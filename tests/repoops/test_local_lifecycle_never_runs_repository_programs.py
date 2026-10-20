@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -155,3 +156,32 @@ def test_a_clean_repository_still_commits(repo) -> None:
     assert receipt.status == "applied", receipt
     assert receipt.evidence["parent_verified"] is True
     assert _git(repo, "rev-parse", "HEAD") == receipt.evidence["sha"] != head
+
+
+def test_switching_branch_never_rebuilds_a_submodule_under_its_own_config(repo, tmp_path) -> None:
+    # submodule.recurse=true would make switch rebuild a submodule whose folder is missing from the
+    # git folder kept in .git/modules, under that folder's own config: a smudge filter planted there.
+    marker = tmp_path / "SMUDGE_RAN"
+    filter_program = tmp_path / "smudge.sh"
+    filter_program.write_text(f"#!/bin/sh\necho ran > '{marker}'\ncat\n")
+    filter_program.chmod(0o755)
+    upstream = tmp_path / "upstream"
+    upstream.mkdir()
+    _git(upstream, "init", "-q", "-b", "main")
+    (upstream / ".gitattributes").write_text("* filter=evil\n")
+    (upstream / "x.txt").write_text("x\n")
+    _git(upstream, "add", "-A")
+    _git(upstream, "-c", "user.email=n@x", "-c", "user.name=N", "commit", "-qm", "sub")
+    _git(repo, "switch", "-q", "-c", "other")
+    _git(repo, "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(upstream), "sub")
+    _git(repo, "commit", "-qm", "add sub")
+    _git(repo, "switch", "-q", "main")
+    shutil.rmtree(repo / "sub")  # left behind by the switch; only .git/modules/sub remains
+    _git(repo, "config", "--file", str(repo / ".git" / "modules" / "sub" / "config"),
+         "filter.evil.smudge", str(filter_program))
+    _git(repo, "config", "submodule.recurse", "true")
+
+    receipt = LocalLifecycle(RepositoryWorkspace(root=str(repo))).switch_branch(
+        PlatformRevocations().mint("ninja", TOKENS), ExecutionBroker(), "other")
+
+    assert not marker.exists(), receipt

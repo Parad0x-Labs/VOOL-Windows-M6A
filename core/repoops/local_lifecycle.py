@@ -50,10 +50,13 @@ def _run(root: str, *args: str, mutating: bool, timeout: int = 30) -> subprocess
     refusal = GitRunner(root=Path(root))._repository_refusal(mutating=mutating)
     if refusal:
         return subprocess.CompletedProcess(args, -1, "", f"git was not run: {refusal}")
-    # safe_git's hardening, carried in the environment so the argv stays `git -C <root> <args>`
+    # safe_git's full hardening (hardened_argv: submodule.recurse=false and the other submodule and
+    # signature settings too), carried in the environment so the argv stays `git -C <root> <args>`
     # (the effect-truth tests recognise a dispatch by that shape).
     env = safe_git.safe_env()
-    hardening = safe_git.hardening_args()
+    command = safe_git.hardened_argv(Path(root), *args)
+    split = command.index("-C")
+    hardening, argv = command[1:split], command[split + 2:]
     pairs = []
     while hardening:
         flag = hardening.pop(0)
@@ -66,9 +69,6 @@ def _run(root: str, *args: str, mutating: bool, timeout: int = 30) -> subprocess
     env["GIT_CONFIG_COUNT"] = str(len(pairs))
     for index, (key, value) in enumerate(pairs):
         env[f"GIT_CONFIG_KEY_{index}"], env[f"GIT_CONFIG_VALUE_{index}"] = key, value
-    argv = list(args)
-    if argv and argv[0] in {"diff", "log", "show"}:
-        argv[1:1] = ["--no-ext-diff", "--no-textconv"]
     return subprocess.run(["git", "-C", root, *argv], capture_output=True, text=True, timeout=timeout, env=env)
 
 
