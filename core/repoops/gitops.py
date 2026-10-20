@@ -133,8 +133,12 @@ class GitRunner:
         ``receive.denyCurrentBranch=updateInstead`` rewrites its checked-out files. So a local
         destination is checked like this repository is, and a transport VOOL cannot read the
         destination of (a remote helper, an unknown scheme, an unusual ``file://`` form) is refused.
-        A check that cannot finish refuses."""
+        A check that cannot finish refuses. On Windows this repository's own git folders are checked
+        first (`_windows_push_source_refusal`), since every push writes there too."""
         try:
+            source = _windows_push_source_refusal(self.root, timeout=self.timeout)
+            if source:
+                return source
             urls, problem = self._push_urls(remote)
             if problem:
                 return problem
@@ -157,7 +161,9 @@ class GitRunner:
         name = str(remote or "").strip()
         if not name or name.startswith("-"):
             return [], f"{name!r} is not a remote VOOL can push to"
-        code, out, _ = self.run("remote", "get-url", "--push", "--all", name)
+        code, out, err = self.run("remote", "get-url", "--push", "--all", name)
+        if code == -1 and str(err).startswith("git was not run:"):
+            return [], str(err)[len("git was not run:"):].strip()  # this repository itself is refused
         if code != 0:
             # Not a configured remote, so git pushes to it as a URL or path. A throwaway remote holding
             # it as its url gets the same pushInsteadOf/insteadOf rewrites git would apply (get-url
@@ -195,6 +201,9 @@ class GitRunner:
         url = _shown(url)
         if git_dir is None:
             return f"{url!r} is not a git repository VOOL can check"
+        outside = _windows_destination_refusal(url, git_dir, timeout=self.timeout)
+        if outside:
+            return outside
         try:
             keys = _destination_program_keys(git_dir, timeout=self.timeout)
             hooks = safe_git.active_hooks(git_dir, timeout=self.timeout)
@@ -474,24 +483,31 @@ def _shown(url: str) -> str:
 
 def _destination_program_keys(git_dir: Path, *, timeout: float) -> list[str]:
     """Program-naming keys in a push destination's own config: every scope git reads there except the
-    user's system and global files (so config.worktree too), plus any ``*hook`` key (receive-pack's
-    ``gc --auto`` runs ``gc.recentObjectsHook``)."""
+    user's system and global files (so config.worktree too), classified as safe_git classifies this
+    repository's own (``*hook`` keys such as ``gc.recentObjectsHook``, which receive-pack's ``gc --auto``
+    runs, included; ``advice.*`` and a signing switch set to a value that runs nothing, excluded)."""
     probe = subprocess.run(
         ["git", "--git-dir", str(git_dir), "config", "--list", "--show-scope", "--includes", "--null"],
         capture_output=True, timeout=timeout, env=safe_git.safe_env(),
     )
     if probe.returncode not in (0, 1):  # 1: no entries at all
         raise RuntimeError(f"git config could not be read ({probe.returncode})")
-    fields = [entry.split(b"\n", 1)[0].decode("utf-8", "replace").strip().lower()
-              for entry in probe.stdout.split(b"\0") if entry]
+    fields = []
+    for entry in probe.stdout.split(b"\0"):
+        if entry:
+            name, newline, value = entry.partition(b"\n")
+            fields.append((name.decode("utf-8", "replace").strip().lower(),
+                           value.decode("utf-8", "replace") if newline else None))
     if len(fields) % 2:
         raise RuntimeError("git config scopes could not be read")
     keys = set()
-    for scope, key in zip(fields[0::2], fields[1::2], strict=True):
-        if scope in {"system", "global"}:
+    for (scope, _), (key, value) in zip(fields[0::2], fields[1::2], strict=True):
+        if scope in {"system", "global"} or not safe_git.is_executable_key(key):
             continue
-        if safe_git.is_executable_key(key) or key.rsplit(".", 1)[-1].endswith("hook"):
-            keys.add(key)
+        safe = safe_git._SAFE_VALUES.get(key)
+        if safe is not None and value is not None and safe(value):
+            continue  # signing switched off, or the default format, runs nothing
+        keys.add(key)
     return sorted(keys)
 
 
@@ -506,6 +522,72 @@ def _local_push_path(url: str) -> Path | None:
     if _has_drive_prefix(rest[1:]):
         rest = rest[1:]  # file:///C:/repo
     return Path(rest)
+
+
+def _windows_destination_refusal(url: str, git_dir: Path, *, timeout: float) -> str:
+    """On Windows, a push writes into a repository on this computer only when that repository's git
+    folders are inside the folders marked in VOOL_WINDOWS_DISPOSABLE_WORKSPACES (owner decision,
+    2026-10-20); a push to an online server is not affected. receive-pack writes objects and refs in
+    the destination's git folder and, for a linked worktree, its shared git folder, so both are
+    placed, and a link or hard link inside them, which would send those writes elsewhere, is refused
+    too (core/git_write_redirects.py). Reproduced 2026-10-20: a push to a local bare repository
+    outside the marked folders wrote its objects and branch there. Off Windows this returns ""."""
+    from core import git_write_redirects, windows_write_gate
+
+    if not windows_write_gate.active():
+        return ""
+    probe = subprocess.run(
+        ["git", "--git-dir", str(git_dir), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        capture_output=True, text=True, timeout=timeout, env=safe_git.safe_env(),
+    )
+    common = probe.stdout.strip()
+    if probe.returncode != 0 or not common:
+        return f"VOOL cannot tell where the push destination {url!r} keeps its git folder, so it does not push there"
+    roots = windows_write_gate.flagged_roots()
+    for place in dict.fromkeys((str(git_dir), common)):
+        if not windows_write_gate._inside(place, roots):
+            return (f"On Windows, VOOL pushes to a repository on this computer only inside the folders marked in "
+                    f"{windows_write_gate.ENV_VAR}; the push destination {url!r} keeps its git folder at {place}, "
+                    "which is outside them")
+    try:
+        found = git_write_redirects.refusal_for([("the push destination", git_dir, str(git_dir), common)],
+                                                timeout=timeout)
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+        return f"the push destination {url!r} could not be checked ({type(exc).__name__})"
+    return f"the push destination {url!r}: {found}" if found else ""
+
+
+def _windows_push_source_refusal(root: Path, *, timeout: float) -> str:
+    """On Windows, why a push from the repository at `root` could write outside the marked folders
+    ("" when it cannot): every push updates this repository's own refs (where the remote's branch now
+    is), so its git folder and shared git folder must be inside the folders marked in
+    VOOL_WINDOWS_DISPOSABLE_WORKSPACES (owner card, 2026-10-20, "Marked repos only"), and a link or
+    hard link in them, or a key its config sets that moves writes, is refused as for repo.git
+    (core/git_write_redirects.py), whatever the destination. Reproduced 2026-10-20: from a repository
+    outside the marked folders, or with `.git/refs/remotes` linked to an outside folder, a push to a
+    marked destination wrote the remote's branch outside. Off Windows this returns ""."""
+    from core import git_write_redirects, windows_write_gate
+
+    if not windows_write_gate.active():
+        return ""
+    probe = subprocess.run(
+        safe_git.hardened_argv(root, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"),
+        capture_output=True, text=True, timeout=timeout, env=safe_git.safe_env(),
+    )
+    lines = probe.stdout.splitlines()
+    if probe.returncode != 0 or len(lines) != 2 or not all(os.path.isabs(line) for line in lines):
+        return "VOOL cannot tell where this repository keeps its git folder, so it does not push from it"
+    roots = windows_write_gate.flagged_roots()
+    for place in dict.fromkeys(lines):
+        if not windows_write_gate._inside(place, roots):
+            return (f"On Windows, VOOL pushes only from a repository inside the folders marked in "
+                    f"{windows_write_gate.ENV_VAR}, since a push updates the pushing repository's own refs; "
+                    f"this repository keeps its git folder at {place}, which is outside them")
+    try:
+        found = git_write_redirects.refusal_for([("the repository", Path(root), lines[0], lines[1])], timeout=timeout)
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+        return f"this repository could not be checked before the push ({type(exc).__name__})"
+    return found
 
 
 def _receiving_git_dir(path: Path, *, timeout: float) -> Path | None:

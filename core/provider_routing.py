@@ -543,6 +543,20 @@ def estimated_local_model_resident_gb(model_id: str, *, artifact_size_gb: float 
     return round(total_parameters_b * 0.75 + 1.5, 2)
 
 
+def _hardware_fit_pool(probe: Any, *, force_cpu: bool = False) -> str:
+    """Which memory the hardware-fit gate measures a local model against on this host.
+
+    ``"unified"`` on Apple Silicon (RAM shared with the GPU), ``"graphics"`` on a CUDA or DirectML
+    host that reports VRAM (the model must fit the graphics card), ``"system"`` otherwise (RAM).
+    """
+    accelerator = "cpu" if force_cpu else str(getattr(probe, "accelerator", "cpu") or "cpu").strip().lower()
+    if accelerator == "mps":
+        return "unified"
+    if accelerator in {"cuda", "directml"} and float(getattr(probe, "vram_gb", 0.0) or 0.0) > 0.0:
+        return "graphics"
+    return "system"
+
+
 def provider_hardware_fit_budget(
     capability: ProviderCapabilityTruth,
     *,
@@ -562,19 +576,15 @@ def provider_hardware_fit_budget(
         return ("hardware_capacity_unknown" if model_parameter_billions(capability.model_id) >= 13.0 else ""), 0.0, 0.0
     ram_gb = float(getattr(active_probe, "ram_gb", 0.0) or 0.0)
     vram_gb = float(getattr(active_probe, "vram_gb", 0.0) or 0.0)
-    accelerator = (
-        "cpu"
-        if force_cpu
-        else str(getattr(active_probe, "accelerator", "cpu") or "cpu").strip().lower()
-    )
+    pool = _hardware_fit_pool(active_probe, force_cpu=force_cpu)
     need_ram = float(capability.ram_budget_gb or 0.0)
     need_vram = float(capability.vram_budget_gb or 0.0)
     if need_ram <= 0.0 and need_vram <= 0.0:
         return ("hardware_footprint_unknown" if model_parameter_billions(capability.model_id) >= 13.0 else ""), 0.0, 0.0
-    if accelerator == "mps":
+    if pool == "unified":
         required = max(need_ram, need_vram)
         available = max(0.0, ram_gb * 0.75)
-    elif accelerator in {"cuda", "directml"} and vram_gb > 0.0:
+    elif pool == "graphics":
         required = need_vram or need_ram
         available = max(0.0, vram_gb - 1.2)
     else:
@@ -609,7 +619,8 @@ def local_hardware_shortfall(registry: ModelRegistry | None = None) -> dict[str,
 
     Returns ``{}`` when there is no enabled local model, when any local model fits, or when the
     only refusals are "capacity unknown". Otherwise names the smallest refused model with the
-    memory it needs and what this host can give it, so a refused turn can say so plainly.
+    memory it needs and what this host can give it, so a refused turn can say so plainly; adds
+    ``"memory": "graphics"`` when that memory is the graphics card's.
     """
     shortfalls: list[tuple[float, str, float]] = []
     try:
@@ -620,17 +631,21 @@ def local_hardware_shortfall(registry: ModelRegistry | None = None) -> dict[str,
             if not capability.hardware_fit_reason:
                 return {}
             if capability.hardware_fit_reason == "model_exceeds_hardware_budget":
-                _, required, available = provider_hardware_fit_budget(
-                    capability,
-                    force_cpu=_manifest_forces_cpu(manifest),
-                )
-                shortfalls.append((required, capability.model_id, available))
+                force_cpu = _manifest_forces_cpu(manifest)
+                _, required, available = provider_hardware_fit_budget(capability, force_cpu=force_cpu)
+                pool = _hardware_fit_pool(_device_probe(), force_cpu=force_cpu)
+                shortfalls.append((required, capability.model_id, available, pool))
     except Exception:
         return {}
     if not shortfalls:
         return {}
-    required, model_id, available = min(shortfalls)
-    return {"model": model_id, "required_gb": required, "available_gb": available}
+    required, model_id, available, pool = min(shortfalls)
+    shortfall: dict[str, Any] = {"model": model_id, "required_gb": required, "available_gb": available}
+    if pool == "graphics":
+        # The gate measured the graphics card, not the computer's RAM: say so, or a 32 GB PC is
+        # told it lacks memory because its GPU has 6 GB.
+        shortfall["memory"] = "graphics"
+    return shortfall
 
 
 def _envelope_manifest_score(
