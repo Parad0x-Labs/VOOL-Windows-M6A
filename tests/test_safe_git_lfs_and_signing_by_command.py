@@ -395,3 +395,52 @@ def test_a_repository_that_names_no_lfs_server_is_not_checked_further(tmp_path: 
 ])
 def test_endpoint_hosts(url: str, host: str) -> None:
     assert safe_git._endpoint_host(url) == host
+
+
+# ── No automatic housekeeping in VOOL's own git ────────────────────────────────────────────────
+
+
+def _loose_objects(repo: Path) -> int:
+    counts = dict(line.split(": ", 1) for line in _git(repo, "count-objects", "-v").splitlines())
+    return int(counts["count"])
+
+
+def _auto_housekeeping_repo(tmp_path: Path, strategy: str) -> Path:
+    # Two loose objects in objects/17 trip gc.auto=1; the next commit's automatic housekeeping
+    # would pack them. git before 2.54 ignores the strategy and runs gc either way.
+    repo, _marker = _repo(tmp_path)
+    found = 0
+    for index in range(100000):
+        content = f"loose {index}\n".encode()
+        if hashlib.sha1(b"blob %d\0" % len(content) + content).hexdigest().startswith("17"):
+            subprocess.run(["git", "-C", str(repo), "hash-object", "-w", "--stdin"], input=content,
+                           check=True, capture_output=True)
+            found += 1
+            if found == 2:
+                break
+    for key, value in (("maintenance.strategy", strategy), ("maintenance.geometric-repack.auto", "-1"),
+                       ("gc.auto", "1"), ("gc.autoDetach", "false"), ("maintenance.autoDetach", "false")):
+        _git(repo, "config", key, value)
+    (repo / "notes.txt").write_text("two\n", encoding="utf-8")
+    return repo
+
+
+def test_control_a_commits_automatic_housekeeping_packs_loose_objects(tmp_path: Path) -> None:
+    repo = _auto_housekeeping_repo(tmp_path, "gc")
+    before = _loose_objects(repo)
+
+    subprocess.run(["git", "-c", "core.hooksPath=" + os.devnull, "-C", str(repo), "commit", "-q", "-a", "-m", "gc"],
+                   capture_output=True, timeout=120, env=safe_git.safe_env())
+
+    assert before >= 2 and _loose_objects(repo) < before, "control: the commit ran no housekeeping"
+
+
+@pytest.mark.parametrize("strategy", ["gc", "geometric"])
+def test_vool_commits_run_no_automatic_housekeeping(tmp_path: Path, strategy: str) -> None:
+    repo = _auto_housekeeping_repo(tmp_path, strategy)
+    before = _loose_objects(repo)
+
+    result = GitRunner(root=repo).commit(message="no housekeeping")
+
+    assert result.ok is True, result.to_dict()
+    assert _loose_objects(repo) >= before, "VOOL's commit ran automatic housekeeping"
