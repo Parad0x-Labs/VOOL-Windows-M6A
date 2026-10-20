@@ -750,14 +750,15 @@ def test_a_command_whose_incoming_commit_cannot_be_named_is_refused(tmp_path: Pa
 
 
 @pytest.mark.parametrize("key", ["http.proxy", "http.https://git.example.test/.proxy"])
-def test_a_proxy_the_repository_sets_counts_as_a_server_lfs_would_contact(tmp_path: Path, key: str) -> None:
+def test_a_proxy_the_repository_sets_does_not_refuse_ordinary_work(tmp_path: Path, key: str) -> None:
+    # A per-repository proxy is an ordinary corporate setup, and git's own fetch and push use it
+    # too; it is not an LFS server the repository picked.
     repo = _project(tmp_path)
     _git(repo, "branch", "other")
-    _git(repo, "config", key, "http://127.0.0.9:9")
+    _git(repo, "config", key, "http://proxy.corp.test:3128")
 
-    refusal = safe_git.lfs_endpoint_refusal(repo, ("merge", "other"))
-
-    assert refusal.startswith(f"Git LFS would contact 127.0.0.9 ({key}, set in .git/config)"), refusal
+    assert safe_git.lfs_endpoint_refusal(repo, ("merge", "other")) == ""
+    assert safe_git.lfs_endpoint_refusal(repo, ("switch", "-c", "p")) == ""
 
 
 def test_the_users_own_proxy_is_not_held_against_the_repository(tmp_path: Path, monkeypatch) -> None:
@@ -851,3 +852,32 @@ def test_file_names_that_are_not_utf8_do_not_refuse_an_ordinary_merge(tmp_path: 
 
     assert safe_git.lfs_endpoint_refusal(repo, ("merge", "--no-ff", "--no-edit", "names")) == ""
     assert safe_git.lfs_endpoint_refusal(repo, ("switch", "names")) == ""
+
+
+# ── Final review, 20 Oct ───────────────────────────────────────────────────────────────────────
+
+
+def test_a_misspelled_commit_says_which_name_could_not_be_read(tmp_path: Path) -> None:
+    repo = _project(tmp_path)
+
+    refusal = safe_git.lfs_endpoint_refusal(repo, ("merge", "nosuch"))
+
+    assert refusal == ("the repository's Git LFS servers could not be checked ('nosuch' is not a revision "
+                       "VOOL can check)"), refusal
+
+
+def test_a_remote_whose_name_has_capitals_is_picked_by_name(tmp_path: Path) -> None:
+    repo = _project(tmp_path)
+    _git(repo, "remote", "add", "Fork/X", "https://git.example.test/fork.git")
+    branch = _git(repo, "symbolic-ref", "--short", "HEAD").strip()
+    _git(repo, "config", f"branch.{branch}.remote", "Fork/X")
+    _commit_lfsconfig(repo, "https://git.example.test/project.git/info/lfs")
+
+    assert safe_git.lfs_endpoint_refusal(repo, ("switch", "-c", "n")) == ""
+
+
+def test_reading_a_remotes_url_ignores_the_signing_keys(tmp_path: Path) -> None:
+    repo = _project(tmp_path)
+    _git(repo, "config", "commit.gpgSign", "true")
+
+    assert safe_git.executable_config_for(repo, ("remote", "get-url", "origin")) == []
