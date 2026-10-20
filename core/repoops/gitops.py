@@ -109,18 +109,20 @@ class GitRunner:
         """Why git must not run in this repository at all ("" when it may). A repository's own
         config must not make git start programs, and a mutation must not run hooks unsandboxed
         (core/safe_git.py). With ``argv``, only the keys that matter for that command count (a
-        read-only command ignores signing switches); without it, every key does."""
+        read-only command ignores signing switches); without it, every key does. A mutation with
+        ``argv`` also must not send Git LFS to a server the repository chose."""
         try:
             keys = (safe_git.executable_config_for(self.root, argv, timeout=self.timeout) if argv
                     else safe_git.executable_local_config(self.root, timeout=self.timeout))
             hooks = safe_git.active_hooks(self.root, timeout=self.timeout) if mutating else []
+            lfs = safe_git.lfs_endpoint_refusal(self.root, argv, timeout=self.timeout) if mutating and argv else ""
         except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
             return f"the repository's git configuration could not be checked ({type(exc).__name__})"
         if keys:
             return "the repository's own git config names programs git would run: " + ", ".join(keys)
         if hooks:
             return "this repository has git hooks VOOL would have to run unsandboxed: " + ", ".join(hooks)
-        return ""
+        return lfs
 
     def push_destination_refusal(self, remote: str) -> str:
         """Why a push to ``remote`` must not run ("" when it may).

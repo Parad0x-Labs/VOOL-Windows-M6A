@@ -40,6 +40,7 @@ import os
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
+from urllib.parse import urlsplit
 
 #: Final key segments (lowercase) whose value git runs as a program or shell command.
 _EXECUTABLE_KEY_SUFFIXES = frozenset({
@@ -273,6 +274,117 @@ def _config_entries(cwd: Path, options: list[str], *, timeout: float) -> list[tu
     return fields
 
 
+def lfs_endpoint_refusal(cwd: Path, argv: Sequence[str] = (), *, timeout: float = 20) -> str:
+    """Why Git LFS must not run for ``git <argv>`` here ("" when it may): the repository names an LFS
+    server that is neither this project's git host nor one the user named.
+
+    The user's own git-lfs (their global ``filter.lfs.*``) downloads objects whenever git writes
+    LFS files into the work tree, and asks the server the repository picks: ``lfs.url``,
+    ``lfs.pushurl`` or ``remote.<x>.lfs(push)url`` from the repository's own config or from the
+    ``.lfsconfig`` it carries, in the work tree, the index, HEAD or a commit ``argv`` brings in.
+    Trusted are the hosts of this repository's remotes (where git-lfs goes when nothing is named)
+    and hosts in the user's system or global LFS settings; URLs are compared after git's
+    ``insteadOf`` rewriting, by host. A trusted server can still point git-lfs at storage
+    elsewhere; that is the server's choice, not the repository's. A check that cannot finish
+    refuses."""
+    try:
+        named: list[tuple[str, str]] = []
+        trusted: set[str] = set()
+        remote_urls: list[str] = []
+        scoped = _config_entries(cwd, ["--show-scope"], timeout=timeout)
+        if len(scoped) % 2:
+            raise RuntimeError("git config scopes could not be read")
+        for index in range(0, len(scoped) - 1, 2):
+            (scope, _), (key, value) = scoped[index], scoped[index + 1]
+            user = scope in _USER_CONFIG_SCOPES
+            if _is_lfs_endpoint_key(key) and value:
+                if user:
+                    trusted.add(_endpoint_host(_expanded_url(cwd, value, timeout=timeout)))
+                else:
+                    named.append((value, f"{key}, {_where(scope)}"))
+            elif user and key.startswith("lfs.") and "://" in key:
+                trusted.add(_endpoint_host(key[len("lfs."):].rpartition(".")[0]))  # lfs.<url>.<setting>
+            elif fnmatch.fnmatchcase(key, "remote.*.url") or fnmatch.fnmatchcase(key, "remote.*.pushurl"):
+                if value:
+                    remote_urls.append(value)
+        for source, entries in _lfsconfig_files(cwd, argv, timeout=timeout):
+            named.extend((value, f"{key} in {source}") for key, value in entries
+                         if _is_lfs_endpoint_key(key) and value)
+        if not named:
+            return ""
+        trusted.update(_endpoint_host(_expanded_url(cwd, url, timeout=timeout)) for url in remote_urls)
+        trusted.discard("")
+        for url, source in named:
+            host = _endpoint_host(_expanded_url(cwd, url, timeout=timeout))
+            if not host or host not in trusted:
+                shown = host.partition(":")[2] if host.startswith("path:") else host
+                return (f"Git LFS would contact {shown or 'a server VOOL cannot read'} ({source}), which is not "
+                        "this project's git host or a server in your own git settings")
+        return ""
+    except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+        return f"the repository's Git LFS servers could not be checked ({type(exc).__name__})"
+
+
+def _is_lfs_endpoint_key(key: str) -> bool:
+    return key in {"lfs.url", "lfs.pushurl"} or any(
+        fnmatch.fnmatchcase(key, pattern) for pattern in ("remote.*.lfsurl", "remote.*.lfspushurl"))
+
+
+def _lfsconfig_files(cwd: Path, argv: Sequence[str], *, timeout: float) -> list[tuple[str, list[tuple[str, str | None]]]]:
+    """``(where, entries)`` for each ``.lfsconfig`` git-lfs could read for ``git <argv>``: the work
+    tree's file, the index's, HEAD's, and that of each argument that names a commit."""
+    found: list[tuple[str, list[tuple[str, str | None]]]] = []
+    if _rev_parse(cwd, "--is-inside-work-tree", timeout=timeout) == "true":
+        worktree_file = Path(_rev_parse(cwd, "--show-toplevel", timeout=timeout)) / ".lfsconfig"
+        if worktree_file.is_file():
+            found.append(("the work tree's .lfsconfig", _config_entries(cwd, ["-f", str(worktree_file)],
+                                                                        timeout=timeout)))
+    specs = {":.lfsconfig": "the index's .lfsconfig", "HEAD:.lfsconfig": "HEAD's .lfsconfig"}
+    for arg in list(argv)[1:]:
+        if arg and not arg.startswith("-") and "\n" not in arg:
+            specs.setdefault(f"{arg}:.lfsconfig", f"the .lfsconfig in {arg}")
+    probe = subprocess.run(hardened_argv(cwd, "cat-file", "--batch-check"), input="".join(f"{spec}\n" for spec in specs),
+                           capture_output=True, text=True, timeout=timeout, env=safe_env())
+    if probe.returncode != 0:
+        raise RuntimeError(f"git cat-file failed ({probe.returncode})")
+    for (spec, where), line in zip(specs.items(), probe.stdout.splitlines(), strict=True):
+        fields = line.split()
+        if len(fields) == 3 and fields[1] == "blob":
+            found.append((where, _config_entries(cwd, ["--blob", fields[0]], timeout=timeout)))
+        elif not line.endswith(" missing") and not line.endswith(" ambiguous"):
+            raise RuntimeError(f"{spec} is not a file git-lfs could read")
+    return found
+
+
+def _expanded_url(cwd: Path, url: str, *, timeout: float) -> str:
+    """``url`` after git's ``url.<base>.insteadOf`` rewriting (which git-lfs applies too)."""
+    if "://" not in url and not _scp_like(url):
+        return url  # a local path; a bare word would be read as a remote's name
+    probe = subprocess.run(hardened_argv(cwd, "ls-remote", "--get-url", url), capture_output=True, text=True,
+                           timeout=timeout, env=safe_env())
+    expanded = probe.stdout.strip()
+    if probe.returncode != 0 or not expanded:
+        raise RuntimeError(f"git ls-remote --get-url failed ({probe.returncode})")
+    return expanded
+
+
+def _scp_like(url: str) -> bool:
+    head, colon, _ = url.partition(":")
+    return bool(colon) and "/" not in head and len(head) > 1
+
+
+def _endpoint_host(url: str) -> str:
+    """The lowercase host ``url`` reaches, or ``path:<url>`` for a local path or ``file://`` URL."""
+    if "://" in url:
+        parts = urlsplit(url)
+        if parts.scheme.lower() == "file":
+            return f"path:{url}"
+        return (parts.hostname or "").rstrip(".")
+    if _scp_like(url):
+        return url.partition(":")[0].rpartition("@")[2].strip("[]").lower().rstrip(".")
+    return f"path:{url}"
+
+
 def active_hooks(cwd: Path, *, timeout: float = 20) -> list[str]:
     """Hooks git would run here without hardening (the repository's own, or the user's
     core.hooksPath). Hardening disables them; a mutation that would have run one is refused
@@ -311,5 +423,5 @@ read_only_argv = hardened_argv
 
 
 __all__ = ["active_hooks", "executable_config_for", "executable_local_config", "hardened_argv", "hardening_args",
-           "is_executable_key", "is_safe_value",
+           "is_executable_key", "is_safe_value", "lfs_endpoint_refusal",
            "read_only_argv", "safe_env"]
