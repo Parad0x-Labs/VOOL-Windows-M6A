@@ -175,6 +175,7 @@ function Invoke-WindowsRuntimeRegression {
         "tests\test_windows_stop_spares_foreign_listeners.py",
         "tests\test_process_liveness_never_kills.py",
         "tests\test_windows_mutation_ledger_names.py",
+        "tests\test_windows_relaunch_reopens_a_closed_window.py",
         "tests\test_windows_junction_boundary.py",
         "tests\test_windows_write_gate.py",
         "tests\test_windows_write_gate_before_approval.py",
@@ -188,7 +189,9 @@ function Invoke-WindowsRuntimeRegression {
         "tests\test_forgetting_is_applied_or_never_claimed_20261007.py",
         "tests\test_forget_subject_readers_r9.py",
         "tests\lifecycle\test_forget_revocation_law_20260929.py",
-        "tests\test_email_store_recovery_surface.py"
+        "tests\test_email_store_recovery_surface.py",
+        "tests\test_windows_default_local_model.py",
+        "tests\test_windows_bundle_default_reaches_auto.py"
     )
     $previousUtf8 = $env:PYTHONUTF8
     $env:PYTHONUTF8 = "1"

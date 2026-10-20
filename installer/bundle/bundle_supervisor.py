@@ -19,6 +19,9 @@ from core.runtime_paths import native_runtime_home
 _POLL_SECONDS = 2.0
 _STARTUP_TIMEOUT_SECONDS = 60.0
 _MAX_BACKOFF_SECONDS = 30.0
+# A relaunch that arrives while the window is still closing (the user clicked X, then the
+# shortcut) still reopens it if that window exits within this many seconds.
+_REOPEN_GRACE_SECONDS = 10.0
 _WINDOWS_SCRIPT_ARGUMENT_PREFIX = (
     r'^(?:\x22(?:[^\x22]*\\)?pythonw?\.exe\x22|(?:[^\s\x22]*\\)?pythonw?\.exe)'
     r'(?:\s+-[bBdEhIiOPqRsSuvVx]+'
@@ -126,6 +129,7 @@ class BundleSupervisor:
         self.state_path = self.run_dir / "bundle-supervisor.json"
         self.lock_path = self.run_dir / "bundle-supervisor.lock"
         self.stop_path = self.run_dir / "stop"
+        self.window_reopen_path = self.run_dir / "window-reopen"
         self.model_status_path = self.run_dir / "model-pull.json"
         self.processes: dict[str, subprocess.Popen[Any]] = {}
         self.handles: dict[str, Any] = {}
@@ -138,6 +142,7 @@ class BundleSupervisor:
         self.supervisor_started_at = time.time()
         self._lock_handle: Any | None = None
         self.window_started = False
+        self.window_reopen_until = 0.0
 
     def _manifest(self) -> dict[str, Any]:
         path = self.root / "bundle_manifest.json"
@@ -517,7 +522,7 @@ class BundleSupervisor:
     def _reap_window(self) -> None:
         """A window that closed because its runtime was lost (vool_window exit 3, e.g. the API was
         restarted) reopens once the API answers again. Any other exit -- the user closing the
-        window included -- stays closed."""
+        window included -- stays closed until the user launches VOOL again."""
         child = self.processes.get("window")
         if child is None or child.poll() is None:
             return
@@ -526,6 +531,30 @@ class BundleSupervisor:
         self._log(f"window exited returncode={returncode}")
         if returncode == 3:
             self.window_started = False
+
+    def _request_window_reopen(self) -> None:
+        """A second launch while this home's supervisor runs asks that supervisor to show the
+        window again, the way reopening the Mac app shows its hidden window. The request is a
+        file in this home's own run folder, like the stop request: it reaches only the
+        supervisor that holds this home's lease, and no other program."""
+        with contextlib.suppress(OSError):
+            self.window_reopen_path.write_text("reopen\n", encoding="utf-8")
+
+    def _consume_window_reopen(self) -> None:
+        """Honor a reopen request: a window the user closed opens again once the API answers. A
+        window that is still open is left as it is, unless it exits within the grace period --
+        it was closing when the request came."""
+        now = time.monotonic()
+        try:
+            self.window_reopen_path.unlink()
+        except OSError:
+            pass
+        else:
+            self._log("window reopen requested")
+            self.window_reopen_until = now + _REOPEN_GRACE_SECONDS
+        if "window" not in self.processes and now < self.window_reopen_until:
+            self.window_started = False
+            self.window_reopen_until = 0.0
 
     def _write_state(self) -> None:
         payload = {
@@ -549,10 +578,12 @@ class BundleSupervisor:
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         if not self._acquire_lease():
-            self._log("supervisor already running; duplicate launch ignored")
+            self._request_window_reopen()
+            self._log("supervisor already running; window reopen requested")
             return 0
         self._prepare()
         self.stop_path.unlink(missing_ok=True)
+        self.window_reopen_path.unlink(missing_ok=True)
         self._log("supervisor started")
         try:
             while not self.stop_path.exists():
@@ -561,6 +592,7 @@ class BundleSupervisor:
                 self._ensure_ollama()
                 self._ensure_api()
                 self._reap_window()
+                self._consume_window_reopen()
                 self._ensure_window()
                 self._write_state()
                 if once:

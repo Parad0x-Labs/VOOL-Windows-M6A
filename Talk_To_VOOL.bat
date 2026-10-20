@@ -44,7 +44,7 @@ set "RECEIPT_MODEL="
 for /f "tokens=*" %%A in ('type "%RECEIPT_MODEL_FILE%" 2^>nul') do set "RECEIPT_MODEL=%%A"
 if not "!RECEIPT_MODEL!"=="" if not "%VOOL_ALLOW_MODEL_ENV_OVERRIDE%"=="1" set "VOOL_OLLAMA_MODEL=!RECEIPT_MODEL!"
 if "%VOOL_OLLAMA_MODEL%"=="" if not "!RECEIPT_MODEL!"=="" set "VOOL_OLLAMA_MODEL=!RECEIPT_MODEL!"
-if "%VOOL_OLLAMA_MODEL%"=="" set "VOOL_OLLAMA_MODEL=qwen2.5:7b"
+if "%VOOL_OLLAMA_MODEL%"=="" set "VOOL_OLLAMA_MODEL=qwen3:8b"
 del /f /q "%RECEIPT_HOME_FILE%" "%RECEIPT_PROFILE_FILE%" "%RECEIPT_MODEL_FILE%" >nul 2>&1
 if "%OLLAMA_MODELS%"=="" if exist "%SCRIPT_DRIVE%\Ollama\models" set "OLLAMA_MODELS=%SCRIPT_DRIVE%\Ollama\models"
 if not "%OLLAMA_MODELS%"=="" if not exist "%OLLAMA_MODELS%" if exist "%SCRIPT_DRIVE%\Ollama\models" set "OLLAMA_MODELS=%SCRIPT_DRIVE%\Ollama\models"
