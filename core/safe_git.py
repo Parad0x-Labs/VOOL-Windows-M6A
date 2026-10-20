@@ -499,7 +499,15 @@ def _checkout_target_commits(cwd: Path, name: str, *, as_branch: bool, timeout: 
     fetch refspec, which the repository sets: so every ref ending in ``/<name>`` is checked. A name
     that is none of them refuses."""
     found: list[str] = []
-    if name != "-" and not name.startswith("refs/"):
+    if name == "-" or name.startswith("@{-"):
+        # The previous branch: rev-parse would prefer a tag of its name, git switches to the branch.
+        full = subprocess.run(hardened_argv(cwd, "rev-parse", "--symbolic-full-name", "@{-1}" if name == "-" else name),
+                              capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
+        if full.returncode != 0 or "ambiguous" in full.stderr:  # git names no ref when a tag shares the name
+            raise RuntimeError(f"the branch {name!r} names cannot be read")
+        if full.stdout.strip().startswith("refs/heads/"):
+            found.append(_rev_parse(cwd, f"{full.stdout.strip()}^{{commit}}", timeout=timeout))
+    elif not name.startswith("refs/"):
         local = subprocess.run(hardened_argv(cwd, "rev-parse", "--verify", "--quiet", f"refs/heads/{name}^{{commit}}"),
                                capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
         if local.returncode == 0 and local.stdout.strip():
@@ -513,7 +521,11 @@ def _checkout_target_commits(cwd: Path, name: str, *, as_branch: bool, timeout: 
             for line in listing.stdout.splitlines():
                 oid, _, ref = line.partition(" ")
                 if ref.endswith(f"/{name}"):
-                    found.append(_rev_parse(cwd, f"{oid}^{{commit}}", timeout=timeout))
+                    commit = subprocess.run(hardened_argv(cwd, "rev-parse", "--verify", "--quiet", f"{oid}^{{commit}}"),
+                                            capture_output=True, encoding="utf-8", errors="surrogateescape",
+                                            timeout=timeout, env=safe_env())
+                    if commit.returncode == 0 and commit.stdout.strip():  # a tag of a tree is no branch
+                        found.append(commit.stdout.strip())
     try:
         found.append(_resolve_commit(cwd, name, timeout=timeout))
     except RuntimeError:
