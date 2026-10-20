@@ -214,3 +214,47 @@ def test_model_git_ignores_object_locations_from_the_environment(variable, arch_
         "locate", {"reference": secret["second"], "workspace_root": str(bound)}, bound=bound
     )
     assert OUTSIDE_SUBJECT not in repr(_envelope(located)), _envelope(located)
+
+
+@pytest.mark.parametrize("how", ["objects-link", "pack-link", "promisor-remote"])
+def test_model_never_reads_an_object_store_outside_the_bound_folder(how, arch_home):
+    # Git also reads objects through links inside .git/objects, and a promisor remote makes it
+    # fetch missing objects from another repository on demand.
+    secret = _outside_repo(arch_home)
+    bound = arch_home["tmp"] / "bound"
+    bound.mkdir()
+    _git(bound, "init", "-q")
+    objects = bound / ".git" / "objects"
+    outside_objects = secret["repo"] / ".git" / "objects"
+    if how == "objects-link":
+        import shutil
+
+        shutil.rmtree(objects)
+        os.symlink(outside_objects, objects, target_is_directory=True)
+    elif how == "pack-link":
+        _git(secret["repo"], "gc", "-q")
+        (objects / "pack").rmdir()
+        os.symlink(outside_objects / "pack", objects / "pack", target_is_directory=True)
+    else:
+        _git(bound, "config", "extensions.partialClone", "origin")
+        _git(bound, "config", "remote.origin.url", secret["repo"].as_uri())
+        _git(bound, "config", "remote.origin.promisor", "true")
+    if how != "promisor-remote":
+        _git(bound, "update-ref", "refs/heads/borrowed", secret["second"])
+
+    compared = _model_call(
+        "compare",
+        {"kind": "git_commits", "a": secret["first"], "b": secret["second"],
+         "workspace_root": str(bound)},
+        bound=bound,
+    )
+    located = _model_call(
+        "locate", {"reference": secret["second"], "workspace_root": str(bound)}, bound=bound
+    )
+
+    assert compared.ok is False, _envelope(compared)
+    for execution in (compared, located):
+        assert OUTSIDE_NAME not in repr(_envelope(execution)), _envelope(execution)
+        assert OUTSIDE_SUBJECT not in repr(_envelope(execution)), _envelope(execution)
+    if how == "promisor-remote":  # and nothing was fetched into the bound folder
+        assert not list((bound / ".git" / "objects" / "pack").glob("*.promisor"))
