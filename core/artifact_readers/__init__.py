@@ -340,16 +340,11 @@ def read(data: bytes, *, name: str = "", extension: str = "", **kwargs: Any) -> 
             fmt="",
         )
     if not spec.available():
-        if spec.external_decoder and not _sandbox.confinement_available():
+        unconfined = confinement_refusal(spec, name=name)
+        if unconfined is not None:
             # Refuse for the REAL reason. "Install ffmpeg" would send the operator to fix a
             # decoder that is present and working; what is missing is the ability to confine it.
-            raise ReaderUnavailable(
-                f"{name or 'That file'} is {spec.label}, and {_sandbox.confinement_unavailable_reason()}. "
-                f"It was not read: this runtime does not run untrusted document parsers unconfined.",
-                code="confinement_unavailable",
-                remediation="Use a macOS host where the sandbox is available, or attach the content as text.",
-                fmt=spec.fmt,
-            )
+            raise unconfined
         raise ReaderUnavailable(
             f"{name or 'That file'} is {spec.label}, and this machine is missing {' and '.join(spec.requires) or 'its decoder'}, so it was not read.",
             code=f"{spec.fmt}_decoder_unavailable",
@@ -360,6 +355,26 @@ def read(data: bytes, *, name: str = "", extension: str = "", **kwargs: Any) -> 
     for key, value in kwargs.items():
         accepted[key] = value
     return spec.read(data, **_filtered(spec, accepted))
+
+
+def confinement_refusal(spec: ReaderSpec, *, name: str = "") -> ReaderUnavailable | None:
+    """The refusal `read` raises when ``spec`` is held back because this host cannot confine it.
+
+    None when that is not the cause: a format read in process, or a host that can confine. It is
+    the cause `ReaderSpec.blocked_reason` names first, ahead of whether the decoder is installed,
+    because an installed decoder still never runs unconfined. A door that refuses before `read`
+    is reached gets the same reason and remedy here instead of restating them.
+    """
+    if not spec.external_decoder or _sandbox.confinement_available():
+        return None
+    # The remedy comes from the same place as the reason, so it is true on this host too.
+    return ReaderUnavailable(
+        f"{name or 'That file'} is {spec.label}, and {_sandbox.confinement_unavailable_reason()}. "
+        f"It was not read: this runtime does not run untrusted document parsers unconfined.",
+        code="confinement_unavailable",
+        remediation=_sandbox.confinement_unavailable_remediation(),
+        fmt=spec.fmt,
+    )
 
 
 def _filtered(spec: ReaderSpec, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -455,6 +470,7 @@ __all__ = [
     "archive",
     "available_extensions",
     "capability_report",
+    "confinement_refusal",
     "detect",
     "documents",
     "image",
