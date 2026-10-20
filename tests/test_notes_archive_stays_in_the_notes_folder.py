@@ -29,11 +29,12 @@ another editor's change, and that ``link_note_to_event`` refuses every path the 
   (``archive_remove_failed`` / ``restore_remove_failed``), unless the copy changed meanwhile: then both stay
   and the answer names both (``archive_move_incomplete`` / ``restore_move_incomplete``); elsewhere the move
   completes. The same holds for a note changed while VOOL removes it and saved back with the bytes VOOL read
-  (archive and restore). If that note then goes while VOOL removes the copy, VOOL writes the copy again
-  (``archive_note_gone`` / ``restore_note_gone``), and when it cannot (its folder is now a file, or another
-  file holds the name, which is left as it is) it says it kept no copy (``archive_copy_lost`` /
-  ``restore_copy_lost``). If the note goes while the copy cannot be removed, or after another program moved the
-  copy's folder away, the answer is that the note is gone, and VOOL writes no second copy;
+  (archive and restore). If that note then goes (or is replaced) while VOOL removes the copy, VOOL writes the
+  copy again (``archive_note_gone`` / ``restore_note_gone``, ``archive_note_changed``), and when it cannot
+  (its folder is now a file, or another file holds the name, which is left as it is) it says it kept no copy
+  (``archive_copy_lost`` / ``restore_copy_lost``). If the note goes while the copy cannot be removed, or after
+  another program moved the copy's folder away, the answer is that the note is gone, and VOOL writes no
+  second copy;
 * a file in the notes folder that is not UTF-8 stops an archive with ``archive_unreadable``, nothing moved;
 * ``link_note_to_event`` writes no receipt into a ``.txt`` file, a note in a subfolder or in ``.archive``,
   a path that climbs out of the notes folder, or a note outside the workspace, and writes one into a note
@@ -825,15 +826,18 @@ def test_a_note_changed_and_saved_back_while_it_is_removed_stays_and_its_copy_go
 STRANGER = b"another program's file\n"
 
 
-@pytest.mark.parametrize("how", ["the copy cannot be written back", "another file takes the copy's name",
-                                 "the copy cannot be removed", "the copy's folder is moved away"])
-def test_a_note_saved_back_that_goes_while_its_archived_copy_is_removed_is_answered_as_it_ends(world, monkeypatch, how) -> None:
+@pytest.mark.parametrize("how", ["the note is replaced", "the note goes and the copy cannot be written back",
+                                 "the note goes and another file takes the copy's name",
+                                 "the copy cannot be removed and the note stays", "the copy cannot be removed and the note goes",
+                                 "the copy's folder is moved away and the note goes"])
+def test_a_note_saved_back_whose_archived_copy_is_then_removed_is_answered_as_it_ends(world, monkeypatch, how) -> None:
     """As above, the note is changed while VOOL removes it and saved back with the bytes VOOL read, so VOOL
-    removes its archived copy again, and then another program removes the note. When VOOL removed the copy
-    but cannot write it back (the emptied archive folder is now a file, or another file took the copy's name,
-    which VOOL leaves as it is), the answer says that VOOL kept no copy. When VOOL could not remove the copy
-    (it changed meanwhile) or another program moved the copy's folder away first, the copy is where that left
-    it, the answer is that the note is gone, and VOOL writes no second copy."""
+    removes its archived copy again; then another program acts. When VOOL removed the copy and the note was
+    then replaced, VOOL writes the copy again. When it cannot write it back (the emptied archive folder is now
+    a file, or another file took the copy's name, which VOOL leaves as it is), the answer says that VOOL kept
+    no copy. When VOOL could not remove the copy (it changed meanwhile), both stay, and the answer names both
+    while the note stays, or says the note is gone when it went; when another program moved the copy's folder
+    away first, the copy is where that left it. In neither case does VOOL write a second copy."""
     original = _note_bytes("Kickoff", "agenda: intro and goals")
     note, archive = world.notes / "kickoff.md", world.notes / ".archive"
     copy = archive / "kickoff.md"
@@ -841,18 +845,22 @@ def test_a_note_saved_back_that_goes_while_its_archived_copy_is_removed_is_answe
     written: list[bytes] = []
 
     def then(path: Path) -> None:
-        note.unlink()
-        if how == "the copy cannot be written back":
+        if how == "the note is replaced":
+            _replace_with("another file")(note)
+            return
+        if how != "the copy cannot be removed and the note stays":
+            note.unlink()
+        if how == "the note goes and the copy cannot be written back":
             archive.rmdir()
             archive.write_bytes(STRANGER)
-        elif how == "another file takes the copy's name":
+        elif how == "the note goes and another file takes the copy's name":
             path.write_bytes(STRANGER)
-        elif how == "the copy cannot be removed":
+        elif how.startswith("the copy cannot be removed"):
             _append(path, COPY_EDIT)
-        else:
+        elif how.startswith("the copy's folder is moved away"):
             archive.rename(world.notes / "old-archive")
 
-    after_copy = how in ("the copy cannot be written back", "another file takes the copy's name")
+    after_copy = how.startswith("the note")
     fired = _stage_edits(monkeypatch,
                          after_write=(lambda path: path == copy, lambda path: written.append(path.read_bytes())),
                          before_remove=[(lambda path: path == note, lambda path: _append(path, EDIT)),
@@ -864,10 +872,17 @@ def test_a_note_saved_back_that_goes_while_its_archived_copy_is_removed_is_answe
 
     assert written[0] == _as_archived(original, _stamp_line(written[0], "archived_at"))
     assert fired == ["after_write", "before_remove", "after_remove", "after_remove" if after_copy else "before_remove"]
+    base = {"docs": "dir", "notes": "dir"}
+    if how == "the note is replaced":
+        assert _tree(world.workspace) == {**base, "notes/.archive": "dir", "notes/.archive/kickoff.md": written[0],
+                                          "notes/kickoff.md": b"another file under the same name\n"}, \
+            "the replacement stays as it is, and the archived copy is written again with the same bytes"
+        _refused(result, "archive_note_changed")
+        return
     if after_copy:
-        archived = ({"notes/.archive": STRANGER} if how == "the copy cannot be written back"
+        archived = ({"notes/.archive": STRANGER} if how == "the note goes and the copy cannot be written back"
                     else {"notes/.archive": "dir", "notes/.archive/kickoff.md": STRANGER})
-        assert _tree(world.workspace) == {"docs": "dir", "notes": "dir", **archived}, \
+        assert _tree(world.workspace) == {**base, **archived}, \
             "the note is gone, VOOL removed its copy, and another program's file is left as it is"
         _refused(result, "archive_copy_lost")
         assert result.details["detail"] == ("VOOL removed its archived copy kickoff.md again while kickoff.md was still "
@@ -875,10 +890,17 @@ def test_a_note_saved_back_that_goes_while_its_archived_copy_is_removed_is_answe
                                             "as VOOL read it, and could not write the copy back, so it kept no copy of "
                                             "the note")
         return
+    if how == "the copy cannot be removed and the note stays":
+        assert _tree(world.workspace) == {**base, "notes/.archive": "dir", "notes/.archive/kickoff.md": written[0] + COPY_EDIT,
+                                          "notes/kickoff.md": original}
+        _refused(result, "archive_move_incomplete")
+        assert result.details["detail"] == ("kickoff.md stays in the notes folder, and VOOL could not remove its "
+                                            "archived copy kickoff.md")
+        return
     left = ({"notes/.archive": "dir", "notes/.archive/kickoff.md": written[0] + COPY_EDIT}
-            if how == "the copy cannot be removed"
+            if how == "the copy cannot be removed and the note goes"
             else {"notes/old-archive": "dir", "notes/old-archive/kickoff.md": written[0]})
-    assert _tree(world.workspace) == {"docs": "dir", "notes": "dir", **left}, \
+    assert _tree(world.workspace) == {**base, **left}, \
         "the copy VOOL did not remove is where it was left, and no second copy is written"
     _refused(result, "archive_note_gone")
     assert result.details["detail"] == ("nothing is at kickoff.md in the notes folder any more; "
