@@ -44,8 +44,12 @@ public sealed class RootsTests : IDisposable
     [InlineData("device", "unsupported_filesystem")]
     [InlineData("case_sensitive", "case_sensitive_dir")]
     [InlineData("volume_guid", "invalid_flagged")]
+    [InlineData("mapped_drive", "unsupported_filesystem")]
     public async Task Refused_flagged_entry_stops_the_start_without_a_pipe(string kind, string code)
     {
+        // F5: windows-broker.yml maps a local share as a drive letter and names a folder on it.
+        if (kind == "mapped_drive" && TestSupport.AdminFolder("VOOL_BROKER_TEST_MAPPED_ROOT") is null)
+            TestSupport.SkipOrFailAdminRow("A mapped network drive needs a share, and making one needs admin.");
         var target = NewFolder("target");
         var entry = kind switch
         {
@@ -60,6 +64,7 @@ public sealed class RootsTests : IDisposable
             "case_sensitive" => NewFolder("cs"),
             // F1: fully qualified and it opens the folder, but has no drive letter.
             "volume_guid" => TestSupport.VolumeGuidSpelling(target),
+            "mapped_drive" => TestSupport.AdminFolder("VOOL_BROKER_TEST_MAPPED_ROOT")!,
             _ => throw new ArgumentOutOfRangeException(nameof(kind))
         };
         if (kind == "file") File.WriteAllText(entry, "x");
@@ -174,18 +179,24 @@ public sealed class RootsTests : IDisposable
     [Fact]
     public async Task Short_name_spelling_shares_the_folder_id()
     {
-        var flagged = NewFolder("A long flagged folder name");
-        var shortPath = TestSupport.ShortPath(flagged);
-        if (shortPath is null)
-            Assert.Skip("This volume created no 8.3 name for a new folder (8.3 name creation is disabled; enabling it needs admin).");
-        var (broker, ready) = await TestSupport.StartReady(TestSupport.DefaultBootstrap([flagged, shortPath!], journal));
+        var parent = TestSupport.NewShortNameDirectory();
         try
         {
-            var reported = ready.RootElement.GetProperty("flagged").EnumerateArray().ToArray();
-            Assert.Equal(reported[0].GetProperty("id").GetString(), reported[1].GetProperty("id").GetString());
-            Assert.Equal(reported[0].GetProperty("path").GetString(), reported[1].GetProperty("path").GetString());
+            var flagged = Path.Combine(parent, "A long flagged folder name");
+            Directory.CreateDirectory(flagged);
+            var shortPath = TestSupport.ShortPath(flagged);
+            if (shortPath is null)
+                TestSupport.SkipOrFailAdminRow("This volume created no 8.3 name for a new folder (8.3 name creation is disabled; enabling it needs admin).");
+            var (broker, ready) = await TestSupport.StartReady(TestSupport.DefaultBootstrap([flagged, shortPath!], journal));
+            try
+            {
+                var reported = ready.RootElement.GetProperty("flagged").EnumerateArray().ToArray();
+                Assert.Equal(reported[0].GetProperty("id").GetString(), reported[1].GetProperty("id").GetString());
+                Assert.Equal(reported[0].GetProperty("path").GetString(), reported[1].GetProperty("path").GetString());
+            }
+            finally { ready.Dispose(); await TestSupport.Kill(broker); }
         }
-        finally { ready.Dispose(); await TestSupport.Kill(broker); }
+        finally { TestSupport.DeleteTree(parent); }
     }
 
     // F8: nested flagged folders are both accepted, each with its own id.
@@ -204,11 +215,26 @@ public sealed class RootsTests : IDisposable
         finally { ready.Dispose(); await TestSupport.Kill(broker); }
     }
 
-    // F7: a non-NTFS volume.
-    [Fact]
-    public void Flagged_folder_on_a_volume_that_is_not_NTFS_is_refused()
+    // F7: a non-NTFS volume. windows-broker.yml makes a FAT32, an exFAT and a ReFS volume, each
+    // with a folder.
+    [Theory]
+    [InlineData("VOOL_BROKER_TEST_FAT32_ROOT")]
+    [InlineData("VOOL_BROKER_TEST_EXFAT_ROOT")]
+    [InlineData("VOOL_BROKER_TEST_REFS_ROOT")]
+    public async Task Flagged_folder_on_a_volume_that_is_not_NTFS_is_refused(string variable)
     {
-        Assert.Skip("No FAT, exFAT or ReFS volume is reachable inside the VOOL Windows folder, and making a test folder elsewhere is outside the allowed folders. The file-system check is in RootRegistry.AddFlaggedRoot.");
+        var flagged = TestSupport.AdminFolder(variable);
+        if (flagged is null)
+        {
+            const string reason = "No FAT, exFAT or ReFS volume is reachable inside the VOOL Windows folder, and making one needs admin. The file-system check is in RootRegistry.AddFlaggedRoot.";
+            TestSupport.SkipOrFailAdminRow(reason);
+            return;
+        }
+        var pipes = TestSupport.BrokerPipes();
+        using var refusal = await TestSupport.StartRefused(TestSupport.DefaultBootstrap([flagged], journal));
+        Assert.Equal("unsupported_filesystem", Code(refusal));
+        Assert.Equal(flagged, refusal.RootElement.GetProperty("error").GetProperty("entry").GetString());
+        Assert.Empty(TestSupport.BrokerPipes().Except(pipes));
     }
 
     // The held flagged folder by itself, with no walk under it: it cannot be renamed or deleted

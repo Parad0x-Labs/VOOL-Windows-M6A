@@ -223,6 +223,38 @@ internal static class TestSupport
         return path;
     }
 
+    /// <summary>
+    /// Set to 1 by windows-broker.yml, which makes the volumes and the share the admin rows need
+    /// (8.3 names, a mounted-volume folder, FAT32, exFAT, a mapped drive): a row whose setup is
+    /// missing then fails instead of skipping.
+    /// </summary>
+    public static bool AdminRowsRequired => Environment.GetEnvironmentVariable("VOOL_BROKER_TEST_REQUIRE_ADMIN_ROWS") == "1";
+
+    /// <summary>Skips an admin row with its reason, or fails with that reason when the admin rows are required.</summary>
+    public static void SkipOrFailAdminRow(string reason)
+    {
+        if (AdminRowsRequired) Assert.Fail($"A required admin row did not run: {reason}");
+        Assert.Skip(reason);
+    }
+
+    /// <summary>The folder an environment variable names for an admin row, or null when it is unset.</summary>
+    public static string? AdminFolder(string variable)
+    {
+        var path = Environment.GetEnvironmentVariable(variable);
+        if (string.IsNullOrEmpty(path)) return null;
+        Assert.True(Directory.Exists(path), $"{variable} names {path}, which is not a folder.");
+        return path;
+    }
+
+    /// <summary>A new empty folder for a test that needs 8.3 names: on the volume VOOL_BROKER_TEST_8DOT3_ROOT names when it is set, else under TEMP.</summary>
+    public static string NewShortNameDirectory()
+    {
+        var parent = AdminFolder("VOOL_BROKER_TEST_8DOT3_ROOT") ?? Path.GetTempPath();
+        var path = Path.Combine(parent, "vool-broker-test-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(path);
+        return path;
+    }
+
     private static string BrokerExe() =>
         Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../src/VoolBroker/bin/Debug/net10.0-windows/VoolBroker.exe"));
 

@@ -337,13 +337,20 @@ public sealed class HandleWalkTests : IDisposable
     [Fact]
     public void Short_name_is_refused()
     {
-        Directory.CreateDirectory(Inside("A long folder name for 8dot3"));
-        var shortPath = TestSupport.ShortPath(Inside("A long folder name for 8dot3"));
-        if (shortPath is null)
-            Assert.Skip("This volume created no 8.3 name for a new folder (8.3 name creation is disabled; enabling it needs admin).");
-        var before = TestSupport.TreeHash(root);
-        Assert.Equal("short_name", Refusal(Path.GetFileName(shortPath!)));
-        Assert.Equal(before, TestSupport.TreeHash(root));
+        var folder = TestSupport.NewShortNameDirectory();
+        try
+        {
+            using var shortRegistry = new RootRegistry();
+            var shortEntry = shortRegistry.GetEntry(shortRegistry.AddFlaggedRoot(folder));
+            Directory.CreateDirectory(Path.Combine(folder, "A long folder name for 8dot3"));
+            var shortPath = TestSupport.ShortPath(Path.Combine(folder, "A long folder name for 8dot3"));
+            if (shortPath is null)
+                TestSupport.SkipOrFailAdminRow("This volume created no 8.3 name for a new folder (8.3 name creation is disabled; enabling it needs admin).");
+            var before = TestSupport.TreeHash(folder);
+            Assert.Equal("short_name", Assert.Throws<BrokerRefusal>(() => HandleWalk.Open(shortEntry, Path.GetFileName(shortPath!), WalkTarget.Any, WalkAccess.Read).Dispose()).Code);
+            Assert.Equal(before, TestSupport.TreeHash(folder));
+        }
+        finally { TestSupport.DeleteTree(folder); }
     }
 
     // P9, on the way and at the end.
@@ -369,11 +376,29 @@ public sealed class HandleWalkTests : IDisposable
     }
 
     // P14: crossing to another volume needs a volume mount point, which is a reparse point (P3
-    // refuses it first) and needs admin to create.
+    // refuses it first) and needs admin to create. windows-broker.yml mounts a second volume at
+    // mnt inside the folder VOOL_BROKER_TEST_MOUNTED_FOLDER names, with on-other-volume.txt on it.
     [Fact]
     public void Object_on_another_volume_is_refused()
     {
-        Assert.Skip("Reaching another volume from a relative open needs a mounted-volume folder: creating one needs admin, and it is a reparse point, which the walk refuses first (P3). The volume check stays as defence in depth.");
+        var flagged = TestSupport.AdminFolder("VOOL_BROKER_TEST_MOUNTED_FOLDER");
+        if (flagged is null)
+        {
+            TestSupport.SkipOrFailAdminRow("Reaching another volume from a relative open needs a mounted-volume folder, and creating one needs admin.");
+            return;
+        }
+        var mount = Path.Combine(flagged, "mnt");
+        Assert.True((File.GetAttributes(mount) & FileAttributes.ReparsePoint) != 0, $"{mount} is not a mounted-volume folder.");
+        var other = Path.Combine(mount, "on-other-volume.txt");
+        var content = File.ReadAllBytes(other);
+        using var mountedRegistry = new RootRegistry();
+        var mountedEntry = mountedRegistry.GetEntry(mountedRegistry.AddFlaggedRoot(flagged));
+        string Code(string relative, WalkTarget target, WalkAccess access) =>
+            Assert.Throws<BrokerRefusal>(() => HandleWalk.Open(mountedEntry, relative, target, access).Dispose()).Code;
+        Assert.Equal("reparse_point", Code("mnt", WalkTarget.Directory, WalkAccess.Read));
+        Assert.Equal("reparse_point", Code("mnt\\on-other-volume.txt", WalkTarget.Any, WalkAccess.Read));
+        Assert.Equal("reparse_point", Code("mnt\\on-other-volume.txt", WalkTarget.Any, WalkAccess.Write));
+        Assert.Equal(content, File.ReadAllBytes(other));
     }
 
     [Fact]
