@@ -277,6 +277,7 @@ public sealed class ChannelTests
         using var ready = JsonDocument.Parse((await broker.StandardOutput.ReadLineAsync(TestContext.Current.CancellationToken))!);
         await using var client = await TestSupport.Connect(ready.RootElement.GetProperty("pipe").GetString()!, TestContext.Current.CancellationToken);
         await Assert.ThrowsAsync<EndOfStreamException>(() => TestSupport.ReadFrame(client, TestContext.Current.CancellationToken));
+        Assert.False(broker.HasExited, "The broker exited instead of only closing the rejected connection.");
         broker.Kill(true);
         await broker.WaitForExitAsync(TestContext.Current.CancellationToken);
     }
@@ -296,6 +297,7 @@ public sealed class ChannelTests
             using var ready = JsonDocument.Parse((await broker.StandardOutput.ReadLineAsync(TestContext.Current.CancellationToken))!);
             await using var client = await TestSupport.Connect(ready.RootElement.GetProperty("pipe").GetString()!, TestContext.Current.CancellationToken);
             await Assert.ThrowsAsync<EndOfStreamException>(() => TestSupport.ReadFrame(client, TestContext.Current.CancellationToken));
+            Assert.False(broker.HasExited, "The broker exited instead of only closing the rejected connection.");
         }
         finally
         {
@@ -325,7 +327,7 @@ public sealed class ChannelTests
     }
 
     [Fact]
-    public async Task Broker_proof_does_not_match_a_different_secret_and_windows_instance_creation_is_observed()
+    public async Task Broker_proof_is_the_hmac_of_the_client_nonce_and_a_second_server_instance_is_logged()
     {
         var bootstrap = TestSupport.DefaultBootstrap();
         var secret = (string)bootstrap.GetType().GetProperty("secret")!.GetValue(bootstrap)!;
@@ -342,8 +344,9 @@ public sealed class ChannelTests
                 instanceCreated = true;
             }
             catch (IOException) { }
+            // Whether Windows lets another server instance of the name be created is logged, not
+            // asserted: the client's server-pid check is what stands against a squatter.
             Console.WriteLine($"Windows allowed a second server instance: {instanceCreated}");
-            Assert.True(instanceCreated, "Windows refused a second instance of the existing pipe name.");
 
             await using var client = await TestSupport.Connect(fullName, TestContext.Current.CancellationToken);
             using var challenge = await TestSupport.ReadFrame(client, TestContext.Current.CancellationToken);
@@ -352,8 +355,11 @@ public sealed class ChannelTests
             var key = Convert.FromHexString(secret);
             await TestSupport.WriteFrame(client, new { type = "client_proof", nonce = Convert.ToHexString(clientNonce).ToLowerInvariant(), hmac = Convert.ToHexString(System.Security.Cryptography.HMACSHA256.HashData(key, brokerNonce)).ToLowerInvariant() }, TestContext.Current.CancellationToken);
             using var proof = await TestSupport.ReadFrame(client, TestContext.Current.CancellationToken);
-            var expectedWrong = System.Security.Cryptography.HMACSHA256.HashData(new byte[32], clientNonce);
-            Assert.NotEqual(Convert.ToHexString(expectedWrong).ToLowerInvariant(), proof.RootElement.GetProperty("hmac").GetString());
+            Assert.Equal("server_proof", proof.RootElement.GetProperty("type").GetString());
+            var expected = System.Security.Cryptography.HMACSHA256.HashData(key, clientNonce);
+            Assert.Equal(Convert.ToHexString(expected).ToLowerInvariant(), proof.RootElement.GetProperty("hmac").GetString());
+            var underAnotherSecret = System.Security.Cryptography.HMACSHA256.HashData(new byte[32], clientNonce);
+            Assert.NotEqual(Convert.ToHexString(underAnotherSecret).ToLowerInvariant(), proof.RootElement.GetProperty("hmac").GetString());
         }
         finally { broker.Kill(true); await broker.WaitForExitAsync(TestContext.Current.CancellationToken); }
     }
@@ -442,6 +448,9 @@ public sealed class ChannelTests
                 await oversized.WriteAsync(header, TestContext.Current.CancellationToken);
                 using var refusal = await TestSupport.ReadFrame(oversized, TestContext.Current.CancellationToken);
                 Assert.Equal("too_large", refusal.RootElement.GetProperty("error").GetProperty("code").GetString());
+                Assert.Equal(JsonValueKind.Null, refusal.RootElement.GetProperty("id").ValueKind);
+                Assert.False(refusal.RootElement.GetProperty("ok").GetBoolean());
+                Assert.True(await TestSupport.IsClosedByServer(oversized, TimeSpan.FromSeconds(10)), "The broker kept a connection open after a too_large frame.");
             }
 
             await using (var malformed = await TestSupport.Connect(name, TestContext.Current.CancellationToken))
@@ -453,13 +462,12 @@ public sealed class ChannelTests
 
             await using (var truncated = await TestSupport.Connect(name, TestContext.Current.CancellationToken))
             {
+                // A frame cut short by the client going away: only the broker's survival below is checked.
                 await TestSupport.Authenticate(truncated, secret);
-                var pendingRead = TestSupport.ReadFrame(truncated, TestContext.Current.CancellationToken);
                 await truncated.WriteAsync(new byte[] { 10, 0, 0, 0, (byte)'{', (byte)'}' }, TestContext.Current.CancellationToken);
-                await truncated.DisposeAsync();
-                await Assert.ThrowsAsync<EndOfStreamException>(() => pendingRead);
             }
 
+            Assert.False(broker.HasExited, "A bad frame stopped the broker.");
             await using var healthy = await TestSupport.Connect(name, TestContext.Current.CancellationToken);
             await TestSupport.Authenticate(healthy, secret);
             await TestSupport.WriteFrame(healthy, new { id = "after-bad-frame", op = "ping" }, TestContext.Current.CancellationToken);

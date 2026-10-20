@@ -27,6 +27,33 @@ class EffectOutcomeUnknown(RuntimeError):
     """A request was written but its effect could not be determined."""
 
 
+class BatchRestored(BrokerRefusal):
+    """A batch made changes, stopped, and was put back in full: refused, nothing left changed.
+
+    ``code`` is the cause; ``batch`` is the broker's report (batch_id, ran, restored, left).
+    """
+
+    def __init__(self, code: str, message: str, batch: dict[str, Any]) -> None:
+        super().__init__(code, message)
+        self.batch = batch
+
+
+class BatchNotRestored(EffectOutcomeUnknown):
+    """A batch made changes and could not all be put back: some changes may remain.
+
+    Not safe to retry. ``code`` is restore_incomplete, ``cause`` what stopped the batch when the
+    broker reports it, and ``batch`` the broker's report; batch["batch_id"] names the batch for
+    restore_batch.
+    """
+
+    def __init__(self, code: str, message: str, cause: str | None, batch: dict[str, Any]) -> None:
+        super().__init__(f"{code}: {message}" if message else code)
+        self.code = code
+        self.message = message
+        self.cause = cause
+        self.batch = batch
+
+
 def encode_frame(message: dict[str, Any]) -> bytes:
     """Encode one UTF-8 JSON object with a four-byte little-endian length."""
     try:

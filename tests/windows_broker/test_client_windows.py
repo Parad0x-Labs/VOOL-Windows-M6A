@@ -140,3 +140,27 @@ def test_client_rejects_wrong_secret_from_real_broker(tmp_path: Path) -> None:
     finally:
         _stop_broker(process)
 
+
+def test_client_refuses_a_pipe_whose_server_is_not_the_broker(tmp_path: Path) -> None:
+    if os.name != "nt":
+        pytest.skip("requires Windows named pipes and GetProcessTimes")
+    from core.windows_broker.client import BrokerClient
+
+    process, secret, pipe_name = _start_broker(tmp_path)
+    try:
+        # The real GetNamedPipeServerProcessId check: the expected pid is this test process.
+        client = BrokerClient(pipe_name, secret, os.getpid())
+        with pytest.raises(ConnectionError, match="unavailable") as refused:
+            client.connect()
+        assert "not the broker process" in str(refused.value.__cause__)
+        client.close()
+
+        assert process.poll() is None
+        right = BrokerClient(pipe_name, secret, process.pid)
+        right.connect()
+        try:
+            assert right.request("ping")["ok"] is True
+        finally:
+            right.close()
+    finally:
+        _stop_broker(process)
