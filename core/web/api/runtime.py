@@ -62,7 +62,11 @@ from core.runtime_install_profiles import (
     required_ollama_models_for_profile,
 )
 from core.runtime_paths import active_config_home_dir, resolve_workspace_root
-from core.runtime_provider_defaults import default_runtime_model_tag, ensure_default_runtime_providers
+from core.runtime_provider_defaults import (
+    default_runtime_model_tag,
+    ensure_default_runtime_providers,
+    record_ollama_artifact_sizes,
+)
 from core.runtime_task_events import (
     new_runtime_event_stream_id,
     register_runtime_event_sink,
@@ -660,6 +664,20 @@ def start_ollama_model_pull(model_tag: str | None = None, *, env: dict[str, str]
     return progress
 
 
+def record_installed_ollama_artifact_sizes(registry: ModelRegistry, *, env: dict[str, str] | None = None) -> None:
+    """Stamp Ollama's measured artifact sizes on the registered local lanes (best effort)."""
+    if not local_models_enabled(env=env) or not _automatic_ollama_access_allowed(env):
+        return
+    try:
+        inventory = installed_ollama_model_inventory(env=env, base_url=ollama_base_url(env), timeout_seconds=5.0)
+        stamped = record_ollama_artifact_sizes(registry, inventory)
+    except Exception as exc:
+        logger.info("Could not record installed Ollama model sizes: %s", safe_error_text(exc))
+        return
+    for provider_id in stamped:
+        logger.info("Recorded Ollama's measured size for %s.", provider_id)
+
+
 def ensure_default_provider(
     registry: ModelRegistry,
     model_tag: str,
@@ -1048,6 +1066,9 @@ def bootstrap_runtime_services(
     def _run_provider_prewarm() -> None:
         # Warming loads the model into memory, so it cannot start until the model is on disk.
         model_pull.wait(timeout=_MODEL_PULL_WAIT_SECONDS)
+        # The lanes are registered and the model is on disk: give every turn's hardware-fit gate
+        # the measured size boot's residency pick already uses.
+        record_installed_ollama_artifact_sizes(model_registry, env=provider_env)
         log_prewarm_results(
             model_registry,
             model_tag=runtime_model_tag,

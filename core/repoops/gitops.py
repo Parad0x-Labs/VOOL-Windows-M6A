@@ -157,7 +157,9 @@ class GitRunner:
         name = str(remote or "").strip()
         if not name or name.startswith("-"):
             return [], f"{name!r} is not a remote VOOL can push to"
-        code, out, _ = self.run("remote", "get-url", "--push", "--all", name)
+        code, out, err = self.run("remote", "get-url", "--push", "--all", name)
+        if code == -1 and str(err).startswith("git was not run:"):
+            return [], str(err)[len("git was not run:"):].strip()  # this repository itself is refused
         if code != 0:
             # Not a configured remote, so git pushes to it as a URL or path. A throwaway remote holding
             # it as its url gets the same pushInsteadOf/insteadOf rewrites git would apply (get-url
@@ -477,24 +479,31 @@ def _shown(url: str) -> str:
 
 def _destination_program_keys(git_dir: Path, *, timeout: float) -> list[str]:
     """Program-naming keys in a push destination's own config: every scope git reads there except the
-    user's system and global files (so config.worktree too), plus any ``*hook`` key (receive-pack's
-    ``gc --auto`` runs ``gc.recentObjectsHook``)."""
+    user's system and global files (so config.worktree too), classified as safe_git classifies this
+    repository's own (``*hook`` keys such as ``gc.recentObjectsHook``, which receive-pack's ``gc --auto``
+    runs, included; ``advice.*`` and a signing switch set to a value that runs nothing, excluded)."""
     probe = subprocess.run(
         ["git", "--git-dir", str(git_dir), "config", "--list", "--show-scope", "--includes", "--null"],
         capture_output=True, timeout=timeout, env=safe_git.safe_env(),
     )
     if probe.returncode not in (0, 1):  # 1: no entries at all
         raise RuntimeError(f"git config could not be read ({probe.returncode})")
-    fields = [entry.split(b"\n", 1)[0].decode("utf-8", "replace").strip().lower()
-              for entry in probe.stdout.split(b"\0") if entry]
+    fields = []
+    for entry in probe.stdout.split(b"\0"):
+        if entry:
+            name, newline, value = entry.partition(b"\n")
+            fields.append((name.decode("utf-8", "replace").strip().lower(),
+                           value.decode("utf-8", "replace") if newline else None))
     if len(fields) % 2:
         raise RuntimeError("git config scopes could not be read")
     keys = set()
-    for scope, key in zip(fields[0::2], fields[1::2], strict=True):
-        if scope in {"system", "global"}:
+    for (scope, _), (key, value) in zip(fields[0::2], fields[1::2], strict=True):
+        if scope in {"system", "global"} or not safe_git.is_executable_key(key):
             continue
-        if safe_git.is_executable_key(key) or key.rsplit(".", 1)[-1].endswith("hook"):
-            keys.add(key)
+        safe = safe_git._SAFE_VALUES.get(key)
+        if safe is not None and value is not None and safe(value):
+            continue  # signing switched off, or the default format, runs nothing
+        keys.add(key)
     return sorted(keys)
 
 
