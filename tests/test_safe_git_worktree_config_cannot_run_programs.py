@@ -381,3 +381,109 @@ def test_a_git_lfs_transfer_agent_is_refused_even_with_a_false_looking_value(tmp
     _git(repo, "config", key, "false")
 
     assert safe_git.executable_local_config(repo) == [key]
+
+
+def _forged_signature_commit(repo: Path) -> str:
+    # A commit carrying a signature header the repository wrote itself, with no key.
+    tree = _git(repo, "write-tree").strip()
+    body = (f"tree {tree}\nparent {_git(repo, 'rev-parse', 'HEAD').strip()}\n"
+            "author T <t@example.test> 1 +0000\ncommitter T <t@example.test> 1 +0000\n"
+            "gpgsig -----BEGIN PGP SIGNATURE-----\n \n AAAA\n -----END PGP SIGNATURE-----\n\nforged\n")
+    sha = subprocess.run(["git", "-C", str(repo), "hash-object", "-t", "commit", "-w", "--stdin"], input=body,
+                         check=True, capture_output=True, text=True).stdout.strip()
+    _git(repo, "branch", "forged", sha)
+    return sha
+
+
+@pytest.mark.parametrize("key", ["log.showSignature", "merge.verifySignatures"])
+def test_signature_checks_switched_on_by_the_repository_are_refused(tmp_path: Path, monkeypatch, key: str) -> None:
+    repo, marker = _repo(tmp_path)
+    _user_signing_program(tmp_path, monkeypatch, marker)
+    _forged_signature_commit(repo)
+    _git(repo, "config", key, "true")
+
+    merge = GitRunner(root=repo).merge("forged")
+
+    assert merge.ok is False
+    assert safe_git.executable_local_config(repo) == [key.lower()]
+    assert not marker.exists(), f"a repository's {key} made git run the user's gpg"
+
+
+@_POSIX_SCRIPT
+def test_vool_log_never_verifies_signatures_even_when_the_user_turned_it_on(tmp_path: Path, monkeypatch) -> None:
+    from core import user_rules
+
+    repo, marker = _repo(tmp_path)
+    _user_signing_program(tmp_path, monkeypatch, marker)
+    subprocess.run(["git", "config", "-f", str(tmp_path / "home" / ".gitconfig"), "log.showSignature", "true"],
+                   check=True, capture_output=True)
+    _forged_signature_commit(repo)
+
+    subprocess.run(["git", *safe_git.hardening_args(), "-C", str(repo), "log", "-1", "forged"],
+                   capture_output=True, timeout=60, env=safe_git.safe_env())
+    assert marker.exists(), "control: git log did not run the signature check; the case below proves nothing"
+    marker.unlink()
+
+    text = user_rules._git_text(repo, "log", "-1", "--no-color", "--format=%B", "forged")
+
+    assert "forged" in text
+    assert not marker.exists(), "VOOL's git log ran the signature check on a forged signature"
+
+
+@pytest.mark.parametrize("value", ["ssh", "x509", "OpenPGP", ""])
+def test_a_repository_cannot_choose_another_signing_format(tmp_path: Path, value: str) -> None:
+    repo, _marker = _repo(tmp_path)
+    _git(repo, "config", "gpg.format", value)
+
+    assert safe_git.executable_local_config(repo) == ["gpg.format"]
+
+
+def test_the_default_signing_format_set_by_the_repository_passes(tmp_path: Path) -> None:
+    repo, _marker = _repo(tmp_path)
+    _git(repo, "config", "gpg.format", "openpgp")
+    _git(repo, "config", "log.showSignature", "false")
+    _git(repo, "config", "merge.verifySignatures", "no")
+
+    assert safe_git.executable_local_config(repo) == []
+
+
+def _submodule_rebuilt_on_switch(tmp_path: Path, marker: Path) -> tuple[Path, str]:
+    # Branch `side` moves the gitlink to a submodule commit whose files use a filter; the submodule
+    # folder is empty on main, and its git folder under .git/modules names that filter's program.
+    superproject, sub, _ = _superproject(tmp_path)
+    upstream = tmp_path / "upstream" / "repo"
+    (upstream / ".gitattributes").write_text("*.txt filter=planted\n", encoding="utf-8")
+    (upstream / "notes.txt").write_text("filtered\n", encoding="utf-8")
+    _git(upstream, "add", "-A")
+    _git(upstream, "commit", "-q", "-m", "filtered")
+    _git(superproject, "switch", "-q", "-c", "side")
+    _git(sub, "pull", "-q")
+    _git(superproject, "commit", "-q", "-a", "-m", "bump sub")
+    _git(superproject, "switch", "-q", "-")
+    shutil.rmtree(sub)
+    sub.mkdir()
+    modules = superproject / ".git" / "modules" / "sub"
+    _git(modules, "config", "filter.planted.smudge", _planted_program(tmp_path, marker))
+    _git(modules, "config", "filter.planted.clean", _planted_program(tmp_path, marker))
+    _git(superproject, "config", "submodule.recurse", "true")
+    return superproject, _git(superproject, "rev-parse", "side").strip()
+
+
+def test_control_a_recursive_switch_rebuilds_a_submodule_and_runs_its_git_folders_filter(tmp_path: Path) -> None:
+    marker = tmp_path / "MARKER"
+    superproject, side = _submodule_rebuilt_on_switch(tmp_path, marker)
+
+    subprocess.run(["git", *safe_git.hardening_args(), "-C", str(superproject), "switch", "-c", "control", side],
+                   capture_output=True, timeout=60, env=safe_git.safe_env())
+
+    assert marker.exists(), "the recursive switch did not run the filter; the case below proves nothing"
+
+
+def test_a_branch_switch_never_rebuilds_a_submodule_from_its_git_folder(tmp_path: Path) -> None:
+    marker = tmp_path / "MARKER"
+    superproject, side = _submodule_rebuilt_on_switch(tmp_path, marker)
+
+    result = GitRunner(root=superproject).create_branch("next", start_point=side)
+
+    assert result.ok is True, result.to_dict()
+    assert not marker.exists(), "a recursive switch ran a filter named in a submodule's git folder"
