@@ -33,7 +33,50 @@ import subprocess
 from dataclasses import dataclass, field
 
 from core.platform.broker import EffectOutcome, EffectRequest, ExecutionBroker
-from core.repoops.identity import RepositoryWorkspace, WorkspaceError, _git
+from core.repoops.identity import RepositoryWorkspace, WorkspaceError
+
+
+def _run(root: str, *args: str, mutating: bool, timeout: int = 30) -> subprocess.CompletedProcess:
+    """A hardened git in ``root`` (core/safe_git.py), or a refusal shaped like a failed run.
+
+    A repository whose own config names programs is refused outright; a mutation is also refused
+    when the repository has hooks, which hardening would otherwise skip silently. Nothing here
+    runs a program the repository chose."""
+    from pathlib import Path
+
+    from core import safe_git
+    from core.repoops.gitops import GitRunner
+
+    refusal = GitRunner(root=Path(root))._repository_refusal(mutating=mutating)
+    if refusal:
+        return subprocess.CompletedProcess(args, -1, "", f"git was not run: {refusal}")
+    # safe_git's hardening, carried in the environment so the argv stays `git -C <root> <args>`
+    # (the effect-truth tests recognise a dispatch by that shape).
+    env = safe_git.safe_env()
+    hardening = safe_git.hardening_args()
+    pairs = []
+    while hardening:
+        flag = hardening.pop(0)
+        if flag == "--no-optional-locks":
+            env["GIT_OPTIONAL_LOCKS"] = "0"
+        elif flag == "-c":
+            pairs.append(hardening.pop(0).split("=", 1))
+        else:
+            raise RuntimeError(f"safe_git hardening flag {flag!r} has no environment form")
+    env["GIT_CONFIG_COUNT"] = str(len(pairs))
+    for index, (key, value) in enumerate(pairs):
+        env[f"GIT_CONFIG_KEY_{index}"], env[f"GIT_CONFIG_VALUE_{index}"] = key, value
+    argv = list(args)
+    if argv and argv[0] in {"diff", "log", "show"}:
+        argv[1:1] = ["--no-ext-diff", "--no-textconv"]
+    return subprocess.run(["git", "-C", root, *argv], capture_output=True, text=True, timeout=timeout, env=env)
+
+
+def _git(root: str, *args: str, mutating: bool = False) -> str:
+    proc = _run(root, *args, mutating=mutating)
+    if proc.returncode != 0:
+        raise WorkspaceError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
+    return proc.stdout.strip()
 
 
 class LifecycleError(RuntimeError):
@@ -174,10 +217,10 @@ class LocalLifecycleSnapshot:
 def capture_snapshot(ws: RepositoryWorkspace) -> LocalLifecycleSnapshot:
     # RAW stdout: porcelain's leading XY columns are significant — a global
     # strip() would eat the first line's index-status space.
-    out = subprocess.run(
-        ["git", "-C", ws.root, "status", "--porcelain=v1"],
-        capture_output=True, text=True, timeout=30,
-    ).stdout
+    out = _run(ws.root, "status", "--porcelain=v1", mutating=False)
+    if out.returncode != 0:  # unknown is not clean
+        raise WorkspaceError(f"git status failed: {out.stderr.strip()}")
+    out = out.stdout
     entries = []
     for line in out.splitlines():
         if len(line) < 4:
@@ -186,10 +229,7 @@ def capture_snapshot(ws: RepositoryWorkspace) -> LocalLifecycleSnapshot:
         if line.startswith('"'):      # quoted path with special chars
             path = line[3:].strip('"')
         entries.append(FileStatus(path=path, index_status=x, worktree_status=y))
-    proc = subprocess.run(
-        ["git", "-C", ws.root, "symbolic-ref", "--quiet", "--short", "HEAD"],
-        capture_output=True, text=True, timeout=30,
-    )
+    proc = _run(ws.root, "symbolic-ref", "--quiet", "--short", "HEAD", mutating=False)
     branch = proc.stdout.strip() if proc.returncode == 0 else None
     try:
         upstream = _git(ws.root, "rev-parse", "--abbrev-ref", "@{upstream}")
@@ -283,9 +323,7 @@ class LocalLifecycle:
                 if wt_branch == branch:
                     return EffectOutcome(status="refused", reason=(
                         f"branch_checked_out_elsewhere:{wt_path}"))
-            proc = subprocess.run(
-                ["git", "-C", self._ws.root, "switch", branch],
-                capture_output=True, text=True, timeout=60)
+            proc = _run(self._ws.root, "switch", branch, mutating=True, timeout=60)
             if proc.returncode != 0:
                 return EffectOutcome.from_domain(
                     "rejected", reason=proc.stderr.strip()[:200])
@@ -309,9 +347,7 @@ class LocalLifecycle:
                 return EffectOutcome.from_domain("rejected",
                                                  reason="cannot_delete_current_branch")
             flag = "-D" if force_unmerged else "-d"
-            proc = subprocess.run(
-                ["git", "-C", self._ws.root, "branch", flag, branch],
-                capture_output=True, text=True, timeout=30)
+            proc = _run(self._ws.root, "branch", flag, branch, mutating=True)
             if proc.returncode != 0:
                 return EffectOutcome.from_domain("rejected",
                                                  reason=proc.stderr.strip()[:200])
@@ -343,8 +379,7 @@ class LocalLifecycle:
             root = os.path.realpath(self._ws.root)
             if not resolved.startswith(root + os.sep) and resolved != root:
                 raise StageScopeError(f"path escapes workspace: {p}")
-            subprocess.run(["git", "-C", self._ws.root, "add", "--", p],
-                           capture_output=True, text=True, timeout=30, check=True)
+            _git(self._ws.root, "add", "--", p, mutating=True)
         staged_now = set(staged_paths(self._ws))
         extra = sorted(staged_now - set(rel_paths))
         if extra:
@@ -414,9 +449,7 @@ class LocalLifecycle:
             if ruled is not None:
                 return EffectOutcome.from_domain("rejected", reason=ruled.reason)
 
-            proc = subprocess.run(
-                ["git", "-C", self._ws.root, "commit", "-m", message],
-                capture_output=True, text=True, timeout=60)
+            proc = _run(self._ws.root, "commit", "-m", message, mutating=True, timeout=60)
             committed = proc.returncode == 0
             if not committed:
                 # Nothing happened OR partial? git commit is atomic per run:
@@ -492,7 +525,7 @@ class LocalLifecycle:
     # -- restore / discard (typed, destructive-but-narrow) -----------------------
     def restore_worktree_file(self, fork, broker: ExecutionBroker, rel_path: str):
         def dispatch() -> EffectOutcome:
-            _git(self._ws.root, "checkout", "--", rel_path)
+            _git(self._ws.root, "checkout", "--", rel_path, mutating=True)
             gone = rel_path not in unstaged_paths(self._ws)
             return EffectOutcome(status="applied",
                                  evidence={"restored": rel_path,
@@ -508,7 +541,7 @@ class LocalLifecycle:
 
     def unstage_file(self, fork, broker: ExecutionBroker, rel_path: str):
         def dispatch() -> EffectOutcome:
-            _git(self._ws.root, "restore", "--staged", "--", rel_path)
+            _git(self._ws.root, "restore", "--staged", "--", rel_path, mutating=True)
             still = rel_path in staged_paths(self._ws)
             return EffectOutcome(status="applied",
                                  evidence={"unstaged": rel_path,
@@ -553,7 +586,7 @@ class LocalLifecycle:
                 if wt_branch == branch:
                     return EffectOutcome.from_domain(
                         "rejected", reason="branch_already_checked_out")
-            _git(self._ws.root, "worktree", "add", real, branch)
+            _git(self._ws.root, "worktree", "add", real, branch, mutating=True)
             listing = list_worktrees(self._ws)   # postcondition: really there
             found = any(p == real for _b, p in listing)
             return EffectOutcome(status="applied", evidence={
@@ -576,13 +609,11 @@ class LocalLifecycle:
                 return EffectOutcome.from_domain(
                     "rejected", reason="not_a_removable_worktree")
             # A DIRTY worktree is never silently destroyed.
-            proc = subprocess.run(
-                ["git", "-C", real, "status", "--porcelain"],
-                capture_output=True, text=True, timeout=30)
-            if proc.stdout.strip():
+            proc = _run(real, "status", "--porcelain", mutating=False)
+            if proc.returncode != 0 or proc.stdout.strip():  # unknown is not clean
                 return EffectOutcome.from_domain(
                     "rejected", reason="dirty_worktree_refused")
-            _git(self._ws.root, "worktree", "remove", real)
+            _git(self._ws.root, "worktree", "remove", real, mutating=True)
             gone = all(p != real for _b, p in list_worktrees(self._ws))
             return EffectOutcome(status="applied",
                                  evidence={"removed": real,
@@ -617,9 +648,7 @@ class LocalLifecycle:
                 return EffectOutcome.from_domain("rejected",
                                                  reason="unknown_source_sha")
 
-            proc = subprocess.run(
-                ["git", "-C", self._ws.root, "cherry-pick", source_sha],
-                capture_output=True, text=True, timeout=60)
+            proc = _run(self._ws.root, "cherry-pick", source_sha, mutating=True, timeout=60)
             after = capture_snapshot(self._ws)
             if after.operation_in_progress == "cherry-pick":
                 # The world CHANGED: repo entered conflicted state. This is
@@ -674,9 +703,7 @@ def unstaged_paths(ws: RepositoryWorkspace) -> tuple[str, ...]:
 
 
 def _is_tracked(ws: RepositoryWorkspace, rel_path: str) -> bool:
-    proc = subprocess.run(
-        ["git", "-C", ws.root, "ls-files", "--error-unmatch", "--", rel_path],
-        capture_output=True, text=True, timeout=15)
+    proc = _run(ws.root, "ls-files", "--error-unmatch", "--", rel_path, mutating=False, timeout=15)
     return proc.returncode == 0
 
 
