@@ -683,3 +683,117 @@ def test_format_placeholders_that_check_signatures_keep_the_signing_keys(tmp_pat
     _git(repo, "config", "gpg.format", "x509")
 
     assert safe_git.executable_config_for(repo, argv) == ["gpg.format (set in .git/config)"], argv
+
+
+# ── Second review, 20 Oct ──────────────────────────────────────────────────────────────────────
+
+
+def _project(tmp_path: Path) -> Path:
+    repo, _marker = _repo(tmp_path)
+    _git(repo, "remote", "add", "origin", "https://git.example.test/project.git")
+    return repo
+
+
+@pytest.mark.parametrize("directory_renames", ["true", "conflict"])
+def test_an_lfsconfig_a_folder_rename_moves_to_the_top_is_checked(tmp_path: Path, directory_renames: str) -> None:
+    # The other side moves sub/'s files to the top; this side adds sub/.lfsconfig, which git then
+    # moves along. Neither side holds a top-level .lfsconfig.
+    repo = _project(tmp_path)
+    (repo / "sub").mkdir()
+    for name in ("a", "b", "c"):
+        (repo / "sub" / name).write_text(f"{name}\n", encoding="utf-8")
+    _git(repo, "add", "sub")
+    _git(repo, "commit", "-q", "-m", "sub")
+    _git(repo, "switch", "-q", "-c", "theirs")
+    _git(repo, "mv", "sub/a", "sub/b", "sub/c", ".")
+    _git(repo, "commit", "-q", "-m", "flatten")
+    _git(repo, "switch", "-q", "-")
+    subprocess.run(["git", "config", "-f", str(repo / "sub" / ".lfsconfig"), "lfs.url", "http://127.0.0.7:9/e"],
+                   check=True, capture_output=True)
+    _git(repo, "add", "sub/.lfsconfig")
+    _git(repo, "commit", "-q", "-m", "nested lfsconfig")
+    _git(repo, "config", "merge.directoryRenames", directory_renames)
+
+    refusal = safe_git.lfs_endpoint_refusal(repo, ("merge", "--no-ff", "--no-edit", "theirs"))
+
+    assert refusal.startswith("Git LFS would contact 127.0.0.7") and "merge would write" in refusal, refusal
+
+
+def _side_with_lfsconfig(repo: Path) -> None:
+    # Branch "side" carries an .lfsconfig naming another server; HEAD is back where it was, so
+    # "-" (the previous branch) is side.
+    _git(repo, "switch", "-q", "-c", "side")
+    _commit_lfsconfig(repo, "http://127.0.0.8:9/e")
+    _git(repo, "switch", "-q", "-")
+
+
+@pytest.mark.parametrize("argv", [("merge", "--no-ff", "--no-edit", "-"), ("cherry-pick", "--no-rerere-autoupdate", "-"),
+                                  ("switch", "-c", "m", "-"), ("switch", "-c", "n", ":/LFS server")])
+def test_a_commit_named_by_shorthand_is_resolved_and_checked(tmp_path: Path, argv: tuple[str, ...]) -> None:
+    repo = _project(tmp_path)
+    _side_with_lfsconfig(repo)
+
+    refusal = safe_git.lfs_endpoint_refusal(repo, argv)
+
+    assert refusal.startswith("Git LFS would contact 127.0.0.8"), refusal
+
+
+@pytest.mark.parametrize("argv", [("merge", "--no-ff", "--no-edit", "--stat"), ("cherry-pick", "--continue"),
+                                  ("merge", "no-such-branch"), ("switch", "-c", "n", "no-such-branch")])
+def test_a_command_whose_incoming_commit_cannot_be_named_is_refused(tmp_path: Path, argv: tuple[str, ...]) -> None:
+    repo = _project(tmp_path)
+    _side_with_lfsconfig(repo)
+
+    refusal = safe_git.lfs_endpoint_refusal(repo, argv)
+
+    assert refusal.startswith("the repository's Git LFS servers could not be checked"), refusal
+
+
+@pytest.mark.parametrize("key", ["http.proxy", "http.https://git.example.test/.proxy"])
+def test_a_proxy_the_repository_sets_counts_as_a_server_lfs_would_contact(tmp_path: Path, key: str) -> None:
+    repo = _project(tmp_path)
+    _git(repo, "branch", "other")
+    _git(repo, "config", key, "http://127.0.0.9:9")
+
+    refusal = safe_git.lfs_endpoint_refusal(repo, ("merge", "other"))
+
+    assert refusal.startswith(f"Git LFS would contact 127.0.0.9 ({key}, set in .git/config)"), refusal
+
+
+def test_the_users_own_proxy_is_not_held_against_the_repository(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    subprocess.run(["git", "config", "-f", str(home / ".gitconfig"), "http.proxy", "http://proxy.corp.test:3128"],
+                   check=True, capture_output=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    repo = _project(tmp_path)
+    _git(repo, "branch", "other")
+
+    assert safe_git.lfs_endpoint_refusal(repo, ("merge", "other")) == ""
+
+
+@pytest.mark.parametrize("argv, state", [(("cherry-pick", "--abort"), "ORIG_HEAD"),
+                                         (("revert", "--abort"), "sequencer/head"),
+                                         (("rebase", "--abort"), "rebase-merge/orig-head")])
+def test_an_abort_checks_the_commit_it_goes_back_to(tmp_path: Path, argv: tuple[str, ...], state: str) -> None:
+    repo = _project(tmp_path)
+    _side_with_lfsconfig(repo)
+    if "/" in state:
+        (repo / ".git" / state).parent.mkdir(parents=True, exist_ok=True)
+        (repo / ".git" / state).write_text(_git(repo, "rev-parse", "side"), encoding="utf-8")
+    else:
+        _git(repo, "update-ref", state, "side")
+
+    refusal = safe_git.lfs_endpoint_refusal(repo, argv)
+
+    assert refusal.startswith(f"Git LFS would contact 127.0.0.8 (lfs.url in the .lfsconfig in {state})"), refusal
+
+
+def test_a_project_lfsconfig_is_read_the_same_from_a_subfolder(tmp_path: Path) -> None:
+    repo = _project(tmp_path)
+    _commit_lfsconfig(repo, "https://git.example.test/project.git/info/lfs")
+    (repo / "deeper").mkdir()
+
+    assert safe_git.lfs_endpoint_refusal(repo / "deeper", ("switch", "-c", "x")) == ""
