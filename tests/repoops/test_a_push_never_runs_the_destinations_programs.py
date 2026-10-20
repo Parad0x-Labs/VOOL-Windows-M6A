@@ -196,6 +196,35 @@ def test_a_clean_local_bare_remote_still_pushes(tmp_path) -> None:
     assert remote_ref(bare, "pushed") == head(root)
 
 
+def test_a_destination_whose_settings_run_nothing_still_pushes(tmp_path) -> None:
+    runner, root, bare = _runner_world(tmp_path)
+    git(bare, "config", "commit.gpgsign", "false")
+    git(bare, "config", "gpg.format", "openpgp")
+    git(bare, "config", "advice.ignoredHook", "false")  # toggles a message; names no program
+
+    code, _, err = _push(runner)
+
+    assert code == 0, err
+    assert remote_ref(bare, "pushed") == head(root)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the program is a POSIX shell command")
+def test_a_refused_pushing_repository_is_named_as_the_reason(tmp_path) -> None:
+    runner, root, bare = _runner_world(tmp_path)
+    marker = tmp_path / "FSMONITOR_RAN"
+    program = tmp_path / "fsmonitor.sh"
+    program.write_text(f"#!/bin/sh\necho ran > '{marker}'\n", encoding="utf-8")
+    program.chmod(0o755)
+    git(root, "config", "core.fsmonitor", str(program))
+
+    assert "core.fsmonitor" in runner.push_destination_refusal("origin")
+    code, _, err = _push(runner)
+
+    assert code != 0 and "core.fsmonitor" in err and "is not a git repository" not in err, err
+    assert not marker.exists()
+    assert remote_ref(bare, "pushed") == ""
+
+
 @pytest.mark.parametrize("url, transport", [
     ("https://github.com/o/r.git", "network"),
     ("ssh://git@github.com/o/r.git", "network"),
