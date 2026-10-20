@@ -60,7 +60,9 @@ _EXECUTABLE_KEY_SUFFIXES = frozenset({
     "difffilter",         # interactive.diffFilter
 })
 #: Final-segment endings that name a program however the key is spelled before them:
-#: gpg.ssh.defaultKeyCommand, gc.recentObjectsHook, uploadpack.packObjectsHook, sendemail.<x>Cmd.
+#: gpg.ssh.defaultKeyCommand, gc.recentObjectsHook (runs during a commit's auto gc),
+#: uploadpack.packObjectsHook (runs when a local clone or fetch serves this repository),
+#: sendemail.<x>Cmd.
 _EXECUTABLE_KEY_ENDINGS = ("command", "cmd", "hook")
 #: Whole keys (fnmatch, lowercase) that pull in configuration git would then obey.
 _EXECUTABLE_KEY_PATTERNS = ("include.path", "includeif.*.path", "pager.*", "submodule.*.update",
@@ -88,8 +90,8 @@ def is_executable_key(key: str) -> bool:
     last = lowered.rsplit(".", 1)[-1]
     if last in _EXECUTABLE_KEY_SUFFIXES:
         return True
-    if last.endswith(_EXECUTABLE_KEY_ENDINGS) and not lowered.startswith("advice."):
-        return True  # advice.<x>Hook and the like only toggle a message
+    if last.endswith(_EXECUTABLE_KEY_ENDINGS) and not lowered.startswith(("advice.", "alias.")):
+        return True  # advice.<x>Hook only toggles a message; alias.<x> is a name VOOL never invokes
     return any(fnmatch.fnmatchcase(lowered, pattern) for pattern in _EXECUTABLE_KEY_PATTERNS)
 
 
