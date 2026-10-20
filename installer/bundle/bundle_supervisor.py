@@ -18,6 +18,9 @@ from core.runtime_paths import native_runtime_home
 _POLL_SECONDS = 2.0
 _STARTUP_TIMEOUT_SECONDS = 60.0
 _MAX_BACKOFF_SECONDS = 30.0
+# A relaunch that arrives while the window is still closing (the user clicked X, then the
+# shortcut) still reopens it if that window exits within this many seconds.
+_REOPEN_GRACE_SECONDS = 10.0
 _WINDOWS_SCRIPT_ARGUMENT_PREFIX = (
     r'^(?:\x22(?:[^\x22]*\\)?pythonw?\.exe\x22|(?:[^\s\x22]*\\)?pythonw?\.exe)'
     r'(?:\s+-[bBdEhIiOPqRsSuvVx]+'
@@ -64,6 +67,7 @@ class BundleSupervisor:
         self.supervisor_started_at = time.time()
         self._lock_handle: Any | None = None
         self.window_started = False
+        self.window_reopen_until = 0.0
 
     def _manifest(self) -> dict[str, Any]:
         path = self.root / "bundle_manifest.json"
@@ -413,15 +417,20 @@ class BundleSupervisor:
             self.window_reopen_path.write_text("reopen\n", encoding="utf-8")
 
     def _consume_window_reopen(self) -> None:
-        """Honor a pending reopen request: a window the user closed opens again once the API
-        answers. A window that is still open is left as it is."""
+        """Honor a reopen request: a window the user closed opens again once the API answers. A
+        window that is still open is left as it is, unless it exits within the grace period --
+        it was closing when the request came."""
+        now = time.monotonic()
         try:
             self.window_reopen_path.unlink()
         except OSError:
-            return
-        self._log("window reopen requested")
-        if "window" not in self.processes:
+            pass
+        else:
+            self._log("window reopen requested")
+            self.window_reopen_until = now + _REOPEN_GRACE_SECONDS
+        if "window" not in self.processes and now < self.window_reopen_until:
             self.window_started = False
+            self.window_reopen_until = 0.0
 
     def _write_state(self) -> None:
         payload = {
