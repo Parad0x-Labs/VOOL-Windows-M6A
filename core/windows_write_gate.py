@@ -212,7 +212,8 @@ def _git_places(folder: str) -> list[tuple[str, str]] | str:
     core/safe_git.py), and a refusal is given in that runner's words. A link below these three (in place
     of `.git/objects`), a hard link there, or a repository-set key that moves writes (Git LFS keys,
     `gc.repackFilterTo`) would send them elsewhere, so such a repository is refused
-    (core/git_write_redirects.py)."""
+    (core/git_write_redirects.py). Each checked-out submodule's git folders are placed and checked the
+    same way, since git and git-lfs also write there."""
     import subprocess
 
     from core import git_write_redirects, safe_git
@@ -234,13 +235,17 @@ def _git_places(folder: str) -> list[tuple[str, str]] | str:
     if probe.returncode != 0 or len(lines) != 3 or not all(_placeable(line) for line in lines):
         return unplaceable
     try:
-        redirected = git_write_redirects.refusal(lines[1], lines[2], Path(folder))
+        repos = git_write_redirects.repositories(Path(folder), (lines[1], lines[2]))
+        redirected = git_write_redirects.refusal_for(repos)
     except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired):
-        return "the repository's git folder or config could not be checked for links and settings that move its writes"
+        return "the repository's git folders or config could not be checked for links and settings that move its writes"
     if redirected:
         return f"{redirected}, so where it writes cannot be checked"
-    return list(zip(("the repository's work tree", "the repository's git folder", "the repository's shared git folder"),
-                    lines, strict=True))
+    places = list(zip(("the repository's work tree", "the repository's git folder", "the repository's shared git folder"),
+                      lines, strict=True))
+    for label, _, git_dir, common_dir in repos[1:]:  # each checked-out submodule, where git also writes
+        places.extend(((f"{label}'s git folder", git_dir), (f"{label}'s shared git folder", common_dir)))
+    return places
 
 
 def _placeable(folder: str) -> bool:

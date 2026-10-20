@@ -129,8 +129,12 @@ class GitRunner:
         ``receive.denyCurrentBranch=updateInstead`` rewrites its checked-out files. So a local
         destination is checked like this repository is, and a transport VOOL cannot read the
         destination of (a remote helper, an unknown scheme, an unusual ``file://`` form) is refused.
-        A check that cannot finish refuses."""
+        A check that cannot finish refuses. On Windows this repository's own git folders are checked
+        first (`_windows_push_source_refusal`), since every push writes there too."""
         try:
+            source = _windows_push_source_refusal(self.root, timeout=self.timeout)
+            if source:
+                return source
             urls, problem = self._push_urls(remote)
             if problem:
                 return problem
@@ -533,10 +537,36 @@ def _windows_destination_refusal(url: str, git_dir: Path, *, timeout: float) -> 
                     f"{windows_write_gate.ENV_VAR}; the push destination {url!r} keeps its git folder at {place}, "
                     "which is outside them")
     try:
-        found = git_write_redirects.link_refusal(str(git_dir), common)
-    except OSError as exc:
+        found = git_write_redirects.refusal_for([("the push destination", git_dir, str(git_dir), common)],
+                                                timeout=timeout)
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
         return f"the push destination {url!r} could not be checked ({type(exc).__name__})"
     return f"the push destination {url!r}: {found}" if found else ""
+
+
+def _windows_push_source_refusal(root: Path, *, timeout: float) -> str:
+    """On Windows, why a push from the repository at `root` could write outside the marked folders
+    ("" when it cannot): every push updates this repository's own refs (where the remote's branch now
+    is), so a link or hard link in its git folders, or a key its config sets that moves writes, is
+    refused as for repo.git (core/git_write_redirects.py), whatever the destination. Reproduced
+    2026-10-20: with `.git/refs/remotes` linked to an outside folder, a push to a marked destination
+    wrote the remote's branch there. Off Windows this returns ""."""
+    from core import git_write_redirects, windows_write_gate
+
+    if not windows_write_gate.active():
+        return ""
+    probe = subprocess.run(
+        safe_git.hardened_argv(root, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"),
+        capture_output=True, text=True, timeout=timeout, env=safe_git.safe_env(),
+    )
+    lines = probe.stdout.splitlines()
+    if probe.returncode != 0 or len(lines) != 2:
+        return "VOOL cannot tell where this repository keeps its git folder, so it does not push from it"
+    try:
+        found = git_write_redirects.refusal_for([("the repository", Path(root), lines[0], lines[1])], timeout=timeout)
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+        return f"this repository could not be checked before the push ({type(exc).__name__})"
+    return found
 
 
 def _receiving_git_dir(path: Path, *, timeout: float) -> Path | None:
