@@ -231,3 +231,64 @@ def test_the_refusal_stays_silent_when_a_local_model_fits(home, monkeypatch) -> 
         "I couldn't get a live model response in this run, so I'm not going to recycle cached or "
         "remembered text as if it were fresh."
     )
+
+
+def test_a_model_registered_from_settings_is_sized_at_once(home, monkeypatch) -> None:
+    from core.web.api.runtime import RuntimeServices
+    from core.web.api.service import dispatch_post
+    from storage.migrations import run_migrations
+
+    run_migrations()  # the HTTP door records each request in the invocation ledger
+    with _FakeOllama([{"name": "qwen3:8b", "size": QWEN3_8B_BYTES}]) as fake:
+        monkeypatch.setenv("VOOL_RAW_OLLAMA_API_URL", fake.url)
+        response = dispatch_post(
+            path="/api/models/local/register",
+            body={"model_name": "qwen3:8b"},
+            client_host="127.0.0.1",
+            headers={"Content-Type": "application/json"},
+            runtime=RuntimeServices(),
+            model_name="vool",
+            workspace_root_provider=lambda: str(home),
+        )
+
+    assert response.status == 200
+    size = ModelRegistry().get_manifest("ollama-local", "qwen3:8b").metadata["artifact_size_gb"]
+    assert size == pytest.approx(QWEN3_8B_BYTES / 1024.0**3, abs=0.001)
+
+
+def test_with_a_cloud_model_set_up_the_refusal_points_to_it(home, monkeypatch) -> None:
+    from core.agent_runtime.memory_runtime import chat_surface_honest_degraded_response
+    from storage.model_provider_manifest import ModelProviderManifest, upsert_provider_manifest
+
+    _cpu_host(monkeypatch, 8.0)
+    _registered_qwen3_8b(monkeypatch, measured=True)
+    upsert_provider_manifest(
+        ModelProviderManifest(
+            provider_name="openai-compatible-remote",
+            model_name="cloud-test-model",
+            source_type="http",
+            capabilities=["summarize"],
+            runtime_config={"base_url": "https://api.example.com/v1"},
+        )
+    )
+    monkeypatch.setattr("core.local_model_presence.local_model_running", lambda **_: True)
+
+    class _Execution:
+        source = "no_provider_available"
+        details = {}
+
+    assert chat_surface_honest_degraded_response(None, _Execution()) == (
+        "I couldn't get a live model response in this run: `qwen3:8b` needs about 6.4 GB of memory "
+        "and this computer can spare about 5.6 GB for it, so I didn't start it. Pick a cloud model in "
+        "the model selector, or save one in Setup under “Where should it think?” so Auto uses it."
+    )
+
+
+def test_no_shortfall_is_reported_while_another_local_model_fits(home, monkeypatch) -> None:
+    _cpu_host(monkeypatch, 8.0)
+    registry = _registered_qwen3_8b(monkeypatch, measured=True)
+    register_installed_local_model(registry, model_tag="qwen3:4b")
+
+    # qwen3:8b (6.37 GB) does not fit 5.6 GB, but qwen3:4b (4.5 GB estimate) does.
+    assert provider_capability_truth_for_manifest(registry.get_manifest("ollama-local", "qwen3:4b")).hardware_fit
+    assert local_hardware_shortfall() == {}
