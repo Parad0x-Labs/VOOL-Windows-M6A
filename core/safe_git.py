@@ -154,7 +154,7 @@ def executable_config_for(cwd: Path, argv: Sequence[str], *, timeout: float = 20
 #: Subcommands that never sign or check a signature unless an option asks for it.
 _SIGNING_FREE_SUBCOMMANDS = frozenset({
     "status", "diff", "log", "show", "rev-parse", "ls-files", "for-each-ref", "rev-list", "merge-base",
-    "cat-file", "describe", "symbolic-ref", "config", "branch",
+    "cat-file", "describe", "symbolic-ref", "config", "branch", "remote",
 })
 #: Options that make one of those sign or verify after all (log/show --show-signature, branch has none).
 _SIGNING_OPTIONS = ("--show-signature", "--gpg-sign", "--verify-signatures", "-S")
@@ -295,8 +295,8 @@ def lfs_endpoint_refusal(cwd: Path, argv: Sequence[str] = (), *, timeout: float 
     and hosts in the user's system or global LFS settings; URLs are compared after git's
     ``insteadOf`` rewriting, by host. A remote picked by ``remote.lfsdefault``,
     ``branch.<x>.remote`` and the like counts as a named server when it is a URL rather than one of
-    the repository's remotes, since git-lfs then contacts that URL, and so does a proxy the
-    repository sets (``http.proxy``, ``http.<url>.proxy``). A trusted server can still point
+    the repository's remotes, since git-lfs then contacts that URL. A proxy the repository sets
+    (``http.proxy``) is not counted: git's own fetch and push go through it as well. A trusted server can still point
     git-lfs at storage elsewhere; that is the server's choice, not the repository's. Commands that
     never write LFS files into the work tree (add, commit, tag, push without git-lfs's hook) are
     not checked. A check that cannot finish refuses."""
@@ -320,8 +320,6 @@ def lfs_endpoint_refusal(cwd: Path, argv: Sequence[str] = (), *, timeout: float 
                     named.append((value, f"{key}, {_where(scope)}"))
             elif _is_remote_pick_key(key) and value:
                 picks.append((value, f"{key}, {_where(scope)}", user))
-            elif not user and value and (key == "http.proxy" or fnmatch.fnmatchcase(key, "http.*.proxy")):
-                named.append((value, f"{key}, {_where(scope)}"))  # git-lfs sends its requests through it
             elif user and key.startswith("lfs.") and "://" in key:
                 trusted.add(_endpoint_host(key[len("lfs."):].rpartition(".")[0]))  # lfs.<url>.<setting>
             elif fnmatch.fnmatchcase(key, "remote.*.url") or fnmatch.fnmatchcase(key, "remote.*.pushurl"):
@@ -336,7 +334,7 @@ def lfs_endpoint_refusal(cwd: Path, argv: Sequence[str] = (), *, timeout: float 
                 elif _is_remote_pick_key(key) and value:
                     picks.append((value, f"{key} in {source}", False))
         for value, source, user in picks:  # a remote's name is fine, and so is a word that names none
-            if value not in remotes and _could_be_a_server(value):
+            if value.lower() not in remotes and _could_be_a_server(value):  # config names come lowercased
                 if user:
                     trusted.add(_endpoint_host(_expanded_url(cwd, value, timeout=timeout)))
                 else:
@@ -352,7 +350,9 @@ def lfs_endpoint_refusal(cwd: Path, argv: Sequence[str] = (), *, timeout: float 
                 return (f"Git LFS would contact {shown or 'a server VOOL cannot read'} ({source}), which is not "
                         "this project's git host or a server in your own git settings")
         return ""
-    except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
+    except RuntimeError as exc:  # says what could not be read; never a URL
+        return f"the repository's Git LFS servers could not be checked ({exc})"
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         return f"the repository's Git LFS servers could not be checked ({type(exc).__name__})"
 
 
