@@ -140,6 +140,7 @@ public sealed class Journal
         }
         var left = new List<string>();
         var ordered = committed ? steps.Values.ToList() : steps.Values.Reverse().ToList();
+        var notAttempted = 0;
         using (var log = Reopen(batchId))
         {
             // What was read may still be only in the cache: a record whose own flush failed (a
@@ -165,11 +166,14 @@ public sealed class Journal
                     // without a record. A later attempt finds the step already undone and records it.
                     var code = error is BrokerRefusal refusal ? refusal.Code : error.GetType().Name;
                     left.Add($"{Describe(step)}: undone, but its journal record failed ({code}); the restore stopped here");
+                    notAttempted = ordered.SkipWhile(other => other.GetProperty("i").GetInt32() != index).Skip(1)
+                        .Count(other => !finished.Contains(other.GetProperty("i").GetInt32()));
                     break;
                 }
                 finished.Add(index);
             }
         }
+        if (notAttempted > 0) left.Add($"{notAttempted} later step(s) not attempted");
         if (left.Count == 0)
         {
             try { File.Delete(PathOf(batchId)); }

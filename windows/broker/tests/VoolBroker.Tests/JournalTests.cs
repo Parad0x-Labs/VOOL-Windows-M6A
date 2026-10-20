@@ -178,9 +178,11 @@ public sealed class JournalTests : IDisposable
         finally { BatchLog.FaultForTests = null; }
         Assert.Equal(2, undoneRecords);
         Assert.False(first.Complete);
-        var line = Assert.Single(first.Left);
-        Assert.StartsWith("aside f.txt", line, StringComparison.Ordinal);
-        Assert.Contains("journal_unavailable", line, StringComparison.Ordinal);
+        Assert.Equal(2, first.Left.Count);
+        Assert.StartsWith("aside f.txt", first.Left[0], StringComparison.Ordinal);
+        Assert.Contains("journal_unavailable", first.Left[0], StringComparison.Ordinal);
+        // The temp step after it is named too: the outcome never understates what is still changed.
+        Assert.Equal("1 later step(s) not attempted", first.Left[1]);
         // The aside step was made: f.txt is back. The temp step after it was not attempted.
         Assert.Equal("original", File.ReadAllText(work.In("f.txt")));
         Assert.Single(work.BrokerNames(), name => Path.GetFileName(name).StartsWith(".vool-broker-tmp-", StringComparison.Ordinal));

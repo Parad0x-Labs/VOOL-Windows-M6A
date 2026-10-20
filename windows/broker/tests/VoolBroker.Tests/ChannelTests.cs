@@ -168,6 +168,36 @@ public sealed class ChannelTests
         }
     }
 
+    // Clients that open and close at once while 15 connections are held. One that closes before
+    // the broker's ConnectNamedPipe takes the ERROR_NO_DATA path at the instance cap, which must
+    // not make a 17th instance (review of 3k). Whether a given attempt hits that moment is timing.
+    [Fact]
+    public async Task Clients_that_leave_at_once_at_the_instance_cap_do_not_stop_the_broker()
+    {
+        var bootstrap = TestSupport.DefaultBootstrap();
+        var (broker, ready) = await TestSupport.StartReady(bootstrap);
+        var clients = new List<System.IO.Pipes.NamedPipeClientStream>();
+        try
+        {
+            var pipeName = ready.RootElement.GetProperty("pipe").GetString()!;
+            for (var i = 0; i < 15; i++) clients.Add(await TestSupport.ConnectAuthenticated(ready, TestSupport.SecretOf(bootstrap)));
+            for (var i = 0; i < 200; i++)
+            {
+                using var leaving = new System.IO.Pipes.NamedPipeClientStream(".", pipeName[@"\\.\pipe\".Length..], System.IO.Pipes.PipeDirection.InOut);
+                try { leaving.Connect(2000); } catch (TimeoutException) { }
+            }
+            Assert.False(broker.HasExited, "Clients leaving at once stopped the broker.");
+            using var ping = await TestSupport.Request(clients[0], new { id = "still-served", op = "ping" });
+            Assert.True(ping.RootElement.GetProperty("ok").GetBoolean());
+        }
+        finally
+        {
+            foreach (var client in clients) await client.DisposeAsync();
+            ready.Dispose();
+            await TestSupport.Kill(broker);
+        }
+    }
+
     [Fact]
     public async Task A_slow_request_outlives_the_idle_timeout()
     {

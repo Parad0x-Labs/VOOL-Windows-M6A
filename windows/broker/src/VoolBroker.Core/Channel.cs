@@ -63,8 +63,9 @@ public sealed class Channel(int apiPid, long apiCreationTime, byte[] secret, str
                 var error = connect.Result;
                 if (error == ErrorNoData)
                 {
-                    // The next instance is made before this one goes, so the name always has one.
-                    pending = CreatePipe(false);
+                    // Under the cap the next instance is made before this one goes, so the name always
+                    // has one; at the cap the connected instances keep it (one more would not fit).
+                    if (active.Count + 1 < MaxInstances) pending = CreatePipe(false);
                     pipe.Dispose();
                     continue;
                 }
@@ -80,7 +81,12 @@ public sealed class Channel(int apiPid, long apiCreationTime, byte[] secret, str
             // turns away at once would otherwise close the only instance, and a client arriving
             // then would find the pipe gone (ERROR_FILE_NOT_FOUND, which WaitNamedPipe does not
             // wait out) rather than busy. At the instance cap the connected instances keep the name.
-            if (active.Count + 1 < MaxInstances) pending = CreatePipe(false);
+            try { if (active.Count + 1 < MaxInstances) pending = CreatePipe(false); }
+            catch
+            {
+                pipe.Dispose();
+                throw;
+            }
             active.Add(StartClient(pipe, cancellationToken));
         }
         pending?.Dispose();
