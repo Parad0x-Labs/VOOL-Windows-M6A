@@ -4392,6 +4392,11 @@ def _dispatch_post_inner(
                 json_response(500, {"error": "registration did not persist", "model_name": model_name}),
                 runtime,
             )
+        # Boot records measured sizes only for the lanes it registered; size this one now, so its
+        # turns are not judged by the parameter estimate until the next start.
+        from core.web.api.runtime import record_installed_ollama_artifact_sizes
+
+        record_installed_ollama_artifact_sizes(registry)
         return apply_runtime_headers(
             json_response(
                 200,
