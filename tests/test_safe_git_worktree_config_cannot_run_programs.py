@@ -493,6 +493,8 @@ def test_a_branch_switch_never_rebuilds_a_submodule_from_its_git_folder(tmp_path
 def _auto_gc_runs_the_recent_objects_hook(tmp_path: Path, marker: Path) -> Path:
     # The repository makes its next commit's automatic gc prune at once, and names a program for
     # gc to ask which objects are recent. Two loose unreachable objects in objects/17 trip gc.auto=1.
+    # git 2.54+ runs the "geometric" maintenance strategy by default after a commit, which does not
+    # prune; the repository's own maintenance.strategy=gc picks gc again (older git runs gc anyway).
     repo, _ = _repo(tmp_path)
     found = 0
     for index in range(100000):
@@ -503,7 +505,8 @@ def _auto_gc_runs_the_recent_objects_hook(tmp_path: Path, marker: Path) -> Path:
             found += 1
             if found == 2:
                 break
-    for key, value in (("gc.auto", "1"), ("gc.autoDetach", "false"), ("gc.pruneExpire", "now"),
+    for key, value in (("maintenance.strategy", "gc"), ("gc.auto", "1"), ("gc.autoDetach", "false"),
+                       ("gc.pruneExpire", "now"),
                        ("gc.recentObjectsHook", _planted_program(tmp_path, marker))):
         _git(repo, "config", key, value)
     (repo / "notes.txt").write_text("two\n", encoding="utf-8")
