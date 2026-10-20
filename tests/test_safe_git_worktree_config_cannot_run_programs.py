@@ -11,6 +11,7 @@ checked-out submodule, which obeys the submodule's own config.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -244,3 +245,87 @@ def test_a_submodule_without_a_checkout_runs_nothing_in_diff_or_the_rules_scans(
     assert diff["ok"] is True
     assert "sub" in pushed and "sub" in staged
     assert not marker.exists(), "git ran a diff driver named in a submodule's git folder"
+
+
+def _user_signing_program(tmp_path: Path, monkeypatch, marker: Path) -> None:
+    # The user's own gpg.program, in a global config under a private HOME. git execs it directly
+    # (no shell), so it is a script with a shebang. It answers git like gpg does, so a signed
+    # commit succeeds when signing is the user's choice.
+    script = tmp_path / "fake-gpg"
+    script.write_text(
+        f"#!{sys.executable}\nimport pathlib, sys\npathlib.Path({str(marker)!r}).write_text('ran')\n"
+        "sys.stdin.buffer.read()\n"
+        "sys.stderr.write('\\n[GNUPG:] SIG_CREATED D 1 8 00 0 X\\n')\n"
+        "sys.stdout.write('-----BEGIN PGP SIGNATURE-----\\n\\nAA==\\n-----END PGP SIGNATURE-----\\n')\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    home = tmp_path / "home"
+    home.mkdir()
+    subprocess.run(["git", "config", "-f", str(home / ".gitconfig"), "gpg.program", script.as_posix()],
+                   check=True, capture_output=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+
+_POSIX_SCRIPT = pytest.mark.skipif(os.name == "nt", reason="the stand-in gpg is a shebang script; "
+                                                          "prove the signing run on Windows separately")
+
+
+@_POSIX_SCRIPT
+def test_control_hardened_git_runs_the_signing_program_when_the_repository_turns_signing_on(
+        tmp_path: Path, monkeypatch) -> None:
+    repo, marker = _repo(tmp_path)
+    _user_signing_program(tmp_path, monkeypatch, marker)
+    _git(repo, "config", "commit.gpgSign", "true")
+
+    subprocess.run([*safe_git.hardened_argv(repo, "commit", "--allow-empty", "-q", "-m", "signed")],
+                   capture_output=True, timeout=60, env=safe_git.safe_env())
+
+    assert marker.exists(), "git did not run the signing program; the cases below prove nothing"
+
+
+@pytest.mark.parametrize("key", ["commit.gpgSign", "tag.gpgSign", "tag.forceSignAnnotated"])
+def test_signing_switched_on_by_the_repository_is_refused_and_never_runs(tmp_path: Path, monkeypatch,
+                                                                        key: str) -> None:
+    repo, marker = _repo(tmp_path)
+    _user_signing_program(tmp_path, monkeypatch, marker)
+    _git(repo, "config", key, "true")
+    (repo / "notes.txt").write_text("two\n", encoding="utf-8")
+    head = _git(repo, "rev-parse", "HEAD").strip()
+
+    commit = GitRunner(root=repo).commit(message="signed")
+    tag = GitRunner(root=repo).tag("v1", message="signed")
+
+    assert commit.ok is False and tag.ok is False
+    assert _git(repo, "rev-parse", "HEAD").strip() == head
+    assert key.lower() in safe_git.executable_local_config(repo)
+    assert not marker.exists(), f"a repository's {key} made git run the signing program"
+
+
+@_POSIX_SCRIPT
+def test_signing_the_user_turned_on_is_still_the_users_choice(tmp_path: Path, monkeypatch) -> None:
+    repo, marker = _repo(tmp_path)
+    _user_signing_program(tmp_path, monkeypatch, marker)
+    subprocess.run(["git", "config", "-f", str(tmp_path / "home" / ".gitconfig"), "commit.gpgSign", "true"],
+                   check=True, capture_output=True)
+    (repo / "notes.txt").write_text("two\n", encoding="utf-8")
+
+    result = GitRunner(root=repo).commit(message="signed by the user's choice")
+
+    assert result.ok is True, result.to_dict()
+    assert marker.exists()
+
+
+@pytest.mark.parametrize("key", ["lfs.customtransfer.planted.path", "lfs.customtransfer.planted.args",
+                                 "lfs.standalonetransferagent"])
+def test_a_git_lfs_transfer_agent_set_by_the_repository_is_refused(tmp_path: Path, key: str) -> None:
+    repo, marker = _repo(tmp_path)
+    _git(repo, "config", key, _planted_program(tmp_path, marker))
+
+    status = git_status_workspace({}, workspace_root=repo)
+
+    assert status["status"] == "refused_repository_config", key
+    assert key.lower() in status["response_text"]
+    assert not marker.exists()
