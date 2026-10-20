@@ -1483,8 +1483,10 @@ def _message_sources(sub: str, rest: list[str], root: Path | None) -> str:
         for rev in reused:
             if root is None:
                 raise _Unreadable("the reused message's repository is unknown")
+            if rev.startswith("-"):  # git log would take it as an option (--output=<file> writes a file)
+                raise _Unreadable(f"the reused message {rev!r} is not a commit")
             try:
-                parts.append(_git_text(root, "log", "-1", "--no-color", "--format=%B", rev))
+                parts.append(_git_text(root, "log", "-1", "--no-color", "--format=%B", "--end-of-options", rev))
             except _ScanIncomplete as exc:
                 raise _Unreadable(f"the reused message {rev!r} could not be read") from exc
     return "\n".join(parts)
