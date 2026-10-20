@@ -23,7 +23,7 @@ Three layers:
   ``--local``-only check and ran during a repo.git commit, on every platform. Any scope git may
   add later is checked too (fail closed). Each checked-out submodule's own config is checked the
   same way, since git runs inside those submodules too (also reproduced 2026-10-19); a submodule
-  with no checkout runs nothing because hardened_argv() keeps git from diffing inside its git
+  with no checkout runs nothing because hardened_argv() keeps git from diffing in or rebuilding from its git
   folder.
 System and global config belong to the user (for example Git LFS's global filters) and are not
 second-guessed. `alias.*` is not refused: an alias runs only when invoked by name, and VOOL
@@ -60,9 +60,11 @@ _EXECUTABLE_KEY_SUFFIXES = frozenset({
 #: Whole keys (fnmatch, lowercase) that pull in configuration git would then obey.
 _EXECUTABLE_KEY_PATTERNS = ("include.path", "includeif.*.path", "pager.*", "submodule.*.update",
                             "protocol.allow", "protocol.*.allow", "browser.*.path", "man.*.path",
-                            # Signing switched on makes git run gpg, gpgsm or ssh-keygen without the
-                            # repository naming a program; only a definite false passes (_SIGNING_SWITCHES).
+                            # Signing or signature checks switched on make git run gpg, gpgsm or
+                            # ssh-keygen without the repository naming a program, and gpg.format picks
+                            # which; only the values in _SAFE_VALUES pass.
                             "commit.gpgsign", "tag.gpgsign", "tag.forcesignannotated", "push.gpgsign",
+                            "log.showsignature", "merge.verifysignatures", "gpg.format",
                             # Git LFS runs a custom transfer agent's program for push and fetch.
                             "lfs.customtransfer.*", "lfs.standalonetransferagent")
 #: Inherited environment variables git may keep: identity only.
@@ -128,8 +130,8 @@ def _executable_config(cwd: Path, *, timeout: float, depth: int) -> list[str]:
         (scope, _), (key, value) = scoped[index], scoped[index + 1]
         if scope in _USER_CONFIG_SCOPES or not is_executable_key(key):
             continue
-        if key in _SIGNING_SWITCHES and value is not None and value.lower() in _DEFINITE_FALSE:
-            continue  # signing switched off runs nothing
+        if key in _SAFE_VALUES and value is not None and _SAFE_VALUES[key](value):
+            continue  # signing switched off, or the default format, runs nothing
         keys.append(key)
     # Bare, or inside the git directory: there is no work tree, so git recurses into no submodule.
     submodules = _checked_out_submodules(cwd, timeout=timeout) if inside_work_tree else []
@@ -173,11 +175,22 @@ def _rev_parse(cwd: Path, option: str, *, timeout: float) -> str:
     return answer
 
 
-#: Keys that make git run a signing program when on, without naming one. Each value set in a
-#: repository-owned scope must be one of git's definite false spellings, or the repository is refused:
-#: a bare key (true), an empty value and anything else fail closed.
-_SIGNING_SWITCHES = frozenset({"commit.gpgsign", "tag.gpgsign", "tag.forcesignannotated", "push.gpgsign"})
 _DEFINITE_FALSE = frozenset({"false", "no", "off", "0"})
+
+
+def _definitely_false(value: str) -> bool:
+    return value.lower() in _DEFINITE_FALSE
+
+
+#: Keys that make git run a signing or verifying program without naming one, and the values that run
+#: nothing. Each value set in a repository-owned scope must pass, or the repository is refused: a bare
+#: key (true), an empty value and anything else fail closed. ``gpg.format`` passes only as git's
+#: default, so a repository cannot swap the user's own signing program for gpgsm or ssh-keygen.
+_SAFE_VALUES = {
+    **dict.fromkeys(("commit.gpgsign", "tag.gpgsign", "tag.forcesignannotated", "push.gpgsign",
+                     "log.showsignature", "merge.verifysignatures"), _definitely_false),
+    "gpg.format": lambda value: value == "openpgp",
+}
 
 
 #: Config scopes that belong to the user, not to the repository (``git config --show-scope``).
@@ -227,8 +240,11 @@ def hardened_argv(cwd: Path, *argv: str) -> list[str]:
     # A changed gitlink whose folder is missing makes `diff.submodule=diff` (the user's or the
     # repository's) run a child diff in .git/modules/<name>, under that folder's own config and
     # attributes, out of reach of --no-ext-diff. `short` and no status summary run nothing there.
+    # `submodule.recurse` would make switch/checkout/merge rebuild such a submodule from that folder
+    # (running its filters), and `log.showSignature` would make log run the user's gpg on a forged
+    # signature the repository planted.
     command = ["git", *hardening_args(), "-c", "diff.submodule=short", "-c", "status.submoduleSummary=false",
-               "-C", str(cwd), *argv]
+               "-c", "submodule.recurse=false", "-c", "log.showSignature=false", "-C", str(cwd), *argv]
     if argv and argv[0] in {"diff", "log", "show"}:
         command[len(command) - len(argv) + 1:len(command) - len(argv) + 1] = ["--no-ext-diff", "--no-textconv"]
     return command
