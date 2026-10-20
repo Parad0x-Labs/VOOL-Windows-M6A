@@ -1231,6 +1231,39 @@ def _execute_tool_intent_impl(
         )
         return undispatchable
 
+    # On Windows, a path argument naming a share, a device or no full local folder is refused HERE,
+    # before the sandbox, workspace, Windows-gate and permission checks below: each of them looks the
+    # path up, and on Windows a lookup of `\\host\share` is already the SMB connection. MCP and plugin
+    # tools are judged again by the network tier alone, because their arguments mean whatever their
+    # server says. Off Windows the first call answers None before it reads anything.
+    from core import windows_path_policy
+
+    path_refusal = windows_path_policy.argument_refusal(intent, arguments)
+    if path_refusal is not None and (is_mcp_intent(intent) or _is_plugin_contract(intent)):
+        path_refusal = windows_path_policy.argument_refusal(intent, arguments, network_only=True)
+    if path_refusal is not None:
+        response = windows_path_policy.refusal_text(path_refusal.value, path_refusal.kind)
+        return ToolIntentExecution(
+            handled=True,
+            ok=False,
+            status=windows_path_policy.STATUS,
+            response_text=response,
+            user_safe_response_text=response,
+            mode="tool_failed",
+            tool_name=intent,
+            details={
+                "executed": False,
+                "argument": path_refusal.key,
+                "kind": path_refusal.kind,
+                "observation": _tool_observation(
+                    intent=intent,
+                    tool_surface="path_policy",
+                    ok=False,
+                    status=windows_path_policy.STATUS,
+                ),
+            },
+        )
+
     # UNCONDITIONAL. This used to run only `if mode_policy_is_active(source_context)`, which made
     # the absence of a mode a total bypass: a caller carrying no `operating_mode` and no session
     # record wrote files and ran side-effecting commands with no decision taken at all. Measured on

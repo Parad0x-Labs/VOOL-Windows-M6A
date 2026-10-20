@@ -37,6 +37,7 @@ import posixpath
 import re
 from pathlib import Path
 
+from core import windows_path_policy
 from core.agent_runtime import build_request_intent
 
 # Extensions that make a token a source file rather than prose. Deliberately a closed list: a bare
@@ -75,6 +76,12 @@ def workspace_relative_path(candidate: str, *, workspace_root: str) -> str:
     root = str(workspace_root or "").strip()
     if not raw or not root:
         return ""
+    # On Windows a share is not resolved to find out whether it is inside the workspace: resolving
+    # `\\host\share` is already the SMB connection. It is not inside it.
+    if windows_path_policy.refused_form(raw, network_only=True) or windows_path_policy.refused_form(
+        root, network_only=True
+    ):
+        return ""
     try:
         resolved_root = Path(root).expanduser().resolve()
         resolved = Path(raw).expanduser().resolve()
@@ -95,9 +102,16 @@ def named_build_files(text: str, *, workspace_root: str = "") -> list[str]:
     saying so.
     """
     found: list[str] = []
-    for match in _NAMED_FILE_RE.finditer(str(text or "")):
+    body = str(text or "")
+    for match in _NAMED_FILE_RE.finditer(body):
         candidate = str(match.group("path") or "").strip().rstrip(".,;:!?)")
         if not candidate or not _has_source_extension(candidate):
+            continue
+        # The pattern can start inside `//host/x` or `\\host\x`, at the host or at its last
+        # leading slash. On Windows the path as typed, those separators included, is judged, and a
+        # share is dropped like any other destination outside the workspace.
+        before = body[: match.start("path")]
+        if windows_path_policy.refused_form(before[len(before.rstrip("/\\")):] + candidate, network_only=True):
             continue
         if candidate.startswith(("/", "~")) or re.match(r"^[A-Za-z]:[\\/]", candidate):
             rebased = workspace_relative_path(candidate, workspace_root=workspace_root)

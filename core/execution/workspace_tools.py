@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from core import safe_git, windows_write_gate
+from core import safe_git, windows_path_policy, windows_write_gate
 
 from .artifacts import (
     DestinationChangedError,
@@ -65,6 +65,12 @@ _MAX_WORKSPACE_SCAN_LIMIT = 100_000
 
 def resolve_workspace_path(raw_path: str | None, *, workspace_root: Path, write: bool = False) -> Path:
     raw = str(raw_path or "").strip()
+    # On Windows a share or device path, as the root or as the path, raises before anything below
+    # resolves or protects it: a lookup of `\\host\share` there is already the SMB connection. Only
+    # the network tier, because the root is the server's own; a root- or drive-relative path stays
+    # on a local drive, and confinement below refuses it.
+    windows_path_policy.check(str(workspace_root), network_only=True)
+    windows_path_policy.check(raw, network_only=True)
     if not raw:
         return _unprotected(workspace_root, write=write)
     candidate = Path(raw).expanduser()

@@ -406,6 +406,26 @@ _ARBITRATE_ON_AMBIGUITY = "ambiguity"
 _ARBITRATE_ON_NEAR_MISS = "near_miss"
 
 
+def _non_local_typed_path(text: str) -> tuple[str, str]:
+    """On Windows, the first path in the user's own words that a message lane below would look up and
+    that names a share, a device or no full local folder, with its kind; ("", "") otherwise, and always
+    off Windows. Read with those lanes' own parsers, in their order: the skill import's package, the
+    write-root lane's destination and the PDF lane's file. Nothing is looked up."""
+    from core import windows_path_policy
+
+    if not windows_path_policy.active():
+        return "", ""
+    from core.agent_runtime.fast_paths_pdf import non_local_pdf
+    from core.agent_runtime.fast_paths_skill import non_local_package
+    from core.agent_runtime.write_root_honesty import non_local_write_target
+
+    for finder in (non_local_package, non_local_write_target, non_local_pdf):
+        path, kind = finder(text)
+        if kind:
+            return path, kind
+    return "", ""
+
+
 def handle_turn_frontdoor(
     agent: Any,
     *,
@@ -1557,6 +1577,26 @@ def handle_turn_frontdoor(
     )
     if housekeeping_turn is not None:
         return housekeeping_turn
+
+    # On Windows, a path the user typed that names a share, a device or no full local folder is
+    # answered here, ahead of the skill, write-root and PDF lanes below, which would look it up. Those
+    # lanes read the normalized text, where `//host/share/x` arrives split as `/ /host/share/x`, so they
+    # refuse only what they can still recognise; this reads the words as typed, with their own
+    # parsers, and the refusal names the path the user wrote. Off Windows nothing is refused here.
+    typed_path, typed_kind = _non_local_typed_path(raw_user_input)
+    if typed_kind:
+        from core import windows_path_policy
+
+        return {
+            "result": agent._fast_path_result(
+                session_id=session_id,
+                user_input=effective_input,
+                response=windows_path_policy.refusal_text(typed_path, typed_kind),
+                confidence=0.95,
+                source_context=source_context,
+                reason="non_local_path_refused",
+            )
+        }
 
     # A named skill reaches the skill tools, for the same reason a named PDF reaches the PDF tools.
     # `skill.create`/`validate`/`install` work when called directly and NOTHING routed chat to them:

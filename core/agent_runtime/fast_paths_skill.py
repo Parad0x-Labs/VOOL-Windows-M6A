@@ -689,6 +689,19 @@ def _zip_attachments(session_id: str, source_context: dict[str, Any] | None) -> 
 _PATH_RE = re.compile(r"(?P<path>(?:~|/)[^\s`\"']+\.zip)\b", re.IGNORECASE)
 
 
+def non_local_package(text: str) -> tuple[str, str]:
+    """On Windows, the package path an import names when it is a share, a device path or no full local
+    folder, judged as typed, with its kind; ("", "") otherwise, and always off Windows. Nothing is
+    looked up."""
+    from core.agent_runtime.write_root_honesty import typed_path_kind
+
+    body = str(text or "")
+    path_match = _PATH_RE.search(body) if _IMPORT_RE.search(body) else None
+    if path_match is None:
+        return "", ""
+    return path_match.group("path"), typed_path_kind(body, path_match.start(), path_match.group("path"))
+
+
 def maybe_handle_skill_request(
     agent: Any,
     user_input: str,
@@ -977,7 +990,13 @@ def maybe_handle_skill_request(
                 for attachment_id, label in skill_package.held_for_session(holder)
             ]
         if not sources and path_match:
-            sources = [{"path": path_match.group("path"), "label": path_match.group("path")}]
+            from core.execution.constants import drive_left_behind
+
+            # On Windows a full local path the input normalizer split (`C: /Users/you/x.zip`) keeps
+            # its drive, as typed: without it the package path names no full local folder.
+            package = path_match.group("path")
+            package = drive_left_behind(user_input or "", path_match.start(), package) + package
+            sources = [{"path": package, "label": package}]
         if not sources:
             return plain(
                 "Attach the skill zip to your message (or give its full path) and say `import this "
@@ -1079,13 +1098,18 @@ def maybe_handle_skill_request(
 
 def _precheck_package(holder: str, source: dict[str, Any]) -> str:
     """The refusal reason for a package VOOL would refuse anyway, or "" (read-only)."""
-    from core import skill_package
+    from core import skill_package, windows_path_policy
 
     raw: bytes | None = None
     if source.get("attachment_id"):
         held = skill_package.held_package(holder, str(source["attachment_id"]))
         raw = held[0] if held else None
     elif source.get("path"):
+        non_local = windows_path_policy.refused_form(source["path"])
+        if non_local:
+            # On Windows a share, a device path or a partial path is refused before it is read:
+            # reading `\\host\share\x.zip` is already the SMB connection.
+            return windows_path_policy.refusal_text(source["path"], non_local)
         try:
             from pathlib import Path
 

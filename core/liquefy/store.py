@@ -42,6 +42,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from core import windows_path_policy
 from core.liquefy import api
 from core.liquefy.redaction import redact_payload
 
@@ -403,6 +404,10 @@ class LiquefyLogStore:
 
     # ------------------------------------------------------------------- read
     def _segment_path(self, segment_id: str) -> Path:
+        # On Windows a share in the id would re-root the join onto that share, so it is refused first.
+        non_local = windows_path_policy.refused_form(segment_id, network_only=True)
+        if non_local:
+            raise SegmentMissingError(windows_path_policy.refusal_text(segment_id, non_local))
         return self.segments_dir / f"{segment_id}.lsegh"
 
     def _read_segment_records(self, path: Path) -> list[dict]:
