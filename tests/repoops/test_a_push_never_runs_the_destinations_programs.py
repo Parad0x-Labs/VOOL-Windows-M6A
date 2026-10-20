@@ -167,14 +167,24 @@ def test_a_transport_whose_destination_vool_cannot_read_is_refused(tmp_path, url
     assert code != 0 and "VOOL pushes only over" in err, err
 
 
-def test_a_remote_helper_chosen_by_vcs_is_refused(tmp_path) -> None:
+def test_a_remote_helper_chosen_by_vcs_is_refused(tmp_path, monkeypatch) -> None:
     runner, root, bare = _runner_world(tmp_path)
+    marker = tmp_path / "HELPER_RAN"
+    helpers = tmp_path / "helpers"
+    helpers.mkdir()
+    helper = helpers / "git-remote-fake"
+    helper.write_text(f"#!/bin/sh\necho ran > '{marker}'\nexit 1\n")
+    helper.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{helpers}{os.pathsep}{os.environ.get('PATH', '')}")
     git(root, "config", "remote.origin.vcs", "fake")
 
     code, _, err = _push(runner)
 
-    assert code != 0 and "remote helper" in err, err
+    # Refused either by the push destination check or by safe_git's repository-config check, which
+    # also names remote.origin.vcs and runs first once that check covers it.
+    assert code != 0 and ("remote helper" in err or "remote.origin.vcs" in err), err
     assert remote_ref(bare, "pushed") == ""
+    assert not marker.exists()
 
 
 def test_a_clean_local_bare_remote_still_pushes(tmp_path) -> None:
