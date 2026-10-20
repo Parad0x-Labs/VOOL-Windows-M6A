@@ -178,10 +178,9 @@ def _gc_filter_to(repo: Path, outside: Path) -> Path:
 
 
 def test_without_the_gate_a_commit_s_housekeeping_writes_into_gc_repack_filter_to(tmp_path: Path, monkeypatch) -> None:
-    """The premise, with no gate in front: VOOL's own commit, through GitRunner, runs git's automatic
-    gc, and that gc writes a pack into the outside folder."""
-    from core.repoops.gitops import GitRunner
-
+    """The premise, with no gate in front: a commit runs git's automatic gc, and that gc writes a pack
+    into the outside folder. The commit is plain git with hooks off, since VOOL's own git runs no
+    automatic housekeeping once PR #37 lands; the refusal below still guards every other git."""
     home = tmp_path / "home"
     home.mkdir()
     for name in ("HOME", "USERPROFILE", "XDG_CONFIG_HOME"):
@@ -190,9 +189,9 @@ def test_without_the_gate_a_commit_s_housekeeping_writes_into_gc_repack_filter_t
     filtered = _gc_filter_to(repo, outside)
     (repo / "change.txt").write_bytes(b"pending\n")
 
-    result = GitRunner(root=repo).commit(message="housekeeping runs after this")
+    _git(repo, "-c", f"core.hooksPath={os.devnull}", "add", "-A")  # _git asserts git succeeded
+    _git(repo, "-c", f"core.hooksPath={os.devnull}", "commit", "-q", "-m", "housekeeping runs after this")
 
-    assert result.ok, result.to_dict()
     assert any(path.suffix == ".pack" for path in filtered.iterdir()), "the commit's gc wrote no pack outside"
 
 
