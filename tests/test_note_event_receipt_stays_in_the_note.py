@@ -16,8 +16,8 @@ pinned in ``tests/test_notes_archive_stays_in_the_notes_folder.py``, whose notes
 file reuses.
 
 The calendar route reads the user's time zone through ``zoneinfo``, which on Windows needs the ``tzdata``
-package. The Windows gauntlet installs ``.[dev,companion,evm]``, none of which brings it, so this file runs
-on the Linux and macOS CI lanes and is not on the gauntlet's runtime list.
+package. The Windows gauntlet installs ``.[dev,companion,evm]``, none of which brings it, so this file is not
+on the gauntlet's runtime list; it runs on the Linux CI shards.
 """
 from __future__ import annotations
 
