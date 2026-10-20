@@ -57,7 +57,7 @@ PLAN_STEP_KEYS = frozenset(
 # Read-only git verbs recovery_plan may invoke. Anything else fails the test.
 GIT_READONLY_VERBS = {
     "status", "log", "show", "cat-file", "rev-parse", "branch", "diff",
-    "stash list", "fsck",
+    "stash list", "fsck", "config --list",
 }
 
 
@@ -309,6 +309,8 @@ def _git_verb(argv: list[str]) -> str:
         return ""
     if rest[0] == "stash":
         return "stash list" if len(rest) > 1 and rest[1] == "list" else "stash"
+    if rest[0] == "config":
+        return "config --list" if "--list" in rest[1:] else "config"
     return rest[0]
 
 
