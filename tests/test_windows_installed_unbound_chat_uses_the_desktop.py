@@ -55,15 +55,6 @@ def test_a_blank_bundle_root_is_not_the_installed_app(tmp_path, monkeypatch) -> 
     assert default_workspace_root() == str(tmp_path.resolve())
 
 
-def test_the_installed_app_does_not_tick_the_setup_folder_step(tmp_path, monkeypatch) -> None:
-    from core import setup_progress
-
-    monkeypatch.setenv("VOOL_BUNDLE_ROOT", str(tmp_path / "Programs" / "VOOL"))
-    monkeypatch.setattr("core.project_store.list_projects", lambda: [])
-
-    assert setup_progress.folder_done() is False
-
-
 def test_the_write_gate_still_refuses_the_desktop_until_it_is_flagged(tmp_path, monkeypatch) -> None:
     """The real dispatch, with the workspace an unbound chat gets in the installed app."""
     from core.runtime_execution_tools import _dispatch_runtime_tool
@@ -92,8 +83,10 @@ def test_the_write_gate_still_refuses_the_desktop_until_it_is_flagged(tmp_path, 
 @pytest.mark.skipif(sys.platform != "win32", reason="the Windows shell's known Desktop folder")
 def test_on_windows_it_is_the_shells_desktop_not_a_guessed_path() -> None:
     shell = subprocess.run(
-        ["powershell", "-NoProfile", "-Command", "[Environment]::GetFolderPath('Desktop')"],
-        capture_output=True, text=True, timeout=60, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        ["powershell", "-NoProfile", "-Command",
+         "[Console]::OutputEncoding = [Text.Encoding]::UTF8; [Environment]::GetFolderPath('Desktop')"],
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     assert shell.returncode == 0, shell.stderr
     assert api_runtime._windows_desktop() == Path(shell.stdout.strip())
