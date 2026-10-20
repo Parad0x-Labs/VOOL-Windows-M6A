@@ -163,7 +163,8 @@ _SIGNING_OPTIONS = ("--show-signature", "--gpg-sign", "--verify-signatures", "-S
 def _may_sign_or_verify(argv: Sequence[str]) -> bool:
     if not argv or argv[0] not in _SIGNING_FREE_SUBCOMMANDS:
         return True
-    return any(arg == option or arg.startswith(option) for arg in argv[1:] for option in _SIGNING_OPTIONS)
+    # %G<x> (log, show, rev-list) and %(signature...) (for-each-ref) verify signatures as well.
+    return any(arg.startswith(_SIGNING_OPTIONS) or "%G" in arg or "%(signature" in arg for arg in argv[1:])
 
 
 def _where(scope: str, *, submodule: bool = False) -> str:
@@ -292,13 +293,19 @@ def lfs_endpoint_refusal(cwd: Path, argv: Sequence[str] = (), *, timeout: float 
     ``.lfsconfig`` it carries, in the work tree, the index, HEAD or a commit ``argv`` brings in.
     Trusted are the hosts of this repository's remotes (where git-lfs goes when nothing is named)
     and hosts in the user's system or global LFS settings; URLs are compared after git's
-    ``insteadOf`` rewriting, by host. A trusted server can still point git-lfs at storage
-    elsewhere; that is the server's choice, not the repository's. A check that cannot finish
-    refuses."""
+    ``insteadOf`` rewriting, by host. A remote picked by ``remote.lfsdefault``,
+    ``branch.<x>.remote`` and the like counts as a named server when it is a URL rather than one of
+    the repository's remotes, since git-lfs then contacts that URL. A trusted server can still point
+    git-lfs at storage elsewhere; that is the server's choice, not the repository's. Commands that
+    never write LFS files into the work tree (add, commit, tag, push without git-lfs's hook) are
+    not checked. A check that cannot finish refuses."""
+    if argv and argv[0] in _LFS_FREE_SUBCOMMANDS:
+        return ""
     try:
         named: list[tuple[str, str]] = []
         trusted: set[str] = set()
         remote_urls: list[str] = []
+        picks: list[tuple[str, str, bool]] = []  # (value, source, user's) of keys that pick a remote
         scoped = _config_entries(cwd, ["--show-scope"], timeout=timeout)
         if len(scoped) % 2:
             raise RuntimeError("git config scopes could not be read")
@@ -310,14 +317,27 @@ def lfs_endpoint_refusal(cwd: Path, argv: Sequence[str] = (), *, timeout: float 
                     trusted.add(_endpoint_host(_expanded_url(cwd, value, timeout=timeout)))
                 else:
                     named.append((value, f"{key}, {_where(scope)}"))
+            elif _is_remote_pick_key(key) and value:
+                picks.append((value, f"{key}, {_where(scope)}", user))
             elif user and key.startswith("lfs.") and "://" in key:
                 trusted.add(_endpoint_host(key[len("lfs."):].rpartition(".")[0]))  # lfs.<url>.<setting>
             elif fnmatch.fnmatchcase(key, "remote.*.url") or fnmatch.fnmatchcase(key, "remote.*.pushurl"):
                 if value:
                     remote_urls.append(value)
+        remotes = {key[len("remote."):].rpartition(".")[0] for key, _ in scoped
+                   if fnmatch.fnmatchcase(key, "remote.*.url")}
         for source, entries in _lfsconfig_files(cwd, argv, timeout=timeout):
-            named.extend((value, f"{key} in {source}") for key, value in entries
-                         if _is_lfs_endpoint_key(key) and value)
+            for key, value in entries:
+                if _is_lfs_endpoint_key(key) and value:
+                    named.append((value, f"{key} in {source}"))
+                elif _is_remote_pick_key(key) and value:
+                    picks.append((value, f"{key} in {source}", False))
+        for value, source, user in picks:  # a remote's name is fine; anything else is a URL git-lfs uses
+            if value not in remotes:
+                if user:
+                    trusted.add(_endpoint_host(_expanded_url(cwd, value, timeout=timeout)))
+                else:
+                    named.append((value, source))
         if not named:
             return ""
         trusted.update(_endpoint_host(_expanded_url(cwd, url, timeout=timeout)) for url in remote_urls)
@@ -333,6 +353,17 @@ def lfs_endpoint_refusal(cwd: Path, argv: Sequence[str] = (), *, timeout: float 
         return f"the repository's Git LFS servers could not be checked ({type(exc).__name__})"
 
 
+#: Subcommands VOOL runs that never write LFS files into the work tree (git-lfs uploads on push
+#: only from its pre-push hook, and hooks are refused).
+_LFS_FREE_SUBCOMMANDS = frozenset({"add", "commit", "tag", "push"})
+
+
+def _is_remote_pick_key(key: str) -> bool:
+    """Keys whose value names the remote git-lfs talks to (a remote's name, or a URL)."""
+    return key in {"remote.lfsdefault", "remote.lfspushdefault", "remote.pushdefault"} or any(
+        fnmatch.fnmatchcase(key, pattern) for pattern in ("branch.*.remote", "branch.*.pushremote"))
+
+
 def _is_lfs_endpoint_key(key: str) -> bool:
     return key in {"lfs.url", "lfs.pushurl"} or any(
         fnmatch.fnmatchcase(key, pattern) for pattern in ("remote.*.lfsurl", "remote.*.lfspushurl"))
@@ -340,61 +371,119 @@ def _is_lfs_endpoint_key(key: str) -> bool:
 
 def _lfsconfig_files(cwd: Path, argv: Sequence[str], *, timeout: float) -> list[tuple[str, list[tuple[str, str | None]]]]:
     """``(where, entries)`` for each ``.lfsconfig`` git-lfs could read for ``git <argv>``: the work
-    tree's file, the index's, HEAD's, and that of each argument that names a commit."""
+    tree's file, the index's, HEAD's, and that of each argument that names a commit. Names are
+    matched without regard to case (on Windows and macOS ``.LFSConfig`` is the same file), and one
+    that is not a regular file (a symlink git-lfs would follow) is refused."""
     found: list[tuple[str, list[tuple[str, str | None]]]] = []
     if _rev_parse(cwd, "--is-inside-work-tree", timeout=timeout) == "true":
         worktree_file = Path(_rev_parse(cwd, "--show-toplevel", timeout=timeout)) / ".lfsconfig"
         if worktree_file.is_file():
             found.append(("the work tree's .lfsconfig", _config_entries(cwd, ["-f", str(worktree_file)],
                                                                         timeout=timeout)))
-    specs = {":.lfsconfig": "the index's .lfsconfig", "HEAD:.lfsconfig": "HEAD's .lfsconfig"}
-    for arg in list(argv)[1:]:
-        if arg and not arg.startswith("-") and "\n" not in arg:
-            specs.setdefault(f"{arg}:.lfsconfig", f"the .lfsconfig in {arg}")
+        index = subprocess.run(hardened_argv(cwd, "ls-files", "-s", "-z", "--", ":(top,icase,literal).lfsconfig"),
+                               capture_output=True, text=True, timeout=timeout, env=safe_env())
+        if index.returncode != 0:
+            raise RuntimeError(f"git ls-files failed ({index.returncode})")
+        for line in filter(None, index.stdout.split("\0")):
+            info, _, name = line.partition("\t")
+            fields = info.split()
+            if "/" in name or len(fields) != 3:
+                raise RuntimeError("the index's .lfsconfig is not a file git-lfs could read")
+            found.append((f"the index's {name}", _lfsconfig_blob(cwd, fields[0], fields[1], timeout=timeout)))
+    revisions = {"HEAD": "HEAD's {name}"}
+    for arg in _revision_args(argv):
+        revisions.setdefault(arg, f"the {{name}} in {arg}")
     result = _merge_result_tree(cwd, argv, timeout=timeout)
     if result:  # what the merge, cherry-pick or revert writes, which neither side may hold as such
-        specs[f"{result}:.lfsconfig"] = f"the .lfsconfig {argv[0]} would write"
-    probe = subprocess.run(hardened_argv(cwd, "cat-file", "--batch-check"), input="".join(f"{spec}\n" for spec in specs),
-                           capture_output=True, text=True, timeout=timeout, env=safe_env())
-    if probe.returncode != 0:
-        raise RuntimeError(f"git cat-file failed ({probe.returncode})")
-    for (spec, where), line in zip(specs.items(), probe.stdout.splitlines(), strict=True):
-        fields = line.split()
-        if len(fields) == 3 and fields[1] == "blob":
-            found.append((where, _config_entries(cwd, ["--blob", fields[0]], timeout=timeout)))
-        elif not line.endswith(" missing") and not line.endswith(" ambiguous"):
-            raise RuntimeError(f"{spec} is not a file git-lfs could read")
+        revisions[result] = f"the {{name}} {argv[0]} would write"
+    for where, mode, oid in _tree_lfsconfigs(cwd, revisions, timeout=timeout):
+        found.append((where, _lfsconfig_blob(cwd, mode, oid, timeout=timeout)))
     return found
 
 
-#: Options of the merging commands VOOL runs that take a value.
-_MERGE_VALUE_OPTIONS = frozenset({"-m", "--message", "-s", "--strategy", "-X", "--strategy-option"})
+def _lfsconfig_blob(cwd: Path, mode: str, oid: str, *, timeout: float) -> list[tuple[str, str | None]]:
+    if mode not in {"100644", "100755"}:
+        raise RuntimeError("a .lfsconfig is not a regular file")
+    return _config_entries(cwd, ["--blob", oid], timeout=timeout)
 
 
-def _merge_result_tree(cwd: Path, argv: Sequence[str], *, timeout: float) -> str:
-    """The tree a merge, cherry-pick or revert of one commit would write ("" for other commands, and
-    for --abort/--continue, which write HEAD's or the index's content)."""
-    if not argv or argv[0] not in {"merge", "cherry-pick", "revert"}:
-        return ""
-    targets, skip_value = [], False
-    for arg in argv[1:]:
+def _tree_lfsconfigs(cwd: Path, revisions: dict[str, str], *, timeout: float) -> list[tuple[str, str, str]]:
+    """``(where, mode, oid)`` of every top-level ``.lfsconfig``, in any case, in the tree of each
+    revision (``revisions`` maps a revision to a description with a ``{name}`` slot); arguments that
+    are not revisions are skipped."""
+    probe = subprocess.run(hardened_argv(cwd, "cat-file", "--batch-check"),
+                           input="".join(f"{revision}^{{tree}}\n" for revision in revisions),
+                           capture_output=True, text=True, timeout=timeout, env=safe_env())
+    if probe.returncode != 0:
+        raise RuntimeError(f"git cat-file failed ({probe.returncode})")
+    found = []
+    for (revision, where), line in zip(revisions.items(), probe.stdout.splitlines(), strict=True):
+        fields = line.split()
+        if line.endswith((" missing", " ambiguous")):
+            continue
+        if len(fields) != 3 or fields[1] != "tree":
+            raise RuntimeError(f"{revision} could not be read")
+        listing = subprocess.run(hardened_argv(cwd, "ls-tree", "-z", fields[0]), capture_output=True, text=True,
+                                 timeout=timeout, env=safe_env())
+        if listing.returncode != 0:
+            raise RuntimeError(f"git ls-tree failed ({listing.returncode})")
+        for entry in filter(None, listing.stdout.split("\0")):
+            info, _, name = entry.partition("\t")
+            if name.lower() == ".lfsconfig":
+                mode, _, oid = info.split()
+                found.append((where.replace("{name}", name), mode, oid))
+    return found
+
+
+#: Options of the merging commands VOOL runs that take a value (-m is cherry-pick's and revert's
+#: mainline, merge's message).
+_MERGE_VALUE_OPTIONS = frozenset({"-m", "--message", "--mainline", "-s", "--strategy", "-X", "--strategy-option"})
+
+
+def _revision_args(argv: Sequence[str]) -> list[str]:
+    """The arguments of ``git <argv>`` that may name a revision (not options or their values)."""
+    found, skip_value = [], False
+    for arg in list(argv)[1:]:
         if skip_value:
             skip_value = False
         elif arg in _MERGE_VALUE_OPTIONS:
             skip_value = True
-        elif not arg.startswith("-"):
-            targets.append(arg)
+        elif arg and not arg.startswith("-") and "\n" not in arg:
+            found.append(arg)
+    return found
+
+
+def _mainline(argv: Sequence[str]) -> str:
+    for index, arg in enumerate(argv):
+        value = argv[index + 1] if arg in {"-m", "--mainline"} and index + 1 < len(argv) else (
+            arg.partition("=")[2] if arg.startswith("--mainline=") else None)
+        if value is not None:
+            if not value.isdigit() or value == "0":
+                raise ValueError("the mainline parent cannot be read")
+            return value
+    return "1"
+
+
+def _merge_result_tree(cwd: Path, argv: Sequence[str], *, timeout: float) -> str:
+    """The tree a merge, cherry-pick or revert of one commit would write ("" for other commands, for
+    --abort/--continue, which write HEAD's or the index's content, and when neither side holds a
+    ``.lfsconfig``, so the result cannot either)."""
+    if not argv or argv[0] not in {"merge", "cherry-pick", "revert"}:
+        return ""
+    targets = _revision_args(argv)
     if not targets:
         return ""
     if len(targets) != 1:
         raise RuntimeError(f"git {argv[0]} of more than one commit cannot be checked")
     target = _rev_parse(cwd, f"{targets[0]}^{{commit}}", timeout=timeout)
     if argv[0] == "merge":
-        sides = ["HEAD", target]
+        theirs, sides = target, ["HEAD", target]
     else:
-        parent = _rev_parse(cwd, f"{target}^1", timeout=timeout)  # raises for a root commit
+        parent = _rev_parse(cwd, f"{target}^{_mainline(argv)}", timeout=timeout)  # raises for a root commit
         base, theirs = (parent, target) if argv[0] == "cherry-pick" else (target, parent)
         sides = ["--merge-base", base, "HEAD", theirs]
+    if not _tree_lfsconfigs(cwd, {"HEAD": "", theirs: ""}, timeout=timeout):
+        return ""
     # merge.renormalize would run the user's filters (git-lfs among them) on both sides.
     command = ["git", *hardening_args(), "-c", "merge.renormalize=false", "-C", str(cwd),
                "merge-tree", "--write-tree", "--no-messages", *sides]
