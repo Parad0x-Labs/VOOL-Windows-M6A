@@ -15,6 +15,7 @@ default-deny that lives only in an ``if`` above the call is one refactor away fr
 
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -117,8 +118,89 @@ class GitRunner:
             return "this repository has git hooks VOOL would have to run unsandboxed: " + ", ".join(hooks)
         return ""
 
+    def push_destination_refusal(self, remote: str) -> str:
+        """Why a push to ``remote`` must not run ("" when it may).
+
+        A push to a local folder or ``file://`` URL runs ``git receive-pack`` on this machine inside
+        the destination repository, and that git drops this side's ``-c`` hardening: it runs the
+        destination's hooks, programs its config names (``core.alternateRefsCommand``), and with
+        ``receive.denyCurrentBranch=updateInstead`` rewrites its checked-out files. So a local
+        destination is checked like this repository is, and a transport VOOL cannot read the
+        destination of (a remote helper, an unknown scheme, an unusual ``file://`` form) is refused."""
+        urls, problem = self._push_urls(remote)
+        if problem:
+            return problem
+        for url in urls:
+            transport = _push_transport(url)
+            if transport == "network":
+                continue
+            if transport != "local":
+                return f"VOOL pushes only over https, ssh or git, or to a local folder; {url!r} is not one of those"
+            refusal = self._local_destination_refusal(url)
+            if refusal:
+                return refusal
+        return ""
+
+    def _push_urls(self, remote: str) -> tuple[list[str], str]:
+        """The URLs ``git push <remote>`` would push to, rewrites applied, as git itself resolves them."""
+        name = str(remote or "").strip()
+        if not name or name.startswith("-"):
+            return [], f"{name!r} is not a remote VOOL can push to"
+        code, out, _ = self.run("remote", "get-url", "--push", "--all", name)
+        if code != 0:
+            # Not a configured remote, so git pushes to it as a URL or path. A throwaway remote holding
+            # it as its url gets the same pushInsteadOf/insteadOf rewrites git would apply (get-url
+            # ignores a remote defined with -c, `remote -v` lists it).
+            probe = subprocess.run(
+                safe_git.hardened_argv(self.root, "-c", f"remote.{_PROBE_REMOTE}.url={name}", "remote", "-v"),
+                capture_output=True, text=True, timeout=self.timeout, env=safe_git.safe_env(),
+            )
+            code = probe.returncode
+            prefix, suffix = f"{_PROBE_REMOTE}\t", " (push)"
+            out = "\n".join(line[len(prefix):-len(suffix)] for line in probe.stdout.splitlines()
+                            if line.startswith(prefix) and line.endswith(suffix))
+        urls = [line.strip() for line in (out or "").splitlines() if line.strip()]
+        if code != 0 or not urls:
+            return [], f"the push destination of {name!r} could not be read"
+        vcs = subprocess.run(
+            safe_git.hardened_argv(self.root, "config", "--get", f"remote.{name}.vcs"),
+            capture_output=True, text=True, timeout=self.timeout, env=safe_git.safe_env(),
+        )
+        if vcs.returncode == 0 and vcs.stdout.strip():
+            return [], f"remote {name!r} names a remote helper (remote.{name}.vcs), which VOOL does not run"
+        return urls, ""
+
+    def _local_destination_refusal(self, url: str) -> str:
+        path = _local_push_path(url)
+        if path is None:
+            return f"VOOL cannot tell which folder {url!r} names, so it does not push there"
+        if not path.is_absolute():
+            path = Path(self.root) / path  # git -C <root> resolves it from here
+        git_dir = _receiving_git_dir(path, timeout=self.timeout)
+        if git_dir is None:
+            return f"{url!r} is not a git repository VOOL can check"
+        try:
+            keys = safe_git.executable_local_config(git_dir, timeout=self.timeout)
+            hooks = safe_git.active_hooks(git_dir, timeout=self.timeout)
+            update = subprocess.run(
+                ["git", "--git-dir", str(git_dir), "config", "--get", "receive.denycurrentbranch"],
+                capture_output=True, text=True, timeout=self.timeout, env=safe_git.safe_env(),
+            )
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+            return f"the push destination {url!r} could not be checked ({type(exc).__name__})"
+        if keys:
+            return f"the push destination {url!r} has git config naming programs a push would run: " + ", ".join(keys)
+        if hooks:
+            return f"the push destination {url!r} has git hooks a push would run unsandboxed: " + ", ".join(hooks)
+        if update.stdout.strip().lower() == "updateinstead":
+            return (f"the push destination {url!r} sets receive.denyCurrentBranch=updateInstead, so a push "
+                    "would rewrite its checked-out files")
+        return ""
+
     def run(self, *argv: str) -> tuple[int, str, str]:
         refusal = self._repository_refusal(mutating=bool(argv) and argv[0] not in _READ_ONLY_SUBCOMMANDS)
+        if not refusal and argv and argv[0] == "push" and len(argv) > 1:
+            refusal = self.push_destination_refusal(argv[1])
         if refusal:
             self.log.append({"argv": list(argv), "returncode": -1, "refused": True})
             return -1, "", f"git was not run: {refusal}"
@@ -328,6 +410,62 @@ class GitRunner:
         """
 
         return ("push", str(remote), f"{sha!s}:refs/heads/{ref!s}")
+
+
+#: The throwaway remote name that reads how git resolves a push to a bare URL or path.
+_PROBE_REMOTE = "vool-push-target"
+#: URL schemes git pushes over the network with its own transports (connect.c, remote-curl).
+_NETWORK_SCHEMES = frozenset({"https", "http", "ssh", "git", "git+ssh", "ssh+git"})
+
+
+def _has_drive_prefix(text: str) -> bool:
+    return os.name == "nt" and len(text) >= 2 and text[1] == ":" and text[0].isascii() and text[0].isalpha()
+
+
+def _push_transport(url: str) -> str:
+    """"network", "local" or "other", the way git's transport_get and url_is_local_not_ssh decide."""
+    scheme_end = 0
+    while scheme_end < len(url) and (url[scheme_end].isascii() and (url[scheme_end].isalnum() or url[scheme_end] in "+.-")):
+        scheme_end += 1
+    if url.startswith("::", scheme_end) and scheme_end:
+        return "other"  # <helper>::<address> runs git-remote-<helper>
+    if "://" in url:
+        scheme = url.split("://", 1)[0]
+        if scheme == "file":
+            return "local"
+        return "network" if scheme in _NETWORK_SCHEMES else "other"
+    colon, slash = url.find(":"), url.find("/")
+    if colon < 0 or (0 <= slash < colon) or _has_drive_prefix(url):
+        return "local"
+    return "network"  # scp-like [user@]host:path, which git runs over ssh
+
+
+def _local_push_path(url: str) -> Path | None:
+    """The folder a local push URL names, or None for a form VOOL does not read (git percent-decodes
+    ``file://`` URLs, ignores their host part on POSIX and reads it as a UNC share on Windows)."""
+    if not url.startswith("file://"):
+        return Path(os.path.expanduser(url)) if url.startswith("~") else Path(url)
+    rest = url[len("file://"):]
+    if not rest.startswith("/") or "%" in rest or "[" in rest:
+        return None
+    if _has_drive_prefix(rest[1:]):
+        rest = rest[1:]  # file:///C:/repo
+    return Path(rest)
+
+
+def _receiving_git_dir(path: Path, *, timeout: float) -> Path | None:
+    """The repository ``git receive-pack <path>`` enters: the first of path/.git, path, path.git/.git
+    and path.git that is a git directory (setup.c enter_repo), or None."""
+    for candidate in (path / ".git", path, Path(f"{path}.git") / ".git", Path(f"{path}.git")):
+        if not candidate.exists():
+            continue
+        probe = subprocess.run(
+            ["git", "--git-dir", str(candidate), "rev-parse", "--absolute-git-dir"],
+            capture_output=True, text=True, timeout=timeout, env=safe_git.safe_env(),
+        )
+        if probe.returncode == 0 and probe.stdout.strip():
+            return Path(probe.stdout.strip())
+    return None
 
 
 __all__ = ["DEFAULT_DENIED", "GIT_TIMEOUT_SECONDS", "OPERATIONS", "GitResult", "GitRunner"]

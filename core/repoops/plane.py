@@ -3400,6 +3400,20 @@ class RepoOpsRuntime:
             "tests_green": bool(session.tests.get("success")),
         }
 
+    def _push_destination_refusal(self, session: RepoSession, plan: dict[str, Any]):
+        """A push whose destination would run programs on this machine (a local repository's hooks
+        or config, a remote helper) is refused here, before consent is asked for or spent. The
+        runner refuses the same push again at dispatch (core/repoops/gitops.py)."""
+        reason = self._runner(session).push_destination_refusal(str(plan.get("remote") or ""))
+        if not reason:
+            return None
+        return self._result(
+            session,
+            ok=False,
+            status="push_destination_refused",
+            text=f"The push was refused: {reason}. Nothing was sent, and no consent was used.",
+        )
+
     def _user_rules_refusal(self, session: RepoSession, plan: dict[str, Any], *, source_context: dict[str, Any] | None):
         """A push whose commits, changes or ref carry a word the user's rules ban from git is refused
         here, before consent is asked for or spent. Narrow-only: no match is not an approval.
@@ -3442,6 +3456,9 @@ class RepoOpsRuntime:
         ruled, rule_note = self._user_rules_refusal(session, plan, source_context=source_context)
         if ruled is not None:
             return ruled
+        refused = self._push_destination_refusal(session, plan)
+        if refused is not None:
+            return refused
         plan_hash = _sha(_canonical(plan))
         with self._lock:
             session.push_plan = {**plan, "plan_hash": plan_hash, "built_at": _utcnow()}
@@ -3792,6 +3809,10 @@ class RepoOpsRuntime:
         ruled, rule_note = self._user_rules_refusal(session, current, source_context=source_context)
         if ruled is not None:
             return ruled
+        # Checked again now: the destination may have gained a hook since the plan was made.
+        refused = self._push_destination_refusal(session, current)
+        if refused is not None:
+            return refused
 
         simulate = arguments.get("simulate")
         if simulate is None:
