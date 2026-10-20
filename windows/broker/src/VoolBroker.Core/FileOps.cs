@@ -16,8 +16,11 @@ public sealed record FileStat(string Kind, long Size, string FileId, bool ReadOn
 /// <summary>The read-only operations, stat and read, on an opened root (design section 6).</summary>
 public static class FileOps
 {
-    /// <summary>The largest read: its bytes, base64-encoded, must fit in one 64 MiB reply.</summary>
-    public const int MaxReadBytes = 48 * 1024 * 1024;
+    /// <summary>
+    /// The largest read: its base64 (4/3 of it, 62.7 MiB) plus the reply's other fields must fit in
+    /// one 64 MiB frame. 48 MiB would be exactly 64 MiB of base64, with no room for the rest.
+    /// </summary>
+    public const int MaxReadBytes = 47 * 1024 * 1024;
 
     /// <summary>Stats the object relativePath names under root; an empty path is the root itself.</summary>
     public static FileStat Stat(OpenedRoot root, string relativePath)

@@ -1,4 +1,6 @@
+using System.Security.Cryptography;
 using System.Text.Json;
+using Microsoft.Win32.SafeHandles;
 using VoolBroker.Core;
 using Xunit;
 
@@ -218,6 +220,217 @@ public sealed class BatchTests : IDisposable
             }
             Assert.False(Directory.Exists(Path.Combine(flagged, "b")));
             Assert.Equal("f", File.ReadAllText(Path.Combine(flagged, "a", "f.txt")));
+        }
+        finally
+        {
+            ready.Dispose();
+            await TestSupport.Kill(broker);
+            TestSupport.DeleteTree(flagged);
+            TestSupport.DeleteTree(journalParent);
+        }
+    }
+
+    /// <summary>The last record of the one batch the journal holds, read while the batch still writes it.</summary>
+    private JsonElement LastRecord()
+    {
+        using var stream = new FileStream(Assert.Single(work.JournalFiles()), FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var reader = new StreamReader(stream);
+        var last = reader.ReadToEnd().TrimEnd('\n').Split('\n')[^1];
+        using var document = JsonDocument.Parse(last);
+        return document.RootElement.Clone();
+    }
+
+    // The commit record is written, then its flush fails: the batch is committed, so it is
+    // reported done and finished, never "restored" with its originals already deleted (review R1).
+    [Fact]
+    public void A_batch_whose_commit_flush_fails_is_reported_committed()
+    {
+        File.WriteAllText(work.In("f.txt"), "original");
+        BatchRunner.AfterCommitRecordForTests = () => throw new IOException("injected flush failure");
+        var result = work.Runner.Apply([work.Write("f.txt", "new", Workspace.Sha256("original"))]);
+        BatchRunner.AfterCommitRecordForTests = null;
+        Assert.Empty(result.CleanupLeft);
+        Assert.Equal("new", File.ReadAllText(work.In("f.txt")));
+        Assert.Empty(work.BrokerNames());
+        Assert.Empty(work.JournalFiles());
+    }
+
+    // Changes run one at a time: a change asked for while a batch runs waits for it, and when that
+    // batch ends not fully restored, the waiting change is refused journal_pending (review R2).
+    [Fact]
+    public async Task A_change_waits_for_a_running_batch_and_then_sees_it_pending()
+    {
+        File.WriteAllText(work.In("f.txt"), "original");
+        Task<string>? second = null;
+        var ranMeanwhile = false;
+        BatchRunner.BeforeStepForTests = (_, kind) =>
+        {
+            if (kind != "place" || second is not null) return;
+            second = Task.Run(() =>
+            {
+                BatchRunner.BeforeStepForTests = null;
+                return Assert.Throws<BrokerRefusal>(() => work.Runner.Apply([work.Write("other.txt", "x", "absent")])).Code;
+            });
+            ranMeanwhile = ((IAsyncResult)second).AsyncWaitHandle.WaitOne(TimeSpan.FromMilliseconds(500));
+            // Then this batch stops in a way it cannot fully undo: another program takes f.txt's name.
+            File.WriteAllText(work.In("f.txt"), "intruder");
+            throw new IOException("injected");
+        };
+        var stopped = work.Stopped(work.Write("f.txt", "new", Workspace.Sha256("original")));
+        BatchRunner.BeforeStepForTests = null;
+        Assert.False(ranMeanwhile, "A second change finished while the first batch was running.");
+        Assert.False(stopped.Restored);
+        Assert.Equal("journal_pending", await second!.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken));
+        Assert.False(File.Exists(work.In("other.txt")));
+    }
+
+    // Another program takes a temp name after its record is written and before the create: the
+    // create fails, and that object is never removed by the restore (review R3).
+    [Fact]
+    public void An_object_already_under_a_temp_name_is_never_removed()
+    {
+        string? taken = null;
+        BatchRunner.BeforeStepForTests = (_, kind) =>
+        {
+            if (kind != "temp" || taken is not null) return;
+            taken = work.In(LastRecord().GetProperty("name").GetString()!);
+            File.WriteAllText(taken, "someone else's");
+        };
+        var stopped = work.Stopped(work.Write("f.txt", "new", "absent"));
+        BatchRunner.BeforeStepForTests = null;
+        Assert.Equal("destination_exists", stopped.Code);
+        Assert.True(stopped.Restored, string.Join("; ", stopped.Left));
+        Assert.Equal("someone else's", File.ReadAllText(taken!));
+        Assert.False(File.Exists(work.In("f.txt")));
+        Assert.Empty(work.JournalFiles());
+    }
+
+    // After a crash, the journal does not know the id of a temp it never created: an object under
+    // that name that is not what a create leaves (empty, one link) is left and reported (review R3).
+    [Fact]
+    public void After_a_crash_an_unknown_object_under_a_temp_name_is_left_and_reported()
+    {
+        string? taken = null;
+        BatchRunner.BeforeStepForTests = (_, kind) =>
+        {
+            if (kind != "temp") return;
+            taken = work.In(LastRecord().GetProperty("name").GetString()!);
+            File.WriteAllText(taken, "someone else's");
+            throw new BatchCrashForTests();
+        };
+        Assert.Throws<BatchCrashForTests>(() => work.Runner.Apply([work.Write("f.txt", "new", "absent")]));
+        BatchRunner.BeforeStepForTests = null;
+        work.Restart();
+        var outcome = Assert.Single(work.Journal.RecoverAll(work.Registry));
+        Assert.False(outcome.Complete);
+        Assert.Contains(outcome.Left, line => line.StartsWith("temp ", StringComparison.Ordinal) && line.EndsWith("changed_since_check", StringComparison.Ordinal));
+        Assert.Equal("someone else's", File.ReadAllText(taken!));
+        Assert.Single(work.JournalFiles());
+    }
+
+    // A new folder is placed, the batch then stops, and another program holds a file inside that
+    // folder, so NTFS refuses to move it back yet. The temp step it moved waits for it instead of
+    // counting as undone, so restore_batch later leaves no temp folder behind (review R6). The file
+    // is inside the folder because the plan's own handle on a new file (write access, read sharing)
+    // stops any other program holding that file exclusively while the batch runs.
+    [Fact]
+    public void A_temp_a_later_step_moved_is_not_counted_undone_before_that_step()
+    {
+        SafeFileHandle? held = null;
+        BatchRunner.BeforeStepForTests = (index, kind) =>
+        {
+            if (index != 2) return;
+            Assert.Equal("temp", kind);
+            File.WriteAllText(work.In("d", "x.txt"), "x");
+            held = TestSupport.HoldExclusively(work.In("d", "x.txt"));
+            throw new IOException("injected");
+        };
+        BatchStopped stopped;
+        try { stopped = work.Stopped(work.Ensure("d"), work.Write("g.txt", "g", "absent")); }
+        finally { BatchRunner.BeforeStepForTests = null; }
+        using (held)
+        {
+            Assert.NotNull(held);
+            Assert.Equal("io_error", stopped.Code);
+            Assert.False(stopped.Restored);
+            Assert.Contains(stopped.Left, line => line.StartsWith("place d:", StringComparison.Ordinal));
+            Assert.Contains(stopped.Left, line => line.StartsWith("temp ", StringComparison.Ordinal) && line.EndsWith("changed_since_check", StringComparison.Ordinal));
+        }
+        File.Delete(work.In("d", "x.txt"));
+        var outcome = work.Runner.Restore(stopped.BatchId);
+        Assert.True(outcome.Complete, string.Join("; ", outcome.Left));
+        Assert.False(Directory.Exists(work.In("d")));
+        Assert.Empty(work.BrokerNames());
+        Assert.Empty(work.JournalFiles());
+    }
+
+    // A read-only file is never deleted, and never replaced by a rename.
+    [Fact]
+    public void Read_only_files_are_not_deleted_or_replaced()
+    {
+        File.WriteAllText(work.In("ro.txt"), "ro");
+        File.WriteAllText(work.In("f.txt"), "f");
+        File.SetAttributes(work.In("ro.txt"), FileAttributes.ReadOnly);
+        var before = TestSupport.TreeHash(work.Root);
+        Assert.Equal("read_only", work.Refusal(work.Delete("ro.txt")));
+        Assert.Equal("read_only", work.Refusal(work.Rename("f.txt", "ro.txt", replace: true)));
+        Assert.Equal(before, TestSupport.TreeHash(work.Root));
+        Assert.Empty(work.JournalFiles());
+        File.SetAttributes(work.In("ro.txt"), FileAttributes.Normal);
+    }
+
+    // One operation over the limit refuses the whole batch before anything is planned.
+    [Fact]
+    public void A_batch_over_the_operation_limit_changes_nothing()
+    {
+        var changes = Enumerable.Range(0, BatchRunner.MaxOperations + 1).Select(n => work.Write($"f{n}.txt", "x", "absent")).ToArray();
+        Assert.Equal("invalid_request", work.Refusal(changes));
+        Assert.Empty(Directory.GetFileSystemEntries(work.Root));
+        Assert.Empty(work.JournalFiles());
+    }
+
+    // Over the pipe: apply_batch's own limit and field checks, and the largest read. A read of
+    // FileOps.MaxReadBytes whose base64 is all '+' (the worst case for a JSON encoder) arrives
+    // whole in one reply (review R5).
+    [Fact]
+    public async Task Limits_over_the_pipe()
+    {
+        var flagged = TestSupport.NewTempDirectory();
+        var journalParent = TestSupport.NewTempDirectory();
+        var bootstrap = TestSupport.DefaultBootstrap([flagged], Path.Combine(journalParent, "journal"));
+        var (broker, ready) = await TestSupport.StartReady(bootstrap);
+        try
+        {
+            var flaggedId = ready.RootElement.GetProperty("flagged")[0].GetProperty("id").GetString()!;
+            await using var client = await TestSupport.ConnectAuthenticated(ready, TestSupport.SecretOf(bootstrap));
+            using var opened = await TestSupport.Request(client, new { id = "open", op = "open_root", flagged_id = flaggedId, rel = "" });
+            var rootId = opened.RootElement.GetProperty("root_id").GetString()!;
+
+            var tooMany = Enumerable.Range(0, BatchRunner.MaxOperations + 1)
+                .Select(n => (object)new { op = "write_file", rel = $"f{n}.txt", data = "eA==", expect = "absent" }).ToArray();
+            using (var reply = await TestSupport.Request(client, new { id = "many", op = "apply_batch", root_id = rootId, ops = tooMany }))
+                Assert.Equal("invalid_request", TestSupport.ErrorCode(reply));
+            File.WriteAllText(Path.Combine(flagged, "x.txt"), "x");
+            using (var reply = await TestSupport.Request(client, new { id = "extra", op = "apply_batch", root_id = rootId, ops = new object[] { new { op = "delete", rel = "x.txt", force = true } } }))
+                Assert.Equal("invalid_request", TestSupport.ErrorCode(reply));
+            Assert.Equal("x", File.ReadAllText(Path.Combine(flagged, "x.txt")));
+            Assert.Equal("x.txt", Path.GetFileName(Assert.Single(Directory.GetFileSystemEntries(flagged))));
+
+            using (var reply = await TestSupport.Request(client, new { id = "over", op = "read", root_id = rootId, rel = "x.txt", max_bytes = FileOps.MaxReadBytes + 1 }))
+                Assert.Equal("invalid_request", TestSupport.ErrorCode(reply));
+            var data = new byte[FileOps.MaxReadBytes];
+            byte[] plus = [0xFB, 0xEF, 0xBE];
+            for (var index = 0; index < data.Length; index++) data[index] = plus[index % 3];
+            File.WriteAllBytes(Path.Combine(flagged, "big.bin"), data);
+            using (var reply = await TestSupport.Request(client, new { id = "big", op = "read", root_id = rootId, rel = "big.bin", max_bytes = FileOps.MaxReadBytes }))
+            {
+                Assert.True(reply.RootElement.GetProperty("ok").GetBoolean(), TestSupport.ErrorCode(reply));
+                Assert.Equal(data.Length, reply.RootElement.GetProperty("size").GetInt32());
+                Assert.Equal(Convert.ToHexString(SHA256.HashData(data)).ToLowerInvariant(), reply.RootElement.GetProperty("sha256").GetString());
+                Assert.True(data.AsSpan().SequenceEqual(Convert.FromBase64String(reply.RootElement.GetProperty("data").GetString()!)));
+            }
+            using var ping = await TestSupport.Request(client, new { id = "after", op = "ping" });
+            Assert.True(ping.RootElement.GetProperty("ok").GetBoolean());
         }
         finally
         {

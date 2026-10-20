@@ -466,8 +466,9 @@ internal static class TestSupport
     {
         using var handle = CreateFileW(folder, GenericWrite, 1 | 2, 0, OpenExisting, BackupSemantics | OpenReparsePoint, 0);
         if (handle.IsInvalid) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
-        var substitute = Encoding.Unicode.GetBytes(@"\??\" + target);
-        var print = Encoding.Unicode.GetBytes(target);
+        // The raw UTF-16 units, so a target name holding an unpaired surrogate is kept as it is.
+        var substitute = MemoryMarshal.AsBytes((@"\??\" + target).AsSpan()).ToArray();
+        var print = MemoryMarshal.AsBytes(target.AsSpan()).ToArray();
         var pathBytes = substitute.Length + 2 + print.Length + 2;
         var buffer = new byte[8 + 8 + pathBytes];
         BinaryPrimitives.WriteUInt32LittleEndian(buffer, 0xA0000003);
@@ -692,6 +693,7 @@ internal sealed class Workspace : IDisposable
     {
         BatchRunner.BeforeStepForTests = null;
         BatchRunner.AfterPlanForTests = null;
+        BatchRunner.AfterCommitRecordForTests = null;
         Registry.Dispose();
         TestSupport.DeleteTree(Root);
         TestSupport.DeleteTree(Outside);

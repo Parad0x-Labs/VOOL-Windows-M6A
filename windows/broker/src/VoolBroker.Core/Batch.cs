@@ -1,5 +1,4 @@
 using Microsoft.Win32.SafeHandles;
-using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text.Json;
 
@@ -35,16 +34,23 @@ internal sealed class BatchCrashForTests : Exception;
 public sealed class BatchRunner(RootRegistry roots, Journal journal)
 {
     public const int MaxOperations = 1024;
-    private readonly ConcurrentDictionary<string, byte> busy = new(StringComparer.Ordinal);
+
+    // Changes run one at a time (design section 5), and restore_batch with them: a batch never
+    // starts while another is running, recovering or being restored, so the pending check below
+    // sees every batch the journal holds.
+    private readonly object changing = new();
 
     // The test hooks are per async flow, so a test's hook never runs in another test's batch.
     private static readonly AsyncLocal<Action<int, string>?> beforeStep = new();
     private static readonly AsyncLocal<Action?> afterPlan = new();
+    private static readonly AsyncLocal<Action?> afterCommitRecord = new();
 
     /// <summary>Test hook: runs before each step (its index and kind), after its journal record is flushed.</summary>
     internal static Action<int, string>? BeforeStepForTests { get => beforeStep.Value; set => beforeStep.Value = value; }
     /// <summary>Test hook: runs after the plan holds everything, before the journal is begun.</summary>
     internal static Action? AfterPlanForTests { get => afterPlan.Value; set => afterPlan.Value = value; }
+    /// <summary>Test hook: runs right after the commit record is written, where a failing flush would throw.</summary>
+    internal static Action? AfterCommitRecordForTests { get => afterCommitRecord.Value; set => afterCommitRecord.Value = value; }
     /// <summary>
     /// Test hook for the broker process (set only from VOOL_BROKER_TEST_PAUSE_AT, see Program): runs
     /// at each journal boundary with its name and step index (-1 for the commit), so a test can stop
@@ -78,64 +84,69 @@ public sealed class BatchRunner(RootRegistry roots, Journal journal)
     {
         if (changes.Count is 0 or > MaxOperations) throw new BrokerRefusal("invalid_request", $"A batch holds 1 to {MaxOperations} operations.");
         if (!Journal.Available) throw new BrokerRefusal("journal_unavailable", "The journal folder cannot be written; no file is changed.");
+        lock (changing) return ApplyAlone(changes);
+    }
+
+    private BatchResult ApplyAlone(IReadOnlyList<FileChange> changes)
+    {
         // A batch the journal still holds (not finished, not fully restored, or unreadable) leaves
         // objects the broker may still have to put back: no new change starts until it is cleared.
-        var unfinished = Journal.Pending().Where(id => !busy.ContainsKey(id)).ToArray();
-        if (unfinished.Length > 0)
+        var unfinished = Journal.Pending();
+        if (unfinished.Count > 0)
             throw new BrokerRefusal("journal_pending", $"Batch {unfinished[0]} is not finished; restore_batch it first. No file is changed.");
         using var plan = new Plan();
         var planned = changes.Select(plan.Add).ToArray();
         AfterPlanForTests?.Invoke();
         var batchId = Journal.NewId();
-        busy.TryAdd(batchId, 0);
+        var results = new List<Dictionary<string, object?>>();
+        var ran = 0;
+        var log = Journal.Begin(batchId, changes.Count);
+        var steps = new Steps(log, batchId);
         try
         {
-            var results = new List<Dictionary<string, object?>>();
-            var ran = 0;
-            var log = Journal.Begin(batchId, changes.Count);
-            var steps = new Steps(log, batchId);
-            try
+            foreach (var change in planned)
             {
-                foreach (var change in planned)
-                {
-                    results.Add(change.Execute(steps));
-                    ran++;
-                }
-                BoundaryForTests?.Invoke("before_commit", -1);
-                log.Append(new Dictionary<string, object?> { ["t"] = "commit" });
-                BoundaryForTests?.Invoke("after_commit", -1);
+                results.Add(change.Execute(steps));
+                ran++;
             }
-            catch (BatchCrashForTests)
-            {
-                log.Dispose();
-                plan.Dispose();
-                throw;
-            }
-            catch (Exception error) when (error is not OutOfMemoryException)
-            {
-                log.Dispose();
-                plan.Dispose();
-                var (code, message) = error is BrokerRefusal refusal ? (refusal.Code, refusal.Message)
-                    : error is IOException ? ("io_error", error.Message) : ("authority_check_failed", error.GetType().Name);
-                RecoveryOutcome outcome;
-                try { outcome = Journal.Recover(batchId, roots); }
-                catch (Exception recoverError) when (recoverError is BrokerRefusal or IOException or UnauthorizedAccessException)
-                {
-                    outcome = new RecoveryOutcome(batchId, false, false, [$"journal: {recoverError.Message}"]);
-                }
-                throw new BatchStopped(code, message, batchId, ran, outcome.Complete, outcome.Left);
-            }
-            // Committed: the objects set aside are deleted through the handles the plan still holds,
-            // never looked up again by name. Any it cannot delete, the journal cleans up below.
-            steps.RemoveAsides();
+            BoundaryForTests?.Invoke("before_commit", -1);
+            log.Append(new Dictionary<string, object?> { ["t"] = "commit" });
+            AfterCommitRecordForTests?.Invoke();
+            BoundaryForTests?.Invoke("after_commit", -1);
+        }
+        catch (BatchCrashForTests)
+        {
             log.Dispose();
             plan.Dispose();
-            IReadOnlyList<string> left;
-            try { left = Journal.Recover(batchId, roots).Left; }
-            catch (Exception error) when (error is BrokerRefusal or IOException or UnauthorizedAccessException) { left = [$"journal: {error.Message}"]; }
-            return new BatchResult(batchId, results, left);
+            throw;
         }
-        finally { busy.TryRemove(batchId, out _); }
+        catch (Exception error) when (error is not OutOfMemoryException)
+        {
+            log.Dispose();
+            plan.Dispose();
+            var (code, message) = error is BrokerRefusal refusal ? (refusal.Code, refusal.Message)
+                : error is IOException ? ("io_error", error.Message) : ("authority_check_failed", error.GetType().Name);
+            RecoveryOutcome outcome;
+            try { outcome = Journal.Recover(batchId, roots); }
+            catch (Exception recoverError) when (recoverError is not OutOfMemoryException)
+            {
+                outcome = new RecoveryOutcome(batchId, false, false, [$"journal: {recoverError.GetType().Name}: {recoverError.Message}"]);
+            }
+            // The commit record reached the journal before the error (its flush failed, say):
+            // the batch is committed and recovery finished it, so it is reported as done, with
+            // anything its cleanup left, never as restored.
+            if (outcome.Committed) return new BatchResult(batchId, results, outcome.Left);
+            throw new BatchStopped(code, message, batchId, ran, outcome.Complete, outcome.Left);
+        }
+        // Committed: the objects set aside are deleted through the handles the plan still holds,
+        // never looked up again by name. Any it cannot delete, the journal cleans up below.
+        steps.RemoveAsides();
+        log.Dispose();
+        plan.Dispose();
+        IReadOnlyList<string> left;
+        try { left = Journal.Recover(batchId, roots).Left; }
+        catch (Exception error) when (error is not OutOfMemoryException) { left = [$"journal: {error.GetType().Name}: {error.Message}"]; }
+        return new BatchResult(batchId, results, left);
     }
 
     /// <summary>restore_batch: finishes (committed) or undoes (not committed) a batch the journal still holds.</summary>
@@ -143,9 +154,7 @@ public sealed class BatchRunner(RootRegistry roots, Journal journal)
     {
         if (!Journal.IsBatchId(batchId)) throw new BrokerRefusal("invalid_request", "batch_id must be 32 lowercase hex digits.");
         if (!Journal.Available) throw new BrokerRefusal("journal_unavailable", "The journal folder cannot be read.");
-        if (!busy.TryAdd(batchId, 0)) throw new BrokerRefusal("in_use", "That batch is running or being restored.");
-        try { return Journal.Recover(batchId, roots); }
-        finally { busy.TryRemove(batchId, out _); }
+        lock (changing) return Journal.Recover(batchId, roots);
     }
 
     /// <summary>Journals and makes the steps of one batch, numbering them in order.</summary>
@@ -163,9 +172,21 @@ public sealed class BatchRunner(RootRegistry roots, Journal journal)
         {
             var index = Begin("temp", new() { ["vol"] = parent.Volume, ["parent"] = parent.Id(), ["name"] = name });
             var access = Native.Delete | (directory ? 0 : Native.FileWriteData | Native.FileWriteAttributes);
-            var handle = Native.OpenRelative(parent.Handle!, name, access,
-                directory ? Native.FileDirectoryFile : Native.FileNonDirectoryFile,
-                directory ? Native.ShareRead | Native.ShareWrite : Native.ShareRead, Native.FileCreate);
+            SafeFileHandle handle;
+            try
+            {
+                handle = Native.OpenRelative(parent.Handle!, name, access,
+                    directory ? Native.FileDirectoryFile : Native.FileNonDirectoryFile,
+                    directory ? Native.ShareRead | Native.ShareWrite : Native.ShareRead, Native.FileCreate);
+            }
+            catch (BrokerRefusal)
+            {
+                // The create made nothing (NtCreateFile creates or fails as a whole), so the step is
+                // recorded as never made: an object someone else has under that name is not the
+                // batch's to remove.
+                log.Append(new() { ["t"] = "undone", ["i"] = index });
+                throw;
+            }
             plan.Own(handle);
             Done(index, FileOps.FileIdOf(handle));
             if (data is not null)

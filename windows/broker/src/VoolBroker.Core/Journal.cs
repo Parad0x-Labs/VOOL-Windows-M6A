@@ -69,23 +69,36 @@ public sealed class Journal
     public BatchLog Begin(string batchId, int operations)
     {
         if (!Available) throw new BrokerRefusal("journal_unavailable", "The journal folder cannot be written; no file is changed.");
+        FileStream? stream = null;
         try
         {
-            var log = new BatchLog(new FileStream(PathOf(batchId), FileMode.CreateNew, FileAccess.Write, FileShare.Read, 1, FileOptions.WriteThrough));
+            stream = new FileStream(PathOf(batchId), FileMode.CreateNew, FileAccess.Write, FileShare.Read, 1, FileOptions.WriteThrough);
+            var log = new BatchLog(stream);
             log.Append(new Dictionary<string, object?> { ["t"] = "begin", ["batch"] = batchId, ["ops"] = operations });
             return log;
         }
-        catch (IOException error) { throw new BrokerRefusal("journal_unavailable", error.Message); }
-        catch (UnauthorizedAccessException error) { throw new BrokerRefusal("journal_unavailable", error.Message); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or BrokerRefusal)
+        {
+            // Nothing has changed yet: the file this call just created (CreateNew) is removed, so a
+            // failed begin never leaves a batch that blocks every later change.
+            if (stream is not null)
+            {
+                stream.Dispose();
+                try { File.Delete(PathOf(batchId)); }
+                catch (Exception deleteError) when (deleteError is IOException or UnauthorizedAccessException) { }
+            }
+            if (error is BrokerRefusal) throw;
+            throw new BrokerRefusal("journal_unavailable", error.Message);
+        }
     }
 
     /// <summary>Recovers every batch the journal holds (at start). A batch whose file cannot be read is kept and reported.</summary>
     public IReadOnlyList<RecoveryOutcome> RecoverAll(RootRegistry roots) => Pending().Select(batchId =>
     {
         try { return Recover(batchId, roots); }
-        catch (Exception error) when (error is BrokerRefusal or IOException or UnauthorizedAccessException)
+        catch (Exception error) when (error is not OutOfMemoryException)
         {
-            return new RecoveryOutcome(batchId, false, false, [error is BrokerRefusal refusal ? $"journal: {refusal.Code}: {refusal.Message}" : $"journal: {error.Message}"]);
+            return new RecoveryOutcome(batchId, false, false, [error is BrokerRefusal refusal ? $"journal: {refusal.Code}: {refusal.Message}" : $"journal: {error.GetType().Name}: {error.Message}"]);
         }
     }).ToArray();
 
@@ -120,11 +133,12 @@ public sealed class Journal
                 try
                 {
                     if (committed) Cleanup(step, roots);
-                    else Undo(step, records, roots);
+                    else Undo(step, records, finished, roots);
                 }
                 catch (BrokerRefusal refusal) { left.Add($"{Describe(step)}: {refusal.Code}"); continue; }
-                catch (IOException error) { left.Add($"{Describe(step)}: {error.Message}"); continue; }
+                catch (Exception error) when (error is not OutOfMemoryException) { left.Add($"{Describe(step)}: {error.GetType().Name}: {error.Message}"); continue; }
                 log.Append(new Dictionary<string, object?> { ["t"] = "undone", ["i"] = index });
+                finished.Add(index);
             }
         }
         if (left.Count == 0)
@@ -167,8 +181,127 @@ public sealed class Journal
             catch (JsonException) { throw new BrokerRefusal("journal_unreadable", $"Record {line + 1} of batch {batchId} is unreadable."); }
             start = end + 1;
         }
+        Validate(records, batchId);
         return records;
     }
+
+    /// <summary>
+    /// The whole journal is checked before recovery acts on any of it: begin first, with this
+    /// batch's id; steps numbered 0, 1, 2 in order, each of a known kind with exactly its fields
+    /// and their types; temp and aside names of this batch's own form; done and undone only for a
+    /// step already recorded, each at most once; nothing but undone after the commit. A record
+    /// that parses but does not fit is damage like any other: never guessed at.
+    /// </summary>
+    private static void Validate(List<JsonElement> records, string batchId)
+    {
+        var steps = 0;
+        var committed = false;
+        var done = new HashSet<int>();
+        var undone = new HashSet<int>();
+        for (var line = 0; line < records.Count; line++)
+        {
+            var record = records[line];
+            void Bad(string why) => throw new BrokerRefusal("journal_unreadable", $"Record {line + 1} of batch {batchId} is not a journal record ({why}).");
+            void Fields(params string[] names)
+            {
+                foreach (var property in record.EnumerateObject())
+                    if (!names.Contains(property.Name, StringComparer.Ordinal)) Bad($"unexpected field '{property.Name}'");
+                foreach (var name in names)
+                    if (!record.TryGetProperty(name, out _) && !(name == "object" && Text(record, "t") == "done")) Bad($"missing field '{name}'");
+            }
+            int Index()
+            {
+                if (!Int(record, "i", out var index) || index < 0 || index >= steps) Bad("step index");
+                return index;
+            }
+            void Hex(string name)
+            {
+                var value = Text(record, name);
+                if (value is null || value.Length != 32 || !value.All(char.IsAsciiHexDigitLower)) Bad($"field '{name}'");
+            }
+            void Name(string name, string? prefix = null)
+            {
+                var value = Text(record, name);
+                if (value is null || value.Length is 0 or > 255 || value is "." or ".." || value.IndexOfAny(['\\', '/', ':', '\0']) >= 0) Bad($"field '{name}'");
+                if (prefix is not null && !IsOwnName(value!, prefix)) Bad($"field '{name}' is not a name this batch uses");
+            }
+            var kind = Text(record, "t");
+            if ((line == 0) != (kind == "begin")) Bad("begin must come first, once");
+            switch (kind)
+            {
+                case "begin":
+                    Fields("t", "batch", "ops");
+                    if (Text(record, "batch") != batchId) Bad("batch id");
+                    if (!Int(record, "ops", out var operations) || operations is < 1 or > BatchRunner.MaxOperations) Bad("ops");
+                    break;
+                case "step":
+                {
+                    if (committed) Bad("a step after the commit");
+                    if (!Int(record, "i", out var index) || index != steps) Bad("step index");
+                    if (!record.TryGetProperty("vol", out var vol) || vol.ValueKind != JsonValueKind.Number || !vol.TryGetUInt64(out _)) Bad("field 'vol'");
+                    switch (Text(record, "k"))
+                    {
+                        case "temp":
+                            Fields("t", "i", "k", "vol", "parent", "name");
+                            Hex("parent");
+                            Name("name", TempPrefix(batchId));
+                            break;
+                        case "aside":
+                            Fields("t", "i", "k", "vol", "parent", "name", "aside", "object");
+                            Hex("parent"); Hex("object");
+                            Name("name");
+                            Name("aside", AsidePrefix(batchId));
+                            break;
+                        case "place":
+                            Fields("t", "i", "k", "vol", "from_parent", "from_name", "parent", "name", "object");
+                            Hex("from_parent"); Hex("parent"); Hex("object");
+                            Name("from_name"); Name("name");
+                            break;
+                        default:
+                            Bad("step kind");
+                            break;
+                    }
+                    steps++;
+                    break;
+                }
+                case "done":
+                    if (committed) Bad("done after the commit");
+                    Fields("t", "i", "object");
+                    if (!done.Add(Index())) Bad("a step done twice");
+                    if (record.TryGetProperty("object", out _)) Hex("object");
+                    break;
+                case "undone":
+                    Fields("t", "i");
+                    if (!undone.Add(Index())) Bad("a step undone twice");
+                    break;
+                case "commit":
+                    if (committed) Bad("a second commit");
+                    Fields("t");
+                    committed = true;
+                    break;
+                default:
+                    Bad("record kind");
+                    break;
+            }
+        }
+    }
+
+    private static bool Int(JsonElement record, string name, out int value)
+    {
+        value = 0;
+        return record.TryGetProperty(name, out var element) && element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out value);
+    }
+
+    private static string? Text(JsonElement record, string name) =>
+        record.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
+    /// <summary>The temp and aside names a batch makes (BatchRunner.Steps): its prefix, then a number.</summary>
+    internal static string TempPrefix(string batchId) => $".vool-broker-tmp-{batchId[..12]}-";
+    internal static string AsidePrefix(string batchId) => $".vool-broker-aside-{batchId[..12]}-";
+
+    private static bool IsOwnName(string name, string prefix) =>
+        name.StartsWith(prefix, StringComparison.Ordinal) && name.Length > prefix.Length && name.Length <= prefix.Length + 10 &&
+        name[prefix.Length..].All(char.IsAsciiDigit);
 
     /// <summary>Opens a batch's file to add the records recovery writes.</summary>
     private BatchLog Reopen(string batchId)
@@ -208,7 +341,7 @@ public sealed class Journal
         return null;
     }
 
-    private static void Undo(JsonElement step, IReadOnlyList<JsonElement> records, RootRegistry roots)
+    private static void Undo(JsonElement step, IReadOnlyList<JsonElement> records, IReadOnlySet<int> finished, RootRegistry roots)
     {
         var kind = step.GetProperty("k").GetString();
         var name = step.GetProperty("name").GetString()!;
@@ -219,14 +352,27 @@ public sealed class Journal
             {
                 case "temp":
                 {
-                    // The name is the batch's own, so an object under it is the batch's temp; when the
-                    // journal knows the temp's id, it must also match.
+                    // The name has this batch's own temp form (Validate). When the journal knows the
+                    // temp's id, the object must match it. When it does not (the create failed, or a
+                    // crash came before the done record), only what the create itself leaves is
+                    // removed: an empty file with one link, or an empty folder.
                     using var temp = TryOpen(folder, name);
-                    if (temp is null) return;
                     var made = ObjectOf(step, records);
-                    if (made is not null && !Is(temp, made)) throw new BrokerRefusal("changed_since_check", "Another object holds the temp name.");
-                    if ((Native.GetAttributeTag(temp).FileAttributes & Native.FileAttributeDirectory) != 0 && !Native.IsDirectoryEmpty(temp))
-                        throw new BrokerRefusal("not_empty", "A temp folder is not empty.");
+                    if (temp is null)
+                    {
+                        // The temp was moved on by a place step that is not undone yet: it is not gone.
+                        if (made is not null && PlacedAndNotUndone(made, records, finished))
+                            throw new BrokerRefusal("changed_since_check", "The temp object is still in the place a later step moved it to.");
+                        return;
+                    }
+                    var isDirectory = (Native.GetAttributeTag(temp).FileAttributes & Native.FileAttributeDirectory) != 0;
+                    if (made is not null)
+                    {
+                        if (!Is(temp, made)) throw new BrokerRefusal("changed_since_check", "Another object holds the temp name.");
+                    }
+                    else if (!IsAsCreated(temp, isDirectory))
+                        throw new BrokerRefusal("changed_since_check", "The object under the temp name is not the empty one the batch made.");
+                    if (isDirectory && !Native.IsDirectoryEmpty(temp)) throw new BrokerRefusal("not_empty", "A temp folder is not empty.");
                     Native.DeleteNow(temp, name);
                     return;
                 }
@@ -234,18 +380,16 @@ public sealed class Journal
                 {
                     var target = Id(step, "object");
                     var asideName = step.GetProperty("aside").GetString()!;
-                    using (var aside = TryOpen(folder, asideName))
+                    // Already in its place (the aside rename never happened, or was undone): done.
+                    using (var original = TryOpen(folder, name))
                     {
-                        if (aside is not null)
-                        {
-                            if (!Is(aside, target)) throw new BrokerRefusal("changed_since_check", "Another object holds the aside name.");
-                            Native.RenameInto(aside, folder, name);
-                            return;
-                        }
+                        if (original is not null && Is(original, target)) return;
                     }
-                    using var original = TryOpen(folder, name);
-                    if (original is not null && Is(original, target)) return;
-                    throw new BrokerRefusal("not_found", "The object set aside is neither aside nor in its place.");
+                    using var aside = TryOpen(folder, asideName);
+                    if (aside is null) throw new BrokerRefusal("not_found", "The object set aside is neither aside nor in its place.");
+                    if (!Is(aside, target)) throw new BrokerRefusal("changed_since_check", "Another object holds the aside name.");
+                    Native.RenameInto(aside, folder, name);
+                    return;
                 }
                 case "place":
                 {
@@ -271,6 +415,22 @@ public sealed class Journal
                     throw new BrokerRefusal("journal_unavailable", $"Unknown journal step '{kind}'.");
             }
         }
+    }
+
+    /// <summary>What a create leaves before anything is written: an empty folder, or an empty file with one link.</summary>
+    private static bool IsAsCreated(SafeFileHandle handle, bool isDirectory)
+    {
+        if (isDirectory) return Native.IsDirectoryEmpty(handle);
+        var info = Native.GetStandardInfo(handle);
+        return info.EndOfFile == 0 && info.NumberOfLinks == 1;
+    }
+
+    /// <summary>True when a place step not yet undone moved the object with this id.</summary>
+    private static bool PlacedAndNotUndone(byte[] objectId, IReadOnlyList<JsonElement> records, IReadOnlySet<int> finished)
+    {
+        var id = Convert.ToHexString(objectId).ToLowerInvariant();
+        return records.Any(record => Kind(record) == "step" && record.GetProperty("k").GetString() == "place" &&
+            record.GetProperty("object").GetString() == id && !finished.Contains(record.GetProperty("i").GetInt32()));
     }
 
     /// <summary>After a commit only aside objects remain to remove; every other step stays as made.</summary>

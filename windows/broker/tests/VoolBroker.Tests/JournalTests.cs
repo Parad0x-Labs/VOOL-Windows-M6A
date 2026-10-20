@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using VoolBroker.Core;
 using Xunit;
 
@@ -187,11 +188,21 @@ public sealed class JournalTests : IDisposable
 
     // A damaged journal record (cut off part way, missing its line end, or not a record) is never
     // guessed at: recovery stops and changes nothing, every new change is refused, reads still
-    // work, and the next start reports the batch as pending.
+    // work, and the next start reports the batch as pending. The same holds for records that
+    // parse but do not fit the journal (review R4): a missing or mistyped field, an unknown
+    // record, a step numbered twice, an undone for no step, another batch's begin, and a temp
+    // step naming a file the batch never made (other.txt, which must survive).
     [Theory]
     [InlineData("cut_off")]
     [InlineData("no_line_end")]
     [InlineData("not_a_record")]
+    [InlineData("step_without_index")]
+    [InlineData("index_not_a_number")]
+    [InlineData("unknown_record")]
+    [InlineData("step_numbered_twice")]
+    [InlineData("undone_of_no_step")]
+    [InlineData("other_batch")]
+    [InlineData("foreign_temp_name")]
     public async Task A_damaged_journal_is_never_guessed_at(string damage)
     {
         File.WriteAllText(work.In("other.txt"), "readable");
@@ -202,11 +213,29 @@ public sealed class JournalTests : IDisposable
         var journalFile = Assert.Single(work.JournalFiles());
         var batchId = Path.GetFileNameWithoutExtension(journalFile)["batch-".Length..];
         var bytes = File.ReadAllBytes(journalFile);
+        var lines = Encoding.UTF8.GetString(bytes).TrimEnd('\n').Split('\n');
+        var stepLines = lines.Where(line => line.Contains("\"t\":\"step\"", StringComparison.Ordinal)).ToArray();
+        byte[] Appended(string line) => [.. bytes, .. Encoding.UTF8.GetBytes(line + "\n")];
+        string ForeignTemp()
+        {
+            var record = JsonNode.Parse(stepLines[0])!.AsObject();
+            Assert.Equal("temp", (string?)record["k"]);
+            record["i"] = stepLines.Length;
+            record["name"] = "other.txt";
+            return record.ToJsonString();
+        }
         bytes = damage switch
         {
             "cut_off" => bytes[..^5],
             "no_line_end" => bytes[..^1],
-            _ => [.. Encoding.UTF8.GetBytes("not a record\n"), .. bytes],
+            "not_a_record" => [.. Encoding.UTF8.GetBytes("not a record\n"), .. bytes],
+            "step_without_index" => Appended("{\"t\":\"step\",\"k\":\"temp\"}"),
+            "index_not_a_number" => Appended("{\"t\":\"undone\",\"i\":\"x\"}"),
+            "unknown_record" => Appended("{\"t\":\"frobnicate\"}"),
+            "step_numbered_twice" => Appended(stepLines[0]),
+            "undone_of_no_step" => Appended("{\"t\":\"undone\",\"i\":99}"),
+            "other_batch" => Encoding.UTF8.GetBytes(string.Join("\n", lines.Skip(1).Prepend(lines[0].Replace(batchId, new string('0', 32), StringComparison.Ordinal))) + "\n"),
+            _ => Appended(ForeignTemp()),
         };
         File.WriteAllBytes(journalFile, bytes);
         work.Restart();

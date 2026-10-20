@@ -55,6 +55,10 @@ internal static class Program
             // now, before the pipe exists; any it cannot finish stay in the journal and are reported.
             BatchRunner.PauseAtFromEnvironment();
             var journal = Journal.Open(journalDirectory);
+            // Checked again now the folder exists: Open created any missing part of it, and a
+            // junction made in between would have been followed.
+            try { roots.ValidateJournalOutsideFlagged(journalDirectory); }
+            catch (BrokerRefusal refusal) { return RefuseEntry(journalDirectory, refusal.Code); }
             var recovered = journal.RecoverAll(roots);
             var journalReport = new
             {

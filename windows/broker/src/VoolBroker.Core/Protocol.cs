@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 
 namespace VoolBroker.Core;
@@ -16,6 +17,11 @@ public sealed class EffectOutcomeUnknown(string requestId) : Exception($"Outcome
 public static class Protocol
 {
     public const int MaxMessageBytes = 64 * 1024 * 1024;
+
+    // The contract is framed JSON values, not canonical bytes. The relaxed encoder writes '+' and
+    // '/' (base64) and non-ASCII text as themselves instead of six-byte escapes, so a reply's size
+    // follows its content: a read of FileOps.MaxReadBytes always fits in one frame.
+    private static readonly JsonSerializerOptions Options = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     public static async ValueTask<JsonDocument> ReadFrameAsync(Stream stream, CancellationToken cancellationToken = default)
     {
@@ -58,7 +64,13 @@ public static class Protocol
 
     private static byte[] Encode(object message)
     {
-        var body = JsonSerializer.SerializeToUtf8Bytes(message);
+        byte[] body;
+        // Text that is not valid UTF-16 (an unpaired surrogate) cannot be written as JSON.
+        try { body = JsonSerializer.SerializeToUtf8Bytes(message, Options); }
+        catch (Exception error) when (error is ArgumentException or InvalidOperationException)
+        {
+            throw new BrokerRefusal("reply_unencodable", "The message cannot be encoded as JSON.");
+        }
         if (body.Length > MaxMessageBytes) throw new BrokerRefusal("too_large", "Message exceeds 64 MiB.");
         var frame = new byte[4 + body.Length];
         BinaryPrimitives.WriteUInt32LittleEndian(frame, checked((uint)body.Length));

@@ -28,6 +28,8 @@ public sealed class RootRegistry : IDisposable
     public static void ValidatePlatform()
     {
         if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763)) throw new BrokerRefusal("unsupported_windows", "Windows 10 version 1809 or later is required.");
+        // Native.RenameInto writes FILE_RENAME_INFORMATION with its 64-bit layout.
+        if (!Environment.Is64BitProcess) throw new BrokerRefusal("unsupported_windows", "The broker must run as a 64-bit process.");
     }
 
     /// <summary>Opens and checks one flagged entry; returns its id (the same id for another spelling of the same folder).</summary>
@@ -59,6 +61,10 @@ public sealed class RootRegistry : IDisposable
             if ((attribute.FileAttributes & Native.FileAttributeDirectory) == 0) throw new BrokerRefusal("invalid_flagged", "Flagged entry is not a directory.");
             if ((Native.GetCaseFlags(handle) & Native.FileCaseSensitiveSearch) != 0) throw new BrokerRefusal("case_sensitive_dir", "Case-sensitive directories are refused.");
             var finalPath = Native.GetFinalPath(handle, Native.VolumeNameDos);
+            // The start line reports this path. A real path holding an unpaired surrogate (reached,
+            // say, through a junction above the entry) cannot be written as JSON without changing
+            // it, and a changed path could name another folder: refused, never repaired.
+            if (!IsValidUnicode(finalPath)) throw new BrokerRefusal("invalid_name", "The flagged folder's real path is not valid Unicode.");
             if (finalPath.StartsWith("\\\\?\\UNC\\", StringComparison.OrdinalIgnoreCase) || finalPath.StartsWith("\\\\", StringComparison.Ordinal) && !finalPath.StartsWith("\\\\?\\", StringComparison.Ordinal))
                 throw new BrokerRefusal("unsupported_filesystem", "Network roots are unsupported.");
             var volumePath = Native.GetVolumePath(finalPath);
@@ -76,6 +82,17 @@ public sealed class RootRegistry : IDisposable
             return id;
         }
         catch { handle.Dispose(); throw; }
+    }
+
+    /// <summary>True when text has no unpaired UTF-16 surrogate.</summary>
+    internal static bool IsValidUnicode(string text)
+    {
+        for (var index = 0; index < text.Length; index++)
+        {
+            if (char.IsHighSurrogate(text[index]) && index + 1 < text.Length && char.IsLowSurrogate(text[index + 1])) index++;
+            else if (char.IsSurrogate(text[index])) return false;
+        }
+        return true;
     }
 
     /// <summary>

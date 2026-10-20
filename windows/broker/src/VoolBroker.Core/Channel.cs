@@ -150,7 +150,15 @@ public sealed class Channel(int apiPid, long apiCreationTime, byte[] secret, str
                 using (requestDoc)
                 {
                     var reply = Dispatch(requestDoc.RootElement, count, requestIds, connectionRoots, out var close);
-                    watchdog.Run(() => Protocol.WriteFrame(stream, reply));
+                    try { watchdog.Run(() => Protocol.WriteFrame(stream, reply)); }
+                    catch (BrokerRefusal refusal) when (refusal.Code is "too_large" or "reply_unencodable")
+                    {
+                        // The reply could not be encoded (over 64 MiB, or text that is not valid
+                        // Unicode); nothing of it was written. The request may have run, so this is
+                        // never a plain refusal: the client treats it as outcome unknown.
+                        var id = requestDoc.RootElement.GetProperty("id").Clone();
+                        watchdog.Run(() => Protocol.WriteFrame(stream, Refusal(id, "reply_unencodable", "The reply could not be encoded; the request's outcome is unknown.")));
+                    }
                     if (close) return;
                 }
             }

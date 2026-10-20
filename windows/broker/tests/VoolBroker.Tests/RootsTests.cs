@@ -442,6 +442,22 @@ public sealed class RootsTests : IDisposable
         Assert.Equal("unsupported_windows", Assert.Throws<BrokerRefusal>(RootRegistry.ValidatePlatform).Code);
     }
 
+    // A flagged entry whose real path holds an unpaired surrogate (here reached through a junction
+    // above the entry, so the entry text itself is valid) cannot go on the start line unchanged:
+    // the start is refused invalid_name, never repaired and never a crash (coordinator, 20 Oct).
+    [Fact]
+    public async Task A_flagged_folder_whose_real_path_is_not_valid_unicode_stops_the_start()
+    {
+        var odd = Path.Combine(temp, "odd\uDC80name");
+        Directory.CreateDirectory(Path.Combine(odd, "flag"));
+        Assert.Contains(Directory.GetDirectories(temp), path => path == odd);
+        var link = NewFolder("link");
+        TestSupport.TurnIntoJunction(link, odd);
+        using var refusal = await TestSupport.StartRefused(TestSupport.DefaultBootstrap([Path.Combine(link, "flag")], journal));
+        Assert.Equal("invalid_name", Code(refusal));
+        Assert.Equal(Path.Combine(link, "flag"), refusal.RootElement.GetProperty("error").GetProperty("entry").GetString());
+    }
+
     private static bool TryRenameAndRestore(string source, string destination)
     {
         if (!TestSupport.TryRename(source, destination)) return false;
