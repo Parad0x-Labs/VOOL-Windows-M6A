@@ -10,9 +10,11 @@ repository can still send git's writes elsewhere:
 - a hard link. A file git rewrites in place (COMMIT_EDITMSG, MERGE_MSG, MERGE_MODE, AUTO_MERGE) that
   is also another file's name changes that other file. In an object store (`objects/`, a submodule's
   `modules/<name>/objects/`, Git LFS's `lfs/objects/`) git and git-lfs never rewrite a file: they write
-  a new one and rename it into place, and a clone, `git submodule add` or `git lfs pull` from a local
-  folder hard-links those files, so a hard link there is allowed (git may still touch such a file's
-  time stamp);
+  a new one and rename it into place, as they do for `objects/info/` (`commit-graph`, `packs`,
+  `alternates`) and a pack's indexes, bitmaps and `multi-pack-index`, and a clone, `git submodule add`
+  or `git lfs pull` from a local folder hard-links those files, so a hard link there is allowed (git
+  may still touch such a file's time stamp; the files git does write in place there are listed at
+  `_OBJECT_STORE_FILE`);
 - Git LFS, which the system config runs as a filter (Git for Windows installs it so), keeps its
   objects and temp files in `lfs.storage` when the repository's own config sets it, and other
   `lfs.*` keys it reads from that config choose transfer programs. Every repository-set `lfs.*` key
@@ -62,9 +64,21 @@ _LFS_KEYS_ALLOWED = re.compile(
 _KEYS_REFUSED = frozenset({"gc.repackfilterto", "http.cookiefile"})
 #: Config scopes that belong to the user, not to the repository (``git config --show-scope``).
 _USER_CONFIG_SCOPES = frozenset({"system", "global", "command"})
-#: Files in an object store, the only places a hard link is allowed (paths relative to a git folder).
+#: Files in an object store that git and git-lfs only ever create, rename into place or delete, the
+#: only places a hard link is allowed (paths relative to a git folder). Checked against git's source
+#: (2.56 development, 2026-10-20): a pack's `.promisor` is rewritten in place by a partial-clone fetch,
+#: `objects/loose-object-idx` is appended to, and dumb-http `*.temp` downloads are resumed in place,
+#: so a hard link at those is refused.
+_HASH = r"[0-9a-f]{40}(?:[0-9a-f]{24})?"  # SHA-1 or SHA-256
 _OBJECT_STORE_FILE = re.compile(
-    r"(?:modules/.+/)?(?:objects/(?:[0-9a-f]{2}|pack)|lfs/objects/[0-9a-f]{2}/[0-9a-f]{2})/[^/]+"
+    r"(?:modules/.+/)?(?:"
+    r"objects/[0-9a-f]{2}/[0-9a-f]{38}(?:[0-9a-f]{24})?"
+    rf"|objects/pack/pack-{_HASH}\.(?:pack|idx|rev|bitmap|mtimes|keep)"
+    rf"|objects/pack/multi-pack-index(?:-{_HASH}\.(?:bitmap|rev))?"
+    rf"|objects/pack/multi-pack-index\.d/(?:multi-pack-index-chain|multi-pack-index-{_HASH}\.(?:midx|bitmap|rev))"
+    r"|objects/info/(?:commit-graph|packs|alternates)"
+    rf"|objects/info/commit-graphs/(?:commit-graph-chain|graph-{_HASH}\.graph)"
+    r"|lfs/objects/[0-9a-f]{2}/[0-9a-f]{2}/[0-9a-f]{64})"
 )
 #: Nested submodules deeper than this are refused rather than checked (as core/safe_git.py does).
 _MAX_SUBMODULE_DEPTH = 8
@@ -102,8 +116,8 @@ def refusal_for(repos: list[tuple[str, Path, str, str]], *, timeout: float = 30)
     found = link_refusal(*(folder for _, _, git_dir, common_dir in repos for folder in (common_dir, git_dir)))
     if found:
         return found
-    for label, folder, _, _ in repos:
-        keys = _redirecting_keys(folder, timeout=timeout)
+    for label, _, git_dir, _ in repos:
+        keys = _redirecting_keys(git_dir, timeout=timeout)
         if keys:
             whose = "the repository's own" if label == "the repository" else f"{label}'s own"
             return f"{whose} git config sets keys that can move git's writes elsewhere: " + ", ".join(keys)
@@ -196,17 +210,24 @@ def _refused_key(key: str) -> bool:
     return key.startswith("lfs.") and not _LFS_KEYS_ALLOWED.fullmatch(key)
 
 
-def _redirecting_keys(cwd: Path, *, timeout: float) -> list[str]:
+def _redirecting_keys(git_dir: str, *, timeout: float) -> list[str]:
+    """The keys the repository with git folder `git_dir` sets itself that move git's writes. The git
+    folder is named, since `git -C` opens no repository when the user's safe settings
+    (`safe.bareRepository`, ownership) say not to and then lists the user's keys only; a listing with
+    no repository scope is refused rather than read as clean (every repository's config sets
+    `core.repositoryformatversion`)."""
     probe = subprocess.run(
-        ["git", "-C", str(cwd), "config", "--show-scope", "--includes", "--null", "--list"],
+        ["git", "--git-dir", str(git_dir), "config", "--show-scope", "--includes", "--null", "--list"],
         capture_output=True, timeout=timeout, env=safe_git.safe_env(),
     )
-    if probe.returncode not in (0, 1):  # 1: no entries at all
+    if probe.returncode != 0:
         raise RuntimeError(f"git config could not be read ({probe.returncode})")
     fields = [entry.split(b"\n", 1)[0].decode("utf-8", "replace").strip().lower()
               for entry in probe.stdout.split(b"\0") if entry]
     if len(fields) % 2:
         raise RuntimeError("git config scopes could not be read")
+    if "local" not in fields[::2]:
+        raise RuntimeError("git listed none of the repository's own config")
     keys = {key for scope, key in zip(fields[::2], fields[1::2], strict=True)
             if scope not in _USER_CONFIG_SCOPES and _refused_key(key)}
     return sorted(keys)
