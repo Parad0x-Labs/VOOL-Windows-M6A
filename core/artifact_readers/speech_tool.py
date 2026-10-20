@@ -199,11 +199,33 @@ def tools_dir() -> Path:
         return Path(tempfile.gettempdir()) / "vool_reader_tools"
 
 
+def _host_is_macos() -> bool:
+    """The helper is Swift over Apple's Speech framework: macOS is the only host that can run it."""
+    return platform.system() == "Darwin"
+
+
+def _platform_unsupported(*, fmt: str = "") -> ReaderUnavailable | None:
+    """The typed reason a host that is not macOS cannot transcribe. None on macOS.
+
+    Answered BEFORE the toolchain reason: "install the Xcode Command Line Tools" is advice only a
+    Mac can follow, so any other host is told what is true there and what to do instead.
+    """
+    if _host_is_macos():
+        return None
+    where = "on Windows yet" if platform.system() == "Windows" else "on this system"
+    return ReaderUnavailable(
+        f"Dictation and audio transcription are not available {where}.",
+        code="speech_platform_unsupported",
+        remediation="Type your message instead.",
+        fmt=fmt,
+    )
+
+
 def toolchain_available() -> bool:
     """Buildable AND confinable. A helper this runtime could not sandbox is not available to it."""
     from . import _sandbox
 
-    return platform.system() == "Darwin" and os.access(SWIFTC, os.X_OK) and _sandbox.confinement_available()
+    return _host_is_macos() and os.access(SWIFTC, os.X_OK) and _sandbox.confinement_available()
 
 
 def _binary_path() -> Path:
@@ -212,6 +234,9 @@ def _binary_path() -> Path:
 
 def ensure_tool() -> Path:
     """The compiled helper, built once and cached by the hash of the source above."""
+    unsupported = _platform_unsupported()
+    if unsupported is not None:
+        raise unsupported
     if not toolchain_available():
         raise ReaderUnavailable(
             "This machine has no Swift toolchain, so the built-in speech recogniser cannot be built.",
@@ -359,6 +384,9 @@ def speech_available(*, locale: str = DEFAULT_LOCALE, probe_if_needed: bool = Tr
 
 def transcribe_unavailable(locale: str = DEFAULT_LOCALE) -> ReaderUnavailable | None:
     """THE typed reason transcription cannot run here, probed without side effects. None = it can."""
+    unsupported = _platform_unsupported(fmt="audio")
+    if unsupported is not None:
+        return unsupported
     if not toolchain_available():
         return ReaderUnavailable(
             "This machine has no Swift toolchain, so the built-in speech recogniser cannot be built.",
