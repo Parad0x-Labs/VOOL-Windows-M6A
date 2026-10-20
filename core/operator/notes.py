@@ -204,56 +204,251 @@ def update_note(*, title: str, new_body: str | None = None, append: str | None =
     return {"ok": True, "status": "updated", "note_path": str(path), "title": final_title}
 
 
+_ARCHIVE = ".archive"
+
+
+class _Unconfined(ValueError):
+    """A notes path that is a link, or does not stay where it is named, so no note is moved through it."""
+
+
+def _is_link(path: Path) -> bool:
+    from core import fs_links
+
+    try:
+        return fs_links.is_link(path)
+    except OSError as exc:  # examined but not examinable: treated as unconfined, never as a plain folder
+        raise _Unconfined(f"`{path.name}` cannot be examined ({exc})") from exc
+
+
+def _archive_dir(*, create: bool) -> Path:
+    """``notes/.archive`` as a real folder inside the notes folder, never through a link.
+
+    `_confined` resolves links and accepts one that stays inside the workspace, and the pinned writers
+    refuse a path with any link in it; so the archive must be the plain, unlinked entry the notes folder
+    names. A link there (a junction on Windows needs no privilege) would have archived notes into, and
+    restored and deleted files from, wherever it points."""
+    raw = notes_root() / _ARCHIVE
+    if _is_link(raw) or _confined(f"notes/{_ARCHIVE}") != raw:
+        raise _Unconfined("notes/.archive is a link, not a folder inside the notes folder")
+    if create and not raw.exists():
+        # Another archive, or another program, may make it meanwhile: the check below still refuses a link.
+        raw.mkdir(exist_ok=True)
+        if _is_link(raw) or _confined(f"notes/{_ARCHIVE}") != raw:
+            raise _Unconfined("notes/.archive is a link, not a folder inside the notes folder")
+    return raw
+
+
+def _read_entry(path: Path) -> tuple[bytes, str, tuple[int, int]] | None:
+    """A regular, unlinked UTF-8 file's bytes, its text (newlines as `read_text` gives them) and its
+    identity; None for anything else."""
+    import stat
+
+    try:
+        entry = os.lstat(path)
+        if _is_link(path) or not stat.S_ISREG(entry.st_mode):
+            return None
+        raw = path.read_bytes()
+        text = raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+    except (OSError, ValueError):
+        return None
+    return raw, text, (entry.st_dev, entry.st_ino)
+
+
+def _what_is_at(path: Path, identity: tuple[int, int], raw: bytes) -> str:
+    """What is at ``path`` now, against the file ``identity`` names as it held ``raw``: "same" (that file, with
+    those bytes), "gone" (nothing, or its folder is gone), "unchecked" (it cannot be looked at, in a folder this
+    process may no longer search, say), or "other" (other bytes, another file, a link or a folder; a file
+    another program wrote under the same name can even reuse the old file's identity)."""
+    import stat
+
+    from core import fs_links
+
+    try:
+        entry = os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return "gone"
+    except OSError:
+        return "unchecked"
+    if fs_links.is_link_stat(entry) or not stat.S_ISREG(entry.st_mode) or (entry.st_dev, entry.st_ino) != identity:
+        return "other"
+    try:
+        return "same" if path.read_bytes() == raw else "other"
+    except OSError:
+        return "unchecked"
+
+
+def _move_note(source: Path, source_entry: tuple[bytes, str, tuple[int, int]], target: Path, content: str) -> str:
+    """Write ``content`` as the new file ``target``, then remove ``source`` while it is still the file that was
+    read. "" when both happened. When ``source`` was not removed, the new copy is removed again only while
+    ``source`` still holds the note exactly as it was read; the answer is then "remove_failed" (the note stays
+    as it was), or "move_incomplete" when the copy cannot be removed and the note, checked again, still stays.
+    Otherwise the new copy is left where it is: "note_gone" when nothing is at ``source`` any more,
+    "note_changed" when other bytes, another file, a link or a folder are there, "note_unchecked" when that
+    cannot be checked. If ``source`` stops holding the note while VOOL removes the copy, the copy is written
+    again and the answer is one of those three; "copy_lost" when it cannot be written again, the one case in
+    which VOOL keeps no copy of a note another program changed or removed meanwhile. A copy VOOL did not
+    remove itself (another program moved or removed it first) is never written again."""
+    from core.execution.artifacts import (
+        DestinationChangedError,
+        ReviewedBaseChangedError,
+        pinned_atomic_write_text,
+        pinned_remove_created_file,
+    )
+
+    raw, _text, identity = source_entry
+    try:
+        created = pinned_atomic_write_text(target, content, expected_prior_sha256="")
+    except ReviewedBaseChangedError:
+        return "name_taken"
+    except DestinationChangedError:
+        return "unconfined"
+    except OSError:
+        return "write_failed"
+    try:
+        removed = pinned_remove_created_file(source, created_identity=identity,
+                                             expected_sha256=hashlib.sha256(raw).hexdigest())
+    except OSError:  # refused (DestinationChangedError, ReviewedBaseChangedError) or failed: what is there now decides
+        pass
+    else:
+        return "" if removed == "removed" else "note_gone"
+    answers = {"gone": "note_gone", "other": "note_changed", "unchecked": "note_unchecked"}
+    left = _what_is_at(source, identity, raw)
+    if left != "same":
+        return answers[left]
+    written = content.encode("utf-8")
+    try:
+        copy = pinned_remove_created_file(target, created_identity=created,
+                                          expected_sha256=hashlib.sha256(written).hexdigest())
+    except OSError:  # refused or failed: VOOL did not remove its copy
+        copy = "kept"
+    left = _what_is_at(source, identity, raw)
+    if left != "same":
+        if copy != "removed":
+            return answers[left]
+        try:
+            pinned_atomic_write_text(target, content, expected_prior_sha256="")
+        except OSError:
+            return "copy_lost"
+        return answers[left]
+    if copy == "removed" or _what_is_at(target, created, written) == "gone":
+        return "remove_failed"
+    return "move_incomplete"
+
+
 def archive_note(*, title: str) -> dict[str, Any]:
     """A reviewed, recoverable delete: the note moves to notes/.archive/ and stops being
     listed, read, searched or linked; nothing is erased.
 
     Archived notes keep their front matter (title, session, event links) plus an archived
-    timestamp, so a restore returns exactly what was archived.
+    timestamp, so a restore returns exactly what was archived. Only a note that is a plain file in
+    the notes folder moves, and only into a plain ``.archive`` folder there: the copy is written
+    first and the note removed only while it is still the file that was read, so nothing outside the
+    notes folder is written or removed through a link, and a stopped move never removes the note, and
+    removes its copy only while the note is there as it was read (if the note goes meanwhile, the copy is
+    written again).
     """
-    candidates = [path for path in _iter_note_files() if _split_front_matter(path.read_text(encoding="utf-8"))[0].get("title", "").casefold() == str(title).casefold()]
-    if len(candidates) != 1:
-        if not candidates:
+    try:
+        root = notes_root()
+        matches = [path for path in _iter_note_files()
+                   if _split_front_matter(path.read_text(encoding="utf-8"))[0].get("title", "").casefold() == str(title).casefold()]
+    except UnicodeDecodeError as exc:
+        return {"ok": False, "status": "archive_unreadable",
+                "detail": f"a file in the notes folder is not UTF-8 text ({exc.reason}); nothing was moved"}
+    except ValueError as exc:
+        return {"ok": False, "status": "archive_unconfined", "detail": str(exc)}
+    if len(matches) != 1:
+        if not matches:
             return {"ok": False, "status": "not_found"}
-        return {"ok": False, "status": "ambiguous", "matches": [str(path) for path in candidates]}
-    path = candidates[0]
-    meta, body = _split_front_matter(path.read_text(encoding="utf-8"))
+        return {"ok": False, "status": "ambiguous", "matches": [str(path) for path in matches]}
+    # `_iter_note_files` lists a link by where it leads: a note linked to another file in the
+    # workspace is that file, which an archive would then delete.
+    path = root / matches[0].name
+    entry = _read_entry(path) if matches[0] == path else None
+    if entry is None:
+        return {"ok": False, "status": "not_a_plain_note",
+                "detail": f"{path.name} is a link or not a plain UTF-8 file in the notes folder; nothing was moved"}
+    meta, body = _split_front_matter(entry[1])
     meta["archived_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     front = "\n".join(f"{key}: {value}" for key, value in meta.items() if value != "")
-    archive_dir = notes_root() / ".archive"
-    archive_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        archive_dir = _archive_dir(create=True)
+    except (ValueError, OSError) as exc:
+        return {"ok": False, "status": "archive_unconfined", "detail": str(exc)}
     target = archive_dir / path.name
-    if target.exists():
+    if os.path.lexists(target):
         return {"ok": False, "status": "archive_name_taken", "detail": f"an archived note already occupies {target.name}"}
-    from core.execution.artifacts import atomic_write_text
-
-    atomic_write_text(target, f"---\n{front}\n---\n\n{body.strip()}\n")
-    path.unlink()
+    stopped = _move_note(path, entry, target, f"---\n{front}\n---\n\n{body.strip()}\n")
+    if stopped:
+        detail = {
+            "move_incomplete": f"{path.name} stays in the notes folder, and VOOL could not remove its archived copy "
+                               f"{target.name}",
+            "note_gone": f"nothing is at {path.name} in the notes folder any more; VOOL wrote its archived copy "
+                         f"{target.name} and left it there",
+            "note_changed": f"{path.name} changed or was replaced in the notes folder meanwhile and was left as it is; "
+                            f"VOOL wrote its archived copy {target.name}, the note as VOOL read it, and left it there",
+            "note_unchecked": f"VOOL could not check whether {path.name} is still in the notes folder after writing "
+                              f"its archived copy {target.name}; it left that copy there",
+            "copy_lost": f"VOOL removed its archived copy {target.name} again while {path.name} was still in the notes "
+                         f"folder, then could not confirm that {path.name} is still there as VOOL read it, and could "
+                         f"not write the copy back, so it kept no copy of the note",
+        }.get(stopped, f"{path.name} stays in the notes folder")
+        return {"ok": False, "status": f"archive_{stopped}", "detail": detail}
     return {"ok": True, "status": "archived", "note_path": str(target), "title": str(meta.get("title") or title),
             "recovery": f"say: restore the note \"{title}\" to bring it back unchanged"}
 
 
 def restore_note(*, title: str) -> dict[str, Any]:
-    """Bring an archived note back: same front matter (minus the archive stamp), same body."""
-    archive_dir = notes_root() / ".archive"
+    """Bring an archived note back: same front matter (minus the archive stamp), same body.
+
+    Only plain files in a plain ``notes/.archive`` folder are read, restored and removed."""
+    try:
+        archive_dir = _archive_dir(create=False)
+    except (ValueError, OSError) as exc:
+        return {"ok": False, "status": "archive_unconfined", "detail": str(exc)}
     if not archive_dir.is_dir():
         return {"ok": False, "status": "not_found"}
-    candidates = [path for path in sorted(archive_dir.glob("*.md"))
-                  if _split_front_matter(path.read_text(encoding="utf-8"))[0].get("title", "").casefold() == str(title).casefold()]
+    candidates: list[tuple[Path, tuple[bytes, str, tuple[int, int]]]] = []
+    for path in sorted(archive_dir.glob("*.md")):
+        entry = _read_entry(path)
+        if entry is None:
+            continue  # a link or anything but a plain file is not an archived note
+        try:
+            if _confined(f"notes/{_ARCHIVE}/{path.name}") != path:
+                continue
+        except ValueError:
+            continue
+        if _split_front_matter(entry[1])[0].get("title", "").casefold() == str(title).casefold():
+            candidates.append((path, entry))
     if len(candidates) != 1:
         if not candidates:
             return {"ok": False, "status": "not_found"}
-        return {"ok": False, "status": "ambiguous", "matches": [str(path) for path in candidates]}
-    path = candidates[0]
-    meta, body = _split_front_matter(path.read_text(encoding="utf-8"))
+        return {"ok": False, "status": "ambiguous", "matches": [str(path) for path, _entry in candidates]}
+    path, entry = candidates[0]
+    meta, body = _split_front_matter(entry[1])
     meta.pop("archived_at", None)
     meta["updated"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     front = "\n".join(f"{key}: {value}" for key, value in meta.items() if value != "")
-    restored = _note_path(str(meta.get("title") or title))
-    from core.execution.artifacts import atomic_write_text
-
-    atomic_write_text(restored, f"---\n{front}\n---\n\n{body.strip()}\n")
-    path.unlink()
+    try:
+        restored = _note_path(str(meta.get("title") or title))
+    except ValueError as exc:
+        return {"ok": False, "status": "restore_unconfined", "detail": str(exc)}
+    restored = notes_root() / restored.name
+    stopped = _move_note(path, entry, restored, f"---\n{front}\n---\n\n{body.strip()}\n")
+    if stopped:
+        detail = {
+            "move_incomplete": f"{path.name} stays archived, and VOOL could not remove its restored copy "
+                               f"{restored.name}",
+            "note_gone": f"nothing is at {path.name} in the archive any more; VOOL wrote its restored copy "
+                         f"{restored.name} and left it there",
+            "note_changed": f"{path.name} changed or was replaced in the archive meanwhile and was left as it is; VOOL "
+                            f"wrote its restored copy {restored.name}, the note as VOOL read it, and left it there",
+            "note_unchecked": f"VOOL could not check whether {path.name} is still in the archive after writing its "
+                              f"restored copy {restored.name}; it left that copy there",
+            "copy_lost": f"VOOL removed its restored copy {restored.name} again while {path.name} was still in the "
+                         f"archive, then could not confirm that {path.name} is still there as VOOL read it, and could "
+                         f"not write the copy back, so it kept no copy of the note",
+        }.get(stopped, f"{path.name} stays archived")
+        return {"ok": False, "status": f"restore_{stopped}", "detail": detail}
     return {"ok": True, "status": "restored", "note_path": str(restored), "title": str(meta.get("title") or title)}
 
 
@@ -287,24 +482,35 @@ def link_note_to_event(note_path: str, *, event_uid: str, action_id: str = "") -
     """Write the provider receipt into the note AFTER the event verifiably exists.
 
     Called only from the calendar execution path that just verified the event, so the link
-    is evidence, not hope. The stored path is re-confined to the active project before any
-    byte is written — a path that resolves outside the workspace is refused, not written.
+    is evidence, not hope. The stored path must still be a note: a plain ``.md`` file directly in
+    the active project's notes folder, not a link. Anything else -- a path outside the workspace, or
+    another file inside it -- is refused, not written, and the note is rewritten only while it still
+    holds the bytes just read.
     """
+    from core.execution.artifacts import pinned_atomic_write_text
+
     try:
-        path = _confined(str(Path(str(note_path or "")).expanduser()))
+        root = notes_root()
+        path = root / Path(str(note_path or "")).expanduser().name
+        # `*.md` as the notes folder lists notes (any case of the extension on Windows).
+        if not path.match("*.md") or _confined(str(Path(str(note_path or "")).expanduser())) != path:
+            return False
     except ValueError:
         return False
-    if not path.is_file():
+    entry = _read_entry(path)
+    if entry is None:
         return False
-    from core.execution.artifacts import atomic_write_text
-
-    meta, body = _split_front_matter(path.read_text(encoding="utf-8"))
+    meta, body = _split_front_matter(entry[1])
     meta["linked_event_uid"] = str(event_uid)
     if action_id:
         meta["linked_action_id"] = str(action_id)
     meta["updated"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     front = "\n".join(f"{key}: {value}" for key, value in meta.items() if value != "")
-    atomic_write_text(path, f"---\n{front}\n---\n\n{body.strip()}\n")
+    try:
+        pinned_atomic_write_text(path, f"---\n{front}\n---\n\n{body.strip()}\n",
+                                 expected_prior_sha256=hashlib.sha256(entry[0]).hexdigest())
+    except OSError:
+        return False
     return True
 
 
