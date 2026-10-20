@@ -1825,6 +1825,36 @@ def _lineage_keys(filters: dict[str, Any]) -> list[str]:
     return keys
 
 
+def _within(path: str, root: str) -> bool:
+    """Whether ``path`` is ``root`` or lies beneath it. Pure string work on two absolute,
+    normalized paths: it never touches the filesystem."""
+    candidate = os.path.normcase(path)
+    base = os.path.normcase(root)
+    if candidate == base:
+        return True
+    return candidate.startswith(base.rstrip("\\/") + os.sep)
+
+
+def confine_to_root(raw: str, root: str) -> Path:
+    """``raw`` resolved inside ``root`` (a relative ``raw`` is root-relative), or ScopeRefused.
+
+    The lexical check runs first, so a path outside the root is refused before anything
+    touches the filesystem (on Windows a UNC path such as ``\\\\host\\share`` would make the
+    lookup reach the network). The symlink-resolved path is then checked again, so a link
+    inside the root that points outside it is refused too."""
+    root_abs = os.path.abspath(os.path.expanduser(str(root)))
+    candidate = os.path.expanduser(str(raw or "").strip())
+    if not os.path.isabs(candidate):
+        candidate = os.path.join(root_abs, candidate)
+    candidate = os.path.abspath(candidate)
+    if not _within(candidate, root_abs):
+        raise ScopeRefused(str(raw), "outside the workspace: no root covers this path")
+    real = os.path.realpath(candidate)
+    if not _within(real, os.path.realpath(root_abs)):
+        raise ScopeRefused(str(raw), "resolves outside the workspace through a link")
+    return Path(real)
+
+
 def compare(
     *,
     kind: str = "git_commits",
@@ -1920,7 +1950,7 @@ def compare(
             raise ArchaeologyInputError("compare kind files needs a workspace_root")
         max_file_bytes = int(effective["max_file_bytes"])
         def _file_item(name: str) -> dict:
-            full = Path(ws) / name
+            full = confine_to_root(name, ws)
             protected, reason = is_protected_path(full)
             if protected:
                 raise ScopeRefused(str(full), reason)
