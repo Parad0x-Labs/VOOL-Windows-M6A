@@ -1327,7 +1327,7 @@ def default_workspace_root() -> str:
     across the beta: finalbot, pocketbot, stashbot all landed invisible to the operator).
 
     Precedence, all preserved: an explicit VOOL_WORKSPACE_ROOT override wins (test rigs
-    and isolated homes rely on it), a chat bound to a project resolves to that project's
+    and isolated homes rely on it; in the installed Windows app the legacy NULLA_ name too), a chat bound to a project resolves to that project's
     folder upstream of this default, and a request that names its own location is honored
     by the planners. Development runs (no VOOL_PROJECT_ROOT) keep the working-directory
     workspace exactly as before. macOS folder privacy (TCC): the first Desktop write
@@ -1337,12 +1337,51 @@ def default_workspace_root() -> str:
     import os as _os
 
     packaged = bool(str(_os.environ.get("VOOL_PROJECT_ROOT") or "").strip())
+    # The installed Windows app sets VOOL_BUNDLE_ROOT, not VOOL_PROJECT_ROOT, so it used to fall
+    # through to its working directory, {app}\\app: the program folder, which runtime state
+    # protection refuses to write and uninstall deletes. The owner chose the Desktop for it too
+    # (2026-10-20). The Windows write gate still refuses the Desktop until it is a flagged folder.
+    installed_windows = bool(str(_os.environ.get("VOOL_BUNDLE_ROOT") or "").strip())
     override = str(_os.environ.get("VOOL_WORKSPACE_ROOT") or "").strip()
-    if override or not packaged:
+    if installed_windows and not override:
+        # The installed app reads its chosen workspace the way its notes and resolve_workspace_root
+        # do, legacy NULLA_ name included, so all three agree on the folder.
+        from core.runtime_paths import vool_env
+
+        override = str(vool_env("WORKSPACE_ROOT") or "").strip()
+    if override or not (packaged or installed_windows):
         return str(resolve_workspace_root())
+    if installed_windows and _os.name == "nt":
+        return str(_windows_desktop())
     from pathlib import Path as _Path
 
     return str(_Path.home() / "Desktop")
+
+
+def _windows_desktop() -> Path:
+    """The user's real Desktop on Windows (FOLDERID_Desktop), which OneDrive or a policy may have
+    moved away from %USERPROFILE%\\Desktop; that spelling only when the shell cannot answer."""
+    try:
+        import ctypes
+        import uuid
+        from ctypes import wintypes
+
+        class _Guid(ctypes.Structure):
+            _fields_ = [("data1", wintypes.DWORD), ("data2", wintypes.WORD), ("data3", wintypes.WORD),
+                        ("data4", ctypes.c_ubyte * 8)]
+
+        known = uuid.UUID("{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}")
+        guid = _Guid(known.fields[0], known.fields[1], known.fields[2], (ctypes.c_ubyte * 8)(*known.bytes[8:]))
+        found = ctypes.c_wchar_p()
+        try:
+            result = ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(guid), 0, None, ctypes.byref(found))
+            if result == 0 and found.value:
+                return Path(found.value)
+        finally:
+            ctypes.windll.ole32.CoTaskMemFree(found)  # owed even when the call fails
+    except (AttributeError, OSError, ValueError):
+        pass
+    return Path.home() / "Desktop"
 
 
 _ALLOWED_HOST_NAMES = frozenset({"127.0.0.1", "localhost", "::1"})
