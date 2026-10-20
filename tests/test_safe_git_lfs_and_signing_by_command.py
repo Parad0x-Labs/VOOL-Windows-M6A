@@ -797,3 +797,57 @@ def test_a_project_lfsconfig_is_read_the_same_from_a_subfolder(tmp_path: Path) -
     (repo / "deeper").mkdir()
 
     assert safe_git.lfs_endpoint_refusal(repo / "deeper", ("switch", "-c", "x")) == ""
+
+
+# ── Third review, 20 Oct ───────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("pick", [".", "gone"])
+def test_a_branch_that_tracks_a_local_branch_or_a_remote_without_a_url_is_not_a_server(tmp_path: Path,
+                                                                                       pick: str) -> None:
+    # `git branch --track feat main` writes branch.feat.remote=".", which reaches no server.
+    repo = _project(tmp_path)
+    _git(repo, "branch", "other")
+    _git(repo, "config", "branch.other.remote", pick)
+
+    assert safe_git.lfs_endpoint_refusal(repo, ("merge", "--no-ff", "--no-edit", "other")) == ""
+    assert safe_git.lfs_endpoint_refusal(repo, ("switch", "-c", "n")) == ""
+
+
+def test_a_branchs_remote_that_is_a_path_elsewhere_is_refused(tmp_path: Path) -> None:
+    repo = _project(tmp_path)
+    _git(repo, "branch", "other")
+    _git(repo, "config", "branch.other.remote", str(tmp_path / "elsewhere.git"))
+
+    refusal = safe_git.lfs_endpoint_refusal(repo, ("merge", "other"))
+
+    assert refusal.startswith("Git LFS would contact ") and "branch.other.remote" in refusal, refusal
+
+
+@pytest.mark.parametrize("target", ["FETCH_HEAD", "fetch_head"])
+def test_merging_fetch_head_is_refused_because_it_can_merge_several_heads(tmp_path: Path, target: str) -> None:
+    repo = _project(tmp_path)
+    _side_with_lfsconfig(repo)
+    (repo / ".git" / "FETCH_HEAD").write_text(f"{_git(repo, 'rev-parse', 'HEAD').strip()}\t\tbranch 'a'\n",
+                                              encoding="utf-8")
+
+    refusal = safe_git.lfs_endpoint_refusal(repo, ("merge", "--no-ff", "--no-edit", target))
+
+    assert refusal.startswith("the repository's Git LFS servers could not be checked"), refusal
+
+
+def test_file_names_that_are_not_utf8_do_not_refuse_an_ordinary_merge(tmp_path: Path) -> None:
+    # git stores names as bytes; Windows decodes undeclared output in its ANSI code page.
+    repo = _project(tmp_path)
+    blob = subprocess.run(["git", "-C", str(repo), "hash-object", "-w", "--stdin"], input=b"x\n", check=True,
+                          capture_output=True).stdout.strip()
+    listing = subprocess.run(["git", "-C", str(repo), "ls-tree", "HEAD"], check=True, capture_output=True).stdout
+    for name in ("n\xe9.txt".encode("latin-1"), "окс.txt".encode()):
+        listing += b"100644 blob " + blob + b"\t" + name + b"\n"
+    tree = subprocess.run(["git", "-C", str(repo), "mktree"], input=listing, check=True,
+                          capture_output=True).stdout.decode().strip()
+    _git(repo, "branch", "names", _git(repo, "commit-tree", tree, "-p", "HEAD", "-m", "names").strip())
+    _commit_lfsconfig(repo, "https://git.example.test/project.git/info/lfs")
+
+    assert safe_git.lfs_endpoint_refusal(repo, ("merge", "--no-ff", "--no-edit", "names")) == ""
+    assert safe_git.lfs_endpoint_refusal(repo, ("switch", "names")) == ""
