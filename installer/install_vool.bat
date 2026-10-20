@@ -301,7 +301,7 @@ set "MODEL_TAG="
 "%VENV_DIR%\Scripts\python.exe" -c "from core.install_recommendations import build_install_recommendation_truth; print(build_install_recommendation_truth().primary_local_model)" 2>nul > "%TEMP%\vool_model_tag.txt"
 set /p MODEL_TAG=<"%TEMP%\vool_model_tag.txt"
 del /f /q "%TEMP%\vool_model_tag.txt" >nul 2>&1
-if "%MODEL_TAG%"=="" set "MODEL_TAG=qwen2.5:7b"
+if "%MODEL_TAG%"=="" set "MODEL_TAG=qwen3:8b"
 set "RECOMMENDED_BUNDLE_MODELS="
 "%VENV_DIR%\Scripts\python.exe" -c "from core.install_recommendations import build_install_recommendation_truth; print(','.join(build_install_recommendation_truth().recommended_bundle_models))" 2>nul > "%TEMP%\vool_bundle_models.txt"
 if exist "%TEMP%\vool_bundle_models.txt" (
