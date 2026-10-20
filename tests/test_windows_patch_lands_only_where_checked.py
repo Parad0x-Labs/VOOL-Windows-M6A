@@ -893,11 +893,15 @@ def test_off_windows_a_patch_in_a_workspace_that_is_the_repository_top_still_goe
 OFFSET_PATCH = "--- a/notes.txt\n+++ b/notes.txt\n@@ -2,3 +2,3 @@\n one\n-two\n+TWO\n three\n" + SIGNATURE
 
 
-def _engines_stopped_at_their_time_limit(monkeypatch: pytest.MonkeyPatch, stopped: str) -> list[str]:
-    """Each patch engine VOOL starts, in order ("git apply", "python", "patch"). The engine named `stopped`
-    really runs, and writes, and is then stopped at its time limit: `subprocess.run` raises the timeout it
-    raises for a child that outlives it. Every other subprocess runs as it is."""
+def _engines_stopped_at_their_time_limit(
+    monkeypatch: pytest.MonkeyPatch, stopped: str, workspace: Path
+) -> tuple[list[str], list[dict[str, bytes | None]]]:
+    """Each patch engine VOOL starts, in order ("git apply", "python", "patch"), and the workspace as the
+    stopped engine left it. The engine named `stopped` really runs, and writes, and is then stopped at its
+    time limit: `subprocess.run` raises the timeout it raises for a child that outlives it. Every other
+    subprocess runs as it is."""
     started: list[str] = []
+    left: list[dict[str, bytes | None]] = []
     git, patch = shutil.which("git"), shutil.which("patch")
     real_run, real_python_engine = subprocess.run, workspace_tools._apply_unified_diff_python
 
@@ -907,6 +911,7 @@ def _engines_stopped_at_their_time_limit(monkeypatch: pytest.MonkeyPatch, stoppe
             started.append(engine)
         result = real_run(argv, *args, **kwargs)
         if engine == stopped:
+            left.append(_tree(workspace))
             raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"), output=result.stdout, stderr=result.stderr)
         return result
 
@@ -916,7 +921,12 @@ def _engines_stopped_at_their_time_limit(monkeypatch: pytest.MonkeyPatch, stoppe
 
     monkeypatch.setattr(subprocess, "run", run)
     monkeypatch.setattr(workspace_tools, "_apply_unified_diff_python", python_engine)
-    return started
+    return started, left
+
+
+def _lf(data: bytes | None) -> bytes | None:
+    """The bytes with each CRLF line ending read as LF."""
+    return data.replace(b"\r\n", b"\n") if data is not None else None
 
 
 @pytest.mark.parametrize("engine", ["git apply", "patch"])
@@ -932,16 +942,16 @@ def test_off_windows_an_engine_stopped_at_its_time_limit_leaves_the_outcome_unkn
         (workspace / "notes.txt").write_bytes(NOTES)
         _commit_all(workspace)
         patch = NOTES_PATCH + SIGNATURE
-        left = {"notes.txt": NOTES_EDITED}
+        written = {"notes.txt": NOTES_EDITED}
     else:
         assert shutil.which("patch"), "this case needs GNU patch: what it pins is VOOL's last engine stopped"
         workspace.mkdir()
         (workspace / "notes.txt").write_bytes(NOTES)
         patch = OFFSET_PATCH
         # GNU patch keeps the file as it was beside it when it places a section somewhere else.
-        left = {"notes.txt": NOTES_EDITED, "notes.txt.orig": NOTES}
+        written = {"notes.txt": NOTES_EDITED, "notes.txt.orig": NOTES}
     chat = _Chat(workspace, mode)
-    started = _engines_stopped_at_their_time_limit(monkeypatch, engine)
+    started, left = _engines_stopped_at_their_time_limit(monkeypatch, engine, workspace)
     arguments = {"patch": patch}
 
     execution = chat.run(PATCH, arguments, untouched=(workspace,))
@@ -949,7 +959,12 @@ def test_off_windows_an_engine_stopped_at_its_time_limit_leaves_the_outcome_unkn
     assert execution.ok is False, (execution.status, execution.response_text)
     assert execution.status == "unknown_reconciliation_required", (execution.status, execution.response_text)
     assert started == (["git apply"] if engine == "git apply" else ["python", "patch"])
-    assert _tree(workspace) == left
+    # The stopped engine wrote the patch. Git for Windows' GNU patch writes the file it patches with CRLF
+    # line endings (VOOL never starts it on Windows; this case runs there with the gate switched off), so
+    # the line endings it wrote are not compared.
+    assert len(left) == 1 and {name: _lf(data) for name, data in left[0].items()} == written
+    # Nothing ran over what it left: no other engine, and nothing put back.
+    assert _tree(workspace) == left[0]
     assert _ledger_state(arguments) == "unknown"
 
 
