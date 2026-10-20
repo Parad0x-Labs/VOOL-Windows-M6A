@@ -94,6 +94,7 @@ def execute_model_command(
     *,
     task_id: str = "",
     session_id: str = "",
+    source_context: dict[str, Any] | None = None,
 ) -> Any:
     """The model-lane execution of an ``operator.command.*`` tool call.
 
@@ -104,6 +105,7 @@ def execute_model_command(
 
     from core.command_registry.execute import ExecutionContext, execute_command
     from core.execution.models import ToolIntentExecution, _tool_observation
+    from core.runtime_execution_tools import _workspace_root
 
     command_id = command_id_for(intent)
     if command_id is None:
@@ -124,7 +126,11 @@ def execute_model_command(
             principal="model",
             # scoped identity for the budget door's direct leg; with an active turn
             # ledger the gateway resolves the session/turn identity itself
-            extra={"session_id": str(session_id or ""), "task_id": str(task_id or "")},
+            extra={
+                "session_id": str(session_id or ""),
+                "task_id": str(task_id or ""),
+                "bound_workspace_root": str(_workspace_root(source_context)),
+            },
         ),
     )
     payload = envelope.to_json()

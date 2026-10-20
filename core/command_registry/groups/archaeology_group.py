@@ -27,6 +27,7 @@ from core.project_archaeology import (
     ArchaeologyInputError,
     ReferenceNotFound,
     ScopeRefused,
+    confine_to_root,
 )
 from core.project_archaeology import (
     compare as archaeology_compare,
@@ -152,14 +153,31 @@ def _identity_summary(results: list[dict], *, cap: int = 8) -> str:
     return ", ".join(parts) + tail
 
 
+def _workspace_root_for(inp, ctx) -> str:
+    """The workspace root a command may read. An operator names any root; the model only one
+    inside the folder its chat is bound to (``bound_workspace_root``, set by the model door from
+    the turn's trusted context), the same boundary the workspace file tools hold. An empty root
+    stays empty: the stores are searched and no folder is walked."""
+    requested = str(inp.workspace_root or "").strip()
+    if not requested or ctx.principal != "model":
+        return requested
+    bound = str((ctx.extra or {}).get("bound_workspace_root") or "").strip()
+    if not bound:
+        from core.runtime_paths import resolve_workspace_root
+
+        bound = str(resolve_workspace_root(None))
+    return str(confine_to_root(requested, bound))
+
+
 # -- handlers (thin adapters over the authority) -------------------------------
 
 
 def _handle_locate(inp, ctx):
     try:
+        workspace_root = _workspace_root_for(inp, ctx)
         payload = archaeology_locate(
             inp.reference,
-            workspace_root=inp.workspace_root,
+            workspace_root=workspace_root,
             limit=inp.limit,
             requester=f"command:{ctx.projection}",
         )
@@ -177,6 +195,7 @@ def _handle_locate(inp, ctx):
 
 def _handle_search(inp, ctx):
     try:
+        workspace_root = _workspace_root_for(inp, ctx)
         payload = archaeology_search(
             text=inp.text,
             store=inp.store,
@@ -186,7 +205,7 @@ def _handle_search(inp, ctx):
             path_prefix=inp.path_prefix,
             since=inp.since,
             until=inp.until,
-            workspace_root=inp.workspace_root,
+            workspace_root=workspace_root,
             limit=inp.limit,
             requester=f"command:{ctx.projection}",
         )
@@ -204,6 +223,7 @@ def _handle_search(inp, ctx):
 
 def _handle_trace(inp, ctx):
     try:
+        workspace_root = _workspace_root_for(inp, ctx)
         payload = archaeology_trace(
             turn_id=inp.turn_id,
             session_id=inp.session_id,
@@ -212,7 +232,7 @@ def _handle_trace(inp, ctx):
             path=inp.path,
             since=inp.since,
             until=inp.until,
-            workspace_root=inp.workspace_root,
+            workspace_root=workspace_root,
             limit=inp.limit,
             requester=f"command:{ctx.projection}",
         )
@@ -230,11 +250,12 @@ def _handle_trace(inp, ctx):
 
 def _handle_compare(inp, ctx):
     try:
+        workspace_root = _workspace_root_for(inp, ctx)
         payload = archaeology_compare(
             kind=inp.kind,
             a=inp.a,
             b=inp.b,
-            workspace_root=inp.workspace_root,
+            workspace_root=workspace_root,
             requester=f"command:{ctx.projection}",
         )
     except (ArchaeologyInputError, ScopeRefused, ReferenceNotFound, LookupError) as exc:
@@ -251,11 +272,12 @@ def _handle_compare(inp, ctx):
 
 def _handle_recovery_plan(inp, ctx):
     try:
+        workspace_root = _workspace_root_for(inp, ctx)
         payload = archaeology_recovery_plan(
             reference=inp.reference,
             path=inp.path,
             turn_id=inp.turn_id,
-            workspace_root=inp.workspace_root,
+            workspace_root=workspace_root,
             limit=inp.limit,
             requester=f"command:{ctx.projection}",
         )
