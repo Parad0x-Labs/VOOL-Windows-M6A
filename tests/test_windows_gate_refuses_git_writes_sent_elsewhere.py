@@ -289,7 +289,9 @@ def test_a_submodule_whose_git_folder_is_outside_the_marked_folders_is_refused(
         moved = outside / "lib-git"
         shutil.move(str(modules), str(moved))
         _git(repo, "config", "--file", str(moved / "config"), "core.worktree", str(repo / "lib"))
-        (repo / "lib" / ".git").write_text(f"gitdir: {moved}\n", encoding="utf-8")
+        gitfile = repo / "lib" / ".git"
+        gitfile.unlink()  # Git for Windows hides it, and Windows refuses to overwrite a hidden file
+        gitfile.write_text(f"gitdir: {moved.as_posix()}\n", encoding="utf-8")
 
     _refused(tmp_path, monkeypatch, world, mode, prepare, says="This call also changes submodule lib's git folder")
 
@@ -326,7 +328,7 @@ def test_the_user_s_own_git_lfs_settings_still_commit(tmp_path: Path, monkeypatc
     """System and global config belong to the user (as in core/safe_git.py), so a global `lfs.storage` is theirs."""
     marked, repo, _ = _marked_repo(tmp_path, monkeypatch)
     home = Path(os.environ["HOME"])
-    (home / ".gitconfig").write_text(f"[lfs]\n\tstorage = {home / 'lfs'}\n", encoding="utf-8")
+    (home / ".gitconfig").write_text(f"[lfs]\n\tstorage = {(home / 'lfs').as_posix()}\n", encoding="utf-8")
     session = _bound_session(repo)
 
     _approved_commit_runs(session, marked, repo, mode, world)
