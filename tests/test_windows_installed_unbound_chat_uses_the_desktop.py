@@ -24,7 +24,8 @@ from core.web.api.runtime import default_workspace_root
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch, tmp_path):
-    for name in ("VOOL_PROJECT_ROOT", "VOOL_WORKSPACE_ROOT", "VOOL_BUNDLE_ROOT", gate.ENV_VAR):
+    for name in ("VOOL_PROJECT_ROOT", "VOOL_WORKSPACE_ROOT", "NULLA_PROJECT_ROOT", "NULLA_WORKSPACE_ROOT",
+                 "VOOL_BUNDLE_ROOT", "NULLA_BUNDLE_ROOT", gate.ENV_VAR):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("VOOL_HOME", str(tmp_path / "home"))
 
@@ -46,6 +47,19 @@ def test_a_chosen_workspace_still_wins_in_the_installed_app(tmp_path, monkeypatc
     monkeypatch.setenv("VOOL_WORKSPACE_ROOT", str(tmp_path / "chosen"))
 
     assert default_workspace_root() == str((tmp_path / "chosen").resolve())
+
+
+def test_a_workspace_chosen_under_the_legacy_name_still_wins_in_the_installed_app(tmp_path, monkeypatch) -> None:
+    """Notes and resolve_workspace_root read NULLA_WORKSPACE_ROOT too; the unbound default must agree."""
+    from core.operator import notes
+    from core.runtime_paths import resolve_workspace_root
+
+    chosen = tmp_path / "chosen"
+    monkeypatch.setenv("VOOL_BUNDLE_ROOT", str(tmp_path / "Programs" / "VOOL"))
+    monkeypatch.setenv("NULLA_WORKSPACE_ROOT", str(chosen))
+
+    assert default_workspace_root() == str(resolve_workspace_root()) == str(chosen.resolve())
+    assert notes._workspace_root() == chosen.resolve()
 
 
 def test_a_blank_bundle_root_is_not_the_installed_app(tmp_path, monkeypatch) -> None:
