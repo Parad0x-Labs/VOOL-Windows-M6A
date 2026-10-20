@@ -61,7 +61,7 @@ _EXECUTABLE_KEY_SUFFIXES = frozenset({
 _EXECUTABLE_KEY_PATTERNS = ("include.path", "includeif.*.path", "pager.*", "submodule.*.update",
                             "protocol.allow", "protocol.*.allow", "browser.*.path", "man.*.path",
                             # Signing switched on makes git run gpg, gpgsm or ssh-keygen without the
-                            # repository naming a program; any value fails closed.
+                            # repository naming a program; only a definite false passes (_SIGNING_SWITCHES).
                             "commit.gpgsign", "tag.gpgsign", "tag.forcesignannotated", "push.gpgsign",
                             # Git LFS runs a custom transfer agent's program for push and fetch.
                             "lfs.customtransfer.*", "lfs.standalonetransferagent")
@@ -125,9 +125,12 @@ def _executable_config(cwd: Path, *, timeout: float, depth: int) -> list[str]:
         raise RuntimeError("git config scopes could not be read")
     keys = []
     for index in range(0, len(scoped) - 1, 2):
-        scope, key = scoped[index], scoped[index + 1]
-        if scope not in _USER_CONFIG_SCOPES and is_executable_key(key):
-            keys.append(key)
+        (scope, _), (key, value) = scoped[index], scoped[index + 1]
+        if scope in _USER_CONFIG_SCOPES or not is_executable_key(key):
+            continue
+        if key in _SIGNING_SWITCHES and value is not None and value.lower() in _DEFINITE_FALSE:
+            continue  # signing switched off runs nothing
+        keys.append(key)
     # Bare, or inside the git directory: there is no work tree, so git recurses into no submodule.
     submodules = _checked_out_submodules(cwd, timeout=timeout) if inside_work_tree else []
     for path, submodule in submodules:
@@ -170,13 +173,21 @@ def _rev_parse(cwd: Path, option: str, *, timeout: float) -> str:
     return answer
 
 
+#: Keys that make git run a signing program when on, without naming one. Each value set in a
+#: repository-owned scope must be one of git's definite false spellings, or the repository is refused:
+#: a bare key (true), an empty value and anything else fail closed.
+_SIGNING_SWITCHES = frozenset({"commit.gpgsign", "tag.gpgsign", "tag.forcesignannotated", "push.gpgsign"})
+_DEFINITE_FALSE = frozenset({"false", "no", "off", "0"})
+
+
 #: Config scopes that belong to the user, not to the repository (``git config --show-scope``).
 _USER_CONFIG_SCOPES = frozenset({"system", "global"})
 
 
-def _config_entries(cwd: Path, options: list[str], *, timeout: float) -> list[str]:
-    """``git config --list --includes --null`` with ``options``, split into lowercase fields: with
-    ``--show-scope`` each entry is a scope field followed by its key."""
+def _config_entries(cwd: Path, options: list[str], *, timeout: float) -> list[tuple[str, str | None]]:
+    """``git config --list --includes --null`` with ``options``, split into ``(lowercase name, value)``
+    fields; the value is None for a key set without one. With ``--show-scope`` each entry is a scope
+    field followed by its key field."""
     probe = subprocess.run(
         ["git", "-C", str(cwd), "config", *options, "--includes", "--null", "--list"],
         capture_output=True, timeout=timeout, env=safe_env(),
@@ -186,7 +197,9 @@ def _config_entries(cwd: Path, options: list[str], *, timeout: float) -> list[st
     fields = []
     for entry in probe.stdout.split(b"\0"):
         if entry:
-            fields.append(entry.split(b"\n", 1)[0].decode("utf-8", "replace").strip().lower())
+            name, newline, value = entry.partition(b"\n")
+            fields.append((name.decode("utf-8", "replace").strip().lower(),
+                           value.decode("utf-8", "replace") if newline else None))
     return fields
 
 
