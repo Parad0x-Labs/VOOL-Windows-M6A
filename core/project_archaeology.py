@@ -44,6 +44,8 @@ Law of this module, restated on every envelope:
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import datetime as _dt
 import hashlib
 import json
@@ -1140,16 +1142,53 @@ def _git(repo_root: str | Path, *args: str, timeout: float = 20.0) -> tuple[bool
     return completed.returncode == 0, completed.stdout.strip()
 
 
+#: The highest folder the repository search may reach ("" = no limit). The model's door sets it
+#: to the chat's bound folder, so git evidence never comes from a repository above that folder.
+_GIT_CEILING: contextvars.ContextVar[str] = contextvars.ContextVar("archaeology_git_ceiling", default="")
+
+
+@contextlib.contextmanager
+def git_ceiling(root: str):
+    """Within this block, the repository for a workspace root is looked for no higher than
+    ``root``: a repository whose top is above it gives no git evidence."""
+    token = _GIT_CEILING.set(os.path.realpath(os.path.expanduser(str(root))))
+    try:
+        yield
+    finally:
+        _GIT_CEILING.reset(token)
+
+
 def _git_repo_for(workspace_root: str) -> str:
     candidate = Path(workspace_root).expanduser()
     if not workspace_root:
         return ""
+    ceiling = _GIT_CEILING.get()
     probe = candidate if (candidate / ".git").exists() else candidate.parent
     while str(probe) != str(probe.parent):
+        if ceiling and not _within(os.path.realpath(probe), ceiling):
+            return ""
         if (probe / ".git").exists():
+            if ceiling and not _git_dirs_within(probe, ceiling):
+                return ""
             return str(probe)
         probe = probe.parent
     return ""
+
+
+def _git_dirs_within(repo: Path, ceiling: str) -> bool:
+    """Whether the git directory a ``.git`` entry leads to (a ``gitdir:`` file or a link can point
+    anywhere) and its common directory both lie under ``ceiling``. Unknown is outside."""
+    try:
+        probe = subprocess.run(
+            safe_git.read_only_argv(repo, "rev-parse", "--absolute-git-dir", "--git-common-dir"),
+            capture_output=True, text=True, timeout=20.0, env=safe_git.safe_env(),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    lines = probe.stdout.splitlines()
+    if probe.returncode != 0 or len(lines) != 2:
+        return False
+    return all(_within(os.path.realpath(os.path.join(repo, line)), ceiling) for line in lines)
 
 
 def _git_commit_item(repo: str, reference: str, confidence: str, scan: _Scan) -> dict | None:
