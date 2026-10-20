@@ -199,8 +199,12 @@ def no_route_hint() -> str:
     except Exception:
         return ""
     if shortfall:
+        graphics = shortfall.get("memory") == "graphics"
         lead = (
-            f"`{shortfall['model']}` needs about {shortfall['required_gb']:.1f} GB of memory and this computer "
+            f"`{shortfall['model']}` needs about {shortfall['required_gb']:.1f} GB of graphics memory and this "
+            f"computer's graphics card can spare about {shortfall['available_gb']:.1f} GB for it, so I didn't start it."
+            if graphics
+            else f"`{shortfall['model']}` needs about {shortfall['required_gb']:.1f} GB of memory and this computer "
             f"can spare about {shortfall['available_gb']:.1f} GB for it, so I didn't start it."
         )
         if has_cloud:
@@ -208,7 +212,8 @@ def no_route_hint() -> str:
                 f"{lead} Pick a cloud model in the model selector, or save one in Setup under "
                 "\u201cWhere should it think?\u201d so Auto uses it."
             )
-        return f"{lead} Add a cloud key in Settings \u2192 API Keys, or run VOOL on a computer with more memory."
+        bigger = "a graphics card with more memory" if graphics else "a computer with more memory"
+        return f"{lead} Add a cloud key in Settings \u2192 API Keys, or run VOOL on {bigger}."
     if has_cloud:
         return (
             "no local model is running on this computer, and cloud models only answer once you "
