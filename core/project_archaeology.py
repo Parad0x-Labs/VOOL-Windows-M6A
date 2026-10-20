@@ -1089,18 +1089,25 @@ _GIT_READONLY_TAIL = (
 
 
 def _executable_local_config(repo: Path, *, timeout: float) -> list[str]:
-    """safe_git.executable_local_config, probed through the hardened argv like every archaeology
-    git call. Fails closed: a config that cannot be read counts as naming a program."""
+    """The program-running keys the repository itself sets, probed through the hardened argv
+    like every archaeology git call. Every scope but the user's own (system, global) and this
+    call's hardening (command) counts: ``local`` and ``worktree`` (a repository that enables
+    ``extensions.worktreeConfig`` makes git obey ``.git/config.worktree`` too). Fails closed: a
+    config that cannot be read counts as naming a program."""
     probe = subprocess.run(
-        safe_git.read_only_argv(repo, "config", "--local", "--includes", "--null", "--list"),
+        safe_git.read_only_argv(repo, "config", "--list", "--show-scope", "--includes", "--null"),
         capture_output=True,
         timeout=timeout,
         env=safe_git.safe_env(),
     )
-    if probe.returncode not in (0, 1):  # 1: no local config entries at all
+    if probe.returncode not in (0, 1):  # 1: no config entries at all
         return [f"<unreadable git config: exit {probe.returncode}>"]
+    fields = probe.stdout.split(b"\0")
     keys = set()
-    for entry in probe.stdout.split(b"\0"):
+    # --show-scope --null: "<scope>\0<key>\n<value>\0" per entry.
+    for scope, entry in zip(fields[0::2], fields[1::2], strict=False):
+        if scope.decode("utf-8", "replace") in ("system", "global", "command"):
+            continue
         key = entry.split(b"\n", 1)[0].decode("utf-8", "replace").strip().lower()
         if key and safe_git.is_executable_key(key):
             keys.add(key)
@@ -1321,13 +1328,16 @@ def _walk_tree(
                 scan.cut(f"scan time budget {effective['max_scan_seconds']}s exhausted")
                 break
             full = Path(entry.path)
-            if entry.is_symlink():
+            # A Windows junction is a link too, but DirEntry.is_symlink() says False for it and
+            # is_dir() follows it: without this check the walk descended into wherever it points.
+            is_junction = getattr(entry, "is_junction", None)
+            if entry.is_symlink() or (callable(is_junction) and is_junction()):
                 scan.files_visited += 1
                 try:
                     target = full.resolve(strict=False)
                 except OSError:
                     target = full
-                escaped = not str(target).startswith(str(root.resolve(strict=False)))
+                escaped = not _within(str(target), str(root.resolve(strict=False)))
                 if escaped:
                     refused.append(
                         {
