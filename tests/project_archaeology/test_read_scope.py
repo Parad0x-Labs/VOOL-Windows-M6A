@@ -202,3 +202,43 @@ def test_model_search_in_a_subfolder_of_the_bound_folder_still_walks(workspace):
     assert execution.ok is True, execution.details["envelope"]
     paths = [row.get("path") for row in execution.details["envelope"]["data"]["results"]]
     assert "night-report.md" in paths, paths
+
+
+# -- links the walk must not follow ------------------------------------------------
+
+
+class _JunctionLike:
+    """A directory entry as Windows reports a junction: is_symlink() False, is_junction() True,
+    is_dir() following it."""
+
+    def __init__(self, entry) -> None:
+        self._entry = entry
+
+    def __getattr__(self, name):
+        return getattr(self._entry, name)
+
+    def is_symlink(self) -> bool:
+        return False
+
+    def is_junction(self) -> bool:
+        return True
+
+
+def test_the_walk_never_follows_a_junction_out_of_the_workspace(workspace, outside_file, monkeypatch):
+    import core.project_archaeology as pa
+
+    os.symlink(outside_file.parent, workspace / "junction-out", target_is_directory=True)
+    real_scandir = os.scandir
+
+    def scandir_with_junction(path):
+        return [
+            _JunctionLike(entry) if entry.name == "junction-out" else entry
+            for entry in real_scandir(path)
+        ]
+
+    monkeypatch.setattr(pa.os, "scandir", scandir_with_junction)
+    envelope = pa.search(text=OUTSIDE_MARKER, workspace_root=str(workspace))
+    monkeypatch.undo()
+
+    assert OUTSIDE_MARKER not in repr(envelope["results"]), envelope["results"]
+    assert any(row.get("path") == "junction-out" for row in envelope["scope"]["refused"]), envelope["scope"]

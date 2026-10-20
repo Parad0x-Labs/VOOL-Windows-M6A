@@ -95,3 +95,21 @@ def test_locate_by_commit_never_runs_the_program(tmp_path) -> None:
     except arch.ReferenceNotFound:
         pass
     assert not ran.exists(), ran.read_text()
+
+
+def test_a_program_named_in_config_worktree_is_refused_too(tmp_path) -> None:
+    # extensions.worktreeConfig makes git obey .git/config.worktree, which `git config --local`
+    # does not list.
+    program, ran = _marker(tmp_path)
+    repo, first, second = _signed_history(tmp_path, program)
+    _git(repo, "config", "--unset", "gpg.program")
+    _git(repo, "config", "--unset", "log.showSignature")
+    _git(repo, "config", "extensions.worktreeConfig", "true")
+    _git(repo, "config", "--worktree", "gpg.program", str(program))
+    _git(repo, "config", "--worktree", "log.showSignature", "true")
+
+    with pytest.raises(arch.ScopeRefused) as refused:
+        arch.compare(kind="git_commits", a=first, b=second, workspace_root=str(repo))
+
+    assert "gpg.program" in refused.value.reason
+    assert not ran.exists(), ran.read_text()
