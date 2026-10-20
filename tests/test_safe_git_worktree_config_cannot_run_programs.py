@@ -517,8 +517,9 @@ def test_control_a_commits_automatic_gc_runs_the_repositorys_recent_objects_hook
     marker = tmp_path / "MARKER"
     repo = _auto_gc_runs_the_recent_objects_hook(tmp_path, marker)
 
-    subprocess.run(safe_git.hardened_argv(repo, "commit", "-q", "-a", "-m", "gc"), capture_output=True,
-                   timeout=60, env=safe_git.safe_env())
+    # Without VOOL's housekeeping flags (hardening_args turns automatic housekeeping off).
+    subprocess.run(["git", "-c", f"core.hooksPath={os.devnull}", "-C", str(repo), "commit", "-q", "-a", "-m", "gc"],
+                   capture_output=True, timeout=60, env=safe_git.safe_env())
 
     assert marker.exists(), "the commit's gc did not run the hook; the case below proves nothing"
 
