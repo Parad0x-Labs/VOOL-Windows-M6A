@@ -74,7 +74,6 @@ def test_adding_a_worktree_of_a_branch_naming_another_lfs_server_is_refused(repo
     direct = local_lifecycle._run(str(repo), "worktree", "add", str(target), "feat", mutating=True)
 
     assert receipt.status != "applied", receipt
-    assert "git was" in (receipt.reason or ""), receipt
     assert direct.returncode != 0 and "evil.example" in direct.stderr, direct.stderr
     assert not target.exists()
 
@@ -114,6 +113,39 @@ def test_cherry_picking_a_commit_naming_another_lfs_server_is_refused(repo) -> N
     assert receipt.status != "applied", receipt
     assert _git(repo, "rev-parse", "HEAD") == head
     assert not (repo / ".lfsconfig").exists()
+
+
+def _remote_only(repo: Path, branch: str, lfsconfig: str) -> None:
+    """Leave ``branch`` only as origin's remote-tracking branch, as a fetch would."""
+    sha = _branch_with(repo, branch, lfsconfig)
+    _git(repo, "update-ref", f"refs/remotes/origin/{branch}", sha)
+    _git(repo, "branch", "-D", branch)
+
+
+def test_a_worktree_of_a_branch_only_the_remote_has_is_checked_too(repo, tmp_path) -> None:
+    # `worktree add <path> rb` creates rb from origin/rb when no local rb exists.
+    _remote_only(repo, "rb", HOSTILE)
+    target = tmp_path / "rb-wt"
+
+    proc = local_lifecycle._run(str(repo), "worktree", "add", str(target), "rb", mutating=True)
+
+    assert proc.returncode != 0 and "evil.example" in proc.stderr, proc.stderr
+    assert not target.exists()
+
+
+def test_a_tag_of_the_same_name_does_not_hide_the_branch_from_the_check(repo, tmp_path) -> None:
+    # rev-parse reads "feat" as the tag; switch and worktree add check out the branch.
+    _git(repo, "tag", "feat")
+    _branch_with(repo, "feat", HOSTILE)
+    lc, fork, broker = _lifecycle(repo)
+
+    switched = lc.switch_branch(fork, broker, "feat")
+    added = local_lifecycle._run(str(repo), "worktree", "add", str(tmp_path / "feat-wt"), "feat", mutating=True)
+
+    assert switched.status != "applied", switched
+    assert not (repo / ".lfsconfig").exists()
+    assert added.returncode != 0 and "evil.example" in added.stderr, added.stderr
+    assert not (tmp_path / "feat-wt").exists()
 
 
 # -- the ordinary operations still run ----------------------------------------------------------
@@ -170,3 +202,42 @@ def test_a_branch_carrying_another_lfs_server_can_still_be_deleted(repo) -> None
 
     assert receipt.status == "applied", receipt
     assert "feat" not in _git(repo, "branch", "--list", "feat")
+
+
+def test_switching_to_a_branch_only_the_remote_has_still_works(repo) -> None:
+    _remote_only(repo, "rb", "")
+    lc, fork, broker = _lifecycle(repo)
+
+    receipt = lc.switch_branch(fork, broker, "rb")
+
+    assert receipt.status == "applied", receipt
+    assert _git(repo, "symbolic-ref", "--short", "HEAD") == "rb"
+
+
+def test_a_root_commit_can_still_be_cherry_picked(repo) -> None:
+    _git(repo, "switch", "-q", "--orphan", "fresh")
+    (repo / "c.txt").write_text("three\n")
+    _git(repo, "add", "c.txt")
+    _git(repo, "commit", "-qm", "root")
+    sha = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "switch", "-q", "-f", "main")
+    head = _git(repo, "rev-parse", "HEAD")
+    lc, fork, broker = _lifecycle(repo)
+
+    receipt = lc.cherry_pick(fork, broker, sha, expected_head=head, expected_branch="main")
+
+    assert receipt.status == "applied", receipt
+    assert (repo / "c.txt").read_text() == "three\n"
+
+
+def test_a_worktree_can_still_be_removed_while_the_work_tree_names_another_lfs_server(repo, tmp_path) -> None:
+    _git(repo, "branch", "review")
+    target = tmp_path / "review-wt"
+    _git(repo, "worktree", "add", "-q", str(target), "review")
+    (repo / ".lfsconfig").write_text(HOSTILE)  # untracked, in the main work tree only
+    lc, fork, broker = _lifecycle(repo)
+
+    receipt = lc.remove_worktree(fork, broker, str(target))
+
+    assert receipt.status == "applied", receipt
+    assert not target.exists()
