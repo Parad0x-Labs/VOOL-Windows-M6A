@@ -267,10 +267,11 @@ def _move_note(source: Path, source_entry: tuple[bytes, str, tuple[int, int]], t
     """Write ``content`` as the new file ``target``, then remove ``source`` while it is still the file that was
     read. "" when both happened. When ``source`` was not removed, the new copy is removed again only while
     ``source`` still holds the note exactly as it was read, so the note's text is never left nowhere; the
-    answer is then "remove_failed" (``source`` could not be removed), or "move_incomplete" when the copy cannot
-    be removed either. Otherwise the new copy is left where it is: "note_gone" when nothing is at ``source`` any
+    answer is then "remove_failed" (the note stays as it was), or "move_incomplete" when the copy cannot be
+    removed either. Otherwise the new copy is left where it is: "note_gone" when nothing is at ``source`` any
     more, "note_changed" when other bytes, another file, a link or a folder are there, "note_unchecked" when
-    that cannot be checked."""
+    that cannot be checked. If ``source`` stops holding the note while the copy is being removed, the copy is
+    written again and the answer is one of those three; "copy_lost" if it cannot be written again."""
     from core.execution.artifacts import (
         DestinationChangedError,
         ReviewedBaseChangedError,
@@ -290,10 +291,8 @@ def _move_note(source: Path, source_entry: tuple[bytes, str, tuple[int, int]], t
     try:
         removed = pinned_remove_created_file(source, created_identity=identity,
                                              expected_sha256=hashlib.sha256(raw).hexdigest())
-    except (DestinationChangedError, ReviewedBaseChangedError):
-        stopped = "note_changed"
-    except OSError:
-        stopped = "remove_failed"
+    except OSError:  # refused (DestinationChangedError, ReviewedBaseChangedError) or failed: what is there now decides
+        pass
     else:
         return "" if removed == "removed" else "note_gone"
     left = _what_is_at(source, identity, raw)
@@ -305,7 +304,14 @@ def _move_note(source: Path, source_entry: tuple[bytes, str, tuple[int, int]], t
     except OSError:
         if _what_is_at(target, created, written) != "gone":
             return "move_incomplete"
-    return stopped
+    left = _what_is_at(source, identity, raw)
+    if left == "same":
+        return "remove_failed"
+    try:
+        pinned_atomic_write_text(target, content, expected_prior_sha256="")
+    except OSError:
+        return "copy_lost"
+    return {"gone": "note_gone", "other": "note_changed", "unchecked": "note_unchecked"}[left]
 
 
 def archive_note(*, title: str) -> dict[str, Any]:
@@ -354,12 +360,14 @@ def archive_note(*, title: str) -> dict[str, Any]:
         detail = {
             "move_incomplete": f"{path.name} stays in the notes folder, and VOOL could not remove its archived copy "
                                f"{target.name}",
-            "note_gone": f"nothing is at {path.name} in the notes folder any more; VOOL did not remove its archived "
-                         f"copy {target.name}",
+            "note_gone": f"nothing is at {path.name} in the notes folder any more; VOOL wrote its archived copy "
+                         f"{target.name} and left it there",
             "note_changed": f"{path.name} changed or was replaced in the notes folder meanwhile and was left as it is; "
-                            f"VOOL did not remove its archived copy {target.name}, the note as VOOL read it",
+                            f"VOOL wrote its archived copy {target.name}, the note as VOOL read it, and left it there",
             "note_unchecked": f"VOOL could not check whether {path.name} is still in the notes folder after writing "
-                              f"its archived copy {target.name}; it did not remove that copy",
+                              f"its archived copy {target.name}; it left that copy there",
+            "copy_lost": f"{path.name} changed or left the notes folder while VOOL removed its archived copy "
+                         f"{target.name} again, and VOOL could not write the copy back, so it kept no copy of the note",
         }.get(stopped, f"{path.name} stays in the notes folder")
         return {"ok": False, "status": f"archive_{stopped}", "detail": detail}
     return {"ok": True, "status": "archived", "note_path": str(target), "title": str(meta.get("title") or title),
@@ -407,12 +415,14 @@ def restore_note(*, title: str) -> dict[str, Any]:
         detail = {
             "move_incomplete": f"{path.name} stays archived, and VOOL could not remove its restored copy "
                                f"{restored.name}",
-            "note_gone": f"nothing is at {path.name} in the archive any more; VOOL did not remove its restored copy "
-                         f"{restored.name}",
+            "note_gone": f"nothing is at {path.name} in the archive any more; VOOL wrote its restored copy "
+                         f"{restored.name} and left it there",
             "note_changed": f"{path.name} changed or was replaced in the archive meanwhile and was left as it is; VOOL "
-                            f"did not remove its restored copy {restored.name}, the note as VOOL read it",
+                            f"wrote its restored copy {restored.name}, the note as VOOL read it, and left it there",
             "note_unchecked": f"VOOL could not check whether {path.name} is still in the archive after writing its "
-                              f"restored copy {restored.name}; it did not remove that copy",
+                              f"restored copy {restored.name}; it left that copy there",
+            "copy_lost": f"{path.name} changed or left the archive while VOOL removed its restored copy "
+                         f"{restored.name} again, and VOOL could not write the copy back, so it kept no copy of the note",
         }.get(stopped, f"{path.name} stays archived")
         return {"ok": False, "status": f"restore_{stopped}", "detail": detail}
     return {"ok": True, "status": "restored", "note_path": str(restored), "title": str(meta.get("title") or title)}
