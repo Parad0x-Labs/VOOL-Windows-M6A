@@ -503,10 +503,11 @@ def _checkout_target_commits(cwd: Path, name: str, *, as_branch: bool, timeout: 
         # The previous branch: rev-parse would prefer a tag of its name, git switches to the branch.
         full = subprocess.run(hardened_argv(cwd, "rev-parse", "--symbolic-full-name", "@{-1}" if name == "-" else name),
                               capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
-        if full.returncode != 0 or "ambiguous" in full.stderr:  # git names no ref when a tag shares the name
+        # git names no ref when a tag shares the branch's name (it says so only in a translated
+        # message), and none for a detached HEAD: either way the target cannot be read.
+        if full.returncode != 0 or not full.stdout.strip().startswith("refs/heads/"):
             raise RuntimeError(f"the branch {name!r} names cannot be read")
-        if full.stdout.strip().startswith("refs/heads/"):
-            found.append(_rev_parse(cwd, f"{full.stdout.strip()}^{{commit}}", timeout=timeout))
+        found.append(_rev_parse(cwd, f"{full.stdout.strip()}^{{commit}}", timeout=timeout))
     elif not name.startswith("refs/"):
         local = subprocess.run(hardened_argv(cwd, "rev-parse", "--verify", "--quiet", f"refs/heads/{name}^{{commit}}"),
                                capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
