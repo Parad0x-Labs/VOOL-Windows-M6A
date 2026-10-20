@@ -19,7 +19,9 @@ param(
   [string]$Stage = "G:\vool-build\bundle",
   [string]$PythonVersion = "3.12.7",
   [string]$OllamaExe = "G:\Ollama\ollama.exe",
-  [string]$Model = "qwen2.5:7b",
+  # qwen3:8b is the certified local author. qwen2.5:7b fails the local-model certification
+  # (result_continuation, missing_tool_calls), so VOOL refuses to let it write answers.
+  [string]$Model = "qwen3:8b",
   [switch]$IncludeModel
 )
 $ErrorActionPreference = "Stop"

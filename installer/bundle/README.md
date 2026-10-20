@@ -11,7 +11,7 @@ not ship or patch OpenClaw.
 | Embedded Python + lean runtime deps | ~90 MB | `pydantic, cryptography, requests, pynacl, keyring, psutil, pyyaml, starlette, uvicorn, solders`. **No torch/transformers** — those are training-only and never imported by the server. |
 | VOOL source (`app/`) | ~15 MB | all runtime packages (verified by running the staged bundle) |
 | Ollama | ~3.2 GB with the current official Windows runtime | `ollama.exe` plus the complete `lib\ollama\` runner/DLL support tree, bundled |
-| Model (`models/`) | 0 or ~4.7 GB | first-run download by default; embedded with `-IncludeModel` |
+| Model (`models/`) | 0 or ~5.2 GB | first-run download by default; embedded with `-IncludeModel` |
 
 Result: a **multi-GB installer** with the current official Ollama runtime (model on first run) or a
 larger offline installer (`-IncludeModel`). The exact size follows the official Ollama backend
