@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import uuid
 from pathlib import Path
 
@@ -127,6 +128,21 @@ def test_a_file_in_the_git_folder_hard_linked_to_a_file_elsewhere_is_refused(
 
 
 @pytest.mark.parametrize("mode", MODES)
+@pytest.mark.parametrize("name", ("objects/pack/pack-" + "ab" * 20 + ".promisor", "objects/loose-object-idx"))
+def test_an_object_store_file_git_writes_in_place_hard_linked_elsewhere_is_refused(
+    tmp_path: Path, monkeypatch, world, name: str, mode: str
+) -> None:
+    """A partial-clone fetch rewrites a pack's `.promisor` file in place and git appends to
+    `objects/loose-object-idx`, so unlike the rest of the object store these may not be hard links."""
+    def prepare(repo: Path, outside: Path) -> None:
+        (outside / "precious.txt").write_bytes(b"precious\n")
+        os.link(outside / "precious.txt", repo / ".git" / name)
+
+    _refused(tmp_path, monkeypatch, world, mode, prepare,
+             says=f"a file in the repository's git folder ({name}) is also another file's name")
+
+
+@pytest.mark.parametrize("mode", MODES)
 @pytest.mark.parametrize("key", ("lfs.storage", "lfs.somefuturesetting"))
 def test_a_git_lfs_key_in_the_repository_config_is_refused(
     tmp_path: Path, monkeypatch, world, key: str, mode: str
@@ -162,10 +178,9 @@ def _gc_filter_to(repo: Path, outside: Path) -> Path:
 
 
 def test_without_the_gate_a_commit_s_housekeeping_writes_into_gc_repack_filter_to(tmp_path: Path, monkeypatch) -> None:
-    """The premise, with no gate in front: VOOL's own commit, through GitRunner, runs git's automatic
-    gc, and that gc writes a pack into the outside folder."""
-    from core.repoops.gitops import GitRunner
-
+    """The premise, with no gate in front: a commit runs git's automatic gc, and that gc writes a pack
+    into the outside folder. The commit is plain git with hooks off, since VOOL's own git runs no
+    automatic housekeeping once PR #37 lands; the refusal below still guards every other git."""
     home = tmp_path / "home"
     home.mkdir()
     for name in ("HOME", "USERPROFILE", "XDG_CONFIG_HOME"):
@@ -174,9 +189,9 @@ def test_without_the_gate_a_commit_s_housekeeping_writes_into_gc_repack_filter_t
     filtered = _gc_filter_to(repo, outside)
     (repo / "change.txt").write_bytes(b"pending\n")
 
-    result = GitRunner(root=repo).commit(message="housekeeping runs after this")
+    _git(repo, "-c", f"core.hooksPath={os.devnull}", "add", "-A")  # _git asserts git succeeded
+    _git(repo, "-c", f"core.hooksPath={os.devnull}", "commit", "-q", "-m", "housekeeping runs after this")
 
-    assert result.ok, result.to_dict()
     assert any(path.suffix == ".pack" for path in filtered.iterdir()), "the commit's gc wrote no pack outside"
 
 
@@ -215,6 +230,26 @@ def test_a_repository_cloned_from_a_local_folder_with_hard_linked_objects_still_
     _git(clone, "config", "user.email", "fx@local")
     objects = [path for path in (clone / ".git" / "objects").rglob("*") if path.is_file()]
     assert any(os.stat(path).st_nlink > 1 for path in objects), "git clone of a local folder hard-links its objects"
+    _flag(monkeypatch, marked)
+    session = _bound_session(clone)
+
+    _approved_commit_runs(session, marked, clone, mode, world)
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_a_local_clone_of_a_housekept_repository_still_commits(tmp_path: Path, monkeypatch, world, mode: str) -> None:
+    """After `git gc` a repository's object store also holds `objects/info/commit-graph` and
+    `objects/info/packs`, which a local clone hard-links too; git replaces them by renaming a new
+    file into place, never by writing in them."""
+    marked = tmp_path / "marked"
+    source = _repo(marked / "source")
+    _git(source, "gc", "-q")
+    clone = marked / "clone"
+    _git(marked, "clone", "-q", str(source), str(clone))
+    _git(clone, "config", "user.name", "fx")
+    _git(clone, "config", "user.email", "fx@local")
+    for name in ("commit-graph", "packs"):
+        assert os.stat(clone / ".git" / "objects" / "info" / name).st_nlink > 1, f"objects/info/{name} is hard-linked"
     _flag(monkeypatch, marked)
     session = _bound_session(clone)
 
@@ -332,6 +367,32 @@ def test_the_user_s_own_git_lfs_settings_still_commit(tmp_path: Path, monkeypatc
     session = _bound_session(repo)
 
     _approved_commit_runs(session, marked, repo, mode, world)
+
+
+@pytest.mark.parametrize("setting", ("safe.bareRepository=explicit", "none"))
+def test_a_bare_repository_s_own_keys_are_read_whatever_the_user_s_safe_settings(
+    tmp_path: Path, monkeypatch, setting: str
+) -> None:
+    """A push destination is often a bare repository. With the user's `safe.bareRepository=explicit`,
+    `git -C <bare repository>` opens no repository and lists no repository keys; the check names the
+    git folder itself, and a config with no repository scope at all is not read as a clean one."""
+    from core import git_write_redirects
+
+    home = tmp_path / "home"
+    home.mkdir()
+    for name in ("HOME", "USERPROFILE", "XDG_CONFIG_HOME"):
+        monkeypatch.setenv(name, str(home))
+    bare = tmp_path / "dest.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True, timeout=60)
+    _git(bare, "config", "gc.repackFilterTo", (tmp_path / "elsewhere").as_posix())
+    if setting != "none":
+        section, rest = setting.split(".", 1)
+        name, value = rest.split("=")
+        (home / ".gitconfig").write_text(f"[{section}]\n\t{name} = {value}\n", encoding="utf-8")
+
+    found = git_write_redirects.refusal_for([("the push destination", bare, str(bare), str(bare))])
+
+    assert found.endswith("sets keys that can move git's writes elsewhere: gc.repackfilterto"), found
 
 
 def test_an_entry_another_git_process_removes_during_the_walk_is_skipped(tmp_path: Path, monkeypatch) -> None:

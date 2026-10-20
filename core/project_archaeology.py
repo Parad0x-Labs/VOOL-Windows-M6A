@@ -1191,16 +1191,24 @@ def _git_dirs_within(repo: Path, ceiling: str) -> bool:
     git_dir, common_dir = (os.path.realpath(os.path.join(repo, line)) for line in lines)
     if not (_within(git_dir, ceiling) and _within(common_dir, ceiling)):
         return False
-    return _alternates_within(os.path.join(common_dir, "objects"), ceiling, depth=0)
+    return (
+        _object_store_within(os.path.join(common_dir, "objects"), ceiling, depth=0)
+        and not _fetches_missing_objects(repo)
+    )
 
 
 #: Git follows alternates no deeper than this; deeper chains are refused rather than checked.
 _MAX_ALTERNATES_DEPTH = 5
 
 
-def _alternates_within(objects_dir: str, ceiling: str, *, depth: int) -> bool:
-    """Whether every object store ``objects_dir`` borrows from (objects/info/alternates, followed
-    the way git follows it) lies under ``ceiling``. Unknown is outside; http-alternates is refused."""
+def _object_store_within(objects_dir: str, ceiling: str, *, depth: int) -> bool:
+    """Whether every object git can read through ``objects_dir`` lies under ``ceiling``: the store
+    itself resolves there, holds no links (git never makes one; a link at objects/pack or at a
+    loose object would lead anywhere), and every store it borrows from through
+    objects/info/alternates, followed the way git follows it, does the same. Unknown is outside;
+    http-alternates is refused."""
+    if not _within(os.path.realpath(objects_dir), ceiling) or not _holds_no_links(objects_dir):
+        return False
     info = os.path.join(objects_dir, "info")
     if os.path.lexists(os.path.join(info, "http-alternates")):
         return False
@@ -1221,9 +1229,49 @@ def _alternates_within(objects_dir: str, ceiling: str, *, depth: int) -> bool:
         if entry.startswith('"'):
             return False  # a C-quoted path; refused rather than unquoted
         target = os.path.realpath(os.path.join(objects_dir, entry))
-        if not _within(target, ceiling) or not _alternates_within(target, ceiling, depth=depth + 1):
+        if not _object_store_within(target, ceiling, depth=depth + 1):
             return False
     return True
+
+
+def _holds_no_links(folder: str) -> bool:
+    """Whether nothing under ``folder`` is a symlink or a Windows junction. An unreadable folder
+    counts as holding one."""
+    def refuse(error: OSError) -> None:
+        raise error
+
+    is_junction = getattr(os.path, "isjunction", None)  # Python 3.12+; junctions are Windows-only
+    try:
+        for parent, folders, files in os.walk(folder, onerror=refuse):
+            for name in (*folders, *files):
+                path = os.path.join(parent, name)
+                if os.path.islink(path) or (is_junction is not None and is_junction(path)):
+                    return False
+    except OSError:
+        return False
+    return True
+
+
+def _fetches_missing_objects(repo: Path) -> bool:
+    """Whether git in ``repo`` may fetch objects it lacks from a promisor remote (partial clone),
+    which reads, and writes into this repository, objects from anywhere the remote names.
+    Unknown counts as fetching."""
+    try:
+        probe = subprocess.run(
+            safe_git.read_only_argv(repo, "config", "--list", "--includes", "--null"),
+            capture_output=True, timeout=20.0, env=safe_git.safe_env(),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+    if probe.returncode not in (0, 1):  # 1: no config entries at all
+        return True
+    for entry in probe.stdout.split(b"\0"):
+        key = entry.split(b"\n", 1)[0].decode("utf-8", "replace").strip().lower()
+        if key == "extensions.partialclone" or (
+            key.startswith("remote.") and key.endswith(".promisor")
+        ):
+            return True
+    return False
 
 
 def _git_commit_item(repo: str, reference: str, confidence: str, scan: _Scan) -> dict | None:
