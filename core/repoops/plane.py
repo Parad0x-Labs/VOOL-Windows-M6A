@@ -3989,6 +3989,12 @@ class RepoOpsRuntime:
         if code == 0:
             outcome = {"pushed": True, "simulated": False, "outcome": "applied", "stdout": out[-2000:], "stderr": errtext[-2000:]}
             classified = _classify_effect(leid, instance, "applied", reason="push_exit_0")
+        elif code == -1 and str(errtext).startswith("git was not run:"):
+            # The runner refused before starting git (core/repoops/gitops.py): nothing left the machine.
+            # Checked first, so a refusal whose text happens to name a timeout is not read as unknown.
+            outcome = {"pushed": False, "simulated": False, "outcome": "failed", "stderr": errtext[-2000:]}
+            classified = _classify_effect(leid, instance, "failed_safe_to_retry", reason="refused_before_dispatch",
+                                          detail=errtext[:400])
         elif _push_outcome_unknown(errtext):
             # The push left the machine and the reply did not come back. Whether the remote
             # moved is not knowable from here; calling it failed would authorize a retry that
