@@ -61,7 +61,13 @@ public sealed class Channel(int apiPid, long apiCreationTime, byte[] secret, str
                 var canceled = Task.Delay(Timeout.Infinite, cancellationToken);
                 if (await Task.WhenAny(connect, canceled).ConfigureAwait(false) != connect) { pipe.Dispose(); break; }
                 var error = connect.Result;
-                if (error == ErrorNoData) { pipe.Dispose(); continue; }
+                if (error == ErrorNoData)
+                {
+                    // The next instance is made before this one goes, so the name always has one.
+                    pending = CreatePipe(false);
+                    pipe.Dispose();
+                    continue;
+                }
                 if (error != 0 && error != Native.ErrorPipeConnected)
                     throw new System.ComponentModel.Win32Exception(error);
             }
@@ -70,8 +76,14 @@ public sealed class Channel(int apiPid, long apiCreationTime, byte[] secret, str
                 pipe.Dispose();
                 throw;
             }
+            // The next instance is made before this connection is served. A client the broker
+            // turns away at once would otherwise close the only instance, and a client arriving
+            // then would find the pipe gone (ERROR_FILE_NOT_FOUND, which WaitNamedPipe does not
+            // wait out) rather than busy. At the instance cap the connected instances keep the name.
+            if (active.Count + 1 < MaxInstances) pending = CreatePipe(false);
             active.Add(StartClient(pipe, cancellationToken));
         }
+        pending?.Dispose();
         await Task.WhenAll(active).ConfigureAwait(false);
     }
 
