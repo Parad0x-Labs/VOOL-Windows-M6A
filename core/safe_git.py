@@ -335,8 +335,8 @@ def lfs_endpoint_refusal(cwd: Path, argv: Sequence[str] = (), *, timeout: float 
                     named.append((value, f"{key} in {source}"))
                 elif _is_remote_pick_key(key) and value:
                     picks.append((value, f"{key} in {source}", False))
-        for value, source, user in picks:  # a remote's name is fine; anything else is a URL git-lfs uses
-            if value not in remotes:
+        for value, source, user in picks:  # a remote's name is fine, and so is a word that names none
+            if value not in remotes and _could_be_a_server(value):
                 if user:
                     trusted.add(_endpoint_host(_expanded_url(cwd, value, timeout=timeout)))
                 else:
@@ -367,6 +367,12 @@ def _is_remote_pick_key(key: str) -> bool:
         fnmatch.fnmatchcase(key, pattern) for pattern in ("branch.*.remote", "branch.*.pushremote"))
 
 
+def _could_be_a_server(value: str) -> bool:
+    """Whether a remote pick that is no remote's name reaches somewhere: a URL, an scp-like address
+    or a path. ``.`` (a branch tracking a local branch) and other bare words reach nothing."""
+    return value != "." and any(mark in value for mark in ("/", "\\", ":"))
+
+
 def _is_lfs_endpoint_key(key: str) -> bool:
     return key in {"lfs.url", "lfs.pushurl"} or any(
         fnmatch.fnmatchcase(key, pattern) for pattern in ("remote.*.lfsurl", "remote.*.lfspushurl"))
@@ -385,7 +391,7 @@ def _lfsconfig_files(cwd: Path, argv: Sequence[str], *, timeout: float) -> list[
                                                                         timeout=timeout)))
         index = subprocess.run(hardened_argv(cwd, "ls-files", "-s", "-z", "--full-name", "--",
                                                      ":(top,icase,literal).lfsconfig"),
-                               capture_output=True, text=True, timeout=timeout, env=safe_env())
+                               capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
         if index.returncode != 0:
             raise RuntimeError(f"git ls-files failed ({index.returncode})")
         for line in filter(None, index.stdout.split("\0")):
@@ -417,7 +423,7 @@ def _tree_lfsconfigs(cwd: Path, revisions: dict[str, str], *, timeout: float) ->
     are not revisions are skipped."""
     probe = subprocess.run(hardened_argv(cwd, "cat-file", "--batch-check"),
                            input="".join(f"{revision}^{{tree}}\n" for revision in revisions),
-                           capture_output=True, text=True, timeout=timeout, env=safe_env())
+                           capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
     if probe.returncode != 0:
         raise RuntimeError(f"git cat-file failed ({probe.returncode})")
     found = []
@@ -427,7 +433,7 @@ def _tree_lfsconfigs(cwd: Path, revisions: dict[str, str], *, timeout: float) ->
             continue
         if len(fields) != 3 or fields[1] != "tree":
             raise RuntimeError(f"{revision} could not be read")
-        listing = subprocess.run(hardened_argv(cwd, "ls-tree", "-z", fields[0]), capture_output=True, text=True,
+        listing = subprocess.run(hardened_argv(cwd, "ls-tree", "-z", fields[0]), capture_output=True, encoding="utf-8", errors="surrogateescape",
                                  timeout=timeout, env=safe_env())
         if listing.returncode != 0:
             raise RuntimeError(f"git ls-tree failed ({listing.returncode})")
@@ -469,7 +475,7 @@ def _revision_args(argv: Sequence[str]) -> list[str]:
 def _resolve_commit(cwd: Path, revision: str, *, timeout: float) -> str:
     probe = subprocess.run(hardened_argv(cwd, "rev-parse", "--verify", "--quiet", "--end-of-options",
                                          "@{-1}" if revision == "-" else revision),
-                           capture_output=True, text=True, timeout=timeout, env=safe_env())
+                           capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
     if probe.returncode != 0 or not probe.stdout.strip():
         raise RuntimeError(f"{revision!r} is not a revision VOOL can check")
     return _rev_parse(cwd, f"{probe.stdout.strip()}^{{commit}}", timeout=timeout)
@@ -488,7 +494,7 @@ def _incoming_commits(cwd: Path, argv: Sequence[str], *, timeout: float) -> list
         for state in _ABORT_STATE:
             if "/" in state:
                 where = subprocess.run(hardened_argv(cwd, "rev-parse", "--git-path", state), capture_output=True,
-                                       text=True, timeout=timeout, env=safe_env())
+                                       encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
                 if where.returncode != 0 or not where.stdout.strip():
                     raise RuntimeError(f"git rev-parse --git-path failed ({where.returncode})")
                 path = Path(where.stdout.strip())
@@ -498,7 +504,7 @@ def _incoming_commits(cwd: Path, argv: Sequence[str], *, timeout: float) -> list
                                                          timeout=timeout)))
             else:
                 probe = subprocess.run(hardened_argv(cwd, "rev-parse", "--verify", "--quiet", f"{state}^{{commit}}"),
-                                       capture_output=True, text=True, timeout=timeout, env=safe_env())
+                                       capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
                 if probe.returncode == 0 and probe.stdout.strip():
                     found.append((state, probe.stdout.strip()))
         return found
@@ -506,6 +512,8 @@ def _incoming_commits(cwd: Path, argv: Sequence[str], *, timeout: float) -> list
     if argv[0] in _BRINGING_COMMANDS:
         if argv[0] != "switch" and not targets:
             raise RuntimeError(f"git {argv[0]} without a commit cannot be checked")
+        if argv[0] == "merge" and any(target.upper() == "FETCH_HEAD" for target in targets):
+            raise RuntimeError("git merge FETCH_HEAD merges every fetched head and cannot be checked")
         if any(arg in {"--continue", "--skip", "--quit"} for arg in argv[1:]):
             raise RuntimeError(f"git {argv[0]} continuing a sequence cannot be checked")
         return [(arg, _resolve_commit(cwd, arg, timeout=timeout)) for arg in targets]
@@ -533,7 +541,7 @@ def _holds_lfsconfig_anywhere(cwd: Path, commits: Sequence[str], *, timeout: flo
     detection (directory renames among them) can only move such a file, never make one."""
     for commit in commits:
         listing = subprocess.run(hardened_argv(cwd, "ls-tree", "-r", "-z", "--name-only", commit),
-                                 capture_output=True, text=True, timeout=timeout, env=safe_env())
+                                 capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
         if listing.returncode != 0:
             raise RuntimeError(f"git ls-tree failed ({listing.returncode})")
         if any(path.rpartition("/")[2].lower() == ".lfsconfig" for path in listing.stdout.split("\0")):
@@ -552,7 +560,7 @@ def _merge_result_tree(cwd: Path, argv: Sequence[str], *, timeout: float) -> str
     target = _resolve_commit(cwd, targets[0], timeout=timeout)
     if argv[0] == "merge":
         bases = subprocess.run(hardened_argv(cwd, "merge-base", "--all", "HEAD", target), capture_output=True,
-                               text=True, timeout=timeout, env=safe_env())
+                               encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
         if bases.returncode not in (0, 1):  # 1: unrelated histories
             raise RuntimeError(f"git merge-base failed ({bases.returncode})")
         sides, involved = ["HEAD", target], [*bases.stdout.split(), "HEAD", target]
@@ -565,7 +573,7 @@ def _merge_result_tree(cwd: Path, argv: Sequence[str], *, timeout: float) -> str
     # merge.renormalize would run the user's filters (git-lfs among them) on both sides.
     command = ["git", *hardening_args(), "-c", "merge.renormalize=false", "-C", str(cwd),
                "merge-tree", "--write-tree", "--no-messages", *sides]
-    probe = subprocess.run(command, capture_output=True, text=True, timeout=timeout, env=safe_env())
+    probe = subprocess.run(command, capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
     tree = probe.stdout.split("\n", 1)[0].strip()
     if probe.returncode not in (0, 1) or len(tree) not in (40, 64):  # 1: the result has conflicts
         raise RuntimeError(f"git merge-tree failed ({probe.returncode})")
@@ -578,7 +586,7 @@ def _expanded_url(cwd: Path, url: str, *, timeout: float) -> str:
         raise ValueError("an LFS server URL starts with '-'")
     if "://" not in url and not _scp_like(url):
         return url  # a local path; a bare word would be read as a remote's name
-    probe = subprocess.run(hardened_argv(cwd, "ls-remote", "--get-url", url), capture_output=True, text=True,
+    probe = subprocess.run(hardened_argv(cwd, "ls-remote", "--get-url", url), capture_output=True, encoding="utf-8", errors="surrogateescape",
                            timeout=timeout, env=safe_env())
     expanded = probe.stdout.strip()
     if probe.returncode != 0 or not expanded:
