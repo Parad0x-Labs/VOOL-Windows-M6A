@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import os
 import secrets
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -19,10 +20,29 @@ from .protocol import (
     read_frame,
 )
 
+_ERROR_PIPE_BUSY = 231
+_PIPE_BUSY_WAIT_SECONDS = 5.0
+
 
 def _open_pipe(pipe_name: str) -> Any:
-    # The stream stays open until close() so the caller can make several calls.
-    return open(pipe_name, "r+b", buffering=0)
+    """Open the pipe, waiting while every instance is taken (the broker offers the next one)."""
+    import ctypes
+
+    deadline = time.monotonic() + _PIPE_BUSY_WAIT_SECONDS
+    while True:
+        try:
+            # The stream stays open until close() so the caller can make several calls.
+            return open(pipe_name, "r+b", buffering=0)
+        except OSError as exc:
+            if getattr(exc, "winerror", None) != _ERROR_PIPE_BUSY or time.monotonic() >= deadline:
+                raise
+        # Returns when an instance is free, at the deadline, or at once if the pipe is gone; the
+        # open above then decides.
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        wait = kernel32.WaitNamedPipeW
+        wait.argtypes = (ctypes.c_wchar_p, ctypes.c_uint32)
+        wait.restype = ctypes.c_int
+        wait(pipe_name, max(1, int((deadline - time.monotonic()) * 1000)))
 
 
 def _named_pipe_server_pid(stream: Any) -> int:

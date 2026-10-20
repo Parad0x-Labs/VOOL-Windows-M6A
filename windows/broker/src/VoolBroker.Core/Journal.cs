@@ -160,11 +160,11 @@ public sealed class Journal
                 try { log.Append(new Dictionary<string, object?> { ["t"] = "undone", ["i"] = index }); }
                 catch (Exception error) when (error is not OutOfMemoryException)
                 {
-                    // The step is made but not recorded. Objects have already changed, so this is
+                    // The step is undone but not recorded. Objects may have changed, so this is
                     // never a plain refusal: it is reported as left, and nothing more is changed
-                    // without a record. A later attempt finds the step already made and records it.
+                    // without a record. A later attempt finds the step already undone and records it.
                     var code = error is BrokerRefusal refusal ? refusal.Code : error.GetType().Name;
-                    left.Add($"{Describe(step)}: made, but its journal record failed ({code}); the restore stopped here");
+                    left.Add($"{Describe(step)}: undone, but its journal record failed ({code}); the restore stopped here");
                     break;
                 }
                 finished.Add(index);

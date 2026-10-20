@@ -165,15 +165,18 @@ public sealed class JournalTests : IDisposable
         BatchRunner.BeforeStepForTests = null;
         var batchId = Path.GetFileNameWithoutExtension(Assert.Single(work.JournalFiles()))["batch-".Length..];
 
-        var failed = 0;
+        // The place step was journalled before the crash, so it is undone first (it was never made)
+        // and recorded; the second "undone" record, the aside step's, is the one that fails.
+        var undoneRecords = 0;
         BatchLog.FaultForTests = point =>
         {
-            if (point == "after_write" && LastRecord().GetProperty("t").GetString() == "undone") { failed++; throw new IOException("injected flush failure"); }
+            if (point == "after_write" && LastRecord().GetProperty("t").GetString() == "undone" && ++undoneRecords == 2)
+                throw new IOException("injected flush failure");
         };
         RecoveryOutcome first;
         try { first = work.Runner.Restore(batchId); }
         finally { BatchLog.FaultForTests = null; }
-        Assert.Equal(1, failed);
+        Assert.Equal(2, undoneRecords);
         Assert.False(first.Complete);
         var line = Assert.Single(first.Left);
         Assert.StartsWith("aside f.txt", line, StringComparison.Ordinal);
