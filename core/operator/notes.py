@@ -3,10 +3,12 @@
 A note is a Markdown FILE under the active workspace's ``notes/`` directory — the same
 workspace authority the runtime's file tools resolve (`core.runtime_paths.
 resolve_workspace_root`), so project isolation is the workspace root's own boundary and no
-second notes framework exists. What this module adds on top of the file is only the honest
-metadata: title, creating session, timestamps, and — when a note backs a calendar event —
-the REAL provider receipt (uid/etag) of that event, written only after the event verifiably
-exists.
+second notes framework exists. One exception: the installed Windows app keeps notes in the VOOL
+home's workspace while its file tools keep {app}\\app (`_workspace_root`), so there the file
+tools cannot open a note by its path; the note operations here still can. What this module
+adds on top of the file is only the honest metadata: title, creating session, timestamps, and
+— when a note backs a calendar event — the REAL provider receipt (uid/etag) of that event,
+written only after the event verifiably exists.
 
 Truth rules this module keeps:
 
@@ -38,8 +40,19 @@ _ACTION_LINE_RE = re.compile(r"^\s*(?:\[action\]|action:)\s*(.+)$", re.IGNORECAS
 
 
 def _workspace_root() -> Path:
-    from core.runtime_paths import resolve_workspace_root
+    """The workspace root notes live under.
 
+    The installed Windows bundle (VOOL_BUNDLE_ROOT set by vool-launch.cmd and the bundle
+    supervisor) runs its API with the working directory {app}\\app, which resolve_workspace_root
+    falls back to, and uninstall deletes that folder. There, notes live in the VOOL home's
+    workspace folder instead, where the macOS app and a source checkout already keep them. Only
+    notes move: the unbound chat's workspace and resolve_workspace_root stay as they are. An
+    explicit VOOL_WORKSPACE_ROOT still wins.
+    """
+    from core.runtime_paths import active_vool_home, resolve_workspace_root, vool_env
+
+    if str(vool_env("BUNDLE_ROOT") or "").strip() and not str(vool_env("WORKSPACE_ROOT") or "").strip():
+        return (active_vool_home() / "workspace").resolve()
     return Path(resolve_workspace_root()).resolve()
 
 
