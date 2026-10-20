@@ -10,6 +10,7 @@ the running supervisor, through a file in this home's run folder, to open the wi
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from unittest import mock
 
@@ -83,6 +84,36 @@ def test_a_second_launch_while_the_window_is_open_opens_no_second_window(tmp_pat
     assert running.processes["window"].pid == 201
     assert not running.window_reopen_path.exists()
     running._stop_child("window")
+
+
+def test_a_launch_while_the_window_is_still_closing_reopens_it(tmp_path) -> None:
+    # The user clicks X, then the shortcut, before the window process has finished exiting.
+    running = _supervisor(tmp_path)
+    running._prepare()
+    popen = mock.Mock(side_effect=[_child(401), _child(402)])
+    _poll(running, popen)
+    running._request_window_reopen()
+    _poll(running, popen)  # the window is still alive: the request waits for it
+    assert _window_launches(popen) == 1
+    running.processes["window"].poll.return_value = 0
+    _poll(running, popen)
+    assert _window_launches(popen) == 2
+    assert running.processes["window"].pid == 402
+    running._stop_child("window")
+
+
+def test_closing_an_open_window_long_after_a_launch_keeps_it_closed(tmp_path) -> None:
+    running = _supervisor(tmp_path)
+    running._prepare()
+    popen = mock.Mock(side_effect=[_child(501), _child(502)])
+    _poll(running, popen)
+    running._request_window_reopen()
+    _poll(running, popen)
+    running.window_reopen_until = time.monotonic() - 1.0  # the grace period has passed
+    running.processes["window"].poll.return_value = 0
+    _poll(running, popen)
+    assert _window_launches(popen) == 1
+    assert "window" not in running.processes
 
 
 def test_a_runtime_lost_window_still_reopens_without_a_launch(tmp_path) -> None:
