@@ -59,7 +59,12 @@ _EXECUTABLE_KEY_SUFFIXES = frozenset({
 })
 #: Whole keys (fnmatch, lowercase) that pull in configuration git would then obey.
 _EXECUTABLE_KEY_PATTERNS = ("include.path", "includeif.*.path", "pager.*", "submodule.*.update",
-                            "protocol.allow", "protocol.*.allow", "browser.*.path", "man.*.path")
+                            "protocol.allow", "protocol.*.allow", "browser.*.path", "man.*.path",
+                            # Signing switched on makes git run gpg, gpgsm or ssh-keygen without the
+                            # repository naming a program; any value fails closed.
+                            "commit.gpgsign", "tag.gpgsign", "tag.forcesignannotated", "push.gpgsign",
+                            # Git LFS runs a custom transfer agent's program for push and fetch.
+                            "lfs.customtransfer.*", "lfs.standalonetransferagent")
 #: Inherited environment variables git may keep: identity only.
 _ALLOWED_GIT_ENV = frozenset({
     "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_AUTHOR_DATE",
