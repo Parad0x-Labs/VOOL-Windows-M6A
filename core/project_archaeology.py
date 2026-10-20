@@ -1088,13 +1088,48 @@ _GIT_READONLY_TAIL = (
 )
 
 
+def _executable_local_config(repo: Path, *, timeout: float) -> list[str]:
+    """The program-running keys the repository itself sets, probed through the hardened argv
+    like every archaeology git call. Every scope but the user's own (system, global) and this
+    call's hardening (command) counts: ``local`` and ``worktree`` (a repository that enables
+    ``extensions.worktreeConfig`` makes git obey ``.git/config.worktree`` too). Fails closed: a
+    config that cannot be read counts as naming a program."""
+    probe = subprocess.run(
+        safe_git.read_only_argv(repo, "config", "--list", "--show-scope", "--includes", "--null"),
+        capture_output=True,
+        timeout=timeout,
+        env=safe_git.safe_env(),
+    )
+    if probe.returncode not in (0, 1):  # 1: no config entries at all
+        return [f"<unreadable git config: exit {probe.returncode}>"]
+    fields = probe.stdout.split(b"\0")
+    keys = set()
+    # --show-scope --null: "<scope>\0<key>\n<value>\0" per entry.
+    for scope, entry in zip(fields[0::2], fields[1::2], strict=False):
+        if scope.decode("utf-8", "replace") in ("system", "global", "command"):
+            continue
+        key = entry.split(b"\n", 1)[0].decode("utf-8", "replace").strip().lower()
+        if key and safe_git.is_executable_key(key):
+            keys.add(key)
+    return sorted(keys)
+
+
 def _git(repo_root: str | Path, *args: str, timeout: float = 20.0) -> tuple[bool, str]:
     """One bounded READ-ONLY git probe. Only inspection verbs are ever used;
     the archaeology surface has no authority over the working tree.
 
     Every probe is hardened like every other git route (core/safe_git.py): a repository's
     own config cannot point git's fsmonitor, hooks, external diff, textconv or pager at a
-    program, and the environment carries no GIT_* overrides."""
+    program, and the environment carries no GIT_* overrides. Hardening cannot switch off every
+    such key (``log.showSignature`` with a repository-set ``gpg.program`` still ran it), so a
+    repository whose own config names a program is refused first, as every other git route
+    refuses it (safe_git.executable_local_config)."""
+    keys = _executable_local_config(Path(repo_root), timeout=timeout)
+    if keys:
+        raise ScopeRefused(
+            str(repo_root),
+            "the repository's own git config names programs git would run: " + ", ".join(keys),
+        )
     completed = subprocess.run(
         safe_git.read_only_argv(Path(repo_root), *args),
         capture_output=True,
@@ -1293,13 +1328,16 @@ def _walk_tree(
                 scan.cut(f"scan time budget {effective['max_scan_seconds']}s exhausted")
                 break
             full = Path(entry.path)
-            if entry.is_symlink():
+            # A Windows junction is a link too, but DirEntry.is_symlink() says False for it and
+            # is_dir() follows it: without this check the walk descended into wherever it points.
+            is_junction = getattr(entry, "is_junction", None)
+            if entry.is_symlink() or (callable(is_junction) and is_junction()):
                 scan.files_visited += 1
                 try:
                     target = full.resolve(strict=False)
                 except OSError:
                     target = full
-                escaped = not str(target).startswith(str(root.resolve(strict=False)))
+                escaped = not _within(str(target), str(root.resolve(strict=False)))
                 if escaped:
                     refused.append(
                         {
@@ -1825,6 +1863,36 @@ def _lineage_keys(filters: dict[str, Any]) -> list[str]:
     return keys
 
 
+def _within(path: str, root: str) -> bool:
+    """Whether ``path`` is ``root`` or lies beneath it. Pure string work on two absolute,
+    normalized paths: it never touches the filesystem."""
+    candidate = os.path.normcase(path)
+    base = os.path.normcase(root)
+    if candidate == base:
+        return True
+    return candidate.startswith(base.rstrip("\\/") + os.sep)
+
+
+def confine_to_root(raw: str, root: str) -> Path:
+    """``raw`` resolved inside ``root`` (a relative ``raw`` is root-relative), or ScopeRefused.
+
+    The lexical check runs first, so a path outside the root is refused before anything
+    touches the filesystem (on Windows a UNC path such as ``\\\\host\\share`` would make the
+    lookup reach the network). The symlink-resolved path is then checked again, so a link
+    inside the root that points outside it is refused too."""
+    root_abs = os.path.abspath(os.path.expanduser(str(root)))
+    candidate = os.path.expanduser(str(raw or "").strip())
+    if not os.path.isabs(candidate):
+        candidate = os.path.join(root_abs, candidate)
+    candidate = os.path.abspath(candidate)
+    if not _within(candidate, root_abs):
+        raise ScopeRefused(str(raw), "outside the workspace: no root covers this path")
+    real = os.path.realpath(candidate)
+    if not _within(real, os.path.realpath(root_abs)):
+        raise ScopeRefused(str(raw), "resolves outside the workspace through a link")
+    return Path(real)
+
+
 def compare(
     *,
     kind: str = "git_commits",
@@ -1920,7 +1988,7 @@ def compare(
             raise ArchaeologyInputError("compare kind files needs a workspace_root")
         max_file_bytes = int(effective["max_file_bytes"])
         def _file_item(name: str) -> dict:
-            full = Path(ws) / name
+            full = confine_to_root(name, ws)
             protected, reason = is_protected_path(full)
             if protected:
                 raise ScopeRefused(str(full), reason)
