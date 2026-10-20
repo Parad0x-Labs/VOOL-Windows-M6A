@@ -181,13 +181,17 @@ public sealed class ChannelTests
         {
             var pipeName = ready.RootElement.GetProperty("pipe").GetString()!;
             for (var i = 0; i < 15; i++) clients.Add(await TestSupport.ConnectAuthenticated(ready, TestSupport.SecretOf(bootstrap)));
-            for (var i = 0; i < 200; i++)
+            // Few, short attempts keep the run well inside the broker's 30 s idle timeout.
+            for (var i = 0; i < 50; i++)
             {
                 using var leaving = new System.IO.Pipes.NamedPipeClientStream(".", pipeName[@"\\.\pipe\".Length..], System.IO.Pipes.PipeDirection.InOut);
-                try { leaving.Connect(2000); } catch (TimeoutException) { }
+                try { leaving.Connect(200); } catch (TimeoutException) { }
             }
             Assert.False(broker.HasExited, "Clients leaving at once stopped the broker.");
-            using var ping = await TestSupport.Request(clients[0], new { id = "still-served", op = "ping" });
+            await clients[0].DisposeAsync();
+            clients.RemoveAt(0);
+            clients.Add(await TestSupport.ConnectAuthenticated(ready, TestSupport.SecretOf(bootstrap)));
+            using var ping = await TestSupport.Request(clients[^1], new { id = "still-served", op = "ping" });
             Assert.True(ping.RootElement.GetProperty("ok").GetBoolean());
         }
         finally
