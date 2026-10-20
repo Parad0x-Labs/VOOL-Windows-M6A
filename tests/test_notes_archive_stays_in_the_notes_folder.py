@@ -8,6 +8,8 @@ another editor's change, and that ``link_note_to_event`` refuses every path the 
 
 * a ``notes/.archive`` that is a link (to a folder outside the workspace, or to another workspace folder)
   is refused for archive and for restore with a typed status, and nothing behind it is written or removed;
+  one that another archive or program makes just before VOOL makes it is used when it is a real folder
+  and refused when it is a link;
 * an archived entry that is a link (to a file outside or inside the workspace) or a folder is not
   restored, read into the notes folder or removed;
 * a note that is a link to another workspace file is not archived (the file behind it stays);
@@ -46,8 +48,9 @@ server, in ``tests/test_note_event_receipt_stays_in_the_note.py``, which reuses 
 helpers.
 
 The concurrent changes are staged by wrapping the real writers and remover in
-``core.execution.artifacts``: each wrapper calls the real function and, at the chosen moment, changes,
-replaces, moves or removes a file or folder, or a folder's permissions, the way another program would.
+``core.execution.artifacts`` (and, for the archive folder, ``Path.mkdir``): each wrapper calls the real
+function and, at the chosen moment, changes, replaces, moves or removes a file or folder, or a folder's
+permissions, the way another program would.
 
 Directory links are junctions on Windows (no privilege needed) and symbolic links elsewhere; file links
 are symbolic links on every platform. A host that cannot make a file symbolic link (Windows without
@@ -299,6 +302,38 @@ def test_restoring_through_a_linked_archive_folder_neither_restores_nor_removes_
     assert _tree(world.workspace) == workspace_before, "no note was restored and nothing was removed"
     assert _tree(world.outside) == outside_before
     _refused(result, "archive_unconfined")
+
+
+@pytest.mark.parametrize("made", ["a folder", "a link to a folder outside the workspace"])
+def test_an_archive_folder_another_program_makes_while_the_first_note_is_archived(world, monkeypatch, made) -> None:
+    """notes/.archive does not exist yet, and another archive (or another program) makes it between VOOL's
+    look and VOOL's own mkdir. A real folder is used as if VOOL had made it; a link is still refused."""
+    original = _note_bytes("Kickoff", "agenda: intro and goals")
+    note, archive = world.notes / "kickoff.md", world.notes / ".archive"
+    note.write_bytes(original)
+    real_mkdir, fired = Path.mkdir, []
+
+    def made_meanwhile(self: Path, *args, **kwargs) -> None:
+        if self == archive and not fired:
+            fired.append(made)
+            archive.mkdir() if made == "a folder" else _dir_link(archive, world.outside)
+        return real_mkdir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", made_meanwhile)
+
+    result = _archive("Kickoff")
+
+    assert fired == [made], "the archive folder appeared just before VOOL made it"
+    assert _tree(world.outside) == {}, "nothing was written outside the workspace"
+    if made == "a folder":
+        assert result.ok and result.status == "executed", result.response_text
+        copy = archive / "kickoff.md"
+        assert not os.path.lexists(note)
+        assert copy.read_bytes() == _as_archived(original, _stamp_line(copy.read_bytes(), "archived_at"))
+    else:
+        assert note.read_bytes() == original
+        _refused(result, "archive_unconfined")
+        assert result.details["detail"] == "notes/.archive is a link, not a folder inside the notes folder"
 
 
 # --- archived entries and notes that are links or not files --------------------------------------------
