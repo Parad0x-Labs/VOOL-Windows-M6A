@@ -1088,13 +1088,41 @@ _GIT_READONLY_TAIL = (
 )
 
 
+def _executable_local_config(repo: Path, *, timeout: float) -> list[str]:
+    """safe_git.executable_local_config, probed through the hardened argv like every archaeology
+    git call. Fails closed: a config that cannot be read counts as naming a program."""
+    probe = subprocess.run(
+        safe_git.read_only_argv(repo, "config", "--local", "--includes", "--null", "--list"),
+        capture_output=True,
+        timeout=timeout,
+        env=safe_git.safe_env(),
+    )
+    if probe.returncode not in (0, 1):  # 1: no local config entries at all
+        return [f"<unreadable git config: exit {probe.returncode}>"]
+    keys = set()
+    for entry in probe.stdout.split(b"\0"):
+        key = entry.split(b"\n", 1)[0].decode("utf-8", "replace").strip().lower()
+        if key and safe_git.is_executable_key(key):
+            keys.add(key)
+    return sorted(keys)
+
+
 def _git(repo_root: str | Path, *args: str, timeout: float = 20.0) -> tuple[bool, str]:
     """One bounded READ-ONLY git probe. Only inspection verbs are ever used;
     the archaeology surface has no authority over the working tree.
 
     Every probe is hardened like every other git route (core/safe_git.py): a repository's
     own config cannot point git's fsmonitor, hooks, external diff, textconv or pager at a
-    program, and the environment carries no GIT_* overrides."""
+    program, and the environment carries no GIT_* overrides. Hardening cannot switch off every
+    such key (``log.showSignature`` with a repository-set ``gpg.program`` still ran it), so a
+    repository whose own config names a program is refused first, as every other git route
+    refuses it (safe_git.executable_local_config)."""
+    keys = _executable_local_config(Path(repo_root), timeout=timeout)
+    if keys:
+        raise ScopeRefused(
+            str(repo_root),
+            "the repository's own git config names programs git would run: " + ", ".join(keys),
+        )
     completed = subprocess.run(
         safe_git.read_only_argv(Path(repo_root), *args),
         capture_output=True,
