@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import hmac
 import os
@@ -26,23 +27,31 @@ _PIPE_BUSY_WAIT_SECONDS = 5.0
 
 def _open_pipe(pipe_name: str) -> Any:
     """Open the pipe, waiting while every instance is taken (the broker offers the next one)."""
-    import ctypes
-
     deadline = time.monotonic() + _PIPE_BUSY_WAIT_SECONDS
     while True:
         try:
             # The stream stays open until close() so the caller can make several calls.
             return open(pipe_name, "r+b", buffering=0)
         except OSError as exc:
-            if getattr(exc, "winerror", None) != _ERROR_PIPE_BUSY or time.monotonic() >= deadline:
+            # open() goes through the C runtime, which reports ERROR_PIPE_BUSY as EINVAL with no
+            # winerror. WaitNamedPipeW settles it: it succeeds only when an instance is free, and
+            # fails at once when the pipe does not exist.
+            busy = exc.errno == errno.EINVAL or getattr(exc, "winerror", None) == _ERROR_PIPE_BUSY
+            if not busy or not _wait_for_instance(pipe_name, deadline):
                 raise
-        # Returns when an instance is free, at the deadline, or at once if the pipe is gone; the
-        # open above then decides.
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        wait = kernel32.WaitNamedPipeW
-        wait.argtypes = (ctypes.c_wchar_p, ctypes.c_uint32)
-        wait.restype = ctypes.c_int
-        wait(pipe_name, max(1, int((deadline - time.monotonic()) * 1000)))
+
+
+def _wait_for_instance(pipe_name: str, deadline: float) -> bool:
+    import ctypes
+
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return False
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    wait = kernel32.WaitNamedPipeW
+    wait.argtypes = (ctypes.c_wchar_p, ctypes.c_uint32)
+    wait.restype = ctypes.c_int
+    return bool(wait(pipe_name, max(1, int(remaining * 1000))))
 
 
 def _named_pipe_server_pid(stream: Any) -> int:
