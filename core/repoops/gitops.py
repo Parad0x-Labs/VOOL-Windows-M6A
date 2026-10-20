@@ -105,12 +105,14 @@ class GitRunner:
             return None
         return GitResult(operation, False, "refused_by_user_rule", (), head=self.head(), detail=verdict.refusal.reason)
 
-    def _repository_refusal(self, *, mutating: bool) -> str:
+    def _repository_refusal(self, *, mutating: bool, argv: tuple[str, ...] = ()) -> str:
         """Why git must not run in this repository at all ("" when it may). A repository's own
         config must not make git start programs, and a mutation must not run hooks unsandboxed
-        (core/safe_git.py)."""
+        (core/safe_git.py). With ``argv``, only the keys that matter for that command count (a
+        read-only command ignores signing switches); without it, every key does."""
         try:
-            keys = safe_git.executable_local_config(self.root, timeout=self.timeout)
+            keys = (safe_git.executable_config_for(self.root, argv, timeout=self.timeout) if argv
+                    else safe_git.executable_local_config(self.root, timeout=self.timeout))
             hooks = safe_git.active_hooks(self.root, timeout=self.timeout) if mutating else []
         except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
             return f"the repository's git configuration could not be checked ({type(exc).__name__})"
@@ -218,7 +220,7 @@ class GitRunner:
         raise RuntimeError("the repository's top folder could not be resolved")
 
     def run(self, *argv: str) -> tuple[int, str, str]:
-        refusal = self._repository_refusal(mutating=bool(argv) and argv[0] not in _READ_ONLY_SUBCOMMANDS)
+        refusal = self._repository_refusal(mutating=bool(argv) and argv[0] not in _READ_ONLY_SUBCOMMANDS, argv=argv)
         if not refusal and argv and argv[0] == "push":
             target = [arg for arg in argv[1:] if not arg.startswith("-")]
             refusal = self.push_destination_refusal(target[0] if target else "")

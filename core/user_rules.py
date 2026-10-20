@@ -1226,7 +1226,7 @@ def _git_text(root: Path, *argv: str) -> str:
     # The repository's own config must not make this scan start programs (core/safe_git.py); a
     # repository whose config names any is an incomplete scan, which fails closed.
     try:
-        executable_keys = safe_git.executable_local_config(root, timeout=GIT_SCAN_TIMEOUT_SECONDS)
+        executable_keys = safe_git.executable_config_for(root, argv, timeout=GIT_SCAN_TIMEOUT_SECONDS)
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
         raise _ScanIncomplete("the repository's git config could not be checked") from exc
     if executable_keys:

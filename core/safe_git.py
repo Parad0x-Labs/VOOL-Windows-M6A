@@ -38,6 +38,7 @@ from __future__ import annotations
 import fnmatch
 import os
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 
 #: Final key segments (lowercase) whose value git runs as a program or shell command.
@@ -126,14 +127,48 @@ def executable_local_config(cwd: Path, *, timeout: float = 20) -> list[str]:
     checked-out submodule's config, reported as ``<submodule path>:<key>``: status, diff and commit
     in the superproject run git inside every checked-out submodule, and that git obeys the
     submodule's own config."""
-    return _executable_config(Path(cwd), timeout=timeout, depth=0)
+    return sorted({key for key, _ in _executable_config(Path(cwd), timeout=timeout, depth=0)})
+
+
+def executable_config_for(cwd: Path, argv: Sequence[str], *, timeout: float = 20) -> list[str]:
+    """The program-running keys that matter for running ``git <argv>`` here (empty when none), each
+    as ``key (where it is set)`` for a refusal message.
+
+    Like executable_local_config, except that the signing and signature-check switches
+    (_SAFE_VALUES) are left out when ``argv`` can neither sign nor verify: a repository that signs
+    its own commits can still be read. Any other command, and an empty ``argv``, keeps them."""
+    signs = _may_sign_or_verify(argv)
+    found = {f"{key} ({_where(scope)})" for key, scope in _executable_config(Path(cwd), timeout=timeout, depth=0)
+             if signs or key.rpartition(":")[2] not in _SAFE_VALUES}
+    return sorted(found)
+
+
+#: Subcommands that never sign or check a signature unless an option asks for it.
+_SIGNING_FREE_SUBCOMMANDS = frozenset({
+    "status", "diff", "log", "show", "rev-parse", "ls-files", "for-each-ref", "rev-list", "merge-base",
+    "cat-file", "describe", "symbolic-ref", "config", "branch",
+})
+#: Options that make one of those sign or verify after all (log/show --show-signature, branch has none).
+_SIGNING_OPTIONS = ("--show-signature", "--gpg-sign", "--verify-signatures", "-S")
+
+
+def _may_sign_or_verify(argv: Sequence[str]) -> bool:
+    if not argv or argv[0] not in _SIGNING_FREE_SUBCOMMANDS:
+        return True
+    return any(arg == option or arg.startswith(option) for arg in argv[1:] for option in _SIGNING_OPTIONS)
+
+
+def _where(scope: str) -> str:
+    return {"local": "set in .git/config", "worktree": "set in config.worktree",
+            "command": "set by a -c option"}.get(scope, f"set in git's {scope} config")
 
 
 #: Nested submodules deeper than this are refused rather than checked.
 _MAX_SUBMODULE_DEPTH = 8
 
 
-def _executable_config(cwd: Path, *, timeout: float, depth: int) -> list[str]:
+def _executable_config(cwd: Path, *, timeout: float, depth: int) -> list[tuple[str, str]]:
+    """``(key, scope)`` of each program-running entry, submodule keys as ``<path>:<key>``."""
     # Fails outside a repository, which the callers already treat as "not checked".
     inside_work_tree = _rev_parse(cwd, "--is-inside-work-tree", timeout=timeout) == "true"
     scoped = _config_entries(cwd, ["--show-scope"], timeout=timeout)
@@ -144,16 +179,17 @@ def _executable_config(cwd: Path, *, timeout: float, depth: int) -> list[str]:
         (scope, _), (key, value) = scoped[index], scoped[index + 1]
         if scope in _USER_CONFIG_SCOPES or not is_executable_key(key):
             continue
-        if key in _SAFE_VALUES and value is not None and _SAFE_VALUES[key](value):
+        if is_safe_value(key, value):
             continue  # signing switched off, or the default format, runs nothing
-        keys.append(key)
+        keys.append((key, scope))
     # Bare, or inside the git directory: there is no work tree, so git recurses into no submodule.
     submodules = _checked_out_submodules(cwd, timeout=timeout) if inside_work_tree else []
     for path, submodule in submodules:
         if depth >= _MAX_SUBMODULE_DEPTH:
             raise RuntimeError("submodules are nested too deeply, or a submodule's git folder does not resolve")
-        keys.extend(f"{path}:{key}" for key in _executable_config(submodule, timeout=timeout, depth=depth + 1))
-    return sorted(set(keys))
+        keys.extend((f"{path}:{key}", scope)
+                    for key, scope in _executable_config(submodule, timeout=timeout, depth=depth + 1))
+    return keys
 
 
 def _checked_out_submodules(cwd: Path, *, timeout: float) -> list[tuple[str, Path]]:
@@ -205,6 +241,13 @@ _SAFE_VALUES = {
                      "log.showsignature", "merge.verifysignatures"), _definitely_false),
     "gpg.format": lambda value: value == "openpgp",
 }
+
+
+def is_safe_value(key: str, value: str | None) -> bool:
+    """Whether ``key`` set to ``value`` runs nothing although the key can (a signing switch that is a
+    definite false, ``gpg.format=openpgp``). A key set without a value is never safe."""
+    test = _SAFE_VALUES.get(key.strip().lower())
+    return test is not None and value is not None and test(value)
 
 
 #: Config scopes that belong to the user, not to the repository (``git config --show-scope``).
@@ -267,5 +310,6 @@ def hardened_argv(cwd: Path, *argv: str) -> list[str]:
 read_only_argv = hardened_argv
 
 
-__all__ = ["active_hooks", "executable_local_config", "hardened_argv", "hardening_args", "is_executable_key",
+__all__ = ["active_hooks", "executable_config_for", "executable_local_config", "hardened_argv", "hardening_args",
+           "is_executable_key", "is_safe_value",
            "read_only_argv", "safe_env"]
