@@ -189,3 +189,27 @@ def test_a_push_from_a_repository_that_saves_cookies_to_a_file_of_its_choosing_i
     refusal = GitRunner(root=world["source"]).push_destination_refusal("https://example.invalid/project.git")
 
     assert "sets keys that can move git's writes elsewhere: http." in refusal and refusal.endswith("cookiefile"), refusal
+
+
+@pytest.mark.parametrize("to", ("marked-destination", "online-server"))
+def test_a_push_from_a_repository_outside_the_marked_folders_is_refused(world, to: str) -> None:
+    """Every push writes where the remote's branch now is into the pushing repository's own refs, so
+    on Windows the pushing repository's git folders must be inside the marked folders too (owner
+    card, 2026-10-20, "Marked repos only"). Reproduced by review: from an outside repository, a push
+    to a marked destination wrote `refs/remotes/dest/main` outside."""
+    source = world["elsewhere"] / "project"
+    source.mkdir()
+    _git(source, "init", "-q", "-b", "main")
+    _git(source, "commit", "-q", "--allow-empty", "-m", "seed")
+    destination = _bare(world["marked"] / "dest.git")
+    url = str(destination) if to == "marked-destination" else "https://example.invalid/project.git"
+    _git(source, "remote", "add", "dest", url)
+    before = _refs(destination)
+
+    refusal = GitRunner(root=source).push_destination_refusal("dest")
+    code, err = _push(source, "dest")
+
+    assert "which is outside them" in refusal and "this repository" in refusal, refusal
+    assert code == -1 and err.startswith("git was not run:") and "which is outside them" in err, err
+    assert _refs(destination) == before, "nothing lands in the destination"
+    assert not (source / ".git" / "refs" / "remotes").exists(), "nothing is written in the outside repository"
