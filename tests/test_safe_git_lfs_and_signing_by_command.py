@@ -4,12 +4,22 @@ Signing: a repository that switches on signing for its own commits (``commit.gpg
 in a developer's repository) must still be readable: status, diff, log and the user-rules scans
 cannot sign or verify. Every command that could sign or check a signature is still refused, and the
 user's gpg never runs for it.
+
+Git LFS (Jesse, 20 Oct: "Trusted servers only"): the user's own git-lfs downloads objects whenever
+git writes LFS files into the work tree, from the server the repository names in its config or in
+the ``.lfsconfig`` it carries. VOOL lets that happen only for this project's own git host or a
+server the user named. The cases run the real git-lfs against a local server that records every
+request; the project's remote is ``localhost`` and the other server is ``127.0.0.1``, both the
+same recorder, so a request reaching it proves where git-lfs went.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
 import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -190,3 +200,198 @@ def test_without_a_command_every_key_still_counts(tmp_path: Path) -> None:
 ])
 def test_is_safe_value(key: str, value: str | None, safe: bool) -> None:
     assert safe_git.is_safe_value(key, value) is safe
+
+
+# ── Git LFS: only trusted servers ─────────────────────────────────────────────────────────────
+
+_NEEDS_LFS = pytest.mark.skipif(subprocess.run(["git", "lfs", "version"], capture_output=True).returncode != 0,
+                                reason="git-lfs is not installed")
+
+
+@pytest.fixture
+def lfs_server():
+    hits: list[str] = []
+
+    class Recorder(BaseHTTPRequestHandler):
+        def _refuse(self) -> None:
+            hits.append(f"{self.command} {self.path}")
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def do_GET(self) -> None:
+            self._refuse()
+
+        def do_POST(self) -> None:
+            self._refuse()
+
+        def log_message(self, *args) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Recorder)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield server.server_address[1], hits
+    server.shutdown()
+    server.server_close()
+
+
+def _lfs_repo(tmp_path: Path, monkeypatch, port: int) -> Path:
+    # The user's own git-lfs, set up the way `git lfs install` writes the global config. The
+    # project's remote is on localhost. Branch "lfs" adds an LFS file whose object nobody has, so
+    # bringing it in makes git-lfs ask a server for it.
+    home = tmp_path / "home"
+    home.mkdir()
+    for key, value in (("filter.lfs.process", "git-lfs filter-process"), ("filter.lfs.required", "true"),
+                       ("filter.lfs.clean", "git-lfs clean -- %f"), ("filter.lfs.smudge", "git-lfs smudge -- %f")):
+        subprocess.run(["git", "config", "-f", str(home / ".gitconfig"), key, value], check=True, capture_output=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("NO_PROXY", "localhost,127.0.0.1")
+    repo, _marker = _repo(tmp_path)
+    _git(repo, "remote", "add", "origin", f"http://localhost:{port}/project.git")
+    _git(repo, "switch", "-q", "-c", "lfs")
+    (repo / ".gitattributes").write_text("*.bin filter=lfs diff=lfs merge=lfs -text\n", encoding="utf-8")
+    oid = hashlib.sha256(b"nobody has this\n").hexdigest()
+    (repo / "big.bin").write_text(f"version https://git-lfs.github.com/spec/v1\noid sha256:{oid}\nsize 16\n",
+                                  encoding="utf-8")
+    _git(repo, "add", ".gitattributes", "big.bin")
+    _git(repo, "commit", "-q", "-m", "add an LFS file")
+    _git(repo, "switch", "-q", "-")
+    _without_lfs_hooks(repo)
+    return repo
+
+
+def _without_lfs_hooks(repo: Path) -> None:
+    # git-lfs installs its own hooks whenever it runs, and VOOL refuses a mutation that would run
+    # hooks anyway. Without them (a clone made before git-lfs was installed, or hooks removed) the
+    # LFS check is what stands between the repository and git-lfs.
+    for hook in (repo / ".git" / "hooks").iterdir():
+        if not hook.name.endswith(".sample"):
+            hook.unlink()
+
+
+def _commit_lfsconfig(repo: Path, url: str, *, key: str = "lfs.url") -> None:
+    subprocess.run(["git", "config", "-f", str(repo / ".lfsconfig"), key, url], check=True, capture_output=True)
+    _git(repo, "add", ".lfsconfig")
+    _git(repo, "commit", "-q", "-m", "LFS server")
+    _without_lfs_hooks(repo)
+
+
+@_NEEDS_LFS
+def test_control_git_lfs_goes_to_the_server_the_repositorys_lfsconfig_names(tmp_path: Path, monkeypatch,
+                                                                             lfs_server) -> None:
+    port, hits = lfs_server
+    repo = _lfs_repo(tmp_path, monkeypatch, port)
+    _commit_lfsconfig(repo, f"http://127.0.0.1:{port}/elsewhere")
+
+    subprocess.run(safe_git.hardened_argv(repo, "cherry-pick", "lfs"), capture_output=True, timeout=120,
+                   env=safe_git.safe_env())
+
+    assert any("/elsewhere/" in hit for hit in hits), f"git-lfs did not ask the named server; the cases below prove nothing: {hits}"
+
+
+@_NEEDS_LFS
+@pytest.mark.parametrize("where", ["HEAD", "the commit brought in"])
+def test_an_lfs_server_the_repository_names_elsewhere_is_refused_and_never_contacted(
+        tmp_path: Path, monkeypatch, lfs_server, where: str) -> None:
+    port, hits = lfs_server
+    repo = _lfs_repo(tmp_path, monkeypatch, port)
+    if where == "HEAD":
+        _commit_lfsconfig(repo, f"http://127.0.0.1:{port}/elsewhere")
+    else:  # set up without git-lfs, which would try to download the object
+        no_lfs = ("-c", "filter.lfs.process=", "-c", "filter.lfs.smudge=", "-c", "filter.lfs.required=false")
+        _git(repo, *no_lfs, "switch", "-q", "lfs")
+        _commit_lfsconfig(repo, f"http://127.0.0.1:{port}/elsewhere")
+        _git(repo, *no_lfs, "switch", "-q", "-")
+    head = _git(repo, "rev-parse", "HEAD").strip()
+    hits.clear()
+
+    result = GitRunner(root=repo).cherry_pick("lfs")
+
+    assert result.ok is False
+    assert "Git LFS would contact 127.0.0.1" in result.stderr and ".lfsconfig" in result.stderr, result.to_dict()
+    assert _git(repo, "rev-parse", "HEAD").strip() == head
+    assert hits == [], "git-lfs contacted a server the repository chose"
+
+
+@_NEEDS_LFS
+def test_an_lfs_server_set_in_the_repositorys_own_config_is_refused(tmp_path: Path, monkeypatch,
+                                                                    lfs_server) -> None:
+    port, hits = lfs_server
+    repo = _lfs_repo(tmp_path, monkeypatch, port)
+    _git(repo, "config", "remote.origin.lfsurl", f"http://user:secret@127.0.0.1:{port}/elsewhere")
+
+    result = GitRunner(root=repo).cherry_pick("lfs")
+
+    assert result.ok is False
+    assert "remote.origin.lfsurl, set in .git/config" in result.stderr, result.to_dict()
+    assert "secret" not in result.stderr
+    assert hits == []
+
+
+@_NEEDS_LFS
+def test_an_lfs_server_on_the_projects_own_git_host_is_allowed(tmp_path: Path, monkeypatch, lfs_server) -> None:
+    port, hits = lfs_server
+    repo = _lfs_repo(tmp_path, monkeypatch, port)
+    _commit_lfsconfig(repo, f"http://localhost:{port}/project.git/info/lfs")
+
+    assert safe_git.lfs_endpoint_refusal(repo, ("cherry-pick", "lfs")) == ""
+    result = GitRunner(root=repo).cherry_pick("lfs")
+
+    assert "Git LFS would contact" not in result.stderr, result.to_dict()
+    assert any("/project.git/info/lfs/" in hit for hit in hits), hits
+
+
+@_NEEDS_LFS
+def test_an_lfs_server_the_user_named_is_allowed(tmp_path: Path, monkeypatch, lfs_server) -> None:
+    port, _hits = lfs_server
+    repo = _lfs_repo(tmp_path, monkeypatch, port)
+    subprocess.run(["git", "config", "-f", str(tmp_path / "home" / ".gitconfig"), f"lfs.http://127.0.0.1:{port}/.access",
+                    "basic"], check=True, capture_output=True)
+    _commit_lfsconfig(repo, f"http://127.0.0.1:{port}/mine")
+
+    assert safe_git.lfs_endpoint_refusal(repo, ("cherry-pick", "lfs")) == ""
+
+
+@_NEEDS_LFS
+def test_a_rewrite_that_sends_lfs_to_another_host_is_refused(tmp_path: Path, monkeypatch, lfs_server) -> None:
+    port, hits = lfs_server
+    repo = _lfs_repo(tmp_path, monkeypatch, port)
+    _git(repo, "config", f"url.http://127.0.0.1:{port}/.insteadOf", f"http://localhost:{port}/lfs/")
+    _commit_lfsconfig(repo, f"http://localhost:{port}/lfs/elsewhere")
+
+    result = GitRunner(root=repo).cherry_pick("lfs")
+
+    assert result.ok is False and "Git LFS would contact 127.0.0.1" in result.stderr, result.to_dict()
+    assert hits == []
+
+
+def test_an_lfsconfig_git_cannot_read_is_refused(tmp_path: Path) -> None:
+    repo, _marker = _repo(tmp_path)
+    (repo / ".lfsconfig").write_text("[lfs\n url = http://127.0.0.1/x\n", encoding="utf-8")
+    _git(repo, "add", ".lfsconfig")
+    _git(repo, "commit", "-q", "-m", "broken")
+
+    refusal = safe_git.lfs_endpoint_refusal(repo, ("cherry-pick", "HEAD"))
+
+    assert refusal.startswith("the repository's Git LFS servers could not be checked"), refusal
+
+
+def test_a_repository_that_names_no_lfs_server_is_not_checked_further(tmp_path: Path) -> None:
+    repo, _marker = _repo(tmp_path)
+    _git(repo, "remote", "add", "origin", "https://git.example.test/project.git")
+
+    assert safe_git.lfs_endpoint_refusal(repo, ("merge", "main")) == ""
+
+
+@pytest.mark.parametrize("url, host", [
+    ("https://User:pw@Git.Example.test:8443/x", "git.example.test"), ("git@github.com:o/r.git", "github.com"),
+    ("ssh://git@[::1]:22/r", "::1"), ("file:///srv/r.git", "path:file:///srv/r.git"), ("/srv/r.git", "path:/srv/r.git"),
+    ("C:/repos/r.git", "path:C:/repos/r.git"),
+])
+def test_endpoint_hosts(url: str, host: str) -> None:
+    assert safe_git._endpoint_host(url) == host
