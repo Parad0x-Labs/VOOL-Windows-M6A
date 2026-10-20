@@ -492,29 +492,28 @@ _START_POINT_OPTIONS = frozenset({"-c", "-C", "--create", "--force-create", "--o
 
 
 def _checkout_target_commits(cwd: Path, name: str, *, as_branch: bool, timeout: float) -> list[str]:
-    """Every commit ``git switch <name>`` or ``git worktree add <path> <name>`` may check out. As a
-    branch (``as_branch``), git reads the name as a local branch first (``rev-parse`` would prefer a
-    tag of the same name) and, when there is none, creates a tracking branch from a remote's branch
-    of that name; a start point (``-c <new> <name>``, ``--detach``) is read by ``rev-parse``. All of
-    them are checked, and a name that is none of them refuses."""
+    """Every commit ``git switch <name>`` or ``git worktree add <path> <name>`` may check out. git reads
+    the name as a local branch first (``rev-parse`` would prefer a tag of the same name, and is
+    checked too). As a branch (``as_branch``, not a ``-c``/``--detach`` start point) with no local
+    branch of that name, git creates a tracking branch from a remote's, found through each remote's
+    fetch refspec, which the repository sets: so every ref ending in ``/<name>`` is checked. A name
+    that is none of them refuses."""
     found: list[str] = []
-    if as_branch and name != "-" and not name.startswith("refs/"):
+    if name != "-" and not name.startswith("refs/"):
         local = subprocess.run(hardened_argv(cwd, "rev-parse", "--verify", "--quiet", f"refs/heads/{name}^{{commit}}"),
                                capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
         if local.returncode == 0 and local.stdout.strip():
             found.append(local.stdout.strip())
-        else:
-            remotes = subprocess.run(hardened_argv(cwd, "remote"), capture_output=True, encoding="utf-8",
-                                     errors="surrogateescape", timeout=timeout, env=safe_env())
-            if remotes.returncode != 0:
-                raise RuntimeError(f"git remote failed ({remotes.returncode})")
-            for remote in remotes.stdout.split():
-                probe = subprocess.run(hardened_argv(cwd, "rev-parse", "--verify", "--quiet",
-                                                     f"refs/remotes/{remote}/{name}^{{commit}}"),
-                                       capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout,
-                                       env=safe_env())
-                if probe.returncode == 0 and probe.stdout.strip():
-                    found.append(probe.stdout.strip())
+        elif as_branch:
+            listing = subprocess.run(hardened_argv(cwd, "for-each-ref", "--format=%(objectname) %(refname)"),
+                                     capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout,
+                                     env=safe_env())
+            if listing.returncode != 0:
+                raise RuntimeError(f"git for-each-ref failed ({listing.returncode})")
+            for line in listing.stdout.splitlines():
+                oid, _, ref = line.partition(" ")
+                if ref.endswith(f"/{name}"):
+                    found.append(_rev_parse(cwd, f"{oid}^{{commit}}", timeout=timeout))
     try:
         found.append(_resolve_commit(cwd, name, timeout=timeout))
     except RuntimeError:
