@@ -37,6 +37,8 @@ public sealed class RootRegistry : IDisposable
     {
         ValidatePlatform();
         ArgumentNullException.ThrowIfNull(path);
+        // Windows reads a path only up to a NUL, so "C:\a\0\b" would open C:\a.
+        if (path.Contains('\0')) throw new BrokerRefusal("invalid_flagged", "A flagged folder's path holds a NUL.");
         if (!Path.IsPathFullyQualified(path)) throw new BrokerRefusal("invalid_flagged", "Flagged folders must be absolute.");
         if (path.StartsWith("\\\\.\\", StringComparison.Ordinal) ||
             path.StartsWith("\\\\", StringComparison.Ordinal) && !path.StartsWith("\\\\?\\", StringComparison.Ordinal) ||
@@ -102,6 +104,7 @@ public sealed class RootRegistry : IDisposable
     /// </summary>
     public void ValidateJournalOutsideFlagged(string journalPath)
     {
+        if (journalPath.Contains('\0')) throw new BrokerRefusal("invalid_bootstrap", "journal_dir holds a NUL.");
         if (!Path.IsPathFullyQualified(journalPath)) throw new BrokerRefusal("invalid_bootstrap", "journal_dir must be absolute.");
         var existing = Path.TrimEndingDirectorySeparator(Path.GetFullPath(journalPath));
         var missing = new Stack<string>();

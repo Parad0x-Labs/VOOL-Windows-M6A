@@ -38,12 +38,12 @@ public static class Protocol
     /// The synchronous form, for the broker's connection threads: every read runs on the calling
     /// thread, so CancelSynchronousIo on that thread ends a read that waits too long.
     /// </summary>
-    public static JsonDocument ReadFrame(Stream stream)
+    public static JsonDocument ReadFrame(Stream stream, int maxBytes = MaxMessageBytes)
     {
         var header = new byte[4];
         ReadExact(stream, header);
         var length = BinaryPrimitives.ReadUInt32LittleEndian(header);
-        if (length > MaxMessageBytes) throw new BrokerRefusal("too_large", "Message exceeds 64 MiB.");
+        if (length > maxBytes) throw new BrokerRefusal("too_large", maxBytes == MaxMessageBytes ? "Message exceeds 64 MiB." : $"Message exceeds {maxBytes} bytes.");
         var body = new byte[length];
         ReadExact(stream, body);
         return Parse(body);

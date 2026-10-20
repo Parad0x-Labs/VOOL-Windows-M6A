@@ -3,8 +3,11 @@ using System.Text.Json;
 
 namespace VoolBroker.Core;
 
-/// <summary>What recovering one journalled batch did: complete, or the objects it had to leave.</summary>
-public sealed record RecoveryOutcome(string BatchId, bool Committed, bool Complete, IReadOnlyList<string> Left);
+/// <summary>What recovering one journalled batch did: complete, or the objects it had to leave, and any torn last record it set aside.</summary>
+public sealed record RecoveryOutcome(string BatchId, bool Committed, bool Complete, IReadOnlyList<string> Left, TornRecord? Torn = null);
+
+/// <summary>A last record whose write never finished: how many bytes were cut off the batch's file, and the journal file now holding them.</summary>
+public sealed record TornRecord(int Bytes, string KeptIn);
 
 /// <summary>
 /// The journal for file changes (design 7.4 as it applies to section 6). Each batch has one
@@ -113,7 +116,20 @@ public sealed class Journal
     public RecoveryOutcome Recover(string batchId, RootRegistry roots)
     {
         if (!Holds(batchId)) throw new BrokerRefusal("unknown_batch", "The journal holds no such batch.");
-        var records = Read(batchId);
+        var records = Read(batchId, out var tail);
+        TornRecord? torn = null;
+        if (tail is not null)
+        {
+            // The torn bytes are kept in a file of their own, on disk, before the batch's file is cut.
+            torn = new TornRecord(tail.Length, KeepTornTail(batchId, tail));
+            if (records.Count == 0)
+            {
+                // Only a begin cut short: no step was ever journalled, so nothing was changed.
+                DeleteBatchFile(batchId);
+                return new RecoveryOutcome(batchId, false, true, [], torn);
+            }
+            DropTornTail(batchId, tail.Length);
+        }
         var committed = records.Any(record => Kind(record) == "commit");
         var steps = new SortedDictionary<int, JsonElement>();
         var finished = new HashSet<int>();
@@ -126,6 +142,10 @@ public sealed class Journal
         var ordered = committed ? steps.Values.ToList() : steps.Values.Reverse().ToList();
         using (var log = Reopen(batchId))
         {
+            // What was read may still be only in the cache: a record whose own flush failed (a
+            // commit, above all, after which the originals are deleted). It is made durable before
+            // anything acts on it; if it cannot be, nothing is changed and the batch stays pending.
+            log.FlushToDisk();
             foreach (var step in ordered)
             {
                 var index = step.GetProperty("i").GetInt32();
@@ -144,19 +164,74 @@ public sealed class Journal
         if (left.Count == 0)
         {
             File.Delete(PathOf(batchId));
-            return new RecoveryOutcome(batchId, committed, true, []);
+            return new RecoveryOutcome(batchId, committed, true, [], torn);
         }
-        return new RecoveryOutcome(batchId, committed, false, left);
+        return new RecoveryOutcome(batchId, committed, false, left, torn);
     }
 
     private string PathOf(string batchId) => Path.Combine(Folder, Prefix + batchId + Suffix);
 
     /// <summary>
-    /// Every record. Each one is written whole, with its line end, in one write that is flushed to
-    /// disk, so a record that does not parse or has no line end means the file was damaged: it is
-    /// never guessed at. The batch is then left as it is and reported, and changes stay refused.
+    /// Writes a torn last record's bytes to a new file beside the batch's file (batch-ID.torn, or
+    /// batch-ID.N.torn if a crash during an earlier recovery left one), flushed to disk, and
+    /// returns its name. Never replaces a file. If it cannot be written, nothing is cut or changed.
     /// </summary>
-    private List<JsonElement> Read(string batchId)
+    private string KeepTornTail(string batchId, byte[] tail)
+    {
+        for (var attempt = 1; attempt <= 100; attempt++)
+        {
+            var name = attempt == 1 ? $"{Prefix}{batchId}.torn" : $"{Prefix}{batchId}.{attempt}.torn";
+            var path = Path.Combine(Folder, name);
+            if (File.Exists(path)) continue;
+            try
+            {
+                using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.WriteThrough);
+                stream.Write(tail);
+                stream.Flush(flushToDisk: true);
+                return name;
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                throw new BrokerRefusal("journal_unavailable", $"The torn last record of batch {batchId} could not be kept: {error.Message}");
+            }
+        }
+        throw new BrokerRefusal("journal_unavailable", $"Batch {batchId} already has 100 kept torn records.");
+    }
+
+    /// <summary>Cuts a record whose write never finished (tailBytes long) off the end of a batch's file, before anything is appended after it.</summary>
+    private void DropTornTail(string batchId, int tailBytes)
+    {
+        try
+        {
+            using var stream = new FileStream(PathOf(batchId), FileMode.Open, FileAccess.Write, FileShare.Read, 1, FileOptions.WriteThrough);
+            stream.SetLength(stream.Length - tailBytes);
+            stream.Flush(flushToDisk: true);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            throw new BrokerRefusal("journal_unavailable", error.Message);
+        }
+    }
+
+    private void DeleteBatchFile(string batchId)
+    {
+        try { File.Delete(PathOf(batchId)); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            throw new BrokerRefusal("journal_unavailable", error.Message);
+        }
+    }
+
+    /// <summary>
+    /// Every record. Each one is written whole, with its line end, in one write that is flushed to
+    /// disk before the action it names is begun. So bytes after the last line end are a record whose
+    /// write never finished (a power loss, or a crash in the write): its action never started, and
+    /// the record is treated as never written (tail then holds those bytes). This holds only when
+    /// every record before the last line end parses and fits: any other damage, an empty file
+    /// included, is never guessed at. The batch is then left as it is and reported, and changes
+    /// stay refused.
+    /// </summary>
+    private List<JsonElement> Read(string batchId, out byte[]? tail)
     {
         var records = new List<JsonElement>();
         byte[] bytes;
@@ -165,10 +240,11 @@ public sealed class Journal
             bytes = new byte[stream.Length];
             stream.ReadExactly(bytes);
         }
-        if (bytes.Length == 0 || bytes[^1] != (byte)'\n')
-            throw new BrokerRefusal("journal_unreadable", $"The journal of batch {batchId} ends part way through a record.");
+        if (bytes.Length == 0)
+            throw new BrokerRefusal("journal_unreadable", $"The journal of batch {batchId} holds no record.");
+        var complete = Array.LastIndexOf(bytes, (byte)'\n') + 1;
         var line = 0;
-        for (var start = 0; start < bytes.Length; line++)
+        for (var start = 0; start < complete; line++)
         {
             var end = Array.IndexOf(bytes, (byte)'\n', start);
             try
@@ -181,7 +257,14 @@ public sealed class Journal
             catch (JsonException) { throw new BrokerRefusal("journal_unreadable", $"Record {line + 1} of batch {batchId} is unreadable."); }
             start = end + 1;
         }
-        Validate(records, batchId);
+        // A string that is not valid UTF-8 parses, and only fails when it is read: damage too.
+        try { Validate(records, batchId); }
+        catch (Exception error) when (error is InvalidOperationException or FormatException)
+        {
+            throw new BrokerRefusal("journal_unreadable", $"The journal of batch {batchId} holds a value that cannot be read.");
+        }
+        // Set only now that everything before it is known to be whole.
+        tail = complete < bytes.Length ? bytes[complete..] : null;
         return records;
     }
 
@@ -445,7 +528,12 @@ public sealed class Journal
             if (aside is null) return;
             if (!Is(aside, Id(step, "object"))) throw new BrokerRefusal("changed_since_check", "Another object holds the aside name.");
             if ((Native.GetAttributeTag(aside).FileAttributes & Native.FileAttributeDirectory) != 0 && !Native.IsDirectoryEmpty(aside))
-                throw new BrokerRefusal("not_empty", "A folder set aside is no longer empty.");
+            {
+                // Another program made an entry in the folder after its last check: the delete is
+                // undone, entry and all, under the folder's own name (never left hidden), and reported.
+                Native.RenameInto(aside, folder, step.GetProperty("name").GetString()!);
+                throw new BrokerRefusal("not_empty", "A folder set aside was no longer empty; it is back under its name.");
+            }
             Native.DeleteNow(aside, asideName);
         }
     }
@@ -468,10 +556,27 @@ public sealed class BatchLog : IDisposable
             bytes.CopyTo(line, 0);
             line[^1] = (byte)'\n';
             stream.Write(line);
+            FaultForTests?.Invoke("after_write");
             stream.Flush(flushToDisk: true);
         }
         catch (IOException error) { throw new BrokerRefusal("journal_unavailable", error.Message); }
     }
+
+    /// <summary>Flushes everything written to the batch's file, by any handle, to disk.</summary>
+    public void FlushToDisk()
+    {
+        try
+        {
+            FaultForTests?.Invoke("flush");
+            stream.Flush(flushToDisk: true);
+        }
+        catch (IOException error) { throw new BrokerRefusal("journal_unavailable", error.Message); }
+    }
+
+    private static readonly AsyncLocal<Action<string>?> fault = new();
+
+    /// <summary>Test hook: runs inside Append after the write and before its flush ("after_write"), and before FlushToDisk ("flush"); an IOException it throws is a failed flush.</summary>
+    internal static Action<string>? FaultForTests { get => fault.Value; set => fault.Value = value; }
 
     public void Dispose() => stream.Dispose();
 }

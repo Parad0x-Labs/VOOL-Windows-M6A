@@ -186,15 +186,19 @@ public sealed class JournalTests : IDisposable
         Assert.Empty(work.JournalFiles());
     }
 
-    // A damaged journal record (cut off part way, missing its line end, or not a record) is never
+    // A damaged journal record (cut off part way with records after it, or not a record, with or
+    // without a torn last record after it, or a file holding nothing) is never
     // guessed at: recovery stops and changes nothing, every new change is refused, reads still
     // work, and the next start reports the batch as pending. The same holds for records that
     // parse but do not fit the journal (review R4): a missing or mistyped field, an unknown
-    // record, a step numbered twice, an undone for no step, another batch's begin, and a temp
-    // step naming a file the batch never made (other.txt, which must survive).
+    // record, a step numbered twice, an undone for no step, another batch's begin, a temp step
+    // naming a file the batch never made (other.txt, which must survive), and a string that
+    // cannot be read (review F6).
     [Theory]
-    [InlineData("cut_off")]
-    [InlineData("no_line_end")]
+    [InlineData("cut_off_before_the_end")]
+    [InlineData("cut_off_and_torn")]
+    [InlineData("unknown_record_and_torn")]
+    [InlineData("empty")]
     [InlineData("not_a_record")]
     [InlineData("step_without_index")]
     [InlineData("index_not_a_number")]
@@ -203,6 +207,7 @@ public sealed class JournalTests : IDisposable
     [InlineData("undone_of_no_step")]
     [InlineData("other_batch")]
     [InlineData("foreign_temp_name")]
+    [InlineData("lone_surrogate")]
     public async Task A_damaged_journal_is_never_guessed_at(string damage)
     {
         File.WriteAllText(work.In("other.txt"), "readable");
@@ -224,16 +229,36 @@ public sealed class JournalTests : IDisposable
             record["name"] = "other.txt";
             return record.ToJsonString();
         }
+        // A string that parses but cannot be read (review F6): the aside name starts with an
+        // escaped lone surrogate.
+        string LoneSurrogate()
+        {
+            var text = Encoding.UTF8.GetString(bytes);
+            const string asideField = "\"aside\":\".vool-broker-aside-";
+            Assert.Equal(1, text.Split(asideField).Length - 1);
+            return text.Replace(asideField, "\"aside\":\"\\uD800vool-broker-aside-", StringComparison.Ordinal);
+        }
+        // A record cut part way with complete records after it: damage, not a write that never finished.
+        byte[] CutOffBeforeTheEnd()
+        {
+            var cut = lines.Select((text, index) => index == 1 ? text[..^5] : text);
+            return Encoding.UTF8.GetBytes(string.Join("\n", cut) + "\n");
+        }
         bytes = damage switch
         {
-            "cut_off" => bytes[..^5],
-            "no_line_end" => bytes[..^1],
+            "cut_off_before_the_end" => CutOffBeforeTheEnd(),
+            // Damage before the last line end is never excused by a torn tail after it.
+            "cut_off_and_torn" => [.. CutOffBeforeTheEnd(), .. Encoding.UTF8.GetBytes("{\"t\":\"comm")],
+            "unknown_record_and_torn" => [.. Appended("{\"t\":\"frobnicate\"}"), .. Encoding.UTF8.GetBytes("{\"t\":\"comm")],
+            // A file with no record at all: not a begin cut short, since it holds no part of one.
+            "empty" => [],
             "not_a_record" => [.. Encoding.UTF8.GetBytes("not a record\n"), .. bytes],
             "step_without_index" => Appended("{\"t\":\"step\",\"k\":\"temp\"}"),
             "index_not_a_number" => Appended("{\"t\":\"undone\",\"i\":\"x\"}"),
             "unknown_record" => Appended("{\"t\":\"frobnicate\"}"),
             "step_numbered_twice" => Appended(stepLines[0]),
             "undone_of_no_step" => Appended("{\"t\":\"undone\",\"i\":99}"),
+            "lone_surrogate" => Encoding.UTF8.GetBytes(LoneSurrogate()),
             "other_batch" => Encoding.UTF8.GetBytes(string.Join("\n", lines.Skip(1).Prepend(lines[0].Replace(batchId, new string('0', 32), StringComparison.Ordinal))) + "\n"),
             _ => Appended(ForeignTemp()),
         };
@@ -249,6 +274,7 @@ public sealed class JournalTests : IDisposable
         Assert.Equal("readable", Encoding.UTF8.GetString(FileOps.Read(work.Opened, "other.txt", 100).Data));
         Assert.Equal(crashed, TestSupport.TreeHash(work.Root));
         Assert.Equal(bytes, File.ReadAllBytes(journalFile));
+        Assert.Equal(journalFile, Assert.Single(work.JournalFiles()));
 
         work.Registry.Dispose();
         var bootstrap = TestSupport.DefaultBootstrap([work.Root], work.JournalFolder);
@@ -275,6 +301,197 @@ public sealed class JournalTests : IDisposable
         }
         Assert.Equal(crashed, TestSupport.TreeHash(work.Root));
         Assert.Equal(bytes, File.ReadAllBytes(journalFile));
+    }
+
+    // A power loss in the middle of a record's write (review F1) leaves bytes after the last line
+    // end. Each record is written whole and flushed before its action begins, so that action never
+    // started: at each place a write can tear (a begin, each kind of step, a done, the commit), cut
+    // part way or missing only its line end, the torn bytes are kept in batch-ID.torn, cut off the
+    // journal, and the batch is put back. A begin alone ends as no batch at all.
+    [Theory]
+    [InlineData("begin", 3)]
+    [InlineData("begin", 1)]
+    [InlineData("temp", 5)]
+    [InlineData("temp", 1)]
+    [InlineData("aside", 5)]
+    [InlineData("aside", 1)]
+    [InlineData("place", 5)]
+    [InlineData("place", 1)]
+    [InlineData("done", 5)]
+    [InlineData("done", 1)]
+    [InlineData("commit", 5)]
+    [InlineData("commit", 1)]
+    public void A_record_whose_write_never_finished_is_kept_aside_and_the_batch_put_back(string record, int cut)
+    {
+        File.WriteAllText(work.In("f.txt"), "original");
+        var before = TestSupport.ContentHash(work.Root);
+        var (batchId, tail) = TearAt(record, cut);
+        work.Restart();
+
+        var outcome = Assert.Single(work.Journal.RecoverAll(work.Registry));
+        Assert.True(outcome.Complete, string.Join("; ", outcome.Left));
+        Assert.False(outcome.Committed);
+        Assert.Equal(new TornRecord(tail.Length, $"batch-{batchId}.torn"), outcome.Torn);
+        Assert.Equal(before, TestSupport.ContentHash(work.Root));
+        Assert.Equal("original", File.ReadAllText(work.In("f.txt")));
+        Assert.Empty(work.BrokerNames());
+        var kept = Assert.Single(work.JournalFiles());
+        Assert.Equal($"batch-{batchId}.torn", Path.GetFileName(kept));
+        Assert.Equal(tail, File.ReadAllBytes(kept));
+        Assert.Empty(work.Journal.Pending());
+    }
+
+    // The start line names each torn record it cut off, with its byte count and the file keeping it.
+    [Fact]
+    public async Task The_start_line_reports_a_torn_record()
+    {
+        File.WriteAllText(work.In("f.txt"), "original");
+        var (batchId, tail) = TearAt("commit", 5);
+        work.Registry.Dispose();
+        var bootstrap = TestSupport.DefaultBootstrap([work.Root], work.JournalFolder);
+        var (broker, ready) = await TestSupport.StartReady(bootstrap);
+        try
+        {
+            var journal = ready.RootElement.GetProperty("journal");
+            Assert.Equal(1, journal.GetProperty("recovered").GetInt32());
+            Assert.Empty(journal.GetProperty("pending").EnumerateArray());
+            var torn = Assert.Single(journal.GetProperty("torn").EnumerateArray());
+            Assert.Equal(batchId, torn.GetProperty("batch_id").GetString());
+            Assert.Equal(tail.Length, torn.GetProperty("bytes").GetInt32());
+            Assert.Equal($"batch-{batchId}.torn", torn.GetProperty("kept_in").GetString());
+        }
+        finally
+        {
+            ready.Dispose();
+            await TestSupport.Kill(broker);
+        }
+        Assert.Equal("original", File.ReadAllText(work.In("f.txt")));
+        Assert.Equal(tail, File.ReadAllBytes(Assert.Single(work.JournalFiles())));
+    }
+
+    // A torn record kept before (a crash during an earlier recovery, after keeping it but before the
+    // cut) is never replaced: the next one is kept beside it.
+    [Fact]
+    public void A_torn_record_never_replaces_one_kept_before()
+    {
+        File.WriteAllText(work.In("f.txt"), "original");
+        var (batchId, tail) = TearAt("place", 5);
+        var earlier = Path.Combine(work.JournalFolder, $"batch-{batchId}.torn");
+        File.WriteAllText(earlier, "kept before");
+        work.Restart();
+
+        var outcome = Assert.Single(work.Journal.RecoverAll(work.Registry));
+        Assert.True(outcome.Complete, string.Join("; ", outcome.Left));
+        Assert.Equal($"batch-{batchId}.2.torn", outcome.Torn!.KeptIn);
+        Assert.Equal("kept before", File.ReadAllText(earlier));
+        Assert.Equal(tail, File.ReadAllBytes(Path.Combine(work.JournalFolder, $"batch-{batchId}.2.torn")));
+        Assert.Equal("original", File.ReadAllText(work.In("f.txt")));
+    }
+
+    // The torn bytes are cut off before recovery adds its own records, so a batch it cannot finish
+    // at once (the file's name taken by another program) reads cleanly at the next attempt.
+    [Fact]
+    public void A_batch_left_pending_after_a_torn_record_finishes_later()
+    {
+        File.WriteAllText(work.In("f.txt"), "original");
+        var (batchId, tail) = TearAt("place", 5);
+        File.WriteAllText(work.In("f.txt"), "someone else's");
+        work.Restart();
+
+        var first = Assert.Single(work.Journal.RecoverAll(work.Registry));
+        Assert.False(first.Complete);
+        Assert.Equal(tail.Length, first.Torn!.Bytes);
+        Assert.Equal("someone else's", File.ReadAllText(work.In("f.txt")));
+
+        File.Delete(work.In("f.txt"));
+        var second = work.Runner.Restore(batchId);
+        Assert.True(second.Complete, string.Join("; ", second.Left));
+        Assert.Null(second.Torn);
+        Assert.Equal("original", File.ReadAllText(work.In("f.txt")));
+        Assert.Empty(work.BrokerNames());
+        Assert.Equal($"batch-{batchId}.torn", Path.GetFileName(Assert.Single(work.JournalFiles())));
+    }
+
+    // When the torn bytes cannot be kept, nothing is cut or changed: the batch stays pending.
+    [Fact]
+    public void A_torn_record_that_cannot_be_kept_cuts_nothing()
+    {
+        File.WriteAllText(work.In("f.txt"), "original");
+        var (batchId, _) = TearAt("place", 5);
+        // A folder under the name the torn bytes would take: the file cannot be made.
+        Directory.CreateDirectory(Path.Combine(work.JournalFolder, $"batch-{batchId}.torn"));
+        var journalFile = Path.Combine(work.JournalFolder, $"batch-{batchId}.jsonl");
+        var bytes = File.ReadAllBytes(journalFile);
+        work.Restart();
+        var crashed = TestSupport.TreeHash(work.Root);
+
+        var outcome = Assert.Single(work.Journal.RecoverAll(work.Registry));
+        Assert.False(outcome.Complete);
+        Assert.StartsWith("journal: journal_unavailable", Assert.Single(outcome.Left), StringComparison.Ordinal);
+        Assert.Null(outcome.Torn);
+        Assert.Equal(bytes, File.ReadAllBytes(journalFile));
+        Assert.Equal(crashed, TestSupport.TreeHash(work.Root));
+        Assert.Equal(batchId, Assert.Single(work.Journal.Pending()));
+    }
+
+    /// <summary>
+    /// Replaces f.txt in one batch and stops the broker in the write of the chosen record (begin;
+    /// the temp, aside or place step; the temp's done; the commit), then cuts that record's last cut
+    /// bytes off the journal: what a power loss part way through the write leaves. Returns the
+    /// batch id and the bytes left after the last line end.
+    /// </summary>
+    private (string BatchId, byte[] Tail) TearAt(string record, int cut)
+    {
+        if (record == "begin")
+        {
+            // Stopped before the first step's action; then only part of the begin is left.
+            CrashAt(0);
+        }
+        else
+        {
+            BatchLog.FaultForTests = point =>
+            {
+                if (point != "after_write") return;
+                var last = LastRecord();
+                var kind = last.GetProperty("t").GetString();
+                var matches = record switch
+                {
+                    "done" => kind == "done" && last.GetProperty("i").GetInt32() == 0,
+                    "commit" => kind == "commit",
+                    _ => kind == "step" && last.GetProperty("k").GetString() == record,
+                };
+                if (matches) throw new BatchCrashForTests();
+            };
+        }
+        try { Assert.Throws<BatchCrashForTests>(() => work.Runner.Apply([work.Write("f.txt", "new", Workspace.Sha256("original"))])); }
+        finally
+        {
+            BatchLog.FaultForTests = null;
+            BatchRunner.BeforeStepForTests = null;
+        }
+        var journalFile = Assert.Single(work.JournalFiles());
+        var batchId = Path.GetFileNameWithoutExtension(journalFile)["batch-".Length..];
+        var bytes = File.ReadAllBytes(journalFile);
+        // The torn record is the begin (the first line), or the last line.
+        var (lastLineStart, lineEnd) = record == "begin"
+            ? (0, Array.IndexOf(bytes, (byte)'\n'))
+            : (Array.LastIndexOf(bytes, (byte)'\n', bytes.Length - 2) + 1, bytes.Length - 1);
+        Assert.Equal((byte)'\n', bytes[lineEnd]);
+        var keep = lineEnd + 1 - cut;
+        // The cut never reaches back past the record before it.
+        Assert.True(keep > lastLineStart);
+        bytes = bytes[..keep];
+        File.WriteAllBytes(journalFile, bytes);
+        return (batchId, bytes[lastLineStart..]);
+    }
+
+    private JsonElement LastRecord()
+    {
+        using var stream = new FileStream(Assert.Single(work.JournalFiles()), FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var reader = new StreamReader(stream);
+        var last = reader.ReadToEnd().TrimEnd('\n').Split('\n')[^1];
+        using var document = JsonDocument.Parse(last);
+        return document.RootElement.Clone();
     }
 
     // A journal folder the broker cannot create: it still starts, says so, and refuses every change.

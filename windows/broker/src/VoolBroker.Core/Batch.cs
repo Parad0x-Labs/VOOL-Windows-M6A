@@ -225,7 +225,8 @@ public sealed class BatchRunner(RootRegistry roots, Journal journal)
 
         /// <summary>
         /// After the commit: deletes each object set aside through its held handle, recording each
-        /// one as done. A failure is left for the journal's cleanup, which reports what it cannot do.
+        /// one as done. A failure is left for the journal's cleanup, which reports what it cannot do;
+        /// a folder someone filled since its check is put back under its name there, never left hidden.
         /// </summary>
         public void RemoveAsides()
         {
@@ -456,6 +457,11 @@ public sealed class BatchRunner(RootRegistry roots, Journal journal)
             return new PlannedChange(steps =>
             {
                 steps.Aside(node, steps.AsideName());
+                // Holding a folder does not stop another program creating something in it. Checked
+                // again once it is aside: an entry made since the plan stops the batch, which puts
+                // the folder back under its name, entry and all.
+                if (node.IsDirectory && !Native.IsDirectoryEmpty(node.Handle!))
+                    throw new BrokerRefusal("not_empty", $"Folder '{node.Rel}' is no longer empty.");
                 return new() { ["op"] = "delete", ["path"] = node.Rel };
             });
         }

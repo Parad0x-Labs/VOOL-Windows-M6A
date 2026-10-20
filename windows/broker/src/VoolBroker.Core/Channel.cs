@@ -9,6 +9,8 @@ namespace VoolBroker.Core;
 
 public sealed class Channel(int apiPid, long apiCreationTime, byte[] secret, string journalDirectory, RootRegistry? roots = null, TimeSpan? idleTimeout = null, Journal? journal = null)
 {
+    /// <summary>The largest client_proof frame read before authentication.</summary>
+    internal const int MaxProofBytes = 1024;
     private readonly HashSet<string> _nonces = new(StringComparer.Ordinal);
     private readonly object _nonceLock = new();
     private readonly byte[] _secret = secret;
@@ -118,7 +120,9 @@ public sealed class Channel(int apiPid, long apiCreationTime, byte[] secret, str
                 throw new InvalidDataException("client process identity mismatch");
             var brokerNonce = RandomNumberGenerator.GetBytes(32);
             watchdog.Run(() => Protocol.WriteFrame(stream, new { type = "challenge", nonce = Convert.ToHexString(brokerNonce).ToLowerInvariant() }));
-            using (var proofDoc = watchdog.Run(() => Protocol.ReadFrame(stream)))
+            // The proof is the only frame read before authentication: a few hundred bytes, so a
+            // larger one is refused without reading it.
+            using (var proofDoc = watchdog.Run(() => Protocol.ReadFrame(stream, MaxProofBytes)))
             {
                 // Anything but a client_proof (a request sent before authentication included) closes the connection.
                 var proof = proofDoc.RootElement;
@@ -130,7 +134,8 @@ public sealed class Channel(int apiPid, long apiCreationTime, byte[] secret, str
                 if (!FixedHexEquals(proof.GetProperty("hmac").GetString(), expected)) throw new InvalidDataException("client authentication failed");
                 lock (_nonceLock)
                 {
-                    if (!_nonces.Add(clientNonceHex)) throw new InvalidDataException("replayed client nonce");
+                    // Keyed on the nonce's bytes, so another spelling of the same hex is a replay too.
+                    if (!_nonces.Add(Convert.ToHexString(clientNonce))) throw new InvalidDataException("replayed client nonce");
                 }
                 var response = HMACSHA256.HashData(_secret, clientNonce);
                 watchdog.Run(() => Protocol.WriteFrame(stream, new { type = "server_proof", hmac = Convert.ToHexString(response).ToLowerInvariant() }));

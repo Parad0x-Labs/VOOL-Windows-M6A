@@ -364,6 +364,83 @@ public sealed class BatchTests : IDisposable
         Assert.Empty(work.JournalFiles());
     }
 
+    // The commit record is written but its own flush fails, and so does the flush recovery makes
+    // before acting on it: nothing is deleted, and the batch stays pending. When the commit record
+    // then never reaches the disk (a power loss), the next start puts the original back (review F7).
+    [Fact]
+    public void A_commit_that_cannot_be_made_durable_deletes_nothing()
+    {
+        File.WriteAllText(work.In("f.txt"), "original");
+        var commitWritten = false;
+        BatchLog.FaultForTests = point =>
+        {
+            if (point == "after_write" && LastRecord().GetProperty("t").GetString() == "commit")
+            {
+                commitWritten = true;
+                throw new IOException("injected flush failure");
+            }
+            if (point == "flush" && commitWritten) throw new IOException("injected flush failure");
+        };
+        BatchStopped stopped;
+        try { stopped = work.Stopped(work.Write("f.txt", "new", Workspace.Sha256("original"))); }
+        finally { BatchLog.FaultForTests = null; }
+        Assert.True(commitWritten);
+        Assert.Equal("journal_unavailable", stopped.Code);
+        Assert.False(stopped.Restored);
+        var aside = Assert.Single(work.BrokerNames(), name => Path.GetFileName(name).StartsWith(".vool-broker-aside-", StringComparison.Ordinal));
+        Assert.Equal("original", File.ReadAllText(aside));
+        Assert.Equal("new", File.ReadAllText(work.In("f.txt")));
+        Assert.Equal("journal_pending", work.Refusal(work.Write("other.txt", "x", "absent")));
+
+        var journalFile = Assert.Single(work.JournalFiles());
+        var kept = File.ReadAllLines(journalFile).Where(line => !line.Contains("\"t\":\"commit\"", StringComparison.Ordinal)).ToArray();
+        Assert.Equal(File.ReadAllLines(journalFile).Length - 1, kept.Length);
+        File.WriteAllText(journalFile, string.Join("\n", kept) + "\n");
+        work.Restart();
+        var outcome = Assert.Single(work.Journal.RecoverAll(work.Registry));
+        Assert.True(outcome.Complete, string.Join("; ", outcome.Left));
+        Assert.Equal("original", File.ReadAllText(work.In("f.txt")));
+        Assert.Empty(work.BrokerNames());
+        Assert.Empty(work.JournalFiles());
+    }
+
+    // Holding an empty folder does not stop another program creating something in it. An entry
+    // made after the delete was planned stops the batch, and the folder is back under its name
+    // with the entry in it, never hidden under an aside name (review F3).
+    [Fact]
+    public void A_folder_that_gains_an_entry_before_its_delete_is_put_back()
+    {
+        Directory.CreateDirectory(work.In("empty"));
+        BatchRunner.BeforeStepForTests = (_, kind) => { if (kind == "aside") File.WriteAllText(work.In("empty", "x.txt"), "x"); };
+        BatchStopped stopped;
+        try { stopped = work.Stopped(work.Delete("empty")); }
+        finally { BatchRunner.BeforeStepForTests = null; }
+        Assert.Equal("not_empty", stopped.Code);
+        Assert.True(stopped.Restored, string.Join("; ", stopped.Left));
+        Assert.Equal("x", File.ReadAllText(work.In("empty", "x.txt")));
+        Assert.Empty(work.BrokerNames());
+        Assert.Empty(work.JournalFiles());
+    }
+
+    // The same after the commit, when the folder is already aside: it is put back under its name,
+    // entry and all, reported, and restore_batch then clears the batch (review F3).
+    [Fact]
+    public void A_folder_that_gains_an_entry_after_the_commit_is_put_back_and_reported()
+    {
+        Directory.CreateDirectory(work.In("empty"));
+        BatchRunner.AfterCommitRecordForTests = () => File.WriteAllText(Path.Combine(Assert.Single(work.BrokerNames()), "x.txt"), "x");
+        BatchResult result;
+        try { result = work.Runner.Apply([work.Delete("empty")]); }
+        finally { BatchRunner.AfterCommitRecordForTests = null; }
+        Assert.Contains(result.CleanupLeft, line => line.StartsWith("aside empty", StringComparison.Ordinal) && line.EndsWith("not_empty", StringComparison.Ordinal));
+        Assert.Equal("x", File.ReadAllText(work.In("empty", "x.txt")));
+        Assert.Empty(work.BrokerNames());
+        var outcome = work.Runner.Restore(result.BatchId);
+        Assert.True(outcome.Complete, string.Join("; ", outcome.Left));
+        Assert.Equal("x", File.ReadAllText(work.In("empty", "x.txt")));
+        Assert.Empty(work.JournalFiles());
+    }
+
     // A read-only file is never deleted, and never replaced by a rename.
     [Fact]
     public void Read_only_files_are_not_deleted_or_replaced()

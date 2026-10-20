@@ -45,6 +45,7 @@ public sealed class RootsTests : IDisposable
     [InlineData("case_sensitive", "case_sensitive_dir")]
     [InlineData("volume_guid", "invalid_flagged")]
     [InlineData("mapped_drive", "unsupported_filesystem")]
+    [InlineData("embedded_nul", "invalid_flagged")]
     public async Task Refused_flagged_entry_stops_the_start_without_a_pipe(string kind, string code)
     {
         // F5: windows-broker.yml maps a local share as a drive letter and names a folder on it.
@@ -65,6 +66,8 @@ public sealed class RootsTests : IDisposable
             // F1: fully qualified and it opens the folder, but has no drive letter.
             "volume_guid" => TestSupport.VolumeGuidSpelling(target),
             "mapped_drive" => TestSupport.AdminFolder("VOOL_BROKER_TEST_MAPPED_ROOT")!,
+            // Windows reads a path only up to a NUL, so this would open target itself (review F2).
+            "embedded_nul" => target + "\0\\inner",
             _ => throw new ArgumentOutOfRangeException(nameof(kind))
         };
         if (kind == "file") File.WriteAllText(entry, "x");
@@ -85,6 +88,19 @@ public sealed class RootsTests : IDisposable
         {
             if (kind == "case_sensitive") TestSupport.SetCaseSensitiveOrSkip(entry, enable: false);
         }
+    }
+
+    // A journal folder holding a NUL is refused, never truncated to the part before it (review F2).
+    [Fact]
+    public async Task A_journal_folder_with_a_NUL_is_refused()
+    {
+        var good = NewFolder("good");
+        var journalDirectory = journal + "\0x";
+        var pipes = TestSupport.BrokerPipes();
+        using var refusal = await TestSupport.StartRefused(TestSupport.DefaultBootstrap([good], journalDirectory));
+        Assert.Equal("invalid_bootstrap", Code(refusal));
+        Assert.Equal(journalDirectory, refusal.RootElement.GetProperty("error").GetProperty("entry").GetString());
+        Assert.Empty(TestSupport.BrokerPipes().Except(pipes));
     }
 
     // F10: one refused entry among good ones refuses the whole start, naming that entry.

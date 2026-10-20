@@ -64,7 +64,9 @@ internal static class Program
             {
                 available = journal.Available,
                 recovered = recovered.Count(outcome => outcome.Complete),
-                pending = recovered.Where(outcome => !outcome.Complete).Select(outcome => new { batch_id = outcome.BatchId, left = outcome.Left }).ToArray()
+                pending = recovered.Where(outcome => !outcome.Complete).Select(outcome => new { batch_id = outcome.BatchId, left = outcome.Left }).ToArray(),
+                // Last records whose write never finished, cut off and kept in a file of their own.
+                torn = recovered.Where(outcome => outcome.Torn is not null).Select(outcome => new { batch_id = outcome.BatchId, bytes = outcome.Torn!.Bytes, kept_in = outcome.Torn.KeptIn }).ToArray()
             };
             var secret = Convert.FromHexString(secretText);
             channel = new Channel(pid, creationTime, secret, journalDirectory, roots, IdleTimeoutFromEnvironment(), journal);
