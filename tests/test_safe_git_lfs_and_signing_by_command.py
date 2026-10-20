@@ -384,8 +384,9 @@ def test_an_lfsconfig_git_cannot_read_is_refused(tmp_path: Path) -> None:
 def test_a_repository_that_names_no_lfs_server_is_not_checked_further(tmp_path: Path) -> None:
     repo, _marker = _repo(tmp_path)
     _git(repo, "remote", "add", "origin", "https://git.example.test/project.git")
+    _git(repo, "branch", "other")
 
-    assert safe_git.lfs_endpoint_refusal(repo, ("merge", "main")) == ""
+    assert safe_git.lfs_endpoint_refusal(repo, ("merge", "--no-ff", "-m", "a message", "other")) == ""
 
 
 @pytest.mark.parametrize("url, host", [
@@ -450,3 +451,104 @@ def test_only_a_leading_alias_section_is_exempt_from_the_program_endings() -> No
     assert not safe_git.is_executable_key("alias.lastcommand")
     assert safe_git.is_executable_key("foo.alias.xcommand")
     assert safe_git.is_executable_key("alias.x.command")
+
+
+# ── Review findings, 20 Oct ────────────────────────────────────────────────────────────────────
+
+
+def _no_lfs(*args: str) -> tuple[str, ...]:
+    # Set-up git that leaves LFS files as pointers instead of asking a server for them.
+    return ("-c", "filter.lfs.process=", "-c", "filter.lfs.smudge=", "-c", "filter.lfs.required=false", *args)
+
+
+def _revert_world(tmp_path: Path, monkeypatch, port: int) -> Path:
+    # Commit A adds an LFS file and an .lfsconfig naming another server; commit B removes both.
+    # Reverting B brings A's .lfsconfig back, and neither HEAD nor B holds it.
+    repo = _lfs_repo(tmp_path, monkeypatch, port)
+    _git(repo, *_no_lfs("checkout", "lfs", "--", ".gitattributes", "big.bin"))
+    subprocess.run(["git", "config", "-f", str(repo / ".lfsconfig"), "lfs.url", f"http://127.0.0.1:{port}/elsewhere"],
+                   check=True, capture_output=True)
+    _git(repo, *_no_lfs("add", ".lfsconfig"))
+    _git(repo, *_no_lfs("commit", "-q", "-m", "A"))
+    _git(repo, *_no_lfs("rm", "-q", ".lfsconfig", "big.bin"))
+    _git(repo, *_no_lfs("commit", "-q", "-m", "B"))
+    _without_lfs_hooks(repo)
+    return repo
+
+
+@_NEEDS_LFS
+def test_control_reverting_a_removal_brings_the_other_server_back(tmp_path: Path, monkeypatch, lfs_server) -> None:
+    port, hits = lfs_server
+    repo = _revert_world(tmp_path, monkeypatch, port)
+    hits.clear()
+
+    subprocess.run(safe_git.hardened_argv(repo, "revert", "--no-edit", "HEAD"), capture_output=True, timeout=120,
+                   env=safe_git.safe_env())
+
+    assert any("/elsewhere/" in hit for hit in hits), f"control: git-lfs did not ask the server; {hits}"
+
+
+@_NEEDS_LFS
+def test_a_revert_that_would_bring_back_another_lfs_server_is_refused(tmp_path: Path, monkeypatch,
+                                                                     lfs_server) -> None:
+    port, hits = lfs_server
+    repo = _revert_world(tmp_path, monkeypatch, port)
+    head = _git(repo, "rev-parse", "HEAD").strip()
+    hits.clear()
+
+    result = GitRunner(root=repo).revert("HEAD")
+
+    assert result.ok is False and "Git LFS would contact 127.0.0.1" in result.stderr, result.to_dict()
+    assert "the .lfsconfig revert would write" in result.stderr
+    assert _git(repo, "rev-parse", "HEAD").strip() == head
+    assert hits == []
+
+
+def test_a_cherry_pick_whose_merged_lfsconfig_names_another_server_is_refused(tmp_path: Path) -> None:
+    # Neither side names an LFS server: HEAD has an empty [lfs] section, the picked commit adds a
+    # url to [foo]. Merged, the url lands under [lfs].
+    repo, _marker = _repo(tmp_path)
+    _git(repo, "remote", "add", "origin", "https://git.example.test/project.git")
+    (repo / ".lfsconfig").write_text("[foo]\n#1\n#2\n#3\n#4\n", encoding="utf-8")
+    _git(repo, "add", ".lfsconfig")
+    _git(repo, "commit", "-q", "-m", "base")
+    _git(repo, "switch", "-q", "-c", "side")
+    (repo / ".lfsconfig").write_text("[foo]\n#1\n#2\n#3\n#4\n\turl = http://127.0.0.1/elsewhere\n", encoding="utf-8")
+    _git(repo, "commit", "-q", "-a", "-m", "foo.url")
+    _git(repo, "switch", "-q", "-")
+    (repo / ".lfsconfig").write_text("[lfs]\n#1\n#2\n#3\n#4\n", encoding="utf-8")
+    _git(repo, "commit", "-q", "-a", "-m", "empty lfs section")
+
+    refusal = safe_git.lfs_endpoint_refusal(repo, ("cherry-pick", "--no-rerere-autoupdate", "side"))
+
+    assert "Git LFS would contact 127.0.0.1" in refusal and "the .lfsconfig cherry-pick would write" in refusal, refusal
+
+
+def test_an_lfs_url_that_reads_as_an_option_is_refused(tmp_path: Path) -> None:
+    repo, _marker = _repo(tmp_path)
+    _git(repo, "remote", "add", "origin", "https://git.example.test/project.git")
+    subprocess.run(["git", "config", "-f", str(repo / ".lfsconfig"), "lfs.url", "-ox@127.0.0.1:9:elsewhere"],
+                   check=True, capture_output=True)
+
+    refusal = safe_git.lfs_endpoint_refusal(repo, ("switch", "-c", "x"))
+
+    assert refusal.startswith("the repository's Git LFS servers could not be checked"), refusal
+
+
+def test_picking_more_than_one_commit_is_refused_rather_than_guessed(tmp_path: Path) -> None:
+    repo, _marker = _repo(tmp_path)
+
+    refusal = safe_git.lfs_endpoint_refusal(repo, ("cherry-pick", "HEAD", "HEAD"))
+
+    assert refusal.startswith("the repository's Git LFS servers could not be checked"), refusal
+
+
+def test_a_submodules_key_says_it_is_set_in_the_submodule(tmp_path: Path) -> None:
+    (tmp_path / "inner").mkdir()
+    (tmp_path / "outer").mkdir()
+    inner, _marker = _repo(tmp_path / "inner")
+    outer, _ = _repo(tmp_path / "outer")
+    _git(outer, "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(inner), "sub")
+    _git(outer / "sub", "config", "filter.x.clean", "y")
+
+    assert safe_git.executable_config_for(outer, ("status",)) == ["sub:filter.x.clean (set in the submodule's .git/config)"]
