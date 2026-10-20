@@ -357,8 +357,9 @@ def lfs_endpoint_refusal(cwd: Path, argv: Sequence[str] = (), *, timeout: float 
 
 
 #: Subcommands VOOL runs that never write LFS files into the work tree (git-lfs uploads on push
-#: only from its pre-push hook, and hooks are refused).
-_LFS_FREE_SUBCOMMANDS = frozenset({"add", "commit", "tag", "push"})
+#: only from its pre-push hook, and hooks are refused; branch only moves refs, so a branch carrying
+#: a hostile .lfsconfig can still be deleted).
+_LFS_FREE_SUBCOMMANDS = frozenset({"add", "commit", "tag", "push", "branch"})
 
 
 def _is_remote_pick_key(key: str) -> bool:
@@ -459,10 +460,12 @@ _ABORT_STATE = ("ORIG_HEAD", "MERGE_AUTOSTASH", "rebase-merge/orig-head", "rebas
 
 
 def _revision_args(argv: Sequence[str]) -> list[str]:
-    """The arguments of ``git <argv>`` that may name a revision (not options or their values;
-    a lone ``-`` is the previous branch)."""
+    """The arguments of ``git <argv>`` that may name a revision (not options or their values, nor
+    the paths after ``--``; a lone ``-`` is the previous branch)."""
     found, skip_value = [], False
     for arg in list(argv)[1:]:
+        if arg == "--" and not skip_value:
+            break  # paths follow (checkout -- <path> restores from the index, which is checked anyway)
         if skip_value:
             skip_value = False
         elif arg in _VALUE_OPTIONS:
@@ -637,9 +640,12 @@ def hardened_argv(cwd: Path, *argv: str) -> list[str]:
     # attributes, out of reach of --no-ext-diff. `short` and no status summary run nothing there.
     # `submodule.recurse` would make switch/checkout/merge rebuild such a submodule from that folder
     # (running its filters), and `log.showSignature` would make log run the user's gpg on a forged
-    # signature the repository planted.
+    # signature the repository planted. A repository's `format.pretty` with `%G` does the same for a
+    # log or show without --format (under its `gpg.format`, ssh-keygen or gpgsm); `medium` is git's
+    # default, and a `pretty.medium` alias cannot replace a built-in format.
     command = ["git", *hardening_args(), "-c", "diff.submodule=short", "-c", "status.submoduleSummary=false",
-               "-c", "submodule.recurse=false", "-c", "log.showSignature=false", "-C", str(cwd), *argv]
+               "-c", "submodule.recurse=false", "-c", "log.showSignature=false", "-c", "format.pretty=medium",
+               "-C", str(cwd), *argv]
     if argv and argv[0] in {"diff", "log", "show"}:
         command[len(command) - len(argv) + 1:len(command) - len(argv) + 1] = ["--no-ext-diff", "--no-textconv"]
     return command
