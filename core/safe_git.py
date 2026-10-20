@@ -298,9 +298,9 @@ def lfs_endpoint_refusal(cwd: Path, argv: Sequence[str] = (), *, timeout: float 
     the repository's remotes, since git-lfs then contacts that URL. A proxy the repository sets
     (``http.proxy``) is not counted: git's own fetch and push go through it as well. A trusted server can still point
     git-lfs at storage elsewhere; that is the server's choice, not the repository's. Commands that
-    never write LFS files into the work tree (add, commit, tag, push without git-lfs's hook) are
-    not checked. A check that cannot finish refuses."""
-    if argv and argv[0] in _LFS_FREE_SUBCOMMANDS:
+    never write LFS files into the work tree (add, commit, tag, branch, worktree remove and prune,
+    push without git-lfs's hook) are not checked. A check that cannot finish refuses."""
+    if argv and (argv[0] in _LFS_FREE_SUBCOMMANDS or tuple(argv[:2]) in _LFS_FREE_WORKTREE_COMMANDS):
         return ""
     try:
         named: list[tuple[str, str]] = []
@@ -360,6 +360,8 @@ def lfs_endpoint_refusal(cwd: Path, argv: Sequence[str] = (), *, timeout: float 
 #: only from its pre-push hook, and hooks are refused; branch only moves refs, so a branch carrying
 #: a hostile .lfsconfig can still be deleted).
 _LFS_FREE_SUBCOMMANDS = frozenset({"add", "commit", "tag", "push", "branch"})
+#: Worktree housekeeping that deletes a worktree or its record and never checks one out.
+_LFS_FREE_WORKTREE_COMMANDS = frozenset({("worktree", "remove"), ("worktree", "prune")})
 
 
 def _is_remote_pick_key(key: str) -> bool:
@@ -447,9 +449,9 @@ def _tree_lfsconfigs(cwd: Path, revisions: dict[str, str], *, timeout: float) ->
 
 
 #: Options of the commands VOOL runs that take a value (-m is cherry-pick's and revert's mainline,
-#: merge's message; -c/-C/--orphan name the branch switch creates).
+#: merge's message; -c/-C/--orphan name the branch switch creates, -b/-B the one worktree add does).
 _VALUE_OPTIONS = frozenset({"-m", "--message", "--mainline", "-s", "--strategy", "-X", "--strategy-option",
-                            "-c", "-C", "--create", "--force-create", "--orphan"})
+                            "-c", "-C", "--create", "--force-create", "--orphan", "-b", "-B", "--reason"})
 
 #: Commands whose positional arguments are the commits they bring into the work tree.
 _BRINGING_COMMANDS = frozenset({"merge", "cherry-pick", "revert", "switch"})
@@ -484,6 +486,27 @@ def _resolve_commit(cwd: Path, revision: str, *, timeout: float) -> str:
     return _rev_parse(cwd, f"{probe.stdout.strip()}^{{commit}}", timeout=timeout)
 
 
+def _checkout_target_commits(cwd: Path, name: str, *, timeout: float) -> list[str]:
+    """Every commit ``git switch <name>`` or ``git worktree add <path> <name>`` may check out. git reads
+    the name as a branch first (``rev-parse`` prefers a tag of the same name), then creates a
+    tracking branch from a remote's branch of that name; a start point (``-c <new> <name>``) is read
+    by ``rev-parse``. All of them are checked, and a name that is none of them refuses."""
+    found: list[str] = []
+    if name != "-" and not name.startswith("refs/"):
+        listing = subprocess.run(hardened_argv(cwd, "for-each-ref", "--format=%(objectname)", f"refs/heads/{name}",
+                                               f"refs/remotes/*/{name}"),
+                                 capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
+        if listing.returncode != 0:
+            raise RuntimeError(f"git for-each-ref failed ({listing.returncode})")
+        found = [_rev_parse(cwd, f"{oid}^{{commit}}", timeout=timeout) for oid in listing.stdout.split()]
+    try:
+        found.append(_resolve_commit(cwd, name, timeout=timeout))
+    except RuntimeError:
+        if not found:
+            raise
+    return list(dict.fromkeys(found))
+
+
 def _incoming_commits(cwd: Path, argv: Sequence[str], *, timeout: float) -> list[tuple[str, str]]:
     """``(argument, commit)`` for each commit ``git <argv>`` brings into the work tree. For merge,
     cherry-pick, revert and switch every target must resolve, and one of them without a target
@@ -512,6 +535,10 @@ def _incoming_commits(cwd: Path, argv: Sequence[str], *, timeout: float) -> list
                     found.append((state, probe.stdout.strip()))
         return found
     targets = _revision_args(argv)
+    if argv[0] == "switch" or tuple(argv[:2]) == ("worktree", "add"):
+        if argv[0] == "worktree":
+            targets = targets[2:]  # after "add" and the new worktree's path
+        return [(arg, commit) for arg in targets for commit in _checkout_target_commits(cwd, arg, timeout=timeout)]
     if argv[0] in _BRINGING_COMMANDS:
         if argv[0] != "switch" and not targets:
             raise RuntimeError(f"git {argv[0]} without a commit cannot be checked")
@@ -552,6 +579,14 @@ def _holds_lfsconfig_anywhere(cwd: Path, commits: Sequence[str], *, timeout: flo
     return False
 
 
+def _parents(cwd: Path, commit: str, *, timeout: float) -> list[str]:
+    listing = subprocess.run(hardened_argv(cwd, "rev-list", "--no-walk", "--parents", commit), capture_output=True,
+                             encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
+    if listing.returncode != 0 or not listing.stdout.strip():
+        raise RuntimeError(f"git rev-list --parents failed ({listing.returncode})")
+    return listing.stdout.split()[1:]
+
+
 def _merge_result_tree(cwd: Path, argv: Sequence[str], *, timeout: float) -> str:
     """The tree a merge, cherry-pick or revert of one commit would write ("" for other commands,
     for --abort, and when no side and no merge base holds an ``.lfsconfig``, so the result cannot)."""
@@ -568,7 +603,11 @@ def _merge_result_tree(cwd: Path, argv: Sequence[str], *, timeout: float) -> str
             raise RuntimeError(f"git merge-base failed ({bases.returncode})")
         sides, involved = ["HEAD", target], [*bases.stdout.split(), "HEAD", target]
     else:
-        parent = _rev_parse(cwd, f"{target}^{_mainline(argv)}", timeout=timeout)  # raises for a root commit
+        if not _parents(cwd, target, timeout=timeout):
+            # A root commit has no base, so nothing can be renamed: each path of the result comes
+            # from HEAD or from the commit, both already checked.
+            return ""
+        parent = _rev_parse(cwd, f"{target}^{_mainline(argv)}", timeout=timeout)
         base, theirs = (parent, target) if argv[0] == "cherry-pick" else (target, parent)
         sides, involved = ["--merge-base", base, "HEAD", theirs], [base, "HEAD", theirs]
     if not _holds_lfsconfig_anywhere(cwd, involved, timeout=timeout):
