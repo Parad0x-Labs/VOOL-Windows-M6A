@@ -6,9 +6,10 @@ one, so resolve_workspace_root fell back to that working directory and every not
 {app}\\app\\notes, which vool.iss [UninstallDelete] removes with the program files. The macOS app
 and a source checkout already keep notes in <home>\\workspace\\notes.
 
-Only notes move (core.operator.notes._workspace_root). The unbound chat's default workspace and
-resolve_workspace_root stay where they were in every layout, and the supervisor copies notes an
-earlier build left in the program folder once, without deleting them.
+Notes move (core.operator.notes._workspace_root), and the installed app's unbound chat gets the
+Desktop (tests/test_windows_installed_unbound_chat_uses_the_desktop.py). resolve_workspace_root and
+the other layouts' unbound default stay where they were, and the supervisor copies notes an earlier
+build left in the program folder once, without deleting them.
 
 The layout tests run the real modules in a child Python with the environment each launcher builds:
 the installed bundle (VOOL.cmd's variables, then the supervisor's own child environment), a source
@@ -122,7 +123,7 @@ def _resolved(path: Path) -> str:
     return str(path.resolve())
 
 
-def test_the_installed_app_keeps_notes_in_the_vool_home_and_the_unbound_default_where_it_was(tmp_path: Path) -> None:
+def test_the_installed_app_keeps_notes_in_the_vool_home_and_gives_unbound_chats_the_desktop(tmp_path: Path) -> None:
     app, home = _install(tmp_path), _native_home(tmp_path)
     before = set((REPO / "notes").glob("groceries-*.md"))
 
@@ -143,9 +144,15 @@ def test_the_installed_app_keeps_notes_in_the_vool_home_and_the_unbound_default_
     assert Path(seen["archived_path"]).parent == (notes_dir / ".archive").resolve()
     assert Path(seen["restored_path"]).parent == notes_dir.resolve() and Path(seen["restored_path"]).is_file()
     assert set((REPO / "notes").glob("groceries-*.md")) == before
-    # Unchanged: the API's working directory ({app}\app) is still the workspace and the unbound default.
+    # The API's working directory ({app}\app) is still resolve_workspace_root; an unbound chat gets the
+    # Desktop (owner's choice, 2026-10-20): the shell's known folder on Windows, ~/Desktop elsewhere.
     assert seen["workspace_root"] == _resolved(REPO)
-    assert seen["default_workspace_root"] == _resolved(REPO)
+    if sys.platform == "win32":
+        from core.web.api.runtime import _windows_desktop
+
+        assert seen["default_workspace_root"] == str(_windows_desktop())
+    else:
+        assert seen["default_workspace_root"] == str(tmp_path / "user" / "Desktop")
 
 
 def test_a_source_checkout_keeps_its_notes_and_unbound_default_unchanged(tmp_path: Path) -> None:
