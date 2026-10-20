@@ -266,12 +266,14 @@ def _what_is_at(path: Path, identity: tuple[int, int], raw: bytes) -> str:
 def _move_note(source: Path, source_entry: tuple[bytes, str, tuple[int, int]], target: Path, content: str) -> str:
     """Write ``content`` as the new file ``target``, then remove ``source`` while it is still the file that was
     read. "" when both happened. When ``source`` was not removed, the new copy is removed again only while
-    ``source`` still holds the note exactly as it was read, so the note's text is never left nowhere; the
-    answer is then "remove_failed" (the note stays as it was), or "move_incomplete" when the copy cannot be
-    removed either. Otherwise the new copy is left where it is: "note_gone" when nothing is at ``source`` any
-    more, "note_changed" when other bytes, another file, a link or a folder are there, "note_unchecked" when
-    that cannot be checked. If ``source`` stops holding the note while the copy is being removed, the copy is
-    written again and the answer is one of those three; "copy_lost" if it cannot be written again."""
+    ``source`` still holds the note exactly as it was read; the answer is then "remove_failed" (the note stays
+    as it was), or "move_incomplete" when the copy cannot be removed and the note, checked again, still stays.
+    Otherwise the new copy is left where it is: "note_gone" when nothing is at ``source`` any more,
+    "note_changed" when other bytes, another file, a link or a folder are there, "note_unchecked" when that
+    cannot be checked. If ``source`` stops holding the note while VOOL removes the copy, the copy is written
+    again and the answer is one of those three; "copy_lost" when it cannot be written again, the one case in
+    which VOOL keeps no copy of a note another program changed or removed meanwhile. A copy VOOL did not
+    remove itself (another program moved or removed it first) is never written again."""
     from core.execution.artifacts import (
         DestinationChangedError,
         ReviewedBaseChangedError,
@@ -295,23 +297,28 @@ def _move_note(source: Path, source_entry: tuple[bytes, str, tuple[int, int]], t
         pass
     else:
         return "" if removed == "removed" else "note_gone"
+    answers = {"gone": "note_gone", "other": "note_changed", "unchecked": "note_unchecked"}
     left = _what_is_at(source, identity, raw)
     if left != "same":
-        return {"gone": "note_gone", "other": "note_changed", "unchecked": "note_unchecked"}[left]
+        return answers[left]
     written = content.encode("utf-8")
     try:
-        pinned_remove_created_file(target, created_identity=created, expected_sha256=hashlib.sha256(written).hexdigest())
-    except OSError:
-        if _what_is_at(target, created, written) != "gone":
-            return "move_incomplete"
+        copy = pinned_remove_created_file(target, created_identity=created,
+                                          expected_sha256=hashlib.sha256(written).hexdigest())
+    except OSError:  # refused or failed: VOOL did not remove its copy
+        copy = "kept"
     left = _what_is_at(source, identity, raw)
-    if left == "same":
+    if left != "same":
+        if copy != "removed":
+            return answers[left]
+        try:
+            pinned_atomic_write_text(target, content, expected_prior_sha256="")
+        except OSError:
+            return "copy_lost"
+        return answers[left]
+    if copy == "removed" or _what_is_at(target, created, written) == "gone":
         return "remove_failed"
-    try:
-        pinned_atomic_write_text(target, content, expected_prior_sha256="")
-    except OSError:
-        return "copy_lost"
-    return {"gone": "note_gone", "other": "note_changed", "unchecked": "note_unchecked"}[left]
+    return "move_incomplete"
 
 
 def archive_note(*, title: str) -> dict[str, Any]:
@@ -322,8 +329,9 @@ def archive_note(*, title: str) -> dict[str, Any]:
     timestamp, so a restore returns exactly what was archived. Only a note that is a plain file in
     the notes folder moves, and only into a plain ``.archive`` folder there: the copy is written
     first and the note removed only while it is still the file that was read, so nothing outside the
-    notes folder is written or removed through a link, and a stopped move never removes the note, nor a
-    copy that may be the only one left.
+    notes folder is written or removed through a link, and a stopped move never removes the note, and
+    removes its copy only while the note is there as it was read (if the note goes meanwhile, the copy is
+    written again).
     """
     try:
         root = notes_root()
@@ -366,8 +374,9 @@ def archive_note(*, title: str) -> dict[str, Any]:
                             f"VOOL wrote its archived copy {target.name}, the note as VOOL read it, and left it there",
             "note_unchecked": f"VOOL could not check whether {path.name} is still in the notes folder after writing "
                               f"its archived copy {target.name}; it left that copy there",
-            "copy_lost": f"{path.name} changed or left the notes folder while VOOL removed its archived copy "
-                         f"{target.name} again, and VOOL could not write the copy back, so it kept no copy of the note",
+            "copy_lost": f"VOOL removed its archived copy {target.name} again while {path.name} was still in the notes "
+                         f"folder, then could not confirm that {path.name} is still there as VOOL read it, and could "
+                         f"not write the copy back, so it kept no copy of the note",
         }.get(stopped, f"{path.name} stays in the notes folder")
         return {"ok": False, "status": f"archive_{stopped}", "detail": detail}
     return {"ok": True, "status": "archived", "note_path": str(target), "title": str(meta.get("title") or title),
@@ -421,8 +430,9 @@ def restore_note(*, title: str) -> dict[str, Any]:
                             f"wrote its restored copy {restored.name}, the note as VOOL read it, and left it there",
             "note_unchecked": f"VOOL could not check whether {path.name} is still in the archive after writing its "
                               f"restored copy {restored.name}; it left that copy there",
-            "copy_lost": f"{path.name} changed or left the archive while VOOL removed its restored copy "
-                         f"{restored.name} again, and VOOL could not write the copy back, so it kept no copy of the note",
+            "copy_lost": f"VOOL removed its restored copy {restored.name} again while {path.name} was still in the "
+                         f"archive, then could not confirm that {path.name} is still there as VOOL read it, and could "
+                         f"not write the copy back, so it kept no copy of the note",
         }.get(stopped, f"{path.name} stays archived")
         return {"ok": False, "status": f"restore_{stopped}", "detail": detail}
     return {"ok": True, "status": "restored", "note_path": str(restored), "title": str(meta.get("title") or title)}
