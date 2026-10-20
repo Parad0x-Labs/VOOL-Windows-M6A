@@ -305,3 +305,46 @@ def test_a_remote_branch_fetched_somewhere_unusual_is_checked_too(repo) -> None:
 
     assert proc.returncode != 0 and "evil.example" in proc.stderr, proc.stderr
     assert not (repo / ".lfsconfig").exists()
+
+
+@pytest.mark.parametrize("previous", ["-", "@{-1}"])
+def test_switching_back_to_the_previous_branch_checks_the_branch_not_a_tag_of_its_name(repo, previous) -> None:
+    _git(repo, "tag", "feat")
+    _branch_with(repo, "feat", HOSTILE)  # leaves feat as the previous branch
+
+    proc = local_lifecycle._run(str(repo), "switch", previous, mutating=True)
+
+    # git names no ref for it while the tag shares the name, so the check refuses outright.
+    assert proc.returncode != 0 and "git was not run" in proc.stderr, proc.stderr
+    assert not (repo / ".lfsconfig").exists()
+
+
+def test_a_tag_of_a_tree_ending_in_the_name_does_not_refuse_a_switch(repo) -> None:
+    _remote_only(repo, "dev", "")
+    tree = _git(repo, "rev-parse", "main^{tree}")
+    _git(repo, "tag", "-a", "-m", "tree", "rel/dev", tree)
+
+    proc = local_lifecycle._run(str(repo), "switch", "dev", mutating=True)
+
+    assert proc.returncode == 0, proc.stderr
+    assert _git(repo, "symbolic-ref", "--short", "HEAD") == "dev"
+
+
+def test_switching_back_to_the_previous_branch_still_works(repo) -> None:
+    _git(repo, "branch", "review")
+    _git(repo, "switch", "-q", "review")
+    _git(repo, "switch", "-q", "main")
+
+    proc = local_lifecycle._run(str(repo), "switch", "-", mutating=True)
+
+    assert proc.returncode == 0, proc.stderr
+    assert _git(repo, "symbolic-ref", "--short", "HEAD") == "review"
+
+
+def test_switching_back_to_a_previous_branch_naming_another_lfs_server_is_refused(repo) -> None:
+    _branch_with(repo, "feat", HOSTILE)
+
+    proc = local_lifecycle._run(str(repo), "switch", "-", mutating=True)
+
+    assert proc.returncode != 0 and "evil.example" in proc.stderr, proc.stderr
+    assert not (repo / ".lfsconfig").exists()
