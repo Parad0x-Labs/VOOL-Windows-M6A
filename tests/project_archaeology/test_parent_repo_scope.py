@@ -154,3 +154,63 @@ def test_model_never_follows_a_dot_git_pointer_out_of_the_bound_folder(pointer, 
     for execution in (compared, located):
         assert OUTSIDE_NAME not in repr(_envelope(execution)), _envelope(execution)
         assert OUTSIDE_SUBJECT not in repr(_envelope(execution)), _envelope(execution)
+
+
+def _outside_repo(arch_home) -> dict:
+    secret = arch_home["tmp"] / "secret-objects"
+    secret.mkdir()
+    _git(secret, "init", "-q")
+    (secret / OUTSIDE_NAME).write_text("1\n", encoding="utf-8")
+    _git(secret, "add", ".")
+    _git(secret, "commit", "-q", "-m", "first")
+    first = _git(secret, "rev-parse", "HEAD")
+    (secret / OUTSIDE_NAME).write_text("2\n", encoding="utf-8")
+    _git(secret, "commit", "-q", "-am", OUTSIDE_SUBJECT)
+    return {"repo": secret, "first": first, "second": _git(secret, "rev-parse", "HEAD")}
+
+
+@pytest.mark.parametrize("entry", ["absolute", "relative"])
+def test_model_never_reads_objects_borrowed_from_outside_the_bound_folder(entry, arch_home):
+    # A real `.git` inside the bound folder can borrow another repository's objects through
+    # objects/info/alternates; git then reads commits it does not hold itself.
+    secret = _outside_repo(arch_home)
+    bound = arch_home["tmp"] / "bound"
+    bound.mkdir()
+    _git(bound, "init", "-q")
+    objects = bound / ".git" / "objects"
+    target = secret["repo"] / ".git" / "objects"
+    line = str(target) if entry == "absolute" else os.path.relpath(target, objects)
+    (objects / "info").mkdir(parents=True, exist_ok=True)
+    (objects / "info" / "alternates").write_text(line + "\n", encoding="utf-8")
+    _git(bound, "update-ref", "refs/heads/borrowed", secret["second"])
+
+    compared = _model_call(
+        "compare",
+        {"kind": "git_commits", "a": secret["first"], "b": secret["second"],
+         "workspace_root": str(bound)},
+        bound=bound,
+    )
+    located = _model_call(
+        "locate", {"reference": secret["second"], "workspace_root": str(bound)}, bound=bound
+    )
+
+    assert compared.ok is False, _envelope(compared)
+    for execution in (compared, located):
+        assert OUTSIDE_NAME not in repr(_envelope(execution)), _envelope(execution)
+        assert OUTSIDE_SUBJECT not in repr(_envelope(execution)), _envelope(execution)
+
+
+@pytest.mark.parametrize("variable", ["GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_OBJECT_DIRECTORY"])
+def test_model_git_ignores_object_locations_from_the_environment(variable, arch_home, monkeypatch):
+    # The process environment must not hand the readers another repository's objects either.
+    secret = _outside_repo(arch_home)
+    bound = arch_home["tmp"] / "bound"
+    bound.mkdir()
+    _git(bound, "init", "-q")
+    outside = secret["repo"] / ".git"
+    monkeypatch.setenv(variable, str(outside / "objects"))
+
+    located = _model_call(
+        "locate", {"reference": secret["second"], "workspace_root": str(bound)}, bound=bound
+    )
+    assert OUTSIDE_SUBJECT not in repr(_envelope(located)), _envelope(located)
