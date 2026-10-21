@@ -396,3 +396,52 @@ def test_a_fetch_refspec_naming_refs_in_bytes_that_are_not_text_refuses(repo) ->
 
     assert proc.returncode != 0, proc.stderr
     assert not (repo / ".lfsconfig").exists()
+
+
+def test_a_root_commit_whose_lfsconfig_merges_into_one_naming_a_server_is_refused(repo) -> None:
+    # git cherry-picks a root commit onto an empty base, so both sides' .lfsconfig are merged; with
+    # the built-in union driver two harmless files join into one naming a server (fresh review, 21 Oct).
+    _git(repo, "switch", "-q", "--orphan", "fresh")
+    (repo / ".lfsconfig").write_text("[a]\n\turl = https://evil.example/lfs\n")
+    _git(repo, "add", ".lfsconfig")
+    _git(repo, "commit", "-qm", "root")
+    sha = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "switch", "-q", "-f", "main")
+    (repo / ".gitattributes").write_text(".lfsconfig merge=union\n")
+    (repo / ".lfsconfig").write_text("[a]\n[lfs]\n")
+    _git(repo, "add", ".gitattributes", ".lfsconfig")
+    _git(repo, "commit", "-qm", "union")
+
+    proc = local_lifecycle._run(str(repo), "cherry-pick", sha, mutating=True)
+
+    assert proc.returncode != 0 and "evil.example" in proc.stderr, proc.stderr
+    assert "evil.example" not in (repo / ".lfsconfig").read_text()
+
+
+def test_a_file_is_still_unstaged_while_the_work_tree_names_another_lfs_server(repo) -> None:
+    # restore --staged writes only the index, so no LFS file is fetched.
+    (repo / ".lfsconfig").write_text(HOSTILE)
+    (repo / "a.txt").write_text("two\n")
+    _git(repo, "add", ".lfsconfig", "a.txt")
+    _git(repo, "commit", "-qm", "lfs settings")
+    (repo / "a.txt").write_text("three\n")
+    _git(repo, "add", "a.txt")
+
+    proc = local_lifecycle._run(str(repo), "restore", "--staged", "--", "a.txt", mutating=True)
+
+    assert proc.returncode == 0, proc.stderr
+    assert _git(repo, "diff", "--cached", "--name-only") == ""
+    assert (repo / "a.txt").read_text() == "three\n"
+
+
+@pytest.mark.parametrize("flags", [("--staged", "--worktree"), ("-SW",), ("-W", "-S")])
+def test_restoring_the_work_tree_too_is_still_checked(repo, flags) -> None:
+    (repo / ".lfsconfig").write_text(HOSTILE)
+    _git(repo, "add", ".lfsconfig")
+    _git(repo, "commit", "-qm", "lfs settings")
+    (repo / "a.txt").write_text("changed\n")
+
+    proc = local_lifecycle._run(str(repo), "restore", *flags, "--", "a.txt", mutating=True)
+
+    assert proc.returncode != 0 and "evil.example" in proc.stderr, proc.stderr
+    assert (repo / "a.txt").read_text() == "changed\n"
