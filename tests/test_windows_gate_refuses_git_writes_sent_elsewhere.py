@@ -169,10 +169,11 @@ def test_a_hard_linked_reflog_named_like_an_object_store_file_is_refused(
              says=f"a file in the repository's git folder (modules/x/logs/refs/heads/{branch}) is also another file's name")
 
 
-@pytest.mark.parametrize("folders", ("LOGS/REFS", "Logs/Refs"))
+@pytest.mark.parametrize("folders", ("LOGS/REFS", "Logs/Refs", "log\u017f/ref\u017f"))
 def test_a_hard_linked_reflog_in_folders_named_in_another_case_is_refused(tmp_path: Path, folders: str) -> None:
-    """Windows folder names ignore case, so git's append to `logs/refs/heads/...` lands in a
-    `LOGS/REFS` folder the repository ships; the walk sees the stored case."""
+    """Windows folder names ignore case, by Unicode upper case (`ſ` is `S`), so git's append to
+    `logs/refs/heads/...` lands in a `LOGS/REFS` or `logſ/refſ` folder the repository ships; the walk
+    sees the stored name."""
     from core import git_write_redirects
 
     git_dir = tmp_path / "repo.git"
@@ -184,6 +185,24 @@ def test_a_hard_linked_reflog_in_folders_named_in_another_case_is_refused(tmp_pa
     found = git_write_redirects.link_refusal(str(git_dir))
 
     assert "is also another file's name (a hard link)" in found, found
+
+
+def test_git_folders_spelled_alike_after_windows_case_folding_are_each_walked(tmp_path: Path, monkeypatch) -> None:
+    """Windows `normcase` folds the Kelvin sign `K` to `k`, but NTFS keeps `Ka` and `ka` apart, so a
+    git folder and a shared git folder spelled so must both be walked. Windows folding is simulated
+    with `str.lower`."""
+    from core import git_write_redirects
+
+    monkeypatch.setattr(git_write_redirects.os.path, "normcase", str.lower)
+    git_dir, common_dir = tmp_path / "\u212aa", tmp_path / "ka"
+    git_dir.mkdir()
+    common_dir.mkdir()
+    (tmp_path / "outside").write_bytes(b"precious\n")
+    os.link(tmp_path / "outside", git_dir / "COMMIT_EDITMSG")
+
+    found = git_write_redirects.link_refusal(str(common_dir), str(git_dir))
+
+    assert "(COMMIT_EDITMSG) is also another file's name" in found, found
 
 
 @pytest.mark.parametrize("mode", MODES)
