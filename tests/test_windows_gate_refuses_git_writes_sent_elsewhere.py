@@ -143,6 +143,33 @@ def test_an_object_store_file_git_writes_in_place_hard_linked_elsewhere_is_refus
 
 
 @pytest.mark.parametrize("mode", MODES)
+def test_a_hard_linked_reflog_named_like_an_object_store_file_is_refused(
+    tmp_path: Path, monkeypatch, world, mode: str
+) -> None:
+    """git appends to a reflog in place, and a branch may be named like an object
+    (`objects/ab/<38 hex>`). With the shared git folder at `.git/modules/x` (through `commondir`),
+    that branch's reflog sits at `modules/x/logs/refs/heads/objects/ab/...`, which must not pass for
+    a submodule's object store."""
+    branch = "objects/ab/" + "c" * 38
+
+    def prepare(repo: Path, outside: Path) -> None:
+        git_dir = repo / ".git"
+        shared = git_dir / "modules" / "x"
+        (shared / "logs").mkdir(parents=True)
+        for name in ("objects", "refs", "config"):
+            shutil.move(str(git_dir / name), str(shared / name))
+        shutil.move(str(git_dir / "logs" / "refs"), str(shared / "logs" / "refs"))
+        (git_dir / "commondir").write_text("modules/x\n", encoding="utf-8")
+        _git(repo, "checkout", "-q", "-b", branch)
+        reflog = shared / "logs" / "refs" / "heads" / branch
+        shutil.move(str(reflog), str(outside / "reflog"))
+        os.link(outside / "reflog", reflog)
+
+    _refused(tmp_path, monkeypatch, world, mode, prepare,
+             says=f"a file in the repository's git folder (modules/x/logs/refs/heads/{branch}) is also another file's name")
+
+
+@pytest.mark.parametrize("mode", MODES)
 @pytest.mark.parametrize("key", ("lfs.storage", "lfs.somefuturesetting"))
 def test_a_git_lfs_key_in_the_repository_config_is_refused(
     tmp_path: Path, monkeypatch, world, key: str, mode: str
