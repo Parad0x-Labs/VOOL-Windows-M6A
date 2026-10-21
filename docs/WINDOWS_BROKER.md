@@ -1,7 +1,12 @@
 # Windows broker: design (Step 2 of the Windows port)
 
-Status: design, not built. Read against windows/v0.7.1-port `1c26068`. Every file:line below was
-read at that commit. docs/WINDOWS_PORT_CONTRACTS.md (PR #21, read at `637fc6a`) is the source of truth for routes,
+Status: Phase A built: channel, roots, handle walk, file operations, batches and journal. The
+confined launcher (section 7) is not built: it is later work, and section 7 is design only. Not
+wired: nothing in VOOL calls the broker. Where the build differs from the design, this document
+describes the build, and section 12 lists the design decisions behind it. Read against
+windows/v0.7.1-port `1c26068`: every file:line into VOOL's own code was read at that commit;
+file:line references into the broker (windows/broker) are to the code this PR adds.
+docs/WINDOWS_PORT_CONTRACTS.md (PR #21, read at `637fc6a`) is the source of truth for routes,
 invariants, receipt states and gaps; this design redefines none of them, and section 11 lists the
 changes it proposes to that doc.
 
@@ -47,6 +52,8 @@ with approval ingress; it starts only after **both Job 6 and Job 7 have merged**
   with `KILL_ON_JOB_CLOSE`, so the broker cannot outlive the API. When the supervisor restarts the
   API, a new broker starts with a new pipe and secret; nothing carries over. Wiring this into
   installer/bundle/bundle_supervisor.py, installer/bundle/vool.iss and Start_VOOL.bat is phase B.
+  As built, the broker also exits when its stdin closes or when the API process (matched by id
+  and creation time) exits (Program.cs:236-239).
 - Program files: `{app}\broker\` in the installed layout, `windows\broker\bin\` in a source
   checkout. The broker never writes in the program folder at run time.
 - State: the journal (section 7.4) in `VOOL_HOME\broker\journal\`, a folder of its own, separate
@@ -58,17 +65,34 @@ with approval ingress; it starts only after **both Job 6 and Job 7 have merged**
   VOOL_HOME elsewhere (section 10, item 5).
 - If the broker exits, every child it launched dies with it (section 7.1), and the client fails
   closed (section 8).
+- **Stop chain.** VOOL's stop matchers do not match `VoolBroker.exe`, `vool-confine.exe` or a
+  staged child. That fails safe, because VOOL never stops a process it did not start, but it
+  means stopping them depends on a chain. VOOL's stop ends the API. The API's Job (Phase B) ends
+  the broker. The broker's own launch Jobs end every child and grandchild. The broker kills only
+  through the Jobs it created: no kill by name or pid, and no taskkill (contracts r9 :92/:95).
+  The stop and kill paths in PR #18 (Job 4) are not touched. In Phase A the broker launches no
+  children, so the launch-Job link applies from the launcher's build on; that build must include
+  a test that kills the broker and shows the child and grandchild die. Phase C item 15: the stop
+  button must reach the broker.
 
 ## 3. Channel
 
 - The API creates a 256-bit secret and starts the broker with it, the API's own process id and
-  creation time, and the flagged folders (section 4), on the broker's stdin (never argv, never the
-  environment, never a file).
+  creation time, the flagged folders (section 4) and the journal folder, on the broker's stdin
+  (never argv, never the environment, never a file). As built, this bootstrap is one
+  length-prefixed JSON frame of at most 64 KiB with exactly the fields `secret`, `api_pid`,
+  `api_creation_time`, `flagged` and `journal_dir`; anything else is refused `invalid_bootstrap`
+  (Program.cs:12, 180).
 - The broker creates `\\.\pipe\vool-broker-<random 128-bit hex>` with
   `FILE_FLAG_FIRST_PIPE_INSTANCE` for the first instance, `PIPE_REJECT_REMOTE_CLIENTS`, at most 16
   instances, and a DACL that grants access only to the current user's SID. That DACL is what keeps
   AppContainer children and other users out; an explicit deny for `NT AUTHORITY\NETWORK` is added
   as a second layer. It reports the pipe name back on its stdout.
+- **Instances as built.** The accept loop makes the next instance before it serves a connection,
+  while that stays under the cap, and also when a client leaves before the accept
+  (`ERROR_NO_DATA`). So a client turned away at once never leaves the pipe with no instance, and
+  15 connections plus a client that connects and drops cannot push it past 16 instances.
+  The Python client waits for a free instance with `WaitNamedPipeW` when the pipe is busy.
 - Each control connection: the broker checks `GetNamedPipeClientProcessId` names a process whose
   id and creation time match the API's (so a reused process id fails), then a challenge: the
   client returns an HMAC of a broker nonce under the secret, and the broker answers with an HMAC of
@@ -76,6 +100,58 @@ with approval ingress; it starts only after **both Job 6 and Job 7 have merged**
   `GetNamedPipeServerProcessId` is the broker it started. A failure disconnects and is logged.
 - Control messages are length-prefixed UTF-8 JSON, one request and one response, with a request
   id. Maximum 64 MiB; larger contents are refused (`too_large`) in Step 2.
+- **Framing as built.** Each frame is a 4-byte little-endian unsigned length followed by that many
+  bytes of UTF-8 JSON, up to 64 MiB. A larger length is answered `too_large` with `"id": null`,
+  because the frame was not parsed and its id is unknown, and the connection is then closed. The
+  Python client treats a `too_large` with a null id as `EffectOutcomeUnknown`, never as a plain
+  refusal.
+- **Framed JSON semantics, not canonical bytes.** The contract between client and broker is the
+  JSON value each frame carries, not its exact body bytes. Python's `json` with
+  `ensure_ascii=False` and .NET's `System.Text.Json` may write the same value with different
+  bytes, for example in how non-ASCII text is escaped. Nothing hashes or signs a body:
+  authentication is per connection (below). Every string field is taken exactly as sent or
+  refused `invalid_name`. Two cases are refused and never decoded to U+FFFD:
+  - raw bytes that are not valid UTF-8;
+  - an escaped unpaired surrogate, which is what Python's `json` writes for a Windows name holding
+    a lone surrogate.
+
+  A repaired name could point at a different file.
+- **Several requests per connection, authenticated once.** After the challenge and response, every
+  frame on the connection is a request. There is no per-frame HMAC. A pipe connection is a kernel
+  handle, and injecting frames into it needs that handle. A process can only get the handle by
+  duplicating it, and a process that can do that could read the secret anyway.
+  - Any frame before authentication finishes closes the connection. The one frame read before
+    authentication, `client_proof`, is capped at 1 KiB: a larger length closes the connection
+    without reading the body.
+  - A client nonce is used once per broker run, compared by its bytes, so another spelling of the
+    same hex is a replay too.
+  - Request ids (a string or a number) are unique per connection (`replayed_request`). A request
+    with no `id` or `op`, or an id over 256 characters, closes the connection.
+  - A connection takes at most 4096 requests (`too_many_requests`, then the connection closes).
+  - A connection holds at most 64 roots (`too_many_roots`).
+  - A 30-second idle timeout runs only while the broker waits on the client (reading its next
+    frame, or writing to it), never while it is working on a request.
+    `VOOL_BROKER_IDLE_TIMEOUT_MS` may only shorten it (100 ms to under 30 s).
+  - Each connection runs on its own thread with synchronous I/O, which the watchdog ends with
+    `CancelSynchronousIo`.
+  - Unknown fields on a request are refused (`invalid_request`).
+  - An unexpected exception inside an operation is answered `authority_check_failed`, and the
+    connection stays open.
+- **The guard this rests on.** The one way around connection authentication is a pipe handle
+  leaked into another process. Every handle the broker creates is non-inheritable. A test reads
+  the system handle table, takes a settled snapshot before and after authentication, and requires
+  every new handle to be non-inheritable.
+- Windows lets another process of the same user create a second server instance with the same
+  pipe name (`FILE_FLAG_FIRST_PIPE_INSTANCE` only protects the broker's own first instance). The
+  client's `GetNamedPipeServerProcessId` check against the broker it started is what defends
+  against that.
+- **Start line.** The start line is one JSON line on stdout: `{pipe, broker_pid,
+  broker_creation_time, flagged:[{id, path}], journal:{available, recovered, pending:[{batch_id,
+  left}], torn:[{batch_id, bytes, kept_in}]}}`. `torn` lists each torn last journal record
+  recovery cut off (section 7.4).
+  - `flagged` has one entry per bootstrap entry, in order. Duplicates repeat the same id.
+  - `path` is the DOS final path, with `\\?\` dropped for drive-letter paths.
+  - A refused start prints `{error:{entry, code, message}}` or `{error:{code}}` and opens no pipe.
 - A launched child's stdio does not use the control channel (section 7.5).
 
 ## 4. Roots
@@ -83,10 +159,32 @@ with approval ingress; it starts only after **both Job 6 and Job 7 have merged**
 - **Flagged folders, opened at start.** The API passes the flagged folders it read from
   VOOL_WINDOWS_DISPOSABLE_WORKSPACES. The broker opens each one with
   `FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT`, without `FILE_SHARE_DELETE`, and
-  keeps those handles for its lifetime. It refuses an entry that is a reparse point, a volume root,
-  or not on NTFS; **any refused entry stops the broker from starting**, with the reason, so the
-  user sees it rather than VOOL quietly using fewer folders. A change to the variable needs a VOOL
-  restart.
+  keeps those handles for its lifetime. Each entry is checked against the rules below. A change
+  to the variable needs a VOOL restart.
+
+  Rules for flagged folders, as built. G is core/windows_write_gate.py at `1c26068`
+  (`flagged_roots`:51, `_inside`:61); J6 is Job 6's design, whose resolver feeds Step 3; C is the
+  contracts doc (PR #21) at a7caed3; B is this document. The rule for the comparison:
+  for the same input, the broker is never looser than G or J6.
+
+| # | Input | G / J6 | Broker | Diff |
+|---|---|---|---|---|
+| F1 | Entry not absolute, or no drive letter (including a fully qualified `\\?\Volume{GUID}\...` or `\\?\GLOBALROOT\...` spelling) | G drops it silently (`os.path.isabs`). J6 refuses a folder that isn't absolute. | Refuse start, `invalid_flagged`. Checked after the F5 network/device checks, so F5 spellings keep their own code. | stricter: fails start instead of dropping |
+| F2 | Entry doesn't exist or isn't a directory | G drops it silently (`isdir`) | Refuse start, `invalid_flagged` | stricter |
+| F3 | Entry is a junction, symlink or other reparse point (any tag) | G resolves it with realpath and accepts it (windows_write_gate.py:57). C §3 treats name-surrogate tags as links. | Refuse start, `reparse_point`. Opened with FILE_FLAG_OPEN_REPARSE_POINT, checked with FileAttributeTagInfo. | stricter (B §4, §10 item 5) |
+| F4 | Entry spelled through subst, an 8.3 short name, `\\?\X:\` or different case | G normcase + realpath gives one spelling | Accepted. Identity is volume serial + 128-bit file id (FileIdInfo). The reported final path is GetFinalPathNameByHandleW (long name). | same object, same result |
+| F5 | UNC `\\server\share`, `\\?\UNC\`, `\\.\` device path, or a mapped network drive | G accepts any isdir | Refuse start, `unsupported_filesystem`: UNC, `\\?\UNC\` and `\\.\` by text before any open (before F1's drive-letter check); a mapped drive passes F1 and is refused when its final path is UNC. Real-broker rows: unc, long_unc, device. A mapped-drive row needs a share, so it runs on the hosted runner (section 9.2). | stricter |
+| F6 | Volume root (`C:\`) | G accepts | Refuse start, `invalid_flagged` (B §4) | stricter |
+| F7 | Volume not NTFS (FAT, exFAT, ReFS) | G accepts | Refuse start, `unsupported_filesystem`. Checked first, from the opened folder's handle (`GetVolumeInformationByHandleW`), before any other check on it; the refusal carries a message naming the file system. | stricter |
+| F8 | Two entries naming the same folder, or one inside another | G keeps both | Accepted. One id per distinct file id; a nested entry keeps its own id. | same |
+| F9 | Journal folder inside a flagged folder | n/a | Refuse start, `journal_inside_flagged` (B §2). The check resolves the deepest existing ancestor's final path, so junction, subst and 8.3 spellings are caught. | new |
+| F10 | Any refused entry | n/a | The whole start is refused, naming the entry and its reason | stricter |
+
+- A flagged path holding NUL is refused `invalid_flagged`, and a `journal_dir` holding NUL is
+  refused `invalid_bootstrap`. Windows reads a path only up to a NUL, so `C:\a\0\b` would
+  otherwise open `C:\a`.
+- A flagged folder that is itself case-sensitive (`FILE_CS_FLAG_CASE_SENSITIVE_DIR`) is refused
+  `case_sensitive_dir`, and so is the whole start (Roots.cs:82).
 - **One list for gate and broker.** At start the broker returns, for each flagged folder, an id
   (from the volume serial number and the 128-bit file id, `FileIdInfo`) and its current final path.
   From Step 3 the Windows gate uses that list as its only list of flagged folders, instead of
@@ -98,19 +196,21 @@ with approval ingress; it starts only after **both Job 6 and Job 7 have merged**
   one, found by handle; an absolute path is never reopened. Which root Python hands for a call is
   the gate's job in Step 3: the folder the gate approved for that call, never wider. The broker
   never moves up to a parent, a repository's top folder, or a volume root on its own.
+- `open_root(flagged_id, "")` is the flagged folder itself. The root uses the broker's held
+  handle, and that handle is not opened again.
 - Roots are compared by file id, never by spelling, so a junction, subst drive or 8.3 short name
   for the same folder is the same root. Behaviour difference from the gate: the gate resolves a
   flagged folder that is a junction and accepts it (by design, windows_write_gate.py:57); the
   broker refuses it (section 10, item 5).
 - Holding the flagged folders without `FILE_SHARE_DELETE` means the user cannot rename or delete
-  a flagged folder while VOOL runs, and, if the NTFS behaviour the tests are to prove holds, not
-  its parent folders either (Documents or a development folder). Section 10, item 5.
-- Step 2 accepts only NTFS volumes (`unsupported_filesystem` otherwise). On FAT and exFAT the POSIX
-  rename and delete are refused and file ids are not stable across renames; ReFS and network
-  shares are unknown.
-- Minimum Windows: 10 version 1809 or later, to be pinned against the Windows SDK documentation
-  for `FILE_RENAME_FLAG_POSIX_SEMANTICS` and `FILE_DISPOSITION_FLAG_POSIX_SEMANTICS` before
-  phase A is built. The broker refuses to start on an older build.
+  a flagged folder while VOOL runs, nor its parent folders (Documents or a development folder);
+  P15 tests this (section 5). Section 10, item 5.
+- Step 2 accepts only NTFS volumes (`unsupported_filesystem` otherwise). FAT32, exFAT and ReFS are
+  refused (F7), and so are network shares, including a mapped drive (F5). On FAT and exFAT, file
+  ids are not stable across renames.
+- Minimum Windows: the minimum build is pinned at 10.0.17763 (1809). An older build is refused
+  `unsupported_windows` (Roots.cs:30), and so is a broker not running as a 64-bit process
+  (Roots.cs:32).
 
 ## 5. The handle walk
 
@@ -120,8 +220,11 @@ component is opened relative to the previous handle with `NtCreateFile` and
 `FILE_OPEN_REPARSE_POINT`, then checked with `FileAttributeTagInfo`. Every directory on the way,
 and the root, is opened without `FILE_SHARE_DELETE` and held until the operation (or batch)
 finishes, so none of them can be renamed or deleted out of the root meanwhile. While an operation
-holds them, the user cannot rename those folders. That this blocks a rename of an ancestor on
-Windows is a claim the tests must prove (section 9).
+holds them, the user cannot rename those folders, or their ancestors up to the flagged folder's
+parent (P15, below).
+
+P15, tested: while a root is held, renaming or deleting the held folder, its parent, the
+flagged folder or the flagged folder's parent is refused.
 
 | Rule | Refusal code |
 |---|---|
@@ -130,11 +233,20 @@ Windows is a claim the tests must prove (section 9).
 | Component ends in `.` or space | `invalid_name` |
 | Component is a DOS device name (CON, PRN, AUX, NUL, COM0-9, LPT0-9, CONIN$, CONOUT$, with any extension, any case, superscript digits included) | `device_name` |
 | The opened object is a reparse point of any tag (junction, symlink, mount point, OneDrive placeholder, dedup, AppExecLink) | `reparse_point` |
-| The opened object is a file with a link count above 1 (read or write) | `blocked_by_hard_link` |
+| The opened object is a file with a link count above 1 (read or write); checked before the name, so a multi-link file is always refused with this code | `blocked_by_hard_link` |
+| The component is not the object's own name (an 8.3 short name), compared case-insensitively with the name `FileNormalizedNameInfo` returns (the opened-name class gives an alias back as itself) | `short_name` |
 | A directory on the way is case-sensitive (`FILE_CS_FLAG_CASE_SENSITIVE_DIR`) | `case_sensitive_dir` |
 | The relative path is over 32,767 UTF-16 units | `path_too_long` |
-| The object's volume differs from the root's | `path_escapes_root` |
+| The object's volume differs from the flagged folder's | `path_escapes_root` |
 | The object is held by another program (sharing violation) | `in_use` |
+
+Other codes the build uses:
+- `not_found`, `not_a_directory`, `is_a_directory`;
+- `access_denied` (walk NTSTATUS 0xC0000022, flagged-folder error 5);
+- `in_use` (also flagged-folder error 32, and delete-pending);
+- `invalid_request`.
+- NTSTATUS 0xC000050B maps to `reparse_point`, and 0xC0000033 to `invalid_name`.
+- Any other open failure is `authority_check_failed`.
 
 Why each rule exists:
 - Under a relative NT open, DOS device names, trailing dots and spaces, and 8.3 names are not
@@ -158,15 +270,27 @@ Why each rule exists:
 - Case-sensitive folders (WSL) allow two names that differ only in case, which the rest of VOOL
   treats as one.
 
-After the walk, the broker reads the final object's path with `GetFinalPathNameByHandleW` and
-`VOLUME_NAME_GUID` and confirms it is under the root's (drive letters and subst do not matter). It
-is defence in depth: the held handles are the real check. If the call fails, the operation is
-refused (`authority_check_failed`).
+Why holding a folder works: every walk open and every flagged handle takes FILE_READ_DATA /
+FILE_LIST_DIRECTORY, because NTFS records share access only for opens with data or delete access.
+Without it, a held folder could still be renamed. Opens also
+add SYNCHRONIZE, FILE_SYNCHRONOUS_IO_NONALERT and OBJ_DONT_REPARSE.
 
-Concurrency: the broker runs operations on one root one at a time, and an operation reuses the
-handles its own walk opened (a delete or rename of a folder the same batch walked is done through
-that handle, not a second open). A sharing violation with another program maps to `in_use`, with
-nothing changed.
+An empty folder can become a junction after the walk checked it, because `mklink /J` creates the
+folder and then sets the reparse data. The open under it then returns
+STATUS_REPARSE_POINT_NOT_RESOLVED (0xC0000280), which maps to `reparse_point`. Only an empty
+folder can be turned into a junction, so nothing under it was reachable. A deterministic test
+covers it.
+
+After the walk, the broker reads the final object's path with `GetFinalPathNameByHandleW` and
+`VOLUME_NAME_GUID` and confirms it is under the flagged folder's (drive letters and subst do not
+matter). It is defence in depth: the held handles are the real check. If the call fails, the
+operation is refused (`authority_check_failed`).
+
+Concurrency: changes (`write_file`, `ensure_directory`, `delete`, `rename`, `apply_batch`,
+`restore_batch`) run one at a time across the whole broker, under one lock. Reads (`stat`, `read`,
+`open_root`) are not serialized with them, so a read may see a batch part way (Phase C item 18). A
+batch reuses the handles its plan opened. A sharing violation with another program maps to
+`in_use`, with nothing changed.
 
 ## 6. File operations
 
@@ -174,50 +298,72 @@ Operations (Step 2 set):
 
 | Operation | Done as | For (from Step 3) |
 |---|---|---|
-| `stat(root, rel)` | walk, `FileBasicInfo` / `FileStandardInfo` | checks before a change |
+| `stat(root, rel)` | walk, `FileAttributeTagInfo` / `FileStandardInfo` / `FileIdInfo`; replies kind, size, file id and read-only | checks before a change |
 | `read(root, rel, max_bytes)` | walk, open for read, read | diffs, rollback |
-| `write_file(root, rel, bytes, mode, expect)` | see below | workspace.write_file, workspace.replace_in_file, machine.write_file |
+| `write_file(root, rel, data, expect)` | see below | workspace.write_file, workspace.replace_in_file, machine.write_file |
 | `ensure_directory(root, rel)` | create each missing component relative to its parent | workspace.ensure_directory, machine.ensure_directory |
-| `rename(root, rel_from, root2, rel_to, replace)` | open source with `DELETE`, `FileRenameInfoEx` (`POSIX_SEMANTICS`) onto the destination parent handle | machine.move_path, operator.move_path |
+| `rename(root, rel_from, root2, rel_to, replace)` | walk both, hold the source with `DELETE`, rename by `FileRenameInformation` onto the held destination parent, never replacing; an existing destination with `replace` is set aside first, as a delete is | machine.move_path, operator.move_path |
 | `delete(root, rel)` | open with `DELETE`, rename aside (journalled) | rollback |
 | `apply_batch(root, ops[])` | see below | workspace.apply_unified_diff (section 6.1), workspace.rollback_last_change, code.task.rollback (in its task's folder, section 6.1) |
 | `restore_batch(batch_id)` | see below | undoing a part-done batch |
 
-`write_file`:
-1. Walk to the parent and hold it. If the destination exists, open it with `DELETE` access and
-   share read only (no write, no delete sharing), so no one else can change it; check its link
-   count and, when `expect` is a hash, hash it through this handle. A mismatch is refused
-   (`changed_since_check`). A read-only destination is refused (`read_only`).
-2. Create a temp file in the parent (name recorded in the journal first, section 7.4), write,
-   flush.
-3. `SetFileInformationByHandle(FileRenameInfoEx, POSIX_SEMANTICS)` with `RootDirectory` set to
-   the parent handle: with `expect=absent`, without `REPLACE_IF_EXISTS`, so a file created
-   meanwhile is refused (`changed_since_check`) rather than overwritten; otherwise with
-   `REPLACE_IF_EXISTS`. Whether the replace succeeds while the broker's own handle on the
-   destination is open with these share modes must be proven on Windows; the tests also try the
-   alternative of holding the destination with delete sharing but no write sharing. If neither
-   works, `expect` is best effort and the design says so.
-4. Replacing by rename gives the new file its folder's inherited permissions: an explicit ACL,
-   alternate data streams and attributes of the old file are not kept. That matches VOOL's
-   Python writers, which also replace by rename.
+The protocol also has `ping` (no fields) and `close_root(root_id)`, which releases a root and the
+folders it holds; a connection's roots are also released when it closes. A root is known only on
+the connection that opened it (`unknown_root` elsewhere), and an unknown operation is refused
+`unknown_op` (Channel.cs:221-240, 280, 320). For `rename`, `to_root_id` is optional; a rename
+inside `apply_batch` stays in the batch's root.
+
+- Every change goes through one runner: `write_file`, `ensure_directory`, `delete`, `rename` and
+  `apply_batch` (up to 1024 operations).
+  - **Plan** walks every path, holds every object with DELETE access and read sharing only, and
+    checks every rule and every `expect`.
+  - **Execute** runs only after the plan passes. A refusal in the plan changes nothing.
+- Steps:
+  - temp: a new object named `.vool-broker-tmp-<batch id[..12]>-<n>`;
+  - aside: the old object renamed to `.vool-broker-aside-...`;
+  - place: rename into place, never replacing.
+
+  A file is never overwritten in place. A replace is not one atomic step: between aside and place
+  the name is briefly empty, and a reader in that moment finds no file (Phase C item 18).
+- `write_file` requires `expect`: `any`, `absent` or `sha256:<64 lowercase hex>`. There is no
+  `mode` field. A hash mismatch is `changed_since_check`, and a read-only destination is
+  `read_only`.
+- `read` refuses a file larger than `max_bytes` with `too_large`. `max_bytes` may be at most
+  47 MiB (a larger value is refused `invalid_request`, FileOps.cs:36), so that the base64
+  reply fits in a 64 MiB frame even in the worst case, with replies written by a relaxed JSON
+  encoder (raw `+`, `/` and non-ASCII). A read is never cut short. A reply that still cannot be
+  encoded or does not fit is answered `reply_unencodable` with its request id, never `too_large`,
+  a replacement character or a dropped connection.
+- Refused `invalid_request`:
+  - the same object named twice in a batch;
+  - a path under another operation's object;
+  - a rename that only changes letter case. With `to_root_id` naming a second root on the same
+    folder, the plan sees two trees and the second `DELETE` open hits a sharing violation, so that
+    case is refused `in_use` instead. Either way nothing changes.
+- A folder delete must find the folder empty at plan time, and again once it is set aside
+  (`not_empty`). Holding a folder does not stop another program creating something in it. An entry
+  made before the commit stops the batch, which puts the folder back. One made after the commit is
+  found by cleanup, which puts the folder back under its own name, entry and all, and reports it
+  in `cleanup_left`.
+- New codes:
+  - `destination_exists`, `not_empty`, `read_only`, `cross_volume`, `changed_since_check`;
+  - `journal_unavailable`, `journal_pending`, `journal_unreadable`;
+  - `unknown_batch`, `restore_incomplete`, `too_many_roots`, `io_error`, `reply_unencodable`.
+- **Replies for a finished change:** `ok:true` with `batch_id`, one result per operation
+  (`results`) and `cleanup_left`. `restore_batch` replies `ok:true` with `batch_id` and
+  `committed`, or `restore_incomplete` with `batch {batch_id, ran: null, restored: false, left}`
+  (Channel.cs:276-277, 313-314).
+- **Replies for a batch that made changes and then stopped:** `ok:false` with `batch {batch_id,
+  ran, restored, left}`.
+  - When `restored` is true, `error.code` is the cause.
+  - When `restored` is false, `error.code` is `restore_incomplete` and `error.cause` is the cause.
+  - `left` names what is still out of place. A restore that stops at a step whose journal record
+    can't be written names that step, then `N later step(s) not attempted`; the batch stays in
+    the journal and the next restore finishes it (undo is idempotent).
 
 Moves across volumes are refused (`cross_volume`). Today `machine.move_path` copies across volumes
 (core/machine_file_ops.py:203 `shutil.move`), so this is a behaviour change (section 10, item 5);
 a copy-then-delete by handle, with its own partial-failure receipt, is later work.
-
-`apply_batch`:
-- All-or-nothing for refusals: the broker first walks every path, checks every rule and every
-  `expect`, and only then makes the first change.
-- It keeps before-images itself: an overwritten or deleted file is renamed aside (to a journalled
-  name in the same folder) instead of being replaced or deleted, and a rename records the original
-  name. The batch's state (started, each op done, finished) is journalled.
-- If an I/O error stops a batch part way, the broker restores it itself, by handle, from the aside
-  files (`restore_batch`; Python never writes back by path), and the response says which ops ran,
-  whether the restore was complete, and what is left.
-- When a batch finishes, the broker deletes its aside files. A crash before that is resolved at the
-  next start from the journal: a finished batch's asides are deleted, an unfinished batch is
-  restored. If either fails, the journal keeps the entry and the files, and the broker reports it;
-  this is the "committed but cleanup failed" case of contracts gap 6, which stays open.
 
 Not covered by any broker file operation:
 - `repo.git`: git does its own I/O, so it can only run in the launcher (section 6.1).
@@ -273,6 +419,13 @@ Job 6.
 
 ## 7. Confined launcher
 
+Not built in this PR. The launcher is later work, built under its own plan; everything in this
+section is design.
+
+A probe result kept as a fact for that work (Phase C item 17): on a Windows 11 build 26200 host,
+ALL APPLICATION PACKAGES can read and execute C:\Windows and C:\Program Files, and nothing in the
+host's own .NET SDK folder, the broker's bin folder, %LOCALAPPDATA%\Packages or the user profile.
+
 ### 7.1 Job object and process creation
 
 `launch(ticket)` (the policy comes from the ticket, section 7.5):
@@ -292,8 +445,9 @@ Job 6.
    to the AppContainer profile's own `AC\Temp`, so scratch stays out of the user's folders.
 
 Limits: if VOOL itself runs inside a Job (a terminal, an IDE, the supervisor), the limits combine;
-nested jobs are tested. A process created on the child's behalf by a service (WMI, Task Scheduler,
-an out-of-process COM server) runs outside the Job; AppContainer blocks most of those routes.
+nested jobs must be tested. A process created on the child's behalf by a service (WMI, Task
+Scheduler, an out-of-process COM server) runs outside the Job; AppContainer blocks most of those
+routes.
 
 ### 7.2 Child identity
 
@@ -308,9 +462,9 @@ cannot write each other's roots or open each other's processes and objects.
   sockets are governed by object permissions, not by these capabilities.
 - Reads: an AppContainer can read what is granted to `ALL APPLICATION PACKAGES` (`C:\Windows`,
   usually `C:\Program Files`, parts of HKLM) and whatever it is granted. It cannot read the user's
-  profile or a folder not granted. The tests enumerate what it can read.
+  profile or a folder not granted. The launcher's tests must enumerate what it can read.
 
-### 7.3 Granting the child its folders (decision needed, section 10)
+### 7.3 Granting the child its folders (decided, section 10; not built)
 
 An AppContainer can write only where an ACE grants its SID access. How write and read roots get
 that grant is the hardest open question. The options and their consequences:
@@ -336,10 +490,62 @@ Read roots outside the flagged folders (Python, the VOOL program folder, plugin 
 opened by handle with the section 5 rules and refused if it is a reparse point. Folders already
 readable by `ALL APPLICATION PACKAGES` need no grant; any other (a venv or plugin folder under the
 user profile) needs a grant by option B, so ACLs then change outside the flagged folders too.
-Which folders those are, and how each is granted, is decided in phase C (section 10, item 6); phase A builds and tests the mechanism on folders the tests choose.
+Which folders those are, and how each is granted, is decided in phase C (section 10, item 6);
+the launcher's build tests the mechanism on folders the tests choose.
 
 ### 7.4 Journal and recovery
 
+File changes, as built:
+- Location: `journal_dir` from the bootstrap (`VOOL_HOME\broker\journal`). It is outside `{app}`
+  and every flagged folder (F9). Each batch has one append-only `batch-<id>.jsonl`.
+- Each record is written as one write of the whole line plus its line end, and flushed to disk
+  (WriteThrough plus Flush(true)) before the step it names.
+- An error part way:
+  1. the handles are released;
+  2. the journal undoes the steps already made, newest first.
+- A commit:
+  1. the asides are deleted through the plan's held handles;
+  2. the journal deletes any aside it could not;
+  3. the batch file is removed.
+- Recovery:
+  - It opens folders by file id (OpenFileById), and only inside a folder that is flagged now.
+  - It changes an object only when that object's file id matches the journal.
+  - It records each step it undoes, so a later attempt skips that step.
+- A torn last record: bytes after the last line end,
+  where every earlier line parses and fits, are a record whose write never finished, so its action
+  never began. Recovery writes those bytes to a new `batch-<id>.torn` (or `batch-<id>.N.torn`,
+  never replacing) and flushes it. Only then does it cut them off the batch file, before it
+  appends anything of its own. It reports this in the outcome and on the start line. If the bytes
+  can't be kept, nothing is cut and the batch stays pending (`journal_unavailable`). A begin cut
+  short with nothing after it ends as no batch. The broker never deletes `.torn` files.
+  `restore_batch`'s reply does not report a torn record yet (client follow-up).
+- Before acting, recovery flushes the batch file to disk, so a record whose own flush failed (a
+  commit above all) is durable before anything acts on it. If that flush fails, nothing changes.
+- Any other damage is never guessed at: a record before the last line end that does not parse or
+  is not a record, an empty file, or a value that parses but cannot be read (a lone surrogate).
+  The same goes for a journal whose records parse but do not fit its schema (begin first with
+  its own batch id, steps numbered in order with exact fields per kind, the batch's own temp and
+  aside names, done or undone only for a step that exists and at most once). Recovery
+  stops for that batch with `journal_unreadable`, and the batch stays pending.
+- Changes and `restore_batch` run one at a time under one lock. A temp is removed only when its
+  file id matches, or, when the id is unknown (the create failed or a crash came first), only if
+  it is exactly what a create leaves (an empty file with one link, or an empty folder). A temp a
+  later place moved is not counted undone until that place is undone. A batch whose commit record
+  reached the journal is reported done even if the flush then failed.
+- While any batch is pending (unfinished, not fully restored, or unreadable), every new change is
+  refused `journal_pending`. Reads still work. `restore_batch` can finish a batch, and answers
+  `journal_unreadable` for a damaged one, which only a person can clear (Phase C item 6).
+- No journal folder: the broker starts, every change is refused `journal_unavailable`, and reads
+  work.
+- `VOOL_BROKER_TEST_PAUSE_AT` is for tests only. It stops a batch at a named boundary until the
+  broker is killed, so it can only do what a kill does. In Phase C the API starts the broker with
+  an environment that does not carry this variable.
+- The kill test kills the broker at every journal boundary of an 11-step batch (35 boundaries,
+  70 broker runs) and checks that the next start puts everything back.
+- The journal has no launcher records (profiles, stages, ACEs): the launcher is not built. The
+  bullets below about ACL changes and profiles stay design.
+
+Design (launcher part not built):
 - Every ACL change, profile creation, temp file, aside file and batch step is written to the
   journal (with the object's file id, the name, and the previous security descriptor) and flushed
   **before** it is made.
@@ -393,53 +599,127 @@ Which existing state each outcome lands in (contracts §4 and §5); no new recei
 
 | Outcome | State |
 |---|---|
-| Refused by the broker (any section 5 rule, unknown root, bad ticket, `in_use` before the commit rename) | refused, nothing changed: `windows_filesystem_authority_unavailable` with the broker's code, except `blocked_by_hard_link`, which keeps its own status (sandbox/sandbox_runner.py:209); launch refusals `confinement_unavailable` (core/plugin_executor.py:384) |
+| Refused by the broker (any section 5 rule, unknown root, bad ticket, `in_use` before the batch's first step) | refused, nothing changed: `windows_filesystem_authority_unavailable` with the broker's code, except `blocked_by_hard_link`, which keeps its own status (sandbox/sandbox_runner.py:209); launch refusals `confinement_unavailable` (core/plugin_executor.py:384) |
 | Broker absent, or the channel fails before the request is written | refused, same statuses |
-| A file request was written and no response came (broker died, pipe broke, timeout) | the client raises `EffectOutcomeUnknown` (core/effect_reconciliation.py:61); it never returns `ok=False` for this. That becomes A6 `unknown` only for an A6-reserved intent holding a claim (`a6_reserved_intent`:53, contracts §4 and §5); every other case (an intent that is not reserved, or a reserved one with no `checkpoint_id`) ends as today's plain `error`, which is contracts gap 6. Mechanical resolvers exist only for workspace.write_file and machine.write_file (effect_reconciliation.py:219-220). Phase C fixes the list of which broker-backed intents (the moves, the patch, the rollbacks) are A6-reserved; Step 2 does not. A broker change takes effect at its commit rename (section 6), so "written, no response" may mean it happened |
+| A file request was written and no response came (broker died, pipe broke, timeout) | the client raises `EffectOutcomeUnknown` (core/effect_reconciliation.py:61); it never returns `ok=False` for this. That becomes A6 `unknown` only for an A6-reserved intent holding a claim (`a6_reserved_intent`:53, contracts §4 and §5); every other case (an intent that is not reserved, or a reserved one with no `checkpoint_id`) ends as today's plain `error`, which is contracts gap 6. Mechanical resolvers exist only for workspace.write_file and machine.write_file (effect_reconciliation.py:219-220). Phase C fixes the list of which broker-backed intents (the moves, the patch, the rollbacks) are A6-reserved; Step 2 does not. A broker change takes effect step by step (section 6): a batch with several operations changes the tree one step at a time before its commit, and any batch that stops part way is undone by the journal, so "written, no response" may mean it happened |
 | A launched child ran and the broker died | the child is dead (its Job closed); its result goes through `PluginToolResult` (or the process agent's own result), not A6, as `ok=False` with the reason, naming that its effects are unknown. No receipt state says "unknown" there today; that is recorded as part of gap 6 |
 | `apply_batch` stopped part way by an I/O error | `ok=False` with the ops that ran and whether the broker's own restore (section 6) completed. If the restore did not complete, the entry stays in the journal and the result says what is left (gap 6) |
 | A handler returns `ok=False` after the broker changed files (a part-done batch whose restore did not complete) | as today: the executor ack records it as A6 `failed_safe_to_retry` / `dispatch_ack` (tool_intent_executor.py:1538-1549), the third outcome of contracts gap 6 |
 | Executed | `executed`, with file ids and new hashes |
 
+Client outcomes as built (`core/windows_broker/client.py`):
+- `ConnectionError`: nothing was written.
+- `BrokerRefusal`: refused with nothing changed; the connection stays usable. `BatchRestored`
+  is the batch form: it keeps `batch`, and `batch.restored` is true.
+- `EffectOutcomeUnknown`: the request may have had an effect. That covers a lost reply after a
+  write, `reply_unencodable`, a reply for another id (a `too_large` with a null id among them)
+  and a reply of the wrong shape. `BatchNotRestored` is the batch form: it keeps `batch`,
+  `error.code` and `error.cause`, for `restore_incomplete` and `restored:false`. The connection
+  is closed after either, so a caller reconnects to call `restore_batch`.
+
+Client follow-up for Phase C:
+- Map `EffectOutcomeUnknown` and `BatchNotRestored` to VOOL's "outcome unknown, not safe to
+  retry" state, never to a plain refusal.
+- Read `journal.torn` on the start line, and surface it to the person, with `pending`.
+- When the launcher is built: map vool-confine's "effects unknown" outcome to not safe to retry
+  as well.
+
+Contracts r9 :99-104 has no such state for a launch, so that is a TDL follow-up for a
+contracts-doc round at Phase C.
+
 ## 9. Code layout and tests
 
-- `windows/broker/VoolBroker.sln`: `VoolBroker` (exe), `VoolBroker.Core` (walk, file operations,
-  launcher, journal, protocol), `VoolConfine` (exe), `VoolBroker.Tests` (xunit).
-- .NET 10 LTS, x64. On Steve the SDK is in VOOL Windows\toolchain\dotnet, called by full path.
+- `windows/broker/VoolBroker.sln` has three projects: `VoolBroker` (the exe: bootstrap, start
+  line, serving the pipe), `VoolBroker.Core` (channel and protocol, roots, handle walk, file
+  operations, batches, journal) and `VoolBroker.Tests` (xunit v3).
+- There is no `VoolConfine` project and no launcher code. The confined launcher (section 7) is not
+  built in this PR; it is later work.
+- .NET 10, x64 (`net10.0-windows`). The SDK is pinned to 10.0.402 in `windows/broker/global.json`
+  and the test packages in `Directory.Packages.props`. The Phase A build is framework-dependent;
+  the self-contained publish decided in section 10 belongs to shipping (Phase B).
 - `core/windows_broker/client.py`: the Python client. Nothing imports it before Step 3.
-- Tests on real Windows (Steve, then the hosted Windows runner in windows-broker.yml once the
-  workflow OK is given),
-  each against the real broker, never mocks:
-  - escapes: `..`; a junction and a symlink inside a root pointing out; one swapped in between
-    `stat` and `write_file` by a racing thread; renaming an ancestor folder (and a flagged folder)
-    out of the root while an operation holds it; a hard link to an outside file (write and read);
-    an 8.3 name and a subst drive for a root; every DOS device name; an alternate data stream;
-    trailing dot and space; a case-sensitive folder; a path over 32,767 units; a second volume;
-    a FAT32 volume (refused); an OneDrive-backed folder (record what happens); a repository cloned
-    from a local path (record what the hard-link rule does);
+- Tests on real Windows (a non-admin Windows 11 development machine, and the hosted Windows runner
+  in windows-broker.yml), each against the real broker, never mocks. Built in this PR:
+  - escapes: `..`; a junction and a symlink inside a root pointing out; one swapped in during a
+    walk by a racing thread; renaming an ancestor folder (and a flagged folder) out of the root
+    while an operation holds it; a hard link to an outside file (write and read); an 8.3 name and
+    a subst drive for a root; DOS device names; an alternate data stream; trailing dot and space;
+    a case-sensitive folder; a path over 32,767 units; an object on a second volume; FAT32, exFAT
+    and ReFS flagged folders (refused);
   - every operation's success path, and that each refusal changed nothing (hash the tree before
     and after); a batch with a late refusal changes nothing; a batch stopped by an injected I/O
     error is restored; `expect` against a racing writer; `expect=absent` against a file created
     meanwhile; a read-only destination; a file held open by another program;
+  - journal: temp and aside files are undone or finished after a broker crash at each step, a
+    damaged journal is never guessed at, and changes are refused when the journal is unavailable;
+  - channel: a client without the secret, a client from another process, a reused process id
+    (wrong creation time), a second pipe instance, an oversized message.
+- Later work, not in this PR:
+  - an OneDrive-backed folder (record what happens); a repository cloned from a local path (record
+    what the hard-link rule does);
   - launcher: the child cannot write outside its roots, cannot read the user profile or an
     ungranted folder, cannot reach the network or loopback when `network=false`, cannot connect
     to the broker's pipe, inherits no other handle, two children cannot reach each other, the
     child dies when the broker is killed and when vool-confine is killed, under an outer Job too;
     an MCP-style child streams over stdio; the exit code arrives; git runs (or the test records
     that it does not);
-  - journal: ACEs, profiles, temp and aside files are undone after the Job closes, after a broker
-    crash at each step, and when the journal is missing (refused, nothing guessed);
-  - channel: a client without the secret, a client from another process, a reused process id, a
-    second pipe instance, a ticket used twice, a ticket with a different argv or environment, an
-    oversized message.
-- Linux CI: the Python client's protocol tests against a fake server, and a test that nothing
-  outside tests imports `core.windows_broker` before Step 3.
+  - journal: ACEs and profiles are undone after the Job closes and after a broker crash;
+  - channel: a ticket used twice, a ticket with a different argv or environment.
+- Python: 28 tests in `tests/windows_broker`: the client's protocol and failure-mapping tests
+  against a fake server, a test that nothing outside tests imports `core.windows_broker` before
+  Step 3, and 4 tests against the real broker, which skip off Windows.
+
+### 9.1 As built
+
+- On the hosted Windows runner (windows-broker.yml), the C# suite runs 210 tests: 209 pass and 1
+  skips, the pre-1809 platform row (no hosted runner is that old).
+- The 28 Python client tests run there against the built broker, and the workflow fails if any of
+  them skips.
+- On a non-admin development machine the admin rows (section 9.2) skip with their reason.
+- Mutation testing and an independent review were done during development.
+
+### 9.2 Hosted-runner rows, and P16
+
+P7 (8.3 short name), P14 (object on another volume), F7 (non-NTFS flagged folder) and the F5
+mapped-network-drive spelling can't run on a non-admin host: 8.3 creation is off on the
+development machine, and a second volume, a mounted-volume folder or a share needs admin. There
+their tests skip with that reason. They run in windows-broker.yml on a hosted Windows runner
+(admin), and all pass there. Only the pre-1809 platform row skips, since no hosted runner is that
+old.
+
+The workflow (`windows-2025` runner; the set-up step runs only on a GitHub-hosted runner):
+
+| Row | Setup | Expected result |
+|---|---|---|
+| P7 | NTFS VHDX `V:` with 8.3 names turned on before any folder is made (`fsutil 8dot3name set 2`, then `set V: 0`). The step fails unless a new folder gets a short name. | The short-name tests find a short name |
+| P14 | A second NTFS VHDX mounted as the folder `V:\flagged\mnt` | Refused `reparse_point` |
+| F7 | FAT32 `F:`, exFAT `E:`, ReFS `R:` | Refused `unsupported_filesystem` |
+| F5 | SMB share `vooltest` on `V:\share`, mapped as `M:` with `net use` | Refused `unsupported_filesystem`: the real path is `\\?\UNC\…` (Roots.cs:77) |
+
+- P14 expects `reparse_point`, since a mounted-volume folder is a reparse point; a relative walk
+  has no other way onto another volume, so the volume check stays defence in depth and the test
+  proves the refusal.
+- Any set-up failure fails the job. ReFS is required: a failed ReFS set-up fails the job too.
+- The tests read the volumes and the share from environment variables the workflow sets
+  (`VOOL_BROKER_TEST_8DOT3_ROOT`, `VOOL_BROKER_TEST_MOUNTED_FOLDER`,
+  `VOOL_BROKER_TEST_FAT32_ROOT`, `VOOL_BROKER_TEST_EXFAT_ROOT`, `VOOL_BROKER_TEST_REFS_ROOT`,
+  `VOOL_BROKER_TEST_MAPPED_ROOT`).
+- In CI, `VOOL_BROKER_TEST_REQUIRE_ADMIN_ROWS=1` makes a missing volume or share a failure, not a
+  skip. The pre-1809 platform skip stays a plain skip.
+- On a development machine the variables are unset, so the rows skip with their reason.
+
+Unreachable by design, so no test:
+- P16 (final-path containment): defence in depth. Every way a relative open has onto another
+  volume or outside the root (mount point, junction, symlink, hard link) is refused earlier, and
+  walked folders are held, so no input reaches it with an outside path. If any earlier refusal is
+  loosened, P16 needs a test then.
 
 ## 10. Decisions and open questions
 
-Decided by the owner on 19 Oct 2026:
+Decided:
 - Folder access (section 7.3): staged copy (A) for plugins, decoders and MCP servers; per-object
-  grants (B) only for process agents and git. Phase A builds A; B is a second build.
+  grants (B) only for process agents and git. The launcher's first build implements A; B is a
+  second build.
 - Packaging (item 3 below): self-contained publish.
 
 Still open (nothing is built for them until decided):
@@ -450,9 +730,10 @@ Still open (nothing is built for them until decided):
 3. (Decided above: self-contained, about 70 MB, so users need no .NET runtime. NativeAOT, which
    needs the C++ build tools, was not chosen.)
 4. Building and testing the broker in CI needs a new workflow, windows-broker.yml (dispatch, and
-   pull requests that touch only the broker's folders), kept apart from the gauntlet so broker
-   failures and build time never block other merges. It needs the owner's named OK.
-5. User-visible behaviour changes Step 3 would bring, each needing the owner's OK before Step 3
+   pull requests that touch the broker's folders or a root-level .NET build input), kept apart
+   from the gauntlet so broker failures and build time never block other merges. (Done: this PR
+   adds it.)
+5. User-visible behaviour changes Step 3 would bring, each needing explicit approval before Step 3
    ships:
    - moves across volumes are refused (today they copy);
    - only NTFS volumes are accepted;
@@ -474,6 +755,84 @@ Still open (nothing is built for them until decided):
 6. The read roots outside the flagged folders (section 7.3): which folders, and how each is
    granted. Decided in phase C.
 
+### Phase C decisions
+
+Recorded now, to be decided at wiring. Phase A keeps the stricter default because
+nothing is wired yet. Once the broker is wired, the gate and the broker must agree, and each item
+below changes what the user sees. Items 12-14, 16 and 17 concern the launcher and stay recorded
+for when it is built; item 15 (the stop button must reach the broker) applies to the broker itself
+from Phase B.
+
+1. A bad entry in VOOL_WINDOWS_DISPOSABLE_WORKSPACES stops the whole broker. The alternative is to
+   drop that entry and show a visible warning.
+2. OneDrive placeholders are refused. This matters a lot when a flagged folder sits in
+   OneDrive-synced Documents.
+3. Hard-linked files are refused, including git objects from a local clone. That collides with the
+   in-place per-object git grants chosen for git (option B, section 10).
+4. ReFS volumes, Windows Dev Drives included, are refused (NTFS only).
+5. A flagged folder that is a junction is refused.
+6. A batch the journal still holds (it stopped and could not be fully put back, or a crash left it
+   and recovery could not finish, or its journal file is damaged) blocks every file change until it
+   is finished with restore_batch or a person clears it. A damaged journal is never guessed at, so
+   only a person can clear it: today that means checking the objects the start line lists under
+   `pending`, then deleting that batch's file in VOOL_HOME\broker\journal. Decide how VOOL shows
+   this and offers the clearing step.
+7. If the journal folder cannot be created or written, the broker still starts, every file change
+   is refused (journal_unavailable) and reads still work.
+8. Reads over 47 MiB are refused (too_large), never cut short.
+9. A rename that only changes letter case, and deleting a folder that is not empty, are refused.
+10. UNC, `\\?\UNC\`, `\\.\` device-path, mapped-network-drive and volume-GUID flagged entries are
+    refused, and so is the whole start (F1, F5, F10).
+11. A file or folder name holding an unpaired UTF-16 surrogate (Python's json writes it as a lone
+    surrogate escape, backslash-u then DC80) is refused invalid_name, never repaired, because a
+    repaired name can point at a different file. Such names cannot be reached through the broker
+    at all.
+12. Each confined launch makes an AppContainer profile (%LOCALAPPDATA%\Packages\<name>) and HKCU
+    mapping keys, outside {app}. The broker removes them after each launch and at the next start,
+    but uninstall touches only {app}, so a crash followed by an uninstall leaves them. Decide what
+    uninstall does about leftovers.
+13. After a crash, staged copies of user files sit under %LOCALAPPDATA%\Packages until the next
+    broker start.
+14. Confined children get no network and no loopback (this protects the API and Ollama). HTTP MCP
+    servers, children that call Ollama or the API, and vool-browser (contracts :41) cannot run
+    confined. Decide how VOOL offers them.
+15. The stop button must reach the broker. VOOL's stop matchers do not match VoolBroker,
+    vool-confine or stage children, which fails safe, but stopping them depends on VOOL stop, then
+    the broker (its own Job, Phase B), then the launch Jobs.
+16. "Broker or connection lost, effects unknown" from a launch maps to not safe to retry, like
+    restore_incomplete. Contracts r9 :99-104 has no such state: TDL follow-up for a contracts-doc
+    round at Phase C.
+17. No confined child can start until its interpreter and program folder are readable by its
+    AppContainer (probe on a Windows 11 build 26200 host: ALL APPLICATION PACKAGES can read
+    C:\Windows, including cmd.exe and the .NET Framework folder, but not the host's own .NET SDK
+    folder, the broker's bin folder,
+    %LOCALAPPDATA%\Packages, or Python and the venv under the user profile). Open question 6
+    above (the read roots) is therefore a blocker for wiring any confined child. The launcher's
+    build is to prove the mechanism first only with a C# 5 test child built by the Framework's
+    csc.exe and staged into the profile. Layouts:
+    - A per-machine install under Program Files inherits read and execute for ALL APPLICATION
+      PACKAGES, so a bundled Python in {app} would load without new ACEs (checked read-only on a
+      Windows 11 host: C:\Program Files grants ALL APPLICATION PACKAGES RX, inherited
+      (OI)(CI)(IO)(GR,GE)).
+    - A per-user install under %LOCALAPPDATA%, and the source-checkout layout (Python and .venv in
+      user folders), need a grant.
+    Options: an install-time grant on {app} only, or per-launch ACEs on the
+    interpreter folder. Granting anything on user folders outside {app} is off the table unless
+    explicitly decided otherwise.
+    This item is also an input to Phase B: the bundle layout must not make confining harder.
+18. A replace is not atomic, and reads are not serialized with changes. A
+    replace is temp, then aside, then place, so between aside and place the destination name does
+    not exist, and another program, or a broker read on another connection, gets not_found. VOOL's
+    Python writers replace atomically (os.replace). Decide whether that window is acceptable for
+    the tools Phase C wires in, or whether reads take the change lock and a replace uses another
+    method.
+19. The journal folder is used by path after the start checks. A same-user
+    process that swaps it could hand restore_batch a crafted journal. Recovery stays contained: it
+    only touches objects inside folders flagged now, by file id, and only this batch's own temp and
+    aside names. The fix: hold the journal folder's handle, without delete sharing, for the
+    broker's life, and make batch files relative to it. Decide at Phase C, together with Phase B's
+    install layout.
+
 ## 11. Proposed changes to the contracts doc
 
 To be raised as a follow-up to that doc after PR #21 merges, not inside it:
@@ -489,3 +848,34 @@ To be raised as a follow-up to that doc after PR #21 merges, not inside it:
    two and record the hard-link case as a new gap, all planned for Step 3. They count as closed
    only once Step 3 is proven on Windows.
 5. None needed for the `core.worktree` case: it is recorded in gap 15 at `637fc6a`.
+
+## 12. Design decisions
+
+- **Authentication once per connection, not per frame.** After the challenge and response, every
+  frame on the connection is a request, with no per-frame HMAC: injecting a frame needs the pipe
+  handle, and a process that can duplicate that handle could read the secret anyway (section 3).
+- **Framed JSON semantics, not canonical bytes.** Client and broker agree on the JSON value, not
+  its bytes. Every string field is taken exactly as sent or refused `invalid_name`, never
+  repaired (section 3).
+- **Unpaired surrogates are refused, never repaired.** A name holding one is refused
+  `invalid_name`, and a flagged folder whose real path is not valid Unicode stops the start with
+  `invalid_name`, so replies carry only validated names. A repaired name could point at a
+  different file.
+- **A drive letter is required for a flagged folder.** A volume-GUID or GLOBALROOT spelling is
+  fully qualified but is not a form VOOL's settings use, so it is refused (F1).
+- **Each connection holds at most 64 roots** (`too_many_roots`), because each root holds a handle
+  on every folder on its way.
+- **The broker is never looser than the gate.** For the same input it is never looser than G or
+  Job 6, and every "stricter" row is listed for Phase C (section 4, section 10).
+- **Recovery keeps going past a step it cannot undo.** Every independent step is still undone; a
+  temp a later place moved is not counted undone until that place is undone (section 7.4). It
+  stops only when it cannot record an undo, and then names the steps not attempted (section 6).
+- **A torn last record is not damage.** Each record is flushed before the action it names
+  begins, so bytes after the last line end are a record whose action never started. Treating
+  them as damage would turn an ordinary power loss into a stuck broker; they are kept in a
+  `.torn` file and cut off instead (section 7.4).
+- **P16 has no test.** It is unreachable by design; if an earlier refusal is loosened, it needs
+  one (section 9.2).
+- **Known limitation: cancelling the accept loop.** Stopping `ServeAsync` can leave a blocked
+  `ConnectNamedPipe` call behind. Cancellation only happens as the broker exits, and only tests
+  host the broker in process.
