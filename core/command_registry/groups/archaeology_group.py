@@ -11,6 +11,7 @@ quarantined as untrusted data and gated through the A8 availability verdicts.
 """
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 
 from core.command_registry.spec import (
@@ -28,6 +29,7 @@ from core.project_archaeology import (
     ReferenceNotFound,
     ScopeRefused,
     confine_to_root,
+    git_ceiling,
 )
 from core.project_archaeology import (
     compare as archaeology_compare,
@@ -153,20 +155,34 @@ def _identity_summary(results: list[dict], *, cap: int = 8) -> str:
     return ", ".join(parts) + tail
 
 
-def _workspace_root_for(inp, ctx) -> str:
-    """The workspace root a command may read. An operator names any root; the model only one
-    inside the folder its chat is bound to (``bound_workspace_root``, set by the model door from
-    the turn's trusted context), the same boundary the workspace file tools hold. An empty root
-    stays empty: the stores are searched and no folder is walked."""
-    requested = str(inp.workspace_root or "").strip()
-    if not requested or ctx.principal != "model":
-        return requested
+def _bound_root(ctx) -> str:
+    """The folder the model's chat is bound to (``bound_workspace_root``, set by the model door
+    from the turn's trusted context, else the configured workspace); "" for an operator."""
+    if ctx.principal != "model":
+        return ""
     bound = str((ctx.extra or {}).get("bound_workspace_root") or "").strip()
     if not bound:
         from core.runtime_paths import resolve_workspace_root
 
         bound = str(resolve_workspace_root(None))
+    return bound
+
+
+def _workspace_root_for(inp, ctx) -> str:
+    """The workspace root a command may read. An operator names any root; the model only one
+    inside the folder its chat is bound to, the same boundary the workspace file tools hold. An
+    empty root stays empty: the stores are searched and no folder is walked."""
+    requested = str(inp.workspace_root or "").strip()
+    bound = _bound_root(ctx)
+    if not requested or not bound:
+        return requested
     return str(confine_to_root(requested, bound))
+
+
+def _scope_for(ctx):
+    """For the model, git evidence comes only from a repository inside its bound folder."""
+    bound = _bound_root(ctx)
+    return git_ceiling(bound) if bound else contextlib.nullcontext()
 
 
 # -- handlers (thin adapters over the authority) -------------------------------
@@ -174,13 +190,14 @@ def _workspace_root_for(inp, ctx) -> str:
 
 def _handle_locate(inp, ctx):
     try:
-        workspace_root = _workspace_root_for(inp, ctx)
-        payload = archaeology_locate(
-            inp.reference,
-            workspace_root=workspace_root,
-            limit=inp.limit,
-            requester=f"command:{ctx.projection}",
-        )
+        with _scope_for(ctx):
+            workspace_root = _workspace_root_for(inp, ctx)
+            payload = archaeology_locate(
+                inp.reference,
+                workspace_root=workspace_root,
+                limit=inp.limit,
+                requester=f"command:{ctx.projection}",
+            )
     except (ReferenceNotFound, ArchaeologyInputError, ScopeRefused) as exc:
         return _fault_for(exc, "archaeology.locate")
     return HandlerOk(
@@ -195,20 +212,21 @@ def _handle_locate(inp, ctx):
 
 def _handle_search(inp, ctx):
     try:
-        workspace_root = _workspace_root_for(inp, ctx)
-        payload = archaeology_search(
-            text=inp.text,
-            store=inp.store,
-            kind=inp.kind,
-            session_id=inp.session_id,
-            turn_id=inp.turn_id,
-            path_prefix=inp.path_prefix,
-            since=inp.since,
-            until=inp.until,
-            workspace_root=workspace_root,
-            limit=inp.limit,
-            requester=f"command:{ctx.projection}",
-        )
+        with _scope_for(ctx):
+            workspace_root = _workspace_root_for(inp, ctx)
+            payload = archaeology_search(
+                text=inp.text,
+                store=inp.store,
+                kind=inp.kind,
+                session_id=inp.session_id,
+                turn_id=inp.turn_id,
+                path_prefix=inp.path_prefix,
+                since=inp.since,
+                until=inp.until,
+                workspace_root=workspace_root,
+                limit=inp.limit,
+                requester=f"command:{ctx.projection}",
+            )
     except (ArchaeologyInputError, ScopeRefused) as exc:
         return _fault_for(exc, "archaeology.search")
     truth = "TRUNCATED" if payload["truncated"] else "complete"
@@ -223,19 +241,20 @@ def _handle_search(inp, ctx):
 
 def _handle_trace(inp, ctx):
     try:
-        workspace_root = _workspace_root_for(inp, ctx)
-        payload = archaeology_trace(
-            turn_id=inp.turn_id,
-            session_id=inp.session_id,
-            effect_id=inp.effect_id,
-            attempt_id=inp.attempt_id,
-            path=inp.path,
-            since=inp.since,
-            until=inp.until,
-            workspace_root=workspace_root,
-            limit=inp.limit,
-            requester=f"command:{ctx.projection}",
-        )
+        with _scope_for(ctx):
+            workspace_root = _workspace_root_for(inp, ctx)
+            payload = archaeology_trace(
+                turn_id=inp.turn_id,
+                session_id=inp.session_id,
+                effect_id=inp.effect_id,
+                attempt_id=inp.attempt_id,
+                path=inp.path,
+                since=inp.since,
+                until=inp.until,
+                workspace_root=workspace_root,
+                limit=inp.limit,
+                requester=f"command:{ctx.projection}",
+            )
     except (ArchaeologyInputError, ScopeRefused) as exc:
         return _fault_for(exc, "archaeology.trace")
     joined = ", ".join(str(name) for name in payload["lineage"]["stores_joined"])
@@ -250,14 +269,15 @@ def _handle_trace(inp, ctx):
 
 def _handle_compare(inp, ctx):
     try:
-        workspace_root = _workspace_root_for(inp, ctx)
-        payload = archaeology_compare(
-            kind=inp.kind,
-            a=inp.a,
-            b=inp.b,
-            workspace_root=workspace_root,
-            requester=f"command:{ctx.projection}",
-        )
+        with _scope_for(ctx):
+            workspace_root = _workspace_root_for(inp, ctx)
+            payload = archaeology_compare(
+                kind=inp.kind,
+                a=inp.a,
+                b=inp.b,
+                workspace_root=workspace_root,
+                requester=f"command:{ctx.projection}",
+            )
     except (ArchaeologyInputError, ScopeRefused, ReferenceNotFound, LookupError) as exc:
         return _fault_for(exc, "archaeology.compare")
     comparison = payload["comparison"]
@@ -272,15 +292,16 @@ def _handle_compare(inp, ctx):
 
 def _handle_recovery_plan(inp, ctx):
     try:
-        workspace_root = _workspace_root_for(inp, ctx)
-        payload = archaeology_recovery_plan(
-            reference=inp.reference,
-            path=inp.path,
-            turn_id=inp.turn_id,
-            workspace_root=workspace_root,
-            limit=inp.limit,
-            requester=f"command:{ctx.projection}",
-        )
+        with _scope_for(ctx):
+            workspace_root = _workspace_root_for(inp, ctx)
+            payload = archaeology_recovery_plan(
+                reference=inp.reference,
+                path=inp.path,
+                turn_id=inp.turn_id,
+                workspace_root=workspace_root,
+                limit=inp.limit,
+                requester=f"command:{ctx.projection}",
+            )
     except (ArchaeologyInputError, ScopeRefused) as exc:
         return _fault_for(exc, "archaeology.recovery_plan")
     plan = payload["plan"]

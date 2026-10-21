@@ -22,6 +22,10 @@ See [Release status](../trust/release-status.md) for signing and update details.
 Local models need considerably more memory than the app itself. Sizing guidance is in
 [Run a local model](../guides/local-models.md).
 
+On Windows, the qwen3:8b local model needs at least 10 GB of RAM on a PC without a graphics
+card. With less, VOOL says it can't start it; add a cloud key in **Settings → API Keys** and pick
+a cloud model to chat.
+
 ## Download the app
 
 | Your computer | Download |

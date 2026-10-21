@@ -26,9 +26,9 @@ Three layers:
   with no checkout runs nothing because hardened_argv() keeps git from diffing in or rebuilding from its git
   folder.
 System and global config belong to the user (for example Git LFS's global filters) and are not
-second-guessed. `alias.*` is not refused: an alias runs only when invoked by name, and VOOL
-never invokes one. repo.push is VOOL's one transport command; safe_env() also drops
-GIT_SSH/GIT_SSH_COMMAND. Not closed here: a push to a local-path remote runs that other
+second-guessed. An alias is not refused for a name like ``alias.subcmd``: it runs only when
+invoked by name, and VOOL never invokes one (``alias.command``, ``alias.cmd`` and ``alias.<x>.command``
+still are). repo.push is VOOL's one transport command; safe_env() also drops GIT_SSH/GIT_SSH_COMMAND. Not closed here: a push to a local-path remote runs that other
 repository's receive hooks (git clears the -c hardening for its local receive-pack); tracked in
 the TDL. Residual, documented rather than claimed closed: a process editing .git/config
 between the check and the run (the same check/use class as the Windows filesystem race).
@@ -38,7 +38,9 @@ from __future__ import annotations
 import fnmatch
 import os
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
+from urllib.parse import urlsplit
 
 #: Final key segments (lowercase) whose value git runs as a program or shell command.
 _EXECUTABLE_KEY_SUFFIXES = frozenset({
@@ -108,13 +110,19 @@ def safe_env(base: dict[str, str] | None = None) -> dict[str, str]:
 def hardening_args() -> list[str]:
     """Global git options that keep a command from running repository-chosen programs. Run diff,
     log, show, status and commit through hardened_argv(), which adds the submodule settings these
-    lack; ``git apply`` never diffs a submodule and may use these alone."""
+    lack; ``git apply`` never diffs a submodule and may use these alone.
+
+    VOOL's git also runs no automatic housekeeping: a commit, merge or cherry-pick would otherwise
+    start ``git maintenance run --auto`` (``gc --auto`` before git 2.29), whose gc or repack can run
+    ``gc.recentObjectsHook``. The user's own git and scheduled maintenance are unaffected."""
     return [
         "--no-optional-locks",
         "-c", "core.fsmonitor=false",
         "-c", f"core.hooksPath={os.devnull}",
         "-c", "diff.external=",
         "-c", "core.pager=cat",
+        "-c", "maintenance.auto=false",
+        "-c", "gc.auto=0",
     ]
 
 
@@ -126,14 +134,51 @@ def executable_local_config(cwd: Path, *, timeout: float = 20) -> list[str]:
     checked-out submodule's config, reported as ``<submodule path>:<key>``: status, diff and commit
     in the superproject run git inside every checked-out submodule, and that git obeys the
     submodule's own config."""
-    return _executable_config(Path(cwd), timeout=timeout, depth=0)
+    return sorted({key for key, _ in _executable_config(Path(cwd), timeout=timeout, depth=0)})
+
+
+def executable_config_for(cwd: Path, argv: Sequence[str], *, timeout: float = 20) -> list[str]:
+    """The program-running keys that matter for running ``git <argv>`` here (empty when none), each
+    as ``key (where it is set)`` for a refusal message.
+
+    Like executable_local_config, except that the signing and signature-check switches
+    (_SAFE_VALUES) are left out when ``argv`` can neither sign nor verify: a repository that signs
+    its own commits can still be read. Any other command, and an empty ``argv``, keeps them."""
+    signs = _may_sign_or_verify(argv)
+    found = {f"{key} ({_where(scope, submodule=':' in key)})"
+             for key, scope in _executable_config(Path(cwd), timeout=timeout, depth=0)
+             if signs or key.rpartition(":")[2] not in _SAFE_VALUES}
+    return sorted(found)
+
+
+#: Subcommands that never sign or check a signature unless an option asks for it.
+_SIGNING_FREE_SUBCOMMANDS = frozenset({
+    "status", "diff", "log", "show", "rev-parse", "ls-files", "for-each-ref", "rev-list", "merge-base",
+    "cat-file", "describe", "symbolic-ref", "config", "branch", "remote",
+})
+#: Options that make one of those sign or verify after all (log/show --show-signature, branch has none).
+_SIGNING_OPTIONS = ("--show-signature", "--gpg-sign", "--verify-signatures", "-S")
+
+
+def _may_sign_or_verify(argv: Sequence[str]) -> bool:
+    if not argv or argv[0] not in _SIGNING_FREE_SUBCOMMANDS:
+        return True
+    # %G<x> (log, show, rev-list) and %(signature...) (for-each-ref) verify signatures as well.
+    return any(arg.startswith(_SIGNING_OPTIONS) or "%G" in arg or "%(signature" in arg for arg in argv[1:])
+
+
+def _where(scope: str, *, submodule: bool = False) -> str:
+    owner = "the submodule's " if submodule else ""
+    return {"local": f"set in {owner}.git/config", "worktree": f"set in {owner}config.worktree",
+            "command": "set by a -c option"}.get(scope, f"set in {owner}git {scope} config")
 
 
 #: Nested submodules deeper than this are refused rather than checked.
 _MAX_SUBMODULE_DEPTH = 8
 
 
-def _executable_config(cwd: Path, *, timeout: float, depth: int) -> list[str]:
+def _executable_config(cwd: Path, *, timeout: float, depth: int) -> list[tuple[str, str]]:
+    """``(key, scope)`` of each program-running entry, submodule keys as ``<path>:<key>``."""
     # Fails outside a repository, which the callers already treat as "not checked".
     inside_work_tree = _rev_parse(cwd, "--is-inside-work-tree", timeout=timeout) == "true"
     scoped = _config_entries(cwd, ["--show-scope"], timeout=timeout)
@@ -144,16 +189,17 @@ def _executable_config(cwd: Path, *, timeout: float, depth: int) -> list[str]:
         (scope, _), (key, value) = scoped[index], scoped[index + 1]
         if scope in _USER_CONFIG_SCOPES or not is_executable_key(key):
             continue
-        if key in _SAFE_VALUES and value is not None and _SAFE_VALUES[key](value):
+        if is_safe_value(key, value):
             continue  # signing switched off, or the default format, runs nothing
-        keys.append(key)
+        keys.append((key, scope))
     # Bare, or inside the git directory: there is no work tree, so git recurses into no submodule.
     submodules = _checked_out_submodules(cwd, timeout=timeout) if inside_work_tree else []
     for path, submodule in submodules:
         if depth >= _MAX_SUBMODULE_DEPTH:
             raise RuntimeError("submodules are nested too deeply, or a submodule's git folder does not resolve")
-        keys.extend(f"{path}:{key}" for key in _executable_config(submodule, timeout=timeout, depth=depth + 1))
-    return sorted(set(keys))
+        keys.extend((f"{path}:{key}", scope)
+                    for key, scope in _executable_config(submodule, timeout=timeout, depth=depth + 1))
+    return keys
 
 
 def _checked_out_submodules(cwd: Path, *, timeout: float) -> list[tuple[str, Path]]:
@@ -207,6 +253,13 @@ _SAFE_VALUES = {
 }
 
 
+def is_safe_value(key: str, value: str | None) -> bool:
+    """Whether ``key`` set to ``value`` runs nothing although the key can (a signing switch that is a
+    definite false, ``gpg.format=openpgp``). A key set without a value is never safe."""
+    test = _SAFE_VALUES.get(key.strip().lower())
+    return test is not None and value is not None and test(value)
+
+
 #: Config scopes that belong to the user, not to the repository (``git config --show-scope``).
 _USER_CONFIG_SCOPES = frozenset({"system", "global"})
 
@@ -228,6 +281,334 @@ def _config_entries(cwd: Path, options: list[str], *, timeout: float) -> list[tu
             fields.append((name.decode("utf-8", "replace").strip().lower(),
                            value.decode("utf-8", "replace") if newline else None))
     return fields
+
+
+def lfs_endpoint_refusal(cwd: Path, argv: Sequence[str] = (), *, timeout: float = 20) -> str:
+    """Why Git LFS must not run for ``git <argv>`` here ("" when it may): the repository names an LFS
+    server that is neither this project's git host nor one the user named.
+
+    The user's own git-lfs (their global ``filter.lfs.*``) downloads objects whenever git writes
+    LFS files into the work tree, and asks the server the repository picks: ``lfs.url``,
+    ``lfs.pushurl`` or ``remote.<x>.lfs(push)url`` from the repository's own config or from the
+    ``.lfsconfig`` it carries, in the work tree, the index, HEAD or a commit ``argv`` brings in.
+    Trusted are the hosts of this repository's remotes (where git-lfs goes when nothing is named)
+    and hosts in the user's system or global LFS settings; URLs are compared after git's
+    ``insteadOf`` rewriting, by host. A remote picked by ``remote.lfsdefault``,
+    ``branch.<x>.remote`` and the like counts as a named server when it is a URL rather than one of
+    the repository's remotes, since git-lfs then contacts that URL. A proxy the repository sets
+    (``http.proxy``) is not counted: git's own fetch and push go through it as well. A trusted server can still point
+    git-lfs at storage elsewhere; that is the server's choice, not the repository's. Commands that
+    never write LFS files into the work tree (add, commit, tag, push without git-lfs's hook) are
+    not checked. A check that cannot finish refuses."""
+    if argv and argv[0] in _LFS_FREE_SUBCOMMANDS:
+        return ""
+    try:
+        named: list[tuple[str, str]] = []
+        trusted: set[str] = set()
+        remote_urls: list[str] = []
+        picks: list[tuple[str, str, bool]] = []  # (value, source, user's) of keys that pick a remote
+        scoped = _config_entries(cwd, ["--show-scope"], timeout=timeout)
+        if len(scoped) % 2:
+            raise RuntimeError("git config scopes could not be read")
+        for index in range(0, len(scoped) - 1, 2):
+            (scope, _), (key, value) = scoped[index], scoped[index + 1]
+            user = scope in _USER_CONFIG_SCOPES
+            if _is_lfs_endpoint_key(key) and value:
+                if user:
+                    trusted.add(_endpoint_host(_expanded_url(cwd, value, timeout=timeout)))
+                else:
+                    named.append((value, f"{key}, {_where(scope)}"))
+            elif _is_remote_pick_key(key) and value:
+                picks.append((value, f"{key}, {_where(scope)}", user))
+            elif user and key.startswith("lfs.") and "://" in key:
+                trusted.add(_endpoint_host(key[len("lfs."):].rpartition(".")[0]))  # lfs.<url>.<setting>
+            elif fnmatch.fnmatchcase(key, "remote.*.url") or fnmatch.fnmatchcase(key, "remote.*.pushurl"):
+                if value:
+                    remote_urls.append(value)
+        remotes = {key[len("remote."):].rpartition(".")[0] for key, _ in scoped
+                   if fnmatch.fnmatchcase(key, "remote.*.url")}
+        for source, entries in _lfsconfig_files(cwd, argv, timeout=timeout):
+            for key, value in entries:
+                if _is_lfs_endpoint_key(key) and value:
+                    named.append((value, f"{key} in {source}"))
+                elif _is_remote_pick_key(key) and value:
+                    picks.append((value, f"{key} in {source}", False))
+        for value, source, user in picks:  # a remote's name is fine, and so is a word that names none
+            if value.lower() not in remotes and _could_be_a_server(value):  # config names come lowercased
+                if user:
+                    trusted.add(_endpoint_host(_expanded_url(cwd, value, timeout=timeout)))
+                else:
+                    named.append((value, source))
+        if not named:
+            return ""
+        trusted.update(_endpoint_host(_expanded_url(cwd, url, timeout=timeout)) for url in remote_urls)
+        trusted.discard("")
+        for url, source in named:
+            host = _endpoint_host(_expanded_url(cwd, url, timeout=timeout))
+            if not host or host not in trusted:
+                shown = host.partition(":")[2] if host.startswith("path:") else host
+                return (f"Git LFS would contact {shown or 'a server VOOL cannot read'} ({source}), which is not "
+                        "this project's git host or a server in your own git settings")
+        return ""
+    except RuntimeError as exc:  # says what could not be read; never a URL
+        return f"the repository's Git LFS servers could not be checked ({exc})"
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        return f"the repository's Git LFS servers could not be checked ({type(exc).__name__})"
+
+
+#: Subcommands VOOL runs that never write LFS files into the work tree (git-lfs uploads on push
+#: only from its pre-push hook, and hooks are refused).
+_LFS_FREE_SUBCOMMANDS = frozenset({"add", "commit", "tag", "push"})
+
+
+def _is_remote_pick_key(key: str) -> bool:
+    """Keys whose value names the remote git-lfs talks to (a remote's name, or a URL)."""
+    return key in {"remote.lfsdefault", "remote.lfspushdefault", "remote.pushdefault"} or any(
+        fnmatch.fnmatchcase(key, pattern) for pattern in ("branch.*.remote", "branch.*.pushremote"))
+
+
+def _could_be_a_server(value: str) -> bool:
+    """Whether a remote pick that is no remote's name reaches somewhere: a URL, an scp-like address
+    or a path. ``.`` (a branch tracking a local branch) and other bare words reach nothing."""
+    return value != "." and any(mark in value for mark in ("/", "\\", ":"))
+
+
+def _is_lfs_endpoint_key(key: str) -> bool:
+    return key in {"lfs.url", "lfs.pushurl"} or any(
+        fnmatch.fnmatchcase(key, pattern) for pattern in ("remote.*.lfsurl", "remote.*.lfspushurl"))
+
+
+def _lfsconfig_files(cwd: Path, argv: Sequence[str], *, timeout: float) -> list[tuple[str, list[tuple[str, str | None]]]]:
+    """``(where, entries)`` for each ``.lfsconfig`` git-lfs could read for ``git <argv>``: the work
+    tree's file, the index's, HEAD's, and that of each argument that names a commit. Names are
+    matched without regard to case (on Windows and macOS ``.LFSConfig`` is the same file), and one
+    that is not a regular file (a symlink git-lfs would follow) is refused."""
+    found: list[tuple[str, list[tuple[str, str | None]]]] = []
+    if _rev_parse(cwd, "--is-inside-work-tree", timeout=timeout) == "true":
+        worktree_file = Path(_rev_parse(cwd, "--show-toplevel", timeout=timeout)) / ".lfsconfig"
+        if worktree_file.is_file():
+            found.append(("the work tree's .lfsconfig", _config_entries(cwd, ["-f", str(worktree_file)],
+                                                                        timeout=timeout)))
+        index = subprocess.run(hardened_argv(cwd, "ls-files", "-s", "-z", "--full-name", "--",
+                                                     ":(top,icase,literal).lfsconfig"),
+                               capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
+        if index.returncode != 0:
+            raise RuntimeError(f"git ls-files failed ({index.returncode})")
+        for line in filter(None, index.stdout.split("\0")):
+            info, _, name = line.partition("\t")
+            fields = info.split()
+            if "/" in name or len(fields) != 3:
+                raise RuntimeError("the index's .lfsconfig is not a file git-lfs could read")
+            found.append((f"the index's {name}", _lfsconfig_blob(cwd, fields[0], fields[1], timeout=timeout)))
+    revisions = {"HEAD": "HEAD's {name}"}
+    for arg, commit in _incoming_commits(cwd, argv, timeout=timeout):
+        revisions.setdefault(commit, f"the {{name}} in {arg}")
+    result = _merge_result_tree(cwd, argv, timeout=timeout)
+    if result:  # what the merge, cherry-pick or revert writes, which neither side may hold as such
+        revisions[result] = f"the {{name}} {argv[0]} would write"
+    for where, mode, oid in _tree_lfsconfigs(cwd, revisions, timeout=timeout):
+        found.append((where, _lfsconfig_blob(cwd, mode, oid, timeout=timeout)))
+    return found
+
+
+def _lfsconfig_blob(cwd: Path, mode: str, oid: str, *, timeout: float) -> list[tuple[str, str | None]]:
+    if mode not in {"100644", "100755"}:
+        raise RuntimeError("a .lfsconfig is not a regular file")
+    return _config_entries(cwd, ["--blob", oid], timeout=timeout)
+
+
+def _tree_lfsconfigs(cwd: Path, revisions: dict[str, str], *, timeout: float) -> list[tuple[str, str, str]]:
+    """``(where, mode, oid)`` of every top-level ``.lfsconfig``, in any case, in the tree of each
+    revision (``revisions`` maps a revision to a description with a ``{name}`` slot); arguments that
+    are not revisions are skipped."""
+    probe = subprocess.run(hardened_argv(cwd, "cat-file", "--batch-check"),
+                           input="".join(f"{revision}^{{tree}}\n" for revision in revisions),
+                           capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
+    if probe.returncode != 0:
+        raise RuntimeError(f"git cat-file failed ({probe.returncode})")
+    found = []
+    for (revision, where), line in zip(revisions.items(), probe.stdout.splitlines(), strict=True):
+        fields = line.split()
+        if line.endswith((" missing", " ambiguous")):
+            continue
+        if len(fields) != 3 or fields[1] != "tree":
+            raise RuntimeError(f"{revision} could not be read")
+        listing = subprocess.run(hardened_argv(cwd, "ls-tree", "-z", fields[0]), capture_output=True, encoding="utf-8", errors="surrogateescape",
+                                 timeout=timeout, env=safe_env())
+        if listing.returncode != 0:
+            raise RuntimeError(f"git ls-tree failed ({listing.returncode})")
+        for entry in filter(None, listing.stdout.split("\0")):
+            info, _, name = entry.partition("\t")
+            if name.lower() == ".lfsconfig":
+                mode, _, oid = info.split()
+                found.append((where.replace("{name}", name), mode, oid))
+    return found
+
+
+#: Options of the commands VOOL runs that take a value (-m is cherry-pick's and revert's mainline,
+#: merge's message; -c/-C/--orphan name the branch switch creates).
+_VALUE_OPTIONS = frozenset({"-m", "--message", "--mainline", "-s", "--strategy", "-X", "--strategy-option",
+                            "-c", "-C", "--create", "--force-create", "--orphan"})
+
+#: Commands whose positional arguments are the commits they bring into the work tree.
+_BRINGING_COMMANDS = frozenset({"merge", "cherry-pick", "revert", "switch"})
+
+#: Where an in-progress operation keeps the commit --abort goes back to (or an autostash it applies).
+_ABORT_STATE = ("ORIG_HEAD", "MERGE_AUTOSTASH", "rebase-merge/orig-head", "rebase-apply/orig-head",
+                "rebase-merge/autostash", "rebase-apply/autostash", "sequencer/head")
+
+
+def _revision_args(argv: Sequence[str]) -> list[str]:
+    """The arguments of ``git <argv>`` that may name a revision (not options or their values;
+    a lone ``-`` is the previous branch)."""
+    found, skip_value = [], False
+    for arg in list(argv)[1:]:
+        if skip_value:
+            skip_value = False
+        elif arg in _VALUE_OPTIONS:
+            skip_value = True
+        elif arg == "-" or (arg and not arg.startswith("-")):
+            found.append(arg)
+    return found
+
+
+def _resolve_commit(cwd: Path, revision: str, *, timeout: float) -> str:
+    probe = subprocess.run(hardened_argv(cwd, "rev-parse", "--verify", "--quiet", "--end-of-options",
+                                         "@{-1}" if revision == "-" else revision),
+                           capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
+    if probe.returncode != 0 or not probe.stdout.strip():
+        raise RuntimeError(f"{revision!r} is not a revision VOOL can check")
+    return _rev_parse(cwd, f"{probe.stdout.strip()}^{{commit}}", timeout=timeout)
+
+
+def _incoming_commits(cwd: Path, argv: Sequence[str], *, timeout: float) -> list[tuple[str, str]]:
+    """``(argument, commit)`` for each commit ``git <argv>`` brings into the work tree. For merge,
+    cherry-pick, revert and switch every target must resolve, and one of them without a target
+    (merge's upstream, a sequencer step) must be an --abort; --abort brings in the commit the
+    operation in progress goes back to and any autostash. Other commands' arguments are taken
+    as revisions where they resolve."""
+    if not argv:
+        return []
+    found: list[tuple[str, str]] = []
+    if "--abort" in argv[1:]:
+        for state in _ABORT_STATE:
+            if "/" in state:
+                where = subprocess.run(hardened_argv(cwd, "rev-parse", "--git-path", state), capture_output=True,
+                                       encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
+                if where.returncode != 0 or not where.stdout.strip():
+                    raise RuntimeError(f"git rev-parse --git-path failed ({where.returncode})")
+                path = Path(where.stdout.strip())
+                path = path if path.is_absolute() else Path(cwd) / path
+                if path.is_file():
+                    found.append((state, _resolve_commit(cwd, path.read_text(encoding="utf-8").strip(),
+                                                         timeout=timeout)))
+            else:
+                probe = subprocess.run(hardened_argv(cwd, "rev-parse", "--verify", "--quiet", f"{state}^{{commit}}"),
+                                       capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
+                if probe.returncode == 0 and probe.stdout.strip():
+                    found.append((state, probe.stdout.strip()))
+        return found
+    targets = _revision_args(argv)
+    if argv[0] in _BRINGING_COMMANDS:
+        if argv[0] != "switch" and not targets:
+            raise RuntimeError(f"git {argv[0]} without a commit cannot be checked")
+        if argv[0] == "merge" and any(target.upper() == "FETCH_HEAD" for target in targets):
+            raise RuntimeError("git merge FETCH_HEAD merges every fetched head and cannot be checked")
+        if any(arg in {"--continue", "--skip", "--quit"} for arg in argv[1:]):
+            raise RuntimeError(f"git {argv[0]} continuing a sequence cannot be checked")
+        return [(arg, _resolve_commit(cwd, arg, timeout=timeout)) for arg in targets]
+    for arg in targets:
+        try:
+            found.append((arg, _resolve_commit(cwd, arg, timeout=timeout)))
+        except RuntimeError:
+            continue
+    return found
+
+
+def _mainline(argv: Sequence[str]) -> str:
+    for index, arg in enumerate(argv):
+        value = argv[index + 1] if arg in {"-m", "--mainline"} and index + 1 < len(argv) else (
+            arg.partition("=")[2] if arg.startswith("--mainline=") else None)
+        if value is not None:
+            if not value.isdigit() or value == "0":
+                raise ValueError("the mainline parent cannot be read")
+            return value
+    return "1"
+
+
+def _holds_lfsconfig_anywhere(cwd: Path, commits: Sequence[str], *, timeout: float) -> bool:
+    """Whether any of ``commits`` holds an ``.lfsconfig`` at any depth, in any case: rename
+    detection (directory renames among them) can only move such a file, never make one."""
+    for commit in commits:
+        listing = subprocess.run(hardened_argv(cwd, "ls-tree", "-r", "-z", "--name-only", commit),
+                                 capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
+        if listing.returncode != 0:
+            raise RuntimeError(f"git ls-tree failed ({listing.returncode})")
+        if any(path.rpartition("/")[2].lower() == ".lfsconfig" for path in listing.stdout.split("\0")):
+            return True
+    return False
+
+
+def _merge_result_tree(cwd: Path, argv: Sequence[str], *, timeout: float) -> str:
+    """The tree a merge, cherry-pick or revert of one commit would write ("" for other commands,
+    for --abort, and when no side and no merge base holds an ``.lfsconfig``, so the result cannot)."""
+    if not argv or argv[0] not in {"merge", "cherry-pick", "revert"} or "--abort" in argv[1:]:
+        return ""
+    targets = _revision_args(argv)
+    if len(targets) != 1:
+        raise RuntimeError(f"git {argv[0]} of {len(targets) or 'no'} commits cannot be checked")
+    target = _resolve_commit(cwd, targets[0], timeout=timeout)
+    if argv[0] == "merge":
+        bases = subprocess.run(hardened_argv(cwd, "merge-base", "--all", "HEAD", target), capture_output=True,
+                               encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
+        if bases.returncode not in (0, 1):  # 1: unrelated histories
+            raise RuntimeError(f"git merge-base failed ({bases.returncode})")
+        sides, involved = ["HEAD", target], [*bases.stdout.split(), "HEAD", target]
+    else:
+        parent = _rev_parse(cwd, f"{target}^{_mainline(argv)}", timeout=timeout)  # raises for a root commit
+        base, theirs = (parent, target) if argv[0] == "cherry-pick" else (target, parent)
+        sides, involved = ["--merge-base", base, "HEAD", theirs], [base, "HEAD", theirs]
+    if not _holds_lfsconfig_anywhere(cwd, involved, timeout=timeout):
+        return ""
+    # merge.renormalize would run the user's filters (git-lfs among them) on both sides.
+    command = ["git", *hardening_args(), "-c", "merge.renormalize=false", "-C", str(cwd),
+               "merge-tree", "--write-tree", "--no-messages", *sides]
+    probe = subprocess.run(command, capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
+    tree = probe.stdout.split("\n", 1)[0].strip()
+    if probe.returncode not in (0, 1) or len(tree) not in (40, 64):  # 1: the result has conflicts
+        raise RuntimeError(f"git merge-tree failed ({probe.returncode})")
+    return tree
+
+
+def _expanded_url(cwd: Path, url: str, *, timeout: float) -> str:
+    """``url`` after git's ``url.<base>.insteadOf`` rewriting (which git-lfs applies too)."""
+    if url.startswith("-"):
+        raise ValueError("an LFS server URL starts with '-'")
+    if "://" not in url and not _scp_like(url):
+        return url  # a local path; a bare word would be read as a remote's name
+    probe = subprocess.run(hardened_argv(cwd, "ls-remote", "--get-url", url), capture_output=True, encoding="utf-8", errors="surrogateescape",
+                           timeout=timeout, env=safe_env())
+    expanded = probe.stdout.strip()
+    if probe.returncode != 0 or not expanded:
+        raise RuntimeError(f"git ls-remote --get-url failed ({probe.returncode})")
+    return expanded
+
+
+def _scp_like(url: str) -> bool:
+    head, colon, _ = url.partition(":")
+    return bool(colon) and "/" not in head and len(head) > 1
+
+
+def _endpoint_host(url: str) -> str:
+    """The lowercase host ``url`` reaches, or ``path:<url>`` for a local path or ``file://`` URL."""
+    if "://" in url:
+        parts = urlsplit(url)
+        if parts.scheme.lower() == "file":
+            return f"path:{url}"
+        return (parts.hostname or "").rstrip(".")
+    if _scp_like(url):
+        return url.partition(":")[0].rpartition("@")[2].strip("[]").lower().rstrip(".")
+    return f"path:{url}"
 
 
 def active_hooks(cwd: Path, *, timeout: float = 20) -> list[str]:
@@ -267,5 +648,6 @@ def hardened_argv(cwd: Path, *argv: str) -> list[str]:
 read_only_argv = hardened_argv
 
 
-__all__ = ["active_hooks", "executable_local_config", "hardened_argv", "hardening_args", "is_executable_key",
+__all__ = ["active_hooks", "executable_config_for", "executable_local_config", "hardened_argv", "hardening_args",
+           "is_executable_key", "is_safe_value", "lfs_endpoint_refusal",
            "read_only_argv", "safe_env"]
