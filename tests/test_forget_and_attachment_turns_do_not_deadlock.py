@@ -110,7 +110,10 @@ def test_a_forget_and_another_chats_upload_both_finish(tmp_path, monkeypatch):
     def writing(payload, chat_id=None, *args, **kwargs):
         if chat_id == other and not in_lock.is_set():
             in_lock.set()  # the upload is about to take the ledger's writer fence
-            in_fence.wait(_WAIT)
+            if not revocation._LOCK._is_owned():
+                # The upload holds the store's lock and not yet the ledger's: let the forget take
+                # the ledger's lock first. An upload already holding the ledger's lock has nothing to wait for.
+                in_fence.wait(_WAIT)
         return real_writing(payload, chat_id, *args, **kwargs)
 
     monkeypatch.setattr(revocation, "writing", writing)
