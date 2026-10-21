@@ -650,3 +650,47 @@ def test_the_planner_lists_a_split_drive_path_with_its_drive(windows_host) -> No
     assert {text: planned(text) for text in texts} == {
         text: ("planned_safe_machine_directory_list", "machine.list_directory", "C:/Users/you/Desktop/notes") for text in texts
     }
+
+
+def test_a_drive_split_pdf_in_a_folder_named_scan_is_read_from_its_text(windows_host) -> None:
+    # The OCR words are read with the file's name taken out, as it stands in the text. A drive the
+    # normalizer split off is not in that spelling, so taking out the drive-joined name would leave
+    # `old scan` behind and send a text PDF to OCR.
+    from core.agent_runtime.fast_paths_pdf import pdf_read_request
+    from core.input_normalizer import normalize_user_text
+
+    home = Path.home()
+    (home / "Documents" / "old scan").mkdir(parents=True, exist_ok=True)
+    (home / "Documents" / "old scan" / "report.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
+    drive, rooted = os.path.splitdrive(str(home))
+    typed_home = (drive or "C:") + rooted.replace("\\", "/")
+    windows_host.on()
+
+    text = normalize_user_text(f"read the pdf {typed_home}/Documents/old scan/report.pdf").normalized_text
+    request = pdf_read_request(str(text))
+
+    assert request is not None and request["named"] == f"{typed_home}/Documents/old scan/report.pdf", (text, request)
+    assert request["spelled"] != request["named"] and request["wants_ocr"] is False, (text, request)
+
+
+def test_the_drive_check_reads_only_the_few_characters_before_each_path(monkeypatch, windows_host) -> None:
+    # A drive the normalizer split off sits at most `C: ` before its path, so only that much is read.
+    # Copying and rescanning the whole message up to each path made a pasted message of many rooted
+    # tokens take minutes.
+    from core.agent_runtime.write_root_honesty import non_local_write_target
+    from core.execution import constants
+
+    real = constants._DRIVE_LEFT_BEHIND_RE
+    spans: list[tuple[int, int]] = []
+
+    class _Spy:
+        def search(self, string: str, pos: int = 0, endpos: int | None = None):
+            end = len(string) if endpos is None else min(endpos, len(string))
+            spans.append((pos, end))
+            return real.search(string, pos, end)
+
+    monkeypatch.setattr(constants, "_DRIVE_LEFT_BEHIND_RE", _Spy())
+    windows_host.on()
+
+    assert non_local_write_target(" ".join(f"/d{n}" for n in range(2000))) == ("", "")
+    assert len(spans) >= 2000 and max(end - pos for pos, end in spans) <= 4, (len(spans), max(spans, key=lambda s: s[1] - s[0]))
