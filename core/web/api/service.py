@@ -3594,6 +3594,9 @@ def dispatch_upload(
                 label = chat_attachments.sanitize_name(declared_name)
             except chat_attachments.AttachmentRefused:
                 label = "pasted text" if is_document else "an attachment"
+            if exc.code == "forgotten_content":
+                # The name may be what was forgotten: the Activity row never repeats it.
+                label = "pasted text" if is_document else "an attachment"
             _attachment_event(
                 session_id,
                 event_type="attachment_refused",
