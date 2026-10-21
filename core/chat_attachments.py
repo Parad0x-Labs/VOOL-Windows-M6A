@@ -2325,6 +2325,11 @@ _WITHHELD_MARK = "⟦… lines {first}–{last} withheld: they carry words this 
 _WITHHELD_MARK_RE = re.compile(r"⟦… lines \d+–\d+ withheld: they carry words this chat asked to forget …⟧")
 
 
+def _unmarked(text: str) -> str:
+    """`text` with this module's own forget marks and withheld notices read as blanks."""
+    return _WITHHELD_MARK_RE.sub(" ", str(text).replace(FORGET_LINE_MARK, " "))
+
+
 #: The words a neutral name may start with, tried in order until one does not carry the forgotten word.
 _NEUTRAL_PREFIXES = ("document", "file", "attachment", "item")
 
@@ -2335,8 +2340,9 @@ def _neutral_name(record: dict[str, Any], token: str = "", *, clear: Callable[[s
 
     The name never carries the word it replaces: "Forget document" (or "doc", or a piece of the
     id) would otherwise rename a record to a name that still matches, and the forget could never
-    verify. The first candidate `clear` accepts wins (by default: does not carry `token`); another
-    prefix, then another piece of the id, is tried. Raises ValueError when none clears."""
+    verify. The first candidate `clear` accepts wins (by default: does not carry `token`), checked
+    with its extension and then without; another prefix, then another piece of the id, is tried.
+    When none clears, the name is `_WORDLESS_NAME`, which holds no word at all. Never raises."""
     extension = os.path.splitext(str(record.get("name") or ""))[1].lower()
     keep = token and extension and len(extension) <= 8 and extension[1:].isalnum() and not _carries(extension, token)
     if clear is None:
@@ -2346,9 +2352,66 @@ def _neutral_name(record: dict[str, Any], token: str = "", *, clear: Callable[[s
     for prefix in _NEUTRAL_PREFIXES:
         for piece in pieces:
             candidate = f"{prefix}-{piece}" if piece else prefix
+            if keep and clear(candidate + extension):
+                return candidate + extension
             if clear(candidate):
-                return candidate + (extension if keep else "")
-    raise ValueError("no neutral name clears the forgotten words")
+                return candidate
+    return _WORDLESS_NAME
+
+
+#: The last neutral name: no letter or digit, so no forgotten word can be in it.
+_WORDLESS_NAME = "\u2026"
+
+
+def forgotten_words(session_id: str, *, settled: bool = True) -> tuple[str, ...]:
+    """Every word this chat asked to forget, under any handle of it (the one given, its canonical
+    id, or a legacy handle that folds to it), or that every chat did. Raises when it cannot be read:
+    unknown is never clean.
+
+    The forget ledger's own rows are read, an open forget's included (its renames run while its
+    operation is open). `settled` adds what `revocation.revoked_tokens` holds for those handles
+    (every owner ledger), which raises while an erasure is still incomplete."""
+    from core.memory import revocation
+
+    raw = str(session_id or "").strip()
+    owners = {value for value in (raw, canonical_chat_session_id(raw) if raw else "") if value}
+    tokens: set[str] = set()
+    directory = revocation._directory()
+    ledger = directory / "ledger.json"
+    if ledger.exists() or ledger.is_symlink():
+        for row in revocation._read(directory)["operations"].values():
+            chat = str(row.get("chat") or "")
+            if row.get("kind", "forget") != "forget" or not row.get("token"):
+                continue
+            if not chat or chat in owners or canonical_chat_session_id(chat) in owners:
+                tokens.add(str(row["token"]))
+    if settled:
+        for handle in owners:
+            tokens.update(revocation.revoked_tokens(handle))
+    return tuple(sorted(tokens))
+
+
+def _carries_any(text: str, tokens: Iterable[str]) -> bool:
+    """Whether `text` carries any of `tokens`, or names a subject they withdrew (the serve screen's test)."""
+    tokens = tuple(tokens)
+    if not tokens or not str(text or "").strip():
+        return False
+    from core.memory.carriers import carries, memory_words
+    from core.memory.withdrawals import payload_is_withdrawn
+
+    words = memory_words(_unmarked(str(text)))
+    return any(carries(words, token) for token in tokens) or payload_is_withdrawn(words, tokens)
+
+
+def carries_forgotten_words(session_id: str, text: str) -> bool:
+    """Whether `text` (a refused file's name, a refusal's reason) may carry words this chat asked to
+    forget. An unreadable ledger answers yes."""
+    if not str(text or "").strip():
+        return False
+    try:
+        return _carries_any(text, forgotten_words(session_id))
+    except Exception:
+        return True
 
 
 def _carries(text: str, token: str) -> bool:
@@ -2417,8 +2480,13 @@ def documents_carrying(session_id: str, token: str) -> list[str]:
     """The ids of this chat's stored records whose words still carry `token`. Raises when unknown."""
     session = _valid_session(session_id)
     with _LOCK:
-        return [record["id"] for record in _session_text_records(session, strict=True, token=token)
+        records = _session_text_records(session, strict=True, token=token)
+        # A name forget wrote must not carry any word this chat forgot before either: a later
+        # rename that brought one back is a carrier of that earlier forget.
+        earlier = forgotten_words(session, settled=False) if any(r.get("renamed_by_forget_at") for r in records) else ()
+        return [record["id"] for record in records
                 if _carries(str(record.get("name") or ""), token)
+                or (record.get("renamed_by_forget_at") and _carries_any(str(record.get("name") or ""), earlier))
                 or any(_carries(text, token) for text in _record_texts(record))]
 
 
@@ -2458,6 +2526,13 @@ def forget_in_documents(session_id: str, token: str) -> int:
     Another chat's records are never read for change."""
     session = _valid_session(session_id)
     changed = 0
+    # A new name must not carry any word this chat forgot before either (an unreadable ledger raises:
+    # the forget is then not verified, never renamed blind).
+    earlier = forgotten_words(session, settled=False)
+
+    def clear(candidate: str) -> bool:
+        return not _carries(candidate, token) and not _carries_any(candidate, earlier)
+
     with _LOCK:
         for record in _session_text_records(session, strict=False):
             texts = _record_texts(record)
@@ -2468,7 +2543,7 @@ def forget_in_documents(session_id: str, token: str) -> int:
             changed += 1
             if name_hit:
                 # The name is sent to the model and shown on receipts: it goes like content does.
-                record["name"] = _neutral_name(record, token)
+                record["name"] = _neutral_name(record, token, clear=clear)
                 record["renamed_by_forget_at"] = _iso(_utcnow())
                 if not text_hit:
                     _write_manifest(record)
@@ -2512,18 +2587,15 @@ def _revocation_screen(session_id: str):
     Every window that carries a revoked token (or a subject this chat withdrew) is replaced by a
     marker naming its line range and no content. An unreadable ledger raises `_Withheld` for every
     text (fail closed, the history assembly's `revocation_unavailable`)."""
-    from core.memory import revocation
     from core.memory.carriers import carries, memory_words
     from core.memory.withdrawals import payload_is_withdrawn
 
-    handles = {str(session_id or "").strip()}
-    with contextlib.suppress(AttachmentRefused):
-        handles.add(_valid_session(session_id))
     try:
-        tokens = tuple(sorted({token for handle in handles if handle for token in revocation.revoked_tokens(handle)}))
+        tokens = forgotten_words(session_id)
     except Exception:
         def withhold(text: str) -> str:
             raise _Withheld("revocation_unavailable")
+        withhold.unreadable = True  # type: ignore[attr-defined]
         return withhold
     if not tokens:
         return lambda text: text
@@ -2571,10 +2643,10 @@ class _LazyScreen:
         name = str(record.get("name") or "")
         if self.text(name) == name:
             return name
-        try:
-            return _neutral_name(record, clear=lambda candidate: self.text(candidate) == candidate)
-        except ValueError:  # the ledger cannot be read, so no candidate can be cleared
+        if getattr(self._screen, "unreadable", False):
+            # No word can be checked: the plain neutral name, which holds none of the user's words.
             return _neutral_name(record)
+        return _neutral_name(record, clear=lambda candidate: self.text(candidate) == candidate)
 
     def raw(self, raw: bytes) -> bytes | None:
         text = raw.decode("utf-8", errors="replace")
