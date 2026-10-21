@@ -181,10 +181,15 @@ def test_every_kind_of_name_is_screened_at_serve_time(tmp_path, monkeypatch, led
         *ca.evidence_items_for_turn(session_id=chat, turn_id="turn-1"),
     ]
     names = [str(entry.get("name") or "") for entry in served]
-    assert len(names) >= 6, names  # image, picked file and artifact from both lanes at least
+    # Windows withholds every text record while the ledger cannot be read, the picked file included
+    # (Mac serves its bytes unscreened under a neutral name, from 0fec732, which is not ported).
+    kinds = ("image", "picked", "artifact") if ledger == "revoked" else ("image", "artifact")
+    assert len(names) >= 2 * len(kinds), names  # each served kind from both lanes at least
     assert not any(value.lower() in name.lower() for name in names), names
-    for kind in ("image", "picked", "artifact"):
+    for kind in kinds:
         assert ca._neutral_name(records[kind]) in names, (kind, names)
+    if ledger == "unreadable":
+        assert ca._neutral_name(records["picked"]) not in names, names
 
 
 def test_an_unrevoked_name_is_served_as_it_is(tmp_path, monkeypatch):
