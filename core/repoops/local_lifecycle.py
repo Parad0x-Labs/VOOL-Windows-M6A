@@ -32,6 +32,7 @@ import os
 import subprocess
 from dataclasses import dataclass, field
 
+from core import windows_path_policy
 from core.platform.broker import EffectOutcome, EffectRequest, ExecutionBroker
 from core.repoops.identity import RepositoryWorkspace, WorkspaceError
 
@@ -377,6 +378,9 @@ class LocalLifecycle:
         if not rel_paths:
             raise StageScopeError("no paths requested — refusing implicit scope")
         for p in rel_paths:
+            # On Windows a lookup of a share path is an SMB connection, so a share is refused first.
+            if windows_path_policy.refused_form(p, network_only=True):
+                raise StageScopeError(f"path is a network or device path: {p}")
             resolved = os.path.realpath(os.path.join(self._ws.root, p))
             root = os.path.realpath(self._ws.root)
             if not resolved.startswith(root + os.sep) and resolved != root:
@@ -579,6 +583,9 @@ class LocalLifecycle:
     def create_worktree(self, fork, broker: ExecutionBroker, path: str,
                         branch: str):
         def dispatch() -> EffectOutcome:
+            kind = windows_path_policy.refused_form(path, network_only=True)
+            if kind:  # refused before realpath, whose lookup of a share is an SMB connection
+                return EffectOutcome.from_domain("rejected", reason=f"network_path:{kind}")
             self.require_clean_of_operations()
             real = os.path.realpath(path)
             if os.path.exists(real):
@@ -605,6 +612,9 @@ class LocalLifecycle:
 
     def remove_worktree(self, fork, broker: ExecutionBroker, path: str):
         def dispatch() -> EffectOutcome:
+            kind = windows_path_policy.refused_form(path, network_only=True)
+            if kind:  # refused before realpath, whose lookup of a share is an SMB connection
+                return EffectOutcome.from_domain("rejected", reason=f"network_path:{kind}")
             real = os.path.realpath(path)
             targets = [p for _b, p in list_worktrees(self._ws)]
             if real not in targets or real == os.path.realpath(self._ws.root):
