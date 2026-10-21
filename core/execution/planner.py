@@ -1044,15 +1044,16 @@ def _clean_workspace_path(candidate: str) -> str:
 
 def _clean_workspace_directory_path(candidate: str, *, workspace_root: str = "") -> str:
     raw = str(candidate or "").strip().strip("`\"'")
-    # Judged as typed: the input normalizer splits a typed `C:/x` into `C: /x`, which on its own is
-    # a partial path.
-    drive = drive_left_behind(raw, 3, raw[3:]) if raw[2:3] == " " else ""
-    if windows_path_policy.refused_form(drive + raw[3:] if drive else raw):
-        # On Windows a share, a device path or a partial path names no workspace folder, and is not
-        # resolved to find out: resolving `\\host\share` is already the SMB connection.
+    typed_kind = windows_path_policy.refused_form(raw)
+    if typed_kind in windows_path_policy.NETWORK_KINDS:
+        # On Windows a share or a device path names no workspace folder, and is not resolved to find
+        # out: resolving `\\host\share` is already the SMB connection.
         return ""
     clean = ""
-    if raw and workspace_root:
+    # A root- or drive-relative folder (`/notes`, `C:notes`) is not resolved either: the lexical clean
+    # below places it, as it does on base once the resolve finds it outside the workspace (`/notes` is
+    # the workspace folder `notes`).
+    if raw and workspace_root and not typed_kind:
         try:
             resolved_workspace_root = Path(workspace_root).expanduser().resolve()
             resolved_candidate = Path(raw).expanduser().resolve()

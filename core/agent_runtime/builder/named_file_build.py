@@ -110,9 +110,12 @@ def named_build_files(text: str, *, workspace_root: str = "") -> list[str]:
         # The pattern can start inside `//host/x` or `\\host\x`, at the host or at its last
         # leading slash. On Windows the path as typed, those separators included, is judged, and a
         # share is dropped like any other destination outside the workspace.
-        before = body[: match.start("path")]
-        if windows_path_policy.refused_form(before[len(before.rstrip("/\\")):] + candidate, network_only=True):
-            continue
+        if windows_path_policy.active():
+            start = lead = match.start("path")
+            while lead > 0 and body[lead - 1] in "/\\":
+                lead -= 1
+            if windows_path_policy.refused_form(body[lead:start] + candidate, network_only=True):
+                continue
         if candidate.startswith(("/", "~")) or re.match(r"^[A-Za-z]:[\\/]", candidate):
             rebased = workspace_relative_path(candidate, workspace_root=workspace_root)
             if not rebased:

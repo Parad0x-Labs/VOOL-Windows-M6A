@@ -3641,7 +3641,10 @@ def execute_runtime_tool(
     # agent-team gate and the council fence, which both resolve the paths a call names: on Windows a
     # lookup of `\\host\share` is already the SMB connection. Seats, code-task steps and sub-tasks
     # reach this door directly, so it refuses for itself. Off Windows this answers None at once.
-    path_refusal = windows_path_policy.argument_refusal(intent, arguments)
+    path_refusal = windows_path_policy.argument_refusal(intent, arguments) or (
+        # The workspace every dispatch below resolves (`_workspace_root`), when it is a share.
+        windows_path_policy.context_workspace_refusal(source_context)
+    )
     if path_refusal is not None:
         response = windows_path_policy.refusal_text(path_refusal.value, path_refusal.kind)
         return RuntimeExecutionResult(

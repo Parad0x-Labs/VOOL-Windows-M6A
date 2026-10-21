@@ -1667,7 +1667,9 @@ def drive_left_behind(text: str, start: int, candidate: str) -> str:
 
     if windows_path_policy.refused_form(candidate) != "root_relative":
         return ""
-    match = _DRIVE_LEFT_BEHIND_RE.search(str(text or "")[:start])
+    # Only the few characters before `start` can hold that drive: the pattern is anchored at `start`.
+    # Searched there in place, so a long message is not copied and scanned once per candidate.
+    match = _DRIVE_LEFT_BEHIND_RE.search(str(text or ""), max(0, start - 4), start)
     return f"{match.group(1)}:" if match else ""
 # Phrasings that ask what is INSIDE a place, as opposed to where that place is. A request that
 # says "what's in X" is answered by a listing; answering with X's location is a correct fact and

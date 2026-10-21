@@ -1241,6 +1241,10 @@ def _execute_tool_intent_impl(
     path_refusal = windows_path_policy.argument_refusal(intent, arguments)
     if path_refusal is not None and (is_mcp_intent(intent) or _is_plugin_contract(intent)):
         path_refusal = windows_path_policy.argument_refusal(intent, arguments, network_only=True)
+    if path_refusal is None:
+        # The workspace the checks below resolve: a share there (an unbound chat's default folder on a
+        # redirected Desktop) is refused with the sentence, not raised from the resolver as a 500.
+        path_refusal = windows_path_policy.context_workspace_refusal(source_context)
     if path_refusal is not None:
         response = windows_path_policy.refusal_text(path_refusal.value, path_refusal.kind)
         return ToolIntentExecution(

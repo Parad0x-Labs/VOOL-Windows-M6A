@@ -18,6 +18,7 @@ from core.execution.constants import (
     OPERATOR_OWNED_MACHINE_PHRASES,
     asks_runtime_for_a_fact,
     content_is_a_brief,
+    drive_left_behind,
     elliptical_drive_followup,
     largest_kind,
     machine_diagnostics_intent,
@@ -1021,6 +1022,9 @@ def _extract_machine_file_read_target(raw: str) -> dict[str, Any] | None:
         if not plain_match:
             return None
         path = str(plain_match.group("path") or "").strip()
+        # On Windows a full local path the input normalizer split (`C: /Users/you/x.txt`) keeps its
+        # drive, as typed: without it the read door refuses the rooted half as no full local path.
+        path = drive_left_behind(text, plain_match.start("path"), path) + path
     if not path:
         return None
     normalized_text = re.sub(r"[\?\!\.,:;]+", " ", text.lower())

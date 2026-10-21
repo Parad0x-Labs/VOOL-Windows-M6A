@@ -89,8 +89,12 @@ _COMMAND_PATH_FIELDS: dict[str, tuple[str, ...]] = {
     "update.rollback": ("expected_app_path", "expected_data_dir"),
     "logs.verify": ("segment_id",),
 }
-#: The fields of a chat request, and of its source context, that name the folder the turn works in.
-_CHAT_WORKSPACE_FIELDS = ("workspace", "workspace_root", "cwd", "projectRoot")
+#: The fields of a chat request, and of its source context, that name the folder the turn works in,
+#: and the VOOL home it opens its memory store under (`runtime_home`, which the served turn keeps when
+#: a caller sets it).
+_CHAT_WORKSPACE_FIELDS = ("workspace", "workspace_root", "cwd", "projectRoot", "runtime_home")
+#: The fields of a turn's source context that hold the folder its tools resolve against.
+_CONTEXT_WORKSPACE_FIELDS = ("workspace", "workspace_root")
 
 
 def _text(value: Any) -> str | None:
@@ -163,13 +167,16 @@ def classify_drive(value: Any) -> str:
 
 
 def classify_url(value: Any) -> str:
-    """`unc` when the URL `value` opens a file on another machine, otherwise "".
+    """The kind of file the URL `value` opens: a network kind for a file on another machine,
+    `root_relative` for a path with no drive on this one, otherwise "".
 
-    A `file:` URL is local only when it names a drive (`file:///C:/x`, `file:///c|/x`), optionally on
-    `localhost`, once percent-escapes are decoded and `\\` read as `/`; any other `file:` URL names a
-    host. `view-source:` is judged by the URL it wraps. A value without a scheme is judged as a path
-    with the network tier, so a route such as `/x` passes and `//host/x` does not. Other schemes
-    (https, data, about, mailto) are not files and give "".
+    Percent-escapes are decoded and `\\` read as `/` first. A `file:` URL's host is what follows `//`:
+    any host but `localhost` is `unc`. Without one (`file:///x`, `file:/x`) the rest is a path on
+    this machine: local when it names a drive (`file:///C:/x`, `file:///c|/x`), `root_relative` for
+    `/Users/x` (on Windows, the current drive's), and judged as a path for `//host/s`
+    (`file:////host/s` is the share). `view-source:` is judged by the URL it wraps. A value without a
+    scheme is judged as a path with the network tier, so a route such as `/x` passes and `//host/x`
+    does not. Other schemes (https, data, about, mailto) are not files and give "".
     """
     text = _text(value)
     if text is None:
@@ -186,12 +193,16 @@ def classify_url(value: Any) -> str:
             break
     if scheme != "file":
         return ""
-    body = unquote(text).replace("\\", "/").lstrip("/")
-    if body.lower().startswith("localhost/"):
-        body = body[len("localhost/"):].lstrip("/")
-    if not body or _FILE_URL_DRIVE_RE.match(body):
+    body = unquote(text).replace("\\", "/")
+    if body.startswith("//"):
+        host, _slash, path = body[2:].partition("/")
+        if host and host.lower() != "localhost":
+            return "unc"
+        body = "/" + path
+    if not body.strip("/") or _FILE_URL_DRIVE_RE.match(body.lstrip("/")):
         return ""
-    return "unc"
+    # A host-less path: `file:x` is `/x`, as a browser reads it.
+    return classify(body if body.startswith("/") else "/" + body)
 
 
 def refusal_text(value: Any, kind: str) -> str:
@@ -371,4 +382,23 @@ def chat_workspace_refusal(body: Any, source_context: Any) -> PathRefusal | None
             refusal = _fields_refusal(fields, _CHAT_WORKSPACE_FIELDS)
             if refusal is not None:
                 return refusal
+    return None
+
+
+def context_workspace_refusal(source_context: Any) -> PathRefusal | None:
+    """On Windows, the workspace of a turn's source context when it is a share or a device path, or
+    None. Off Windows, always None.
+
+    Only the network tier: the chat door already refused a caller's own workspace field, so what is
+    left here is the server's (an unbound chat's default folder, which may be a redirected Desktop).
+    """
+    if not _IS_WINDOWS:
+        return None
+    if not isinstance(source_context, Mapping):
+        return None
+    for name in _CONTEXT_WORKSPACE_FIELDS:
+        text = _text(source_context.get(name))
+        kind = classify(text, network_only=True) if text else ""
+        if kind:
+            return PathRefusal(name, text, kind)
     return None

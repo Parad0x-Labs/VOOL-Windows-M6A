@@ -328,13 +328,16 @@ def unreachable_write_target(text: str, *, source_context: dict[str, object] | N
     return ""
 
 
-def non_local_write_target(text: str) -> tuple[str, str]:
+def non_local_write_target(text: str, *, network_only: bool = False) -> tuple[str, str]:
     """On Windows, the first path this turn asks us to write that names a share, a device or no full
-    local folder, with its kind; ``("", "")`` otherwise, and always off Windows. Nothing is looked up.
+    local folder (only a share or a device, with ``network_only``), with its kind; ``("", "")``
+    otherwise, and always off Windows. Nothing is looked up.
     """
     body = str(text or "")
     for start, candidate in _destination_candidates(body):
         kind = typed_path_kind(body, start, candidate)
+        if network_only and kind not in windows_path_policy.NETWORK_KINDS:
+            continue
         if kind and _write_intent_precedes(body, start):
             return candidate, kind
     return "", ""
