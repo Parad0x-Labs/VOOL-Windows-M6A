@@ -169,6 +169,23 @@ def test_a_hard_linked_reflog_named_like_an_object_store_file_is_refused(
              says=f"a file in the repository's git folder (modules/x/logs/refs/heads/{branch}) is also another file's name")
 
 
+@pytest.mark.parametrize("folders", ("LOGS/REFS", "Logs/Refs"))
+def test_a_hard_linked_reflog_in_folders_named_in_another_case_is_refused(tmp_path: Path, folders: str) -> None:
+    """Windows folder names ignore case, so git's append to `logs/refs/heads/...` lands in a
+    `LOGS/REFS` folder the repository ships; the walk sees the stored case."""
+    from core import git_write_redirects
+
+    git_dir = tmp_path / "repo.git"
+    reflog = git_dir / "modules" / "x" / folders / "heads" / "objects" / "ab" / ("c" * 38)
+    reflog.parent.mkdir(parents=True)
+    (tmp_path / "outside").write_bytes(b"precious\n")
+    os.link(tmp_path / "outside", reflog)
+
+    found = git_write_redirects.link_refusal(str(git_dir))
+
+    assert "is also another file's name (a hard link)" in found, found
+
+
 @pytest.mark.parametrize("mode", MODES)
 @pytest.mark.parametrize("key", ("lfs.storage", "lfs.somefuturesetting"))
 def test_a_git_lfs_key_in_the_repository_config_is_refused(
