@@ -2165,6 +2165,15 @@ def maybe_handle_memory_command(
         from core.turn_context import forget_chat_context_pages
 
         forget_chat_context_pages(chat_id=resolved_session, token=token, erasures=erasures)
+        # The chat's documents carry their exact text into every later turn: a forgotten value is removed
+        # from them too (store `chat_documents`), or the forget is not verified (FIX-PLAN 1.2 step 6).
+        try:
+            from core.chat_attachments import forget_in_documents
+
+            _record_erasure_store(erasures, "chat_documents", "verified", forget_in_documents(resolved_session, token))
+        except Exception as exc:
+            LOGGER.warning("chat document erasure failed: %s", type(exc).__name__)
+            _record_erasure_store(erasures, "chat_documents", "incomplete")
         for owner, operation_store in owner_stores.items():
             block_status: dict[str, Any] = {}
             try:
@@ -2182,6 +2191,7 @@ def maybe_handle_memory_command(
             "memory_fts", "source_fts", "source_embeddings",
             "user_heuristics", "operator_dense_profile", "persisted_packet_cache_copies", "packet_receipt_ledgers",
             "context_pages", "chat_session_metadata", "swarm_sniffed_context",
+            "chat_documents",
         )
         for store in required_stores:
             if store not in erasures.get("stores", {}):
@@ -2253,6 +2263,7 @@ def maybe_handle_memory_command(
                 "structured_summaries", "session_summaries", "memory_receipts", "conversation_log", "dialogue_derivatives",
                 "memory_fts", "source_fts",
                 "user_heuristics", "operator_dense_profile", "context_pages", "chat_session_metadata",
+                "chat_documents",
             ))
             total_removed += sum(int(result.get("removed") or 0)
                                  for name, result in erasures.get("stores", {}).items()

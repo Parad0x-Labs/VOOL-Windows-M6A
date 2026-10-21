@@ -309,6 +309,15 @@ def verify_forget_stores(
 
     verify("chat_session_metadata", session_metadata)
 
+    def chat_documents() -> bool:
+        # Every stored record of the chat, staged ones included, re-read; an unreadable one raises
+        # and stays incomplete (NO RECORD = REFUSE: unknown is never clean).
+        from core.chat_attachments import documents_carrying
+
+        return bool(documents_carrying(chat_id, token))
+
+    verify("chat_documents", chat_documents)
+
     from core.vool_memory import _node_forget_payload, _node_matches_session, _row_to_node
 
     for owner, memory in owner_memories.items():
