@@ -299,8 +299,9 @@ def lfs_endpoint_refusal(cwd: Path, argv: Sequence[str] = (), *, timeout: float 
     (``http.proxy``) is not counted: git's own fetch and push go through it as well. A trusted server can still point
     git-lfs at storage elsewhere; that is the server's choice, not the repository's. Commands that
     never write LFS files into the work tree (add, commit, tag, branch, worktree remove and prune,
-    push without git-lfs's hook) are not checked. A check that cannot finish refuses."""
-    if argv and (argv[0] in _LFS_FREE_SUBCOMMANDS or tuple(argv[:2]) in _LFS_FREE_WORKTREE_COMMANDS):
+    restore of the index only, push without git-lfs's hook) are not checked. A check that cannot finish refuses."""
+    if argv and (argv[0] in _LFS_FREE_SUBCOMMANDS or tuple(argv[:2]) in _LFS_FREE_WORKTREE_COMMANDS
+                 or _restores_the_index_only(argv)):
         return ""
     try:
         named: list[tuple[str, str]] = []
@@ -362,6 +363,22 @@ def lfs_endpoint_refusal(cwd: Path, argv: Sequence[str] = (), *, timeout: float 
 _LFS_FREE_SUBCOMMANDS = frozenset({"add", "commit", "tag", "push", "branch"})
 #: Worktree housekeeping that deletes a worktree or its record and never checks one out.
 _LFS_FREE_WORKTREE_COMMANDS = frozenset({("worktree", "remove"), ("worktree", "prune")})
+
+
+def _restores_the_index_only(argv: Sequence[str]) -> bool:
+    """``git restore --staged`` without ``--worktree``: it writes only the index, never a file, so no
+    smudge filter runs. A short option cluster carrying ``-s`` (whose value could read as flags) is
+    not taken as one."""
+    if argv[0] != "restore":
+        return False
+    args = list(argv[1:])
+    options = [arg for arg in (args[:args.index("--")] if "--" in args else args) if arg.startswith("-")]
+    short = [arg[1:] for arg in options if not arg.startswith("--")]
+    if any("s" in cluster for cluster in short):
+        return False
+    staged = "--staged" in options or any("S" in cluster for cluster in short)
+    worktree = "--worktree" in options or any("W" in cluster for cluster in short)
+    return staged and not worktree
 
 
 def _is_remote_pick_key(key: str) -> bool:
@@ -685,12 +702,20 @@ def _merge_result_tree(cwd: Path, argv: Sequence[str], *, timeout: float) -> str
         sides, involved = ["HEAD", target], [*bases.stdout.split(), "HEAD", target]
     else:
         if not _parents(cwd, target, timeout=timeout):
-            # A root commit has no base, so nothing can be renamed: each path of the result comes
-            # from HEAD or from the commit, both already checked.
-            return ""
-        parent = _rev_parse(cwd, f"{target}^{_mainline(argv)}", timeout=timeout)
-        base, theirs = (parent, target) if argv[0] == "cherry-pick" else (target, parent)
-        sides, involved = ["--merge-base", base, "HEAD", theirs], [base, "HEAD", theirs]
+            if argv[0] == "revert":
+                raise RuntimeError("git revert of a root commit cannot be checked")
+            # git cherry-picks a root commit onto an empty base, so files both sides add are merged
+            # (a union merge driver can join two harmless .lfsconfig files into one naming a server).
+            empty = subprocess.run(hardened_argv(cwd, "hash-object", "-t", "tree", "--stdin"), input="",
+                                   capture_output=True, encoding="utf-8", errors="surrogateescape",
+                                   timeout=timeout, env=safe_env())
+            if empty.returncode != 0 or len(empty.stdout.strip()) not in (40, 64):
+                raise RuntimeError(f"git hash-object failed ({empty.returncode})")
+            sides, involved = ["--merge-base", empty.stdout.strip(), "HEAD", target], ["HEAD", target]
+        else:
+            parent = _rev_parse(cwd, f"{target}^{_mainline(argv)}", timeout=timeout)
+            base, theirs = (parent, target) if argv[0] == "cherry-pick" else (target, parent)
+            sides, involved = ["--merge-base", base, "HEAD", theirs], [base, "HEAD", theirs]
     if not _holds_lfsconfig_anywhere(cwd, involved, timeout=timeout):
         return ""
     # merge.renormalize would run the user's filters (git-lfs among them) on both sides.
