@@ -2414,8 +2414,9 @@ def forgotten_words(session_id: str, *, settled: bool = True) -> tuple[str, ...]
     return tuple(sorted(tokens))
 
 
-def _carries_any(text: str, tokens: Iterable[str]) -> bool:
-    """Whether `text` carries any of `tokens`, or names a subject they withdrew (the serve screen's test)."""
+def _carries_any(text: str, tokens: Iterable[str], *, withdrawn: bool = True) -> bool:
+    """Whether `text` carries any of `tokens`, or (`withdrawn`) names a subject they withdrew (the serve
+    screen's test)."""
     tokens = tuple(tokens)
     if not tokens or not str(text or "").strip():
         return False
@@ -2423,15 +2424,23 @@ def _carries_any(text: str, tokens: Iterable[str]) -> bool:
     from core.memory.withdrawals import payload_is_withdrawn
 
     words = memory_words(_unmarked(str(text)))
-    return any(carries(words, token) for token in tokens) or payload_is_withdrawn(words, tokens)
+    return any(carries(words, token) for token in tokens) or (withdrawn and payload_is_withdrawn(words, tokens))
 
 
-def _name_carries(name: str, token: str, words: Iterable[str]) -> bool:
-    """The one test of a record's name, shared by a forget's rename and its verifier so the two can
-    never disagree: the name carries the token being forgotten, or any word this chat forgot, or
-    names a subject one of them withdrew. A name the verifier flags is therefore always renamed,
-    and a retry heals one an earlier rename got wrong."""
-    return _carries(name, token) or _carries_any(name, words)
+def _name_carries(name: str, token: str, words: Iterable[str], *, forget_written: bool) -> bool:
+    """The one test of a record's name, shared by a forget's rename, its verifier and its Activity
+    label so they can never disagree: the name carries the token being forgotten, or any word this
+    chat forgot. A name a forget wrote (`forget_written`, the runtime's own) must also not name a
+    subject one of them withdrew; a user's own name that merely does keeps its name in storage and
+    is hidden from the model by the serve screen only (that match is fuzzy, a rename is permanent).
+    A name the verifier flags is therefore always renamed, and a retry heals one an earlier rename
+    got wrong."""
+    return _carries(name, token) or _carries_any(name, words, withdrawn=forget_written)
+
+
+def _forget_written(record: dict[str, Any]) -> bool:
+    """Whether the record's current name is one a forget wrote."""
+    return bool(record.get("renamed_by_forget_at"))
 
 
 def carries_forgotten_words(session_id: str, text: str) -> bool:
@@ -2515,7 +2524,7 @@ def documents_carrying(session_id: str, token: str) -> list[str]:
     with _LOCK:
         records = _session_text_records(session, strict=True, token=token)
         return [record["id"] for record in records
-                if _name_carries(str(record.get("name") or ""), token, words)
+                if _name_carries(str(record.get("name") or ""), token, words, forget_written=_forget_written(record))
                 or any(_carries(text, token) for text in _record_texts(record))]
 
 
@@ -2560,21 +2569,26 @@ def forget_in_documents(session_id: str, token: str) -> int:
     words = forgotten_words(session, settled=False)
 
     def clear(candidate: str) -> bool:
-        return not _name_carries(candidate, token, words)
+        return not _name_carries(candidate, token, words, forget_written=True)
 
     with _LOCK:
+        # Every decision first, every write after: a record with no clean name stops the forget
+        # (incomplete) before any record of the chat is changed.
+        plans = []
         for record in _session_text_records(session, strict=False):
             texts = _record_texts(record)
             text_hit = any(_carries(text, token) for text in texts)
-            name_hit = _name_carries(str(record.get("name") or ""), token, words)
+            name_hit = _name_carries(str(record.get("name") or ""), token, words, forget_written=_forget_written(record))
             if not text_hit and not name_hit:
                 continue
+            renamed = _neutral_name(record, token, clear=clear) if name_hit else ""
+            if renamed == _WORDLESS_NAME:
+                raise RuntimeError("no neutral name clears this chat's forgotten words")
+            plans.append((record, text_hit, name_hit, renamed))
+        for record, text_hit, name_hit, renamed in plans:
             changed += 1
             if name_hit:
                 # The name is sent to the model and shown on receipts: it goes like content does.
-                renamed = _neutral_name(record, token, clear=clear)
-                if renamed == _WORDLESS_NAME:
-                    raise RuntimeError("no neutral name clears this chat's forgotten words")
                 record["name"] = renamed
                 record["renamed_by_forget_at"] = _iso(_utcnow())
                 if not text_hit:
