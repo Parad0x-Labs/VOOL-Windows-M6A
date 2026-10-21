@@ -181,7 +181,9 @@ def _link_in(root: Path) -> str:
             if stat.S_ISDIR(status.st_mode):
                 pending.append((Path(entry.path), name))
                 continue
-            if _OBJECT_STORE_FILE.fullmatch(name):
+            # Lowercased: Windows folder names ignore case, so a shipped `LOGS/REFS` folder is where
+            # git's reflog appends land, and git itself names the object store in lower case.
+            if _OBJECT_STORE_FILE.fullmatch(name.lower()):
                 continue
             try:
                 # The listing gives no link count on Windows, so the file itself is asked there.
