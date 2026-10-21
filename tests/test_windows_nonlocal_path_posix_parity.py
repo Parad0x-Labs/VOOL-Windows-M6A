@@ -14,11 +14,11 @@ These tests pin that on the real surfaces, with the seam explicitly off:
 - the real executor (`execute_tool_intent`) running a workspace read and a `browser.render`;
 - the browser engine's own entry points, which the search provider and media ingestion call directly.
 
-The expected answers were measured on the base (f8d2e30), where no guard exists yet. A guard that
+The expected answers were measured on the base (9f88889), where no guard exists yet. A guard that
 forgets its short-circuit changes one of them: a 400 or a refusal sentence where the base ran the
-turn, compared the files or started the browser, or a lookup that silently stops happening. Literal
-strings are asserted, never `refusal_text`, so this file runs unchanged against a base that has no
-such module.
+turn, refused the compare in its own words or started the browser, or a lookup that silently stops
+happening. Literal strings are asserted, never `refusal_text`, so this file runs against a base
+given only `core/windows_path_policy.py`, with no guard wired to it.
 
 `tests/_nonlocal_touch_recorder.py` refuses every lookup naming the marker host `attkr9`, so a run as
 root can never create `/attkr9`; on Linux a refused lookup answers what the missing path answers. The
@@ -267,14 +267,12 @@ def test_off_windows_every_surface_answers_as_on_base(
         " folder — use a path relative to it, or open a chat bound to the other folder."
     )
     assert read_lookups == {"core/mode_permission_policy.py", "core/execution/workspace_tools.py"}
-    # /api/commands/dispatch: the handler runs and reads the file, which does not exist (ENOENT), and the
-    # base reports that as an internal fault: this pins the base answer, not a judgement of it. The words
-    # after the errno are the recorder's, so only the errno and the path are pinned.
+    # /api/commands/dispatch: the handler runs, and the base's own scope check (#33's `confine_to_root`)
+    # refuses the absolute path outside the workspace by its spelling, before anything looks it up.
     assert len(compare_runs) == 1, "the compare handler did not run"
-    assert (compare_status, compare.get("ok"), (compare.get("fault") or {}).get("code")) == (500, False, "internal"), compare
-    summary = str(compare.get("summary") or "")
-    assert summary.startswith("archaeology.compare failed: [Errno 2] ") and summary.endswith(": '//attkr9/s/x.txt'"), compare
-    assert compare_lookups == {"core/project_archaeology.py"}
+    assert (compare_status, compare.get("ok"), (compare.get("fault") or {}).get("code")) == (500, False, "fault_validation"), compare
+    assert compare.get("summary") == "scope refused: outside the workspace: no root covers this path", compare
+    assert compare_lookups == set()
     assert marker_starts == [], "a process naming the share was started"
     # browser.render: the call reaches the permission decision and the browser renders the URL, as on base.
     assert (rendered.status, rendered.ok, render_decisions) == ("executed", True, 1), rendered.response_text

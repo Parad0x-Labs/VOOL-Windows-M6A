@@ -20,16 +20,24 @@ What this file pins:
   existing "I can't write to ... Nothing was written" reply), naming the path as typed; a quoted
   share in a write is never named any other way; and a full local drive path written with forward
   slashes is not refused, in a read or in a write.
+- What is not refused: build, skill and memory messages that only mention a route, a folder or a
+  share (the build lane refuses only a share or device it is asked to write); a full drive path the
+  input normalizer split (`C: /Users/you/x.txt`), which keeps its drive; a backslash-relative PDF
+  and a forward-slash drive path in a skill import or a listing; and a folder typed as `/notes` in a
+  write, which is still the workspace folder `notes`, as on base.
+- A refused listing of a share is the answer: no other folder is listed in its place.
 
 The Windows rule is switched on only through `windows_path_policy._IS_WINDOWS` (the `windows_host`
 fixture), and only after local setup, because with it on a POSIX `tmp_path` counts as
 root-relative; the controls therefore use relative or `~` paths. Literal sentences are asserted,
-never `refusal_text`, so this file runs unchanged against a base that has no such module.
+never `refusal_text`, so this file runs against base 9f88889 given only `core/windows_path_policy.py`,
+with no guard wired.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import uuid
 from pathlib import Path
@@ -43,6 +51,7 @@ from tests.asgi_harness import asgi_request
 
 STATUS = "non_local_path_refused"
 NETWORK = "is a network or device path"
+PARTIAL = "is not a full local path"
 # What the page's own fetches send: JSON from the page's loopback origin.
 JSON_HEADERS = {"Content-Type": "application/json", "Host": "127.0.0.1", "Origin": "http://127.0.0.1:11435"}
 
@@ -271,8 +280,15 @@ def _planner_lane(tmp_path: Path) -> tuple[dict, dict]:
     observed: dict[str, Any] = {
         form.id: _clean_workspace_directory_path(_on(form, "repo"), workspace_root=workspace) for form in MARKER_FORMS
     }
-    # No folder at all, rather than the share re-rooted into the workspace ("attkr9/s/x/repo").
-    expected: dict[str, Any] = {form.id: "" for form in MARKER_FORMS}
+    # A share or a device: no folder at all, rather than the share re-rooted into the workspace
+    # ("attkr9/s/x/repo"). A partial path is placed as base places it once it is outside the workspace,
+    # by the lexical clean, without resolving it ("/attkr9/x/repo" is the workspace folder "attkr9/x/repo").
+    expected: dict[str, Any] = {form.id: "" for form in NETWORK_FORMS}
+    expected.update({
+        "root-relative-backslash": "\\attkr9\\x\\repo",
+        "root-relative-forward": "attkr9/x/repo",
+        "drive-relative": "C:attkr9\\x\\repo",
+    })
     # Control: a local relative folder is still cleaned into a workspace folder.
     observed["control"] = _clean_workspace_directory_path("docs/site", workspace_root=workspace)
     expected["control"] = "docs/site"
@@ -413,3 +429,160 @@ def test_pdf_move_skill_and_write_messages_say_what_was_refused(monkeypatch, rec
     for local in (local_pdf, local_write):
         assert NETWORK not in local and "is not a full local path" not in local, local
     assert "I can't write to `" in local_write and "Nothing was written" in local_write, local_write
+
+
+def _not_refused(reply: str) -> bool:
+    """No Windows refusal of any kind: neither sentence, nor the raw status a lane might relay."""
+    return NETWORK not in reply and PARTIAL not in reply and STATUS not in reply
+
+
+def test_build_skill_and_memory_messages_that_only_mention_a_path_are_not_refused(monkeypatch, recorder, windows_host) -> None:
+    # On base these turns are taken by the builder, the skill lane and memory, which come before the
+    # write-root and PDF lanes. A route, a folder named in prose or a fact to remember is no path the
+    # turn opens, so the Windows rule does not answer them first.
+    chat = _served_chat(monkeypatch)
+    windows_host.on()
+    builds = [
+        "create a flask app with a /api/users endpoint that returns json",
+        "add a route /api/login to server.py",
+        "make a website with pages /about and /contact",
+    ]
+    skill = "create a skill called backup that saves files to /backups"
+    memories = [
+        "remember that my tax return is at /Users/me/tax.pdf",
+        "remember that I put my projects in /code",
+        "remember that I save my invoices to //attkr9/s/Invoices",
+        "remember that my tax return is at //attkr9/s/tax.pdf",
+    ]
+    # A build asked to write to a share is still answered first: the builder joins the paths a build
+    # names onto the workspace and looks them up.
+    builds_to_a_share = {
+        "create a flask app that saves uploads to //attkr9/s/uploads": "//attkr9/s/uploads",
+        "create a python app in //attkr9/s/app and build it in the workspace": "//attkr9/s/app",
+    }
+
+    replies, touched = _served_turns(chat, recorder, [*builds, skill, *memories, *builds_to_a_share])
+
+    assert touched == {}, touched
+    assert all(status == 200 and reply.strip() for status, reply in replies.values()), replies
+    for text in (*builds, skill, *memories):
+        assert _not_refused(replies[text][1]), (text, replies[text])
+    # Each was answered by its own lane, as on base.
+    assert all("I couldn't build that in the workspace" in replies[text][1] for text in builds), replies
+    assert "I drafted the skill `backup`" in replies[skill][1], replies[skill]
+    assert all("I’ll remember that" in replies[text][1] for text in memories), replies
+    for text, typed in builds_to_a_share.items():
+        assert _refused_as_typed(replies[text][1], typed), (text, replies[text])
+
+
+def test_a_full_drive_path_split_by_the_normalizer_keeps_its_drive(monkeypatch, recorder, windows_host) -> None:
+    # The input normalizer turns `C:/Users/you/x.txt` into `C: /Users/you/x.txt`. This test's home
+    # stands in for `C:/Users/you`: its rooted half exists, as `\\Users\\you` does on the current drive
+    # on Windows, so the lanes really reach the read door with what they kept. On POSIX the drive path
+    # is not one of the home folders, so the lanes then answer that; on Windows they read it.
+    home = Path.home()
+    (home / "Documents" / "notes.txt").write_text("hello notes\n", encoding="utf-8")
+    (home / "Documents" / "report.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
+    drive, rooted = os.path.splitdrive(str(home))
+    typed_home = (drive or "C:") + rooted.replace("\\", "/")
+    chat = _served_chat(monkeypatch)
+    windows_host.on()
+    reads = [f"open {typed_home}/Documents/notes.txt", f"what does {typed_home}/Documents/notes.txt say"]
+    pdfs = [f"read the pdf {typed_home}/Documents/report.pdf", f"summarize {typed_home}/Documents/report.pdf"]
+
+    replies, touched = _served_turns(chat, recorder, [*reads, *pdfs])
+
+    assert touched == {}, touched
+    assert all(status == 200 and reply.strip() for status, reply in replies.values()), replies
+    for text in (*reads, *pdfs):
+        assert _not_refused(replies[text][1]), (text, replies[text])
+    # The read is done, or names the path as typed, drive included, and not the rooted half alone (the
+    # reply clips a long path, so the name it shows is the start of the typed one).
+    typed = f"{typed_home}/Documents/notes.txt"
+    for text in reads:
+        named = re.findall(r"`([^`]+)`", replies[text][1])
+        drive_kept = bool(named) and named[0][1:3] == ":/" and typed.startswith(named[0])
+        assert "hello notes" in replies[text][1] or drive_kept, (text, replies[text])
+
+
+def test_relative_and_forward_slash_drive_paths_are_not_refused(monkeypatch, recorder, windows_host) -> None:
+    chat = _served_chat(monkeypatch)
+    windows_host.on()
+    messages = [
+        # The normalizer splits `docs\report.pdf` into `docs\ report.pdf`: the `\ report.pdf` it leaves
+        # is debris of a relative path, not a root-relative one.
+        "read the pdf docs\\report.pdf",
+        "summarize docs\\report.pdf",
+        # A skill package and a listing keep the drive the normalizer split off.
+        "import this skill C:/Users/you/pkg.zip",
+        "what files are in C:/Users/you/Desktop",
+        "what is in the folder C:/Users/you/Documents/Vool testing",
+    ]
+
+    replies, touched = _served_turns(chat, recorder, messages)
+
+    assert touched == {}, touched
+    assert all(status == 200 and reply.strip() for status, reply in replies.values()), replies
+    refused = {text: reply for text, (_status, reply) in replies.items() if not _not_refused(reply)}
+    assert refused == {}, refused
+
+
+def test_a_file_created_in_a_typed_folder_stays_in_that_workspace_folder(tmp_path: Path, monkeypatch, recorder, windows_host) -> None:
+    # `/notes` names no full local path on Windows, and it is not resolved; as on base it is the
+    # workspace folder `notes`, not dropped so that the file silently lands at the workspace root.
+    chat = _served_chat(monkeypatch)
+    windows_host.on()
+    workspace = tmp_path / "workspace"
+    planned = {
+        "in /notes create todo.txt with text: hi": f"Affected: {workspace}/notes/todo.txt.",
+        "inside /docs create readme.md with text: hello": f"Affected: {workspace}/docs/readme.md.",
+    }
+
+    replies, touched = _served_turns(chat, recorder, list(planned))
+
+    assert touched == {}, touched
+    for text, affected in planned.items():
+        status, reply = replies[text]
+        assert status == 200 and affected in reply, (text, reply)
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["//attkr9/s/docs what files are in it", "what files are in //attkr9/s/docs"],
+    ids=["share-first", "share-last"],
+)
+def test_a_refused_listing_is_the_answer_and_no_other_folder_is_listed(text: str, monkeypatch, recorder, windows_host) -> None:
+    # "docs" is also a home-folder word: a lane that took the refused listing as no answer would list
+    # ~/Documents instead and present it as the share's contents.
+    (Path.home() / "Documents" / "sentinel-doc.txt").write_text("x\n", encoding="utf-8")
+    chat = _served_chat(monkeypatch)
+    windows_host.on()
+
+    replies, touched = _served_turns(chat, recorder, [text])
+
+    assert touched == {}, touched
+    status, reply = replies[text]
+    assert status == 200 and _refused_as_typed(reply, "//attkr9/s/docs"), reply
+    assert "sentinel-doc.txt" not in reply, reply
+
+
+def test_the_planner_lists_a_split_drive_path_with_its_drive(windows_host) -> None:
+    from core.execution.planner import plan_tool_workflow
+
+    def planned(text: str) -> tuple[str, str, str]:
+        decision = plan_tool_workflow(user_text=text, task_class="unknown", executed_steps=[], source_context={})
+        payload = dict(decision.next_payload or {})
+        return decision.reason, str(payload.get("intent")), str(dict(payload.get("arguments") or {}).get("path"))
+
+    texts = ("list the files in C: /Users/you/Desktop/notes", "show me what is in C: /Users/you/Desktop/notes")
+    # Off Windows the drive is not re-attached: the plan is base's, byte for byte.
+    windows_host.off()
+    assert {text: planned(text) for text in texts} == {
+        text: ("planned_safe_machine_directory_list", "machine.list_directory", "/Users/you/Desktop/notes") for text in texts
+    }
+    # On Windows the listing keeps the drive the normalizer split off; without it the list tool refuses
+    # `/Users/you/Desktop/notes` as no full local path.
+    windows_host.on()
+    assert {text: planned(text) for text in texts} == {
+        text: ("planned_safe_machine_directory_list", "machine.list_directory", "C:/Users/you/Desktop/notes") for text in texts
+    }

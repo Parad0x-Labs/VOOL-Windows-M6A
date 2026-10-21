@@ -19,15 +19,20 @@ What this file pins:
   probed and found.
 - The Media Studio editor refuses to open or export to a share, before the media worker is asked and
   before the Windows write gate places the output; local relative paths still open and export.
-- A chat request whose body or `source_context` names a share as its workspace is refused before
-  any turn runs, on `/api/chat` and `/v1/chat/completions`; a chat with no such field still runs.
+- A chat request whose body or `source_context` names a share as its workspace, or as the VOOL home
+  its turn opens memory under (`runtime_home`), is refused before any turn runs, on `/api/chat` and
+  `/v1/chat/completions`; a chat with no such field still runs.
+- A chat whose server-held workspace is a share (an unbound chat on a host whose Desktop is
+  redirected to one) answers every turn, refusing the tool calls that would resolve it with the
+  sentence, and touches nothing.
 - A `/api/mode` workspace claim naming a share is the existing mismatch, decided without resolving
   the claim; a local spelling of the chat's real folder still matches.
 
 The Windows rule is switched on only through `windows_path_policy._IS_WINDOWS` (the `windows_host`
 fixture), and only after local setup, because with it on a POSIX `tmp_path` counts as
 root-relative; the controls therefore use relative paths. Literal sentences are asserted, never
-`refusal_text`, so this file runs unchanged against a base that has no such module.
+`refusal_text`, so this file runs against a base given only `core/windows_path_policy.py`, with no
+guard wired to it.
 """
 from __future__ import annotations
 
@@ -50,7 +55,7 @@ STATUS = "non_local_path_refused"
 HOST = {"Host": "127.0.0.1"}
 # What the page's own fetches send: JSON from the page's loopback origin.
 JSON_HEADERS = {"Content-Type": "application/json", "Host": "127.0.0.1", "Origin": "http://127.0.0.1:11435"}
-CHAT_FIELDS = ("workspace", "workspace_root", "cwd", "projectRoot")
+CHAT_FIELDS = ("workspace", "workspace_root", "cwd", "projectRoot", "runtime_home")
 PNG = b"\x89PNG\r\n\x1a\nnot-really-an-image"
 
 
@@ -314,6 +319,52 @@ def test_chat_workspace_fields_naming_a_share_are_refused_before_the_turn(
     assert turns_for_marker_requests == [], "a chat turn ran for a workspace on a share"
     assert control[0] == 200, control
     assert turns == ["hello"], "the control did not reach the served turn, so the check above proves nothing"
+
+
+def test_a_chat_whose_default_workspace_is_a_share_answers_without_touching_it(
+    tmp_path: Path, monkeypatch, recorder, windows_host
+) -> None:
+    from apps import vool_api_server
+    from apps.vool_agent import VoolAgent
+
+    # The installed Windows app gives an unbound chat the user's Desktop as its workspace
+    # (core/web/api/runtime.py:default_workspace_root), and a domain may redirect that Desktop to a
+    # share. That host setting is what this provider returns; the chat door never sees it, because no
+    # request field carries it.
+    desktop = "\\\\attkr9\\s\\you\\Desktop"
+    monkeypatch.setattr(vool_api_server, "_default_workspace_root_impl", lambda: desktop)
+    agent = VoolAgent(backend_name="test-backend", device="nonlocal-test", persona_id="default")
+    monkeypatch.setattr(vool_api_server, "_agent", agent)
+    app = _app(agent)
+    for name in ("Desktop", "Documents", "Downloads"):
+        (tmp_path / "user" / name).mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(tmp_path / "user"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "user"))
+    monkeypatch.chdir(tmp_path)
+    windows_host.on()
+
+    # A plain turn, a memory turn, three turns that reach a tool, which resolves the workspace, and a
+    # build turn, which reads its subject file from the workspace.
+    tool_turns = ('create "notes.md" with hello', "create a file notes.md with hi", "what files are on my desktop")
+    messages = ("hello", "remember that I like tea", *tool_turns, 'write hello to "/docs/notes.md"')
+    answers: dict[str, tuple[int, str]] = {}
+    touched: dict[str, list[str]] = {}
+    for text in messages:
+        before = len(recorder.touches)
+        status, payload = _post(
+            app, "/api/chat", {"messages": [{"role": "user", "content": text}], "session_id": _session(), "stream": False}
+        )
+        answers[text] = (status, str((payload.get("message") or {}).get("content") or payload.get("error") or ""))
+        if recorder.touches[before:]:
+            touched[text] = [str(touch) for touch in recorder.touches[before:]]
+
+    assert touched == {} and recorder.marker_popen == [], f"{answers}\n{recorder.report()}"
+    # Every turn answered; none ended in the resolver's exception (HTTP 500 with an empty reply).
+    assert {text: status for text, (status, _reply) in answers.items()} == dict.fromkeys(messages, 200), answers
+    assert all(reply.strip() for _status, reply in answers.values()), answers
+    # The tool turns say why: the workspace itself is a network or device path.
+    for text in tool_turns:
+        assert f"`{desktop}` is a network or device path" in answers[text][1], (text, answers[text])
 
 
 def test_a_mode_claim_naming_a_share_is_a_mismatch_without_touch(

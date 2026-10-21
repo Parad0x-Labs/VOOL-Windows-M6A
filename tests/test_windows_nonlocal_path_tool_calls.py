@@ -13,7 +13,8 @@ These drive the real executor (`execute_tool_intent`) with the policy seam
 `tests/_nonlocal_touch_recorder.py`: every stat, open, listing or process start naming the marker host
 `attkr9` is recorded and refused. Local fixtures are made before the seam goes on, because with it on
 a POSIX absolute path such as `tmp_path` counts as root-relative. Literal sentences are asserted,
-never `refusal_text`, so the same file runs against a base without the policy module.
+never `refusal_text`, so the same file runs against a base given only `core/windows_path_policy.py`,
+with no guard wired to it.
 """
 from __future__ import annotations
 
@@ -220,22 +221,24 @@ def _fake_browser(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
 
 
 _FILE_URLS = [
-    pytest.param("file://attkr9/s/x.html", id="file-host"),
-    pytest.param("file:////attkr9/s", id="file-four-slashes"),
-    pytest.param("view-source:file://attkr9/s", id="view-source-file-host"),
+    pytest.param("file://attkr9/s/x.html", "is a network or device path", id="file-host"),
+    pytest.param("file:////attkr9/s", "is a network or device path", id="file-four-slashes"),
+    pytest.param("view-source:file://attkr9/s", "is a network or device path", id="view-source-file-host"),
+    # No host: `file:///x` is `\x` on the current drive, which is not a share but is no full local path.
+    pytest.param("file:///attkr9/s/x.html", "is not a full local path", id="file-no-host"),
 ]
 
 
-@pytest.mark.parametrize("url", _FILE_URLS)
+@pytest.mark.parametrize(("url", "sentence"), _FILE_URLS)
 def test_browser_render_of_a_file_url_naming_a_host_never_starts_a_browser(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorder, windows_host, enable_web, url: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorder, windows_host, enable_web, url: str, sentence: str
 ) -> None:
     # `enable_web`: the web tools are off under pytest; the shipped default turns them on.
     workspace, _home = _local_machine(tmp_path, monkeypatch)
     _fake_browser(tmp_path, monkeypatch)
     decisions = _spy(monkeypatch, executor, "decide_tool_call")
     fetches_noted = _spy(monkeypatch, browser_render, "note_remote_fetch_attempt")
-    told = f"`{url}` is a network or device path"
+    told = f"`{url}` {sentence}"
     windows_host.on()
 
     # The model's call, by each name the URL argument goes by, then the engine's own entry points,
@@ -339,3 +342,54 @@ def test_a_local_relative_path_still_reaches_the_decision_on_the_windows_seam(
         assert gate.refusal("machine.write_file", arguments, workspace, environ=with_folder) is None, value
 
     assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+
+
+@pytest.mark.parametrize("name", [pytest.param("//attkr9/s", id="share"), pytest.param("//attkr9/s/docs", id="share-folder")])
+def test_find_folder_never_looks_up_a_share_it_is_asked_for(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorder, windows_host, name: str
+) -> None:
+    # `name` is a search phrase, not a path argument, so the door lets it through; the phrase probe
+    # behind it (`_resolved_existing_directory`) is what must not look a share up as a folder.
+    workspace, home = _local_machine(tmp_path, monkeypatch)
+    (home / "Documents" / "invoices").mkdir()
+    windows_host.on()
+
+    result = _execute("machine.find_folder", {"name": name}, {"workspace": str(workspace), "operating_mode": "auto"})
+    # Control: a local folder name is still searched for and found under the home folders.
+    local = _execute("machine.find_folder", {"name": "invoices"}, {"workspace": str(workspace), "operating_mode": "auto"})
+
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+    assert result.handled, (result.status, result.response_text)
+    assert (local.status, local.ok) == ("executed", True), local.response_text
+    assert "invoices" in str(local.response_text or ""), local.response_text
+
+
+@pytest.mark.parametrize("intent", ["machine.read_file", "machine.list_directory", "machine.write_file"])
+@pytest.mark.parametrize(
+    "value", [pytest.param("~///attkr9/s/x.txt", id="tilde-forward"), pytest.param("~\\\\\\attkr9\\s\\x.txt", id="tilde-backslash")]
+)
+def test_a_home_path_joined_onto_a_share_is_the_share(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorder, windows_host, intent: str, value: str
+) -> None:
+    # The machine tools place `~\rest` as the home folder joined with `rest`, and on Windows a join
+    # onto a rooted `rest` is `rest` itself: `~///host/s/x` names the share.
+    workspace, _home = _local_machine(tmp_path, monkeypatch)
+    decisions = _spy(monkeypatch, executor, "decide_tool_call")
+    windows_host.on()
+
+    arguments = {"path": value, **({"content": "x"} if intent.endswith("write_file") else {})}
+    result = _execute(intent, arguments, {"workspace": str(workspace), "operating_mode": "auto"})
+
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+    assert (result.status, (result.details or {}).get("kind")) == (STATUS, "unc"), (result.status, result.response_text)
+    assert f"`{value}` is a network or device path" in str(result.response_text or ""), result.response_text
+    assert decisions == [], "a permission decision was taken for a share"
+
+
+def test_a_share_is_labelled_as_written_and_never_resolved(recorder, windows_host) -> None:
+    from core.runtime_execution_tools import _home_relative_label
+
+    windows_host.on()
+
+    assert _home_relative_label(Path("//attkr9/s/docs")) == "//attkr9/s/docs"
+    assert recorder.touches == [], recorder.report()

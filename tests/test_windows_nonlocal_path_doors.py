@@ -22,11 +22,18 @@ What this file pins:
   a declared write naming one is treated as an overwrite (approval in Auto), not as a create.
 - A patch whose `---`/`+++` lines name a share is refused with no touch, neither in the Blackbox
   recorder's header resolution nor in the patch tool, and the journal says why.
+- A call whose turn works in a share (the server's own workspace, which no request field names) is
+  refused with the sentence at each of the three doors, before anything resolves that workspace.
+- An MCP or plugin tool's root- or drive-relative argument still reaches its approval (the network
+  tier), while a share there is refused.
+- The resolvers behind the doors, called directly as their other callers call them, never look a
+  share up: the Windows write gate's move and export landings, the workspace path and root
+  resolvers, and the builder's workspace-relative check.
 
 The Windows rule is switched on only through `windows_path_policy._IS_WINDOWS` (the `windows_host`
 fixture), never through `os.name` or `sys.platform`, and only after local setup, because with it on a
 POSIX `tmp_path` counts as root-relative. Literal sentences are asserted, never `refusal_text`, so this
-file runs unchanged against a base that has no such module.
+file runs against a base given only `core/windows_path_policy.py`, with no guard wired to it.
 """
 from __future__ import annotations
 
@@ -354,3 +361,144 @@ def test_a_patch_header_naming_a_share_is_refused_without_touch(
     assert intended, "the Blackbox recorder did not see the patch"
     assert all(entry.get("path_unresolved") is True for entry in intended), intended
     assert all("is a network or device path" in str(entry.get("unresolved_reason") or "") for entry in intended), intended
+
+
+@pytest.mark.parametrize("form", [pytest.param(form, id=form.id) for form in NETWORK_FORMS])
+def test_a_turn_whose_workspace_is_a_share_is_refused_at_every_door(
+    tmp_path: Path, monkeypatch, recorder, windows_host, form: MarkerForm
+) -> None:
+    # As on a Windows host: the write gate is on, so a machine write is placed before any decision.
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    monkeypatch.setenv(gate.ENV_VAR, str(tmp_path / "scratch"))
+    local = tmp_path / "ws"
+    local.mkdir()
+    (local / "notes.txt").write_text("local notes", encoding="utf-8")
+    decisions = _spy(monkeypatch, executor, "decide_tool_call")
+    gate_checks = _spy(monkeypatch, runtime, "windows_write_refusal_before_decision")
+    windows_host.on()
+
+    shared = {"workspace": form.value, "workspace_root": form.value, "operating_mode": "auto"}
+    answers = {
+        "executor": _execute("workspace.read_file", {"path": "notes.txt"}, shared),
+        "runtime door": runtime.execute_runtime_tool("workspace.read_file", {"path": "notes.txt"}, source_context=shared),
+        "authorized door": boundary.execute_authorized_runtime_tool(
+            "machine.write_file", {"path": "notes.txt", "content": "x"}, source_context=shared
+        ),
+    }
+    refused_decisions, refused_gate_checks = len(decisions), len(gate_checks)
+    # Control: the same read in a local workspace still runs.
+    read = _execute("workspace.read_file", {"path": "notes.txt"}, {"workspace": str(local), "operating_mode": "auto"})
+
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+    for door, answer in answers.items():
+        assert (answer.status, answer.ok) == (STATUS, False), (door, answer.status, answer.response_text)
+        assert f"`{form.value}` is a network or device path" in str(answer.response_text or ""), (door, answer.response_text)
+    assert (refused_decisions, refused_gate_checks) == (0, 0), "the share workspace reached a decision or the write gate"
+    assert (read.status, read.ok) == ("executed", True) and "local notes" in str(read.response_text or ""), read.response_text
+
+
+def test_an_mcp_or_plugin_tool_keeps_its_partial_paths_but_not_a_share(
+    tmp_path: Path, monkeypatch, recorder, windows_host, declared_write_contract: str
+) -> None:
+    from core.runtime_flags import override
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    monkeypatch.setenv(gate.ENV_VAR, str(workspace))
+    decisions = _spy(monkeypatch, executor, "decide_tool_call")
+    context = {"workspace": str(workspace), "operating_mode": "manual"}
+    windows_host.on()
+
+    with override("plugin_runtime_tools", True):
+        partial = {value: _execute(declared_write_contract, {"path": value}, context) for value in ("\\notes\\x.txt", "C:notes\\x.txt")}
+        asked = len(decisions)
+        share = _execute(declared_write_contract, {"path": "//attkr9/s/x.txt"}, context)
+
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+    # A plugin's path means what its server says: only the network tier applies, so these reach the
+    # operator's approval as on base ...
+    assert {value: answer.status for value, answer in partial.items()} == dict.fromkeys(partial, "pending_approval"), {
+        value: (answer.status, answer.response_text) for value, answer in partial.items()
+    }
+    assert asked == 2
+    # ... and a share is refused before any decision.
+    assert (share.status, (share.details or {}).get("kind")) == (STATUS, "unc"), share.response_text
+    assert len(decisions) == asked
+
+
+@pytest.mark.parametrize(
+    ("intent", "arguments"),
+    [
+        pytest.param("machine.move_path", {"source": "//attkr9/s/a.txt", "destination": "ws/b.txt"}, id="move-from-share"),
+        pytest.param("machine.move_path", {"source": "ws/a.txt", "destination": "//attkr9/s/b.txt"}, id="move-to-share"),
+        pytest.param("media.export", {"project_id": "clip", "output_path": "//attkr9/s/o.mp4"}, id="export-to-share"),
+    ],
+)
+def test_the_write_gate_asked_directly_never_places_a_share(
+    tmp_path: Path, monkeypatch, recorder, windows_host, intent: str, arguments: dict
+) -> None:
+    # The gate is a public predicate its callers ask directly, ahead of any door: its landing for a
+    # move (`machine_file_ops._canonicalize`) and for an export (`export_destination`) must not
+    # resolve a share to find out where it lands.
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "a.txt").write_text("a", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    environ = {gate.ENV_VAR: str(workspace)}
+    windows_host.on()
+
+    reason = gate.refusal(intent, arguments, workspace, windows=True, environ=environ)
+    # Control: the same move inside the flagged workspace is let through.
+    local = gate.refusal("machine.move_path", {"source": "ws/a.txt", "destination": "ws/b.txt"}, workspace, windows=True, environ=environ)
+
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+    assert reason, "the gate let a write to or from a share through"
+    assert local is None, local
+
+
+@pytest.mark.parametrize("form", [pytest.param(form, id=form.id) for form in NETWORK_FORMS])
+def test_the_workspace_resolvers_never_resolve_a_share_root(tmp_path: Path, recorder, windows_host, form: MarkerForm) -> None:
+    # Code tasks, RepoOps and the Blackbox recorder hand their stored root straight to the path
+    # resolver; a team start and a runtime context hand theirs to the root resolver. The doors refuse a
+    # turn's share workspace before either is reached; these stand behind them for those callers.
+    from core.execution.workspace_tools import resolve_workspace_path
+    from core.runtime_paths import resolve_workspace_root
+
+    local = tmp_path / "ws"
+    local.mkdir()
+    windows_host.on()
+
+    with pytest.raises(ValueError, match="is a network or device path"):
+        resolve_workspace_path("notes.txt", workspace_root=Path(form.value))
+    with pytest.raises(ValueError, match="is a network or device path"):
+        resolve_workspace_root(form.value)
+    resolved = resolve_workspace_path("notes.txt", workspace_root=local)
+    root = resolve_workspace_root(str(local))
+
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+    assert resolved == (local / "notes.txt").resolve() and root == local.resolve()
+
+
+def test_the_builder_never_resolves_a_share_to_place_a_named_file(tmp_path: Path, recorder, windows_host) -> None:
+    from core.agent_runtime.builder.named_file_build import workspace_relative_path
+
+    local = tmp_path / "ws"
+    local.mkdir()
+    windows_host.on()
+
+    placed = {
+        "rooted name in a share workspace": workspace_relative_path("/docs/notes.md", workspace_root="\\\\attkr9\\s\\you\\Desktop"),
+        "share in a local workspace": workspace_relative_path("//attkr9/s/notes.md", workspace_root=str(local)),
+        "device path in a local workspace": workspace_relative_path("//?/UNC/attkr9/s/notes.md", workspace_root=str(local)),
+        # Control: a rooted path inside the local workspace is still resolved into it.
+        "local": workspace_relative_path(str(local / "docs" / "notes.md"), workspace_root=str(local)),
+    }
+
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+    assert placed == {
+        "rooted name in a share workspace": "",
+        "share in a local workspace": "",
+        "device path in a local workspace": "",
+        "local": "docs/notes.md",
+    }

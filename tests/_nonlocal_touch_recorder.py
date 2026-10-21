@@ -12,7 +12,8 @@ Three parts, as the plan for these tests describes:
    from C: `open` (both `open()` and `os.open`), `os.listdir`, `os.scandir`, `os.chdir`,
    `os.mkdir`, `os.rename`, `os.remove`, `sqlite3.connect` and `subprocess.Popen` (argv and cwd),
    plus a few neighbours of the same kind (rmdir, chmod, utime, link, symlink, truncate, walk,
-   glob, the shutil copy/move/rmtree/archive events, tempfile, `os.startfile`, `os.system`).
+   glob, the shutil copy/move/rmtree/archive events, tempfile, `os.startfile`, `os.system`, and the
+   `os.exec*`, `os.spawn*` and `os.posix_spawn*` process starts).
    An audit hook cannot be removed, which is why it is gated by `_ACTIVE` and returns at once
    while no recorder runs.
 2. **monkeypatch wrappers** for the calls that raise no audit event: `os.stat`, `os.lstat`,
@@ -338,8 +339,9 @@ def _audit(event: str, args: tuple[Any, ...]) -> None:
         elif event == "os.system":
             if _record_spawn(event, None, args[:1], None):
                 raise PermissionError(errno.EACCES, f"process start {_REFUSED}")
-        elif event in ("os.exec", "os.spawn"):  # os.exec: (path, args, env); os.spawn: (mode, path, args, env)
-            path, argv, env = (*args, None)[:3] if event == "os.exec" else (*args, None)[1:4]
+        elif event in ("os.exec", "os.posix_spawn", "os.spawn"):
+            # os.exec and os.posix_spawn (posix_spawnp too): (path, args, env); os.spawn: (mode, path, args, env)
+            path, argv, env = (*args, None)[:3] if event != "os.spawn" else (*args, None)[1:4]
             if _record_spawn(event, path, argv, None, env):
                 raise PermissionError(errno.EACCES, f"process start {_REFUSED}")
     finally:

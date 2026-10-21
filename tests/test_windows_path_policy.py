@@ -9,7 +9,8 @@ lexically, without touching the disk, so every door can refuse them before the f
 The pure classifiers are host-independent and are driven here with no seam on Linux CI. The gated
 wrappers answer only on Windows; they are driven through `windows_path_policy._IS_WINDOWS`, never
 through `os.name` or `sys.platform` (pathlib branches on those). Literal sentences are asserted, never
-`refusal_text`, so the same file runs against a base that has no such module.
+`refusal_text`, so the words a user reads are pinned. This file tests the module itself, so unlike the
+other files of this change it has no run against base 9f88889, which has no such module.
 """
 from __future__ import annotations
 
@@ -68,8 +69,13 @@ _ALLOWED_URLS = (
 # file: URLs and scheme-less values that still name a host once decoded.
 _HOST_URLS = (
     "file://attkr9/s", "FILE://attkr9/s", "file:////attkr9/s", r"file:///\\attkr9\s", "file:///%5C%5Cattkr9/s",
-    "file://%61ttkr9/s", "file:/attkr9/s", "file://localhost//attkr9/s", "file://LOCALHOST//attkr9/s",
+    "file://%61ttkr9/s", "file://localhost//attkr9/s", "file://LOCALHOST//attkr9/s",
     "view-source:file://attkr9/s", "  file://attkr9/s/x.html", "//cdn.example.com/x", r"\\attkr9\s",
+)
+# file: URLs with no host: a path on this machine, which on Windows has no drive (the current one's).
+_HOSTLESS_URLS = (
+    "file:/attkr9/s", "file:///attkr9/s/x.html", "file:///Users/you/page.html", "file:///home/x.html",
+    "file://localhost/Users/you/page.html", r"file:///Users\you\page.html", "file:x/y",
 )
 
 # The registry's filesystem fields, and only those: 50+ other commands carry an HTTP route in `path`.
@@ -191,13 +197,31 @@ def test_a_variable_or_file_url_that_names_a_host_is_refused(monkeypatch) -> Non
     assert policy.refused_form(r"%LOGONSERVER%\s", network_only=True) == "unc"
     for url in _HOST_URLS:
         assert policy.refused_url(url) == "unc", url
+        assert policy.argument_refusal("mcp.web.fetch", {"url": url}, network_only=True) == ("url", url, "unc"), url
+
+
+def test_a_file_url_with_no_host_is_a_partial_path_not_a_share(monkeypatch) -> None:
+    # `file:///Users/you/page.html` opens `\Users\you\page.html` on the current drive: no host is
+    # contacted, so it is no network path, and it is no full local path either.
+    for url in _HOSTLESS_URLS:
+        assert policy.classify_url(url) == "root_relative", url
+
+    _windows(monkeypatch)
+    for url in _HOSTLESS_URLS:
+        assert policy.refused_url(url) == "root_relative", url
+        # The full rule refuses it with the partial-path sentence; the network tier that MCP and plugin
+        # tools get lets it through, as it does `/x`.
+        refusal = policy.argument_refusal("browser.render", {"url": url})
+        assert refusal == ("url", url, "root_relative"), (url, refusal)
+        assert "is not a full local path" in policy.refusal_text(refusal.value, refusal.kind), url
+        assert policy.argument_refusal("mcp.web.fetch", {"url": url}, network_only=True) is None, url
 
 
 def test_nothing_is_refused_off_windows(monkeypatch) -> None:
     _windows(monkeypatch, on=False)
     monkeypatch.setenv("LOGONSERVER", r"\\attkr9")
     lookups = _record_alias_lookups(monkeypatch)
-    every_refused_value = (*_NETWORK_SPELLINGS, *_PARTIAL_SPELLINGS, r"%LOGONSERVER%\s", *_HOST_URLS)
+    every_refused_value = (*_NETWORK_SPELLINGS, *_PARTIAL_SPELLINGS, r"%LOGONSERVER%\s", *_HOST_URLS, *_HOSTLESS_URLS)
 
     for value in every_refused_value:
         assert policy.refused_form(value) == "" and policy.refused_form(value, network_only=True) == "", value
@@ -215,8 +239,9 @@ def test_nothing_is_refused_off_windows(monkeypatch) -> None:
         assert policy.argument_refusal("mcp.files.read_file", {"path": value}, network_only=True) is None, value
         for command_id, field in _COMMAND_FILESYSTEM_FIELDS:
             assert policy.command_input_refusal(command_id, {field: value}) is None, (command_id, field, value)
-        chat_fields = {"workspace": value, "workspace_root": value, "cwd": value, "projectRoot": value}
+        chat_fields = {"workspace": value, "workspace_root": value, "cwd": value, "projectRoot": value, "runtime_home": value}
         assert policy.chat_workspace_refusal(dict(chat_fields), dict(chat_fields)) is None, value
+        assert policy.context_workspace_refusal(dict(chat_fields)) is None, value
 
     assert lookups == {"schema": [], "bound": []}, "off Windows the alias contract must never be consulted"
 
@@ -231,8 +256,33 @@ def test_nothing_is_refused_off_windows(monkeypatch) -> None:
     assert policy.chat_workspace_refusal({"workspace": "//attkr9/s"}, {}) is not None
     refusal = policy.chat_workspace_refusal({}, {"projectRoot": r"\attkr9\x"})
     assert refusal is not None and (refusal.value, refusal.kind) == (r"\attkr9\x", "root_relative"), refusal
+    assert policy.context_workspace_refusal({"workspace": "//attkr9/s"}) is not None
     assert policy.argument_refusal("workspace.read_file", {"filepath": "docs/notes.txt"}) is None
     assert any("workspace.read_file" in (*args, *kwargs.values()) for args, kwargs in lookups["schema"]), lookups
+
+
+def test_a_chat_naming_a_share_as_its_vool_home_is_refused(monkeypatch) -> None:
+    # A served turn keeps a caller's `runtime_home` and opens its memory store under it, so the chat
+    # door judges it with the workspace fields.
+    _windows(monkeypatch)
+    for value, kind in (("//attkr9/s/vool", "unc"), (r"\\?\UNC\attkr9\s", "device"), (r"\attkr9\x", "root_relative")):
+        assert policy.chat_workspace_refusal({"runtime_home": value}, {}) == ("runtime_home", value, kind), value
+        assert policy.chat_workspace_refusal({}, {"runtime_home": value}) == ("runtime_home", value, kind), value
+    assert policy.chat_workspace_refusal({"runtime_home": r"C:\Users\you\.vool"}, {}) is None
+
+
+def test_a_turn_whose_workspace_is_a_share_is_refused_by_the_network_tier(monkeypatch) -> None:
+    # The server holds this workspace (an unbound chat's default folder can be a redirected Desktop on
+    # a share), so only a share or a device is refused: the chat door already judged a caller's own.
+    _windows(monkeypatch)
+    for field in ("workspace", "workspace_root"):
+        for value, kind in _NETWORK_SPELLINGS.items():
+            assert policy.context_workspace_refusal({field: value}) == (field, value, kind), (field, value)
+        for value in (*_PARTIAL_SPELLINGS, *_LOCAL_PATHS):
+            assert policy.context_workspace_refusal({field: value}) is None, (field, value)
+    # Only the folder fields: a share named anywhere else in the context is not this check's.
+    assert policy.context_workspace_refusal({"cwd": "//attkr9/s", "note": "//attkr9/s"}) is None
+    assert policy.context_workspace_refusal(None) is None and policy.context_workspace_refusal("//attkr9/s") is None
 
 
 def test_argument_refusal_reads_the_bound_call_and_tiers_its_keys(monkeypatch) -> None:

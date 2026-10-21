@@ -77,6 +77,8 @@ def test_a_model_image_naming_a_share_is_refused_by_the_route_it_requests(record
 
     images = _rendered_images()
     app = create_app(RuntimeServices(display_name="VOOL"))
+    # Off explicitly: on Windows the rule is already on when the test starts.
+    windows_host.off()
     page_with_the_rule_off = render_vool_chat_html()
     windows_host.on()
     page_with_the_rule_on = render_vool_chat_html()

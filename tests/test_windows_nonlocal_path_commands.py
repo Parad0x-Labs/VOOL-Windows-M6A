@@ -2,9 +2,10 @@
 
 A stat of `\\\\host\\share` on Windows is an SMB connection (and an NTLM hash sent to whoever
 answers), and a `git` started with its working directory on a share is the same connection.
-Measured on the base (f8d2e30), every command below whose handler ran reached for its path: the
-archaeology commands resolve `workspace_root`, `path` and the files they compare
-(`project_archaeology`), a team start resolves its `workspace`, a council convene starts
+Measured on the base (9f88889), every command below whose handler ran reached for its path: the
+archaeology commands resolve `workspace_root` and `path` (`project_archaeology`; a file to compare
+that is absolute is refused by base's own scope check, by its spelling), a team start resolves its
+`workspace`, a council convene starts
 `git rev-parse` there, the rollback resolves both expected install paths, a bypass grant resolves
 the workspace it is bound to, and `logs.verify` joins `segment_id` onto its segment folder, where a
 share re-roots the join. (`blackbox.rollback` stops at its own availability probe when no turn is
@@ -15,19 +16,21 @@ through three of its doors: the served `/api/commands/dispatch` (the owner comma
 served `/api/update/rollback` press (a legacy route forwarded into the registry), and the model's
 `operator.command.*` tool call in the real executor. The answer is the registry's own usage fault
 (HTTP 400) whose detail names the field and the reason `non_local_path_refused`, and whose summary is
-the sentence the user reads. `project_archaeology.compare` is also called directly, which is the
-defence behind the registry: it answers `ScopeRefused` without reading the share.
+the sentence the user reads. `project_archaeology.compare` and `search` are also called directly,
+which is the defence behind the registry: they answer `ScopeRefused` without reading the share, for
+a share named as a file and for a share as the workspace root. So is the Liquefy segment check,
+whose `segment_id` the operator API joins onto the segment folder.
 
 `tests/_nonlocal_touch_recorder.py` records (and refuses) every filesystem call or process start
 naming the marker host `attkr9`. The Windows rule is switched on only through
 `windows_path_policy._IS_WINDOWS` (the `windows_host` fixture), and only after local setup, because
 with it on a POSIX `tmp_path` counts as root-relative; the local values here are therefore relative
 to the working directory (`ws`). Literal sentences are asserted, never `refusal_text`, so this file
-runs unchanged against a base that has no such module.
+runs against a base given only `core/windows_path_policy.py`, with no guard wired to it.
 
-Not pinned here: `archaeology.compare` with `kind="files"` reads an absolute path outside
-`workspace_root` on every OS. That is a separate, cross-platform finding; only the share forms are
-asserted below.
+A share named as one of the files `compare` reads is refused on every OS by base's own scope check
+(`confine_to_root`, #33), by spelling, before this fix's rule is reached; a share as the workspace
+root is refused only by this fix (`is_protected_path`), which is why both are driven below.
 """
 from __future__ import annotations
 
@@ -429,14 +432,35 @@ def test_archaeology_compare_of_a_file_on_a_share_is_refused_for_model_and_dispa
             answer = None
         observed[f"direct {share}"] = {
             "raised": type(answer).__name__,
-            "says why": "a network or device path" in str(getattr(answer, "reason", "")),
+            # Base's own scope check refuses an absolute file outside the root, by its spelling.
+            "says why": str(getattr(answer, "reason", "")) == "outside the workspace: no root covers this path",
             **_reached(recorder, touches, starts),
         }
         expected[f"direct {share}"] = {"raised": "ScopeRefused", "says why": True, "touches": [], "process starts": []}
+        # The same share as the workspace root of a compare and of a search: that check cannot see it,
+        # so only this fix's rule (`is_protected_path`) stands before the root is looked up.
+        for call, run in (
+            ("compare", lambda root: project_archaeology.compare(kind="files", a="a.txt", b="b.txt", workspace_root=root, requester="test")),
+            ("search", lambda root: project_archaeology.search(text="first", workspace_root=root, requester="test")),
+        ):
+            touches, starts = len(recorder.touches), len(recorder.popen)
+            try:
+                run(share)
+            except Exception as exc:
+                answer = exc
+            else:
+                answer = None
+            observed[f"direct {call} root {share}"] = {
+                "raised": type(answer).__name__,
+                "says why": "a network or device path" in str(getattr(answer, "reason", "")),
+                **_reached(recorder, touches, starts),
+            }
+            expected[f"direct {call} root {share}"] = {"raised": "ScopeRefused", "says why": True, "touches": [], "process starts": []}
 
     # Controls: two local files in the same relative workspace are still compared, by every door.
     local = {"kind": "files", "a": "a.txt", "b": "b.txt", "workspace_root": "ws"}
-    model_local = _execute("operator.command.archaeology.compare", local, context)
+    # The model's `workspace_root` is read inside the folder its turn is bound to (`ws`), so it names it as `.`.
+    model_local = _execute("operator.command.archaeology.compare", {**local, "workspace_root": "."}, context)
     dispatch_local = _dispatch(app, "archaeology.compare", local)
     direct_local = project_archaeology.compare(**local, requester="test")
 
@@ -447,3 +471,26 @@ def test_archaeology_compare_of_a_file_on_a_share_is_refused_for_model_and_dispa
     assert dispatch_local[0] == 200 and dispatch_local[1].get("ok") is True, dispatch_local
     for compared in (dispatch_local[1]["data"], direct_local):
         assert compared["comparison"]["summary"] == "file compare a.txt vs b.txt: changed", compared["comparison"]
+
+
+@pytest.mark.parametrize(
+    "segment_id", [pytest.param("//attkr9/s/x", id="unc-forward"), pytest.param("//?/UNC/attkr9/s/x", id="device-unc")]
+)
+def test_a_log_segment_named_by_a_share_is_never_looked_up(tmp_path: Path, recorder, windows_host, segment_id: str) -> None:
+    # The operator API joins `segment_id` onto the segment folder, and a share re-roots that join; the
+    # registry's `logs.verify` door refuses it first, but the operator API is called directly too.
+    from core.liquefy.operator import verify_segments
+    from core.liquefy.store import LiquefyLogStore, SegmentMissingError
+
+    store = LiquefyLogStore(tmp_path / "logs")
+    windows_host.on()
+
+    with pytest.raises(SegmentMissingError) as refused:
+        verify_segments(segment_id=segment_id, store=store)
+    # Control: a local segment id is still looked for in the segment folder, and is missing there.
+    with pytest.raises(SegmentMissingError) as missing:
+        verify_segments(segment_id="seg-0001", store=store)
+
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+    assert f"`{segment_id}` is a network or device path" in str(refused.value), refused.value
+    assert "is a network or device path" not in str(missing.value), missing.value
