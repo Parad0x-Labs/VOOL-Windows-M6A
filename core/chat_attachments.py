@@ -1006,9 +1006,35 @@ def _json_safe(value: Any) -> bool:
     return True
 
 
-def _stage_bytes(*, session: str, name: str, kind: str, media_type: str, stored: bytes, extra: dict[str, Any]) -> dict[str, Any]:
-    """The one writer: per-message budgets, a fresh id, bytes then manifest. `extra` rides the record."""
-    with _LOCK:
+def _stage_bytes(
+    *, session: str, name: str, kind: str, media_type: str, stored: bytes, extra: dict[str, Any],
+    fence_text: str | None = None, fence_handles: Iterable[str] = (),
+) -> dict[str, Any]:
+    """The one writer: per-message budgets, a fresh id, bytes then manifest. `extra` rides the record.
+
+    `fence_text` (a document's text): the write holds the forget authority's writer fence, so words
+    this chat asked to forget are refused, never stored again ("re-remembering after forget")."""
+    with _LOCK, contextlib.ExitStack() as fences:
+        if fence_text is not None:
+            from core.memory import revocation
+
+            for handle in dict.fromkeys([session, *[str(h or "").strip() for h in fence_handles]]):
+                if not handle:
+                    continue
+                try:
+                    fences.enter_context(revocation.writing(fence_text, handle))
+                except RuntimeError as exc:
+                    if "revoked content" in str(exc):
+                        raise AttachmentRefused(
+                            "forgotten_content",
+                            f"{name} carries words you asked this chat to forget, so it was not kept. "
+                            "Remove them, or use another chat.",
+                        ) from None
+                    raise AttachmentRefused(
+                        "forget_authority_unavailable",
+                        f"{name} was not kept: this chat's forget record could not be read, so it cannot be checked.",
+                        http_status=503,
+                    ) from None
         root = _ensure_stage_dir()
         sweep_expired()
         count, total = _session_budget(session)
@@ -1268,7 +1294,10 @@ def stage_document(*, session_id: str, data: bytes, declared_name: Any = "", sou
             "lines": text.count("\n") + 1,
             "type_rule": rule,
         }
-        return _stage_bytes(session=session, name=name, kind="text", media_type=media_type, stored=bytes(data), extra=extra)
+        return _stage_bytes(
+            session=session, name=name, kind="text", media_type=media_type, stored=bytes(data), extra=extra,
+            fence_text=text, fence_handles=(str(session_id or ""),),
+        )
 
 
 def list_documents(session_id: str) -> list[dict[str, Any]]:
@@ -1683,6 +1712,7 @@ def evidence_items_for_turn(*, session_id: str, turn_id: str, question: str = ""
     """The turn's attachments as bounded evidence items: text inlined as data, images by reference."""
     items: list[dict[str, Any]] = []
     remaining = MAX_TEXT_CHARS_PER_TURN
+    screen = _LazyScreen(session_id)
     with _LOCK:
         for record in _bound_records(session_id, turn_id):
             if record.get("state") != "bound":
@@ -1690,7 +1720,10 @@ def evidence_items_for_turn(*, session_id: str, turn_id: str, question: str = ""
             item = _item_base(record)
             if record["kind"] == "text":
                 budget = max(0, min(MAX_TEXT_CHARS_PER_FILE, remaining))
-                text, truncated, selection = _deliver_text(_open_regular(_bytes_path(record["id"])), budget=budget, exact=bool(record.get("document")), question=question)
+                raw = screen.raw(_open_regular(_bytes_path(record["id"])))
+                if raw is None:
+                    continue
+                text, truncated, selection = _deliver_text(raw, budget=budget, exact=bool(record.get("document")), question=question)
                 remaining = max(0, remaining - len(text))
                 item["text"] = text
                 item["truncated"] = truncated
@@ -1700,6 +1733,8 @@ def evidence_items_for_turn(*, session_id: str, turn_id: str, question: str = ""
                 # Evidence carries the EXTRACTION, never the frames: an evidence item is read by
                 # runtime code, and a base64 video frame in it is megabytes nothing there can use.
                 item = _artifact_entry(record, budget=min(MAX_ARTIFACT_CHARS_PER_FILE, remaining), question=question, with_images=False)
+                if not screen.entry(item):
+                    continue
                 item.setdefault("reference", f"attachment:{record['id']}")
                 item["origin"] = "chat_attachment"
                 remaining = max(0, remaining - len(str(item.get("text") or "")))
@@ -1711,12 +1746,15 @@ def model_attachments_for_turn(*, session_id: str, turn_id: str, question: str =
     """What a model may be handed: bounded text, and images as data URLs of the stripped bytes."""
     entries: list[dict[str, Any]] = []
     remaining = MAX_TEXT_CHARS_PER_TURN
+    screen = _LazyScreen(session_id)
     with _LOCK:
         for record in _bound_records(session_id, turn_id):
             if record.get("state") != "bound":
                 continue
             if record["kind"] == KIND_ARTIFACT:
                 entry = _artifact_entry(record, budget=min(MAX_ARTIFACT_CHARS_PER_FILE, remaining), question=question)
+                if not screen.entry(entry):
+                    continue
                 entry.pop("reference", None)
                 entry.pop("origin", None)
                 remaining = max(0, remaining - len(str(entry.get("text") or "")))
@@ -1727,6 +1765,9 @@ def model_attachments_for_turn(*, session_id: str, turn_id: str, question: str =
             entry.pop("reference", None)
             entry.pop("origin", None)
             if record["kind"] == "text":
+                raw = screen.raw(raw)
+                if raw is None:
+                    continue
                 budget = max(0, min(MAX_TEXT_CHARS_PER_FILE, remaining))
                 text, truncated, selection = _deliver_text(raw, budget=budget, exact=bool(record.get("document")), question=question)
                 remaining = max(0, remaining - len(text))
@@ -1743,6 +1784,9 @@ def model_attachments_for_turn(*, session_id: str, turn_id: str, question: str =
                 extraction = _read_derivative(record["id"]) or {}
                 rendered = str(extraction.get("rendered") or "")
                 if rendered.strip():
+                    rendered = screen.text(rendered)
+                    if rendered is None:
+                        continue
                     allowance = max(0, min(MAX_ARTIFACT_CHARS_PER_FILE, remaining))
                     text, truncated, selection = select_document_text(rendered, budget=allowance, question=question)
                     remaining = max(0, remaining - len(text))
@@ -1768,6 +1812,7 @@ def carried_documents_for_turn(*, session_id: str, exclude_turn_id: str = "", bu
     exclude = str(exclude_turn_id or "").strip()
     entries: list[dict[str, Any]] = []
     remaining = max(0, int(budget))
+    screen = _LazyScreen(session)
     with _LOCK:
         records = [
             r
@@ -1786,7 +1831,10 @@ def carried_documents_for_turn(*, session_id: str, exclude_turn_id: str = "", bu
             path = _bytes_path(record["id"])
             if not path.exists() or path.is_symlink():
                 continue
-            text, truncated, selection = _deliver_text(_open_regular(path), budget=min(MAX_TEXT_CHARS_PER_FILE, remaining), exact=True, question=question)
+            raw = screen.raw(_open_regular(path))
+            if raw is None:
+                continue
+            text, truncated, selection = _deliver_text(raw, budget=min(MAX_TEXT_CHARS_PER_FILE, remaining), exact=True, question=question)
             remaining = max(0, remaining - len(text))
             entry = _item_base(record)
             entry.pop("reference", None)
@@ -2249,6 +2297,228 @@ def erase_session_documents(session_id: str) -> int:
             _unlink_no_follow(_manifest_path(record["id"]))
             removed += 1
     return removed
+
+
+# --- forget reaches the chat's documents (store `chat_documents`) ---------------------------------
+#
+# A "Forget <x>" in a chat must leave no carrier of x that a later turn can be handed: a document of
+# that chat is one (its exact text is carried into every later turn). The forget rewrites each such
+# document with every carrying line removed and says so inline; the manifest keeps the original
+# hash for the receipt. A rewrite that cannot be verified falls back to erasing the bytes. The
+# verifier re-reads every record of the chat and fails closed on anything it cannot read.
+
+FORGET_LINE_MARK = "[line removed by forget]"
+
+
+def _carries(text: str, token: str) -> bool:
+    from core.memory.carriers import carries
+
+    return carries(text, token)
+
+
+def _session_text_records(session: str, *, strict: bool) -> list[dict[str, Any]]:
+    """Every record of the chat (any state but erased) whose bytes are still stored.
+
+    `strict` (the verifier): an unreadable manifest, a symlinked entry or an orphan bytes file is
+    an unknown carrier and raises instead of being skipped."""
+    root = stage_dir()
+    if not root.exists():
+        return []
+    if root.is_symlink():
+        raise AttachmentRefused("symlink_refused", "The attachment staging area is a symbolic link.", http_status=500)
+    if not strict:
+        return [r for r in _all_manifests() if r.get("session_id") == session and r.get("state") != "erased"]
+    records: list[dict[str, Any]] = []
+    known: set[str] = set()
+    for path in sorted(root.glob("att_*.json")):
+        if path.name.endswith(".derived.json"):
+            continue
+        if path.is_symlink():
+            raise AttachmentRefused("symlink_refused", "An attachment manifest is a symbolic link.")
+        payload = json.loads(_open_regular(path).decode("utf-8"))
+        if not isinstance(payload, dict) or not _ID_RE.fullmatch(str(payload.get("id") or "")):
+            raise ValueError("an attachment manifest is unreadable")
+        known.add(payload["id"])
+        if payload.get("session_id") == session and payload.get("state") != "erased":
+            records.append(payload)
+    for path in sorted(root.glob("att_*.bin")):
+        if path.name[: -len(".bin")] not in known:
+            # Bytes with no manifest name no owner: unknown, so never reported as clean.
+            raise ValueError("an attachment bytes file has no manifest")
+    return records
+
+
+def _record_texts(record: dict[str, Any]) -> list[str]:
+    """The words a record can hand a model: its text bytes, and any extraction derived from them."""
+    texts: list[str] = []
+    path = _bytes_path(record["id"])
+    if record.get("kind") == "text" and (path.exists() or path.is_symlink()):
+        texts.append(_open_regular(path).decode("utf-8", errors="replace"))
+    derivative = _derivative_path(record["id"])
+    if derivative.exists() or derivative.is_symlink():
+        texts.append(json.dumps(json.loads(_open_regular(derivative).decode("utf-8")), ensure_ascii=False))
+    return texts
+
+
+def documents_carrying(session_id: str, token: str) -> list[str]:
+    """The ids of this chat's stored records whose words still carry `token`. Raises when unknown."""
+    session = _valid_session(session_id)
+    with _LOCK:
+        return [record["id"] for record in _session_text_records(session, strict=True)
+                if any(_carries(text, token) for text in _record_texts(record))]
+
+
+def _without_carrying_lines(text: str, token: str) -> str:
+    lines = text.splitlines(keepends=True)
+    out: list[str] = []
+    for line in lines:
+        if _carries(line, token):
+            ending = "\n" if line.endswith("\n") else ""
+            out.append(FORGET_LINE_MARK + ending)
+        else:
+            out.append(line)
+    return "".join(out)
+
+
+def _erase_record(record: dict[str, Any]) -> None:
+    """Bytes (and any derivative) gone; a sent record keeps a manifest naming what was there."""
+    _forget_bytes(record["id"])
+    if record.get("state") == "staged":
+        _unlink_no_follow(_manifest_path(record["id"]))
+        return
+    record["state"] = "erased"
+    record["erased_at"] = _iso(_utcnow())
+    record["erased_by"] = "forget"
+    record["bytes_retained"] = False
+    _write_manifest(record)
+
+
+def forget_in_documents(session_id: str, token: str) -> int:
+    """Remove `token` from every stored record of THIS chat. Returns how many records changed.
+
+    A text record is rewritten with each carrying line replaced by ``[line removed by forget]``;
+    its manifest gains ``redacted_at`` and the new ``sha256``, the first hash stays as
+    ``original_sha256``. A record whose rewrite still carries the token (a value split across
+    lines), or whose words sit in an extraction, has its bytes erased instead. Another chat's
+    records are never read for change."""
+    session = _valid_session(session_id)
+    changed = 0
+    with _LOCK:
+        for record in _session_text_records(session, strict=False):
+            texts = _record_texts(record)
+            if not any(_carries(text, token) for text in texts):
+                continue
+            changed += 1
+            path = _bytes_path(record["id"])
+            derivative = _derivative_path(record["id"])
+            if record.get("kind") != "text" or derivative.exists() or not path.exists() or path.is_symlink():
+                _erase_record(record)
+                continue
+            original = _open_regular(path)
+            rewritten = _without_carrying_lines(original.decode("utf-8", errors="replace"), token)
+            data = rewritten.encode("utf-8")
+            if _carries(rewritten, token) or not data:
+                _erase_record(record)
+                continue
+            _write_atomic(path, data)
+            if _open_regular(path) != data:
+                _erase_record(record)
+                continue
+            record["original_sha256"] = record.get("original_sha256") or record.get("sha256")
+            record["sha256"] = hashlib.sha256(data).hexdigest()
+            record["size_bytes"] = len(data)
+            record["chars"] = len(rewritten)
+            record["lines"] = rewritten.count("\n") + 1
+            record["redacted_at"] = _iso(_utcnow())
+            record["forget_redactions"] = int(record.get("forget_redactions") or 0) + 1
+            _write_manifest(record)
+    return changed
+
+
+# --- serve-time revocation fence: a forgotten word never rides a document into a prompt -------------
+
+_WITHHELD_MARK = "[… lines {first}–{last} withheld: they carry words this chat asked to forget …]\n"
+
+
+class _Withheld(Exception):
+    """The document cannot be served: the revocation ledger is unreadable, or its text cannot be cleared."""
+
+
+def _revocation_screen(session_id: str):
+    """A function from a document's text to the text a model may see.
+
+    Every window that carries a revoked token (or a subject this chat withdrew) is replaced by a
+    marker naming its line range and no content. An unreadable ledger raises `_Withheld` for every
+    text (fail closed, the history assembly's `revocation_unavailable`)."""
+    from core.memory import revocation
+    from core.memory.carriers import carries, memory_words
+    from core.memory.withdrawals import payload_is_withdrawn
+
+    handles = {str(session_id or "").strip()}
+    with contextlib.suppress(AttachmentRefused):
+        handles.add(_valid_session(session_id))
+    try:
+        tokens = tuple(sorted({token for handle in handles if handle for token in revocation.revoked_tokens(handle)}))
+    except Exception:
+        def withhold(text: str) -> str:
+            raise _Withheld("revocation_unavailable")
+        return withhold
+    if not tokens:
+        return lambda text: text
+
+    def allowed(chunk: str) -> bool:
+        try:
+            words = memory_words(chunk)
+            return not any(carries(words, token) for token in tokens) and not payload_is_withdrawn(words, tokens)
+        except Exception:
+            return False
+
+    def screen(text: str) -> str:
+        if allowed(text):
+            return text
+        parts = [chunk if allowed(chunk) else _WITHHELD_MARK.format(first=first, last=last)
+                 for first, last, chunk in _line_windows(text)]
+        screened = "".join(parts)
+        if not allowed(screened):
+            raise _Withheld("revoked_words_span_windows")
+        return screened
+
+    return screen
+
+
+class _LazyScreen:
+    """`_revocation_screen` for one delivery call, built only when there is text to screen."""
+
+    def __init__(self, session_id: str) -> None:
+        self._session = session_id
+        self._screen = None
+
+    def text(self, text: str) -> str | None:
+        """The screened text, or None when the record must be withheld whole."""
+        if self._screen is None:
+            self._screen = _revocation_screen(self._session)
+        try:
+            return self._screen(text)
+        except _Withheld:
+            return None
+
+    def raw(self, raw: bytes) -> bytes | None:
+        text = raw.decode("utf-8", errors="replace")
+        screened = self.text(text)
+        if screened is None:
+            return None
+        return raw if screened == text else screened.encode("utf-8")
+
+    def entry(self, entry: dict[str, Any]) -> bool:
+        """Screen an extraction entry's text in place; False when the entry must be withheld."""
+        for key in ("text", "ocr_text"):
+            value = entry.get(key)
+            if isinstance(value, str) and value:
+                screened = self.text(value)
+                if screened is None:
+                    return False
+                entry[key] = screened
+        return True
 
 
 # --- the seams other authorities bind to (portability, Blackbox) -----------------------------------
