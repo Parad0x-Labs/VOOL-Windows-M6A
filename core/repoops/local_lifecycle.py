@@ -40,14 +40,16 @@ def _run(root: str, *args: str, mutating: bool, timeout: int = 30) -> subprocess
     """A hardened git in ``root`` (core/safe_git.py), or a refusal shaped like a failed run.
 
     A repository whose own config names programs is refused outright; a mutation is also refused
-    when the repository has hooks, which hardening would otherwise skip silently. Nothing here
-    runs a program the repository chose."""
+    when the repository has hooks, which hardening would otherwise skip silently, or when it would
+    send Git LFS to a server the repository chose. Nothing here runs a program the repository chose."""
     from pathlib import Path
 
     from core import safe_git
     from core.repoops.gitops import GitRunner
 
-    refusal = GitRunner(root=Path(root))._repository_refusal(mutating=mutating)
+    # A mutation's argv lets the check see the commits it brings in (Git LFS servers named in their
+    # .lfsconfig); signing keys still count for any that can sign. Reads keep the full key check.
+    refusal = GitRunner(root=Path(root))._repository_refusal(mutating=mutating, argv=args if mutating else ())
     if refusal:
         return subprocess.CompletedProcess(args, -1, "", f"git was not run: {refusal}")
     # safe_git's full hardening (hardened_argv: submodule.recurse=false and the other submodule and

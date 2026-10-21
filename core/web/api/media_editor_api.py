@@ -20,7 +20,7 @@ import html
 from pathlib import Path
 from typing import Any
 
-from core import policy_engine, windows_write_gate
+from core import policy_engine, windows_path_policy, windows_write_gate
 from core.media_studio_service import (
     MediaStudioServiceError,
     apply_edit,
@@ -310,6 +310,10 @@ def handle_media_editor_post(path: str, body: dict[str, Any]) -> Any:
             if not policy_engine.get("media.editor_export_enabled", True):
                 return _fail("export_disabled", "editor export disabled by policy", 403)
             out_path = str(body.get("output_path") or "")
+            # On Windows a share or a partial path is refused by its spelling, before the gate places it.
+            non_local = windows_path_policy.refused_form(out_path)
+            if non_local:
+                return _fail(windows_path_policy.STATUS, windows_path_policy.refusal_text(out_path, non_local), 403)
             # On Windows the editor exports only into the flagged folders: the gate checks the output and
             # the folder holding its stage files, placed as export_project places them. There is no chat
             # workspace here, so none is checked.

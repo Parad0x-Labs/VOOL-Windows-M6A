@@ -76,6 +76,13 @@ def dispatch_operator_action(
     composed = _composed_request_parts(intent, task_id=task_id, session_id=session_id)
     if composed is not None:
         return composed
+    if intent.kind in {"inspect_disk_usage", "move_path", "cleanup_temp_files"}:
+        # On Windows a path naming a share, a device or no full local folder is refused before the
+        # disk-usage, move and clean-up handlers look it up: on Windows a lookup of `\\host\share` is
+        # already the SMB connection.
+        refused = operator_handlers.non_local_path_refusal(intent.kind, intent.target_path, intent.destination_path)
+        if refused is not None:
+            return refused
     if intent.kind in {"schedule_reminder", "list_reminders", "cancel_reminder", "move_reminder",
                        "cancel_calendar_event", "move_calendar_event",
                        "check_availability", "list_calendars", "inspect_calendar_event",

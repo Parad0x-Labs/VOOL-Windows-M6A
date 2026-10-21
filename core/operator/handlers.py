@@ -5,11 +5,27 @@ import re
 from pathlib import Path
 from typing import Any
 
+from core import windows_path_policy
 from core.execution.constants import machine_process_sort
 from core.reasoning_engine import Plan
 
 from .models import OperatorActionIntent, OperatorActionResult
 from .when import format_due_time, has_passed
+
+
+def non_local_path_refusal(kind: str, *paths: Any) -> OperatorActionResult | None:
+    """On Windows, the refusal for the first of ``paths`` that names a share, a device or no full local
+    folder, before any handler looks it up; None otherwise, and always None off Windows."""
+    for path in paths:
+        non_local = windows_path_policy.refused_form(path)
+        if non_local:
+            return OperatorActionResult(
+                ok=False,
+                status=windows_path_policy.STATUS,
+                response_text=windows_path_policy.refusal_text(path, non_local),
+                details={"kind": kind},
+            )
+    return None
 
 
 def _percent(value: Any) -> float:
@@ -460,6 +476,10 @@ def handle_move_path(
                 ),
                 details={},
             )
+        # The quoted paths are read from the request text here, so they are judged here too.
+        refused = non_local_path_refusal(intent.kind, parsed.get("source_path"), parsed.get("destination_dir"))
+        if refused is not None:
+            return refused
         source = Path(str(parsed["source_path"])).expanduser()
         destination_dir = Path(str(parsed["destination_dir"])).expanduser()
         validation_error = validate_move_scope_fn(source, destination_dir)

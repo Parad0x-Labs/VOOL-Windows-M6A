@@ -17,6 +17,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from core import windows_path_policy
 from core.memory.files import utcnow
 from core.runtime_paths import data_path
 
@@ -77,7 +78,9 @@ def list_projects() -> list[dict[str, Any]]:
     """All projects, newest first. Each: {id, name, root, created_at, exists}."""
     projects = list(_load().values())
     for entry in projects:
-        entry["exists"] = os.path.isdir(str(entry.get("root") or ""))
+        root = str(entry.get("root") or "")
+        # On Windows a stored share is listed as missing without being looked up.
+        entry["exists"] = not windows_path_policy.refused_form(root, network_only=True) and os.path.isdir(root)
     projects.sort(key=lambda p: str(p.get("created_at") or ""), reverse=True)
     return projects
 
@@ -92,6 +95,8 @@ def project_root(project_id: str) -> str | None:
     if not project:
         return None
     root = str(project.get("root") or "")
+    if windows_path_policy.refused_form(root, network_only=True):
+        return None  # a stored share on Windows: never looked up, so never bound or revealed
     return root if root and os.path.isdir(root) else None
 
 
@@ -99,8 +104,12 @@ def create_project(name: str, root: str) -> tuple[bool, Any]:
     """Register a folder as a project. Returns (True, project) or (False, error_message).
 
     Idempotent by real path: adding the same folder twice returns the existing project (name refreshed).
-    The root must be an existing absolute directory; the filesystem root '/' is refused as a guard.
+    The root must be an existing absolute directory; the filesystem root '/' is refused as a guard. On
+    Windows a share or a partial path is refused by its spelling, before anything looks it up.
     """
+    non_local = windows_path_policy.refused_form(root)
+    if non_local:
+        return False, windows_path_policy.refusal_text(root, non_local)
     resolved = _normalize_root(root)
     if not resolved:
         return False, "a project folder is required"

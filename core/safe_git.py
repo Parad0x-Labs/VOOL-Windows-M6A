@@ -298,9 +298,10 @@ def lfs_endpoint_refusal(cwd: Path, argv: Sequence[str] = (), *, timeout: float 
     the repository's remotes, since git-lfs then contacts that URL. A proxy the repository sets
     (``http.proxy``) is not counted: git's own fetch and push go through it as well. A trusted server can still point
     git-lfs at storage elsewhere; that is the server's choice, not the repository's. Commands that
-    never write LFS files into the work tree (add, commit, tag, push without git-lfs's hook) are
-    not checked. A check that cannot finish refuses."""
-    if argv and argv[0] in _LFS_FREE_SUBCOMMANDS:
+    never write LFS files into the work tree (add, commit, tag, branch, worktree remove and prune,
+    restore of the index only, push without git-lfs's hook) are not checked. A check that cannot finish refuses."""
+    if argv and (argv[0] in _LFS_FREE_SUBCOMMANDS or tuple(argv[:2]) in _LFS_FREE_WORKTREE_COMMANDS
+                 or _restores_the_index_only(argv)):
         return ""
     try:
         named: list[tuple[str, str]] = []
@@ -357,8 +358,22 @@ def lfs_endpoint_refusal(cwd: Path, argv: Sequence[str] = (), *, timeout: float 
 
 
 #: Subcommands VOOL runs that never write LFS files into the work tree (git-lfs uploads on push
-#: only from its pre-push hook, and hooks are refused).
-_LFS_FREE_SUBCOMMANDS = frozenset({"add", "commit", "tag", "push"})
+#: only from its pre-push hook, and hooks are refused; branch only moves refs, so a branch carrying
+#: a hostile .lfsconfig can still be deleted).
+_LFS_FREE_SUBCOMMANDS = frozenset({"add", "commit", "tag", "push", "branch"})
+#: Worktree housekeeping that deletes a worktree or its record and never checks one out.
+_LFS_FREE_WORKTREE_COMMANDS = frozenset({("worktree", "remove"), ("worktree", "prune")})
+
+
+def _restores_the_index_only(argv: Sequence[str]) -> bool:
+    """``git restore --staged`` (or ``-S``) and nothing else: it writes only the index, never a file,
+    so no smudge filter runs. Any other option, abbreviations of ``--worktree`` among them, is not
+    taken as index-only."""
+    if argv[0] != "restore":
+        return False
+    args = list(argv[1:])
+    options = [arg for arg in (args[:args.index("--")] if "--" in args else args) if arg.startswith("-")]
+    return options in (["--staged"], ["-S"])
 
 
 def _is_remote_pick_key(key: str) -> bool:
@@ -446,9 +461,9 @@ def _tree_lfsconfigs(cwd: Path, revisions: dict[str, str], *, timeout: float) ->
 
 
 #: Options of the commands VOOL runs that take a value (-m is cherry-pick's and revert's mainline,
-#: merge's message; -c/-C/--orphan name the branch switch creates).
+#: merge's message; -c/-C/--orphan name the branch switch creates, -b/-B the one worktree add does).
 _VALUE_OPTIONS = frozenset({"-m", "--message", "--mainline", "-s", "--strategy", "-X", "--strategy-option",
-                            "-c", "-C", "--create", "--force-create", "--orphan"})
+                            "-c", "-C", "--create", "--force-create", "--orphan", "-b", "-B", "--reason"})
 
 #: Commands whose positional arguments are the commits they bring into the work tree.
 _BRINGING_COMMANDS = frozenset({"merge", "cherry-pick", "revert", "switch"})
@@ -459,10 +474,12 @@ _ABORT_STATE = ("ORIG_HEAD", "MERGE_AUTOSTASH", "rebase-merge/orig-head", "rebas
 
 
 def _revision_args(argv: Sequence[str]) -> list[str]:
-    """The arguments of ``git <argv>`` that may name a revision (not options or their values;
-    a lone ``-`` is the previous branch)."""
+    """The arguments of ``git <argv>`` that may name a revision (not options or their values, nor
+    the paths after ``--``; a lone ``-`` is the previous branch)."""
     found, skip_value = [], False
     for arg in list(argv)[1:]:
+        if arg == "--" and not skip_value:
+            break  # paths follow (checkout -- <path> restores from the index, which is checked anyway)
         if skip_value:
             skip_value = False
         elif arg in _VALUE_OPTIONS:
@@ -479,6 +496,102 @@ def _resolve_commit(cwd: Path, revision: str, *, timeout: float) -> str:
     if probe.returncode != 0 or not probe.stdout.strip():
         raise RuntimeError(f"{revision!r} is not a revision VOOL can check")
     return _rev_parse(cwd, f"{probe.stdout.strip()}^{{commit}}", timeout=timeout)
+
+
+#: Options with which switch and worktree add read their target as a start point, not a branch.
+_START_POINT_OPTIONS = frozenset({"-c", "-C", "--create", "--force-create", "--orphan", "-d", "--detach",
+                                  "-b", "-B"})
+
+
+def _tracking_refs(cwd: Path, name: str, *, timeout: float) -> set[str]:
+    """The refs git may take a remote's branch ``name`` from when it creates a tracking branch: each
+    remote's fetch refspecs applied to ``refs/heads/<name>`` as git applies them (a ``*`` on both
+    sides carries the matched part over), so a refspec that files it under any name is seen.
+    Remotes set in ``remotes/`` or ``branches/`` files, which git also reads, cannot be checked."""
+    for legacy in ("remotes", "branches"):
+        where = subprocess.run(hardened_argv(cwd, "rev-parse", "--git-path", legacy), capture_output=True,
+                               encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
+        if where.returncode != 0 or not where.stdout.strip():
+            raise RuntimeError(f"git rev-parse --git-path failed ({where.returncode})")
+        path = Path(where.stdout.strip())
+        path = path if path.is_absolute() else Path(cwd) / path
+        if path.is_dir() and any(path.iterdir()):
+            raise RuntimeError(f"remotes set in the repository's {legacy} folder cannot be checked")
+    branch = f"refs/heads/{name}"
+    refs: set[str] = set()
+    for key, value in _config_entries(cwd, [], timeout=timeout):
+        if not (key.startswith("remote.") and key.endswith(".fetch")) or not value:
+            continue
+        if "\ufffd" in value:  # read as text, a name in other bytes would not be the ref git uses
+            raise RuntimeError(f"the fetch refspec {key} names refs that cannot be checked")
+        spec = value.strip().lstrip("+")
+        if spec.startswith("^") or ":" not in spec:
+            continue  # a negative refspec only narrows; one without a destination makes no ref
+        src, _, dst = spec.partition(":")
+        if "*" in src:
+            prefix, _, suffix = src.partition("*")
+            if len(branch) < len(prefix) + len(suffix) or not branch.startswith(prefix) or not branch.endswith(suffix):
+                continue
+            middle = branch[len(prefix):len(branch) - len(suffix)]
+            dst = dst.replace("*", middle, 1)
+        elif src != branch:
+            continue
+        if dst:
+            refs.add(dst)
+    return refs
+
+
+def _checkout_target_commits(cwd: Path, name: str, *, as_branch: bool, timeout: float) -> list[str]:
+    """Every commit ``git switch <name>`` or ``git worktree add <path> <name>`` may check out. git reads
+    the name as a local branch first (``rev-parse`` would prefer a tag of the same name, and is
+    checked too). As a branch (``as_branch``, not a ``-c``/``--detach`` start point) with no local
+    branch of that name, git creates a tracking branch from a remote's, found through each remote's
+    fetch refspec, which the repository sets: so the refs those refspecs map ``<name>`` to, and every
+    ref ending in ``/<name>``, are checked. A name that is none of them refuses."""
+    found: list[str] = []
+    if name == "-" or name.startswith("@{-"):
+        # The previous branch: rev-parse would prefer a tag of its name, git switches to the branch.
+        full = subprocess.run(hardened_argv(cwd, "rev-parse", "--symbolic-full-name", "@{-1}" if name == "-" else name),
+                              capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
+        # git names no ref when a tag shares the branch's name (it says so only in a translated
+        # message), and none for a detached HEAD: either way the target cannot be read.
+        if full.returncode != 0 or not full.stdout.strip().startswith("refs/heads/"):
+            raise RuntimeError(f"the branch {name!r} names cannot be read")
+        found.append(_rev_parse(cwd, f"{full.stdout.strip()}^{{commit}}", timeout=timeout))
+    elif not name.startswith("refs/"):
+        local = subprocess.run(hardened_argv(cwd, "rev-parse", "--verify", "--quiet", f"refs/heads/{name}^{{commit}}"),
+                               capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
+        if local.returncode == 0 and local.stdout.strip():
+            found.append(local.stdout.strip())
+        elif as_branch:
+            listing = subprocess.run(hardened_argv(cwd, "for-each-ref", "--format=%(objectname) %(refname)"),
+                                     capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout,
+                                     env=safe_env())
+            if listing.returncode != 0:
+                raise RuntimeError(f"git for-each-ref failed ({listing.returncode})")
+            tracking = _tracking_refs(cwd, name, timeout=timeout)
+            for line in listing.stdout.splitlines():
+                oid, _, ref = line.partition(" ")
+                if ref.endswith(f"/{name}"):
+                    commit = subprocess.run(hardened_argv(cwd, "rev-parse", "--verify", "--quiet", f"{oid}^{{commit}}"),
+                                            capture_output=True, encoding="utf-8", errors="surrogateescape",
+                                            timeout=timeout, env=safe_env())
+                    if commit.returncode == 0 and commit.stdout.strip():  # a tag of a tree is no branch
+                        found.append(commit.stdout.strip())
+            for ref in sorted(tracking):
+                if ref.startswith("-"):
+                    raise RuntimeError(f"the fetch refspec destination {ref!r} cannot be checked")
+                commit = subprocess.run(hardened_argv(cwd, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"),
+                                        capture_output=True, encoding="utf-8", errors="surrogateescape",
+                                        timeout=timeout, env=safe_env())
+                if commit.returncode == 0 and commit.stdout.strip():
+                    found.append(commit.stdout.strip())
+    try:
+        found.append(_resolve_commit(cwd, name, timeout=timeout))
+    except RuntimeError:
+        if not found:
+            raise
+    return list(dict.fromkeys(found))
 
 
 def _incoming_commits(cwd: Path, argv: Sequence[str], *, timeout: float) -> list[tuple[str, str]]:
@@ -509,6 +622,16 @@ def _incoming_commits(cwd: Path, argv: Sequence[str], *, timeout: float) -> list
                     found.append((state, probe.stdout.strip()))
         return found
     targets = _revision_args(argv)
+    if argv[0] == "switch" or tuple(argv[:2]) == ("worktree", "add"):
+        as_branch = not any(arg in _START_POINT_OPTIONS or arg.startswith(("-b", "-B")) for arg in argv[1:])
+        if argv[0] == "worktree":
+            # worktree add <path> alone checks out a branch guessed from the folder's name (or, with
+            # worktree.guessRemote, a remote's); -b/-B/--detach without a commit start at HEAD.
+            if "--" in argv or (as_branch and len(targets) < 3):
+                raise RuntimeError("git worktree add without an explicit commit cannot be checked")
+            targets = targets[2:]  # after "add" and the new worktree's path
+        return [(arg, commit) for arg in targets
+                for commit in _checkout_target_commits(cwd, arg, as_branch=as_branch, timeout=timeout)]
     if argv[0] in _BRINGING_COMMANDS:
         if argv[0] != "switch" and not targets:
             raise RuntimeError(f"git {argv[0]} without a commit cannot be checked")
@@ -549,6 +672,14 @@ def _holds_lfsconfig_anywhere(cwd: Path, commits: Sequence[str], *, timeout: flo
     return False
 
 
+def _parents(cwd: Path, commit: str, *, timeout: float) -> list[str]:
+    listing = subprocess.run(hardened_argv(cwd, "rev-list", "--no-walk", "--parents", commit), capture_output=True,
+                             encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
+    if listing.returncode != 0 or not listing.stdout.strip():
+        raise RuntimeError(f"git rev-list --parents failed ({listing.returncode})")
+    return listing.stdout.split()[1:]
+
+
 def _merge_result_tree(cwd: Path, argv: Sequence[str], *, timeout: float) -> str:
     """The tree a merge, cherry-pick or revert of one commit would write ("" for other commands,
     for --abort, and when no side and no merge base holds an ``.lfsconfig``, so the result cannot)."""
@@ -565,9 +696,21 @@ def _merge_result_tree(cwd: Path, argv: Sequence[str], *, timeout: float) -> str
             raise RuntimeError(f"git merge-base failed ({bases.returncode})")
         sides, involved = ["HEAD", target], [*bases.stdout.split(), "HEAD", target]
     else:
-        parent = _rev_parse(cwd, f"{target}^{_mainline(argv)}", timeout=timeout)  # raises for a root commit
-        base, theirs = (parent, target) if argv[0] == "cherry-pick" else (target, parent)
-        sides, involved = ["--merge-base", base, "HEAD", theirs], [base, "HEAD", theirs]
+        if not _parents(cwd, target, timeout=timeout):
+            if argv[0] == "revert":
+                raise RuntimeError("git revert of a root commit cannot be checked")
+            # git cherry-picks a root commit onto an empty base, so files both sides add are merged
+            # (a union merge driver can join two harmless .lfsconfig files into one naming a server).
+            empty = subprocess.run(hardened_argv(cwd, "hash-object", "-t", "tree", "--stdin"), input="",
+                                   capture_output=True, encoding="utf-8", errors="surrogateescape",
+                                   timeout=timeout, env=safe_env())
+            if empty.returncode != 0 or len(empty.stdout.strip()) not in (40, 64):
+                raise RuntimeError(f"git hash-object failed ({empty.returncode})")
+            sides, involved = ["--merge-base", empty.stdout.strip(), "HEAD", target], ["HEAD", target]
+        else:
+            parent = _rev_parse(cwd, f"{target}^{_mainline(argv)}", timeout=timeout)
+            base, theirs = (parent, target) if argv[0] == "cherry-pick" else (target, parent)
+            sides, involved = ["--merge-base", base, "HEAD", theirs], [base, "HEAD", theirs]
     if not _holds_lfsconfig_anywhere(cwd, involved, timeout=timeout):
         return ""
     # merge.renormalize would run the user's filters (git-lfs among them) on both sides.
@@ -637,9 +780,12 @@ def hardened_argv(cwd: Path, *argv: str) -> list[str]:
     # attributes, out of reach of --no-ext-diff. `short` and no status summary run nothing there.
     # `submodule.recurse` would make switch/checkout/merge rebuild such a submodule from that folder
     # (running its filters), and `log.showSignature` would make log run the user's gpg on a forged
-    # signature the repository planted.
+    # signature the repository planted. A repository's `format.pretty` with `%G` does the same for a
+    # log or show without --format (under its `gpg.format`, ssh-keygen or gpgsm); `medium` is git's
+    # default, and a `pretty.medium` alias cannot replace a built-in format.
     command = ["git", *hardening_args(), "-c", "diff.submodule=short", "-c", "status.submoduleSummary=false",
-               "-c", "submodule.recurse=false", "-c", "log.showSignature=false", "-C", str(cwd), *argv]
+               "-c", "submodule.recurse=false", "-c", "log.showSignature=false", "-c", "format.pretty=medium",
+               "-C", str(cwd), *argv]
     if argv and argv[0] in {"diff", "log", "show"}:
         command[len(command) - len(argv) + 1:len(command) - len(argv) + 1] = ["--no-ext-diff", "--no-textconv"]
     return command

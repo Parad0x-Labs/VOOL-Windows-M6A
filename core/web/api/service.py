@@ -1081,11 +1081,14 @@ def dispatch_get(
         from pathlib import Path
         from urllib.parse import unquote
 
-        from core import runtime_paths
+        from core import runtime_paths, windows_path_policy
 
         if not is_loopback_host(client_host):
             return apply_runtime_headers(json_response(403, {"ok": False, "error": "owner_local_required"}), runtime)
         requested = unquote((query.get("path") or [""])[0])
+        # On Windows a share or a partial path is refused by its spelling: resolving it reaches for it.
+        if windows_path_policy.refused_form(requested):
+            return apply_runtime_headers(json_response(403, {"ok": False, "error": "path_not_allowed"}), runtime)
         bundles_root = runtime_paths.data_path("session_bundles").resolve()
         try:
             resolved = Path(requested).resolve()
@@ -4505,6 +4508,7 @@ def _dispatch_post_inner(
             # resolved from the chat's server-side namespace/project state, so a client, plugin
             # or model cannot widen the grant by naming another workspace, the home directory,
             # the filesystem root, or another chat's folder.
+            from core import windows_path_policy
             from core.context_namespace import authoritative_chat_workspace
 
             authoritative_root, root_reason = authoritative_chat_workspace(mode_session)
@@ -4548,7 +4552,10 @@ def _dispatch_post_inner(
                 claimed_root = str(body.get("workspace_root") or "").strip()
                 if claimed_root:
                     try:
-                        matches = _Path(claimed_root).expanduser().resolve() == _Path(authoritative_root).resolve()
+                        # On Windows a share or a partial path never matches, and is not resolved to tell.
+                        matches = not windows_path_policy.refused_form(claimed_root) and (
+                            _Path(claimed_root).expanduser().resolve() == _Path(authoritative_root).resolve()
+                        )
                     except (OSError, RuntimeError):
                         matches = False
                     if not matches:
@@ -4662,6 +4669,7 @@ def _dispatch_post_inner(
                         ),
                         runtime,
                     )
+                from core import windows_path_policy
                 from core.context_namespace import authoritative_chat_workspace
 
                 workspace_root, root_reason = authoritative_chat_workspace(mode_session)
@@ -4689,7 +4697,10 @@ def _dispatch_post_inner(
                 claimed_root = str(body.get("workspace_root") or "").strip()
                 if claimed_root:
                     try:
-                        matches = _Path(claimed_root).expanduser().resolve() == _Path(workspace_root).resolve()
+                        # On Windows a share or a partial path never matches, and is not resolved to tell.
+                        matches = not windows_path_policy.refused_form(claimed_root) and (
+                            _Path(claimed_root).expanduser().resolve() == _Path(workspace_root).resolve()
+                        )
                     except (OSError, RuntimeError):
                         matches = False
                     if not matches:
@@ -7388,6 +7399,23 @@ def _dispatch_post_inner(
         inbound_source_context = strip_reserved_trust_keys(
             _inbound_source_context(body)
         )
+        # On Windows a workspace field naming a share or a partial path is refused before any turn
+        # runs, because the turn would look its workspace up.
+        from core import windows_path_policy
+
+        workspace_refusal = windows_path_policy.chat_workspace_refusal(body, inbound_source_context)
+        if workspace_refusal is not None:
+            return apply_runtime_headers(
+                json_response(
+                    400,
+                    {
+                        "ok": False,
+                        "error": windows_path_policy.STATUS,
+                        "message": windows_path_policy.refusal_text(workspace_refusal.value, workspace_refusal.kind),
+                    },
+                ),
+                runtime,
+            )
         resolved_surface = (
             str(
                 inbound_source_context.get("surface")

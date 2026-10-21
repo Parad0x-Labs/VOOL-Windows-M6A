@@ -168,6 +168,25 @@ def test_reading_a_repository_that_turns_signature_checks_on_never_runs_gpg(tmp_
     assert not marker.exists(), "VOOL's read ran the user's gpg on a forged signature"
 
 
+@_POSIX_SCRIPT
+def test_a_log_without_a_format_ignores_the_repositorys_signature_placeholder(tmp_path: Path, monkeypatch) -> None:
+    # format.pretty with %G makes a plain `git log` check the signature (through ssh-keygen or gpgsm
+    # under the repository's gpg.format), and log is a read, so the signing keys do not refuse it.
+    repo, marker = _repo(tmp_path)
+    _user_signing_program(tmp_path, monkeypatch, marker)
+    _forged_signature_commit(repo)
+    _git(repo, "config", "format.pretty", "%G?|%s")
+    subprocess.run(["git", *safe_git.hardening_args(), "-C", str(repo), "log", "-1", "forged"],
+                   capture_output=True, timeout=60, env=safe_git.safe_env())
+    assert marker.exists(), "control: the repository's format.pretty did not run gpg; the case below proves nothing"
+    marker.unlink()
+
+    code, out, _ = GitRunner(root=repo).run("log", "-1", "forged")
+
+    assert code == 0 and out.startswith("commit ") and "forged" in out
+    assert not marker.exists(), "VOOL's log ran the user's gpg for the repository's format.pretty"
+
+
 def test_the_refusal_names_where_each_key_is_set(tmp_path: Path) -> None:
     repo, _marker = _repo(tmp_path)
     _git(repo, "config", "extensions.worktreeConfig", "true")

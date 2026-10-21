@@ -35,6 +35,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from core import windows_path_policy
+
 MAX_SAVED = 24
 MAX_RENDERED = 12
 MAX_CHARS = 240
@@ -235,6 +237,9 @@ def workspace_key(source_context: Mapping[str, Any] | None, project_id: str = ""
         return f"project:{project}"
     folder = str(ctx.get("workspace_root") or ctx.get("workspace") or "").strip()
     if folder:
+        if windows_path_policy.refused_form(folder, network_only=True):
+            # On Windows a share or device folder keys by its spelling: realpath would reach for it.
+            return "folder:" + folder
         return "folder:" + os.path.realpath(folder)
     return "default"
 
