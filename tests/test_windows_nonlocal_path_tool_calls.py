@@ -393,3 +393,32 @@ def test_a_share_is_labelled_as_written_and_never_resolved(recorder, windows_hos
 
     assert _home_relative_label(Path("//attkr9/s/docs")) == "//attkr9/s/docs"
     assert recorder.touches == [], recorder.report()
+
+
+@pytest.mark.parametrize("intent", ["repo.push.request", "repo.session.open"])
+def test_a_push_remote_naming_a_share_is_refused_before_it_is_looked_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorder, windows_host, intent: str
+) -> None:
+    # A push remote is a remote's name or a URL. One on a share is the folder the push check would look
+    # up for its hooks and settings, which is already the SMB connection, so the door refuses it first.
+    workspace, _home = _local_machine(tmp_path, monkeypatch)
+    decisions = _spy(monkeypatch, executor, "decide_tool_call")
+    local_arguments = {
+        "repo.push.request": {"repo_session_id": "rs-none", "ref": "main"},
+        "repo.session.open": {"objective": "push it", "provider": "github", "namespace": "o/r"},
+    }[intent]
+    shares = [(form.value, form.kind) for form in MARKER_FORMS if form.network]
+    shares += [("file://attkr9/s/r.git", "unc"), ("file:////attkr9/s/r.git", "unc")]
+    windows_host.on()
+
+    for value, kind in shares:
+        result = _execute(intent, {**local_arguments, "remote": value}, {"workspace": str(workspace), "operating_mode": "auto"})
+        assert (result.status, (result.details or {}).get("kind")) == (STATUS, kind), (value, result.status, result.response_text)
+        assert f"`{value}` is a network or device path" in str(result.response_text or ""), (value, result.response_text)
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+    assert decisions == [], "a permission decision was taken for a share"
+
+    # A remote's name, a hosted URL and a local drive path are not refused here.
+    for value in ("origin", "https://github.com/o/r.git", "git@github.com:o/r.git", "C:/repos/r.git"):
+        result = _execute(intent, {**local_arguments, "remote": value}, {"workspace": str(workspace), "operating_mode": "auto"})
+        assert result.status != STATUS, (value, result.response_text)
