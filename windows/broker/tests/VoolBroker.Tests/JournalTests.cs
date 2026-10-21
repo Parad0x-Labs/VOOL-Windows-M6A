@@ -101,6 +101,7 @@ public sealed class JournalTests : IDisposable
             .Append("before_commit:-1").Append("after_commit:-1").ToArray();
         foreach (var boundary in boundaries)
         {
+            TestContext.Current.TestOutputHelper?.WriteLine($"Boundary {boundary} at {DateTime.UtcNow:HH:mm:ss.fff}");
             work.Reset();
             Seed();
             var before = TestSupport.ContentHash(work.Root);
