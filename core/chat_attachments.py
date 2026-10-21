@@ -823,7 +823,9 @@ def stage_attachment(*, session_id: str, declared_name: Any, declared_type: Any,
         if extraction is not None:
             _refuse_credential_shaped_extraction(name, extraction)
             extra = _extraction_summary(extraction)
-    record = _stage_bytes(session=session, name=name, kind=kind, media_type=media_type, stored=stored, extra=extra)
+    # The name is kept on the receipt after the turn: a forgotten word never comes back through it.
+    record = _stage_bytes(session=session, name=name, kind=kind, media_type=media_type, stored=stored, extra=extra,
+                          fence_name=True, fence_handles=(str(session_id or ""),))
     if extraction is not None:
         _write_derivative(record["id"], extraction)
     return record
@@ -1008,26 +1010,27 @@ def _json_safe(value: Any) -> bool:
 
 def _stage_bytes(
     *, session: str, name: str, kind: str, media_type: str, stored: bytes, extra: dict[str, Any],
-    fence_text: str | None = None, fence_handles: Iterable[str] = (),
+    fence_text: str | None = None, fence_handles: Iterable[str] = (), fence_name: bool = False,
 ) -> dict[str, Any]:
     """The one writer: per-message budgets, a fresh id, bytes then manifest. `extra` rides the record.
 
     `fence_text` (a document's text): the write holds the forget authority's writer fence, so words
     this chat asked to forget are refused, never stored again ("re-remembering after forget")."""
     with _LOCK, contextlib.ExitStack() as fences:
-        if fence_text is not None:
+        if fence_text is not None or fence_name:
             from core.memory import revocation
 
+            payload = [name] if fence_text is None else [name, fence_text]
             for handle in dict.fromkeys([session, *[str(h or "").strip() for h in fence_handles]]):
                 if not handle:
                     continue
                 try:
-                    fences.enter_context(revocation.writing(fence_text, handle))
+                    fences.enter_context(revocation.writing(payload, handle))
                 except RuntimeError as exc:
                     if "revoked content" in str(exc):
                         raise AttachmentRefused(
                             "forgotten_content",
-                            f"{name} carries words you asked this chat to forget, so it was not kept. "
+                            "This attachment carries words you asked this chat to forget, so it was not kept. "
                             "Remove them, or use another chat.",
                         ) from None
                     raise AttachmentRefused(
@@ -1723,6 +1726,7 @@ def evidence_items_for_turn(*, session_id: str, turn_id: str, question: str = ""
                 raw = screen.raw(_open_regular(_bytes_path(record["id"])))
                 if raw is None:
                     continue
+                item["name"] = screen.name(record)
                 text, truncated, selection = _deliver_text(raw, budget=budget, exact=bool(record.get("document")), question=question)
                 remaining = max(0, remaining - len(text))
                 item["text"] = text
@@ -1768,6 +1772,7 @@ def model_attachments_for_turn(*, session_id: str, turn_id: str, question: str =
                 raw = screen.raw(raw)
                 if raw is None:
                     continue
+                entry["name"] = screen.name(record)
                 budget = max(0, min(MAX_TEXT_CHARS_PER_FILE, remaining))
                 text, truncated, selection = _deliver_text(raw, budget=budget, exact=bool(record.get("document")), question=question)
                 remaining = max(0, remaining - len(text))
@@ -1839,6 +1844,7 @@ def carried_documents_for_turn(*, session_id: str, exclude_turn_id: str = "", bu
             entry = _item_base(record)
             entry.pop("reference", None)
             entry.pop("origin", None)
+            entry["name"] = screen.name(record)
             entry.update({"text": text, "truncated": truncated, "carried": True, "origin_turn_id": str(record.get("turn_id") or ""), "lines": int(record.get("lines") or 0)})
             if selection:
                 entry["selection"] = selection
@@ -2309,6 +2315,18 @@ def erase_session_documents(session_id: str) -> int:
 
 FORGET_LINE_MARK = "[line removed by forget]"
 
+#: The serve-time notice for a window withheld by the screen, in brackets a user's own text does not use.
+_WITHHELD_MARK = "⟦… lines {first}–{last} withheld: they carry words this chat asked to forget …⟧\n"
+_WITHHELD_MARK_RE = re.compile(r"⟦… lines \d+–\d+ withheld: they carry words this chat asked to forget …⟧")
+
+
+def _neutral_name(record: dict[str, Any], token: str = "") -> str:
+    """A name that says nothing of the content: ``document-<id>`` plus the old extension when that
+    extension does not itself carry `token` (and none at all at serve time, `token` unknown)."""
+    extension = os.path.splitext(str(record.get("name") or ""))[1].lower()
+    keep = token and extension and len(extension) <= 8 and extension[1:].isalnum() and not _carries(extension, token)
+    return f"document-{str(record.get('id') or '')[4:12]}" + (extension if keep else "")
+
 
 def _carries(text: str, token: str) -> bool:
     from core.memory.carriers import carries
@@ -2317,7 +2335,8 @@ def _carries(text: str, token: str) -> bool:
 
 
 def _session_text_records(session: str, *, strict: bool, token: str = "") -> list[dict[str, Any]]:
-    """Every record of the chat (any state but erased) whose bytes are still stored.
+    """Every record of the chat, erased ones included (an erased record keeps its name for the
+    receipt, and a name is shown and sent like content).
 
     `strict` (the verifier): a manifest that cannot be read names no owner, so its bytes -- and
     any bytes file with no manifest -- are read too; when they carry `token` (or cannot be read)
@@ -2328,7 +2347,7 @@ def _session_text_records(session: str, *, strict: bool, token: str = "") -> lis
     if root.is_symlink():
         raise AttachmentRefused("symlink_refused", "The attachment staging area is a symbolic link.", http_status=500)
     if not strict:
-        return [r for r in _all_manifests() if r.get("session_id") == session and r.get("state") != "erased"]
+        return [r for r in _all_manifests() if r.get("session_id") == session]
     records: list[dict[str, Any]] = []
     known: set[str] = set()
     for path in sorted(root.glob("att_*.json")):
@@ -2341,9 +2360,13 @@ def _session_text_records(session: str, *, strict: bool, token: str = "") -> lis
             if not isinstance(payload, dict) or payload.get("id") != path.name[: -len(".json")]:
                 raise ValueError("an attachment manifest is unreadable")
         except (OSError, ValueError, AttachmentRefused):
-            continue  # owner unknown: its bytes are checked below as an orphan
+            # Owner unknown: its bytes are checked below as an orphan, and so is the manifest itself
+            # (it may hold a name carrying the words).
+            if path.is_symlink() or _carries(_open_regular(path).decode("utf-8", errors="replace"), token):
+                raise ValueError("an attachment manifest with no readable owner carries the forgotten words") from None
+            continue
         known.add(payload["id"])
-        if payload.get("session_id") == session and payload.get("state") != "erased":
+        if payload.get("session_id") == session:
             records.append(payload)
     for path in sorted([*root.glob("att_*.bin"), *root.glob("att_*.derived.json")]):
         stem = path.name.split(".", 1)[0]
@@ -2372,7 +2395,8 @@ def documents_carrying(session_id: str, token: str) -> list[str]:
     session = _valid_session(session_id)
     with _LOCK:
         return [record["id"] for record in _session_text_records(session, strict=True, token=token)
-                if any(_carries(text, token) for text in _record_texts(record))]
+                if _carries(str(record.get("name") or ""), token)
+                or any(_carries(text, token) for text in _record_texts(record))]
 
 
 def _without_carrying_lines(text: str, token: str) -> str:
@@ -2406,16 +2430,26 @@ def forget_in_documents(session_id: str, token: str) -> int:
     A text record is rewritten with each carrying line replaced by ``[line removed by forget]``;
     its manifest gains ``redacted_at`` and the new ``sha256``, the first hash stays as
     ``original_sha256``. A record whose rewrite still carries the token (a value split across
-    lines), or whose words sit in an extraction, has its bytes erased instead. Another chat's
-    records are never read for change."""
+    lines), or whose words sit in an extraction, has its bytes erased instead. A name carrying
+    the token (of any record of the chat, erased ones included) becomes ``document-<id>.<ext>``.
+    Another chat's records are never read for change."""
     session = _valid_session(session_id)
     changed = 0
     with _LOCK:
         for record in _session_text_records(session, strict=False):
             texts = _record_texts(record)
-            if not any(_carries(text, token) for text in texts):
+            text_hit = any(_carries(text, token) for text in texts)
+            name_hit = _carries(str(record.get("name") or ""), token)
+            if not text_hit and not name_hit:
                 continue
             changed += 1
+            if name_hit:
+                # The name is sent to the model and shown on receipts: it goes like content does.
+                record["name"] = _neutral_name(record, token)
+                record["renamed_by_forget_at"] = _iso(_utcnow())
+                if not text_hit:
+                    _write_manifest(record)
+                    continue
             path = _bytes_path(record["id"])
             derivative = _derivative_path(record["id"])
             if record.get("kind") != "text" or derivative.exists() or not path.exists() or path.is_symlink():
@@ -2443,8 +2477,6 @@ def forget_in_documents(session_id: str, token: str) -> int:
 
 
 # --- serve-time revocation fence: a forgotten word never rides a document into a prompt -------------
-
-_WITHHELD_MARK = "[… lines {first}–{last} withheld: they carry words this chat asked to forget …]\n"
 
 
 class _Withheld(Exception):
@@ -2486,7 +2518,8 @@ def _revocation_screen(session_id: str):
         parts = [chunk if allowed(chunk) else _WITHHELD_MARK.format(first=first, last=last)
                  for first, last, chunk in _line_windows(text)]
         screened = "".join(parts)
-        if not allowed(screened):
+        # The screen's own notices are not the user's words: a forgotten "withheld" never withholds them.
+        if not allowed(_WITHHELD_MARK_RE.sub(" ", screened)):
             raise _Withheld("revoked_words_span_windows")
         return screened
 
@@ -2508,6 +2541,12 @@ class _LazyScreen:
             return self._screen(text)
         except _Withheld:
             return None
+
+    def name(self, record: dict[str, Any]) -> str:
+        """The name a model may see: the record's own, or a neutral one when the name carries a
+        revoked word or the ledger cannot be read (the name never decides whether content goes)."""
+        name = str(record.get("name") or "")
+        return name if self.text(name) == name else _neutral_name(record)
 
     def raw(self, raw: bytes) -> bytes | None:
         text = raw.decode("utf-8", errors="replace")
