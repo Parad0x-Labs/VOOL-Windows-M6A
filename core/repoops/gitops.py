@@ -525,7 +525,8 @@ def _local_push_path(url: str) -> Path | None:
     """The folder a local push URL names, or None for a form VOOL does not read (git ignores a
     ``file://`` URL's host part on POSIX and reads it as a UNC share on Windows). git percent-decodes
     the URL once before reading the path (connect.c url_decode), so it is decoded here the same way;
-    an escape the two could read differently (NUL, slash, backslash, or a malformed escape) is not."""
+    an escape the two could read differently (NUL, slash, backslash, a malformed escape, or bytes
+    that are not UTF-8) is not."""
     if not url.startswith("file://"):
         return Path(os.path.expanduser(url)) if url.startswith("~") else Path(url)
     rest = url[len("file://"):]
@@ -534,7 +535,10 @@ def _local_push_path(url: str) -> Path | None:
     if "%" in rest:
         if not _PLAIN_ESCAPES.fullmatch(rest):
             return None
-        rest = unquote(rest)
+        try:
+            rest = unquote(rest, errors="strict")  # git keeps a non-UTF-8 byte raw; "replace" would read U+FFFD
+        except UnicodeDecodeError:
+            return None
         if rest.startswith("//") or "[" in rest:
             return None  # an escaped second slash: Windows reads //host/share as a share
     if _has_drive_prefix(rest[1:]):
