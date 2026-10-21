@@ -362,3 +362,22 @@ def test_a_posix_double_slash_path_is_never_refused_off_windows(
     assert refused is not None and (refused.value, refused.kind) == (notes, "unc"), refused
     refused = windows_path_policy.command_input_refusal("archaeology.compare", compare_input)
     assert refused is not None and refused.kind == "unc", refused
+
+
+def test_off_windows_a_heartbeat_poll_reads_a_double_slash_path_as_on_base(tmp_path: Path, windows_host) -> None:
+    # The heartbeat poll lane looks up the HEARTBEAT.md a poll names. Off Windows `//tmp/.../HEARTBEAT.md`
+    # is that local file, read as on base; with the seam on it is the share it would be on Windows.
+    from core.agent_runtime.fast_paths_utility import heartbeat_poll_fast_path
+
+    busy = tmp_path / "beat" / "HEARTBEAT.md"
+    busy.parent.mkdir()
+    busy.write_text("# Heartbeat\n- rotate the logs\n", encoding="utf-8")
+    poll = "Read //" + str(busy).lstrip("/") + " if it exists. If nothing needs attention, reply HEARTBEAT_OK."
+    windows_host.off()
+
+    # Read: the file has an open item, so the poll stands aside for the turn.
+    assert heartbeat_poll_fast_path(poll, source_context={}) is None
+
+    windows_host.on()
+    refused = heartbeat_poll_fast_path(poll, source_context={})
+    assert refused is not None and "is a network or device path" in refused, refused
