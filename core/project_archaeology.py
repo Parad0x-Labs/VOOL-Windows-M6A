@@ -206,6 +206,11 @@ def is_protected_path(path: str | Path) -> tuple[bool, str]:
     raw = str(path or "").strip()
     if not raw:
         return False, ""
+    from core import windows_path_policy
+
+    # Resolving a share to read its parts already connects to it, so it is refused by its spelling.
+    if windows_path_policy.refused_form(raw, network_only=True):
+        return True, "a network or device path, which archaeology never reads on Windows"
     parts = _path_parts(raw)
     if not parts:
         return False, ""

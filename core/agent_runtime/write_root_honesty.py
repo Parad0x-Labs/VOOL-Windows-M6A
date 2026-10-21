@@ -20,7 +20,11 @@ from __future__ import annotations
 
 import contextlib
 import re
+from collections.abc import Iterator
 from pathlib import Path
+
+from core import windows_path_policy
+from core.execution.constants import drive_left_behind
 
 # A path the USER rooted. The lookbehind is what keeps prose out: the slash in "and/or", "24/7",
 # "TCP/IP" and "he/she" is preceded by a word character and never starts a path. It also has to keep
@@ -155,7 +159,9 @@ def allowed_write_roots(source_context: dict[str, object] | None) -> list[Path]:
             workspace = str(active_workspace_dir())
         except Exception:
             workspace = ""
-    if workspace:
+    # On Windows a workspace on a share is no root this build writes to, and is not resolved to
+    # find out: resolving `\\host\share` is already the SMB connection.
+    if workspace and not windows_path_policy.refused_form(workspace, network_only=True):
         with contextlib.suppress(Exception):
             roots.append(Path(workspace).expanduser().resolve())
     home = Path.home()
@@ -165,6 +171,21 @@ def allowed_write_roots(source_context: dict[str, object] | None) -> list[Path]:
         except Exception:
             continue
     return roots
+
+
+def typed_path_kind(text: str, start: int, candidate: str) -> str:
+    """On Windows, which kind of non-local path ``candidate`` is, judged as the user typed it: ``""``
+    for a full local path or a relative one. Always ``""`` off Windows.
+
+    ``candidate`` starts at ``start`` in ``text``. A drive letter left just before it belongs to it
+    (``C: /x`` is the ``C:/x`` the user typed), so a root-relative candidate there is that drive's
+    full path. Nothing else rescues a candidate: a share is what a lookup of the candidate itself
+    would reach, whatever was typed before it.
+    """
+    kind = windows_path_policy.refused_form(candidate)
+    if kind == "root_relative" and drive_left_behind(text, start, candidate):
+        return ""
+    return kind
 
 
 def _is_reachable(candidate: str, roots: list[Path]) -> bool:
@@ -269,18 +290,8 @@ def _is_payload_span(
     )
 
 
-def unreachable_write_target(text: str, *, source_context: dict[str, object] | None) -> str:
-    """The rooted path this turn asks us to write and cannot reach, or ``""``.
-
-    Returns the FIRST such path, because that is the one the reply has to be about. Every rooted
-    candidate is classified on its own local context (`_is_payload_span`) rather than the scan
-    being cut off at the first guessed content marker -- a shebang or code fence anywhere in the
-    turn marks only ITS OWN candidate as payload, never the ones around it.
-    """
-    body = str(text or "")
-    if not body.strip():
-        return ""
-    roots = allowed_write_roots(source_context)
+def _destination_candidates(body: str) -> Iterator[tuple[int, str]]:
+    """``(start, path)`` for every rooted candidate in ``body`` that is not payload, in order."""
     fence_spans = _fenced_spans(body)
     candidate_matches = [
         match for match in _ROOTED_PATH_RE.finditer(body) if not _is_url_authority(body, match.start())
@@ -293,11 +304,47 @@ def unreachable_write_target(text: str, *, source_context: dict[str, object] | N
             continue
         if _is_payload_span(body, start, fence_spans=fence_spans, content_spans=content_spans):
             continue
-        if _is_reachable(candidate, roots):
+        yield start, candidate
+
+
+def unreachable_write_target(text: str, *, source_context: dict[str, object] | None) -> str:
+    """The rooted path this turn asks us to write and cannot reach, or ``""``.
+
+    Returns the FIRST such path, because that is the one the reply has to be about. Every rooted
+    candidate is classified on its own local context (`_is_payload_span`) rather than the scan
+    being cut off at the first guessed content marker -- a shebang or code fence anywhere in the
+    turn marks only ITS OWN candidate as payload, never the ones around it. On Windows a candidate
+    naming a share, a device or no full local folder is unreachable without being resolved.
+    """
+    body = str(text or "")
+    if not body.strip():
+        return ""
+    roots = allowed_write_roots(source_context)
+    for start, candidate in _destination_candidates(body):
+        if not typed_path_kind(body, start, candidate) and _is_reachable(candidate, roots):
             continue
         if _write_intent_precedes(body, start):
             return candidate
     return ""
+
+
+def non_local_write_target(text: str, *, network_only: bool = False) -> tuple[str, str]:
+    """On Windows, the first path this turn asks us to write that names a share, a device or no full
+    local folder (only a share or a device, with ``network_only``), with its kind; ``("", "")``
+    otherwise, and always off Windows. Nothing is looked up.
+    """
+    body = str(text or "")
+    for start, candidate in _destination_candidates(body):
+        if not candidate.strip("/\\*"):
+            # A bare `//` or `/*` (a code comment's marker in the text to write) names no host and no
+            # folder, and the lanes never receive it as a path, so it is nothing this turn would open.
+            continue
+        kind = typed_path_kind(body, start, candidate)
+        if network_only and kind not in windows_path_policy.NETWORK_KINDS:
+            continue
+        if kind and _write_intent_precedes(body, start):
+            return candidate, kind
+    return "", ""
 
 
 def unreachable_write_response(path: str, *, source_context: dict[str, object] | None) -> str:
@@ -315,7 +362,9 @@ def unreachable_write_response(path: str, *, source_context: dict[str, object] |
 
 __all__ = [
     "allowed_write_roots",
+    "non_local_write_target",
     "requested_rooted_paths",
+    "typed_path_kind",
     "unreachable_write_response",
     "unreachable_write_target",
 ]

@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any
 from urllib import request as urllib_request
 
+from core import windows_path_policy
+from core.agent_runtime.write_root_honesty import typed_path_kind
 from core.authorized_tool_execution import (
     REFUSAL_STATUSES,
     execute_authorized_runtime_tool,
@@ -16,6 +18,7 @@ from core.execution.constants import (
     OPERATOR_OWNED_MACHINE_PHRASES,
     asks_runtime_for_a_fact,
     content_is_a_brief,
+    drive_left_behind,
     elliptical_drive_followup,
     largest_kind,
     machine_diagnostics_intent,
@@ -47,8 +50,12 @@ _LAST_MACHINE_READ_CAP = 256
 # visible, the path is outside the readable lane, or the path is not there -- so every one of them
 # is a better answer than handing the sentence to the model. Anything not in this set (an internal
 # error, a shape we do not recognise) still falls through to the normal lanes.
+#
+# On Windows, "that path names a share, a device or no full local folder, so nothing was opened" is
+# a verdict about the typed path too. Dropped, the turn fell through to the word fallback, and
+# "//host/s/docs what files are in it" was answered with a listing of ~/Documents.
 _GROUNDED_LISTING_VERDICTS = frozenset(
-    {"executed", "truncated", "no_results", "not_allowed", "not_found"}
+    {"executed", "truncated", "no_results", "not_allowed", "not_found", windows_path_policy.STATUS}
 )
 
 
@@ -562,11 +569,20 @@ def safe_machine_write_targets_workspace(
     workspace_root = str((source_context or {}).get("workspace") or (source_context or {}).get("workspace_root") or "").strip()
     if not workspace_root:
         return False
+    # On Windows nothing that names a share, a device or no full local folder is resolved here:
+    # resolving `\\host\share` is already the SMB connection. Such a workspace or path is not
+    # one this write can be shown to target.
+    if windows_path_policy.refused_form(workspace_root, network_only=True):
+        return False
     try:
         workspace_path = Path(workspace_root).expanduser().resolve()
     except Exception:
         return False
-    for raw_path in re.findall(r"(?:(?:~|/)[^\s'\"`]+)", str(user_input or "")):
+    text = str(user_input or "")
+    for match in re.finditer(r"(?:(?:~|/)[^\s'\"`]+)", text):
+        raw_path = match.group(0)
+        if typed_path_kind(text, match.start(), raw_path):
+            continue
         try:
             candidate = Path(raw_path).expanduser().resolve()
         except Exception:
@@ -1006,6 +1022,9 @@ def _extract_machine_file_read_target(raw: str) -> dict[str, Any] | None:
         if not plain_match:
             return None
         path = str(plain_match.group("path") or "").strip()
+        # On Windows a full local path the input normalizer split (`C: /Users/you/x.txt`) keeps its
+        # drive, as typed: without it the read door refuses the rooted half as no full local path.
+        path = drive_left_behind(text, plain_match.start("path"), path) + path
     if not path:
         return None
     normalized_text = re.sub(r"[\?\!\.,:;]+", " ", text.lower())

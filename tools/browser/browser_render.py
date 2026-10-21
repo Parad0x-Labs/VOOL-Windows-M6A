@@ -12,7 +12,7 @@ import sys
 import tempfile
 from typing import Any
 
-from core import policy_engine
+from core import policy_engine, windows_path_policy
 from core.remote_fetch_policy import note_remote_fetch_attempt, remote_fetch_forbidden
 from core.vool_browser.engine import CREDENTIAL_ISOLATION_FLAGS
 from tools.web.browser_identity import DESKTOP_ACCEPT_LANGUAGE, DESKTOP_USER_AGENT
@@ -328,6 +328,17 @@ def _run_chrome(argv: list[str], *, timeout_s: float) -> tuple[int, bytes, bytes
         raise
 
 
+def _non_local_file_refusal(url: str) -> dict[str, Any] | None:
+    """On Windows, the failed render for a URL that opens a file on another machine, or None.
+
+    Opening `file://host/share` (or a bare `//host/share`) is already a network connection, so no
+    browser is started for it and no remote fetch is noted."""
+    kind = windows_path_policy.refused_url(url)
+    if not kind:
+        return None
+    return {"status": windows_path_policy.STATUS, "final_url": url, "error": windows_path_policy.refusal_text(url, kind)}
+
+
 def _chrome_render_unchecked(
     url: str,
     *,
@@ -422,6 +433,9 @@ def chrome_render(
     Playwright switch is left exactly as it was.
     """
 
+    refused = _non_local_file_refusal(url)
+    if refused is not None:
+        return refused
     note_remote_fetch_attempt(url)
     if remote_fetch_forbidden():
         return {"status": "remote_fetch_disabled", "final_url": url}
@@ -454,6 +468,9 @@ def browser_render(
     equivalent and ignores it.
     """
 
+    refused = _non_local_file_refusal(url)
+    if refused is not None:
+        return refused
     note_remote_fetch_attempt(url)
     if remote_fetch_forbidden():
         return {"status": "remote_fetch_disabled", "final_url": url}

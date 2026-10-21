@@ -9,6 +9,8 @@ import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 
+from core import windows_path_policy
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 VOOL_HOME = (PROJECT_ROOT / ".vool_local").resolve()
 # NULLA -> VOOL compatibility: a pre-rename checkout may already hold the project-local
@@ -266,6 +268,9 @@ def active_workspace_dir() -> Path:
 def resolve_workspace_root(explicit: str | Path | None = None) -> Path:
     candidate = str(explicit or "").strip()
     if candidate:
+        # On Windows an explicit share or device path raises (NonLocalPathError, a ValueError) before
+        # the resolve reaches for it. Only the network tier: callers also pass the server's own roots.
+        windows_path_policy.check(candidate, network_only=True)
         return Path(candidate).expanduser().resolve()
     override = str(vool_env("WORKSPACE_ROOT") or "").strip()
     if override:

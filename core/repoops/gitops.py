@@ -22,7 +22,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from core import safe_git
+from core import safe_git, windows_path_policy
 
 #: A bounded git call. An unbounded git on a pathological repo hangs the tool call and the turn,
 #: and the dispatch layer cannot cancel an in-flight subprocess.
@@ -193,6 +193,12 @@ class GitRunner:
         path = _local_push_path(url)
         if path is None:
             return f"VOOL cannot tell which folder {_shown(url)!r} names, so it does not push there"
+        kind = windows_path_policy.refused_form(str(path), network_only=True)
+        if kind:
+            # On Windows a destination on a share or a device is refused as written: looking it up
+            # below for its hooks and settings is already the SMB connection. This also covers a
+            # remote the repository's own config names, which the tool-call door never sees.
+            return windows_path_policy.refusal_text(url, kind)
         if not path.is_absolute():
             # push runs from the top of the work tree (the git folder of a bare repository), not from
             # wherever <root> sits inside it, and resolves a relative destination from there.
