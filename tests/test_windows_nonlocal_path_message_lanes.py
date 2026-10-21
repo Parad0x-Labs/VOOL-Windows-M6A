@@ -491,6 +491,27 @@ def test_build_skill_and_memory_messages_that_only_mention_a_path_are_not_refuse
         assert _refused_as_typed(replies[text][1], typed), (text, replies[text])
 
 
+def test_a_code_comment_in_a_write_or_build_message_is_not_a_path(monkeypatch, recorder, windows_host) -> None:
+    # `//` and `/*` open a comment in a file's text. They name no host and no folder, and no lane sees
+    # them as a path (the normalizer spaces them out), so the Windows rule does not answer these turns:
+    # each goes to the lane that takes it on base.
+    chat = _served_chat(monkeypatch)
+    windows_host.on()
+    messages = [
+        "create main.js with: // entry point",
+        "create style.css with /* reset */ body { margin: 0 }",
+        "add a // TODO comment to server.js",
+        "write hello to out.txt // no trailing newline",
+    ]
+
+    replies, touched = _served_turns(chat, recorder, messages)
+
+    assert touched == {}, touched
+    assert all(status == 200 and reply.strip() for status, reply in replies.values()), replies
+    refused = {text: reply for text, (_status, reply) in replies.items() if not _not_refused(reply)}
+    assert refused == {}, refused
+
+
 def test_a_full_drive_path_split_by_the_normalizer_keeps_its_drive(monkeypatch, recorder, windows_host) -> None:
     # The input normalizer turns `C:/Users/you/x.txt` into `C: /Users/you/x.txt`. This test's home
     # stands in for `C:/Users/you`: its rooted half exists, as `\\Users\\you` does on the current drive
