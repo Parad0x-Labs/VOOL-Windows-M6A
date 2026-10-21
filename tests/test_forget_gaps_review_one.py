@@ -116,8 +116,26 @@ def test_the_verifier_catches_a_renamed_name_carrying_an_earlier_forgotten_word(
 
     _ingest(profile, chat, [(_ts("2026-03-05T09:00:00"), f"The safe code is {value}.")])
     handled, reply = _forget_command(profile, chat, f"Forget {value}")
-    assert receipts[-1]["stores"]["chat_documents"]["status"] == "incomplete", receipts[-1]["stores"]["chat_documents"]
-    assert not reply.startswith("Forget applied"), reply
+    # The verifier's own test flags that name, and the rename uses the same test (review 2, N2): the
+    # forget renames the record and verifies, and the earlier word is gone everywhere.
+    store = receipts[-1]["stores"]["chat_documents"]
+    assert store["status"] == "verified" and store["removed"] >= 1, store
+    assert handled and reply.startswith("Forget applied"), reply
+    name = ca._read_manifest(doc["id"])["name"]
+    assert not carries(name, "document") and name.endswith(".txt"), name
+    assert not ca.documents_carrying(chat, "document")
+    assert not ca.documents_carrying(chat, value)
+    served = ca.carried_documents_for_turn(session_id=chat, exclude_turn_id="turn-2")
+    assert served and not any(carries(str(e.get("name") or ""), "document") for e in served), served
+    receipt = ca.receipt_for_turn(session_id=chat, turn_id="turn-1")
+    # The receipt's text values (its names), not its `"document": true` kind flag.
+    texts = [value for entry in receipt for key, value in entry.items() if isinstance(value, str)]
+    assert receipt and not any(carries(text, "document") for text in texts), receipt
+    from core.runtime_continuity import list_recent_runtime_session_events
+
+    rows = [row for row in list_recent_runtime_session_events(chat, limit=500)
+            if row.get("event_type") in {"attachment_redacted", "attachment_erased"}]
+    assert rows and not any(carries(row["message"], "document") for row in rows), rows
 
 
 def test_with_no_clean_candidate_the_name_holds_no_word():
