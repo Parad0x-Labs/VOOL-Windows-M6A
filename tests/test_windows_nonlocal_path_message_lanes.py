@@ -587,6 +587,29 @@ def test_a_file_created_in_a_typed_folder_stays_in_that_workspace_folder(tmp_pat
         assert status == 200 and affected in reply, (text, reply)
 
 
+def test_a_typed_folder_inside_the_workspace_is_that_workspace_folder(tmp_path: Path, monkeypatch, recorder, windows_host) -> None:
+    # Without its drive, the workspace's own folder (`\Users\you\ws\notes` for workspace `C:\Users\you\ws`)
+    # is still the workspace folder `notes`, as base found it by resolving on the workspace's drive. Read
+    # as typed, not resolved, it must not be nested under the workspace a second time.
+    workspace = tmp_path / "workspace"
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    monkeypatch.setenv(gate.ENV_VAR, str(workspace))
+    chat = _served_chat(monkeypatch)
+    windows_host.on()
+    typed = workspace.as_posix()
+    planned = {
+        f"in {typed}/notes create todo.txt with text: hi": f"Affected: {workspace}/notes/todo.txt.",
+        f"in {typed.upper()}/Docs create readme.md with text: hello": f"Affected: {workspace}/Docs/readme.md.",
+    }
+
+    replies, touched = _served_turns(chat, recorder, list(planned))
+
+    assert touched == {}, touched
+    for text, affected in planned.items():
+        status, reply = replies[text]
+        assert status == 200 and affected in reply, (text, reply)
+
+
 @pytest.mark.parametrize(
     "text",
     ["//attkr9/s/docs what files are in it", "what files are in //attkr9/s/docs"],
