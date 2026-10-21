@@ -414,7 +414,8 @@ def test_a_root_commit_whose_lfsconfig_merges_into_one_naming_a_server_is_refuse
 
     proc = local_lifecycle._run(str(repo), "cherry-pick", sha, mutating=True)
 
-    assert proc.returncode != 0 and "evil.example" in proc.stderr, proc.stderr
+    # git before 2.45 takes no tree as merge-tree's base, so the check refuses without naming the server.
+    assert proc.returncode != 0 and ("evil.example" in proc.stderr or "merge-tree failed" in proc.stderr), proc.stderr
     assert "evil.example" not in (repo / ".lfsconfig").read_text()
 
 
@@ -434,7 +435,8 @@ def test_a_file_is_still_unstaged_while_the_work_tree_names_another_lfs_server(r
     assert (repo / "a.txt").read_text() == "three\n"
 
 
-@pytest.mark.parametrize("flags", [("--staged", "--worktree"), ("-SW",), ("-W", "-S")])
+@pytest.mark.parametrize("flags", [("--staged", "--worktree"), ("-SW",), ("-W", "-S"), ("--staged", "--work"),
+                                   ("-S", "--worktre"), ("--staged", "--w")])
 def test_restoring_the_work_tree_too_is_still_checked(repo, flags) -> None:
     (repo / ".lfsconfig").write_text(HOSTILE)
     _git(repo, "add", ".lfsconfig")
