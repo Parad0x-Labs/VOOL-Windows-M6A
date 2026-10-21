@@ -1728,113 +1728,141 @@ def _artifact_entry(record: dict[str, Any], *, budget: int, question: str, with_
     return entry
 
 
+def _serve_under_lock(session_id: str, collect, serve) -> list[dict[str, Any]]:
+    """`serve(records, screen)` under `_LOCK`, with the forget screen built before `_LOCK` was taken.
+
+    Reading the forget ledger takes its lock, and a forget takes `_LOCK` inside that lock, so the
+    ledger is never read while `_LOCK` is held. A turn with no records to serve (a text-only turn)
+    never reads the ledger at all, so it never waits on a forget running in another chat. When
+    `collect` finds records and the screen is not built yet, `_LOCK` is let go, the screen is built,
+    and the records are collected again; nothing is served by a call whose screen was not built.
+    A forget that lands between building the screen and retaking `_LOCK` purged the chat's documents
+    under `_LOCK` itself, so the records collected again already carry its redactions.
+    """
+    screen = _LazyScreen(session_id)
+    while True:
+        with _LOCK:
+            records = collect()
+            if not records:
+                return []
+            if screen.ready:
+                return serve(records, screen)
+        screen.read_ledger()
+
+
 def evidence_items_for_turn(*, session_id: str, turn_id: str, question: str = "") -> list[dict[str, Any]]:
     """The turn's attachments as bounded evidence items: text inlined as data, images by reference."""
+    def collect() -> list[dict[str, Any]]:
+        return [r for r in _bound_records(session_id, turn_id) if r.get("state") == "bound"]
+
+    return _serve_under_lock(session_id, collect, lambda records, screen: _evidence_items(records, screen, question))
+
+
+def _evidence_items(records: list[dict[str, Any]], screen: _LazyScreen, question: str) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     remaining = MAX_TEXT_CHARS_PER_TURN
-    screen = _LazyScreen(session_id).read_ledger()
-    with _LOCK:
-        for record in _bound_records(session_id, turn_id):
-            if record.get("state") != "bound":
+    for record in records:
+        item = _item_base(record)
+        if record["kind"] == "text":
+            budget = max(0, min(MAX_TEXT_CHARS_PER_FILE, remaining))
+            raw = screen.raw(_open_regular(_bytes_path(record["id"])))
+            if raw is None:
                 continue
-            item = _item_base(record)
-            if record["kind"] == "text":
-                budget = max(0, min(MAX_TEXT_CHARS_PER_FILE, remaining))
-                raw = screen.raw(_open_regular(_bytes_path(record["id"])))
-                if raw is None:
-                    continue
-                text, truncated, selection = _deliver_text(raw, budget=budget, exact=bool(record.get("document")), question=question)
-                remaining = max(0, remaining - len(text))
-                item["text"] = text
-                item["truncated"] = truncated
-                if selection:
-                    item["selection"] = selection
-            elif record["kind"] == KIND_ARTIFACT:
-                # Evidence carries the EXTRACTION, never the frames: an evidence item is read by
-                # runtime code, and a base64 video frame in it is megabytes nothing there can use.
-                item = _artifact_entry(record, budget=min(MAX_ARTIFACT_CHARS_PER_FILE, remaining), question=question, with_images=False)
-                if not screen.entry(item):
-                    continue
-                item.setdefault("reference", f"attachment:{record['id']}")
-                item["origin"] = "chat_attachment"
-                remaining = max(0, remaining - len(str(item.get("text") or "")))
-            # Every kind's name goes through the screen: a picked file's or an artifact's name is
-            # sent like a document's, and an unreadable ledger hides it the same way. A name no
-            # neutral one can replace withholds the record.
-            name = screen.name(record)
-            if name is None:
+            text, truncated, selection = _deliver_text(raw, budget=budget, exact=bool(record.get("document")), question=question)
+            remaining = max(0, remaining - len(text))
+            item["text"] = text
+            item["truncated"] = truncated
+            if selection:
+                item["selection"] = selection
+        elif record["kind"] == KIND_ARTIFACT:
+            # Evidence carries the EXTRACTION, never the frames: an evidence item is read by
+            # runtime code, and a base64 video frame in it is megabytes nothing there can use.
+            item = _artifact_entry(record, budget=min(MAX_ARTIFACT_CHARS_PER_FILE, remaining), question=question, with_images=False)
+            if not screen.entry(item):
                 continue
-            item["name"] = name
-            items.append(item)
+            item.setdefault("reference", f"attachment:{record['id']}")
+            item["origin"] = "chat_attachment"
+            remaining = max(0, remaining - len(str(item.get("text") or "")))
+        # Every kind's name goes through the screen: a picked file's or an artifact's name is
+        # sent like a document's, and an unreadable ledger hides it the same way. A name no
+        # neutral one can replace withholds the record.
+        name = screen.name(record)
+        if name is None:
+            continue
+        item["name"] = name
+        items.append(item)
     return items
 
 
 def model_attachments_for_turn(*, session_id: str, turn_id: str, question: str = "") -> list[dict[str, Any]]:
     """What a model may be handed: bounded text, and images as data URLs of the stripped bytes."""
+    def collect() -> list[dict[str, Any]]:
+        return [r for r in _bound_records(session_id, turn_id) if r.get("state") == "bound"]
+
+    return _serve_under_lock(session_id, collect, lambda records, screen: _model_attachments(records, screen, question))
+
+
+def _model_attachments(records: list[dict[str, Any]], screen: _LazyScreen, question: str) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     remaining = MAX_TEXT_CHARS_PER_TURN
-    screen = _LazyScreen(session_id).read_ledger()
-    with _LOCK:
-        for record in _bound_records(session_id, turn_id):
-            if record.get("state") != "bound":
+    for record in records:
+        if record["kind"] == KIND_ARTIFACT:
+            entry = _artifact_entry(record, budget=min(MAX_ARTIFACT_CHARS_PER_FILE, remaining), question=question)
+            if not screen.entry(entry):
                 continue
-            if record["kind"] == KIND_ARTIFACT:
-                entry = _artifact_entry(record, budget=min(MAX_ARTIFACT_CHARS_PER_FILE, remaining), question=question)
-                if not screen.entry(entry):
-                    continue
-                entry.pop("reference", None)
-                entry.pop("origin", None)
-                name = screen.name(record)
-                if name is None:
-                    continue
-                entry["name"] = name
-                remaining = max(0, remaining - len(str(entry.get("text") or "")))
-                entries.append(entry)
-                continue
-            raw = _open_regular(_bytes_path(record["id"]))
-            entry = _item_base(record)
             entry.pop("reference", None)
             entry.pop("origin", None)
-            if record["kind"] == "text":
-                raw = screen.raw(raw)
-                if raw is None:
-                    continue
-            # The name of every kind (image, picked file, document) is screened like a document's.
             name = screen.name(record)
             if name is None:
                 continue
             entry["name"] = name
-            if record["kind"] == "text":
-                budget = max(0, min(MAX_TEXT_CHARS_PER_FILE, remaining))
-                text, truncated, selection = _deliver_text(raw, budget=budget, exact=bool(record.get("document")), question=question)
-                remaining = max(0, remaining - len(text))
-                entry["text"] = text
-                entry["truncated"] = truncated
-                entry["lines"] = int(record.get("lines") or 0)
-                if selection:
-                    entry["selection"] = selection
-            else:
-                entry["data_url"] = f"data:{record['media_type']};base64,{base64.b64encode(raw).decode('ascii')}"
-                # The words the pixels carry ride along for EVERY model. Budget comes out of the
-                # same per-turn allowance as every other text, and an over-budget read states the
-                # cut instead of travelling silently whole.
-                extraction = _read_derivative(record["id"]) or {}
-                rendered = str(extraction.get("rendered") or "")
-                if rendered.strip():
-                    rendered = screen.text(rendered)
-                    if rendered is None:
-                        continue
-                    allowance = max(0, min(MAX_ARTIFACT_CHARS_PER_FILE, remaining))
-                    text, truncated, selection = select_document_text(rendered, budget=allowance, question=question)
-                    remaining = max(0, remaining - len(text))
-                    entry["ocr_text"] = text
-                    entry["ocr_truncated"] = truncated
-                    entry["extractor"] = str(extraction.get("extractor") or "")
-                    entry["reader_warnings"] = list(extraction.get("warnings") or [])
-                    entry["source_sha256"] = str(extraction.get("source_sha256") or record.get("sha256") or "")
-                    if truncated:
-                        entry["selection"] = selection
+            remaining = max(0, remaining - len(str(entry.get("text") or "")))
             entries.append(entry)
+            continue
+        raw = _open_regular(_bytes_path(record["id"]))
+        entry = _item_base(record)
+        entry.pop("reference", None)
+        entry.pop("origin", None)
+        if record["kind"] == "text":
+            raw = screen.raw(raw)
+            if raw is None:
+                continue
+        # The name of every kind (image, picked file, document) is screened like a document's.
+        name = screen.name(record)
+        if name is None:
+            continue
+        entry["name"] = name
+        if record["kind"] == "text":
+            budget = max(0, min(MAX_TEXT_CHARS_PER_FILE, remaining))
+            text, truncated, selection = _deliver_text(raw, budget=budget, exact=bool(record.get("document")), question=question)
+            remaining = max(0, remaining - len(text))
+            entry["text"] = text
+            entry["truncated"] = truncated
+            entry["lines"] = int(record.get("lines") or 0)
+            if selection:
+                entry["selection"] = selection
+        else:
+            entry["data_url"] = f"data:{record['media_type']};base64,{base64.b64encode(raw).decode('ascii')}"
+            # The words the pixels carry ride along for EVERY model. Budget comes out of the
+            # same per-turn allowance as every other text, and an over-budget read states the
+            # cut instead of travelling silently whole.
+            extraction = _read_derivative(record["id"]) or {}
+            rendered = str(extraction.get("rendered") or "")
+            if rendered.strip():
+                rendered = screen.text(rendered)
+                if rendered is None:
+                    continue
+                allowance = max(0, min(MAX_ARTIFACT_CHARS_PER_FILE, remaining))
+                text, truncated, selection = select_document_text(rendered, budget=allowance, question=question)
+                remaining = max(0, remaining - len(text))
+                entry["ocr_text"] = text
+                entry["ocr_truncated"] = truncated
+                entry["extractor"] = str(extraction.get("extractor") or "")
+                entry["reader_warnings"] = list(extraction.get("warnings") or [])
+                entry["source_sha256"] = str(extraction.get("source_sha256") or record.get("sha256") or "")
+                if truncated:
+                    entry["selection"] = selection
+        entries.append(entry)
     return entries
 
 
@@ -1847,11 +1875,9 @@ def carried_documents_for_turn(*, session_id: str, exclude_turn_id: str = "", bu
     """
     session = _valid_session(session_id)
     exclude = str(exclude_turn_id or "").strip()
-    entries: list[dict[str, Any]] = []
-    remaining = max(0, int(budget))
-    screen = _LazyScreen(session).read_ledger()
-    with _LOCK:
-        records = [
+
+    def collect() -> list[dict[str, Any]]:
+        return [
             r
             for r in _all_manifests()
             if r.get("session_id") == session
@@ -1861,29 +1887,36 @@ def carried_documents_for_turn(*, session_id: str, exclude_turn_id: str = "", bu
             and r.get("turn_id")
             and r.get("turn_id") != exclude
         ]
-        records.sort(key=lambda r: (str(r.get("bound_at") or r.get("created_at") or ""), int(r.get("bind_index") or 0), r["id"]), reverse=True)
-        for record in records:
-            if remaining <= 0:
-                break
-            path = _bytes_path(record["id"])
-            if not path.exists() or path.is_symlink():
-                continue
-            raw = screen.raw(_open_regular(path))
-            if raw is None:
-                continue
-            text, truncated, selection = _deliver_text(raw, budget=min(MAX_TEXT_CHARS_PER_FILE, remaining), exact=True, question=question)
-            remaining = max(0, remaining - len(text))
-            entry = _item_base(record)
-            entry.pop("reference", None)
-            entry.pop("origin", None)
-            name = screen.name(record)
-            if name is None:
-                continue
-            entry["name"] = name
-            entry.update({"text": text, "truncated": truncated, "carried": True, "origin_turn_id": str(record.get("turn_id") or ""), "lines": int(record.get("lines") or 0)})
-            if selection:
-                entry["selection"] = selection
-            entries.append(entry)
+
+    return _serve_under_lock(session, collect, lambda records, screen: _carried_documents(records, screen, budget, question))
+
+
+def _carried_documents(records: list[dict[str, Any]], screen: _LazyScreen, budget: int, question: str) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    remaining = max(0, int(budget))
+    records.sort(key=lambda r: (str(r.get("bound_at") or r.get("created_at") or ""), int(r.get("bind_index") or 0), r["id"]), reverse=True)
+    for record in records:
+        if remaining <= 0:
+            break
+        path = _bytes_path(record["id"])
+        if not path.exists() or path.is_symlink():
+            continue
+        raw = screen.raw(_open_regular(path))
+        if raw is None:
+            continue
+        text, truncated, selection = _deliver_text(raw, budget=min(MAX_TEXT_CHARS_PER_FILE, remaining), exact=True, question=question)
+        remaining = max(0, remaining - len(text))
+        entry = _item_base(record)
+        entry.pop("reference", None)
+        entry.pop("origin", None)
+        name = screen.name(record)
+        if name is None:
+            continue
+        entry["name"] = name
+        entry.update({"text": text, "truncated": truncated, "carried": True, "origin_turn_id": str(record.get("turn_id") or ""), "lines": int(record.get("lines") or 0)})
+        if selection:
+            entry["selection"] = selection
+        entries.append(entry)
     return entries
 
 
@@ -2685,7 +2718,7 @@ def _revocation_screen(session_id: str):
 
 
 class _LazyScreen:
-    """`_revocation_screen` for one delivery call, built only when there is text to screen."""
+    """`_revocation_screen` for one delivery call, built only when the call has records to serve."""
 
     def __init__(self, session_id: str) -> None:
         self._session = session_id
@@ -2701,10 +2734,16 @@ class _LazyScreen:
             self._screen = _revocation_screen(self._session)
         return self
 
+    @property
+    def ready(self) -> bool:
+        return self._screen is not None
+
     def text(self, text: str) -> str | None:
-        """The screened text, or None when the record must be withheld whole."""
+        """The screened text, or None when the record must be withheld whole.
+
+        A screen not built yet withholds: building it here would read the ledger under `_LOCK`."""
         if self._screen is None:
-            self._screen = _revocation_screen(self._session)
+            return None
         try:
             return self._screen(text)
         except _Withheld:
