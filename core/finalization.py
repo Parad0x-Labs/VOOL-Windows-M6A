@@ -2909,16 +2909,20 @@ def _scrub_governed_json_strings(
 
 def _sweep_step_conversation_log(request_id: str, content_hash: str) -> str:
     from core.memory.files import conversation_log_path, load_jsonl, rewrite_jsonl
+    from core.memory.revocation import serialized
 
-    rows = load_jsonl(conversation_log_path())
-    kept = [
-        row
-        for row in rows
-        if str(row.get("request_id") or "") != request_id
-        and not _text_hash_matches(str(row.get("assistant") or ""), content_hash)
-    ]
-    if len(kept) != len(rows):
-        rewrite_jsonl(conversation_log_path(), kept)
+    # Read and write back inside the forget fence (under A8_TRAVERSAL_LOCK: A8, then the fence), so a
+    # turn written or a forget applied between them is not lost or refused.
+    with serialized():
+        rows = load_jsonl(conversation_log_path())
+        kept = [
+            row
+            for row in rows
+            if str(row.get("request_id") or "") != request_id
+            and not _text_hash_matches(str(row.get("assistant") or ""), content_hash)
+        ]
+        if len(kept) != len(rows):
+            rewrite_jsonl(conversation_log_path(), kept)
     return _SWEEP_STEP_OK
 
 
@@ -2930,17 +2934,20 @@ def _sweep_step_memory_jsonl(request_id: str) -> str:
         session_summaries_path,
         user_heuristics_path,
     )
+    from core.memory.revocation import serialized
 
     # The canonical memory store goes through the memory authority: the entry
     # lock serializes the rewrite against concurrent record/forget mutations
     # and the MEMORY.md projection is refreshed, so no bound mirror line
     # outlives a swept row.
     sweep_governed_memory_rows(request_id)
-    for path in (session_summaries_path(), user_heuristics_path()):
-        rows = load_jsonl(path)
-        kept = [row for row in rows if str(row.get("request_id") or "") != request_id]
-        if len(kept) != len(rows):
-            rewrite_jsonl(path, kept)
+    # Read and write back inside the forget fence, as in _sweep_step_conversation_log.
+    with serialized():
+        for path in (session_summaries_path(), user_heuristics_path()):
+            rows = load_jsonl(path)
+            kept = [row for row in rows if str(row.get("request_id") or "") != request_id]
+            if len(kept) != len(rows):
+                rewrite_jsonl(path, kept)
     return _SWEEP_STEP_OK
 
 
