@@ -1081,11 +1081,14 @@ def dispatch_get(
         from pathlib import Path
         from urllib.parse import unquote
 
-        from core import runtime_paths
+        from core import runtime_paths, windows_path_policy
 
         if not is_loopback_host(client_host):
             return apply_runtime_headers(json_response(403, {"ok": False, "error": "owner_local_required"}), runtime)
         requested = unquote((query.get("path") or [""])[0])
+        # On Windows a share or a partial path is refused by its spelling: resolving it reaches for it.
+        if windows_path_policy.refused_form(requested):
+            return apply_runtime_headers(json_response(403, {"ok": False, "error": "path_not_allowed"}), runtime)
         bundles_root = runtime_paths.data_path("session_bundles").resolve()
         try:
             resolved = Path(requested).resolve()
@@ -4392,6 +4395,11 @@ def _dispatch_post_inner(
                 json_response(500, {"error": "registration did not persist", "model_name": model_name}),
                 runtime,
             )
+        # Boot records measured sizes only for the lanes it registered; size this one now, so its
+        # turns are not judged by the parameter estimate until the next start.
+        from core.web.api.runtime import record_installed_ollama_artifact_sizes
+
+        record_installed_ollama_artifact_sizes(registry)
         return apply_runtime_headers(
             json_response(
                 200,
@@ -4489,6 +4497,7 @@ def _dispatch_post_inner(
             # resolved from the chat's server-side namespace/project state, so a client, plugin
             # or model cannot widen the grant by naming another workspace, the home directory,
             # the filesystem root, or another chat's folder.
+            from core import windows_path_policy
             from core.context_namespace import authoritative_chat_workspace
 
             authoritative_root, root_reason = authoritative_chat_workspace(mode_session)
@@ -4532,7 +4541,10 @@ def _dispatch_post_inner(
                 claimed_root = str(body.get("workspace_root") or "").strip()
                 if claimed_root:
                     try:
-                        matches = _Path(claimed_root).expanduser().resolve() == _Path(authoritative_root).resolve()
+                        # On Windows a share or a partial path never matches, and is not resolved to tell.
+                        matches = not windows_path_policy.refused_form(claimed_root) and (
+                            _Path(claimed_root).expanduser().resolve() == _Path(authoritative_root).resolve()
+                        )
                     except (OSError, RuntimeError):
                         matches = False
                     if not matches:
@@ -4646,6 +4658,7 @@ def _dispatch_post_inner(
                         ),
                         runtime,
                     )
+                from core import windows_path_policy
                 from core.context_namespace import authoritative_chat_workspace
 
                 workspace_root, root_reason = authoritative_chat_workspace(mode_session)
@@ -4673,7 +4686,10 @@ def _dispatch_post_inner(
                 claimed_root = str(body.get("workspace_root") or "").strip()
                 if claimed_root:
                     try:
-                        matches = _Path(claimed_root).expanduser().resolve() == _Path(workspace_root).resolve()
+                        # On Windows a share or a partial path never matches, and is not resolved to tell.
+                        matches = not windows_path_policy.refused_form(claimed_root) and (
+                            _Path(claimed_root).expanduser().resolve() == _Path(workspace_root).resolve()
+                        )
                     except (OSError, RuntimeError):
                         matches = False
                     if not matches:
@@ -5282,6 +5298,12 @@ def _dispatch_post_inner(
                 return apply_runtime_headers(json_response(404, {"error": "project folder not found"}), runtime)
             import subprocess as _subprocess
 
+            from core import generated_files
+
+            if generated_files.host_is_windows():
+                # Windows has no `open`: File Explorer shows the folder, only while it still resolves to itself.
+                opened = generated_files.open_folder_in_explorer(root)
+                return apply_runtime_headers(json_response(200, {"ok": opened, "id": pid.strip()}), runtime)
             opened = False
             with contextlib.suppress(Exception):
                 _subprocess.Popen(["open", root])  # macOS Finder; path is a validated project root, not user input
@@ -5385,8 +5407,9 @@ def _dispatch_post_inner(
         return apply_runtime_headers(json_response(200, {"project": result}), runtime)
 
     if normalized_path == "/api/files/open":
-        # Reveal a generated file in Finder. Owner-local; the path MUST resolve under a known Files root
-        # (generated_files.path_is_allowed), so this can never be used to reach an arbitrary file.
+        # Reveal a generated file in Finder (File Explorer on Windows). Owner-local; the path MUST resolve
+        # under a known Files root (generated_files.path_is_allowed), so this can never be used to reach an
+        # arbitrary file.
         import json as _json
 
         from core import generated_files
@@ -5422,6 +5445,11 @@ def _dispatch_post_inner(
             return apply_runtime_headers(json_response(400, {"error": "reveal must be a boolean"}), runtime)
         if not generated_files.path_is_allowed(path):
             return apply_runtime_headers(json_response(403, {"error": "that file is not under a known Files folder"}), runtime)
+        if not reveal and generated_files.host_is_windows():
+            # Only Show in folder exists on Windows: opening would run a .bat/.exe/.lnk/.ps1 artifact.
+            return apply_runtime_headers(
+                json_response(501, {"ok": False, "error": "opening a file is not available on Windows yet"}), runtime
+            )
         opened = generated_files.open_file(path, reveal=reveal)
         return apply_runtime_headers(json_response(200 if opened else 500, {"ok": opened}), runtime)
 
@@ -7360,6 +7388,23 @@ def _dispatch_post_inner(
         inbound_source_context = strip_reserved_trust_keys(
             _inbound_source_context(body)
         )
+        # On Windows a workspace field naming a share or a partial path is refused before any turn
+        # runs, because the turn would look its workspace up.
+        from core import windows_path_policy
+
+        workspace_refusal = windows_path_policy.chat_workspace_refusal(body, inbound_source_context)
+        if workspace_refusal is not None:
+            return apply_runtime_headers(
+                json_response(
+                    400,
+                    {
+                        "ok": False,
+                        "error": windows_path_policy.STATUS,
+                        "message": windows_path_policy.refusal_text(workspace_refusal.value, workspace_refusal.kind),
+                    },
+                ),
+                runtime,
+            )
         resolved_surface = (
             str(
                 inbound_source_context.get("surface")

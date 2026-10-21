@@ -12428,6 +12428,38 @@ def _page_fragments() -> tuple[str, ...]:
     )
 
 
+# Windows has no Finder, no Preview and no `open`. There the server only shows a file or a project
+# folder in File Explorer and refuses to open a file (core/generated_files.py), so a Windows host is
+# served these exact pieces swapped; every other host gets the template byte for byte. A click on an
+# image starts nothing and the menu's Open item is disabled.
+_WINDOWS_FILE_ACTIONS = (
+    ("Newest first; click a file to reveal it in Finder.</p>",
+     "Newest first; click a file to show it in its folder.</p>"),
+    ("prev.title = 'Reveal folder in Finder';",
+     "prev.title = 'Show folder in File Explorer';"),
+    ('title="Click to open in Preview - right-click for more">',
+     'title="Opening files is not available on Windows yet - right-click for more">'),
+    ("function openImageNative(local) { if (local) _fileOpen(local, false); }   // default app (Preview)",
+     "function openImageNative(local) {}   // opening a file is not available on Windows yet"),
+    ("if (local) add('Open in Preview', () => openImageNative(local));",
+     "if (local) { const off = document.createElement('button'); off.type = 'button'; off.className = 'proj-menu-item';"
+     " off.disabled = true; off.style.opacity = '0.55'; off.textContent = 'Open (not available on Windows yet)';"
+     " menu.appendChild(off); }"),
+    ("if (local) add('Show in Finder', () => revealImage(local));",
+     "if (local) add('Show in folder', () => revealImage(local));"),
+)
+
+
+def _host_chat_template() -> str:
+    from core.generated_files import host_is_windows
+
+    if not host_is_windows():
+        return _VOOL_CHAT_HTML
+    page = _VOOL_CHAT_HTML
+    for mac, windows in _WINDOWS_FILE_ACTIONS:
+        page = page.replace(mac, windows)
+    return page
+
 
 def render_vool_chat_html(*, build_commit: str = "", ui_locale: str = "en") -> str:
     # The page embeds the approved artwork so branding works offline in the native shell.
@@ -12447,7 +12479,7 @@ def render_vool_chat_html(*, build_commit: str = "", ui_locale: str = "en") -> s
     tag = catalog_for(ui_locale).locale
     spec = get_locale(tag)
     page = (
-        _VOOL_CHAT_HTML.replace("__PAGE_BUILD_COMMIT__", str(build_commit or "").strip())
+        _host_chat_template().replace("__PAGE_BUILD_COMMIT__", str(build_commit or "").strip())
         .replace("__VOOL_LOGO_URI__", logo_uri)
         .replace("</body>", "".join(_page_fragments()) + "</body>")
     )

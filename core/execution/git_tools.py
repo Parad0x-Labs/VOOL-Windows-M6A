@@ -241,7 +241,7 @@ def _run_git(argv: list[str], *, cwd: Path) -> dict[str, Any]:
     if probe.returncode != 0:
         return {"status": "not_git_repo", "returncode": probe.returncode, "stdout": "", "stderr": probe.stderr}
     try:
-        executable_keys = safe_git.executable_local_config(cwd)
+        executable_keys = safe_git.executable_config_for(cwd, argv)
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
         return {"status": "refused_repository_config", "returncode": -1, "stdout": "",
                 "stderr": f"the repository's git config could not be checked ({type(exc).__name__})"}

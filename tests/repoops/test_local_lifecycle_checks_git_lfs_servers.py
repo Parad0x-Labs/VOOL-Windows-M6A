@@ -1,0 +1,449 @@
+"""LocalLifecycle's own checkouts never send Git LFS to a server the repository chose.
+
+core/repoops/local_lifecycle.py checked a repository's config and hooks without the command, so
+GitRunner's Git LFS check (core/safe_git.py lfs_endpoint_refusal) never ran there: `worktree add`
+checked out a branch whose committed .lfsconfig named lfs.url=https://evil.example, which GitRunner's
+own merge of that branch refuses (reproduced 20 Oct 2026). With the user's git-lfs filter installed,
+that checkout's smudge step asks that server for every LFS file. Each mutation now passes its argv.
+
+A repository without such an .lfsconfig, or one naming its own git host, still works as before.
+"""
+from __future__ import annotations
+
+import os
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from core.platform.broker import ExecutionBroker, PlatformRevocations
+from core.repoops import local_lifecycle
+from core.repoops.identity import RepositoryWorkspace
+from core.repoops.local_lifecycle import LocalLifecycle, capture_snapshot
+
+TOKENS = ["git.switch_branch", "git.delete_branch", "git.restore", "git.worktree", "git.cherry_pick"]
+HOSTILE = "[lfs]\n\turl = https://evil.example/lfs\n"
+
+
+def _git(root: Path, *args: str) -> str:
+    proc = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, timeout=30,
+                          env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull})
+    assert proc.returncode == 0, proc.stderr
+    return proc.stdout.strip()
+
+
+@pytest.fixture()
+def repo(tmp_path, monkeypatch) -> Path:
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", os.devnull)
+    root = tmp_path / "checkout"
+    root.mkdir()
+    _git(root, "init", "-q", "-b", "main")
+    _git(root, "config", "user.email", "n@x")
+    _git(root, "config", "user.name", "Ninja")
+    _git(root, "remote", "add", "origin", "https://github.com/example/project.git")
+    (root / "a.txt").write_text("one\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "base")
+    return root
+
+
+def _branch_with(repo: Path, branch: str, lfsconfig: str) -> str:
+    """Commit ``lfsconfig`` as .lfsconfig on a new ``branch`` and return to main; the commit's id."""
+    _git(repo, "switch", "-q", "-c", branch)
+    (repo / ".lfsconfig").write_text(lfsconfig)
+    _git(repo, "add", ".lfsconfig")
+    _git(repo, "commit", "-qm", "lfs settings")
+    sha = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "switch", "-q", "main")
+    return sha
+
+
+def _lifecycle(repo: Path) -> tuple[LocalLifecycle, object, ExecutionBroker]:
+    return LocalLifecycle(RepositoryWorkspace(root=str(repo))), PlatformRevocations().mint("ninja", TOKENS), \
+        ExecutionBroker()
+
+
+def test_adding_a_worktree_of_a_branch_naming_another_lfs_server_is_refused(repo, tmp_path) -> None:
+    _branch_with(repo, "feat", HOSTILE)
+    target = tmp_path / "feat-wt"
+    lc, fork, broker = _lifecycle(repo)
+
+    receipt = lc.create_worktree(fork, broker, str(target), "feat")
+    # The receipt's reason is cut short after the long path, so the refusal is read where it is made.
+    direct = local_lifecycle._run(str(repo), "worktree", "add", str(target), "feat", mutating=True)
+
+    assert receipt.status != "applied", receipt
+    assert direct.returncode != 0 and "evil.example" in direct.stderr, direct.stderr
+    assert not target.exists()
+
+
+def test_restoring_a_file_while_the_index_names_another_lfs_server_is_refused(repo) -> None:
+    (repo / ".lfsconfig").write_text(HOSTILE)
+    _git(repo, "add", ".lfsconfig")
+    (repo / ".lfsconfig").unlink()  # only the index carries it
+    (repo / "a.txt").write_text("changed\n")
+    lc, fork, broker = _lifecycle(repo)
+
+    receipt = lc.restore_worktree_file(fork, broker, "a.txt")
+
+    assert receipt.status != "applied", receipt
+    assert "evil.example" in (receipt.reason or ""), receipt
+    assert (repo / "a.txt").read_text() == "changed\n"
+
+
+def test_switching_to_a_branch_naming_another_lfs_server_is_refused(repo) -> None:
+    _branch_with(repo, "feat", HOSTILE)
+    lc, fork, broker = _lifecycle(repo)
+
+    receipt = lc.switch_branch(fork, broker, "feat")
+
+    assert receipt.status != "applied", receipt
+    assert _git(repo, "symbolic-ref", "--short", "HEAD") == "main"
+    assert not (repo / ".lfsconfig").exists()
+
+
+def test_cherry_picking_a_commit_naming_another_lfs_server_is_refused(repo) -> None:
+    sha = _branch_with(repo, "feat", HOSTILE)
+    head = _git(repo, "rev-parse", "HEAD")
+    lc, fork, broker = _lifecycle(repo)
+
+    receipt = lc.cherry_pick(fork, broker, sha, expected_head=head, expected_branch="main")
+
+    assert receipt.status != "applied", receipt
+    assert _git(repo, "rev-parse", "HEAD") == head
+    assert not (repo / ".lfsconfig").exists()
+
+
+def _remote_only(repo: Path, branch: str, lfsconfig: str) -> None:
+    """Leave ``branch`` only as origin's remote-tracking branch, as a fetch would."""
+    sha = _branch_with(repo, branch, lfsconfig)
+    _git(repo, "update-ref", f"refs/remotes/origin/{branch}", sha)
+    _git(repo, "branch", "-D", branch)
+
+
+def test_a_worktree_of_a_branch_only_the_remote_has_is_checked_too(repo, tmp_path) -> None:
+    # `worktree add <path> rb` creates rb from origin/rb when no local rb exists.
+    _remote_only(repo, "rb", HOSTILE)
+    target = tmp_path / "rb-wt"
+
+    proc = local_lifecycle._run(str(repo), "worktree", "add", str(target), "rb", mutating=True)
+
+    assert proc.returncode != 0 and "evil.example" in proc.stderr, proc.stderr
+    assert not target.exists()
+
+
+def test_a_tag_of_the_same_name_does_not_hide_the_branch_from_the_check(repo, tmp_path) -> None:
+    # rev-parse reads "feat" as the tag; switch and worktree add check out the branch.
+    _git(repo, "tag", "feat")
+    _branch_with(repo, "feat", HOSTILE)
+    lc, fork, broker = _lifecycle(repo)
+
+    switched = lc.switch_branch(fork, broker, "feat")
+    added = local_lifecycle._run(str(repo), "worktree", "add", str(tmp_path / "feat-wt"), "feat", mutating=True)
+
+    assert switched.status != "applied", switched
+    assert not (repo / ".lfsconfig").exists()
+    assert added.returncode != 0 and "evil.example" in added.stderr, added.stderr
+    assert not (tmp_path / "feat-wt").exists()
+
+
+# -- the ordinary operations still run ----------------------------------------------------------
+
+def test_a_worktree_of_an_ordinary_branch_is_still_added(repo, tmp_path) -> None:
+    _git(repo, "branch", "review")
+    target = tmp_path / "review-wt"
+    lc, fork, broker = _lifecycle(repo)
+
+    receipt = lc.create_worktree(fork, broker, str(target), "review")
+
+    assert receipt.status == "applied", receipt
+    assert (target / "a.txt").read_text() == "one\n"
+
+
+def test_a_branch_naming_its_own_git_host_for_lfs_is_still_checked_out(repo, tmp_path) -> None:
+    _branch_with(repo, "feat", "[lfs]\n\turl = https://github.com/example/project.git/info/lfs\n")
+    lc, fork, broker = _lifecycle(repo)
+
+    added = lc.create_worktree(fork, broker, str(tmp_path / "feat-wt"), "feat")
+    _git(repo, "worktree", "remove", str(tmp_path / "feat-wt"))
+    switched = lc.switch_branch(fork, broker, "feat")
+
+    assert added.status == "applied", added
+    assert switched.status == "applied", switched
+    assert _git(repo, "symbolic-ref", "--short", "HEAD") == "feat"
+
+
+def test_a_file_is_still_restored_and_a_clean_commit_still_cherry_picked(repo) -> None:
+    _git(repo, "switch", "-q", "-c", "side")
+    (repo / "b.txt").write_text("two\n")
+    _git(repo, "add", "b.txt")
+    _git(repo, "commit", "-qm", "b")
+    sha = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "switch", "-q", "main")
+    (repo / "a.txt").write_text("changed\n")
+    lc, fork, broker = _lifecycle(repo)
+
+    restored = lc.restore_worktree_file(fork, broker, "a.txt")
+    head = capture_snapshot(RepositoryWorkspace(root=str(repo))).head_sha
+    picked = lc.cherry_pick(fork, broker, sha, expected_head=head, expected_branch="main")
+
+    assert restored.status == "applied", restored
+    assert (repo / "a.txt").read_text() == "one\n"
+    assert picked.status == "applied", picked
+    assert (repo / "b.txt").read_text() == "two\n"
+
+
+def test_a_branch_carrying_another_lfs_server_can_still_be_deleted(repo) -> None:
+    _branch_with(repo, "feat", HOSTILE)
+    lc, fork, broker = _lifecycle(repo)
+
+    receipt = lc.delete_local_branch(fork, broker, "feat", force_unmerged=True)
+
+    assert receipt.status == "applied", receipt
+    assert "feat" not in _git(repo, "branch", "--list", "feat")
+
+
+def test_switching_to_a_branch_only_the_remote_has_still_works(repo) -> None:
+    _remote_only(repo, "rb", "")
+    lc, fork, broker = _lifecycle(repo)
+
+    receipt = lc.switch_branch(fork, broker, "rb")
+
+    assert receipt.status == "applied", receipt
+    assert _git(repo, "symbolic-ref", "--short", "HEAD") == "rb"
+
+
+def test_a_root_commit_can_still_be_cherry_picked(repo) -> None:
+    _git(repo, "switch", "-q", "--orphan", "fresh")
+    (repo / "c.txt").write_text("three\n")
+    _git(repo, "add", "c.txt")
+    _git(repo, "commit", "-qm", "root")
+    sha = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "switch", "-q", "-f", "main")
+    head = _git(repo, "rev-parse", "HEAD")
+    lc, fork, broker = _lifecycle(repo)
+
+    receipt = lc.cherry_pick(fork, broker, sha, expected_head=head, expected_branch="main")
+
+    assert receipt.status == "applied", receipt
+    assert (repo / "c.txt").read_text() == "three\n"
+
+
+def test_a_worktree_can_still_be_removed_while_the_work_tree_names_another_lfs_server(repo, tmp_path) -> None:
+    _git(repo, "branch", "review")
+    target = tmp_path / "review-wt"
+    _git(repo, "worktree", "add", "-q", str(target), "review")
+    (repo / ".lfsconfig").write_text(HOSTILE)  # untracked, in the main work tree only
+    lc, fork, broker = _lifecycle(repo)
+
+    receipt = lc.remove_worktree(fork, broker, str(target))
+
+    assert receipt.status == "applied", receipt
+    assert not target.exists()
+
+
+def test_a_branch_of_a_remote_whose_name_has_a_slash_is_still_switched_to(repo) -> None:
+    sha = _branch_with(repo, "x", "")
+    _git(repo, "remote", "add", "my/fork", "https://github.com/example/fork.git")
+    _git(repo, "update-ref", "refs/remotes/my/fork/x", sha)
+    _git(repo, "branch", "-D", "x")
+    lc, fork, broker = _lifecycle(repo)
+
+    receipt = lc.switch_branch(fork, broker, "x")
+
+    assert receipt.status == "applied", receipt
+    assert _git(repo, "symbolic-ref", "--short", "HEAD") == "x"
+
+
+def test_a_worktree_added_without_a_commit_is_refused(repo, tmp_path) -> None:
+    # git guesses the branch from the folder's name, and "--" ends the arguments the check reads.
+    _branch_with(repo, "feat", HOSTILE)
+
+    guessed = local_lifecycle._run(str(repo), "worktree", "add", str(tmp_path / "feat"), mutating=True)
+    dashed = local_lifecycle._run(str(repo), "worktree", "add", "--", str(tmp_path / "wt"), "feat", mutating=True)
+
+    assert guessed.returncode != 0 and "without an explicit commit" in guessed.stderr, guessed.stderr
+    assert dashed.returncode != 0 and "without an explicit commit" in dashed.stderr, dashed.stderr
+    assert not (tmp_path / "feat").exists() and not (tmp_path / "wt").exists()
+
+
+def test_a_new_branch_from_a_local_start_point_ignores_a_remotes_branch_of_that_name(repo) -> None:
+    # git starts it from the local main; another remote's main naming another server plays no part.
+    sha = _branch_with(repo, "theirs", HOSTILE)
+    _git(repo, "update-ref", "refs/remotes/origin/main", sha)
+
+    proc = local_lifecycle._run(str(repo), "switch", "-c", "new", "main", mutating=True)
+
+    assert proc.returncode == 0, proc.stderr
+    assert _git(repo, "symbolic-ref", "--short", "HEAD") == "new"
+    assert not (repo / ".lfsconfig").exists()
+
+
+@pytest.mark.parametrize("command", [("switch", "--detach", "feat"), ("switch", "-d", "feat"),
+                                     ("switch", "-c", "new", "feat")])
+def test_a_start_point_with_a_tag_of_the_same_name_still_checks_the_branch(repo, command) -> None:
+    # git takes the branch here too (switch -c even writes it before calling the name ambiguous).
+    _git(repo, "tag", "feat")
+    _branch_with(repo, "feat", HOSTILE)
+
+    proc = local_lifecycle._run(str(repo), *command, mutating=True)
+
+    assert proc.returncode != 0 and "evil.example" in proc.stderr, proc.stderr
+    assert not (repo / ".lfsconfig").exists()
+
+
+def test_a_remote_branch_fetched_somewhere_unusual_is_checked_too(repo) -> None:
+    # The repository's fetch refspec decides where git looks for origin's rb, not refs/remotes/origin.
+    sha = _branch_with(repo, "rb", HOSTILE)
+    _git(repo, "update-ref", "refs/hidden/rb", sha)
+    _git(repo, "update-ref", "refs/remotes/origin/rb", _git(repo, "rev-parse", "main"))
+    _git(repo, "branch", "-D", "rb")
+    _git(repo, "config", "--replace-all", "remote.origin.fetch", "+refs/heads/*:refs/hidden/*")
+
+    proc = local_lifecycle._run(str(repo), "switch", "rb", mutating=True)
+
+    assert proc.returncode != 0 and "evil.example" in proc.stderr, proc.stderr
+    assert not (repo / ".lfsconfig").exists()
+
+
+@pytest.mark.parametrize("previous", ["-", "@{-1}"])
+def test_switching_back_to_the_previous_branch_checks_the_branch_not_a_tag_of_its_name(repo, previous) -> None:
+    _git(repo, "tag", "feat")
+    _branch_with(repo, "feat", HOSTILE)  # leaves feat as the previous branch
+
+    proc = local_lifecycle._run(str(repo), "switch", previous, mutating=True)
+
+    # git names no ref for it while the tag shares the name, so the check refuses outright.
+    assert proc.returncode != 0 and "git was not run" in proc.stderr, proc.stderr
+    assert not (repo / ".lfsconfig").exists()
+
+
+def test_a_tag_of_a_tree_ending_in_the_name_does_not_refuse_a_switch(repo) -> None:
+    _remote_only(repo, "dev", "")
+    tree = _git(repo, "rev-parse", "main^{tree}")
+    _git(repo, "tag", "-a", "-m", "tree", "rel/dev", tree)
+
+    proc = local_lifecycle._run(str(repo), "switch", "dev", mutating=True)
+
+    assert proc.returncode == 0, proc.stderr
+    assert _git(repo, "symbolic-ref", "--short", "HEAD") == "dev"
+
+
+def test_switching_back_to_the_previous_branch_still_works(repo) -> None:
+    _git(repo, "branch", "review")
+    _git(repo, "switch", "-q", "review")
+    _git(repo, "switch", "-q", "main")
+
+    proc = local_lifecycle._run(str(repo), "switch", "-", mutating=True)
+
+    assert proc.returncode == 0, proc.stderr
+    assert _git(repo, "symbolic-ref", "--short", "HEAD") == "review"
+
+
+def test_switching_back_to_a_previous_branch_naming_another_lfs_server_is_refused(repo) -> None:
+    _branch_with(repo, "feat", HOSTILE)
+
+    proc = local_lifecycle._run(str(repo), "switch", "-", mutating=True)
+
+    assert proc.returncode != 0 and "evil.example" in proc.stderr, proc.stderr
+    assert not (repo / ".lfsconfig").exists()
+
+
+@pytest.mark.parametrize("command", ["switch", "worktree"])
+def test_a_remote_branch_filed_under_another_name_is_checked_despite_a_decoy(repo, tmp_path, command) -> None:
+    # A fetch refspec can file origin's rb as refs/remotes/origin/pre-rb, which does not end in /rb;
+    # a harmless ref that does end in /rb must not stand in for it (fresh review, 21 Oct).
+    sha = _branch_with(repo, "rb", HOSTILE)
+    _git(repo, "update-ref", "refs/remotes/origin/pre-rb", sha)
+    _git(repo, "branch", "-D", "rb")
+    _git(repo, "update-ref", "refs/tags/v1/rb", _git(repo, "rev-parse", "main"))
+    _git(repo, "config", "--replace-all", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/pre-*")
+    target = tmp_path / "rb-wt"
+    argv = ("switch", "rb") if command == "switch" else ("worktree", "add", str(target), "rb")
+
+    proc = local_lifecycle._run(str(repo), *argv, mutating=True)
+
+    assert proc.returncode != 0 and "evil.example" in proc.stderr, proc.stderr
+    assert not (repo / ".lfsconfig").exists() and not target.exists()
+
+
+def test_a_remote_branch_filed_under_another_name_is_still_switched_to(repo) -> None:
+    _remote_only(repo, "rb", "")
+    _git(repo, "update-ref", "refs/remotes/origin/pre-rb", _git(repo, "rev-parse", "refs/remotes/origin/rb"))
+    _git(repo, "update-ref", "-d", "refs/remotes/origin/rb")
+    _git(repo, "config", "--replace-all", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/pre-*")
+
+    proc = local_lifecycle._run(str(repo), "switch", "rb", mutating=True)
+
+    assert proc.returncode == 0, proc.stderr
+    assert _git(repo, "symbolic-ref", "--short", "HEAD") == "rb"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows passes command lines as text, so a ref name of raw bytes cannot be made")
+def test_a_fetch_refspec_naming_refs_in_bytes_that_are_not_text_refuses(repo) -> None:
+    # Read as text, refs/remotes/origin/\xffpre-* names no ref git has, so the real target went unchecked.
+    sha = _branch_with(repo, "rb", HOSTILE)
+    _git(repo, "branch", "-D", "rb")
+    raw = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
+    subprocess.run([b"git", b"-C", os.fsencode(repo), b"update-ref", b"refs/remotes/origin/\xffpre-rb", sha.encode()],
+                   check=True, env=raw, timeout=30)
+    subprocess.run([b"git", b"-C", os.fsencode(repo), b"config", b"--replace-all", b"remote.origin.fetch",
+                    b"+refs/heads/*:refs/remotes/origin/\xffpre-*"], check=True, env=raw, timeout=30)
+    _git(repo, "update-ref", "refs/tags/v1/rb", _git(repo, "rev-parse", "main"))
+
+    proc = local_lifecycle._run(str(repo), "switch", "rb", mutating=True)
+
+    assert proc.returncode != 0, proc.stderr
+    assert not (repo / ".lfsconfig").exists()
+
+
+def test_a_root_commit_whose_lfsconfig_merges_into_one_naming_a_server_is_refused(repo) -> None:
+    # git cherry-picks a root commit onto an empty base, so both sides' .lfsconfig are merged; with
+    # the built-in union driver two harmless files join into one naming a server (fresh review, 21 Oct).
+    _git(repo, "switch", "-q", "--orphan", "fresh")
+    (repo / ".lfsconfig").write_text("[a]\n\turl = https://evil.example/lfs\n")
+    _git(repo, "add", ".lfsconfig")
+    _git(repo, "commit", "-qm", "root")
+    sha = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "switch", "-q", "-f", "main")
+    (repo / ".gitattributes").write_text(".lfsconfig merge=union\n")
+    (repo / ".lfsconfig").write_text("[a]\n[lfs]\n")
+    _git(repo, "add", ".gitattributes", ".lfsconfig")
+    _git(repo, "commit", "-qm", "union")
+
+    proc = local_lifecycle._run(str(repo), "cherry-pick", sha, mutating=True)
+
+    # git before 2.45 takes no tree as merge-tree's base, so the check refuses without naming the server.
+    assert proc.returncode != 0 and ("evil.example" in proc.stderr or "merge-tree failed" in proc.stderr), proc.stderr
+    assert "evil.example" not in (repo / ".lfsconfig").read_text()
+
+
+def test_a_file_is_still_unstaged_while_the_work_tree_names_another_lfs_server(repo) -> None:
+    # restore --staged writes only the index, so no LFS file is fetched.
+    (repo / ".lfsconfig").write_text(HOSTILE)
+    (repo / "a.txt").write_text("two\n")
+    _git(repo, "add", ".lfsconfig", "a.txt")
+    _git(repo, "commit", "-qm", "lfs settings")
+    (repo / "a.txt").write_text("three\n")
+    _git(repo, "add", "a.txt")
+
+    proc = local_lifecycle._run(str(repo), "restore", "--staged", "--", "a.txt", mutating=True)
+
+    assert proc.returncode == 0, proc.stderr
+    assert _git(repo, "diff", "--cached", "--name-only") == ""
+    assert (repo / "a.txt").read_text() == "three\n"
+
+
+@pytest.mark.parametrize("flags", [("--staged", "--worktree"), ("-SW",), ("-W", "-S"), ("--staged", "--work"),
+                                   ("-S", "--worktre"), ("--staged", "--w")])
+def test_restoring_the_work_tree_too_is_still_checked(repo, flags) -> None:
+    (repo / ".lfsconfig").write_text(HOSTILE)
+    _git(repo, "add", ".lfsconfig")
+    _git(repo, "commit", "-qm", "lfs settings")
+    (repo / "a.txt").write_text("changed\n")
+
+    proc = local_lifecycle._run(str(repo), "restore", *flags, "--", "a.txt", mutating=True)
+
+    assert proc.returncode != 0 and "evil.example" in proc.stderr, proc.stderr
+    assert (repo / "a.txt").read_text() == "changed\n"

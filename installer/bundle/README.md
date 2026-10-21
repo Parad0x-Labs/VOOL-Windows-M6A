@@ -13,6 +13,10 @@ not ship or patch OpenClaw.
 | Ollama | ~3.2 GB with the current official Windows runtime | `ollama.exe` plus the complete `lib\ollama\` runner/DLL support tree, bundled |
 | Model (`models/`) | 0 or ~5.2 GB | first-run download by default; embedded with `-IncludeModel` |
 
+**Memory:** local answers need at least 10 GB of RAM on a PC without a graphics card. qwen3:8b
+needs about 6.4 GB, and on the CPU VOOL lets a model use 70% of RAM, so it fits from about 9.1 GB.
+With less, VOOL refuses to start the model and says so; a cloud key still works.
+
 Result: a **multi-GB installer** with the current official Ollama runtime (model on first run) or a
 larger offline installer (`-IncludeModel`). The exact size follows the official Ollama backend
 payloads and selected model; this builder does not download a model unless `-IncludeModel` is used.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -15,6 +16,8 @@ from storage.model_provider_manifest import ModelProviderManifest
 
 if TYPE_CHECKING:
     from core.orchestration.task_envelope import TaskEnvelopeV1
+
+logger = logging.getLogger(__name__)
 
 ProviderRole = Literal["auto", "drone", "queen"]
 
@@ -170,11 +173,25 @@ def _rank_provider_candidates_internal(
         )
     )
     if enforce_hardware_fit:
-        base_ranked = [
-            manifest
-            for manifest in base_ranked
-            if not provider_capability_truth_for_manifest(manifest).hardware_fit_reason
-        ]
+        fitting: list[ModelProviderManifest] = []
+        for manifest in base_ranked:
+            capability = provider_capability_truth_for_manifest(manifest)
+            if not capability.hardware_fit_reason:
+                fitting.append(manifest)
+                continue
+            # A dropped local model is otherwise invisible: the turn just ends with "no model".
+            _, required, available = provider_hardware_fit_budget(
+                capability,
+                force_cpu=_manifest_forces_cpu(manifest),
+            )
+            logger.info(
+                "Hardware fit: %s left out of this turn (%s; needs %.2f GB, this host allows %.2f GB).",
+                manifest.provider_id,
+                capability.hardware_fit_reason,
+                required,
+                available,
+            )
+        base_ranked = fitting
     # AUTHORSHIP ESCALATION ACROSS THE PREFERRED-MODEL FILTER. A preferred/pinned
     # model narrows base_ranked to itself; when that ONE candidate is an uncertified
     # local author (the precall fence will refuse it) and certified local authors
@@ -526,6 +543,62 @@ def estimated_local_model_resident_gb(model_id: str, *, artifact_size_gb: float 
     return round(total_parameters_b * 0.75 + 1.5, 2)
 
 
+def _hardware_fit_pool(probe: Any, *, force_cpu: bool = False) -> str:
+    """Which memory the hardware-fit gate measures a local model against on this host.
+
+    ``"unified"`` on Apple Silicon (RAM shared with the GPU), ``"graphics"`` on a CUDA or DirectML
+    host that reports VRAM (the model must fit the graphics card), ``"system"`` otherwise (RAM).
+    """
+    accelerator = "cpu" if force_cpu else str(getattr(probe, "accelerator", "cpu") or "cpu").strip().lower()
+    if accelerator == "mps":
+        return "unified"
+    if accelerator in {"cuda", "directml"} and float(getattr(probe, "vram_gb", 0.0) or 0.0) > 0.0:
+        return "graphics"
+    return "system"
+
+
+def provider_hardware_fit_budget(
+    capability: ProviderCapabilityTruth,
+    *,
+    probe: Any | None = None,
+    force_cpu: bool = False,
+) -> tuple[str, float, float]:
+    """The hardware-fit verdict with the numbers behind it: ``(reason, required_gb, available_gb)``.
+
+    ``reason`` is what ``provider_hardware_fit_rejection`` returns. The two figures are the
+    resident memory the model needs and what this host can give it, or 0.0 when unknown, so a
+    refusal or a log line can say how far short the host is.
+    """
+    if capability.locality != "local":
+        return "", 0.0, 0.0
+    active_probe = _device_probe() if probe is None else probe
+    if active_probe is None:
+        return ("hardware_capacity_unknown" if model_parameter_billions(capability.model_id) >= 13.0 else ""), 0.0, 0.0
+    ram_gb = float(getattr(active_probe, "ram_gb", 0.0) or 0.0)
+    vram_gb = float(getattr(active_probe, "vram_gb", 0.0) or 0.0)
+    pool = _hardware_fit_pool(active_probe, force_cpu=force_cpu)
+    need_ram = float(capability.ram_budget_gb or 0.0)
+    need_vram = float(capability.vram_budget_gb or 0.0)
+    if need_ram <= 0.0 and need_vram <= 0.0:
+        return ("hardware_footprint_unknown" if model_parameter_billions(capability.model_id) >= 13.0 else ""), 0.0, 0.0
+    if pool == "unified":
+        required = max(need_ram, need_vram)
+        available = max(0.0, ram_gb * 0.75)
+    elif pool == "graphics":
+        required = need_vram or need_ram
+        available = max(0.0, vram_gb - 1.2)
+    else:
+        required = max(need_ram, need_vram)
+        available = max(0.0, ram_gb * 0.70)
+    if required <= 0.0 or available <= 0.0:
+        return (
+            ("hardware_capacity_unknown" if model_parameter_billions(capability.model_id) >= 13.0 else ""),
+            required,
+            available,
+        )
+    return ("model_exceeds_hardware_budget" if required > available else ""), required, available
+
+
 def provider_hardware_fit_rejection(
     capability: ProviderCapabilityTruth,
     *,
@@ -538,34 +611,41 @@ def provider_hardware_fit_rejection(
     too-large model eventually rises to the front and the runtime crashes. This
     gate removes proven no-fit candidates from the chain entirely.
     """
-    if capability.locality != "local":
-        return ""
-    active_probe = _device_probe() if probe is None else probe
-    if active_probe is None:
-        return "hardware_capacity_unknown" if model_parameter_billions(capability.model_id) >= 13.0 else ""
-    ram_gb = float(getattr(active_probe, "ram_gb", 0.0) or 0.0)
-    vram_gb = float(getattr(active_probe, "vram_gb", 0.0) or 0.0)
-    accelerator = (
-        "cpu"
-        if force_cpu
-        else str(getattr(active_probe, "accelerator", "cpu") or "cpu").strip().lower()
-    )
-    need_ram = float(capability.ram_budget_gb or 0.0)
-    need_vram = float(capability.vram_budget_gb or 0.0)
-    if need_ram <= 0.0 and need_vram <= 0.0:
-        return "hardware_footprint_unknown" if model_parameter_billions(capability.model_id) >= 13.0 else ""
-    if accelerator == "mps":
-        required = max(need_ram, need_vram)
-        available = max(0.0, ram_gb * 0.75)
-    elif accelerator in {"cuda", "directml"} and vram_gb > 0.0:
-        required = need_vram or need_ram
-        available = max(0.0, vram_gb - 1.2)
-    else:
-        required = max(need_ram, need_vram)
-        available = max(0.0, ram_gb * 0.70)
-    if required <= 0.0 or available <= 0.0:
-        return "hardware_capacity_unknown" if model_parameter_billions(capability.model_id) >= 13.0 else ""
-    return "model_exceeds_hardware_budget" if required > available else ""
+    return provider_hardware_fit_budget(capability, probe=probe, force_cpu=force_cpu)[0]
+
+
+def local_hardware_shortfall(registry: ModelRegistry | None = None) -> dict[str, Any]:
+    """The local model this host is too small for, when no enabled local model fits at all.
+
+    Returns ``{}`` when there is no enabled local model, when any local model fits, or when the
+    only refusals are "capacity unknown". Otherwise names the smallest refused model with the
+    memory it needs and what this host can give it, so a refused turn can say so plainly; adds
+    ``"memory": "graphics"`` when that memory is the graphics card's.
+    """
+    shortfalls: list[tuple[float, str, float]] = []
+    try:
+        for manifest in (registry or ModelRegistry()).list_manifests(enabled_only=True):
+            if not manifest_is_local(manifest):
+                continue
+            capability = provider_capability_truth_for_manifest(manifest)
+            if not capability.hardware_fit_reason:
+                return {}
+            if capability.hardware_fit_reason == "model_exceeds_hardware_budget":
+                force_cpu = _manifest_forces_cpu(manifest)
+                _, required, available = provider_hardware_fit_budget(capability, force_cpu=force_cpu)
+                pool = _hardware_fit_pool(_device_probe(), force_cpu=force_cpu)
+                shortfalls.append((required, capability.model_id, available, pool))
+    except Exception:
+        return {}
+    if not shortfalls:
+        return {}
+    required, model_id, available, pool = min(shortfalls)
+    shortfall: dict[str, Any] = {"model": model_id, "required_gb": required, "available_gb": available}
+    if pool == "graphics":
+        # The gate measured the graphics card, not the computer's RAM: say so, or a 32 GB PC is
+        # told it lacks memory because its GPU has 6 GB.
+        shortfall["memory"] = "graphics"
+    return shortfall
 
 
 def _envelope_manifest_score(
@@ -758,6 +838,17 @@ def _role_bonus(manifest: ModelProviderManifest, role: ProviderRole) -> float:
     return score
 
 
+def _manifest_forces_cpu(manifest: ModelProviderManifest) -> bool:
+    return str(dict(manifest.runtime_config or {}).get("num_gpu", "")).strip() == "0"
+
+
+def _float_or_zero(value: Any) -> float:
+    try:
+        return max(0.0, float(value or 0.0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def provider_capability_truth_for_manifest(manifest: ModelProviderManifest) -> ProviderCapabilityTruth:
     metadata = dict(manifest.metadata or {})
     runtime_config = dict(manifest.runtime_config or {})
@@ -768,7 +859,17 @@ def provider_capability_truth_for_manifest(manifest: ModelProviderManifest) -> P
     locality = "local" if manifest_is_local(manifest) else "remote"
     privacy_class = "local_private" if locality == "local" else "remote_provider"
     role_fit = orchestration_role or ("drone" if locality == "local" else "queen")
-    estimated_footprint_gb = estimated_local_model_resident_gb(manifest.model_name) if locality == "local" else 0.0
+    # The same estimate boot uses for its residency pick: Ollama's measured artifact size (stamped
+    # on the manifest once the model is installed) plus runtime headroom, falling back to the
+    # parameter-count estimate only when no measured size is recorded.
+    estimated_footprint_gb = (
+        estimated_local_model_resident_gb(
+            manifest.model_name,
+            artifact_size_gb=_float_or_zero(metadata.get("artifact_size_gb")),
+        )
+        if locality == "local"
+        else 0.0
+    )
     tool_support = tuple(
         str(item).strip()
         for item in list(metadata.get("tool_support") or [])
@@ -799,10 +900,7 @@ def provider_capability_truth_for_manifest(manifest: ModelProviderManifest) -> P
         # only this `ProviderCapabilityTruth`.
         is_verified_free_cloud_tool_capable=is_verified_free_cloud_manifest(manifest) and "tool_intent" in capabilities,
     )
-    rejection = provider_hardware_fit_rejection(
-        truth,
-        force_cpu=str(runtime_config.get("num_gpu", "")).strip() == "0",
-    )
+    rejection = provider_hardware_fit_rejection(truth, force_cpu=_manifest_forces_cpu(manifest))
     return ProviderCapabilityTruth(
         **{
             **truth.__dict__,
@@ -817,7 +915,9 @@ __all__ = [
     "ProviderRole",
     "ProviderRoutingPlan",
     "estimated_local_model_resident_gb",
+    "local_hardware_shortfall",
     "provider_capability_truth_for_manifest",
+    "provider_hardware_fit_budget",
     "provider_hardware_fit_rejection",
     "rank_provider_candidates",
     "resolve_provider_routing_plan",

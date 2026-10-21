@@ -21,6 +21,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from core import windows_path_policy
 from core.os_consent_gate import ConsentDeniedError, require_os_user_consent
 
 
@@ -100,7 +101,12 @@ def _canonicalize(raw: str) -> Path | None:
 
     Returns `None` on a resolution failure (permission error, OS-level path error) -- the caller
     must fail closed on `None`, never fall back to the raw, unresolved string.
+
+    On Windows a share or device path is `None` too, before anything resolves it: that lookup is
+    already the SMB connection.
     """
+    if windows_path_policy.refused_form(raw, network_only=True):
+        return None
     try:
         return Path(str(raw or "")).expanduser().resolve()
     except (OSError, RuntimeError, ValueError):
