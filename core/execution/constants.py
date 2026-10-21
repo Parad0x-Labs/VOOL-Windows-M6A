@@ -1647,6 +1647,30 @@ _URL_SPAN_RE = re.compile(r"""\b[A-Za-z][A-Za-z0-9+.\-]*://[^\s`"']+""")
 
 def _without_urls(text: str) -> str:
     return _URL_SPAN_RE.sub(" ", str(text or ""))
+
+
+# A drive letter left just before a rooted path. Typed as `C:/Users/you/x`, the input normalizer
+# hands the lanes `C: /Users/you/x`, so a rooted-path pattern starts at the `/` and leaves the drive
+# behind.
+_DRIVE_LEFT_BEHIND_RE = re.compile(r"(?:^|(?<=[\s(`'\"]))([A-Za-z]): ?\Z")
+
+
+def drive_left_behind(text: str, start: int, candidate: str) -> str:
+    """On Windows, the drive (``"C:"``) the user typed just before the rooted ``candidate`` that
+    starts at ``start`` in ``text``: `C:/x`, or the input normalizer's `C: /x`. ``""`` when there is
+    none or the candidate is not rooted that way, and always off Windows. Nothing is looked up.
+
+    Without its drive the path the user typed in full names no full local folder, and on Windows it
+    would be refused as one.
+    """
+    from core import windows_path_policy
+
+    if windows_path_policy.refused_form(candidate) != "root_relative":
+        return ""
+    # Only the few characters before `start` can hold that drive: the pattern is anchored at `start`.
+    # Searched there in place, so a long message is not copied and scanned once per candidate.
+    match = _DRIVE_LEFT_BEHIND_RE.search(str(text or ""), max(0, start - 4), start)
+    return f"{match.group(1)}:" if match else ""
 # Phrasings that ask what is INSIDE a place, as opposed to where that place is. A request that
 # says "what's in X" is answered by a listing; answering with X's location is a correct fact and
 # the wrong reply.
@@ -1674,7 +1698,14 @@ def _extend_path_over_spaces(text: str, candidate: str, end: int) -> str:
     """
     from pathlib import Path
 
+    from core import windows_path_policy
+
     def _resolves(value: str) -> bool:
+        # On Windows a share, a device path or a partial path is never looked up: the lookup of
+        # `\\host\share` is already the SMB connection. It is handed on as typed, and the tool's
+        # own door refuses it.
+        if windows_path_policy.refused_form(value):
+            return False
         try:
             return Path(value).expanduser().exists()
         except (OSError, ValueError, RuntimeError):
@@ -1705,7 +1736,10 @@ def explicit_path_in(text: str) -> str:
     candidate = match.group(0).rstrip(".,;:!?)")
     if len(candidate) <= 1:
         return ""
-    return _extend_path_over_spaces(cleaned, candidate, match.end())
+    # On Windows a full local path the input normalizer split (`C: /Users/you/x`) is handed on with
+    # its drive, as typed: without it the list and read tools refuse it as no full local path.
+    drive = drive_left_behind(cleaned, match.start(), candidate)
+    return _extend_path_over_spaces(cleaned, drive + candidate, match.end())
 
 
 _QUOTED_PATH_VALUE_RE = re.compile(r"""(["'`])((?:~|\.{1,2})?/[^"'`\n]*|[A-Za-z]:\\[^"'`\n]*)\1""")
@@ -1797,6 +1831,10 @@ def machine_path_listing_intent(text: str) -> str | None:
 def _is_existing_file(candidate: str) -> bool:
     from pathlib import Path
 
+    from core import windows_path_policy
+
+    if windows_path_policy.refused_form(candidate):
+        return False  # on Windows a share or a partial path is not looked up (see `_resolves`)
     try:
         return Path(candidate).expanduser().is_file()
     except (OSError, ValueError, RuntimeError):
@@ -1874,6 +1912,10 @@ def _typed_directory_content_ask(text: str) -> str | None:
         return None
     from pathlib import Path
 
+    from core import windows_path_policy
+
+    if windows_path_policy.refused_form(candidate):
+        return None  # on Windows a share or a partial path is not looked up (see `_resolves`)
     try:
         if not Path(candidate).expanduser().is_dir():
             # A REAL directory is the whole warrant for this loose route. A file belongs to

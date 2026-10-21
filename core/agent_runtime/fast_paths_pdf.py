@@ -38,6 +38,10 @@ import re
 from pathlib import Path
 from typing import Any
 
+from core import windows_path_policy
+from core.agent_runtime.write_root_honesty import typed_path_kind
+from core.execution.constants import drive_left_behind
+
 _PDF_TOKEN_RE = re.compile(r"\.pdf\b", re.IGNORECASE)
 _QUOTED_PDF_RE = re.compile(r"""[`'"]\s*([^`'"\r\n]*?\.pdf)\s*[`'"]""", re.IGNORECASE)
 
@@ -139,6 +143,49 @@ def _looks_like_a_name(candidate: str) -> bool:
     return bool(stem) and stem.lower() not in {"", "a", "an", "the", "my", "this", "that"}
 
 
+def _non_local_kind(candidate: str, text: str) -> str:
+    """On Windows, which kind of non-local path the named PDF is, judged as the user typed it; ""
+    for a local one. Always "" off Windows.
+
+    This lane reads the input normalizer's text, which spaces out what it cannot keep whole: a
+    typed `C:/x/r.pdf` arrives as `C: /x/r.pdf` and `docs\\r.pdf` as `docs \\ r.pdf`. A drive left
+    behind belongs to its path, and a name that starts with a separator followed by a space is such a
+    split piece of a relative name, not a path anyone typed; the front door judged the typed words
+    in full (`turn_frontdoor`).
+    """
+    start = text.find(candidate)
+    if start < 0:
+        return windows_path_policy.refused_form(candidate)
+    kind = typed_path_kind(text, start, candidate)
+    if kind == "root_relative" and candidate[1:2].isspace():
+        return ""
+    return kind
+
+
+def _with_typed_drive(candidate: str, text: str) -> str:
+    """On Windows, `candidate` with the drive the user typed just before it, which the input
+    normalizer split off (`C: /x/r.pdf` is the `C:/x/r.pdf` they typed); otherwise, and always off
+    Windows, `candidate` itself. Nothing is looked up."""
+    if not windows_path_policy.active():
+        return candidate
+    start = text.find(candidate)
+    return (drive_left_behind(text, start, candidate) if start >= 0 else "") + candidate
+
+
+def non_local_pdf(text: str) -> tuple[str, str]:
+    """On Windows, the first PDF this message asks to read that names a share, a device or no full
+    local folder, with its kind; ("", "") otherwise, and always off Windows. Nothing is looked up.
+    """
+    raw = str(text or "").strip()
+    if not raw or not _PDF_TOKEN_RE.search(raw) or any(marker in _padded(raw) for marker in _CREATE_MARKERS):
+        return "", ""
+    for candidate in _candidate_names(raw):
+        kind = _non_local_kind(candidate, raw) if _looks_like_a_name(candidate) else ""
+        if kind:
+            return candidate, kind
+    return "", ""
+
+
 def _search_roots() -> tuple[Path, ...]:
     from core.runtime_execution_tools import _safe_machine_roots
 
@@ -203,40 +250,50 @@ def _resolve_named_pdf(text: str) -> dict[str, Any] | None:
     for candidate in candidates:
         if not _looks_like_a_name(candidate):
             continue
-        expanded = _expand(candidate)
+        if _non_local_kind(candidate, text):
+            # On Windows a share, a device path or a partial path is never looked up, here or under
+            # the roots: the lookup of `\\host\share` is already the SMB connection.
+            continue
+        typed = _with_typed_drive(candidate, text)
+        expanded = _expand(typed)
         try:
             if expanded.is_file():
-                return {"path": expanded, "named": candidate, "found": True}
+                return {"path": expanded, "named": typed, "spelled": candidate, "found": True}
         except OSError:
             pass
-        if not expanded.is_absolute():
+        # A typed drive makes the path absolute where drives exist: it is never looked for under the
+        # roots by its rooted half alone.
+        if not expanded.is_absolute() and typed == candidate:
             for root in _search_roots():
                 probe = root / candidate
                 try:
                     if probe.is_file():
-                        return {"path": probe, "named": candidate, "found": True}
+                        return {"path": probe, "named": candidate, "spelled": candidate, "found": True}
                 except OSError:
                     continue
             located = _find_by_basename(candidate)
             if located is not None:
-                return {"path": located, "named": candidate, "found": True}
+                return {"path": located, "named": candidate, "spelled": candidate, "found": True}
     # Nothing on disk. Report the most specific thing they wrote: a path if they typed one.
-    named = ""
+    spelled = ""
     for candidate in candidates:
         if not _looks_like_a_name(candidate):
             continue
         if any(mark in candidate for mark in ("/", "\\", "~")):
-            named = candidate
+            spelled = candidate
             break
-        if not named:
-            named = candidate
-    if not named:
+        if not spelled:
+            spelled = candidate
+    if not spelled:
         return None
-    return {"path": _expand(named), "named": named, "found": False}
+    named = _with_typed_drive(spelled, text)
+    return {"path": _expand(named), "named": named, "spelled": spelled, "found": False}
 
 
 def pdf_read_request(text: str) -> dict[str, Any] | None:
-    """`{"path", "named", "found", "wants_ocr"}` when the message names a PDF to read, else None."""
+    """`{"path", "named", "spelled", "found", "wants_ocr"}` when the message names a PDF to read, else
+    None. `named` is the file as the user typed it; `spelled` is how it appears in `text`, which on
+    Windows lacks a drive the input normalizer split off."""
     raw = str(text or "").strip()
     if not raw or not _PDF_TOKEN_RE.search(raw):
         return None
@@ -252,7 +309,7 @@ def pdf_read_request(text: str) -> dict[str, Any] | None:
     # OCR. It happened to be a scan, so the answer was right and the bug invisible; a text-layer
     # PDF called scan_of_contract.pdf would have been read by approximate recognition when exact
     # text was sitting there, and slowly.
-    without_name = _padded(raw.replace(str(resolved.get("named") or ""), " "))
+    without_name = _padded(raw.replace(str(resolved.get("spelled") or ""), " "))
     resolved["wants_ocr"] = any(marker in without_name for marker in _OCR_MARKERS)
     return resolved
 
@@ -361,6 +418,16 @@ def maybe_handle_pdf_read(
 
     path: Path = request["path"]
     named = str(request.get("named") or "")
+    non_local = _non_local_kind(named, user_input)
+    if non_local:
+        return agent._fast_path_result(
+            session_id=session_id,
+            user_input=user_input,
+            response=windows_path_policy.refusal_text(named, non_local),
+            confidence=0.9,
+            source_context=source_context,
+            reason="pdf_read_non_local_path",
+        )
     shown = _display(path, named)
 
     def plain(body: str, *, reason: str) -> dict[str, Any]:
@@ -482,4 +549,4 @@ def maybe_handle_pdf_read(
     )
 
 
-__all__ = ["maybe_handle_pdf_read", "pdf_read_request"]
+__all__ = ["maybe_handle_pdf_read", "non_local_pdf", "pdf_read_request"]
