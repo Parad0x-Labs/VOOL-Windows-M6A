@@ -1742,8 +1742,12 @@ def evidence_items_for_turn(*, session_id: str, turn_id: str, question: str = ""
                 item["origin"] = "chat_attachment"
                 remaining = max(0, remaining - len(str(item.get("text") or "")))
             # Every kind's name goes through the screen: a picked file's or an artifact's name is
-            # sent like a document's, and an unreadable ledger hides it the same way.
-            item["name"] = screen.name(record)
+            # sent like a document's, and an unreadable ledger hides it the same way. A name no
+            # neutral one can replace withholds the record.
+            name = screen.name(record)
+            if name is None:
+                continue
+            item["name"] = name
             items.append(item)
     return items
 
@@ -1763,7 +1767,10 @@ def model_attachments_for_turn(*, session_id: str, turn_id: str, question: str =
                     continue
                 entry.pop("reference", None)
                 entry.pop("origin", None)
-                entry["name"] = screen.name(record)
+                name = screen.name(record)
+                if name is None:
+                    continue
+                entry["name"] = name
                 remaining = max(0, remaining - len(str(entry.get("text") or "")))
                 entries.append(entry)
                 continue
@@ -1776,7 +1783,10 @@ def model_attachments_for_turn(*, session_id: str, turn_id: str, question: str =
                 if raw is None:
                     continue
             # The name of every kind (image, picked file, document) is screened like a document's.
-            entry["name"] = screen.name(record)
+            name = screen.name(record)
+            if name is None:
+                continue
+            entry["name"] = name
             if record["kind"] == "text":
                 budget = max(0, min(MAX_TEXT_CHARS_PER_FILE, remaining))
                 text, truncated, selection = _deliver_text(raw, budget=budget, exact=bool(record.get("document")), question=question)
@@ -1849,7 +1859,10 @@ def carried_documents_for_turn(*, session_id: str, exclude_turn_id: str = "", bu
             entry = _item_base(record)
             entry.pop("reference", None)
             entry.pop("origin", None)
-            entry["name"] = screen.name(record)
+            name = screen.name(record)
+            if name is None:
+                continue
+            entry["name"] = name
             entry.update({"text": text, "truncated": truncated, "carried": True, "origin_turn_id": str(record.get("turn_id") or ""), "lines": int(record.get("lines") or 0)})
             if selection:
                 entry["selection"] = selection
@@ -2341,8 +2354,10 @@ def _neutral_name(record: dict[str, Any], token: str = "", *, clear: Callable[[s
     The name never carries the word it replaces: "Forget document" (or "doc", or a piece of the
     id) would otherwise rename a record to a name that still matches, and the forget could never
     verify. The first candidate `clear` accepts wins (by default: does not carry `token`), checked
-    with its extension and then without; another prefix, then another piece of the id, is tried.
-    When none clears, the name is `_WORDLESS_NAME`, which holds no word at all. Never raises."""
+    with its extension and then without; another prefix, then another piece of the id, then a short
+    opaque hex of the record's own (distinct per record, not a piece of the id) is tried. When none
+    clears, the answer is `_WORDLESS_NAME`, which holds no word at all; it is never stored or served
+    (a forget fails honestly on it, the serve screen withholds the record). Never raises."""
     extension = os.path.splitext(str(record.get("name") or ""))[1].lower()
     keep = token and extension and len(extension) <= 8 and extension[1:].isalnum() and not _carries(extension, token)
     if clear is None:
@@ -2356,10 +2371,16 @@ def _neutral_name(record: dict[str, Any], token: str = "", *, clear: Callable[[s
                 return candidate + extension
             if clear(candidate):
                 return candidate
+    for attempt in range(16):
+        candidate = hashlib.sha256(f"{record.get('id') or ''}:{attempt}".encode()).hexdigest()[:8]
+        if extension and len(extension) <= 8 and extension[1:].isalnum() and clear(candidate + extension):
+            return candidate + extension
+        if clear(candidate):
+            return candidate
     return _WORDLESS_NAME
 
 
-#: The last neutral name: no letter or digit, so no forgotten word can be in it.
+#: What `_neutral_name` answers when no candidate clears: no letter or digit. Never stored or served.
 _WORDLESS_NAME = "\u2026"
 
 
@@ -2379,7 +2400,9 @@ def forgotten_words(session_id: str, *, settled: bool = True) -> tuple[str, ...]
     directory = revocation._directory()
     ledger = directory / "ledger.json"
     if ledger.exists() or ledger.is_symlink():
-        for row in revocation._read(directory)["operations"].values():
+        with revocation.serialized():  # the lock every other reader and writer of the ledger holds
+            operations = revocation._read(directory)["operations"]
+        for row in operations.values():
             chat = str(row.get("chat") or "")
             if row.get("kind", "forget") != "forget" or not row.get("token"):
                 continue
@@ -2401,6 +2424,14 @@ def _carries_any(text: str, tokens: Iterable[str]) -> bool:
 
     words = memory_words(_unmarked(str(text)))
     return any(carries(words, token) for token in tokens) or payload_is_withdrawn(words, tokens)
+
+
+def _name_carries(name: str, token: str, words: Iterable[str]) -> bool:
+    """The one test of a record's name, shared by a forget's rename and its verifier so the two can
+    never disagree: the name carries the token being forgotten, or any word this chat forgot, or
+    names a subject one of them withdrew. A name the verifier flags is therefore always renamed,
+    and a retry heals one an earlier rename got wrong."""
+    return _carries(name, token) or _carries_any(name, words)
 
 
 def carries_forgotten_words(session_id: str, text: str) -> bool:
@@ -2479,14 +2510,12 @@ def _record_texts(record: dict[str, Any]) -> list[str]:
 def documents_carrying(session_id: str, token: str) -> list[str]:
     """The ids of this chat's stored records whose words still carry `token`. Raises when unknown."""
     session = _valid_session(session_id)
+    # A name must not carry any word this chat forgot (`_name_carries`, the rename's own test).
+    words = forgotten_words(session, settled=False)
     with _LOCK:
         records = _session_text_records(session, strict=True, token=token)
-        # A name forget wrote must not carry any word this chat forgot before either: a later
-        # rename that brought one back is a carrier of that earlier forget.
-        earlier = forgotten_words(session, settled=False) if any(r.get("renamed_by_forget_at") for r in records) else ()
         return [record["id"] for record in records
-                if _carries(str(record.get("name") or ""), token)
-                or (record.get("renamed_by_forget_at") and _carries_any(str(record.get("name") or ""), earlier))
+                if _name_carries(str(record.get("name") or ""), token, words)
                 or any(_carries(text, token) for text in _record_texts(record))]
 
 
@@ -2526,24 +2555,27 @@ def forget_in_documents(session_id: str, token: str) -> int:
     Another chat's records are never read for change."""
     session = _valid_session(session_id)
     changed = 0
-    # A new name must not carry any word this chat forgot before either (an unreadable ledger raises:
-    # the forget is then not verified, never renamed blind).
-    earlier = forgotten_words(session, settled=False)
+    # Names are judged by the verifier's own test against every word this chat forgot (an unreadable
+    # ledger raises: the forget is then not verified, never renamed blind).
+    words = forgotten_words(session, settled=False)
 
     def clear(candidate: str) -> bool:
-        return not _carries(candidate, token) and not _carries_any(candidate, earlier)
+        return not _name_carries(candidate, token, words)
 
     with _LOCK:
         for record in _session_text_records(session, strict=False):
             texts = _record_texts(record)
             text_hit = any(_carries(text, token) for text in texts)
-            name_hit = _carries(str(record.get("name") or ""), token)
+            name_hit = _name_carries(str(record.get("name") or ""), token, words)
             if not text_hit and not name_hit:
                 continue
             changed += 1
             if name_hit:
                 # The name is sent to the model and shown on receipts: it goes like content does.
-                record["name"] = _neutral_name(record, token, clear=clear)
+                renamed = _neutral_name(record, token, clear=clear)
+                if renamed == _WORDLESS_NAME:
+                    raise RuntimeError("no neutral name clears this chat's forgotten words")
+                record["name"] = renamed
                 record["renamed_by_forget_at"] = _iso(_utcnow())
                 if not text_hit:
                     _write_manifest(record)
@@ -2637,7 +2669,7 @@ class _LazyScreen:
         except _Withheld:
             return None
 
-    def name(self, record: dict[str, Any]) -> str:
+    def name(self, record: dict[str, Any]) -> str | None:
         """The name a model may see: the record's own, or a neutral one when the name carries a
         revoked word or the ledger cannot be read (the name never decides whether content goes)."""
         name = str(record.get("name") or "")
@@ -2646,7 +2678,8 @@ class _LazyScreen:
         if getattr(self._screen, "unreadable", False):
             # No word can be checked: the plain neutral name, which holds none of the user's words.
             return _neutral_name(record)
-        return _neutral_name(record, clear=lambda candidate: self.text(candidate) == candidate)
+        neutral = _neutral_name(record, clear=lambda candidate: self.text(candidate) == candidate)
+        return None if neutral == _WORDLESS_NAME else neutral
 
     def raw(self, raw: bytes) -> bytes | None:
         text = raw.decode("utf-8", errors="replace")
