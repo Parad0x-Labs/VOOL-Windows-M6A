@@ -1726,7 +1726,6 @@ def evidence_items_for_turn(*, session_id: str, turn_id: str, question: str = ""
                 raw = screen.raw(_open_regular(_bytes_path(record["id"])))
                 if raw is None:
                     continue
-                item["name"] = screen.name(record)
                 text, truncated, selection = _deliver_text(raw, budget=budget, exact=bool(record.get("document")), question=question)
                 remaining = max(0, remaining - len(text))
                 item["text"] = text
@@ -1742,6 +1741,9 @@ def evidence_items_for_turn(*, session_id: str, turn_id: str, question: str = ""
                 item.setdefault("reference", f"attachment:{record['id']}")
                 item["origin"] = "chat_attachment"
                 remaining = max(0, remaining - len(str(item.get("text") or "")))
+            # Every kind's name goes through the screen: a picked file's or an artifact's name is
+            # sent like a document's, and an unreadable ledger hides it the same way.
+            item["name"] = screen.name(record)
             items.append(item)
     return items
 
@@ -1761,6 +1763,7 @@ def model_attachments_for_turn(*, session_id: str, turn_id: str, question: str =
                     continue
                 entry.pop("reference", None)
                 entry.pop("origin", None)
+                entry["name"] = screen.name(record)
                 remaining = max(0, remaining - len(str(entry.get("text") or "")))
                 entries.append(entry)
                 continue
@@ -1772,7 +1775,9 @@ def model_attachments_for_turn(*, session_id: str, turn_id: str, question: str =
                 raw = screen.raw(raw)
                 if raw is None:
                     continue
-                entry["name"] = screen.name(record)
+            # The name of every kind (image, picked file, document) is screened like a document's.
+            entry["name"] = screen.name(record)
+            if record["kind"] == "text":
                 budget = max(0, min(MAX_TEXT_CHARS_PER_FILE, remaining))
                 text, truncated, selection = _deliver_text(raw, budget=budget, exact=bool(record.get("document")), question=question)
                 remaining = max(0, remaining - len(text))
