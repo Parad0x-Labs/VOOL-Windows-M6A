@@ -167,3 +167,26 @@ def test_a_diff_u_timestamp_after_the_name_is_not_part_of_the_name(workspace: Pa
     assert result["ok"] is True and result["details"]["changed_paths"] == ["f.txt"], (result["status"], result["response_text"])
     assert after["f.txt"] == b"two\n"
     _assert_lands_only_where_checked(result, before, after)
+
+
+# A git `copy to` section beside an ordinary edit named a hook no `---`/`+++` line names; with the mode
+# lines the copy is executable, and the user's own next `git commit` runs it.
+HOOK_COPY = (
+    "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -1 +1 @@\n-one\n+two\n"
+    "diff --git a/h.sh b/.git/hooks/pre-commit\nold mode 100644\nnew mode 100755\nsimilarity index 100%\n"
+    "copy from h.sh\ncopy to .git/hooks/pre-commit\n"
+)
+
+
+@pytest.mark.parametrize("engines", ["git_present", "without_git"])
+def test_a_copy_section_does_not_write_a_git_hook(
+    workspace: Path, request: pytest.FixtureRequest, engines: str
+) -> None:
+    if engines == "without_git":
+        request.getfixturevalue("without_git")
+    (workspace / "h.sh").write_text("#!/bin/sh\ntouch HOOK_RAN\n", encoding="utf-8")
+    hook = workspace / ".git" / "hooks" / "pre-commit"
+    result, before, after = _apply(workspace, HOOK_COPY)
+    assert not hook.exists(), (result["status"], result["response_text"])
+    assert result["ok"] is False, (result["status"], result["response_text"])
+    assert after == before
