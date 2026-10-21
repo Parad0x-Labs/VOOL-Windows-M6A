@@ -126,3 +126,21 @@ def test_a_forget_and_another_chats_upload_both_finish(tmp_path, monkeypatch):
     assert isinstance(staged, dict) and staged.get("id"), staged
     assert handled and reply.startswith("Forget applied"), reply
     assert not ca.documents_carrying(chat, value)
+
+
+def test_a_text_only_turn_never_reads_the_forget_ledger(tmp_path, monkeypatch):
+    rng = random.Random(5523)
+    _profile(tmp_path)
+    chat = _canonical(rng)
+    reads: list[str] = []
+    real = ca.forgotten_words
+
+    def forgotten_words(session_id, **kwargs):
+        reads.append(session_id)
+        return real(session_id, **kwargs)
+
+    monkeypatch.setattr(ca, "forgotten_words", forgotten_words)
+    assert ca.model_attachments_from_source_context({"runtime_session_id": chat, "attachment_turn_id": "turn-1"}, question="hi") == []
+    # A screen never built withholds rather than reading the ledger under the store's lock.
+    assert ca._LazyScreen(chat).text("Plain words.") is None
+    assert reads == [], "a turn with nothing to serve read the forget ledger"
