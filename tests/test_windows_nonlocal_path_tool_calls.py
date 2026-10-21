@@ -422,3 +422,29 @@ def test_a_push_remote_naming_a_share_is_refused_before_it_is_looked_up(
     for value in ("origin", "https://github.com/o/r.git", "git@github.com:o/r.git", "C:/repos/r.git"):
         result = _execute(intent, {**local_arguments, "remote": value}, {"workspace": str(workspace), "operating_mode": "auto"})
         assert result.status != STATUS, (value, result.response_text)
+
+
+def test_a_push_remote_the_repository_names_on_a_share_is_refused_before_it_is_looked_up(
+    tmp_path: Path, recorder, windows_host
+) -> None:
+    # The repository's own config can name a remote on a share: repository contents the tool-call door
+    # never sees. The push check refuses that destination as written, before it would look it up for
+    # the hooks and settings of a repository there.
+    import subprocess
+
+    from core.repoops.gitops import GitRunner
+
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    remotes = {"forward": "//attkr9/s/r.git", "backslash": "\\\\attkr9\\s\\r.git", "file-url": "file:////attkr9/s/r.git"}
+    # Written straight into the config file: a process start naming the share is refused by the
+    # recorder. A config value escapes its backslashes.
+    with (repo / ".git" / "config").open("a", encoding="utf-8") as config:
+        config.writelines(f'[remote "{name}"]\n\turl = {url.replace(chr(92), chr(92) * 2)}\n' for name, url in remotes.items())
+    windows_host.on()
+
+    refusals = {name: GitRunner(repo).push_destination_refusal(name) for name in remotes}
+
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+    for name, url in remotes.items():
+        assert f"`{url}` is a network or device path" in refusals[name], (name, refusals[name])
