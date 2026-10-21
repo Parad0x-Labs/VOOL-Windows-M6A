@@ -425,7 +425,7 @@ def test_a_push_remote_naming_a_share_is_refused_before_it_is_looked_up(
 
 
 def test_a_push_remote_the_repository_names_on_a_share_is_refused_before_it_is_looked_up(
-    tmp_path: Path, recorder, windows_host
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorder, windows_host
 ) -> None:
     # The repository's own config can name a remote on a share: repository contents the tool-call door
     # never sees. The push check refuses that destination as written, before it would look it up for
@@ -441,6 +441,10 @@ def test_a_push_remote_the_repository_names_on_a_share_is_refused_before_it_is_l
     # recorder. A config value escapes its backslashes.
     with (repo / ".git" / "config").open("a", encoding="utf-8") as config:
         config.writelines(f'[remote "{name}"]\n\turl = {url.replace(chr(92), chr(92) * 2)}\n' for name, url in remotes.items())
+    # As on a Windows host: the write gate is on, and a push starts only from a repository inside a
+    # marked folder, so the check gets as far as the destination.
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    monkeypatch.setenv(gate.ENV_VAR, str(tmp_path))
     windows_host.on()
 
     refusals = {name: GitRunner(repo).push_destination_refusal(name) for name in remotes}
