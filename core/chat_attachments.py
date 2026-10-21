@@ -54,7 +54,7 @@ import struct
 import threading
 import unicodedata
 import zlib
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -2320,12 +2320,30 @@ _WITHHELD_MARK = "⟦… lines {first}–{last} withheld: they carry words this 
 _WITHHELD_MARK_RE = re.compile(r"⟦… lines \d+–\d+ withheld: they carry words this chat asked to forget …⟧")
 
 
-def _neutral_name(record: dict[str, Any], token: str = "") -> str:
+#: The words a neutral name may start with, tried in order until one does not carry the forgotten word.
+_NEUTRAL_PREFIXES = ("document", "file", "attachment", "item")
+
+
+def _neutral_name(record: dict[str, Any], token: str = "", *, clear: Callable[[str], bool] | None = None) -> str:
     """A name that says nothing of the content: ``document-<id>`` plus the old extension when that
-    extension does not itself carry `token` (and none at all at serve time, `token` unknown)."""
+    extension does not itself carry `token` (and none at all at serve time, `token` unknown).
+
+    The name never carries the word it replaces: "Forget document" (or "doc", or a piece of the
+    id) would otherwise rename a record to a name that still matches, and the forget could never
+    verify. The first candidate `clear` accepts wins (by default: does not carry `token`); another
+    prefix, then another piece of the id, is tried. Raises ValueError when none clears."""
     extension = os.path.splitext(str(record.get("name") or ""))[1].lower()
     keep = token and extension and len(extension) <= 8 and extension[1:].isalnum() and not _carries(extension, token)
-    return f"document-{str(record.get('id') or '')[4:12]}" + (extension if keep else "")
+    if clear is None:
+        clear = (lambda candidate: not _carries(candidate, token)) if token else (lambda candidate: True)
+    ident = str(record.get("id") or "")[4:]
+    pieces = [ident[start:start + 8] for start in range(0, len(ident), 8)] or [""]
+    for prefix in _NEUTRAL_PREFIXES:
+        for piece in pieces:
+            candidate = f"{prefix}-{piece}" if piece else prefix
+            if clear(candidate):
+                return candidate + (extension if keep else "")
+    raise ValueError("no neutral name clears the forgotten words")
 
 
 def _carries(text: str, token: str) -> bool:
@@ -2546,7 +2564,12 @@ class _LazyScreen:
         """The name a model may see: the record's own, or a neutral one when the name carries a
         revoked word or the ledger cannot be read (the name never decides whether content goes)."""
         name = str(record.get("name") or "")
-        return name if self.text(name) == name else _neutral_name(record)
+        if self.text(name) == name:
+            return name
+        try:
+            return _neutral_name(record, clear=lambda candidate: self.text(candidate) == candidate)
+        except ValueError:  # the ledger cannot be read, so no candidate can be cleared
+            return _neutral_name(record)
 
     def raw(self, raw: bytes) -> bytes | None:
         text = raw.decode("utf-8", errors="replace")
