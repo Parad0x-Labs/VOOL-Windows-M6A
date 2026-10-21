@@ -378,3 +378,21 @@ def test_a_remote_branch_filed_under_another_name_is_still_switched_to(repo) -> 
 
     assert proc.returncode == 0, proc.stderr
     assert _git(repo, "symbolic-ref", "--short", "HEAD") == "rb"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows passes command lines as text, so a ref name of raw bytes cannot be made")
+def test_a_fetch_refspec_naming_refs_in_bytes_that_are_not_text_refuses(repo) -> None:
+    # Read as text, refs/remotes/origin/\xffpre-* names no ref git has, so the real target went unchecked.
+    sha = _branch_with(repo, "rb", HOSTILE)
+    _git(repo, "branch", "-D", "rb")
+    raw = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull}
+    subprocess.run([b"git", b"-C", os.fsencode(repo), b"update-ref", b"refs/remotes/origin/\xffpre-rb", sha.encode()],
+                   check=True, env=raw, timeout=30)
+    subprocess.run([b"git", b"-C", os.fsencode(repo), b"config", b"--replace-all", b"remote.origin.fetch",
+                    b"+refs/heads/*:refs/remotes/origin/\xffpre-*"], check=True, env=raw, timeout=30)
+    _git(repo, "update-ref", "refs/tags/v1/rb", _git(repo, "rev-parse", "main"))
+
+    proc = local_lifecycle._run(str(repo), "switch", "rb", mutating=True)
+
+    assert proc.returncode != 0, proc.stderr
+    assert not (repo / ".lfsconfig").exists()
