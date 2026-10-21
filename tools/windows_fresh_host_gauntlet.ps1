@@ -185,6 +185,7 @@ function Invoke-WindowsRuntimeRegression {
         "tests\test_safe_git_worktree_config_cannot_run_programs.py",
         "tests\test_safe_git_lfs_and_signing_by_command.py",
         "tests\repoops\test_local_lifecycle_checks_git_lfs_servers.py",
+        "tests\repoops\test_local_lifecycle_refuses_share_paths.py",
         "tests\test_user_rules_reused_message_is_not_an_option.py",
         "tests\test_windows_gate_checks_where_git_writes.py",
         "tests\test_windows_gate_refuses_git_writes_sent_elsewhere.py",
