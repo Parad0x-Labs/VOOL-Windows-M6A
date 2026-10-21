@@ -18,8 +18,11 @@ TEST = "from calc import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n"
 
 
 def git(root: Path, *args: str, check: bool = True) -> str:
+    # No automatic maintenance: git would repack in the background after a commit (git 2.54+, when its
+    # sample of objects/17/ finds two objects) and run whatever program a test plants in the repository's
+    # config meanwhile, so a marker would show the harness's own git, not VOOL's.
     out = subprocess.run(
-        ["git", "-C", str(root), *args],
+        ["git", "-c", "maintenance.auto=false", "-c", "gc.auto=0", "-C", str(root), *args],
         capture_output=True,
         text=True,
         timeout=60,

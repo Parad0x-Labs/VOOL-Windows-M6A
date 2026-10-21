@@ -32,6 +32,10 @@ ROW_IDENTITIES = frozenset({
     # confidence. Measured on the 0.7.1 Mac smoke: a turn page of 114 bytes failed "Forget 14." as if it
     # still held the forgotten words.
     "bytes", "generation", "erased", "confidence", "task_id",
+    # A context grant's id hashes its chat and source, and its revocation is a timestamp. Measured 2026-10-21:
+    # "Forget 21." in chat openclaw:c3c3... refused every later "Remember ..." there, because the write's access
+    # policy carried that chat's grant id "grant-e92129353f...".
+    "grant_id", "revoked_at",
 })
 NODE_IDENTITIES = ROW_IDENTITIES | frozenset({
     "timestamp", "embedding", "linked_node_ids", "base_importance", "access_count",
