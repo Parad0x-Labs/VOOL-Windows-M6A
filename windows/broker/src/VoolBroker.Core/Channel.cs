@@ -34,6 +34,11 @@ public sealed class Channel(int apiPid, long apiCreationTime, byte[] secret, str
     private BatchRunner? _batches;
     private readonly object _batchesLock = new();
 
+    // Per async flow, like the walk's hooks, so one test's hook never runs in another test's server.
+    private static readonly AsyncLocal<Action<int>?> beforeConnect = new();
+    /// <summary>Test hook: runs with the live connection count after an instance is made, before ConnectNamedPipe.</summary>
+    internal static Action<int>? BeforeConnectForTests { get => beforeConnect.Value; set => beforeConnect.Value = value; }
+
     public SafeFileHandle CreateInitialPipe() => CreatePipe(true);
 
     public async Task ServeAsync(SafeFileHandle initialPipe, CancellationToken cancellationToken)
@@ -54,6 +59,7 @@ public sealed class Channel(int apiPid, long apiCreationTime, byte[] secret, str
             first = false;
             try
             {
+                BeforeConnectForTests?.Invoke(active.Count);
                 // The last error is read on the thread that called ConnectNamedPipe: it is per thread,
                 // and reading it after the await saw another thread's value, so a client that connected
                 // before ConnectNamedPipe (ERROR_PIPE_CONNECTED) stopped the whole server.

@@ -168,37 +168,78 @@ public sealed class ChannelTests
         }
     }
 
-    // Clients that open and close at once while 15 connections are held. One that closes before
-    // the broker's ConnectNamedPipe takes the ERROR_NO_DATA path at the instance cap, which must
-    // not make a 17th instance (review of 3k). Whether a given attempt hits that moment is timing.
+    // A client that closes before the broker's ConnectNamedPipe takes the ERROR_NO_DATA path; at
+    // the instance cap that path must not make a 17th instance (review of 3k).
     [Fact]
-    public async Task Clients_that_leave_at_once_at_the_instance_cap_do_not_stop_the_broker()
+    public async Task A_client_that_leaves_before_the_accept_at_the_instance_cap_does_not_stop_the_broker()
     {
-        var bootstrap = TestSupport.DefaultBootstrap();
-        var (broker, ready) = await TestSupport.StartReady(bootstrap);
+        // In process, so a hook can connect and drop a client on the one free instance before
+        // ConnectNamedPipe, every time: ConnectNamedPipe then reports ERROR_NO_DATA with 15
+        // connections live, and one more instance would not fit.
+        var journalDir = TestSupport.NewTempDirectory();
+        var secret = System.Security.Cryptography.RandomNumberGenerator.GetBytes(32);
+        var key = Convert.ToHexString(secret).ToLowerInvariant();
+        using var roots = new VoolBroker.Core.RootRegistry();
+        var channel = new VoolBroker.Core.Channel(Environment.ProcessId, TestSupport.CurrentCreationTime, secret, journalDir, roots);
+        using var lifetime = new CancellationTokenSource();
+        var initial = channel.CreateInitialPipe();
+        var dropped = 0;
+        // Set before ServeAsync: the hook is per async flow.
+        VoolBroker.Core.Channel.BeforeConnectForTests = live =>
+        {
+            if (live != 15 || Interlocked.Exchange(ref dropped, 1) != 0) return;
+            using var leaving = new System.IO.Pipes.NamedPipeClientStream(".", channel.PipeName[@"\\.\pipe\".Length..], System.IO.Pipes.PipeDirection.InOut);
+            leaving.Connect(5000);
+        };
+        var serving = channel.ServeAsync(initial, lifetime.Token);
         var clients = new List<System.IO.Pipes.NamedPipeClientStream>();
         try
         {
-            var pipeName = ready.RootElement.GetProperty("pipe").GetString()!;
-            for (var i = 0; i < 15; i++) clients.Add(await TestSupport.ConnectAuthenticated(ready, TestSupport.SecretOf(bootstrap)));
-            // Few, short attempts keep the run well inside the broker's 30 s idle timeout.
-            for (var i = 0; i < 50; i++)
+            for (var i = 0; i < 15; i++)
             {
-                using var leaving = new System.IO.Pipes.NamedPipeClientStream(".", pipeName[@"\\.\pipe\".Length..], System.IO.Pipes.PipeDirection.InOut);
-                try { leaving.Connect(200); } catch (TimeoutException) { }
+                var client = await TestSupport.Connect(channel.PipeName, TestContext.Current.CancellationToken);
+                clients.Add(client);
+                await TestSupport.Authenticate(client, key);
             }
-            Assert.False(broker.HasExited, "Clients leaving at once stopped the broker.");
-            await clients[0].DisposeAsync();
-            clients.RemoveAt(0);
-            clients.Add(await TestSupport.ConnectAuthenticated(ready, TestSupport.SecretOf(bootstrap)));
-            using var ping = await TestSupport.Request(clients[^1], new { id = "still-served", op = "ping" });
+            using var before = await TestSupport.Request(clients[0], new { id = "before", op = "ping" });
+            Assert.True(before.RootElement.GetProperty("ok").GetBoolean());
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            while (Volatile.Read(ref dropped) == 0)
+            {
+                Assert.True(DateTime.UtcNow < deadline, "No client left before the accept; the hook did not run.");
+                await Task.Delay(50, TestContext.Current.CancellationToken);
+            }
+            // The broker has handled the drop: a held connection is still served...
+            using var after = await TestSupport.Request(clients[0], new { id = "after", op = "ping" });
+            Assert.True(after.RootElement.GetProperty("ok").GetBoolean());
+            Assert.False(serving.IsCompleted, "Clients leaving at the instance cap stopped the broker.");
+            // ...and a new client gets an instance once a held one leaves.
+            await clients[1].DisposeAsync();
+            clients.RemoveAt(1);
+            var fresh = await TestSupport.Connect(channel.PipeName, TestContext.Current.CancellationToken);
+            clients.Add(fresh);
+            await TestSupport.Authenticate(fresh, key);
+            using var ping = await TestSupport.Request(fresh, new { id = "fresh", op = "ping" });
             Assert.True(ping.RootElement.GetProperty("ok").GetBoolean());
+            Assert.False(serving.IsCompleted, "The broker stopped serving.");
         }
         finally
         {
+            VoolBroker.Core.Channel.BeforeConnectForTests = null;
             foreach (var client in clients) await client.DisposeAsync();
-            ready.Dispose();
-            await TestSupport.Kill(broker);
+            lifetime.Cancel();
+            // The server thread waiting in ConnectNamedPipe ends only when a client connects.
+            try
+            {
+                await using var wake = new System.IO.Pipes.NamedPipeClientStream(".", channel.PipeName[@"\\.\pipe\".Length..], System.IO.Pipes.PipeDirection.InOut);
+                await wake.ConnectAsync(2000, TestContext.Current.CancellationToken);
+            }
+            catch (Exception error) when (error is TimeoutException or IOException) { }
+            // Any exception here (a fault from a regression, a timeout) is the assertions' to report.
+            try { await serving.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken); }
+            catch (Exception) { }
+            initial.Dispose();
+            TestSupport.DeleteTree(journalDir);
         }
     }
 
