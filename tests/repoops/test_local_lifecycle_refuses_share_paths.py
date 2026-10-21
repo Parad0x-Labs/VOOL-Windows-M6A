@@ -7,7 +7,9 @@ anything refused it, and stage_exact_files resolved each path the same way (repr
 at port 13a11d8 with the touch recorder). delete_untracked_file stats (and could unlink) the joined
 path, which is the share itself when the share is absolute, and restore_worktree_file and unstage_file
 hand it to git as a pathspec, which git resolves the same way. Each now asks
-core.windows_path_policy first.
+core.windows_path_policy first. A path git would read as pathspec magic (":(literal)//host/s/x")
+is spelled like no share, yet git strips the magic and resolves the rest, so on Windows the steps
+that hand a path to git refuse a leading ":" too.
 
 A local path is still added, removed and staged as before.
 """
@@ -102,6 +104,33 @@ def test_restoring_unstaging_or_deleting_a_share_path_is_refused_before_it_is_lo
     receipt = getattr(lc, step)(fork, broker, share)
 
     assert receipt.status != "applied", receipt
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+
+
+MAGIC = [":(literal)//attkr9/s/x", ":(glob)\\\\attkr9\\s\\x"]
+MAGIC_IDS = ["literal", "glob"]
+
+
+@pytest.mark.parametrize("step", ["restore_worktree_file", "unstage_file"])
+@pytest.mark.parametrize("path", MAGIC, ids=MAGIC_IDS)
+def test_a_pathspec_magic_path_is_refused_before_git_sees_it(repo, recorder, windows_host, path, step) -> None:
+    lc, fork, broker = _lifecycle(repo)
+    windows_host.on()
+
+    receipt = getattr(lc, step)(fork, broker, path)
+
+    assert receipt.status != "applied", receipt
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+
+
+@pytest.mark.parametrize("path", MAGIC, ids=MAGIC_IDS)
+def test_staging_a_pathspec_magic_path_is_refused_before_git_sees_it(repo, recorder, windows_host, path) -> None:
+    lc, _fork, _broker = _lifecycle(repo)
+    windows_host.on()
+
+    with pytest.raises(StageScopeError):
+        lc.stage_exact_files((path,))
+
     assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
 
 
