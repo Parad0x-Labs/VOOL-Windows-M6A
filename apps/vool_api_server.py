@@ -620,6 +620,7 @@ def main() -> int:
 
     logger.info("Bootstrapping VOOL runtime...")
     runtime: RuntimeServices | None = None
+    windows_broker = None
     try:
         # Defer provider prewarm so the port binds first: this is the fix for OpenClaw getting
         # ECONNREFUSED on 11435 while VOOL is still warming models after boot.
@@ -639,6 +640,16 @@ def main() -> int:
         import uvicorn
 
         _write_pidfile()
+        # Windows broker (phase B): started as this process's child inside a Job that ends it when
+        # this process exits. Nothing is routed through it yet. Fail-soft: boot never depends on it.
+        if os.name == "nt":
+            try:
+                from core.runtime_paths import PROJECT_ROOT, active_vool_home
+                from core.windows_broker.process import start_for_api
+
+                windows_broker = start_for_api(PROJECT_ROOT, active_vool_home())
+            except Exception:
+                logger.exception("Windows broker failed to start; server continues without it")
         # Signed-manifest update subsystem (2026-09-01 amendment): bounded, async, and
         # honestly UNAVAILABLE when no publisher key / feed is configured. Never blocks
         # boot, never raises into the server.
@@ -726,6 +737,9 @@ def main() -> int:
                 signal.signal(signal.SIGTERM, previous_sigterm)
     finally:
         _remove_pidfile()
+        if windows_broker is not None:
+            with contextlib.suppress(Exception):
+                windows_broker.stop()
         try:
             from core.operator.reminder_dispatcher import stop_default_dispatcher
 
