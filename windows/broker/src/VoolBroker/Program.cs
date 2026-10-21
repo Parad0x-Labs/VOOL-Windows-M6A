@@ -49,7 +49,7 @@ internal static class Program
             }
             var journalDirectory = root.GetProperty("journal_dir").GetString()!;
             try { roots.ValidateJournalOutsideFlagged(journalDirectory); }
-            catch (BrokerRefusal refusal) { return RefuseEntry(journalDirectory, refusal.Code); }
+            catch (BrokerRefusal refusal) { return RefuseEntry(journalDirectory, refusal.Code, refusal.Message); }
             // The journal folder is created if needed. Without it the broker still starts, and every
             // file change is refused journal_unavailable. Batches a crash left are finished or undone
             // now, before the pipe exists; any it cannot finish stay in the journal and are reported.
@@ -58,7 +58,7 @@ internal static class Program
             // Checked again now the folder exists: Open created any missing part of it, and a
             // junction made in between would have been followed.
             try { roots.ValidateJournalOutsideFlagged(journalDirectory); }
-            catch (BrokerRefusal refusal) { return RefuseEntry(journalDirectory, refusal.Code); }
+            catch (BrokerRefusal refusal) { return RefuseEntry(journalDirectory, refusal.Code, refusal.Message); }
             var recovered = journal.RecoverAll(roots);
             var journalReport = new
             {
