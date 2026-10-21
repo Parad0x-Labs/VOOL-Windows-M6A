@@ -1016,7 +1016,9 @@ def _stage_bytes(
 
     `fence_text` (a document's text): the write holds the forget authority's writer fence, so words
     this chat asked to forget are refused, never stored again ("re-remembering after forget")."""
-    with _LOCK, contextlib.ExitStack() as fences:
+    # The writer fence (the forget ledger's lock) is taken before `_LOCK`, in the order a forget
+    # takes them, so an upload and a forget never wait on each other's second lock.
+    with contextlib.ExitStack() as fences:
         if fence_text is not None or fence_name:
             from core.memory import revocation
 
@@ -1038,6 +1040,7 @@ def _stage_bytes(
                         f"{name} was not kept: this chat's forget record could not be read, so it cannot be checked.",
                         http_status=503,
                     ) from None
+        fences.enter_context(_LOCK)
         root = _ensure_stage_dir()
         sweep_expired()
         count, total = _session_budget(session)
@@ -1287,7 +1290,21 @@ def stage_document(*, session_id: str, data: bytes, declared_name: Any = "", sou
         rule = "declared_name"
     else:
         extension, media_type, rule = document_type_for(text)
-    with _LOCK:
+    from core.memory import revocation
+
+    # The forget ledger's lock before `_LOCK`, in the order a forget takes them (see `_stage_bytes`):
+    # the document's number is chosen under `_LOCK`, and the writer fence inside re-enters the
+    # ledger's lock this thread already holds instead of waiting for it.
+    with contextlib.ExitStack() as locks:
+        try:
+            locks.enter_context(revocation.serialized())
+        except OSError:
+            raise AttachmentRefused(
+                "forget_authority_unavailable",
+                f"{label or 'The pasted text'} was not kept: this chat's forget record could not be read, so it cannot be checked.",
+                http_status=503,
+            ) from None
+        locks.enter_context(_LOCK)
         name = label or f"{DOCUMENT_NAME_PREFIX}-{_document_count(session) + 1}{extension}"
         extra = {
             "document": True,
@@ -1715,7 +1732,7 @@ def evidence_items_for_turn(*, session_id: str, turn_id: str, question: str = ""
     """The turn's attachments as bounded evidence items: text inlined as data, images by reference."""
     items: list[dict[str, Any]] = []
     remaining = MAX_TEXT_CHARS_PER_TURN
-    screen = _LazyScreen(session_id)
+    screen = _LazyScreen(session_id).read_ledger()
     with _LOCK:
         for record in _bound_records(session_id, turn_id):
             if record.get("state") != "bound":
@@ -1756,7 +1773,7 @@ def model_attachments_for_turn(*, session_id: str, turn_id: str, question: str =
     """What a model may be handed: bounded text, and images as data URLs of the stripped bytes."""
     entries: list[dict[str, Any]] = []
     remaining = MAX_TEXT_CHARS_PER_TURN
-    screen = _LazyScreen(session_id)
+    screen = _LazyScreen(session_id).read_ledger()
     with _LOCK:
         for record in _bound_records(session_id, turn_id):
             if record.get("state") != "bound":
@@ -1832,7 +1849,7 @@ def carried_documents_for_turn(*, session_id: str, exclude_turn_id: str = "", bu
     exclude = str(exclude_turn_id or "").strip()
     entries: list[dict[str, Any]] = []
     remaining = max(0, int(budget))
-    screen = _LazyScreen(session)
+    screen = _LazyScreen(session).read_ledger()
     with _LOCK:
         records = [
             r
@@ -2673,6 +2690,16 @@ class _LazyScreen:
     def __init__(self, session_id: str) -> None:
         self._session = session_id
         self._screen = None
+
+    def read_ledger(self) -> _LazyScreen:
+        """Build the screen now, before the caller takes `_LOCK`.
+
+        Reading the forget ledger takes its lock. A forget holds that lock for its whole command and
+        takes `_LOCK` inside it, so the ledger is never read while `_LOCK` is held: the two locks are
+        always taken ledger first, store second, and a forget and an attachment turn cannot deadlock."""
+        if self._screen is None:
+            self._screen = _revocation_screen(self._session)
+        return self
 
     def text(self, text: str) -> str | None:
         """The screened text, or None when the record must be withheld whole."""
