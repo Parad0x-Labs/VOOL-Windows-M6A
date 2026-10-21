@@ -3503,28 +3503,6 @@ def _attachment_event(
         emit_runtime_event(context, event_type=event_type, message=message, details=dict(details))
 
 
-def _refusal_may_carry_forgotten_words(session_id: str, text: str) -> bool:
-    """Whether a refused upload's name (or reason) may carry words this chat asked to forget.
-
-    Read from the forget authority here, in the attachment-event path, under the handle the
-    client sent and the chat's own id, so the Activity row never relies on a later writer to
-    blank it. An unreadable ledger answers yes (unknown is never clean)."""
-    if not str(text or "").strip():
-        return False
-    from core.chat_session_identity import canonical_chat_session_id
-    from core.memory import revocation
-    from core.memory.carriers import carries, memory_words
-
-    try:
-        handle = str(session_id or "").strip()
-        handles = {value for value in (handle, canonical_chat_session_id(handle)) if value}
-        tokens = {token for value in handles for token in revocation.revoked_tokens(value)}
-        words = memory_words(str(text))
-        return any(carries(words, token) for token in tokens)
-    except Exception:
-        return True
-
-
 def dispatch_upload(
     *,
     path: str,
@@ -3618,13 +3596,15 @@ def dispatch_upload(
             except chat_attachments.AttachmentRefused:
                 name = ""
             label, reason = name or neutral, exc.message
-            if exc.code == "forgotten_content" or _refusal_may_carry_forgotten_words(session_id, name):
+            if exc.code == "forgotten_content" or chat_attachments.carries_forgotten_words(session_id, name):
                 # The name may be what was forgotten: the Activity row never repeats it, whichever
                 # refusal it was (most are raised before the forget fence runs).
                 label = neutral
                 reason = reason.replace(name, "the file") if name else reason
-                if _refusal_may_carry_forgotten_words(session_id, reason):
-                    reason = f"it was not kept ({exc.code})."
+            # The reason is checked on its own too: it can quote more than the name (an archive
+            # member's name, a page), and unknown is never clean.
+            if chat_attachments.carries_forgotten_words(session_id, reason):
+                reason = f"it was not kept ({exc.code})."
             _attachment_event(
                 session_id,
                 event_type="attachment_refused",
