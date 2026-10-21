@@ -5,8 +5,8 @@ git percent-decodes a `file://` URL before it reads the path (connect.c `url_dec
 written `file:///C:/Users/Jo%20Smith/...`. VOOL refused every escaped URL ("cannot tell which
 folder"), so such a push never landed, and a push outside the marked folders was refused for the
 wrong reason. VOOL now decodes the URL once, as git does, and places the folder it names; a form
-the two could read differently (an escaped NUL, slash or backslash, a malformed escape, or a
-decoded path that starts with two slashes, which Windows reads as a share) is still refused. The
+the two could read differently (an escaped NUL, slash or backslash, a malformed escape, bytes that are
+not UTF-8, which git keeps as raw bytes and Python would turn into U+FFFD, or a decoded path that starts with two slashes, which Windows reads as a share) is still refused. The
 Windows decision is switched on through the gate's `_IS_WINDOWS`, so the file runs on every platform.
 """
 from __future__ import annotations
@@ -93,7 +93,7 @@ def test_a_push_to_an_escaped_file_url_outside_the_marked_folders_is_refused_as_
     assert _refs(destination) == before
 
 
-@pytest.mark.parametrize("escape", ("%00", "%2F", "%2f", "%5C", "%zz", "%2"))
+@pytest.mark.parametrize("escape", ("%00", "%2F", "%2f", "%5C", "%zz", "%2", "%ff", "%C3%28", "%ED%A0%80"))
 def test_an_escape_git_and_vool_could_read_differently_is_still_refused(world, escape: str) -> None:
     destination = _bare(world["marked"] / "dest.git")
     url = destination.as_uri() + "/x" + escape
