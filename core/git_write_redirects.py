@@ -71,7 +71,10 @@ _USER_CONFIG_SCOPES = frozenset({"system", "global", "command"})
 #: so a hard link at those is refused.
 _HASH = r"[0-9a-f]{40}(?:[0-9a-f]{24})?"  # SHA-1 or SHA-256
 _OBJECT_STORE_FILE = re.compile(
-    r"(?:(?:worktrees/[^/]+/)?modules/.+/)?(?:"  # a linked worktree keeps its submodules' git folders in its own
+    # A submodule's git folder, also inside a linked worktree's own git folder. No step of it is a
+    # `logs` or `refs` folder: git appends to reflogs in place, and a branch may be named like an
+    # object (`objects/ab/<38 hex>`), so `modules/x/logs/refs/heads/objects/...` is not an object store.
+    r"(?:(?:worktrees/[^/]+/)?modules/(?:(?!(?:logs|refs)/)[^/]+/)+)?(?:"
     r"objects/[0-9a-f]{2}/[0-9a-f]{38}(?:[0-9a-f]{24})?"
     rf"|objects/pack/pack-{_HASH}\.(?:pack|idx|rev|bitmap|mtimes|keep)"
     rf"|objects/pack/multi-pack-index(?:-{_HASH}\.(?:bitmap|rev))?"
