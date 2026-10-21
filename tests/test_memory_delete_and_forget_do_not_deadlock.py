@@ -123,3 +123,62 @@ def test_a_memory_erase_and_another_chats_forget_both_finish(tmp_path, monkeypat
     assert handled and reply.startswith("Forget applied"), reply
     assert not [r for r in entries._load_jsonl(entries.memory_entries_path())
                 if r.get("record_id") == record_id and r.get("status") == "active"]
+
+
+def test_a_chat_delete_alongside_a_forget_completes_and_keeps_nothing_revoked(tmp_path, monkeypatch):
+    """The delete rewrites the shared transcript without the chat's rows. Read before a forget and
+    written after it, that list still carries the forgotten value: the fence refuses the write and the
+    delete fails. Taking the fence for the whole delete orders it wholly before or after the forget."""
+    monkeypatch.setattr(entries, "_MEMORY_ENTRY_LOCK", threading.Lock())
+    monkeypatch.setattr(revocation, "_LOCK", threading.RLock())
+
+    rng = random.Random(7201)
+    profile = _profile(tmp_path)
+    chat, other = _canonical(rng), _canonical(rng)
+    value = _value(rng)
+    _ingest(profile, chat, [(_ts("2026-03-04T09:00:00"), f"The gate code is {value}.")])
+    _remember(monkeypatch, other, f"The locker code is {_value(rng)}.")
+    assert any(value in str(row) for row in entries._load_jsonl(entries.conversation_log_path()))
+
+    read_rows, in_fence = threading.Event(), threading.Event()
+    real_rewrite, real_forget = entries.rewrite_jsonl, entries.forget_structured_memory
+
+    def rewrite_jsonl(path, rows):
+        if threading.current_thread().name == "eraser" and path == entries.conversation_log_path() and not read_rows.is_set():
+            read_rows.set()  # the delete has read the transcript and is about to write it back
+            if not revocation._LOCK._is_owned():
+                # Without the fence, let the forget run between the read and the write. A delete that
+                # already holds the fence has nothing to wait for.
+                in_fence.wait(_WAIT)
+        return real_rewrite(path, rows)
+
+    def forget_structured_memory(*args, **kwargs):
+        in_fence.set()
+        return real_forget(*args, **kwargs)
+
+    monkeypatch.setattr(entries, "rewrite_jsonl", rewrite_jsonl)
+    monkeypatch.setattr(entries, "forget_structured_memory", forget_structured_memory)
+
+    results: dict = {}
+
+    def run(key, fn):
+        try:
+            results[key] = fn()
+        except BaseException as exc:  # reported below
+            results[key] = exc
+
+    one = threading.Thread(target=run, args=("erase", lambda: entries.delete_conversation_session(other)), name="eraser", daemon=True)
+    two = threading.Thread(target=run, args=("forget", lambda: _forget_command(profile, chat, f"Forget {value}")), daemon=True)
+    one.start()
+    assert read_rows.wait(_WAIT), "the delete never reached the transcript rewrite"
+    two.start()
+    one.join(_JOIN)
+    two.join(_JOIN)
+    assert not one.is_alive() and not two.is_alive(), "the chat delete and the forget deadlocked"
+
+    assert results["erase"] is True, results
+    handled, reply = results["forget"]
+    assert handled and reply.startswith("Forget applied"), reply
+    transcript = entries._load_jsonl(entries.conversation_log_path())
+    assert not [row for row in transcript if str(row.get("session_id") or "").strip() == other]
+    assert not [row for row in transcript if value in str(row)]
