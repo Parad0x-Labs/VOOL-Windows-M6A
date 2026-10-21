@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><RootNamespace>VoolBroker</RootNamespace></PropertyGroup>
+  <ItemGroup><ProjectReference Include="..\VoolBroker.Core\VoolBroker.Core.csproj" /></ItemGroup>
+</Project>
