@@ -2316,11 +2316,12 @@ def _carries(text: str, token: str) -> bool:
     return carries(text, token)
 
 
-def _session_text_records(session: str, *, strict: bool) -> list[dict[str, Any]]:
+def _session_text_records(session: str, *, strict: bool, token: str = "") -> list[dict[str, Any]]:
     """Every record of the chat (any state but erased) whose bytes are still stored.
 
-    `strict` (the verifier): an unreadable manifest, a symlinked entry or an orphan bytes file is
-    an unknown carrier and raises instead of being skipped."""
+    `strict` (the verifier): a manifest that cannot be read names no owner, so its bytes -- and
+    any bytes file with no manifest -- are read too; when they carry `token` (or cannot be read)
+    the carrier is unknown and this raises instead of reporting the chat clean."""
     root = stage_dir()
     if not root.exists():
         return []
@@ -2333,18 +2334,24 @@ def _session_text_records(session: str, *, strict: bool) -> list[dict[str, Any]]
     for path in sorted(root.glob("att_*.json")):
         if path.name.endswith(".derived.json"):
             continue
-        if path.is_symlink():
-            raise AttachmentRefused("symlink_refused", "An attachment manifest is a symbolic link.")
-        payload = json.loads(_open_regular(path).decode("utf-8"))
-        if not isinstance(payload, dict) or not _ID_RE.fullmatch(str(payload.get("id") or "")):
-            raise ValueError("an attachment manifest is unreadable")
+        try:
+            if path.is_symlink():
+                raise ValueError("symlinked manifest")
+            payload = json.loads(_open_regular(path).decode("utf-8"))
+            if not isinstance(payload, dict) or payload.get("id") != path.name[: -len(".json")]:
+                raise ValueError("an attachment manifest is unreadable")
+        except (OSError, ValueError, AttachmentRefused):
+            continue  # owner unknown: its bytes are checked below as an orphan
         known.add(payload["id"])
         if payload.get("session_id") == session and payload.get("state") != "erased":
             records.append(payload)
-    for path in sorted(root.glob("att_*.bin")):
-        if path.name[: -len(".bin")] not in known:
-            # Bytes with no manifest name no owner: unknown, so never reported as clean.
-            raise ValueError("an attachment bytes file has no manifest")
+    for path in sorted([*root.glob("att_*.bin"), *root.glob("att_*.derived.json")]):
+        stem = path.name.split(".", 1)[0]
+        if stem in known:
+            continue
+        # Bytes with no readable manifest name no owner: clean only if they do not carry the words.
+        if path.is_symlink() or _carries(_open_regular(path).decode("utf-8", errors="replace"), token):
+            raise ValueError("an attachment file with no owner carries the forgotten words")
     return records
 
 
@@ -2364,7 +2371,7 @@ def documents_carrying(session_id: str, token: str) -> list[str]:
     """The ids of this chat's stored records whose words still carry `token`. Raises when unknown."""
     session = _valid_session(session_id)
     with _LOCK:
-        return [record["id"] for record in _session_text_records(session, strict=True)
+        return [record["id"] for record in _session_text_records(session, strict=True, token=token)
                 if any(_carries(text, token) for text in _record_texts(record))]
 
 
