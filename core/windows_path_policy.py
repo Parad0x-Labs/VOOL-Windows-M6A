@@ -67,8 +67,9 @@ AMBIGUOUS_KEYS = frozenset({
     "target", "targets", "dest", "to", "from", "src", "source", "folder", "file", "filename", "filepath",
     "dir", "dir_path", "folder_path", "directory_path", "files",
 })
-#: Argument names that carry a URL, judged by `classify_url`.
-URL_KEYS = frozenset({"url", "uri", "link"})
+#: Argument names that carry a URL, judged by `classify_url`. A git `remote` is a remote's name or a
+#: URL; one on a share is looked up by the push check before it is refused, so it is judged here first.
+URL_KEYS = frozenset({"url", "uri", "link", "remote"})
 _PATH_INTENT_PREFIXES = (
     "workspace.", "machine.", "operator.", "pdf.", "skill.", "media.", "sandbox.", "code.", "repo.", "file.",
 )
