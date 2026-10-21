@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from core import windows_path_policy
 from core.response_constraints import parse_response_constraint
 from core.runtime_execution_tools import (
     _find_folder_name_from_phrase,
@@ -50,6 +51,7 @@ from .constants import (
     _VERB_NAME_FOLDER_RE,
     _extend_path_over_spaces,
     bound_chat_attachment_present,
+    drive_left_behind,
     machine_diagnostics_intent,
     machine_disk_scope,
     machine_display_intent,
@@ -1042,8 +1044,16 @@ def _clean_workspace_path(candidate: str) -> str:
 
 def _clean_workspace_directory_path(candidate: str, *, workspace_root: str = "") -> str:
     raw = str(candidate or "").strip().strip("`\"'")
+    typed_kind = windows_path_policy.refused_form(raw)
+    if typed_kind in windows_path_policy.NETWORK_KINDS:
+        # On Windows a share or a device path names no workspace folder, and is not resolved to find
+        # out: resolving `\\host\share` is already the SMB connection.
+        return ""
     clean = ""
-    if raw and workspace_root:
+    # A root- or drive-relative folder (`/notes`, `C:notes`) is not resolved either: the lexical clean
+    # below places it, as it does on base once the resolve finds it outside the workspace (`/notes` is
+    # the workspace folder `notes`).
+    if raw and workspace_root and not typed_kind:
         try:
             resolved_workspace_root = Path(workspace_root).expanduser().resolve()
             resolved_candidate = Path(raw).expanduser().resolve()
@@ -1125,11 +1135,14 @@ def _explicit_home_rooted_path(text: str) -> str:
     """A concrete path under Desktop/Downloads/Documents that the user wrote out, else ''."""
     for match in _HOME_ROOTED_PATH_RE.finditer(str(text or "")):
         candidate = str(match.group("path") or "").rstrip(".,;:!?)")
+        # On Windows a full local path the input normalizer split (`C: /Users/you/Desktop`) keeps
+        # its drive, as typed: without it the list tool refuses it as no full local path.
+        drive = drive_left_behind(str(text or ""), match.start("path"), candidate)
         # Second extractor, same cut-at-the-space bug as `explicit_path_in`. Measured on the
         # deployed build 2026-07-30: "check ~/Documents/Vool testing and tell me whats there"
         # became "~/Documents/Vool", which does not exist, and the turn ended in "I wasn't able to
         # turn that into a completed action" for a folder sitting right there.
-        candidate = _extend_path_over_spaces(str(text or ""), candidate, match.end("path"))
+        candidate = _extend_path_over_spaces(str(text or ""), drive + candidate, match.end("path"))[len(drive) :]
         segments = [part for part in candidate.split("/") if part and part != "~"]
         # Drop the /Users/<name> prefix so the first meaningful segment is the home folder.
         if segments and segments[0].lower() in {"users", "home"}:
@@ -1137,7 +1150,7 @@ def _explicit_home_rooted_path(text: str) -> str:
         if not segments:
             continue
         if any(segments[0].lower() == root.lower() for root in _SAFE_LISTING_ROOTS):
-            return candidate
+            return drive + candidate
     return ""
 
 

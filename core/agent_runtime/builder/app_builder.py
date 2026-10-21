@@ -25,6 +25,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from core import windows_path_policy
 from core.agent_runtime.builder import mutation_scope as mutation_scope_module
 from core.agent_runtime.builder.mutation_scope import MutationScope
 from core.agent_runtime.builder.named_file_build import workspace_relative_path
@@ -519,6 +520,10 @@ def subject_block(subject_paths: tuple[str, ...], *, workspace_root: str) -> str
     excerpts: list[str] = []
     for rel in paths[:2]:
         candidate = rel if os.path.isabs(rel) else os.path.join(str(workspace_root or ""), rel)
+        # On Windows a subject on a network share or device is never opened, even when the
+        # workspace itself is one (a Desktop redirected to a share).
+        if windows_path_policy.refused_form(candidate, network_only=True):
+            continue
         try:
             with open(candidate, encoding="utf-8", errors="replace") as handle:
                 body = handle.read(_SUBJECT_EXCERPT_CHARS)

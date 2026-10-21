@@ -28,6 +28,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from core import windows_path_policy
 from core.tool_argument_aliases import (
     bind_known_argument_aliases,
     input_schema_for_intent,
@@ -2334,6 +2335,10 @@ def _declared_write_target_exists(
     path_value = str(args.get("path") or args.get("target") or args.get("destination") or "").strip()
     if not path_value:
         return False
+    if windows_path_policy.refused_form(path_value, network_only=True):
+        # On Windows a share or device path is never looked up here (that lookup is the SMB
+        # connection). A target that cannot be checked counts as one that exists: an overwrite.
+        return True
     root_value = _trusted_write_root(source_context)
     try:
         candidate = Path(path_value) if os.path.isabs(path_value) else (
@@ -2590,6 +2595,9 @@ def _resolve_against(root: str, raw_path: str) -> Path | None:
     """Absolute, symlink-resolved target for one path argument, or None when it cannot be resolved."""
     text = str(raw_path or "").strip()
     if not text:
+        return None
+    if any(windows_path_policy.refused_form(value, network_only=True) for value in (text, root)):
+        # On Windows a share or device path is not resolved: that lookup is the SMB connection.
         return None
     try:
         candidate = Path(text).expanduser()
@@ -3100,6 +3108,9 @@ def _edit_preview(intent: str, arguments: dict[str, Any], source_context: dict[s
     else:
         raw_root = _trusted_write_root(source_context)
         if not raw_root:
+            return ""
+        if any(windows_path_policy.refused_form(value, network_only=True) for value in (raw_path, raw_root)):
+            # On Windows a share or device file is not read for a preview: that read is the SMB connection.
             return ""
         root = Path(raw_root).expanduser()
         try:

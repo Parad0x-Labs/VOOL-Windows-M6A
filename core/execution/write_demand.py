@@ -45,6 +45,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import NamedTuple
 
+from core import windows_path_policy
+
 _SPLIT_EXT_CLASS_CHARS = frozenset(
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./-"
 )
@@ -779,8 +781,12 @@ def confine_target(
         return "", ""
     if ".." in raw.replace("\\", "/").split("/"):
         return "", "traversal"
+    # On Windows a share is never resolved to find out whether it is inside the workspace: resolving
+    # `\\host\share` is already the SMB connection. A target there is a rooted path outside it.
+    if windows_path_policy.refused_form(raw, network_only=True):
+        return "", "outside_root"
     resolved = ""
-    if raw and workspace_root:
+    if raw and workspace_root and not windows_path_policy.refused_form(workspace_root, network_only=True):
         try:
             resolved_workspace_root = Path(workspace_root).expanduser().resolve()
             resolved_candidate = Path(raw).expanduser().resolve()

@@ -363,9 +363,14 @@ def read_bundle(
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, bytes], dict[str, Any]]:
     """Open a bundle file. Returns (payload, manifest, attachment members, signature record),
     fully verified: archive safety, member hashes, then signature."""
+    from core import windows_path_policy
     from core.session_portability import signing
     from core.session_portability.api import PortabilityRefused
 
+    # On Windows a share or a partial path is refused by its spelling, before anything looks it up.
+    non_local = windows_path_policy.refused_form(path)
+    if non_local:
+        raise PortabilityRefused("BUNDLE_PATH_NOT_LOCAL", windows_path_policy.refusal_text(path, non_local))
     if not path.is_file():
         raise PortabilityRefused("BUNDLE_PATH_MISSING", f"No bundle file at {path}")
     raw = path.read_bytes()

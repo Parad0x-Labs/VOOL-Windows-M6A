@@ -16,6 +16,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from core import windows_path_policy
 from core.runtime_paths import active_vool_home, runtime_auxiliary_path
 
 # Sidecar index: which chat (session) + prompt produced each generated file, so the Files panel can
@@ -134,7 +135,7 @@ def list_generated_files(*, limit: int = 500) -> dict[str, Any]:
 def path_is_allowed(path: str) -> bool:
     """True only when ``path`` resolves to a file under one of the known roots (never an arbitrary path)."""
     raw = str(path or "").strip()
-    if not raw:
+    if not raw or windows_path_policy.refused_form(raw):
         return False
     try:
         target = os.path.realpath(os.path.expanduser(raw))

@@ -10,7 +10,9 @@ depending only on which router claimed the turn.
 The contract, in order:
 
 1. A cancelled turn executes nothing. The same typed check the model loop applies runs here, so a
-   stop press reaches a fast-path dispatch too.
+   stop press reaches a fast-path dispatch too. On Windows, neither does a call whose path names a
+   share, a device or no full local folder (`core.windows_path_policy`), and no decision is taken
+   for it.
 2. An EXPLICIT permission decision stands behind every execution. It arrives either as a held,
    typed ``PermissionDecision`` (the model loop already decided at its controller seam; handing the
    decision object here is what prevents a second prompt and a second receipt) or is taken here
@@ -40,6 +42,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from core import windows_path_policy
 from core.mode_permission_policy import (
     PermissionDecision,
     PermissionEffect,
@@ -222,6 +225,24 @@ def execute_authorized_runtime_tool(
             status="cancelled",
             response_text="The turn was cancelled before this tool ran.",
             cancelled=True,
+        )
+
+    # On Windows, a path naming a share, a device or no full local folder is refused next, before
+    # the Windows write gate places it and before any decision is taken or used: both look the path
+    # up, and on Windows a lookup of `\\host\share` is already the SMB connection.
+    path_refusal = windows_path_policy.argument_refusal(intent, arguments) or (
+        # The workspace the write gate and the dispatch resolve, when it is a share.
+        windows_path_policy.context_workspace_refusal(source_context)
+    )
+    if path_refusal is not None:
+        return _refusal_result(
+            intent,
+            None,
+            status=windows_path_policy.STATUS,
+            response_text=(
+                f"`{intent}` was not executed: "
+                + windows_path_policy.refusal_text(path_refusal.value, path_refusal.kind)
+            ),
         )
 
     if permission_decision is not None:

@@ -17,6 +17,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from core import windows_path_policy
 from core.command_registry.envelope import (
     FAULT_CODE_TO_EXIT,
     Breadcrumb,
@@ -262,6 +263,24 @@ def execute_command(
             f"Bad arguments for {spec.command_id}: {input_error}",
             started=started,
             detail={"reason": input_error},
+            projection=ctx.projection,
+        )
+
+    # On Windows, a field that names a file or folder on a share, a device or no full local folder is
+    # a usage fault, before the availability probe, the gate or the handler reaches for it: on Windows
+    # a lookup of `\\host\share` (or a `git` started there) is already the SMB connection.
+    path_refusal = windows_path_policy.command_input_refusal(spec.command_id, input_data)
+    if path_refusal is not None:
+        return _fault_envelope(
+            spec,
+            "usage",
+            windows_path_policy.refusal_text(path_refusal.value, path_refusal.kind),
+            started=started,
+            detail={
+                "reason": windows_path_policy.STATUS,
+                "argument": path_refusal.key,
+                "kind": path_refusal.kind,
+            },
             projection=ctx.projection,
         )
 
