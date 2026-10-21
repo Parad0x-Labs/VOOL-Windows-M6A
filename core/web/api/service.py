@@ -3593,14 +3593,25 @@ def dispatch_upload(
             )
     except chat_attachments.AttachmentRefused as exc:
         if exc.code != "missing_session":
+            neutral = "pasted text" if is_document else "an attachment"
             try:
-                label = chat_attachments.sanitize_name(declared_name)
+                name = chat_attachments.sanitize_name(declared_name)
             except chat_attachments.AttachmentRefused:
-                label = "pasted text" if is_document else "an attachment"
+                name = ""
+            label, reason = name or neutral, exc.message
+            if exc.code == "forgotten_content" or chat_attachments.carries_forgotten_words(session_id, name):
+                # The name may be what was forgotten: the Activity row never repeats it, whichever
+                # refusal it was (most are raised before the forget fence runs).
+                label = neutral
+                reason = reason.replace(name, "the file") if name else reason
+            # The reason is checked on its own too: it can quote more than the name (an archive
+            # member's name, a page), and unknown is never clean.
+            if chat_attachments.carries_forgotten_words(session_id, reason):
+                reason = f"it was not kept ({exc.code})."
             _attachment_event(
                 session_id,
                 event_type="attachment_refused",
-                message=f"{'Document' if is_document else 'Attachment'} refused: {label} — {exc.message}",
+                message=f"{'Document' if is_document else 'Attachment'} refused: {label} — {reason}",
                 details={"code": exc.code, "declared_type": declared_type, "size_bytes": len(data), "source": source},
             )
         return _out(json_response(exc.http_status, exc.to_dict()))

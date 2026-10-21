@@ -1,0 +1,30 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VoolBroker", "src\VoolBroker\VoolBroker.csproj", "{6194DB7D-1FA0-45CB-AF5E-F870A86EC76E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VoolBroker.Core", "src\VoolBroker.Core\VoolBroker.Core.csproj", "{0A84C10E-4E09-4285-9E55-75844D61FDF0}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VoolBroker.Tests", "tests\VoolBroker.Tests\VoolBroker.Tests.csproj", "{4EA85555-EC34-4094-A537-88E0DD89F847}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{6194DB7D-1FA0-45CB-AF5E-F870A86EC76E}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{6194DB7D-1FA0-45CB-AF5E-F870A86EC76E}.Debug|x64.Build.0 = Debug|Any CPU
+		{6194DB7D-1FA0-45CB-AF5E-F870A86EC76E}.Release|x64.ActiveCfg = Release|Any CPU
+		{6194DB7D-1FA0-45CB-AF5E-F870A86EC76E}.Release|x64.Build.0 = Release|Any CPU
+		{0A84C10E-4E09-4285-9E55-75844D61FDF0}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{0A84C10E-4E09-4285-9E55-75844D61FDF0}.Debug|x64.Build.0 = Debug|Any CPU
+		{0A84C10E-4E09-4285-9E55-75844D61FDF0}.Release|x64.ActiveCfg = Release|Any CPU
+		{0A84C10E-4E09-4285-9E55-75844D61FDF0}.Release|x64.Build.0 = Release|Any CPU
+		{4EA85555-EC34-4094-A537-88E0DD89F847}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{4EA85555-EC34-4094-A537-88E0DD89F847}.Debug|x64.Build.0 = Debug|Any CPU
+		{4EA85555-EC34-4094-A537-88E0DD89F847}.Release|x64.ActiveCfg = Release|Any CPU
+		{4EA85555-EC34-4094-A537-88E0DD89F847}.Release|x64.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
