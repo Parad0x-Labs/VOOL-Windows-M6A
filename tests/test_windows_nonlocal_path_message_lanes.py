@@ -29,9 +29,11 @@ What this file pins:
 
 The Windows rule is switched on only through `windows_path_policy._IS_WINDOWS` (the `windows_host`
 fixture), and only after local setup, because with it on a POSIX `tmp_path` counts as
-root-relative; the controls therefore use relative or `~` paths. Literal sentences are asserted,
-never `refusal_text`, so this file runs against base 9f88889 given only `core/windows_path_policy.py`,
-with no guard wired.
+root-relative; the controls therefore use relative or `~` paths. On a Windows host the Windows write
+gate is on as well and answers some writes first: a move whose paths are only in its quoted text is
+refused there before the move handler reads them, and the move control and the `/notes` write mark
+their folder for it. Literal sentences are asserted, never `refusal_text`, so this file runs against
+base 9f88889 given only `core/windows_path_policy.py`, with no guard wired.
 """
 
 from __future__ import annotations
@@ -46,6 +48,7 @@ from typing import Any
 import pytest
 
 from core import runtime_paths
+from core import windows_write_gate as gate
 from tests._nonlocal_touch_recorder import MARKER_FORMS, NETWORK_FORMS, MarkerForm, recorder, windows_host
 from tests.asgi_harness import asgi_request
 
@@ -337,10 +340,23 @@ def _operator_lane(tmp_path: Path) -> tuple[dict, dict]:
             ok, status, text = run(intent)
             observed[f"{form.id} {case}"] = (ok, status, form.sentence in text)
             expected[f"{form.id} {case}"] = (False, STATUS, True)
-    # Control: a local move is still checked on disk and proposed for approval. Relative, because the
-    # handler expands `~` into this host's POSIX home, which the Windows rule reads as root-relative.
-    (tmp_path / "a.txt").write_text("a\n", encoding="utf-8")
-    ok, status, _text = run(parse_operator_action_intent('move "a.txt" to "archive"'))
+            if case == "move, quoted only" and gate._IS_WINDOWS:
+                # On a Windows host the write gate answers first: a move that names no source path of its
+                # own cannot be placed, so it is refused before the handler reads the quoted text.
+                expected[f"{form.id} {case}"] = (False, gate.STATUS, False)
+    # Control: a local move is still checked on disk and proposed for approval. Off Windows the paths
+    # are relative, because the handler expands `~` into this host's POSIX home, which the Windows rule
+    # reads as root-relative. On a Windows host the write gate places only a path that is absolute once
+    # `~` is expanded, inside a folder marked for it, so there they are `~` paths in a marked folder.
+    if gate._IS_WINDOWS:
+        (Path.home() / "a.txt").write_text("a\n", encoding="utf-8")
+        local_move = 'move "~\\a.txt" to "~\\archive"'
+    else:
+        (tmp_path / "a.txt").write_text("a\n", encoding="utf-8")
+        local_move = 'move "a.txt" to "archive"'
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv(gate.ENV_VAR, str(tmp_path))
+        ok, status, _text = run(parse_operator_action_intent(local_move))
     observed["control"] = (ok, status)
     expected["control"] = (True, "approval_required")
     return observed, expected
@@ -530,9 +546,13 @@ def test_relative_and_forward_slash_drive_paths_are_not_refused(monkeypatch, rec
 def test_a_file_created_in_a_typed_folder_stays_in_that_workspace_folder(tmp_path: Path, monkeypatch, recorder, windows_host) -> None:
     # `/notes` names no full local path on Windows, and it is not resolved; as on base it is the
     # workspace folder `notes`, not dropped so that the file silently lands at the workspace root.
+    workspace = tmp_path / "workspace"
+    # As on a Windows host: the write gate is on and the chat's workspace is a marked disposable folder,
+    # so the write reaches the approval ask, which names where it would land.
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    monkeypatch.setenv(gate.ENV_VAR, str(workspace))
     chat = _served_chat(monkeypatch)
     windows_host.on()
-    workspace = tmp_path / "workspace"
     planned = {
         "in /notes create todo.txt with text: hi": f"Affected: {workspace}/notes/todo.txt.",
         "inside /docs create readme.md with text: hello": f"Affected: {workspace}/docs/readme.md.",
