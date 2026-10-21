@@ -379,7 +379,7 @@ class LocalLifecycle:
             raise StageScopeError("no paths requested — refusing implicit scope")
         for p in rel_paths:
             # On Windows a lookup of a share path is an SMB connection, so a share is refused first.
-            if windows_path_policy.refused_form(p, network_only=True):
+            if _share_kind(p, pathspec=True):
                 raise StageScopeError(f"path is a network or device path: {p}")
             resolved = os.path.realpath(os.path.join(self._ws.root, p))
             root = os.path.realpath(self._ws.root)
@@ -531,8 +531,8 @@ class LocalLifecycle:
     # -- restore / discard (typed, destructive-but-narrow) -----------------------
     def restore_worktree_file(self, fork, broker: ExecutionBroker, rel_path: str):
         def dispatch() -> EffectOutcome:
-            kind = windows_path_policy.refused_form(rel_path, network_only=True)
-            if kind:  # refused before git or a stat looks the share up, which is an SMB connection
+            kind = _share_kind(rel_path, pathspec=True)
+            if kind:  # refused before git looks the share up, which is an SMB connection
                 return EffectOutcome.from_domain("rejected", reason=f"network_path:{kind}")
             _git(self._ws.root, "checkout", "--", rel_path, mutating=True)
             gone = rel_path not in unstaged_paths(self._ws)
@@ -550,8 +550,8 @@ class LocalLifecycle:
 
     def unstage_file(self, fork, broker: ExecutionBroker, rel_path: str):
         def dispatch() -> EffectOutcome:
-            kind = windows_path_policy.refused_form(rel_path, network_only=True)
-            if kind:  # refused before git or a stat looks the share up, which is an SMB connection
+            kind = _share_kind(rel_path, pathspec=True)
+            if kind:  # refused before git looks the share up, which is an SMB connection
                 return EffectOutcome.from_domain("rejected", reason=f"network_path:{kind}")
             _git(self._ws.root, "restore", "--staged", "--", rel_path, mutating=True)
             still = rel_path in staged_paths(self._ws)
@@ -569,8 +569,8 @@ class LocalLifecycle:
 
     def delete_untracked_file(self, fork, broker: ExecutionBroker, rel_path: str):
         def dispatch() -> EffectOutcome:
-            kind = windows_path_policy.refused_form(rel_path, network_only=True)
-            if kind:  # refused before git or a stat looks the share up, which is an SMB connection
+            kind = _share_kind(rel_path)
+            if kind:  # refused before a stat looks the share up, which is an SMB connection
                 return EffectOutcome.from_domain("rejected", reason=f"network_path:{kind}")
             target = os.path.join(self._ws.root, rel_path)
             if not os.path.isfile(target) or _is_tracked(self._ws, rel_path):
@@ -721,6 +721,19 @@ def staged_paths(ws: RepositoryWorkspace) -> tuple[str, ...]:
 def unstaged_paths(ws: RepositoryWorkspace) -> tuple[str, ...]:
     return tuple(p for p in _git(ws.root, "diff", "--name-only").splitlines()
                  if p.strip())
+
+
+def _share_kind(path: str, *, pathspec: bool = False) -> str:
+    """On Windows, why `path` is refused before anything looks it up; "" when it is not.
+
+    A path handed to git as a pathspec is also refused when it starts with ":": git reads that
+    as pathspec magic (":(literal)//host/s/x"), strips it and resolves the rest, so the magic
+    hides a share from the spelling check. A Windows file name cannot start with ":" anyway.
+    """
+    kind = windows_path_policy.refused_form(path, network_only=True)
+    if not kind and pathspec and windows_path_policy.active() and path.startswith(":"):
+        return "pathspec_magic"
+    return kind
 
 
 def _is_tracked(ws: RepositoryWorkspace, rel_path: str) -> bool:
