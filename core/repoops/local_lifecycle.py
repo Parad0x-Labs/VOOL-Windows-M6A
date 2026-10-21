@@ -531,6 +531,9 @@ class LocalLifecycle:
     # -- restore / discard (typed, destructive-but-narrow) -----------------------
     def restore_worktree_file(self, fork, broker: ExecutionBroker, rel_path: str):
         def dispatch() -> EffectOutcome:
+            kind = windows_path_policy.refused_form(rel_path, network_only=True)
+            if kind:  # refused before git or a stat looks the share up, which is an SMB connection
+                return EffectOutcome.from_domain("rejected", reason=f"network_path:{kind}")
             _git(self._ws.root, "checkout", "--", rel_path, mutating=True)
             gone = rel_path not in unstaged_paths(self._ws)
             return EffectOutcome(status="applied",
@@ -547,6 +550,9 @@ class LocalLifecycle:
 
     def unstage_file(self, fork, broker: ExecutionBroker, rel_path: str):
         def dispatch() -> EffectOutcome:
+            kind = windows_path_policy.refused_form(rel_path, network_only=True)
+            if kind:  # refused before git or a stat looks the share up, which is an SMB connection
+                return EffectOutcome.from_domain("rejected", reason=f"network_path:{kind}")
             _git(self._ws.root, "restore", "--staged", "--", rel_path, mutating=True)
             still = rel_path in staged_paths(self._ws)
             return EffectOutcome(status="applied",
@@ -563,6 +569,9 @@ class LocalLifecycle:
 
     def delete_untracked_file(self, fork, broker: ExecutionBroker, rel_path: str):
         def dispatch() -> EffectOutcome:
+            kind = windows_path_policy.refused_form(rel_path, network_only=True)
+            if kind:  # refused before git or a stat looks the share up, which is an SMB connection
+                return EffectOutcome.from_domain("rejected", reason=f"network_path:{kind}")
             target = os.path.join(self._ws.root, rel_path)
             if not os.path.isfile(target) or _is_tracked(self._ws, rel_path):
                 return EffectOutcome.from_domain(
