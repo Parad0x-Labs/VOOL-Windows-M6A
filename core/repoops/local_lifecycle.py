@@ -378,7 +378,8 @@ class LocalLifecycle:
         if not rel_paths:
             raise StageScopeError("no paths requested — refusing implicit scope")
         for p in rel_paths:
-            # On Windows a lookup of a share path is an SMB connection, so a share is refused first.
+            # On Windows a lookup of a share path is an SMB connection, so a share, or pathspec magic
+            # that git would resolve to one, is refused first.
             if _share_kind(p, pathspec=True):
                 raise StageScopeError(f"path is a network or device path: {p}")
             resolved = os.path.realpath(os.path.join(self._ws.root, p))
