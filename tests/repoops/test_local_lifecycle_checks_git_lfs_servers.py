@@ -348,3 +348,33 @@ def test_switching_back_to_a_previous_branch_naming_another_lfs_server_is_refuse
 
     assert proc.returncode != 0 and "evil.example" in proc.stderr, proc.stderr
     assert not (repo / ".lfsconfig").exists()
+
+
+@pytest.mark.parametrize("command", ["switch", "worktree"])
+def test_a_remote_branch_filed_under_another_name_is_checked_despite_a_decoy(repo, tmp_path, command) -> None:
+    # A fetch refspec can file origin's rb as refs/remotes/origin/pre-rb, which does not end in /rb;
+    # a harmless ref that does end in /rb must not stand in for it (fresh review, 21 Oct).
+    sha = _branch_with(repo, "rb", HOSTILE)
+    _git(repo, "update-ref", "refs/remotes/origin/pre-rb", sha)
+    _git(repo, "branch", "-D", "rb")
+    _git(repo, "update-ref", "refs/tags/v1/rb", _git(repo, "rev-parse", "main"))
+    _git(repo, "config", "--replace-all", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/pre-*")
+    target = tmp_path / "rb-wt"
+    argv = ("switch", "rb") if command == "switch" else ("worktree", "add", str(target), "rb")
+
+    proc = local_lifecycle._run(str(repo), *argv, mutating=True)
+
+    assert proc.returncode != 0 and "evil.example" in proc.stderr, proc.stderr
+    assert not (repo / ".lfsconfig").exists() and not target.exists()
+
+
+def test_a_remote_branch_filed_under_another_name_is_still_switched_to(repo) -> None:
+    _remote_only(repo, "rb", "")
+    _git(repo, "update-ref", "refs/remotes/origin/pre-rb", _git(repo, "rev-parse", "refs/remotes/origin/rb"))
+    _git(repo, "update-ref", "-d", "refs/remotes/origin/rb")
+    _git(repo, "config", "--replace-all", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/pre-*")
+
+    proc = local_lifecycle._run(str(repo), "switch", "rb", mutating=True)
+
+    assert proc.returncode == 0, proc.stderr
+    assert _git(repo, "symbolic-ref", "--short", "HEAD") == "rb"
