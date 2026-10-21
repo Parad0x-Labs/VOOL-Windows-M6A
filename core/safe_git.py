@@ -366,19 +366,14 @@ _LFS_FREE_WORKTREE_COMMANDS = frozenset({("worktree", "remove"), ("worktree", "p
 
 
 def _restores_the_index_only(argv: Sequence[str]) -> bool:
-    """``git restore --staged`` without ``--worktree``: it writes only the index, never a file, so no
-    smudge filter runs. A short option cluster carrying ``-s`` (whose value could read as flags) is
-    not taken as one."""
+    """``git restore --staged`` (or ``-S``) and nothing else: it writes only the index, never a file,
+    so no smudge filter runs. Any other option, abbreviations of ``--worktree`` among them, is not
+    taken as index-only."""
     if argv[0] != "restore":
         return False
     args = list(argv[1:])
     options = [arg for arg in (args[:args.index("--")] if "--" in args else args) if arg.startswith("-")]
-    short = [arg[1:] for arg in options if not arg.startswith("--")]
-    if any("s" in cluster for cluster in short):
-        return False
-    staged = "--staged" in options or any("S" in cluster for cluster in short)
-    worktree = "--worktree" in options or any("W" in cluster for cluster in short)
-    return staged and not worktree
+    return options in (["--staged"], ["-S"])
 
 
 def _is_remote_pick_key(key: str) -> bool:
