@@ -71,7 +71,8 @@ def test_a_processs_first_manifest_read_sets_up_the_table_under_the_write_lock(s
         deadline = time.monotonic() + 60.0
         while not ready.exists() and reader.poll() is None and time.monotonic() < deadline:
             time.sleep(0.01)
-        time.sleep(1.0)
+        # Well inside the reader's 5 s busy timeout, so a slow runner cannot turn a wait into a refusal.
+        time.sleep(0.5)
         waited = reader.poll() is None
     finally:
         holder.execute("COMMIT")
