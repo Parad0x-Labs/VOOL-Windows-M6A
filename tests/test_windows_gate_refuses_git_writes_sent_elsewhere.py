@@ -189,12 +189,16 @@ def test_a_hard_linked_reflog_in_folders_named_in_another_case_is_refused(tmp_pa
 
 def test_git_folders_spelled_alike_after_windows_case_folding_are_each_walked(tmp_path: Path, monkeypatch) -> None:
     """Windows `normcase` folds the Kelvin sign `K` to `k`, but NTFS keeps `Ka` and `ka` apart, so a
-    git folder and a shared git folder spelled so must both be walked. Windows folding is simulated
-    with `str.lower`."""
+    git folder and a shared git folder spelled so must both be walked. The folding is simulated with
+    two names every disk keeps apart (a case-insensitive disk would merge `Ka` and `ka`), which the
+    simulated `normcase` folds to one."""
     from core import git_write_redirects
 
-    monkeypatch.setattr(git_write_redirects.os.path, "normcase", str.lower)
-    git_dir, common_dir = tmp_path / "\u212aa", tmp_path / "ka"
+    def windows_like_normcase(path: str) -> str:
+        return path.replace("kelvin-sign-a", "k-a")
+
+    monkeypatch.setattr(git_write_redirects.os.path, "normcase", windows_like_normcase)
+    git_dir, common_dir = tmp_path / "kelvin-sign-a", tmp_path / "k-a"
     git_dir.mkdir()
     common_dir.mkdir()
     (tmp_path / "outside").write_bytes(b"precious\n")
