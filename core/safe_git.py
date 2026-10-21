@@ -510,6 +510,8 @@ def _tracking_refs(cwd: Path, name: str, *, timeout: float) -> set[str]:
     for key, value in _config_entries(cwd, [], timeout=timeout):
         if not (key.startswith("remote.") and key.endswith(".fetch")) or not value:
             continue
+        if "\ufffd" in value:  # read as text, a name in other bytes would not be the ref git uses
+            raise RuntimeError(f"the fetch refspec {key} names refs that cannot be checked")
         spec = value.strip().lstrip("+")
         if spec.startswith("^") or ":" not in spec:
             continue  # a negative refspec only narrows; one without a destination makes no ref
