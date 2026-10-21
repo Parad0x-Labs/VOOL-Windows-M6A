@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import ntpath
 import re
 from pathlib import Path
 from typing import Any
@@ -1042,6 +1043,17 @@ def _clean_workspace_path(candidate: str) -> str:
     return clean
 
 
+def _workspace_folder_as_typed(typed: str, workspace_root: str) -> str | None:
+    """The workspace folder a drive-less `typed` path names, read without resolving it: `notes` for
+    `\\Users\\you\\ws\\notes` with the workspace at `C:\\Users\\you\\ws`, "" for the workspace itself, and
+    None when it does not lie inside the workspace or steps up (`..`), which the lexical clean refuses."""
+    root = [part.lower() for part in re.split(r"[\\/]+", ntpath.splitdrive(str(workspace_root))[1]) if part]
+    parts = [part for part in re.split(r"[\\/]+", typed) if part]
+    if not root or ".." in parts or [part.lower() for part in parts[: len(root)]] != root:
+        return None
+    return "/".join(parts[len(root) :])
+
+
 def _clean_workspace_directory_path(candidate: str, *, workspace_root: str = "") -> str:
     raw = str(candidate or "").strip().strip("`\"'")
     typed_kind = windows_path_policy.refused_form(raw)
@@ -1052,7 +1064,14 @@ def _clean_workspace_directory_path(candidate: str, *, workspace_root: str = "")
     clean = ""
     # A root- or drive-relative folder (`/notes`, `C:notes`) is not resolved either: the lexical clean
     # below places it, as it does on base once the resolve finds it outside the workspace (`/notes` is
-    # the workspace folder `notes`).
+    # the workspace folder `notes`). One that spells the workspace's own folder without its drive is
+    # read against the workspace as typed, where base's resolve on that drive found it.
+    if typed_kind == "root_relative" and workspace_root:
+        inside = _workspace_folder_as_typed(raw, workspace_root)
+        if inside == "":
+            return ""
+        if inside is not None:
+            candidate = inside
     if raw and workspace_root and not typed_kind:
         try:
             resolved_workspace_root = Path(workspace_root).expanduser().resolve()
