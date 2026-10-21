@@ -34,13 +34,21 @@ class _FakeJob:
 
 
 class _FakeStdin:
-    def __init__(self, events: list[str]) -> None:
+    def __init__(self, events: list[str], block: threading.Event | None = None, *, broken: bool = False) -> None:
         self.events = events
         self.data = b""
         self.closed = False
+        self.block = block
+        self.broken = broken
 
     def write(self, data: bytes) -> int:
         self.events.append("bootstrap")
+        if self.block is not None:
+            # A broker that never reads its stdin: the write waits until the broker is gone.
+            self.block.wait(30)
+            raise BrokenPipeError
+        if self.broken:
+            raise BrokenPipeError
         self.data += data
         return len(data)
 
@@ -55,6 +63,7 @@ class _FakeStdout:
     def __init__(self, lines: list[bytes], block: threading.Event | None = None) -> None:
         self.lines = list(lines)
         self.block = block
+        self.closed = False
 
     def readline(self) -> bytes:
         if self.lines:
@@ -64,16 +73,24 @@ class _FakeStdout:
         return b""
 
     def close(self) -> None:
-        if self.block is not None:
-            self.block.set()
+        self.closed = True
 
 
 class _FakeProcess:
-    def __init__(self, events: list[str], lines: list[bytes], *, exits: int | None = None, block: bool = False) -> None:
+    def __init__(
+        self,
+        events: list[str],
+        lines: list[bytes],
+        *,
+        exits: int | None = None,
+        block: bool = False,
+        stdin_blocks: bool = False,
+        stdin_broken: bool = False,
+    ) -> None:
         self.events = events
         self.pid = 4242
-        self.stdin = _FakeStdin(events)
-        self.unblock = threading.Event() if block else None
+        self.unblock = threading.Event() if block or stdin_blocks else None
+        self.stdin = _FakeStdin(events, self.unblock if stdin_blocks else None, broken=stdin_broken)
         self.stdout = _FakeStdout(lines, self.unblock)
         self.stderr = None
         self.returncode = exits
@@ -102,7 +119,14 @@ def _host(tmp_path: Path, lines: list[bytes], **kwargs: Any) -> tuple[BrokerHost
     def popen(argv: list[str], **options: Any) -> _FakeProcess:
         made["argv"] = argv
         made["options"] = options
-        made["process"] = _FakeProcess(events, lines, exits=kwargs.pop("exits", None), block=kwargs.pop("block", False))
+        made["process"] = _FakeProcess(
+            events,
+            lines,
+            exits=kwargs.pop("exits", None),
+            block=kwargs.pop("block", False),
+            stdin_blocks=kwargs.pop("stdin_blocks", False),
+            stdin_broken=kwargs.pop("stdin_broken", False),
+        )
         return made["process"]
 
     def job_factory() -> _FakeJob:
@@ -182,6 +206,9 @@ def test_stop_closes_the_job_and_stdin_once(tmp_path: Path) -> None:
     assert made["job"].closed == 1
     assert made["process"].stdin.closed
     assert not host.status.running and host.status.reason == "stopped"
+    # A reader blocked on stdout holds its lock until the pipe ends, so closing it could hang the
+    # API's exit; the broker's end goes with the job, and the reader sees the end itself.
+    assert not made["process"].stdout.closed
 
 
 def test_a_refused_start_reports_its_code_and_leaves_nothing_running(tmp_path: Path) -> None:
@@ -208,6 +235,83 @@ def test_a_silent_broker_is_killed_after_the_timeout(tmp_path: Path) -> None:
     assert time.monotonic() - started < 5
     assert not status.running and status.reason == "start_timeout"
     assert made["process"].killed and made["job"].closed == 1
+
+
+def test_a_broker_that_never_reads_its_bootstrap_is_killed_after_the_timeout(tmp_path: Path) -> None:
+    host, _events, made = _host(tmp_path, [], stdin_blocks=True, timeout=0.2)
+    started = time.monotonic()
+    status = host.start()
+    assert time.monotonic() - started < 5
+    assert not status.running and status.reason == "start_timeout"
+    assert made["process"].killed and made["job"].closed == 1
+
+
+def test_a_refusal_is_reported_even_when_the_bootstrap_write_fails(tmp_path: Path) -> None:
+    # The broker refuses the frame's header, writes its refusal and exits before the write ends.
+    refusal = json.dumps({"error": {"code": "bad_frame"}}).encode() + b"\n"
+    host, _events, made = _host(tmp_path, [refusal], exits=2, stdin_broken=True)
+    status = host.start()
+    assert not status.running and status.reason == "refused:bad_frame"
+    assert made["job"].closed == 1
+
+
+def test_stop_during_a_start_gives_up_at_once(tmp_path: Path) -> None:
+    host, _events, made = _host(tmp_path, [], block=True, timeout=30.0)
+    starter = threading.Thread(target=host.start)
+    starter.start()
+    deadline = time.monotonic() + 5
+    while "process" not in made and time.monotonic() < deadline:
+        time.sleep(0.01)
+    started = time.monotonic()
+    host.stop()
+    starter.join(5)
+    assert not starter.is_alive()
+    assert time.monotonic() - started < 5
+    assert not host.status.running and host.status.reason == "stopped"
+    assert made["process"].killed and made["job"].closed == 1
+
+
+def test_a_background_start_returns_at_once_and_stop_is_safe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gate = threading.Event()
+    calls: list[str] = []
+
+    class _Slow:
+        def __init__(self, executable: Path, flagged: list[str], journal_dir: Path) -> None:
+            self.status = broker_process.BrokerStatus(False, "not_started")
+
+        def start(self) -> broker_process.BrokerStatus:
+            gate.wait(5)
+            calls.append("start")
+            return self.status
+
+    published = tmp_path / "windows" / "broker" / "publish"
+    published.mkdir(parents=True)
+    (published / "VoolBroker.exe").write_bytes(b"")
+    monkeypatch.setattr(broker_process, "_is_windows", lambda: True)
+    monkeypatch.setattr(broker_process, "BrokerHost", _Slow)
+    started = time.monotonic()
+    host = start_for_api(tmp_path, tmp_path / "home", environ={}, background=True)
+    assert time.monotonic() - started < 1 and calls == []
+    gate.set()
+    deadline = time.monotonic() + 5
+    while not calls and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert calls == ["start"] and isinstance(host, _Slow)
+
+
+def test_a_stop_before_a_background_start_runs_leaves_nothing_started(tmp_path: Path) -> None:
+    host, _events, made = _host(tmp_path, [_ready()])
+    host.stop()
+    status = host.start()
+    assert not status.running and status.reason == "stopped"
+    assert "process" not in made
+
+
+def test_the_api_starts_the_broker_in_the_background() -> None:
+    source = (Path(__file__).resolve().parents[2] / "apps" / "vool_api_server.py").read_text(encoding="utf-8")
+    assert "start_for_api(PROJECT_ROOT, active_vool_home(), background=True)" in source
 
 
 def test_an_unreadable_start_line_is_refused(tmp_path: Path) -> None:

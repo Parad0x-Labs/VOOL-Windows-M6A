@@ -29,15 +29,19 @@ def test_the_bundle_publishes_the_broker_into_the_stage() -> None:
     assert 'throw "Broker publish produced no VoolBroker.exe' in script
 
 
-def test_the_publish_is_self_contained_and_pinned() -> None:
+def test_the_publish_is_self_contained_and_pinned(tmp_path: Path) -> None:
     script = _read("windows/broker/publish.ps1")
     for argument in ('"-r", "win-x64"', '"--self-contained"', '"-p:RuntimeFrameworkVersion=10.0.13"'):
         assert argument in script
     assert 'Join-Path $PSScriptRoot "publish"' in script
-    # A checkout's API starts the broker from the default publish folder.
+    # A checkout's API starts the broker from the default publish folder (windows/broker/publish).
     from core.windows_broker.process import broker_executable
 
-    assert broker_executable(ROOT) in (None, ROOT / "windows" / "broker" / "publish" / "VoolBroker.exe")
+    assert broker_executable(tmp_path) is None
+    published = tmp_path / "windows" / "broker" / "publish"
+    published.mkdir(parents=True)
+    (published / "VoolBroker.exe").write_bytes(b"")
+    assert broker_executable(tmp_path) == published / "VoolBroker.exe"
 
 
 def test_the_publish_folder_is_not_tracked() -> None:
