@@ -200,6 +200,31 @@ def test_a_variable_or_file_url_that_names_a_host_is_refused(monkeypatch) -> Non
         assert policy.argument_refusal("mcp.web.fetch", {"url": url}, network_only=True) == ("url", url, "unc"), url
 
 
+def test_a_file_url_with_its_drive_where_the_host_goes_is_a_local_file(monkeypatch) -> None:
+    # `file://C:/x` puts the drive where the host goes. Browsers open it as `file:///C:/x` and
+    # `url2pathname` reads it as `C:\x`, so it is a file on this machine, not a server named `C:`.
+    drive_as_host = ("file://C:/x", "file://c|/x", "FILE://D:/x", "file://C:", r"file://C:\Users\you\a.txt", "file://C%3A/x")
+    # The host is compared without case, as Windows does.
+    localhost = ("file://LOCALHOST/C:/x", "file://LocalHost/C:/x")
+    # A host that only starts like a drive is still a host.
+    hosts = ("file://C:attkr9/s", "file://Cattkr9/s", "file://C:/x@attkr9", "file://attkr9/C:/x")
+    for url in (*drive_as_host, *localhost):
+        assert policy.classify_url(url) == "", url
+    assert policy.classify_url("file://LocalHost/Users/you/page.html") == "root_relative"
+    for url in hosts[:2]:
+        assert policy.classify_url(url) == "unc", url
+
+    _windows(monkeypatch)
+    for url in (*drive_as_host, *localhost):
+        assert policy.refused_url(url) == "", url
+        assert policy.argument_refusal("browser.render", {"url": url}) is None, url
+        assert policy.argument_refusal("mcp.web.fetch", {"url": url}, network_only=True) is None, url
+    for url in hosts[:2]:
+        assert policy.refused_url(url) == "unc", url
+    # `@` and a later drive are only part of the path once the host is `C:` or `attkr9`.
+    assert policy.refused_url(hosts[2]) == "" and policy.refused_url(hosts[3]) == "unc"
+
+
 def test_a_file_url_with_no_host_is_a_partial_path_not_a_share(monkeypatch) -> None:
     # `file:///Users/you/page.html` opens `\Users\you\page.html` on the current drive: no host is
     # contacted, so it is no network path, and it is no full local path either.

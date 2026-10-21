@@ -29,9 +29,11 @@ What this file pins:
 
 The Windows rule is switched on only through `windows_path_policy._IS_WINDOWS` (the `windows_host`
 fixture), and only after local setup, because with it on a POSIX `tmp_path` counts as
-root-relative; the controls therefore use relative or `~` paths. Literal sentences are asserted,
-never `refusal_text`, so this file runs against base 9f88889 given only `core/windows_path_policy.py`,
-with no guard wired.
+root-relative; the controls therefore use relative or `~` paths. On a Windows host the Windows write
+gate is on as well and answers some writes first: a move whose paths are only in its quoted text is
+refused there before the move handler reads them, and the move control and the `/notes` write mark
+their folder for it. Literal sentences are asserted, never `refusal_text`, so this file runs against
+base 9f88889 given only `core/windows_path_policy.py`, with no guard wired.
 """
 
 from __future__ import annotations
@@ -46,6 +48,7 @@ from typing import Any
 import pytest
 
 from core import runtime_paths
+from core import windows_write_gate as gate
 from tests._nonlocal_touch_recorder import MARKER_FORMS, NETWORK_FORMS, MarkerForm, recorder, windows_host
 from tests.asgi_harness import asgi_request
 
@@ -337,10 +340,23 @@ def _operator_lane(tmp_path: Path) -> tuple[dict, dict]:
             ok, status, text = run(intent)
             observed[f"{form.id} {case}"] = (ok, status, form.sentence in text)
             expected[f"{form.id} {case}"] = (False, STATUS, True)
-    # Control: a local move is still checked on disk and proposed for approval. Relative, because the
-    # handler expands `~` into this host's POSIX home, which the Windows rule reads as root-relative.
-    (tmp_path / "a.txt").write_text("a\n", encoding="utf-8")
-    ok, status, _text = run(parse_operator_action_intent('move "a.txt" to "archive"'))
+            if case == "move, quoted only" and gate._IS_WINDOWS:
+                # On a Windows host the write gate answers first: a move that names no source path of its
+                # own cannot be placed, so it is refused before the handler reads the quoted text.
+                expected[f"{form.id} {case}"] = (False, gate.STATUS, False)
+    # Control: a local move is still checked on disk and proposed for approval. Off Windows the paths
+    # are relative, because the handler expands `~` into this host's POSIX home, which the Windows rule
+    # reads as root-relative. On a Windows host the write gate places only a path that is absolute once
+    # `~` is expanded, inside a folder marked for it, so there they are `~` paths in a marked folder.
+    if gate._IS_WINDOWS:
+        (Path.home() / "a.txt").write_text("a\n", encoding="utf-8")
+        local_move = 'move "~\\a.txt" to "~\\archive"'
+    else:
+        (tmp_path / "a.txt").write_text("a\n", encoding="utf-8")
+        local_move = 'move "a.txt" to "archive"'
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv(gate.ENV_VAR, str(tmp_path))
+        ok, status, _text = run(parse_operator_action_intent(local_move))
     observed["control"] = (ok, status)
     expected["control"] = (True, "approval_required")
     return observed, expected
@@ -475,6 +491,27 @@ def test_build_skill_and_memory_messages_that_only_mention_a_path_are_not_refuse
         assert _refused_as_typed(replies[text][1], typed), (text, replies[text])
 
 
+def test_a_code_comment_in_a_write_or_build_message_is_not_a_path(monkeypatch, recorder, windows_host) -> None:
+    # `//` and `/*` open a comment in a file's text. They name no host and no folder, and no lane sees
+    # them as a path (the normalizer spaces them out), so the Windows rule does not answer these turns:
+    # each goes to the lane that takes it on base.
+    chat = _served_chat(monkeypatch)
+    windows_host.on()
+    messages = [
+        "create main.js with: // entry point",
+        "create style.css with /* reset */ body { margin: 0 }",
+        "add a // TODO comment to server.js",
+        "write hello to out.txt // no trailing newline",
+    ]
+
+    replies, touched = _served_turns(chat, recorder, messages)
+
+    assert touched == {}, touched
+    assert all(status == 200 and reply.strip() for status, reply in replies.values()), replies
+    refused = {text: reply for text, (_status, reply) in replies.items() if not _not_refused(reply)}
+    assert refused == {}, refused
+
+
 def test_a_full_drive_path_split_by_the_normalizer_keeps_its_drive(monkeypatch, recorder, windows_host) -> None:
     # The input normalizer turns `C:/Users/you/x.txt` into `C: /Users/you/x.txt`. This test's home
     # stands in for `C:/Users/you`: its rooted half exists, as `\\Users\\you` does on the current drive
@@ -530,12 +567,39 @@ def test_relative_and_forward_slash_drive_paths_are_not_refused(monkeypatch, rec
 def test_a_file_created_in_a_typed_folder_stays_in_that_workspace_folder(tmp_path: Path, monkeypatch, recorder, windows_host) -> None:
     # `/notes` names no full local path on Windows, and it is not resolved; as on base it is the
     # workspace folder `notes`, not dropped so that the file silently lands at the workspace root.
+    workspace = tmp_path / "workspace"
+    # As on a Windows host: the write gate is on and the chat's workspace is a marked disposable folder,
+    # so the write reaches the approval ask, which names where it would land.
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    monkeypatch.setenv(gate.ENV_VAR, str(workspace))
     chat = _served_chat(monkeypatch)
     windows_host.on()
-    workspace = tmp_path / "workspace"
     planned = {
         "in /notes create todo.txt with text: hi": f"Affected: {workspace}/notes/todo.txt.",
         "inside /docs create readme.md with text: hello": f"Affected: {workspace}/docs/readme.md.",
+    }
+
+    replies, touched = _served_turns(chat, recorder, list(planned))
+
+    assert touched == {}, touched
+    for text, affected in planned.items():
+        status, reply = replies[text]
+        assert status == 200 and affected in reply, (text, reply)
+
+
+def test_a_typed_folder_inside_the_workspace_is_that_workspace_folder(tmp_path: Path, monkeypatch, recorder, windows_host) -> None:
+    # Without its drive, the workspace's own folder (`\Users\you\ws\notes` for workspace `C:\Users\you\ws`)
+    # is still the workspace folder `notes`, as base found it by resolving on the workspace's drive. Read
+    # as typed, not resolved, it must not be nested under the workspace a second time.
+    workspace = tmp_path / "workspace"
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    monkeypatch.setenv(gate.ENV_VAR, str(workspace))
+    chat = _served_chat(monkeypatch)
+    windows_host.on()
+    typed = workspace.as_posix()
+    planned = {
+        f"in {typed}/notes create todo.txt with text: hi": f"Affected: {workspace}/notes/todo.txt.",
+        f"in {typed.upper()}/Docs create readme.md with text: hello": f"Affected: {workspace}/Docs/readme.md.",
     }
 
     replies, touched = _served_turns(chat, recorder, list(planned))
@@ -586,3 +650,47 @@ def test_the_planner_lists_a_split_drive_path_with_its_drive(windows_host) -> No
     assert {text: planned(text) for text in texts} == {
         text: ("planned_safe_machine_directory_list", "machine.list_directory", "C:/Users/you/Desktop/notes") for text in texts
     }
+
+
+def test_a_drive_split_pdf_in_a_folder_named_scan_is_read_from_its_text(windows_host) -> None:
+    # The OCR words are read with the file's name taken out, as it stands in the text. A drive the
+    # normalizer split off is not in that spelling, so taking out the drive-joined name would leave
+    # `old scan` behind and send a text PDF to OCR.
+    from core.agent_runtime.fast_paths_pdf import pdf_read_request
+    from core.input_normalizer import normalize_user_text
+
+    home = Path.home()
+    (home / "Documents" / "old scan").mkdir(parents=True, exist_ok=True)
+    (home / "Documents" / "old scan" / "report.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
+    drive, rooted = os.path.splitdrive(str(home))
+    typed_home = (drive or "C:") + rooted.replace("\\", "/")
+    windows_host.on()
+
+    text = normalize_user_text(f"read the pdf {typed_home}/Documents/old scan/report.pdf").normalized_text
+    request = pdf_read_request(str(text))
+
+    assert request is not None and request["named"] == f"{typed_home}/Documents/old scan/report.pdf", (text, request)
+    assert request["spelled"] != request["named"] and request["wants_ocr"] is False, (text, request)
+
+
+def test_the_drive_check_reads_only_the_few_characters_before_each_path(monkeypatch, windows_host) -> None:
+    # A drive the normalizer split off sits at most `C: ` before its path, so only that much is read.
+    # Copying and rescanning the whole message up to each path made a pasted message of many rooted
+    # tokens take minutes.
+    from core.agent_runtime.write_root_honesty import non_local_write_target
+    from core.execution import constants
+
+    real = constants._DRIVE_LEFT_BEHIND_RE
+    spans: list[tuple[int, int]] = []
+
+    class _Spy:
+        def search(self, string: str, pos: int = 0, endpos: int | None = None):
+            end = len(string) if endpos is None else min(endpos, len(string))
+            spans.append((pos, end))
+            return real.search(string, pos, end)
+
+    monkeypatch.setattr(constants, "_DRIVE_LEFT_BEHIND_RE", _Spy())
+    windows_host.on()
+
+    assert non_local_write_target(" ".join(f"/d{n}" for n in range(2000))) == ("", "")
+    assert len(spans) >= 2000 and max(end - pos for pos, end in spans) <= 4, (len(spans), max(spans, key=lambda s: s[1] - s[0]))

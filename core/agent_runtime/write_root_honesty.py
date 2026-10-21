@@ -335,6 +335,10 @@ def non_local_write_target(text: str, *, network_only: bool = False) -> tuple[st
     """
     body = str(text or "")
     for start, candidate in _destination_candidates(body):
+        if not candidate.strip("/\\*"):
+            # A bare `//` or `/*` (a code comment's marker in the text to write) names no host and no
+            # folder, and the lanes never receive it as a path, so it is nothing this turn would open.
+            continue
         kind = typed_path_kind(body, start, candidate)
         if network_only and kind not in windows_path_policy.NETWORK_KINDS:
             continue

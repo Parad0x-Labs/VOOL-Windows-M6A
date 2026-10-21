@@ -393,3 +393,58 @@ def test_a_share_is_labelled_as_written_and_never_resolved(recorder, windows_hos
 
     assert _home_relative_label(Path("//attkr9/s/docs")) == "//attkr9/s/docs"
     assert recorder.touches == [], recorder.report()
+
+
+@pytest.mark.parametrize("intent", ["repo.push.request", "repo.session.open"])
+def test_a_push_remote_naming_a_share_is_refused_before_it_is_looked_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorder, windows_host, intent: str
+) -> None:
+    # A push remote is a remote's name or a URL. One on a share is the folder the push check would look
+    # up for its hooks and settings, which is already the SMB connection, so the door refuses it first.
+    workspace, _home = _local_machine(tmp_path, monkeypatch)
+    decisions = _spy(monkeypatch, executor, "decide_tool_call")
+    local_arguments = {
+        "repo.push.request": {"repo_session_id": "rs-none", "ref": "main"},
+        "repo.session.open": {"objective": "push it", "provider": "github", "namespace": "o/r"},
+    }[intent]
+    shares = [(form.value, form.kind) for form in MARKER_FORMS if form.network]
+    shares += [("file://attkr9/s/r.git", "unc"), ("file:////attkr9/s/r.git", "unc")]
+    windows_host.on()
+
+    for value, kind in shares:
+        result = _execute(intent, {**local_arguments, "remote": value}, {"workspace": str(workspace), "operating_mode": "auto"})
+        assert (result.status, (result.details or {}).get("kind")) == (STATUS, kind), (value, result.status, result.response_text)
+        assert f"`{value}` is a network or device path" in str(result.response_text or ""), (value, result.response_text)
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+    assert decisions == [], "a permission decision was taken for a share"
+
+    # A remote's name, a hosted URL and a local drive path are not refused here.
+    for value in ("origin", "https://github.com/o/r.git", "git@github.com:o/r.git", "C:/repos/r.git"):
+        result = _execute(intent, {**local_arguments, "remote": value}, {"workspace": str(workspace), "operating_mode": "auto"})
+        assert result.status != STATUS, (value, result.response_text)
+
+
+def test_a_push_remote_the_repository_names_on_a_share_is_refused_before_it_is_looked_up(
+    tmp_path: Path, recorder, windows_host
+) -> None:
+    # The repository's own config can name a remote on a share: repository contents the tool-call door
+    # never sees. The push check refuses that destination as written, before it would look it up for
+    # the hooks and settings of a repository there.
+    import subprocess
+
+    from core.repoops.gitops import GitRunner
+
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    remotes = {"forward": "//attkr9/s/r.git", "backslash": "\\\\attkr9\\s\\r.git", "file-url": "file:////attkr9/s/r.git"}
+    # Written straight into the config file: a process start naming the share is refused by the
+    # recorder. A config value escapes its backslashes.
+    with (repo / ".git" / "config").open("a", encoding="utf-8") as config:
+        config.writelines(f'[remote "{name}"]\n\turl = {url.replace(chr(92), chr(92) * 2)}\n' for name, url in remotes.items())
+    windows_host.on()
+
+    refusals = {name: GitRunner(repo).push_destination_refusal(name) for name in remotes}
+
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+    for name, url in remotes.items():
+        assert f"`{url}` is a network or device path" in refusals[name], (name, refusals[name])

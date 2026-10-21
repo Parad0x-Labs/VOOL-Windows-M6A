@@ -25,7 +25,9 @@ What this file pins:
 - A call whose turn works in a share (the server's own workspace, which no request field names) is
   refused with the sentence at each of the three doors, before anything resolves that workspace.
 - An MCP or plugin tool's root- or drive-relative argument still reaches its approval (the network
-  tier), while a share there is refused.
+  tier), while a share there is refused. The declared-contract checks need a plugin pack admitted
+  through the real lifecycle; a host that cannot capture a pack (Windows has no `os.O_NOFOLLOW`)
+  admits none, so there they check that refusal instead and stop.
 - The resolvers behind the doors, called directly as their other callers call them, never look a
   share up: the Windows write gate's move and export landings, the workspace path and root
   resolvers, and the builder's workspace-relative check.
@@ -255,11 +257,27 @@ def test_a_code_task_step_reading_a_share_is_refused(tmp_path: Path, monkeypatch
     assert len(decisions) == 1, "the local control did not reach the permission decision"
 
 
+def _a_pack_can_be_captured_here(probe: Path) -> bool:
+    """Whether this host can capture a plugin pack at all. Windows has no `os.O_NOFOLLOW`, so it cannot,
+    and then no pack is ever admitted and no plugin tool exists."""
+    from core.plugin_package import PackageError, capture_package
+
+    probe.mkdir()
+    try:
+        capture_package(probe)
+    except PackageError as exc:
+        return "unavailable on this host" not in str(exc)
+    finally:
+        probe.rmdir()
+    return True
+
+
 @pytest.fixture
 def declared_write_contract(tmp_path: Path, monkeypatch):
     """A third-party contract that DECLARES a workspace write (`pack.touch`), admitted through the
     real plugin lifecycle and loaded into the one registry, as tests/test_plugin_lifecycle.py does."""
     from core import plugin_tools, tool_registry
+    from core.plugin_lifecycle import LifecycleError
     from core.runtime_flags import override
     from tests._toolchain_fixtures import PLUGIN_ID, make_plugin, reset_toolchain_state
 
@@ -269,6 +287,13 @@ def declared_write_contract(tmp_path: Path, monkeypatch):
     # make_plugin writes this into os.environ itself; set it here first so teardown restores it.
     monkeypatch.setenv("VOOL_PLUGIN_SCRATCH_ROOT", str(tmp_path / "scratch"))
     reset_toolchain_state()
+    if not _a_pack_can_be_captured_here(tmp_path / "capture-probe"):
+        # No plugin tool can exist on this host, so there is no declared contract to call. What is checked
+        # is that the pack is refused; on a host that gains the capability the pack is admitted below.
+        with pytest.raises(LifecycleError, match="could not be captured"):
+            make_plugin(tmp_path, admit=True)
+        reset_toolchain_state()
+        pytest.skip("this host cannot capture a plugin pack, so it admits none and has no plugin tool to call")
     make_plugin(tmp_path, admit=True)
     tool_registry.reset()
     with override("plugin_runtime_tools", True):
@@ -277,14 +302,8 @@ def declared_write_contract(tmp_path: Path, monkeypatch):
     reset_toolchain_state()
 
 
-def test_permission_side_callers_never_resolve_a_share(
-    tmp_path: Path, monkeypatch, recorder, windows_host, declared_write_contract: str
-) -> None:
-    # Called as live_data_plan.py and effect_gateway.py call it: no door runs first. The helpers
-    # behind the decision use the network tier, so only network forms are driven.
-    workspace = tmp_path / "ws"
-    workspace.mkdir()
-    permission.reset_mode_permission_state()
+def _permission_decider(workspace: Path):
+    """`decide_tool_call` called as live_data_plan.py and effect_gateway.py call it: no door runs first."""
 
     def decide(intent: str, arguments: dict, mode: str) -> permission.PermissionDecision:
         return permission.decide_tool_call(
@@ -294,11 +313,18 @@ def test_permission_side_callers_never_resolve_a_share(
             source_context={"workspace": str(workspace), "operating_mode": mode, "session_id": "doors-permission"},
         )
 
+    return decide
+
+
+def test_permission_side_callers_never_resolve_a_share(tmp_path: Path, monkeypatch, recorder, windows_host) -> None:
+    # The helpers behind the decision use the network tier, so only network forms are driven.
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    decide = _permission_decider(workspace)
+    permission.reset_mode_permission_state()
+
     try:
         windows_host.on()
-        # Control: a declared write to a new local file is a create, which Auto allows. Anything
-        # stricter below is the share, not the contract.
-        create = decide(declared_write_contract, {"path": "new.txt"}, "auto")
         decisions: dict[tuple[str, str, str, str], permission.PermissionDecision] = {}
         for form in NETWORK_FORMS:
             for key in ("path", "target", "destination"):
@@ -306,19 +332,38 @@ def test_permission_side_callers_never_resolve_a_share(
                     arguments = {key: form.value, **({"content": "x"} if intent.endswith(".write_file") else {})}
                     for mode in ("manual", "auto"):
                         decisions[(intent, key, form.id, mode)] = decide(intent, arguments, mode)
-                decisions[(declared_write_contract, key, form.id, "auto")] = decide(
-                    declared_write_contract, {key: form.value}, "auto"
-                )
+    finally:
+        permission.reset_mode_permission_state()
+
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+    assert all(isinstance(decision, permission.PermissionDecision) for decision in decisions.values())
+
+
+def test_a_declared_write_naming_a_share_is_asked_as_an_overwrite_without_touch(
+    tmp_path: Path, monkeypatch, recorder, windows_host, declared_write_contract: str
+) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    decide = _permission_decider(workspace)
+    permission.reset_mode_permission_state()
+
+    try:
+        windows_host.on()
+        # Control: a declared write to a new local file is a create, which Auto allows. Anything
+        # stricter below is the share, not the contract.
+        create = decide(declared_write_contract, {"path": "new.txt"}, "auto")
+        decisions: dict[tuple[str, str], permission.PermissionDecision] = {}
+        for form in NETWORK_FORMS:
+            for key in ("path", "target", "destination"):
+                decisions[(key, form.id)] = decide(declared_write_contract, {key: form.value}, "auto")
     finally:
         permission.reset_mode_permission_state()
 
     declared = {
         (key, form_id): (decision.effect, permission.PermissionAction.OVERWRITE_EXISTING_FILES in decision.actions)
-        for (intent, key, form_id, _mode), decision in decisions.items()
-        if intent == declared_write_contract
+        for (key, form_id), decision in decisions.items()
     }
     assert recorder.touches == [] and recorder.marker_popen == [], f"{declared}\n{recorder.report()}"
-    assert all(isinstance(decision, permission.PermissionDecision) for decision in decisions.values())
     assert create.effect is permission.PermissionEffect.ALLOW, (create.effect, create.actions, create.reason)
     # A target that cannot be checked is treated as one that exists: an overwrite, asked in Auto.
     assert declared == {

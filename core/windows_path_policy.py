@@ -47,6 +47,7 @@ NETWORK_KINDS = frozenset({"unc", "device", "nt_namespace"})
 _DRIVE_ROOT_RE = re.compile(r"[A-Za-z]:[\\/]?")
 _URL_SCHEME_RE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9+.\-]*):")
 _FILE_URL_DRIVE_RE = re.compile(r"^[A-Za-z](:|\|)(/|$)")
+_FILE_URL_DRIVE_HOST_RE = re.compile(r"[A-Za-z][:|]")
 # A browser drops tabs and line breaks anywhere in a URL, and control characters and spaces at
 # either end (Python's urlsplit does the same), so `fi\tle://host/share` still opens the share.
 _URL_DROPPED = dict.fromkeys(map(ord, "\t\n\r"))
@@ -66,8 +67,9 @@ AMBIGUOUS_KEYS = frozenset({
     "target", "targets", "dest", "to", "from", "src", "source", "folder", "file", "filename", "filepath",
     "dir", "dir_path", "folder_path", "directory_path", "files",
 })
-#: Argument names that carry a URL, judged by `classify_url`.
-URL_KEYS = frozenset({"url", "uri", "link"})
+#: Argument names that carry a URL, judged by `classify_url`. A git `remote` is a remote's name or a
+#: URL; one on a share is looked up by the push check before it is refused, so it is judged here first.
+URL_KEYS = frozenset({"url", "uri", "link", "remote"})
 _PATH_INTENT_PREFIXES = (
     "workspace.", "machine.", "operator.", "pdf.", "skill.", "media.", "sandbox.", "code.", "repo.", "file.",
 )
@@ -171,10 +173,10 @@ def classify_url(value: Any) -> str:
     `root_relative` for a path with no drive on this one, otherwise "".
 
     Percent-escapes are decoded and `\\` read as `/` first. A `file:` URL's host is what follows `//`:
-    any host but `localhost` is `unc`. Without one (`file:///x`, `file:/x`) the rest is a path on
-    this machine: local when it names a drive (`file:///C:/x`, `file:///c|/x`), `root_relative` for
-    `/Users/x` (on Windows, the current drive's), and judged as a path for `//host/s`
-    (`file:////host/s` is the share). `view-source:` is judged by the URL it wraps. A value without a
+    any host but `localhost` is `unc`, and a drive there (`file://C:/x`) starts the path. Without one
+    (`file:///x`, `file:/x`) the rest is a path on this machine: local when it names a drive
+    (`file:///C:/x`, `file:///c|/x`), `root_relative` for `/Users/x` (on Windows, the current
+    drive's), and judged as a path for `//host/s` (`file:////host/s` is the share). `view-source:` is judged by the URL it wraps. A value without a
     scheme is judged as a path with the network tier, so a route such as `/x` passes and `//host/x`
     does not. Other schemes (https, data, about, mailto) are not files and give "".
     """
@@ -196,7 +198,11 @@ def classify_url(value: Any) -> str:
     body = unquote(text).replace("\\", "/")
     if body.startswith("//"):
         host, _slash, path = body[2:].partition("/")
-        if host and host.lower() != "localhost":
+        if _FILE_URL_DRIVE_HOST_RE.fullmatch(host):
+            # `file://C:/x`: a drive where the host goes starts the path, as a browser and
+            # `url2pathname` read it; it is no server named `C:`.
+            path = f"{host}/{path}"
+        elif host and host.lower() != "localhost":
             return "unc"
         body = "/" + path
     if not body.strip("/") or _FILE_URL_DRIVE_RE.match(body.lstrip("/")):
