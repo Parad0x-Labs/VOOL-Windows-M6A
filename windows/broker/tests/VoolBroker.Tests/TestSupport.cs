@@ -425,7 +425,18 @@ internal static class TestSupport
     public static async Task Kill(Process broker)
     {
         if (!broker.HasExited) broker.Kill(true);
-        await broker.WaitForExitAsync(TestContext.Current.CancellationToken);
+        // A killed broker still holds its folders until it has fully exited. One that outlives the
+        // kill fails here, by name, rather than as a locked folder at the next cleanup.
+        var id = broker.Id;
+        try
+        {
+            await broker.WaitForExitAsync(TestContext.Current.CancellationToken)
+                .WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        }
+        catch (TimeoutException)
+        {
+            Assert.Fail($"Broker process {id} did not exit within 30 seconds of being killed.");
+        }
         broker.Dispose();
     }
 
@@ -654,8 +665,105 @@ internal static class TestSupport
         if ((attributes & FileAttributes.ReparsePoint) == 0 && isDirectory)
             foreach (var child in Directory.GetFileSystemEntries(path)) DeleteTree(child);
         if ((attributes & FileAttributes.ReadOnly) != 0) File.SetAttributes(path, attributes & ~FileAttributes.ReadOnly);
-        if (isDirectory) Directory.Delete(path, recursive: false);
-        else File.Delete(path);
+        // Another program (a virus scanner on a hosted runner) can hold a just-written folder for a
+        // moment, which fails the delete with a sharing violation. Each such failure names what holds
+        // the path in the test output. A VOOL broker holding it is a bug and fails at once; any other
+        // holder is waited out for a few seconds, and still fails the test, by name, after that.
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                if (isDirectory) Directory.Delete(path, recursive: false);
+                else File.Delete(path);
+                return;
+            }
+            catch (IOException error) when (error.HResult == SharingViolation)
+            {
+                var holders = Holders(path);
+                var named = holders.Count == 0 ? "no process named by the Restart Manager" : string.Join(", ", holders.Select(holder => $"{holder.Name} (process {holder.Id})"));
+                var brokers = Process.GetProcessesByName("VoolBroker");
+                var running = brokers.Length == 0 ? "none" : string.Join(", ", brokers.Select(broker => broker.Id));
+                foreach (var broker in brokers) broker.Dispose();
+                var diagnosis = $"{path} is in use: held by {named}; VoolBroker processes running: {running}";
+                TestContext.Current.TestOutputHelper?.WriteLine($"Delete attempt {attempt} at {DateTime.UtcNow:HH:mm:ss.fff}: {diagnosis}");
+                if (holders.Any(holder => holder.Id == Environment.ProcessId || holder.Name.Equals("VoolBroker", StringComparison.OrdinalIgnoreCase)))
+                    throw new IOException($"A VOOL broker still holds a folder it should have let go of. {diagnosis}", error);
+                if (DateTime.UtcNow >= deadline)
+                    throw new IOException($"Still in use after {attempt} attempts over 5 seconds. {diagnosis}", error);
+                Thread.Sleep(100);
+            }
+        }
+    }
+
+    // HRESULT_FROM_WIN32(ERROR_SHARING_VIOLATION).
+    private const int SharingViolation = unchecked((int)0x80070020);
+    private const int ErrorMoreData = 234;
+
+    // The processes the Restart Manager sees holding a path. The test process itself counts as a
+    // broker here, because it hosts the in-process roots. An empty list means none were named,
+    // not that nothing holds the path.
+    private static List<(int Id, string Name)> Holders(string path)
+    {
+        var holders = new List<(int Id, string Name)>();
+        if (RmStartSession(out var session, 0, new char[RmSessionKeyLength + 1]) != 0) return holders;
+        try
+        {
+            if (RmRegisterResources(session, 1, [path], 0, 0, 0, 0) != 0) return holders;
+            uint count = 0;
+            RmProcessInfo[]? processes = null;
+            int result;
+            while ((result = RmGetList(session, out var needed, ref count, processes, out _)) == ErrorMoreData)
+            {
+                processes = new RmProcessInfo[needed];
+                count = needed;
+            }
+            if (result != 0 || processes is null) return holders;
+            for (var index = 0; index < count; index++)
+            {
+                var id = processes[index].ProcessId;
+                string name;
+                try { using var process = Process.GetProcessById(id); name = process.ProcessName; }
+                catch (Exception lookup) when (lookup is ArgumentException or InvalidOperationException) { name = processes[index].AppName; }
+                holders.Add((id, id == Environment.ProcessId ? "this test process" : name));
+            }
+        }
+        finally
+        {
+            _ = RmEndSession(session);
+        }
+        return holders;
+    }
+
+    private const int RmSessionKeyLength = 32;
+
+    [DllImport("rstrtmgr.dll", CharSet = CharSet.Unicode)]
+    private static extern int RmStartSession(out uint session, int flags, char[] sessionKey);
+
+    [DllImport("rstrtmgr.dll", CharSet = CharSet.Unicode)]
+    private static extern int RmRegisterResources(uint session, uint fileCount, string[] files,
+        uint applicationCount, nint applications, uint serviceCount, nint services);
+
+    [DllImport("rstrtmgr.dll", CharSet = CharSet.Unicode)]
+    private static extern int RmGetList(uint session, out uint needed, ref uint count,
+        [In, Out] RmProcessInfo[]? processes, out uint rebootReasons);
+
+    [DllImport("rstrtmgr.dll")]
+    private static extern int RmEndSession(uint session);
+
+    // RM_PROCESS_INFO. FILETIME is two DWORDs (4-byte aligned), so the start time is two fields.
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct RmProcessInfo
+    {
+        public int ProcessId;
+        public uint StartTimeLow;
+        public uint StartTimeHigh;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)] public string AppName;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)] public string ServiceShortName;
+        public int ApplicationType;
+        public uint AppStatus;
+        public uint TerminalServicesSessionId;
+        [MarshalAs(UnmanagedType.Bool)] public bool Restartable;
     }
 }
 
