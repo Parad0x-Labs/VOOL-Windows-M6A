@@ -491,13 +491,49 @@ _START_POINT_OPTIONS = frozenset({"-c", "-C", "--create", "--force-create", "--o
                                   "-b", "-B"})
 
 
+def _tracking_refs(cwd: Path, name: str, *, timeout: float) -> set[str]:
+    """The refs git may take a remote's branch ``name`` from when it creates a tracking branch: each
+    remote's fetch refspecs applied to ``refs/heads/<name>`` as git applies them (a ``*`` on both
+    sides carries the matched part over), so a refspec that files it under any name is seen.
+    Remotes set in ``remotes/`` or ``branches/`` files, which git also reads, cannot be checked."""
+    for legacy in ("remotes", "branches"):
+        where = subprocess.run(hardened_argv(cwd, "rev-parse", "--git-path", legacy), capture_output=True,
+                               encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env())
+        if where.returncode != 0 or not where.stdout.strip():
+            raise RuntimeError(f"git rev-parse --git-path failed ({where.returncode})")
+        path = Path(where.stdout.strip())
+        path = path if path.is_absolute() else Path(cwd) / path
+        if path.is_dir() and any(path.iterdir()):
+            raise RuntimeError(f"remotes set in the repository's {legacy} folder cannot be checked")
+    branch = f"refs/heads/{name}"
+    refs: set[str] = set()
+    for key, value in _config_entries(cwd, [], timeout=timeout):
+        if not (key.startswith("remote.") and key.endswith(".fetch")) or not value:
+            continue
+        spec = value.strip().lstrip("+")
+        if spec.startswith("^") or ":" not in spec:
+            continue  # a negative refspec only narrows; one without a destination makes no ref
+        src, _, dst = spec.partition(":")
+        if "*" in src:
+            prefix, _, suffix = src.partition("*")
+            if len(branch) < len(prefix) + len(suffix) or not branch.startswith(prefix) or not branch.endswith(suffix):
+                continue
+            middle = branch[len(prefix):len(branch) - len(suffix)]
+            dst = dst.replace("*", middle, 1)
+        elif src != branch:
+            continue
+        if dst:
+            refs.add(dst)
+    return refs
+
+
 def _checkout_target_commits(cwd: Path, name: str, *, as_branch: bool, timeout: float) -> list[str]:
     """Every commit ``git switch <name>`` or ``git worktree add <path> <name>`` may check out. git reads
     the name as a local branch first (``rev-parse`` would prefer a tag of the same name, and is
     checked too). As a branch (``as_branch``, not a ``-c``/``--detach`` start point) with no local
     branch of that name, git creates a tracking branch from a remote's, found through each remote's
-    fetch refspec, which the repository sets: so every ref ending in ``/<name>`` is checked. A name
-    that is none of them refuses."""
+    fetch refspec, which the repository sets: so the refs those refspecs map ``<name>`` to, and every
+    ref ending in ``/<name>``, are checked. A name that is none of them refuses."""
     found: list[str] = []
     if name == "-" or name.startswith("@{-"):
         # The previous branch: rev-parse would prefer a tag of its name, git switches to the branch.
@@ -519,6 +555,7 @@ def _checkout_target_commits(cwd: Path, name: str, *, as_branch: bool, timeout: 
                                      env=safe_env())
             if listing.returncode != 0:
                 raise RuntimeError(f"git for-each-ref failed ({listing.returncode})")
+            tracking = _tracking_refs(cwd, name, timeout=timeout)
             for line in listing.stdout.splitlines():
                 oid, _, ref = line.partition(" ")
                 if ref.endswith(f"/{name}"):
@@ -527,6 +564,14 @@ def _checkout_target_commits(cwd: Path, name: str, *, as_branch: bool, timeout: 
                                             timeout=timeout, env=safe_env())
                     if commit.returncode == 0 and commit.stdout.strip():  # a tag of a tree is no branch
                         found.append(commit.stdout.strip())
+            for ref in sorted(tracking):
+                if ref.startswith("-"):
+                    raise RuntimeError(f"the fetch refspec destination {ref!r} cannot be checked")
+                commit = subprocess.run(hardened_argv(cwd, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"),
+                                        capture_output=True, encoding="utf-8", errors="surrogateescape",
+                                        timeout=timeout, env=safe_env())
+                if commit.returncode == 0 and commit.stdout.strip():
+                    found.append(commit.stdout.strip())
     try:
         found.append(_resolve_commit(cwd, name, timeout=timeout))
     except RuntimeError:
