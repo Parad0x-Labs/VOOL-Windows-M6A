@@ -138,20 +138,19 @@ def link_refusal(*folders: str) -> str:
 
 
 def _outermost(folders: tuple[str, ...]) -> list[Path]:
-    """`folders` without repeats and without those inside another one (compared as they resolve)."""
-    resolved = {}
+    """`folders` without repeats and without those inside another one (compared as they resolve).
+    Paths are compared exactly, never case-folded: Windows folds `K` (U+212A) to `k` but NTFS keeps
+    `Ka` and `ka` apart, and a folder marked case-sensitive keeps any two spellings apart, so folding
+    could drop a folder that is not walked as part of another. A folder spelled two ways is walked twice."""
+    resolved: dict[str, Path] = {}
     for folder in folders:
-        resolved.setdefault(os.path.normcase(os.path.realpath(folder)), Path(folder))
+        resolved.setdefault(os.path.realpath(folder), Path(folder))
     keys = sorted(resolved, key=len)
     kept: list[str] = []
     for key in keys:
-        if not any(os.path.commonpath([key, outer]) == outer for outer in kept if _same_drive(key, outer)):
+        if not any(key == outer or key.startswith(outer.rstrip(os.sep) + os.sep) for outer in kept):
             kept.append(key)
     return [resolved[key] for key in kept]
-
-
-def _same_drive(a: str, b: str) -> bool:
-    return os.path.splitdrive(a)[0] == os.path.splitdrive(b)[0]
 
 
 def _link_in(root: Path) -> str:
@@ -181,9 +180,12 @@ def _link_in(root: Path) -> str:
             if stat.S_ISDIR(status.st_mode):
                 pending.append((Path(entry.path), name))
                 continue
-            # Lowercased: Windows folder names ignore case, so a shipped `LOGS/REFS` folder is where
-            # git's reflog appends land, and git itself names the object store in lower case.
-            if _OBJECT_STORE_FILE.fullmatch(name.lower()):
+            # Case-folded: Windows folder names ignore case (by Unicode upper case, so `logſ` is `logs`),
+            # a shipped `LOGS/REFS` folder is where git's reflog appends land, and git names the object
+            # store in lower case. The listing reports each entry's stored long name only, never an 8.3
+            # short name, a stream (`::$INDEX_ALLOCATION`) or a spelling with trailing dots or spaces
+            # that the stored name lacks, and git opens `logs` and `refs` by those exact names.
+            if _OBJECT_STORE_FILE.fullmatch(name.casefold()):
                 continue
             try:
                 # The listing gives no link count on Windows, so the file itself is asked there.
