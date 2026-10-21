@@ -641,13 +641,14 @@ def main() -> int:
 
         _write_pidfile()
         # Windows broker (phase B): started as this process's child inside a Job that ends it when
-        # this process exits. Nothing is routed through it yet. Fail-soft: boot never depends on it.
+        # this process exits. Nothing is routed through it yet. Fail-soft: boot never depends on it,
+        # and it starts in the background so the port binds without waiting on it.
         if os.name == "nt":
             try:
                 from core.runtime_paths import PROJECT_ROOT, active_vool_home
                 from core.windows_broker.process import start_for_api
 
-                windows_broker = start_for_api(PROJECT_ROOT, active_vool_home())
+                windows_broker = start_for_api(PROJECT_ROOT, active_vool_home(), background=True)
             except Exception:
                 logger.exception("Windows broker failed to start; server continues without it")
         # Signed-manifest update subsystem (2026-09-01 amendment): bounded, async, and

@@ -16,6 +16,7 @@ import secrets
 import struct
 import subprocess
 import threading
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,7 +24,7 @@ from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
 
-#: How long the API waits for the broker's start line. Start-up never waits on it for longer.
+#: How long the host waits for the broker to take its bootstrap and answer with its start line.
 START_TIMEOUT_SECONDS = 10.0
 _FLAGGED_ENV = "VOOL_WINDOWS_DISPOSABLE_WORKSPACES"
 
@@ -85,6 +86,8 @@ class BrokerHost:
         self._process: Any = None
         self._job: _Job | None = None
         self._lock = threading.Lock()
+        self._stopping = threading.Event()
+        self._worker: threading.Thread | None = None
 
     def start(self) -> BrokerStatus:
         with self._lock:
@@ -96,6 +99,8 @@ class BrokerHost:
         return self.status
 
     def stop(self) -> None:
+        # Set before taking the lock, so a start still waiting on the broker gives up at once.
+        self._stopping.set()
         with self._lock:
             if self._process is None and self._job is None:
                 return
@@ -109,6 +114,8 @@ class BrokerHost:
                 self._job = None
 
     def _start(self) -> BrokerStatus:
+        if self._stopping.is_set():
+            return BrokerStatus(False, "stopped")
         try:
             self._job = self._job_factory()
             self._process = self._popen(
@@ -131,17 +138,15 @@ class BrokerHost:
                 "journal_dir": str(self.journal_dir),
             }
             payload = json.dumps(bootstrap, separators=(",", ":")).encode("utf-8")
-            self._process.stdin.write(struct.pack("<I", len(payload)) + payload)
-            self._process.stdin.flush()
         except Exception:
             logger.exception("Windows broker could not be launched")
             self._release()
             return BrokerStatus(False, "start_failed")
 
-        line = self._read_start_line()
+        line = self._exchange(struct.pack("<I", len(payload)) + payload)
         if line is None:
             self._release()
-            return BrokerStatus(False, "start_timeout")
+            return BrokerStatus(False, "stopped" if self._stopping.is_set() else "start_timeout")
         if not line:
             try:
                 code: object = self._process.wait(timeout=5)
@@ -164,12 +169,32 @@ class BrokerHost:
         threading.Thread(target=self._drain, args=(self._process.stdout,), daemon=True).start()
         return BrokerStatus(True, "", ready["pipe"], int(self._process.pid))
 
-    def _read_start_line(self) -> bytes | None:
-        """The start line, b"" when the broker closed stdout first, None after the timeout."""
+    def _exchange(self, frame: bytes) -> bytes | None:
+        """Send the bootstrap and read the start line: b"" when the broker closed stdout first, None
+        after the timeout or a stop. Both run on a worker, so a broker that never reads its stdin
+        cannot block the caller either."""
+        process = self._process
         result: list[bytes] = []
-        reader = threading.Thread(target=lambda: result.append(self._process.stdout.readline()), daemon=True)
-        reader.start()
-        reader.join(self.timeout)
+
+        def run() -> None:
+            # A broker that refuses the frame writes its refusal and exits, so the write may fail;
+            # the start line is read anyway, so the refusal's code is what gets reported.
+            with contextlib.suppress(OSError, ValueError):
+                process.stdin.write(frame)
+                process.stdin.flush()
+            try:
+                result.append(process.stdout.readline())
+            except (OSError, ValueError):
+                result.append(b"")
+
+        self._worker = threading.Thread(target=run, name="windows-broker-start", daemon=True)
+        self._worker.start()
+        deadline = time.monotonic() + self.timeout
+        while self._worker.is_alive() and not self._stopping.is_set():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            self._worker.join(min(remaining, 0.1))
         return result[0] if result else None
 
     @staticmethod
@@ -179,7 +204,9 @@ class BrokerHost:
                 pass
 
     def _release(self) -> None:
-        """Closing the job ends the broker; then its pipes are closed and it is reaped."""
+        """Closing the job ends the broker, which is then reaped. Its stdout is never closed here:
+        a reader blocked on it holds the stream's lock until the pipe ends, so closing it could hang
+        the API's exit. stdin is closed only once the start worker has finished writing to it."""
         process, job = self._process, self._job
         self._process, self._job = None, None
         if job is not None:
@@ -189,10 +216,10 @@ class BrokerHost:
         if process.poll() is None:
             with contextlib.suppress(OSError):
                 process.kill()
-        for stream in (process.stdin, process.stdout):
-            if stream is not None:
-                with contextlib.suppress(OSError):
-                    stream.close()
+        worker, self._worker = self._worker, None
+        if process.stdin is not None and (worker is None or not worker.is_alive()):
+            with contextlib.suppress(OSError):
+                process.stdin.close()
         try:
             process.wait(timeout=10)
         except subprocess.TimeoutExpired:
@@ -200,9 +227,12 @@ class BrokerHost:
 
 
 def start_for_api(
-    project_root: Path, vool_home: Path, *, environ: Mapping[str, str] | None = None
+    project_root: Path, vool_home: Path, *, environ: Mapping[str, str] | None = None, background: bool = False
 ) -> BrokerHost:
-    """Start the broker for this API process. Never raises; the host's status says what happened."""
+    """Start the broker for this API process. Never raises; the host's status says what happened.
+
+    With ``background`` the start runs on a daemon thread and this returns at once, so the API
+    binds its port without waiting on the broker; stop() is still safe at any moment."""
     env = os.environ if environ is None else environ
     journal_dir = vool_home / "broker" / "journal"
     executable = broker_executable(project_root) if _is_windows() else None
@@ -216,7 +246,10 @@ def start_for_api(
     # the Windows path separator (os.pathsep there), as core/windows_write_gate.py reads it.
     flagged = [part.strip() for part in env.get(_FLAGGED_ENV, "").split(";") if part.strip()]
     host = BrokerHost(executable, flagged, journal_dir)
-    host.start()
+    if background:
+        threading.Thread(target=host.start, name="windows-broker-start", daemon=True).start()
+    else:
+        host.start()
     return host
 
 

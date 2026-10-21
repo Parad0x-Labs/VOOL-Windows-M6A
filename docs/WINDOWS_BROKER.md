@@ -53,9 +53,11 @@ with approval ingress; it starts only after **both Job 6 and Job 7 have merged**
   API, a new broker starts with a new pipe and secret; nothing carries over. Phase B built this:
   apps/vool_api_server.py calls `core.windows_broker.process.start_for_api` at start-up and stops
   the broker in its exit path. The broker is assigned to the Job before it is sent its bootstrap.
-  A broker that is missing, refused or slow (10 s for its start line) is logged and VOOL runs
-  without it, because nothing is routed through it before Step 3. The flagged folders are the
-  entries of VOOL_WINDOWS_DISPOSABLE_WORKSPACES as written, so the broker applies its own checks.
+  The start runs in the background, so the API binds its port without waiting on the broker, and
+  a stop during the start ends it at once. A broker that is missing, refused or slow (10 s to take
+  its bootstrap and send its start line) is logged and VOOL runs without it, because nothing is
+  routed through it before Step 3. The flagged folders are the entries of
+  VOOL_WINDOWS_DISPOSABLE_WORKSPACES as written, so the broker applies its own checks.
   As built, the broker also exits when its stdin closes or when the API process (matched by id
   and creation time) exits (Program.cs:236-239).
 - Program files: `{app}\broker\` in the installed layout (installer/bundle/vool.iss, staged by
