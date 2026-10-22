@@ -192,6 +192,7 @@ function Invoke-WindowsRuntimeRegression {
         "tests\test_windows_gate_refuses_git_writes_sent_elsewhere.py",
         "tests\test_git_follows_links_in_its_git_folder.py",
         "tests\repoops\test_windows_push_lands_only_in_marked_folders.py",
+        "tests\repoops\test_a_file_url_with_escapes_names_its_folder.py",
         "tests\test_windows_gate_checks_the_task_and_session_folder.py",
         "tests\test_windows_patch_lands_only_where_checked.py",
         "tests\test_notes_archive_stays_in_the_notes_folder.py",
