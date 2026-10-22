@@ -135,8 +135,7 @@ def test_the_verifier_catches_a_renamed_name_carrying_an_earlier_forgotten_word(
 
     rows = [row for row in list_recent_runtime_session_events(chat, limit=500)
             if row.get("event_type") in {"attachment_redacted", "attachment_erased"}]
-    # Windows writes no forget Activity row (Mac's comes from f066104, not ported): no row may carry the word.
-    assert not any(carries(row["message"], "document") for row in rows), rows
+    assert rows and not any(carries(row["message"], "document") for row in rows), rows
 
 
 def test_with_no_clean_candidate_the_name_holds_no_word():
