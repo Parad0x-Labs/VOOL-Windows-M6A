@@ -35,7 +35,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
-from core import safe_git
+from core import safe_git, windows_path_policy
 from storage.db import get_connection
 
 __all__ = [
@@ -1475,9 +1475,7 @@ def _message_sources(sub: str, rest: list[str], root: Path | None) -> str:
     if sub == "commit":
         for path_text in _option_values(rest, "-t", "--template"):
             parts.append(_read_message_file(path_text, root))
-        reused = [*_option_values(rest, "-C", "--reuse-message"), *_option_values(rest, "-c", "--reedit-message")]
-        for spec in (*_option_values(rest, "", "--fixup"), *_option_values(rest, "", "--squash")):
-            reused.append(spec.split(":", 1)[1] if spec.startswith(("amend:", "reword:")) else spec)
+        reused = _reused_revisions(rest)
         if "--amend" in rest and not parts and not reused:
             reused.append("HEAD")
         for rev in reused:
@@ -1490,6 +1488,51 @@ def _message_sources(sub: str, rest: list[str], root: Path | None) -> str:
             except _ScanIncomplete as exc:
                 raise _Unreadable(f"the reused message {rev!r} could not be read") from exc
     return "\n".join(parts)
+
+
+def _reused_revisions(rest: list[str]) -> list[str]:
+    """The revisions a ``git commit`` reuses a message from: -C/-c, --fixup/--squash (amend: and reword: dropped)."""
+    reused = [*_option_values(rest, "-C", "--reuse-message"), *_option_values(rest, "-c", "--reedit-message")]
+    for spec in (*_option_values(rest, "", "--fixup"), *_option_values(rest, "", "--squash")):
+        reused.append(spec.split(":", 1)[1] if spec.startswith(("amend:", "reword:")) else spec)
+    return reused
+
+
+def _revision_share_kind(rev: str) -> str:
+    """The network kind of a share a revision names, as itself or as the path part git looks up when
+    it does not resolve (``HEAD:<path>``, ``:<n>:<path>``, ``:<path>``, ``:(magic)<path>``, ``:/<path>``).
+    "" for none, and always off Windows."""
+    candidates = [rev]
+    for index, char in enumerate(rev):
+        if char != ":":
+            continue
+        tail = rev[index + 1:]
+        candidates.append(tail)
+        if tail.startswith("("):
+            candidates.append(tail.partition(")")[2])
+        elif tail[:1] in {"!", "/", "^"}:
+            candidates.append(tail[1:])
+    for candidate in candidates:
+        kind = windows_path_policy.refused_form(candidate, network_only=True)
+        if kind:
+            return kind
+    return ""
+
+
+def _share_refusal(sub: str, rest: list[str], repo_opt: str) -> RuleRefusal | None:
+    """On Windows, a share the check itself would look up: the ``-C`` repository, a ``-F/--file`` or
+    ``-t/--template`` message file, or a reused-message revision. A lookup of ``\\\\host\\share`` there is
+    an SMB connection, so it is refused by its spelling before anything resolves, reads or runs git."""
+    named = [(value, windows_path_policy.refused_form(value, network_only=True))
+             for value in (repo_opt, *_option_values(rest, "-F", "--file"))]
+    if sub == "commit":
+        named += [(value, windows_path_policy.refused_form(value, network_only=True))
+                  for value in _option_values(rest, "-t", "--template")]
+        named += [(rev, _revision_share_kind(rev)) for rev in _reused_revisions(rest)]
+    for value, kind in named:
+        if value and kind:
+            return RuleRefusal(operation=sub, reason=windows_path_policy.refusal_text(value, kind))
+    return None
 
 
 def _read_message_file(path_text: str, root: Path | None) -> str:
@@ -1597,6 +1640,9 @@ def sandbox_git_check(argv: list[str], *, cwd: str = "") -> GitRuleVerdict:
     sub, rest, repo_opt = _git_subcommand(argv)
     if sub not in _GIT_OUTBOUND:
         return GitRuleVerdict()
+    shared = _share_refusal(sub, rest, repo_opt)
+    if shared is not None:
+        return GitRuleVerdict(refusal=shared)
     root: Path | None = None
     if repo_opt:
         root = Path(repo_opt).expanduser()
