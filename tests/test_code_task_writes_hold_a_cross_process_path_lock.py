@@ -12,8 +12,18 @@ parent's approved write is about to reach the writer, a REAL second process exec
 approval on the same file -- of the same task, or of another task over the same workspace. The
 second process must be refused unexecuted, the parent's reviewed write must land, and the journal
 must show exactly one consumed approval.
+
+The task's reproduce stage needs a sandboxed command run, which the Windows runner cannot make, and
+the lock under test is the one that differs there (``msvcrt.locking``, not ``flock``). So in the
+parent only, ``workspace.run_tests`` runs the same check as a plain subprocess with this Python; the
+racing writes in both processes go through the production door unchanged.
 """
 from __future__ import annotations
+
+import subprocess
+import sys
+
+import pytest
 
 from tests.test_code_task_reviewed_base import (
     BUGGY,
@@ -29,6 +39,31 @@ from tests.test_code_task_reviewed_base import (
 assert stock_repo  # the fixture, imported for these cases
 
 SECOND = FIXED + "# second\n"
+
+
+@pytest.fixture(autouse=True)
+def _reproduce_without_the_sandbox(monkeypatch):
+    import core.runtime_execution_tools as tools
+
+    door = tools.execute_runtime_tool
+
+    def run_tests_plainly(intent, arguments, *args, **kwargs):
+        if intent != "workspace.run_tests":
+            return door(intent, arguments, *args, **kwargs)
+        context = kwargs.get("source_context") or {}
+        command = arguments["command"]
+        script = command.split()[-1]
+        ran = subprocess.run([sys.executable, script], cwd=context.get("workspace_root"),
+                             capture_output=True, text=True, timeout=60)
+        ok = ran.returncode == 0
+        return tools.RuntimeExecutionResult(
+            handled=True, ok=ok, status="executed" if ok else "command_failed",
+            response_text=ran.stdout + ran.stderr,
+            details={"command": command, "returncode": ran.returncode, "stdout": ran.stdout,
+                     "stderr": ran.stderr, "success": ok, "executed": True},
+        )
+
+    monkeypatch.setattr(tools, "execute_runtime_tool", run_tests_plainly)
 
 
 def _parent_writes_while_another_process_writes(monkeypatch, tmp_path, ctx, competing: dict):
