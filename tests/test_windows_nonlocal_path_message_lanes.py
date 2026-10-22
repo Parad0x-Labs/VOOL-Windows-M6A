@@ -754,6 +754,42 @@ def test_the_build_subject_is_never_a_file_the_message_typed_as_a_share(windows_
     assert subject("audit app.py", shares[0]) == ("attkr9/s/a.js",)
 
 
+def test_a_build_subject_typed_inside_a_device_or_nt_path_is_no_subject(
+    tmp_path: Path, monkeypatch, recorder, windows_host
+) -> None:
+    # The file the builder takes can start inside a device or NT path typed with mixed separators
+    # (`\\?\UNC/host/s/a.js` gives `UNC/host/s/a.js`), after no separator of its own. The whole word it
+    # ends is read, so that is no subject either, and a build naming one, with a block comment or the
+    # workspace folder ahead of it, reads no file by that name.
+    from core.agent_runtime.builder.controller import _audited_subject_paths
+
+    workspace = tmp_path / "workspace"
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    monkeypatch.setenv(gate.ENV_VAR, str(workspace))
+    chat = _served_chat(monkeypatch)
+    windows_host.on()
+    typed = os.path.splitdrive(str(workspace))[1].replace("\\", "/")
+    devices = [
+        'create a.js and save it to "\\\\?\\UNC/attkr9/s/a.js"',
+        'create a.js and save it to "\\??\\UNC/attkr9/s/a.js"',
+        'create a.js and save it to "//?/UNC/attkr9/s/a.js"',
+        'create a.js and save it to "//-attkr9/s/a.js"',
+    ]
+    builds = [
+        "create a.js /*x*/ and save it to \\\\?\\UNC/attkr9/s/x.txt",
+        f"create todo.txt in {typed}/notes and save a copy to \\\\?\\UNC/attkr9/s/x.txt",
+    ]
+
+    subjects = {
+        text: _audited_subject_paths({"conversation_history": [{"role": "user", "content": text}]}) for text in devices
+    }
+    replies, touched = _served_turns(chat, recorder, builds)
+
+    assert subjects == dict.fromkeys(devices, ()), subjects
+    assert touched == {}, touched
+    assert all(status == 200 and reply.strip() for status, reply in replies.values()), replies
+
+
 def test_a_full_drive_path_split_by_the_normalizer_keeps_its_drive(monkeypatch, recorder, windows_host) -> None:
     # The input normalizer turns `C:/Users/you/x.txt` into `C: /Users/you/x.txt`. This test's home
     # stands in for `C:/Users/you`: its rooted half exists, as `\\Users\\you` does on the current drive
