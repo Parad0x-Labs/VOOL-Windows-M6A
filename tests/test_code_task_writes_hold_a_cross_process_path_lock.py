@@ -18,7 +18,8 @@ the lock under test is the one that differs there (``msvcrt.locking``, not ``flo
 parent only, ``workspace.run_tests`` runs the same check as a plain subprocess with this Python; the
 racing writes in both processes go through the production door unchanged. The shared repository
 fixture writes its files in text mode, which is CRLF on Windows, so here they are rewritten as the
-exact bytes whose hashes the cases assert.
+exact bytes whose hashes the cases assert, and the repository is marked as a folder VOOL may write in
+on Windows.
 """
 from __future__ import annotations
 
@@ -43,7 +44,11 @@ assert stock_repo  # the fixture, imported for these cases
 
 
 @pytest.fixture
-def repo(stock_repo):
+def repo(stock_repo, monkeypatch):
+    from core import windows_write_gate
+
+    # On Windows, VOOL writes only inside marked folders; the racing child processes inherit this.
+    monkeypatch.setenv(windows_write_gate.ENV_VAR, str(stock_repo))
     for path in stock_repo.iterdir():
         if path.is_file():
             path.write_bytes(path.read_text(encoding="utf-8").encode("utf-8"))  # read_text folds CRLF
