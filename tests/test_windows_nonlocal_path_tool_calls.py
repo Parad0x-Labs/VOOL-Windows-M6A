@@ -515,3 +515,258 @@ def test_a_push_remote_on_this_computer_is_judged_on_the_network_tier_only(
     assert code == 0, err
     read_back = ["git", "--git-dir", str(destination), "rev-parse", "refs/heads/pinned"]
     assert subprocess.run(read_back, capture_output=True, text=True, check=True).stdout.strip() == head
+
+
+# MCP and plugin tools: their arguments mean whatever their server says, so the executor judges them on
+# the network tier only. A partial path reaches the operator's approval and a share is refused. The
+# authorized boundary and the runtime door, which the approved call crosses next and which the fast
+# paths and seats call directly, must judge them on that same tier. No server is started: the MCP tool
+# is the contract a configured server's listing gives, the plugin tool a registered plugin contract,
+# and each lane's dispatch is replaced by a stand-in that notes the call.
+_MCP_TOOL = "mcp.demo.read_file"
+_PLUGIN_TOOL = "demo.reader"
+_SERVER_TOOLS = (_MCP_TOOL, _PLUGIN_TOOL)
+#: The status each lane's stand-in answers with once it runs.
+_RAN = {_MCP_TOOL: "mcp_executed", _PLUGIN_TOOL: "executed"}
+
+
+@pytest.fixture
+def server_defined_tools(monkeypatch: pytest.MonkeyPatch):
+    """An unpinned MCP tool (asked every call) and a plugin tool (asked in Manual mode), with the plugin
+    lane open. Yields the list of calls the two lanes' dispatch received."""
+    from types import SimpleNamespace
+
+    from core import mode_permission_policy as permission
+    from core import tool_registry
+    from core.execution import mcp_bridge
+    from core.runtime_flags import override
+    from core.runtime_tool_contracts import RuntimeToolContract
+    from tests._toolchain_fixtures import reset_toolchain_state
+
+    listed = SimpleNamespace(
+        name="read_file",
+        description="Read a file.",
+        input_schema={"type": "object", "properties": {"path": {"type": "string"}}},
+    )
+    mcp_contract = mcp_bridge._contract_for({"name": "demo"}, listed)
+    monkeypatch.setattr(mcp_bridge, "mcp_contracts", lambda: [mcp_contract])
+    tool_registry.register(
+        RuntimeToolContract(
+            intent=_PLUGIN_TOOL,
+            description="demo plugin reader",
+            tool_surface="plugin",
+            capability_id=_PLUGIN_TOOL,
+            capability_claim="reads a file",
+            supported=True,
+            unsupported_reason="",
+            input_schema={"path": "str"},
+            output_schema={"ok": "bool"},
+            side_effect_class="read_only",
+            approval_requirement="manual",
+            timeout_policy="60s",
+            retry_policy="none",
+            artifact_emission="none",
+            error_contract="typed",
+            handler="plugin",
+            source="plugin:demo",
+        )
+    )
+    dispatched: list[tuple[str, dict]] = []
+
+    def lane(status: str):
+        def run(intent: str, arguments: dict):
+            dispatched.append((intent, dict(arguments)))
+            return executor.ToolIntentExecution(
+                handled=True, ok=True, status=status, response_text="ran", user_safe_response_text="ran",
+                mode="tool_executed", tool_name=intent, details={"executed": True},
+            )
+
+        return run
+
+    monkeypatch.setattr(executor, "execute_mcp_intent", lane(_RAN[_MCP_TOOL]))
+    monkeypatch.setattr(executor, "_execute_plugin_tool", lane(_RAN[_PLUGIN_TOOL]))
+    permission.reset_mode_permission_state()
+    try:
+        with override("plugin_runtime_tools", True):
+            yield dispatched
+    finally:
+        permission.reset_mode_permission_state()
+        reset_toolchain_state()
+
+
+def _asked_then_approved(intent: str, arguments: dict, source_context: dict):
+    """The call as the operator sees it: asked, allowed once, then sent again carrying that approval."""
+    from core import mode_permission_policy as permission
+
+    ids = {"task_id": f"nonlocal-{uuid.uuid4().hex}", "session_id": f"nonlocal-session-{uuid.uuid4().hex}"}
+    tracker = HiveActivityTracker(config=HiveActivityTrackerConfig(enabled=False, watcher_api_url=None))
+
+    def send(context: dict):
+        return executor.execute_tool_intent(
+            {"intent": intent, "arguments": dict(arguments)},
+            **ids,
+            checkpoint_id=f"runtime-{uuid.uuid4().hex}",
+            step_index=0,
+            source_context=context,
+            hive_activity_tracker=tracker,
+        )
+
+    asked = send(source_context)
+    if asked.status != "pending_approval":
+        return asked, None
+    token = str(asked.details["approval_request"]["approval_id"])
+    assert permission.resolve_approval(token, decision="allow") is not None
+    return asked, send({**source_context, "mode_approval_token": token})
+
+
+def _approved_decision():
+    """The decision a caller holds once the operator allowed the call, as the model loop hands it in."""
+    from core import mode_permission_policy as permission
+
+    return permission.PermissionDecision(
+        effect=permission.PermissionEffect.ALLOW,
+        mode=permission.OperatingMode.MANUAL,
+        actions=(),
+        reason="allowed by the operator",
+    )
+
+
+def test_an_approved_mcp_or_plugin_call_with_a_partial_path_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, windows_host, server_defined_tools
+) -> None:
+    # The executor puts a root- or drive-relative argument of these tools to the operator (the network
+    # tier), so once the operator allows it the call runs in its own lane. The permission decision
+    # looks such a path up on this computer to name what it affects; that lookup is not on a share.
+    from core import authorized_tool_execution as boundary
+    from core import runtime_execution_tools as runtime
+
+    workspace, _home = _local_machine(tmp_path, monkeypatch)
+    context = {"workspace": str(workspace), "operating_mode": "manual"}
+    windows_host.on()
+
+    observed: dict[str, dict] = {}
+    expected: dict[str, dict] = {}
+    for intent in _SERVER_TOOLS:
+        for value in ("\\notes\\x.txt", "/notes/x.txt", "C:notes\\x.txt"):
+            arguments = {"path": value}
+            ran = len(server_defined_tools)
+            asked, approved = _asked_then_approved(intent, arguments, context)
+            dispatched = [(name, sent.get("path")) for name, sent in server_defined_tools[ran:]]
+            # The two doors called as the fast paths and the seats call them: each hands an MCP or plugin
+            # call back to its own lane (None) instead of refusing it.
+            at_boundary = boundary.execute_authorized_runtime_tool(
+                intent, arguments, source_context=context, permission_decision=_approved_decision()
+            )
+            at_runtime_door = runtime.execute_runtime_tool(intent, arguments, source_context=context)
+            observed[f"{intent} {value}"] = {
+                "asked": asked.status,
+                "approved": getattr(approved, "status", None),
+                "approved text": str(getattr(approved, "response_text", "") or "")[:160],
+                "dispatched": dispatched,
+                "authorized boundary": getattr(at_boundary, "status", None),
+                "runtime door": getattr(at_runtime_door, "status", None),
+            }
+            expected[f"{intent} {value}"] = {
+                "asked": "pending_approval",
+                "approved": _RAN[intent],
+                "approved text": "ran",
+                "dispatched": [(intent, value)],
+                "authorized boundary": None,
+                "runtime door": None,
+            }
+
+    assert observed == expected, _differences(observed, expected)
+
+
+def test_an_mcp_or_plugin_call_naming_a_share_is_refused_at_every_door(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorder, windows_host, server_defined_tools
+) -> None:
+    from core import authorized_tool_execution as boundary
+    from core import runtime_execution_tools as runtime
+
+    workspace, _home = _local_machine(tmp_path, monkeypatch)
+    decisions = _spy(monkeypatch, executor, "decide_tool_call")
+    context = {"workspace": str(workspace), "operating_mode": "manual"}
+    # Every share and device form, the NT object path of the share, and a file URL naming its host.
+    shares = [(form.value, form.kind) for form in MARKER_FORMS if form.network]
+    shares += [("\\??\\UNC\\attkr9\\s\\x", "nt_namespace"), ("//?/UNC/attkr9/s/x", "device")]
+    calls = [({"path": value}, kind) for value, kind in shares] + [({"url": "file://attkr9/s/x"}, "unc")]
+    windows_host.on()
+
+    observed: dict[str, dict] = {}
+    expected: dict[str, dict] = {}
+    for intent in _SERVER_TOOLS:
+        for arguments, kind in calls:
+            asked, touches, starts = len(decisions), len(recorder.touches), len(recorder.popen)
+            answers = {
+                "executor": _execute(intent, arguments, context),
+                # Even with the operator's allow in hand.
+                "authorized boundary": boundary.execute_authorized_runtime_tool(
+                    intent, arguments, source_context=context, permission_decision=_approved_decision()
+                ),
+                "runtime door": runtime.execute_runtime_tool(intent, arguments, source_context=context),
+            }
+            (value,) = arguments.values()
+            for door, answer in answers.items():
+                observed[f"{intent} {value} {door}"] = {
+                    "status": getattr(answer, "status", None),
+                    "says what and why": f"`{value}` is a network or device path"
+                    in str(getattr(answer, "response_text", "") or ""),
+                }
+                expected[f"{intent} {value} {door}"] = {"status": STATUS, "says what and why": True}
+            observed[f"{intent} {value}"] = {
+                "kind": (answers["executor"].details or {}).get("kind"),
+                "permission decisions": len(decisions) - asked,
+                **_reached(recorder, touches, starts),
+            }
+            expected[f"{intent} {value}"] = {
+                "kind": kind, "permission decisions": 0, "touches": [], "process starts": []
+            }
+
+    assert observed == expected, _differences(observed, expected)
+    assert server_defined_tools == [], "an MCP or plugin lane ran a call naming a share"
+
+
+@pytest.mark.parametrize(
+    ("intent", "arguments"),
+    [
+        pytest.param("machine.read_file", {"path": "\\attkr9\\x"}, id="machine-root-relative"),
+        pytest.param("workspace.read_file", {"path": "C:attkr9\\x"}, id="workspace-drive-relative"),
+        # Not an MCP name and no registered plugin contract, whatever it looks like.
+        pytest.param("demo.unlisted", {"path": "/attkr9/x"}, id="unregistered-root-relative"),
+        # The tier is the outer call's: a step is judged on the full rule, the MCP call it runs included.
+        pytest.param(
+            "code.task.step",
+            {"task_id": "task-1", "step_id": "s1", "intent": _MCP_TOOL, "arguments": {"path": "\\attkr9\\x"}},
+            id="step-running-mcp-root-relative",
+        ),
+    ],
+)
+def test_a_partial_path_for_any_other_tool_is_still_refused_at_both_doors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    recorder,
+    windows_host,
+    server_defined_tools,
+    intent: str,
+    arguments: dict,
+) -> None:
+    from core import authorized_tool_execution as boundary
+    from core import runtime_execution_tools as runtime
+
+    workspace, _home = _local_machine(tmp_path, monkeypatch)
+    context = {"workspace": str(workspace), "operating_mode": "manual"}
+    windows_host.on()
+
+    answers = {
+        "authorized boundary": boundary.execute_authorized_runtime_tool(
+            intent, arguments, source_context=context, permission_decision=_approved_decision()
+        ),
+        "runtime door": runtime.execute_runtime_tool(intent, arguments, source_context=context),
+    }
+
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+    for door, answer in answers.items():
+        assert getattr(answer, "status", None) == STATUS, (door, getattr(answer, "response_text", answer))
+        assert "is not a full local path" in str(answer.response_text or ""), (door, answer.response_text)
+    assert server_defined_tools == []
