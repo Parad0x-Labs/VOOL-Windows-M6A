@@ -452,3 +452,66 @@ def test_a_push_remote_the_repository_names_on_a_share_is_refused_before_it_is_l
     assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
     for name, url in remotes.items():
         assert f"`{url}` is a network or device path" in refusals[name], (name, refusals[name])
+
+
+def test_a_push_remote_on_this_computer_is_judged_on_the_network_tier_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, windows_host
+) -> None:
+    # The push check judges a destination as written on the network tier only: a share or a device is
+    # refused, and a folder on this computer is then checked where it is. A folder named without its
+    # drive (`\Users\you\r.git`, or a POSIX absolute path with the seam on) is root-relative: the full
+    # rule would refuse it, but the push check places it on the pushing repository's drive.
+    import subprocess
+
+    from core import safe_git, windows_path_policy
+    from core.repoops.gitops import GitRunner
+
+    # Only these repositories' own git config may decide the answer: a user's core.hooksPath, hook
+    # templates or url.<x>.insteadOf would refuse the push or send it elsewhere. So no git started here
+    # reads the system or global config, an inherited GIT_* variable or the installation's templates.
+    # The push check's git runs with safe_git.safe_env(), which drops every GIT_* variable but the
+    # identity, so the two switches are added to what it returns; the home folders also cover a git
+    # older than GIT_CONFIG_GLOBAL (2.32).
+    for name in [name for name in os.environ if name.upper().startswith("GIT_")]:
+        monkeypatch.delenv(name)
+    home, no_config = tmp_path / "home", tmp_path / "empty.gitconfig"
+    home.mkdir()
+    no_config.write_bytes(b"")
+    for name in ("HOME", "USERPROFILE", "XDG_CONFIG_HOME"):
+        monkeypatch.setenv(name, str(home))
+    isolated = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": str(no_config)}
+    for name, value in isolated.items():
+        monkeypatch.setenv(name, value)
+    scrubbed = safe_git.safe_env
+    monkeypatch.setattr(safe_git, "safe_env", lambda base=None: {**scrubbed(base), **isolated})
+
+    repo, destination = tmp_path / "repo", tmp_path / "dest.git"
+    identity = ["-c", "user.name=fx", "-c", "user.email=fx@local"]
+    subprocess.run(["git", "init", "-q", "--template=", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), *identity, "commit", "-q", "--allow-empty", "-m", "seed"], check=True)
+    subprocess.run(["git", "init", "-q", "--bare", "--template=", str(destination)], check=True)
+    # The full path is drive-absolute on Windows and root-relative here; the drive-less one is
+    # root-relative on every host, so the two tiers disagree on at least one remote everywhere.
+    full, rooted = str(destination), os.path.splitdrive(str(destination))[1]
+    remotes = {"full": full, "rooted": rooted}
+    for name, url in remotes.items():
+        subprocess.run(["git", "-C", str(repo), "remote", "add", name, url], check=True)
+    # As on a Windows host: the write gate is on, and a push starts only from a repository inside a
+    # marked folder, so the check gets as far as the destination.
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    monkeypatch.setenv(gate.ENV_VAR, str(tmp_path))
+    windows_host.on()
+    assert windows_path_policy.refused_form(rooted) == "root_relative", rooted
+
+    runner = GitRunner(repo)
+    for remote in (*remotes, full, rooted):  # each configured remote, and each path given as the remote
+        refusal = runner.push_destination_refusal(remote)
+        assert "is not a full local path" not in refusal, (remote, refusal)
+        assert "is a network or device path" not in refusal, (remote, refusal)
+        assert refusal == "", (remote, refusal)
+
+    head = runner.head()
+    code, _, err = runner.run(*runner.push_argv(remote="full", ref="pinned", sha=head))
+    assert code == 0, err
+    read_back = ["git", "--git-dir", str(destination), "rev-parse", "refs/heads/pinned"]
+    assert subprocess.run(read_back, capture_output=True, text=True, check=True).stdout.strip() == head
