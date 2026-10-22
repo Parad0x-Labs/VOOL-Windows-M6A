@@ -195,6 +195,7 @@ function Invoke-WindowsRuntimeRegression {
         "tests\repoops\test_a_file_url_with_escapes_names_its_folder.py",
         "tests\test_windows_gate_checks_the_task_and_session_folder.py",
         "tests\test_windows_patch_lands_only_where_checked.py",
+        "tests\test_code_task_writes_hold_a_cross_process_path_lock.py",
         "tests\test_notes_archive_stays_in_the_notes_folder.py",
         "tests\test_forgetting_is_applied_or_never_claimed_20261007.py",
         "tests\test_forget_subject_readers_r9.py",
