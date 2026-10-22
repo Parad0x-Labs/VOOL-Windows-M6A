@@ -681,6 +681,25 @@ def test_the_write_finder_answers_a_colon_after_a_comment_and_a_share_after_two_
     assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
 
 
+def test_the_write_finder_answers_a_comment_with_two_separators_after_it_as_typed(recorder, windows_host) -> None:
+    from core.agent_runtime.write_root_honesty import non_local_write_target
+
+    windows_host.on()
+    # Two separators anywhere in the candidate are where a share can start, the comment's own closing `/`
+    # counted: each of these is answered as typed, as on base, and never passed over as a comment.
+    typed = [
+        "/*x*//attkr9/s/x.txt",
+        "/**//attkr9/s/x.txt",
+        "/*x*/a//attkr9/s/x.txt",
+        "/*x*/\\attkr9\\s\\x.txt",
+    ]
+
+    found = {path: non_local_write_target(f"write hello to {path}") for path in typed}
+
+    assert found == {path: (path, "root_relative") for path in typed}
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+
+
 def test_a_share_inside_or_after_a_block_comment_is_still_refused_as_typed(monkeypatch, recorder, windows_host) -> None:
     # A comment a share, a device or a URL starts inside (`/*x*///host/s`) is refused whole, as typed, as
     # on base; a share typed after a comment the write verb reaches, past the verb's own reach, is refused
@@ -776,8 +795,9 @@ def test_the_build_subject_is_never_a_file_the_message_typed_as_a_share(windows_
 def test_a_build_subject_typed_as_an_escaped_or_wrapped_share_url_or_typed_twice_is_no_subject(windows_host) -> None:
     # Each reading of a typed place catches its own spelling: a percent-escaped file URL is a share only
     # when read as a URL (its subject comes out as `5Cattkr9/s/a.js`), and a share glued to a prefix
-    # that is no separator (`URL:file://`) only when read with the whole word it ends. A target typed
-    # twice is no subject when either place types it as a share, the first or the last.
+    # that is no separator (`URL:file://`) only when read with the separators typed right before it
+    # (`//attkr9/s/a.js`): the whole word is no share, as a path or as a URL. A target typed twice is
+    # no subject when either place types it as a share, the first or the last.
     from core.agent_runtime.builder.controller import _audited_subject_paths
 
     def subject(*messages: str) -> tuple[str, ...]:
@@ -793,6 +813,35 @@ def test_a_build_subject_typed_as_an_escaped_or_wrapped_share_url_or_typed_twice
     windows_host.on()
 
     assert {text: subject("audit app.py", text) for text in shares} == dict.fromkeys(shares, ())
+
+
+def test_a_build_subject_glued_to_a_backslash_share_is_no_subject_and_a_local_one_still_is(windows_host) -> None:
+    # The separators typed right before a target are read whether they are `/` or `\`, so a share typed
+    # with backslashes after a prefix that is no separator is no subject either. The guard refuses only
+    # shares, devices and NT paths: a target typed root-relative, drive-relative or as a file URL with no
+    # host is still the subject, as off Windows.
+    from core.agent_runtime.builder.controller import _audited_subject_paths
+
+    def subject(*messages: str) -> tuple[str, ...]:
+        history = [{"role": "user", "content": text} for text in messages]
+        return _audited_subject_paths({"conversation_history": history})
+
+    shares = [
+        "create a.js and save it to URL:file:\\\\attkr9/s/a.js",
+        "create a.js and save it to (\\\\attkr9/s/a.js)",
+        "create a.js and save it to =\\\\attkr9/s/a.js",
+    ]
+    local = {
+        "fix the bug in /src/app.py": ("src/app.py",),
+        "fix the bug in C:src/app.py": ("src/app.py",),
+        "create a.js and save it to file:/src/a.js": ("src/a.js",),
+    }
+    windows_host.off()
+    off_windows = {text: subject("audit app.py", text) for text in local}
+    windows_host.on()
+
+    assert {text: subject("audit app.py", text) for text in shares} == dict.fromkeys(shares, ())
+    assert {text: subject("audit app.py", text) for text in local} == local == off_windows
 
 
 def test_a_build_subject_typed_inside_a_device_or_nt_path_is_no_subject(
