@@ -231,7 +231,8 @@ def forget_profile_derivatives(
     def carries(value: Any) -> bool:
         return payload_carries(value, token)
 
-    with _MEMORY_ENTRY_LOCK:
+    # Fence first, as in forget_memory_record: _forget_session_metadata enters it under this lock.
+    with serialized(), _MEMORY_ENTRY_LOCK:
         _forget_session_metadata(token, chat_id=access_policy.chat_id, erasures=erasures)
         try:
             rows = _load_erasure_rows(user_heuristics_path())
