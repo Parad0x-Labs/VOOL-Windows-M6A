@@ -1763,7 +1763,9 @@ def writer_may_persist_text(text: str) -> bool:
     closed (the write is refused — never resurrect erased bytes)."""
     try:
         verdict = verdict_or_unavailable(text)
-    except Exception:
+    except Exception as exc:
+        # Still vetoed; the type only, since the error's text can carry the governed bytes.
+        _log.warning("writer_may_persist_text failed (%s); the write is refused", type(exc).__name__)
         return False
     return verdict not in (AVAILABILITY_WITHHELD, AVAILABILITY_ERASED)
 
