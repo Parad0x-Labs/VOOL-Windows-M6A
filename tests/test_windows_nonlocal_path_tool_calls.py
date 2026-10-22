@@ -836,3 +836,62 @@ def test_an_mcp_or_plugin_value_that_expands_to_a_share_is_refused_at_every_door
             intent, asked.status, getattr(approved, "response_text", None)
         )
     assert server_defined_tools == [(intent, {"path": "\\%VOOL_TEST_FOLDER%\\x.txt"}) for intent in _SERVER_TOOLS]
+
+
+#: Every argument name the doors judge besides the plain path names: the URL names, and the names that are
+#: a path for file tools but something else elsewhere.
+_JUDGED_NAMES = (
+    "url", "uri", "link", "remote",
+    "target", "targets", "dest", "to", "from", "src", "source", "folder", "file", "filename", "filepath",
+    "dir", "dir_path", "folder_path", "directory_path", "files",
+)
+
+
+def test_an_mcp_or_plugin_value_that_expands_to_a_share_is_refused_under_every_name_the_doors_judge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorder, windows_host, server_defined_tools
+) -> None:
+    # A URL name, and a name such as `to` or `source` on a tool that is not a file tool, are judged on the
+    # network tier even by the full rule, so `\%VAR%host\s\x` under them is no share as typed. An MCP or
+    # plugin call is still judged as the tool may expand it: the value is refused as the share it names,
+    # at all three doors and before any decision, whatever name carries it.
+    from core import authorized_tool_execution as boundary
+    from core import runtime_execution_tools as runtime
+
+    workspace, _home = _local_machine(tmp_path, monkeypatch)
+    monkeypatch.setenv("VOOL_TEST_SEPARATOR", "\\")
+    decisions = _spy(monkeypatch, executor, "decide_tool_call")
+    context = {"workspace": str(workspace), "operating_mode": "manual"}
+    value = "\\%VOOL_TEST_SEPARATOR%attkr9\\s\\x"
+    windows_host.on()
+
+    observed: dict[str, dict] = {}
+    expected: dict[str, dict] = {}
+    for intent in _SERVER_TOOLS:
+        for name in _JUDGED_NAMES:
+            arguments = {name: value}
+            asked, touches, starts = len(decisions), len(recorder.touches), len(recorder.popen)
+            answers = {
+                "executor": _execute(intent, dict(arguments), context),
+                "authorized boundary": boundary.execute_authorized_runtime_tool(
+                    intent, dict(arguments), source_context=context, permission_decision=_approved_decision()
+                ),
+                "runtime door": runtime.execute_runtime_tool(intent, dict(arguments), source_context=context),
+            }
+            for door, answer in answers.items():
+                observed[f"{intent} {name} {door}"] = {
+                    "status": getattr(answer, "status", None),
+                    "says what and why": f"`{value}` is a network or device path"
+                    in str(getattr(answer, "response_text", "") or ""),
+                }
+                expected[f"{intent} {name} {door}"] = {"status": STATUS, "says what and why": True}
+            observed[f"{intent} {name}"] = {
+                "kind": (answers["executor"].details or {}).get("kind"),
+                "permission decisions": len(decisions) - asked,
+                **_reached(recorder, touches, starts),
+            }
+            expected[f"{intent} {name}"] = {
+                "kind": "unc", "permission decisions": 0, "touches": [], "process starts": []
+            }
+
+    assert observed == expected, _differences(observed, expected)
+    assert server_defined_tools == [], "an MCP or plugin lane ran a call naming a share"
