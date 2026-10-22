@@ -770,3 +770,69 @@ def test_a_partial_path_for_any_other_tool_is_still_refused_at_both_doors(
         assert getattr(answer, "status", None) == STATUS, (door, getattr(answer, "response_text", answer))
         assert "is not a full local path" in str(answer.response_text or ""), (door, answer.response_text)
     assert server_defined_tools == []
+
+
+def test_an_mcp_or_plugin_value_that_expands_to_a_share_is_refused_at_every_door(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorder, windows_host, server_defined_tools
+) -> None:
+    # The network tier hands a root- or drive-relative value on to the MCP or plugin tool, and a tool may
+    # expand the variables in it. On Windows `\%HOMEPATH%\x` is `\\Users\you\x` once expanded: a share
+    # on the host `Users`. Such a value is refused as the share it names, at all three doors and before
+    # any decision; one whose variables expand to a local path still runs once it is approved.
+    from core import authorized_tool_execution as boundary
+    from core import runtime_execution_tools as runtime
+
+    workspace, _home = _local_machine(tmp_path, monkeypatch)
+    monkeypatch.setenv("VOOL_TEST_SEPARATOR", "\\")
+    monkeypatch.setenv("VOOL_TEST_SHARE_ROOT", "/attkr9/s")
+    monkeypatch.setenv("VOOL_TEST_FOLDER", "notes")
+    decisions = _spy(monkeypatch, executor, "decide_tool_call")
+    context = {"workspace": str(workspace), "operating_mode": "manual"}
+    shares = [
+        {"path": "\\%VOOL_TEST_SEPARATOR%attkr9\\s\\x"},
+        {"cwd": "/${VOOL_TEST_SHARE_ROOT}/x"},
+        {"path": "C:x.txt", "paths": ["notes.txt", "/$VOOL_TEST_SHARE_ROOT/x"]},
+        {"url": "file:///%VOOL_TEST_SEPARATOR%attkr9/s/x"},
+    ]
+    windows_host.on()
+
+    observed: dict[str, dict] = {}
+    expected: dict[str, dict] = {}
+    for intent in _SERVER_TOOLS:
+        for arguments in shares:
+            asked, touches, starts = len(decisions), len(recorder.touches), len(recorder.popen)
+            answers = {
+                "executor": _execute(intent, arguments, context),
+                "authorized boundary": boundary.execute_authorized_runtime_tool(
+                    intent, dict(arguments), source_context=context, permission_decision=_approved_decision()
+                ),
+                "runtime door": runtime.execute_runtime_tool(intent, dict(arguments), source_context=context),
+            }
+            texts = [item for given in arguments.values() for item in ([given] if isinstance(given, str) else given)]
+            (value,) = [text for text in texts if "VOOL_TEST" in text]
+            for door, answer in answers.items():
+                observed[f"{intent} {arguments} {door}"] = {
+                    "status": getattr(answer, "status", None),
+                    "says what and why": f"`{value}` is a network or device path"
+                    in str(getattr(answer, "response_text", "") or ""),
+                }
+                expected[f"{intent} {arguments} {door}"] = {"status": STATUS, "says what and why": True}
+            observed[f"{intent} {arguments}"] = {
+                "kind": (answers["executor"].details or {}).get("kind"),
+                "permission decisions": len(decisions) - asked,
+                **_reached(recorder, touches, starts),
+            }
+            expected[f"{intent} {arguments}"] = {
+                "kind": "unc", "permission decisions": 0, "touches": [], "process starts": []
+            }
+
+    assert observed == expected, _differences(observed, expected)
+    assert server_defined_tools == [], "an MCP or plugin lane ran a call naming a share"
+
+    # A variable that expands to a local folder is still the tool's to place.
+    for intent in _SERVER_TOOLS:
+        asked, approved = _asked_then_approved(intent, {"path": "\\%VOOL_TEST_FOLDER%\\x.txt"}, context)
+        assert (asked.status, getattr(approved, "status", None)) == ("pending_approval", _RAN[intent]), (
+            intent, asked.status, getattr(approved, "response_text", None)
+        )
+    assert server_defined_tools == [(intent, {"path": "\\%VOOL_TEST_FOLDER%\\x.txt"}) for intent in _SERVER_TOOLS]
