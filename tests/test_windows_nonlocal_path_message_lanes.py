@@ -690,6 +690,70 @@ def test_a_share_inside_or_after_a_block_comment_is_still_refused_as_typed(monke
     assert _refused_as_typed(replies[far][1], "//attkr9/s/x.txt"), replies[far]
 
 
+def test_a_build_whose_file_is_typed_as_a_share_reads_no_file_by_that_name(
+    tmp_path: Path, monkeypatch, recorder, windows_host
+) -> None:
+    # A file a build names as a share (quoted, backticked or as a `file://` URL, which the write check
+    # does not read as a destination), with or without a block comment beside it, is not the build's
+    # subject: the builder neither opens the share nor joins `attkr9/s/a.js` onto the workspace and reads
+    # that. A file named relative to the workspace is still read there, and only there.
+    workspace = tmp_path / "workspace"
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    monkeypatch.setenv(gate.ENV_VAR, str(workspace))
+    chat = _served_chat(monkeypatch)
+    windows_host.on()
+    shares = [
+        'create a.js and save it to "//attkr9/s/a.js"',
+        'create a.js and save it to "//attkr9/s/a.js" /*x*/',
+        'create a.js /*x*/ and save it to "//attkr9/s/a.js"',
+        'create a.js and save it to /*x*/ "//attkr9/s/a.js"',
+        "create a.js and save it to `//attkr9/s/a.js` /*x*/",
+        "create a.js and save it to file://attkr9/s/a.js",
+        "create a.js and save it to file://attkr9/s/a.js /*x*/",
+    ]
+    local = ["create a.js and save it to 'attkr9/s/a.js' /*x*/", "create attkr9.js /*x*/"]
+
+    replies, touched = _served_turns(chat, recorder, [*shares, *local])
+
+    assert all(status == 200 and reply.strip() for status, reply in replies.values()), replies
+    assert {text: found for text, found in touched.items() if text in shares} == {}, touched
+    # The local controls may read `<workspace>/attkr9/s/a.js` and `<workspace>/attkr9.js`: nothing else.
+    inside = os.path.normcase(str(workspace)) + os.sep
+    outside = [
+        touch for touch in recorder.touches if not os.path.normcase(os.path.normpath(touch.path)).startswith(inside)
+    ]
+    assert outside == [] and recorder.marker_popen == [], recorder.report()
+
+
+def test_the_build_subject_is_never_a_file_the_message_typed_as_a_share(windows_host) -> None:
+    # The builder reads its subject from the newest user message that names a file, joined onto the
+    # workspace. On Windows a file that message typed as a share or a device path is no subject, and no
+    # older message stands in for it; a file named relative to the workspace, or none at all, is read as
+    # before. Off Windows the subject is the file named, as on base. Nothing here looks anything up.
+    from core.agent_runtime.builder.controller import _audited_subject_paths
+
+    def subject(*messages: str) -> tuple[str, ...]:
+        history = [{"role": "user", "content": text} for text in messages]
+        return _audited_subject_paths({"conversation_history": history})
+
+    shares = [
+        'create a.js and save it to "//attkr9/s/a.js"',
+        "create a.js and save it to `//attkr9/s/a.js` /*x*/",
+        "create a.js and save it to file://attkr9/s/a.js",
+        'create a.js and save it to "file:////attkr9/s/a.js"',
+        'create a.js and save it to "///attkr9/s/a.js"',
+        'create a.js and save it to "//./UNC/attkr9/s/a.js"',
+    ]
+    windows_host.on()
+
+    assert {text: subject("audit app.py", text) for text in shares} == dict.fromkeys(shares, ())
+    assert subject("audit app.py", "create a.js and save it to 'attkr9/s/a.js'") == ("attkr9/s/a.js",)
+    assert subject("audit app.py", "create attkr9.js") == ("attkr9.js",)
+    assert subject("audit app.py", "prove the bug you found") == ("app.py",)
+    windows_host.off()
+    assert subject("audit app.py", shares[0]) == ("attkr9/s/a.js",)
+
+
 def test_a_full_drive_path_split_by_the_normalizer_keeps_its_drive(monkeypatch, recorder, windows_host) -> None:
     # The input normalizer turns `C:/Users/you/x.txt` into `C: /Users/you/x.txt`. This test's home
     # stands in for `C:/Users/you`: its rooted half exists, as `\\Users\\you` does on the current drive
