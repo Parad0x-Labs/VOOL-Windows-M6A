@@ -352,7 +352,7 @@ def argument_refusal(intent: Any, arguments: Any, *, network_only: bool = False)
     gate and the dispatcher read (`core.tool_argument_aliases`) binds a model's near-miss names, such as
     `file_path` or `uri`, onto the contract's own fields. A code-task or repo step is also checked as the
     inner call it runs, under that inner intent's own key rules. `network_only` applies the network tier
-    to every argument; the executor passes it for MCP and plugin tools.
+    to every argument; `tool_call_refusal` passes it for MCP and plugin tools.
     """
     if not _IS_WINDOWS:
         return None
@@ -364,6 +364,38 @@ def argument_refusal(intent: Any, arguments: Any, *, network_only: bool = False)
         inner_intent, inner_arguments = arguments.get("intent"), arguments.get("arguments")
         if isinstance(inner_intent, str) and isinstance(inner_arguments, Mapping):
             refusal = _call_refusal(inner_intent.strip(), inner_arguments, network_only)
+    return refusal
+
+
+def _server_defined_tool(intent: str) -> bool:
+    """Whether `intent` is an MCP tool or a registered plugin tool. A registry that cannot be read
+    answers False, which keeps the full rule."""
+    try:
+        from core.execution.mcp_bridge import is_mcp_intent
+        from core.tool_registry import tool_for_intent
+
+        if is_mcp_intent(intent):
+            return True
+        contract = tool_for_intent(intent)
+    except Exception:
+        return False
+    return contract is not None and str(getattr(contract, "source", "") or "").startswith("plugin:")
+
+
+def tool_call_refusal(intent: Any, arguments: Any) -> PathRefusal | None:
+    """On Windows, `argument_refusal` in the tier the tool doors judge `intent(arguments)` on, or None.
+    Off Windows, always None.
+
+    An MCP or plugin tool is judged on the network tier, because its arguments mean whatever its server
+    says; every other tool, a step that runs one included, on the full rule. The model executor, the
+    authorized execution boundary and the runtime door all ask this, so a call the executor put to the
+    operator is not refused by the next door once it is approved.
+    """
+    if not _IS_WINDOWS:
+        return None
+    refusal = argument_refusal(intent, arguments)
+    if refusal is not None and _server_defined_tool(str(intent or "")):
+        refusal = argument_refusal(intent, arguments, network_only=True)
     return refusal
 
 
