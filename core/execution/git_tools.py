@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from core import safe_git
+from core import safe_git, windows_path_policy
 
 from .artifacts import build_command_artifact, truncate_text
 from .workspace_tools import resolve_workspace_path
@@ -57,6 +57,9 @@ def git_diff_workspace(arguments: dict[str, Any], *, workspace_root: Path) -> di
         command.append("--cached")
     path = str(arguments.get("path") or "").strip()
     if path:
+        refused = _refused_pathspec(target, path)
+        if refused:
+            return refused
         command.extend(["--", path])
     result = _run_git(command, cwd=target)
     if result["status"] == "refused_repository_config":
@@ -220,6 +223,31 @@ def _refused_repository_config(target: Path, result: dict[str, Any]) -> dict[str
             "if you trust them."
         ),
         "details": {"cwd": str(target), "stdout": "", "stderr": str(result["stderr"])},
+    }
+
+
+def _refused_pathspec(target: Path, path: str) -> dict[str, Any] | None:
+    """On Windows, the refusal for a pathspec git would resolve on a share; None when there is none.
+
+    git resolves an absolute pathspec, and on Windows a lookup of a share is an SMB connection. The
+    tool-call layer refuses share spellings, but pathspec magic (":(literal)//host/s/x") hides one:
+    git strips the magic and resolves the rest. No Windows file name starts with ":", so that is
+    refused too.
+    """
+    kind = windows_path_policy.refused_form(path, network_only=True)
+    if kind:
+        text = windows_path_policy.refusal_text(path, kind)
+    elif windows_path_policy.active() and path.startswith(":"):
+        shown = path.replace("`", "")[:120]
+        text = (f"`{shown}` starts with \":\", which git reads as a pattern rather than a file name. "
+                "On Windows, VOOL only diffs a plain path inside the current folder, so git was not run.")
+    else:
+        return None
+    return {
+        "ok": False,
+        "status": "refused_network_path",
+        "response_text": text,
+        "details": {"cwd": str(target), "path": path, "stdout": "", "stderr": ""},
     }
 
 
