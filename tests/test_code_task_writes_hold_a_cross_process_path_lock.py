@@ -16,7 +16,9 @@ must show exactly one consumed approval.
 The task's reproduce stage needs a sandboxed command run, which the Windows runner cannot make, and
 the lock under test is the one that differs there (``msvcrt.locking``, not ``flock``). So in the
 parent only, ``workspace.run_tests`` runs the same check as a plain subprocess with this Python; the
-racing writes in both processes go through the production door unchanged.
+racing writes in both processes go through the production door unchanged. The shared repository
+fixture writes its files in text mode, which is CRLF on Windows, so here they are rewritten as the
+exact bytes whose hashes the cases assert.
 """
 from __future__ import annotations
 
@@ -30,6 +32,7 @@ from tests.test_code_task_reviewed_base import (
     FIXED,
     _approved,
     _door,
+    _git,
     _journal,
     _race_processes,
     _sha,
@@ -37,6 +40,16 @@ from tests.test_code_task_reviewed_base import (
 )
 
 assert stock_repo  # the fixture, imported for these cases
+
+
+@pytest.fixture
+def repo(stock_repo):
+    for path in stock_repo.iterdir():
+        if path.is_file():
+            path.write_bytes(path.read_text(encoding="utf-8").encode("utf-8"))  # read_text folds CRLF
+    _git(stock_repo, "config", "core.autocrlf", "false")
+    _git(stock_repo, "commit", "-q", "--allow-empty", "-am", "exact bytes")
+    return stock_repo
 
 SECOND = FIXED + "# second\n"
 
@@ -82,8 +95,8 @@ def _parent_writes_while_another_process_writes(monkeypatch, tmp_path, ctx, comp
     return seen
 
 
-def test_another_approval_of_the_same_task_cannot_write_the_file_mid_flight(stock_repo, tmp_path, monkeypatch):
-    ctx, task_id, arguments, step = _approved(stock_repo, intent="workspace.write_file", explicit_hash=True,
+def test_another_approval_of_the_same_task_cannot_write_the_file_mid_flight(repo, tmp_path, monkeypatch):
+    ctx, task_id, arguments, step = _approved(repo, intent="workspace.write_file", explicit_hash=True,
                                               session="path-lock-same-task")
     other = {"path": "inventory.py", "content": SECOND, "expected_hash": _sha(BUGGY)}
     assert _door("code.task.propose", {"task_id": task_id, "proposal_id": "second", "intent": "workspace.write_file",
@@ -99,7 +112,7 @@ def test_another_approval_of_the_same_task_cannot_write_the_file_mid_flight(stoc
 
     assert seen["child"] == {"ok": False, "status": "approval_in_flight", "executed": False}, seen
     assert landed.ok, (landed.status, landed.response_text)
-    assert (stock_repo / "inventory.py").read_text(encoding="utf-8") == FIXED
+    assert (repo / "inventory.py").read_text(encoding="utf-8") == FIXED
     journal = _journal(task_id)
     assert journal["steps"]["from-another-process"]["status"] == "approval_in_flight"
     assert not journal["steps"]["from-another-process"]["executed"]
@@ -111,11 +124,11 @@ def test_another_approval_of_the_same_task_cannot_write_the_file_mid_flight(stoc
     assert executed == ["parent"], executed
 
 
-def test_an_approval_of_another_task_cannot_write_the_file_mid_flight(stock_repo, tmp_path, monkeypatch):
-    ctx, task_id, arguments, step = _approved(stock_repo, intent="workspace.write_file", explicit_hash=True,
+def test_an_approval_of_another_task_cannot_write_the_file_mid_flight(repo, tmp_path, monkeypatch):
+    ctx, task_id, arguments, step = _approved(repo, intent="workspace.write_file", explicit_hash=True,
                                               session="path-lock-task-one")
     other_ctx, other_task, other_arguments, _other_step = _approved(
-        stock_repo, intent="workspace.write_file", explicit_hash=True, session="path-lock-task-two",
+        repo, intent="workspace.write_file", explicit_hash=True, session="path-lock-task-two",
         content=SECOND, proposal_id="other-fix",
     )
     seen = _parent_writes_while_another_process_writes(monkeypatch, tmp_path, ctx, {
@@ -128,7 +141,7 @@ def test_an_approval_of_another_task_cannot_write_the_file_mid_flight(stock_repo
 
     assert seen["child"] == {"ok": False, "status": "approval_in_flight", "executed": False}, seen
     assert landed.ok, (landed.status, landed.response_text)
-    assert (stock_repo / "inventory.py").read_text(encoding="utf-8") == FIXED
+    assert (repo / "inventory.py").read_text(encoding="utf-8") == FIXED
     assert _journal(task_id)["proposals"]["restock-fix"]["consumed_by"] == "parent"
     other_journal = _journal(other_task)
     assert other_journal["steps"]["from-another-task"]["status"] == "approval_in_flight"
@@ -136,11 +149,11 @@ def test_an_approval_of_another_task_cannot_write_the_file_mid_flight(stock_repo
     assert not other_journal["proposals"]["other-fix"]["consumed_by"]
 
 
-def test_an_approved_write_with_no_competitor_still_lands(stock_repo):
+def test_an_approved_write_with_no_competitor_still_lands(repo):
     """The lock only orders writers: it never refuses a write nobody else is making."""
-    ctx, task_id, arguments, step = _approved(stock_repo, intent="workspace.write_file", explicit_hash=True,
+    ctx, task_id, arguments, step = _approved(repo, intent="workspace.write_file", explicit_hash=True,
                                               session="path-lock-alone")
     landed = step("alone", "workspace.write_file", arguments)
     assert landed.ok, (landed.status, landed.response_text)
-    assert (stock_repo / "inventory.py").read_text(encoding="utf-8") == FIXED
+    assert (repo / "inventory.py").read_text(encoding="utf-8") == FIXED
     assert _journal(task_id)["proposals"]["restock-fix"]["consumed_by"] == "alone"
