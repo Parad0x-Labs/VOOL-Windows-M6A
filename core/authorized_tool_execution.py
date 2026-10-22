@@ -229,8 +229,9 @@ def execute_authorized_runtime_tool(
 
     # On Windows, a path naming a share, a device or no full local folder is refused next, before
     # the Windows write gate places it and before any decision is taken or used: both look the path
-    # up, and on Windows a lookup of `\\host\share` is already the SMB connection.
-    path_refusal = windows_path_policy.argument_refusal(intent, arguments) or (
+    # up, and on Windows a lookup of `\\host\share` is already the SMB connection. An MCP or plugin
+    # tool is judged on the network tier, as the executor judged it before asking for its approval.
+    path_refusal = windows_path_policy.tool_call_refusal(intent, arguments) or (
         # The workspace the write gate and the dispatch resolve, when it is a share.
         windows_path_policy.context_workspace_refusal(source_context)
     )

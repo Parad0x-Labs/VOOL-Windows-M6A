@@ -1046,10 +1046,12 @@ def _clean_workspace_path(candidate: str) -> str:
 def _workspace_folder_as_typed(typed: str, workspace_root: str) -> str | None:
     """The workspace folder a drive-less `typed` path names, read without resolving it: `notes` for
     `\\Users\\you\\ws\\notes` with the workspace at `C:\\Users\\you\\ws`, "" for the workspace itself, and
-    None when it does not lie inside the workspace or steps up (`..`), which the lexical clean refuses."""
+    None when it does not lie inside the workspace. `.` and `..` are read first, as Windows reads them
+    (`\\Users\\you\\ws\\a\\..\\b` is `b`), so one that steps out (`\\Users\\you\\ws\\..\\evil`) is None.
+    The read leaves no `.` or `..` part, only one padded with a space (` ..`), which the caller refuses."""
     root = [part.lower() for part in re.split(r"[\\/]+", ntpath.splitdrive(str(workspace_root))[1]) if part]
-    parts = [part for part in re.split(r"[\\/]+", typed) if part]
-    if not root or ".." in parts or [part.lower() for part in parts[: len(root)]] != root:
+    parts = [part for part in re.split(r"[\\/]+", ntpath.normpath(typed)) if part]
+    if not root or [part.lower() for part in parts[: len(root)]] != root:
         return None
     return "/".join(parts[len(root) :])
 
@@ -1068,10 +1070,15 @@ def _clean_workspace_directory_path(candidate: str, *, workspace_root: str = "")
     # read against the workspace as typed, where base's resolve on that drive found it.
     if typed_kind == "root_relative" and workspace_root:
         inside = _workspace_folder_as_typed(raw, workspace_root)
-        if inside == "":
-            return ""
         if inside is not None:
-            candidate = inside
+            # The workspace's own folder skips the lexical clean, whose `lstrip("./")` and stop words
+            # would make `.github` `github` and `repo` the workspace root. The planner and the writer
+            # strip the whole path, so a blank or padded part (`ws/ /x`, `ws/ ../x`) would surface
+            # there as a root or a `..`: such a folder is no workspace folder.
+            folder = inside.rstrip(".,!?").strip().rstrip("/")
+            if any(part.strip() in {"", ".", ".."} for part in folder.split("/")):
+                return ""
+            return folder
     if raw and workspace_root and not typed_kind:
         try:
             resolved_workspace_root = Path(workspace_root).expanduser().resolve()

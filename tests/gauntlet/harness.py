@@ -549,6 +549,11 @@ def runtime() -> Any:
             # between a deterministic suite and one that depends on how it was invoked.
             # `core/web/api/runtime.py:751` reads it; nothing about routing changes.
             os.environ.setdefault("VOOL_DISABLE_MESH_DAEMON", "1")
+            # Nor the compute-mode daemon: its thread starts a process to read the machine's idle
+            # time (`xprintidle` on Linux) every 15 seconds for the rest of the pytest run, and a
+            # later test that proves no process starts at all (the Windows browser-render refusal)
+            # sees those starts. The served rigs turn it off the same way.
+            os.environ.setdefault("VOOL_DISABLE_COMPUTE_MODE", "1")
             from core.vool_workstation_ui import VOOL_WORKSTATION_DEPLOYMENT_VERSION
             from core.web.api.runtime import bootstrap_runtime_services
 

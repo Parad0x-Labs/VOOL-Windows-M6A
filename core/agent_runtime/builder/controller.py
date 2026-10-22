@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import re
 import shlex
 import sys
 import time
@@ -9,6 +10,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from core import windows_path_policy
 from core.agent_runtime.orchestrator import redact_tool_arguments
 from core.context_scope import ContextAccessPolicy
 from core.mode_permission_policy import PENDING_BATCH_CALLS_KEY
@@ -96,6 +98,30 @@ class BuilderGenerationBudget:
         return max(1.0, min(_BUILDER_CALL_TIMEOUT_SECONDS, self.remaining()))
 
 
+def _typed_as_a_share(text: str, target: str) -> bool:
+    """On Windows, whether ``text`` types ``target`` as a share or a device path anywhere. Each place
+    it is typed is read two ways: with the separators typed right before it (``//host/s/a.js``,
+    ``file://host/s/a.js``), as ``named_build_files`` reads a file a build names, and with the whole
+    word it ends (``\\\\?\\UNC/host/s/a.js``, whose target starts after ``UNC\\``), as a path and as a
+    URL. Always False off Windows."""
+    if not windows_path_policy.active():
+        return False
+    for match in re.finditer(re.escape(target), text):
+        lead = word = match.start()
+        while lead > 0 and text[lead - 1] in "/\\":
+            lead -= 1
+        while word > 0 and not text[word - 1].isspace() and text[word - 1] not in "\"'`<>|":
+            word -= 1
+        typed = text[word : match.start()] + target
+        if (
+            windows_path_policy.refused_form(text[lead : match.start()] + target, network_only=True)
+            or windows_path_policy.refused_form(typed, network_only=True)
+            or windows_path_policy.refused_url(typed) in windows_path_policy.NETWORK_KINDS
+        ):
+            return True
+    return False
+
+
 def _audited_subject_paths(source_context: Any) -> tuple[str, ...]:
     """The files a preceding audit actually read, so a follow-up build knows its subject.
 
@@ -141,7 +167,13 @@ def _audited_subject_paths(source_context: Any) -> tuple[str, ...]:
                 continue
             if str(message.get("role") or "").strip().lower() != "user":
                 continue
-            target = str(audit_target_in(str(message.get("content") or "")) or "").strip()
+            content = str(message.get("content") or "")
+            target = str(audit_target_in(content) or "").strip()
+            if target and _typed_as_a_share(content, target):
+                # On Windows a subject the message typed as a share (`"//host/s/a.js"`,
+                # `file://host/s/a.js`) is no workspace file: it is not joined onto the workspace and
+                # read, and no older message stands in for it.
+                return ()
             if target:
                 return (target,)
     except Exception:

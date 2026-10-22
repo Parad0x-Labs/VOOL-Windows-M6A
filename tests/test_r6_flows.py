@@ -502,6 +502,7 @@ def test_restart_through_the_boot_path_recovers_a_failed_served_replacement_with
         assert "llm.cloud.custom" in _store_and_descriptor()[0]._pending_intents(), (
             "the second interruption lost the recovery record")
 
+        monkeypatch.setenv("VOOL_DISABLE_COMPUTE_MODE", "1")
         _bootstrap(run_prewarm=False)  # restart: no reconcile call, no new paste
 
         assert _store_and_descriptor()[0]._pending_intents() == {}, "the restart did not decide the operation"
@@ -548,6 +549,7 @@ def test_an_undecidable_pending_pair_at_restart_keeps_its_record_refuses_and_doe
         monkeypatch.setattr(backend, "store_credential", original)
         requests_before = (a.request_count, b.request_count)
 
+        monkeypatch.setenv("VOOL_DISABLE_COMPUTE_MODE", "1")
         runtime = _bootstrap(run_prewarm=False)  # must complete: an undecidable pair never aborts boot
         assert runtime is not None
         assert "llm.cloud.custom" in _store_and_descriptor()[0]._pending_intents(), "recovery closed a foreign conflict"

@@ -494,3 +494,157 @@ def test_a_log_segment_named_by_a_share_is_never_looked_up(tmp_path: Path, recor
     assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
     assert f"`{segment_id}` is a network or device path" in str(refused.value), refused.value
     assert "is a network or device path" not in str(missing.value), missing.value
+
+
+# The base URL that a team start, a council convene and a council resume send their own HTTP calls to.
+# Each handler appends a route (`/api/chat`, `/api/cloud/status`) and urllib opens the result, and
+# urllib's file handler stats a `file:` URL's path: on Windows, `file:////attkr9/s` plus `/api/chat`
+# is `\\attkr9\s\api\chat`, looked up on a background thread after the command has answered.
+BASE_URL_SHARES: tuple[MarkerForm, ...] = (
+    MarkerForm("file-host", "file://attkr9/s", "unc", True),
+    MarkerForm("file-hostless", "file:////attkr9/s", "unc", True),
+    MarkerForm("file-localhost", "file://localhost//attkr9/s", "unc", True),
+    MarkerForm("file-escaped", "file:///%5C%5Cattkr9/s", "unc", True),
+    # urllib drops a `URL:` wrapper before it opens anything.
+    MarkerForm("url-wrapped", "URL:file:////attkr9/s", "unc", True),
+    MarkerForm("unc-forward", "//attkr9/s", "unc", True),
+    MarkerForm("unc-backslash", "\\\\attkr9\\s", "unc", True),
+    MarkerForm("device-unc", "\\\\?\\UNC\\attkr9\\s", "device", True),
+    MarkerForm("file-root-relative", "file:///attkr9/x", "root_relative", False),
+    # No host and no path: the route appended to it names the server (`file:////api/cloud/status`), so
+    # this one carries no marker, and only its refusal is read.
+    MarkerForm("file-empty", "file:///", "unc", True),
+)
+# An http(s) base URL is a web request, to this machine or to another one, never a path; nor is the
+# default (no base URL: no runner for a team, the loopback server for a resume).
+BASE_URL_CONTROLS = ("http://attkr9:8080", "https://attkr9/v1", "http://127.0.0.1:11435", "")
+
+
+def _base_url_table(session: str) -> list[tuple[str, dict[str, Any], dict[str, Any] | None]]:
+    """Each command whose handler opens its `base_url`: (command, the rest of the request, the approval
+    context the command's own gate needs).
+
+    As in `_command_table`, every request gets past the command's own gate and stops one step short of
+    any HTTP call, so the controls below make none: the team start has no agents, the convene has no
+    problem and the resume names no paused run.
+    """
+    return [
+        ("agents.start", {"session_id": session, "agents": [], "team_limits": TEAM_LIMITS, "workspace": "ws"}, PRESS),
+        ("council.convene", {"payload": {"problem": "", "seats": CLOUD_SEATS}, "workspace_root": "ws"}, None),
+        ("council.resume", {"run_id": "council-000000000000"}, None),
+    ]
+
+
+def _close_teams_started_since(teams_before: set[str]) -> None:
+    with agent_teams._LOCK:
+        started_here = [agent_teams._TEAMS.pop(name) for name in set(agent_teams._TEAMS) - teams_before]
+    for team in started_here:
+        team.close()
+
+
+def test_a_base_url_that_opens_a_share_is_refused_before_the_handler(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorder, windows_host
+) -> None:
+    _local_workspace(tmp_path, monkeypatch)
+    table = _base_url_table(f"openclaw:{uuid.uuid4().hex[:20]}")
+    handler_runs = _spy_handlers(monkeypatch, [command_id for command_id, _rest, _press in table])
+    teams_before = set(agent_teams._TEAMS)
+    app = _app()
+    windows_host.on()
+
+    observed: dict[str, dict] = {}
+    expected: dict[str, dict] = {}
+    try:
+        for command_id, rest, press in table:
+            for form in BASE_URL_SHARES:
+                key = f"{command_id} {form.id}"
+                touches, starts, runs = len(recorder.touches), len(recorder.popen), len(handler_runs[command_id])
+                status, payload = _dispatch(app, command_id, {**rest, "base_url": form.value}, press)
+                observed[key] = {
+                    **_refusal(status, payload),
+                    "says what and why": _sentence(form, form.value) in str(payload.get("summary") or ""),
+                    "handler runs": len(handler_runs[command_id]) - runs,
+                    **_reached(recorder, touches, starts),
+                }
+                expected[key] = {
+                    "status": 400,
+                    "ok": False,
+                    "fault": "usage",
+                    "reason": STATUS,
+                    "argument": "base_url",
+                    "kind": form.kind,
+                    "says what and why": True,
+                    "handler runs": 0,
+                    "touches": [],
+                    "process starts": [],
+                }
+            # Controls: the same request with a web base URL, or none, still reaches the handler.
+            for value in BASE_URL_CONTROLS:
+                key = f"{command_id} control {value or '(no base URL)'}"
+                touches, starts, runs = len(recorder.touches), len(recorder.popen), len(handler_runs[command_id])
+                status, payload = _dispatch(app, command_id, {**rest, "base_url": value}, press)
+                observed[key] = {
+                    "refused as a path": _fault_fields(payload)["reason"] == STATUS,
+                    "handler runs": len(handler_runs[command_id]) - runs,
+                    **_reached(recorder, touches, starts),
+                }
+                expected[key] = {"refused as a path": False, "handler runs": 1, "touches": [], "process starts": []}
+    finally:
+        # A control's team start opens the chat's team (with its own loop thread); it may not outlive
+        # this test.
+        _close_teams_started_since(teams_before)
+
+    assert observed == expected, _differences(observed, expected)
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+
+
+def test_a_team_whose_agents_would_post_to_a_file_url_on_a_share_is_never_started(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorder, windows_host
+) -> None:
+    # The whole request, with a model agent to run: on a build without the refusal the command answers
+    # ok, and the agent's own thread then opens `file:////attkr9/s/api/chat` after that answer. So every
+    # agent turn the request started is waited for before anything is read.
+    _local_workspace(tmp_path, monkeypatch)
+    plan = [{"key": "review", "objective": "Config loader review", "importance": "low", "kind": "model",
+             "mode": "read", "model": "local-reviewer", "limits": TEAM_LIMITS}]
+    handler_runs = _spy_handlers(monkeypatch, ["agents.start"])["agents.start"]
+    teams_before = set(agent_teams._TEAMS)
+    app = _app()
+    windows_host.on()
+
+    request = {"agents": plan, "team_limits": TEAM_LIMITS, "workspace": "ws"}
+    try:
+        on_share = {**request, "session_id": f"openclaw:{uuid.uuid4().hex[:20]}", "base_url": "file:////attkr9/s"}
+        status, payload = _dispatch(app, "agents.start", on_share, PRESS)
+        started = set(agent_teams._TEAMS) - teams_before
+        for name in started:
+            for turn in list(agent_teams._TEAMS[name]._model_threads.values()):
+                turn.join(timeout=10)
+        observed = {
+            **_refusal(status, payload),
+            "handler runs": len(handler_runs),
+            "teams started": len(started),
+            **_reached(recorder, 0, 0),
+        }
+        # Control: the same plan with no base URL reaches the handler and starts the team; its agent is
+        # then refused for having no runner, so no turn is sent anywhere.
+        control = _dispatch(app, "agents.start", {**request, "session_id": f"openclaw:{uuid.uuid4().hex[:20]}"}, PRESS)
+        control_runs = len(handler_runs) - observed["handler runs"]
+    finally:
+        _close_teams_started_since(teams_before)
+
+    assert observed == {
+        "status": 400,
+        "ok": False,
+        "fault": "usage",
+        "reason": STATUS,
+        "argument": "base_url",
+        "kind": "unc",
+        "handler runs": 0,
+        "teams started": 0,
+        "touches": [],
+        "process starts": [],
+    }, recorder.report()
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+    assert control[0] == 200 and control[1].get("ok") is True, control
+    assert control_runs == 1, "the control did not reach the handler, so the checks above prove nothing"
