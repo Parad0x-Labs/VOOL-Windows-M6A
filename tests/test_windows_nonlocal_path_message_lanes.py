@@ -514,6 +514,182 @@ def test_a_code_comment_in_a_write_or_build_message_is_not_a_path(monkeypatch, r
     assert refused == {}, refused
 
 
+def _approval_asks(tmp_path: Path, monkeypatch, recorder, windows_host, planned: dict[str, str], others: list[str]):
+    """Served replies with the write gate on and the workspace marked, as on a Windows host, so a write that
+    goes ahead reaches the approval ask naming where it would land."""
+    workspace = tmp_path / "workspace"
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    monkeypatch.setenv(gate.ENV_VAR, str(workspace))
+    chat = _served_chat(monkeypatch)
+    windows_host.on()
+    replies, touched = _served_turns(chat, recorder, [*planned, *others])
+    assert touched == {}, touched
+    asked = {text: replies[text] for text in planned}
+    missed = {
+        text: reply
+        for text, (status, reply) in asked.items()
+        if status != 200 or f"Affected: {workspace}/{planned[text]}." not in reply
+    }
+    assert missed == {}, missed
+    return replies
+
+
+def test_a_block_comment_attached_to_its_text_reaches_the_write_approval(
+    tmp_path: Path, monkeypatch, recorder, windows_host
+) -> None:
+    # A block comment opened against its text (`/*eslint-disable*/`, `a{color:red}/*x*/`) is root-relative
+    # only by its leading `/`, and `*` is never part of a Windows name, so no lane can open it: the write
+    # goes ahead to the approval ask for the workspace file, as on base, and is not refused as "not a full
+    # local path". A question about such a comment is no write, and is not refused either.
+    planned = {
+        "create a.js with: /*eslint-disable*/ const x = 1;": "a.js",
+        "create style.css with /*reset*/ body { margin: 0 }": "style.css",
+        "create app.css with: a{color:red}/*x*/": "app.css",
+        "create a.ts with: /**@type {number}*/ let n = 1": "a.ts",
+    }
+    question = "why does adding /*x*/ to my css break the minifier?"
+
+    replies = _approval_asks(tmp_path, monkeypatch, recorder, windows_host, planned, [question])
+
+    status, reply = replies[question]
+    assert status == 200 and reply.strip() and _not_refused(reply), reply
+
+
+def test_doc_comment_markers_in_a_write_message_reach_the_write_approval(
+    tmp_path: Path, monkeypatch, recorder, windows_host
+) -> None:
+    # `///` (Rust, C#) and `/**`, `/**/` (JSDoc, C) are, like `//` and `/*`, only separators and asterisks:
+    # they name no host and no folder, so the write goes ahead to the approval ask. The two messages in
+    # `others` are taken by other lanes, and are not refused either.
+    planned = {
+        "create lib.rs with: /// Adds two numbers": "lib.rs",
+        "create a.ts with: /** Adds two numbers */ export const x = 1;": "a.ts",
+        "create a.c with: /**/ int x;": "a.c",
+    }
+    others = ["write hello to out.txt /// banner", "create a.ts with: /** docs */ export {}"]
+
+    replies = _approval_asks(tmp_path, monkeypatch, recorder, windows_host, planned, others)
+
+    refused = {text: replies[text] for text in others if replies[text][0] != 200 or not _not_refused(replies[text][1])}
+    assert refused == {}, refused
+
+
+def test_a_share_with_a_wildcard_or_a_comment_beside_it_is_still_refused_as_typed(
+    monkeypatch, recorder, windows_host
+) -> None:
+    # A `*` in a share, device or NT path, or a block comment typed next to one, never lets it through: the
+    # write and build lanes refuse it as typed, before anything is looked up.
+    chat = _served_chat(monkeypatch)
+    windows_host.on()
+    shares = {
+        "write hello to //attkr9/s/*": "//attkr9/s/*",
+        "write hello to //attkr9/s/a*b": "//attkr9/s/a*b",
+        "write hello to //*/s/x.txt": "//*/s/x.txt",
+        "write hello to ~///attkr9/s/*": "~///attkr9/s/*",
+        "write hello to //?/UNC/attkr9/s/*": "//?/UNC/attkr9/s/*",
+        "write hello to /??/UNC/attkr9/s/*": "/??/UNC/attkr9/s/*",
+        "create a flask app that saves uploads to //attkr9/s/*": "//attkr9/s/*",
+        "create a flask app that saves uploads to /*x*/ //attkr9/s/uploads": "//attkr9/s/uploads",
+    }
+
+    replies, touched = _served_turns(chat, recorder, list(shares))
+
+    assert touched == {}, touched
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+    wrong = {text: replies[text] for text, typed in shares.items() if not _refused_as_typed(replies[text][1], typed)}
+    assert wrong == {}, wrong
+
+
+def test_a_block_comment_before_a_share_does_not_hide_the_share(monkeypatch, recorder, windows_host) -> None:
+    # The comment is passed over, so the answer is about the share the turn names as its destination, as
+    # typed, and not about the comment.
+    chat = _served_chat(monkeypatch)
+    windows_host.on()
+    shares = {
+        "create a.js with: /*x*/ and save it to //attkr9/s/a.js": "//attkr9/s/a.js",
+        "create /*x*/ //attkr9/s/y.txt": "//attkr9/s/y.txt",
+    }
+
+    replies, touched = _served_turns(chat, recorder, list(shares))
+
+    assert touched == {}, touched
+    wrong = {text: replies[text] for text, typed in shares.items() if not _refused_as_typed(replies[text][1], typed)}
+    assert wrong == {}, wrong
+
+
+def test_the_write_finder_passes_over_comment_markers_and_never_over_a_share(recorder, windows_host) -> None:
+    from core.agent_runtime.write_root_honesty import non_local_write_target
+
+    windows_host.on()
+    comments = [
+        "create a.js with: /*eslint-disable*/ const x = 1;",
+        "create app.css with: a{color:red}/*x*/",
+        "create a.js with: /*global $*/",
+        "create a.ts with: /**@type {number}*/ let n = 1",
+        "create lib.rs with: /// Adds two numbers",
+        "create a.ts with: /** docs */ export {}",
+        "create a.c with: /*** banner ***/",
+    ]
+    found = {
+        "write hello to //attkr9/s/*": ("//attkr9/s/*", "unc"),
+        "write hello to //attkr9/s/a*b": ("//attkr9/s/a*b", "unc"),
+        "write hello to //*/s/x.txt": ("//*/s/x.txt", "unc"),
+        "write hello to ///attkr9/s/*": ("///attkr9/s/*", "unc"),
+        "write hello to ~///attkr9/s/*": ("~///attkr9/s/*", "unc"),
+        "write hello to //?/UNC/attkr9/s/*": ("//?/UNC/attkr9/s/*", "device"),
+        "write hello to //./pipe/*": ("//./pipe/*", "device"),
+        "write hello to /??/UNC/attkr9/s/*": ("/??/UNC/attkr9/s/*", "nt_namespace"),
+        "create a.js with: /*x*/ and save it to //attkr9/s/a.js": ("//attkr9/s/a.js", "unc"),
+        # Not a comment: a folder typed without its drive is still answered as typed.
+        "write hello to /tmp/*.log": ("/tmp/*.log", "root_relative"),
+        "create todo.txt in /notes": ("/notes", "root_relative"),
+        # A share, a device or a URL can start inside these: each is answered as typed, as on base.
+        "write hello to /*x*///attkr9/s/x.txt": ("/*x*///attkr9/s/x.txt", "root_relative"),
+        "write hello to /*x*/\\\\attkr9\\s\\x.txt": ("/*x*/\\\\attkr9\\s\\x.txt", "root_relative"),
+        "write hello to /*x*/://?/UNC/attkr9/s/x.txt": ("/*x*/://?/UNC/attkr9/s/x.txt", "root_relative"),
+        "write hello to /*x*/??/UNC/attkr9/s/x.txt": ("/*x*/??/UNC/attkr9/s/x.txt", "root_relative"),
+        "write hello to /*x*/file://attkr9/s/x.txt": ("/*x*/file://attkr9/s/x.txt", "root_relative"),
+    }
+    # The verb reaches the comment but not the share after it: the share is answered in its place.
+    far = "write hello to /*" + "x" * 70 + "*/ //attkr9/s/x.txt"
+
+    assert {text: non_local_write_target(text) for text in comments} == dict.fromkeys(comments, ("", ""))
+    assert {text: non_local_write_target(text) for text in found} == found
+    assert non_local_write_target(far) == ("//attkr9/s/x.txt", "unc")
+    # The build lane's network tier finds the same shares and devices.
+    network = {text: path for text, path in found.items() if path[1] != "root_relative"}
+    assert {text: non_local_write_target(text, network_only=True) for text in network} == network
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+
+
+def test_a_share_inside_or_after_a_block_comment_is_still_refused_as_typed(monkeypatch, recorder, windows_host) -> None:
+    # A comment a share, a device or a URL starts inside (`/*x*///host/s`) is refused whole, as typed, as
+    # on base; a share typed after a comment the write verb reaches, past the verb's own reach, is refused
+    # as typed. Nothing names the marker.
+    chat = _served_chat(monkeypatch)
+    windows_host.on()
+    glued = [
+        "/*x*///attkr9/s/x.txt",
+        "/*x*/\\\\attkr9\\s\\x.txt",
+        "/*x*/://?/UNC/attkr9/s/x.txt",
+        "/*x*/??/UNC/attkr9/s/x.txt",
+        "/*x*/file://attkr9/s/x.txt",
+    ]
+    far = "write hello to /*" + "x" * 70 + "*/ //attkr9/s/x.txt"
+
+    replies, touched = _served_turns(chat, recorder, [*(f"write hello to {path}" for path in glued), far])
+
+    assert touched == {}, touched
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+    wrong = {
+        path: replies[f"write hello to {path}"]
+        for path in glued
+        if not (PARTIAL in replies[f"write hello to {path}"][1] and f"`{path}`" in replies[f"write hello to {path}"][1])
+    }
+    assert wrong == {}, wrong
+    assert _refused_as_typed(replies[far][1], "//attkr9/s/x.txt"), replies[far]
+
+
 def test_a_full_drive_path_split_by_the_normalizer_keeps_its_drive(monkeypatch, recorder, windows_host) -> None:
     # The input normalizer turns `C:/Users/you/x.txt` into `C: /Users/you/x.txt`. This test's home
     # stands in for `C:/Users/you`: its rooted half exists, as `\\Users\\you` does on the current drive
