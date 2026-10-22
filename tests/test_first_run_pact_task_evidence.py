@@ -87,7 +87,7 @@ def test_a_tampered_receipt_is_refused_even_though_it_exists(pact_rig):
     assert payload["error"] in {"evidence_unverifiable", "evidence_missing"}
 
 
-def test_claim_is_reachable_after_a_restart_because_evidence_is_durable(pact_rig, capsys):
+def test_claim_is_reachable_after_a_restart_because_evidence_is_durable(pact_rig, capsys, monkeypatch):
     pact_rig.walk_to("local_task")
     request_id, _frames, _commit = pact_rig.run_task_turn(TASK_PROMPT)
     # Simulate a restart: rebuild runtime services over the SAME home (fresh caches).
@@ -103,6 +103,7 @@ def test_claim_is_reachable_after_a_restart_because_evidence_is_durable(pact_rig
     configure_runtime_home(pact_rig.home)
     try:
         sdb.configure_default_db_path(pact_rig.home / "data" / "vool_web0_v2.db")
+        monkeypatch.setenv("VOOL_DISABLE_COMPUTE_MODE", "1")
         pact_rig.runtime = _bootstrap(run_prewarm=False)
 
         status, payload = _claim(pact_rig, request_id)

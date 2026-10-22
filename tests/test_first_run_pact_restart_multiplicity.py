@@ -55,7 +55,7 @@ def test_sigkill_between_writes_never_leaves_a_half_written_file(pact_rig):
     json.loads(pact_file.read_text())
 
 
-def test_task_claim_succeeds_across_a_full_process_restart(pact_rig):
+def test_task_claim_succeeds_across_a_full_process_restart(pact_rig, monkeypatch):
     pact_rig.walk_to("local_task")
     request_id, _frames, _commit = pact_rig.run_task_turn("Create welcome-notes.txt containing Welcome to VOOL.")
     state_before = first_run_pact.load_state()
@@ -67,6 +67,7 @@ def test_task_claim_succeeds_across_a_full_process_restart(pact_rig):
 
     configure_runtime_home(pact_rig.home)
     sdb.configure_default_db_path(pact_rig.home / "data" / "vool_web0_v2.db")
+    monkeypatch.setenv("VOOL_DISABLE_COMPUTE_MODE", "1")
     pact_rig.runtime = _bootstrap(run_prewarm=False)
 
     state_after_boot = first_run_pact.load_state()
