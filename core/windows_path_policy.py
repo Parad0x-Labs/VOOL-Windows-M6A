@@ -395,14 +395,16 @@ def tool_call_refusal(intent: Any, arguments: Any) -> PathRefusal | None:
     An MCP or plugin tool is judged on the network tier, because its arguments mean whatever its server
     says; every other tool, a step that runs one included, on the full rule. The model executor, the
     authorized execution boundary and the runtime door all ask this, so a call the executor put to the
-    operator is not refused by the next door once it is approved.
+    operator is not refused by the next door once it is approved. The network tier is applied directly,
+    not only to what the full rule refuses: the full rule judges a URL name, and an ambiguous name of a
+    tool that is not a file tool, on the network tier as typed, and only the network tier judges such a
+    value again as expanded.
     """
     if not _IS_WINDOWS:
         return None
-    refusal = argument_refusal(intent, arguments)
-    if refusal is not None and _server_defined_tool(str(intent or "")):
-        refusal = argument_refusal(intent, arguments, network_only=True)
-    return refusal
+    if _server_defined_tool(str(intent or "")):
+        return argument_refusal(intent, arguments, network_only=True)
+    return argument_refusal(intent, arguments)
 
 
 def _base_url_kind(value: str) -> str:
