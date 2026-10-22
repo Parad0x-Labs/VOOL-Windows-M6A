@@ -13,6 +13,7 @@ import dataclasses
 import functools
 import inspect
 import json
+import logging
 import os
 import sqlite3
 import threading
@@ -28,6 +29,8 @@ try:
 except ImportError:  # Windows: no flock; lock one byte far past any content instead.
     fcntl = None
     import msvcrt
+
+_log = logging.getLogger(__name__)
 
 _WINDOWS_LOCK_OFFSET = 0x7FFFFFFE
 _WINDOWS = os.name == 'nt'
@@ -644,7 +647,9 @@ def authorize_payload(payload, chat_id=None, runtime_home=None, *, owner_memory=
         # Served rows answer for their words: a forgotten "14" does not withhold a row recorded on the 14th.
         payload = memory_words(payload)
         return not any(carries(payload, token) for token in tokens) and not payload_is_withdrawn(payload, tokens)
-    except Exception:
+    except Exception as exc:
+        # Still withheld; the type only, since the error's text can carry the withheld words.
+        _log.warning("authorize_payload failed (%s); the payload is withheld", type(exc).__name__)
         return False
 
 
