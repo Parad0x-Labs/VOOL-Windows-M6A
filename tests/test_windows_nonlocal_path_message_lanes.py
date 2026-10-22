@@ -888,6 +888,175 @@ def test_a_typed_folder_inside_the_workspace_is_that_workspace_folder(tmp_path: 
         assert status == 200 and affected in reply, (text, reply)
 
 
+def test_a_typed_workspace_folder_keeps_its_dot_and_reads_dot_dot_as_windows_does(windows_host) -> None:
+    # The workspace's own folder typed without its drive is read as typed, not resolved, and must name
+    # the folder base's resolve on the workspace's drive found: a leading dot stays (`.github`, not
+    # `github`), `.` and `..` are read as Windows reads them (`a\..\b` is `b`), and trailing sentence
+    # punctuation or a closing separator is not part of the folder.
+    from core.execution.planner import _clean_workspace_directory_path
+
+    windows_host.on()
+    workspace = "C:\\Users\\you\\ws"
+    placed = {
+        "/Users/you/ws/.github/workflows": ".github/workflows",
+        "\\Users\\you\\ws\\.vscode": ".vscode",
+        "/Users/you/ws/./notes": "notes",
+        "/Users/you/ws/a/../b": "b",
+        "\\Users\\you\\ws\\a\\..\\b": "b",
+        "/Users/you/ws/a/./b/../c": "a/c",
+        "/Users/you/ws/../ws/notes": "notes",
+        "/Users/you/ws/a/..": "",
+        "/Users/you/ws/notes.": "notes",
+        "/Users/you/ws/notes/": "notes",
+        # A last part made only of trailing dots or punctuation leaves a closing separator once it is
+        # stripped, and that separator is not a blank part: `x/...` is `x`, as Windows trims `...`.
+        "/Users/you/ws/x/...": "x",
+        "/Users/you/ws/x/!": "x",
+    }
+
+    observed = {typed: _clean_workspace_directory_path(typed, workspace_root=workspace) for typed in placed}
+
+    assert observed == placed
+
+
+def test_a_typed_workspace_folder_named_like_a_filler_word_is_that_folder(windows_host) -> None:
+    # The lexical clean drops words such as `repo` or `code` as no folder at all, because in a sentence
+    # they usually are not one. Typed after the workspace's own folder they are a folder name, the one
+    # base's resolve found, so the file goes there and not to the workspace root.
+    from core.execution.planner import _clean_workspace_directory_path
+
+    windows_host.on()
+    names = ["repo", "a", "code", "files", "desktop", "workspace"]
+
+    observed = {
+        name: _clean_workspace_directory_path(f"/Users/you/ws/{name}", workspace_root="C:\\Users\\you\\ws")
+        for name in names
+    }
+
+    assert observed == {name: name for name in names}
+
+
+def test_a_typed_folder_that_steps_out_of_the_workspace_is_no_workspace_folder(windows_host) -> None:
+    # `..` past the workspace names a folder beside it. It is never re-rooted into the workspace as
+    # `evil`, and never kept as `../evil`: the planner places no folder, as base did once its resolve
+    # found the path outside the workspace and the lexical clean refused the `..`.
+    from core.execution.planner import _clean_workspace_directory_path, _workspace_folder_as_typed
+
+    windows_host.on()
+    stepping_out = [
+        "/Users/you/ws/../evil",
+        "/Users/you/ws/a/../../evil",
+        "/Users/you/ws/./../x",
+        "/Users/you/ws/../../Users/you/evil",
+    ]
+    for workspace in ("C:\\Users\\you\\ws", "/Users/you/ws"):
+        as_typed = {
+            typed: _workspace_folder_as_typed(typed, workspace)
+            for typed in [*stepping_out, "\\Users\\you\\ws\\..\\evil"]
+        }
+        cleaned = {typed: _clean_workspace_directory_path(typed, workspace_root=workspace) for typed in stepping_out}
+
+        assert as_typed == dict.fromkeys(as_typed), (workspace, as_typed)
+        assert cleaned == dict.fromkeys(stepping_out, ""), (workspace, cleaned)
+
+
+def test_a_typed_workspace_folder_with_a_blank_or_padded_part_is_no_workspace_folder(windows_host) -> None:
+    # The planner and the writer strip the whole folder, so a blank part or a `.` or `..` padded with
+    # spaces or a tab would come out there as a root (`/x`) or a step out (`../x`). Such a folder is no
+    # workspace folder: the planner places none. A padded name that a later `..` removes, as Windows
+    # removes it, leaves nothing padded behind and is placed (`a/ ../../x` is `a/x`), and a name with a
+    # space before it is the name the writer keeps once it strips the folder.
+    from core.execution.planner import _clean_workspace_directory_path
+
+    windows_host.on()
+    blank_or_padded = [
+        "/Users/you/ws/ ../x",
+        "/Users/you/ws/a/../ ../x",
+        "/Users/you/ws/.. /evil",
+        "/Users/you/ws/a/.. /x",
+        "/Users/you/ws/ ./x",
+        "/Users/you/ws/a/. /x",
+        "/Users/you/ws/ /x",
+        "/Users/you/ws/ / /attkr9/s",
+        "/Users/you/ws/a/ /b",
+        "/Users/you/ws/ ..",
+        "/Users/you/ws/\t../x",
+        "/Users/you/ws/\t/x",
+        "/Users/you/ws/a/\t/b",
+        "\\Users\\you\\ws\\ ..\\x",
+        "\\Users\\you\\ws\\ \\x",
+    ]
+    for workspace in ("C:\\Users\\you\\ws", "/Users/you/ws"):
+        observed = {typed: _clean_workspace_directory_path(typed, workspace_root=workspace) for typed in blank_or_padded}
+        kept = {
+            typed: _clean_workspace_directory_path(typed, workspace_root=workspace)
+            for typed in ("/Users/you/ws/a/ ../../x", "/Users/you/ws/ x")
+        }
+
+        assert observed == dict.fromkeys(blank_or_padded, ""), (workspace, observed)
+        assert kept == {"/Users/you/ws/a/ ../../x": "a/x", "/Users/you/ws/ x": "x"}, (workspace, kept)
+
+
+def test_a_typed_folder_is_read_without_the_workspace_drive(windows_host) -> None:
+    # On Windows the workspace is `C:\Users\you\ws` and the typed folder has no drive. The drive is not
+    # part of the comparison, or the folder would be nested again as `Users/you/ws/notes`. On Linux CI
+    # the test workspace has no drive, so only a Windows-spelled root shows the difference.
+    from core.execution.planner import _clean_workspace_directory_path
+
+    windows_host.on()
+    placed = {
+        ("\\Users\\you\\ws\\notes", "C:\\Users\\you\\ws"): "notes",
+        ("/Users/you/ws/notes", "C:\\Users\\you\\ws"): "notes",
+        ("/USERS/YOU/WS/Docs", "C:\\Users\\you\\ws"): "Docs",
+        ("/Users/you/ws/notes", "C:/Users/you/ws"): "notes",
+        ("\\Users\\you\\ws\\notes", "C:/Users/you/ws"): "notes",
+        ("\\Users\\you\\ws", "C:\\Users\\you\\ws"): "",
+        ("/Users/you/ws", "C:/Users/you/ws"): "",
+    }
+
+    observed = {
+        (typed, workspace): _clean_workspace_directory_path(typed, workspace_root=workspace)
+        for typed, workspace in placed
+    }
+
+    assert observed == placed
+
+
+def test_a_typed_dot_or_dot_dot_workspace_folder_is_placed_where_windows_reads_it(
+    tmp_path: Path, monkeypatch, recorder, windows_host
+) -> None:
+    # Served: the approval ask names where the file would land. The workspace's folder is typed without
+    # its drive (on a Windows host too), the spelling the planner reads as typed: `.github` keeps its
+    # dot, `a/../b` is `b`, `repo` is a folder, and a `..` past the workspace places no folder, so the
+    # file stays at the workspace root. A share spelled with `..` is touched by nothing and placed
+    # under no share folder.
+    workspace = tmp_path / "workspace"
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    monkeypatch.setenv(gate.ENV_VAR, str(workspace))
+    chat = _served_chat(monkeypatch)
+    windows_host.on()
+    typed = os.path.splitdrive(workspace.as_posix())[1]
+    planned = {
+        f"in {typed}/.github/workflows create ci.yml with text: hi": f"Affected: {workspace}/.github/workflows/ci.yml.",
+        f"in {typed}/a/../b create todo.txt with text: hi": f"Affected: {workspace}/b/todo.txt.",
+        f"in {typed}/repo create notes.txt with text: hi": f"Affected: {workspace}/repo/notes.txt.",
+        f"in {typed}/../evil create one.txt with text: hi": f"Affected: {workspace}/one.txt.",
+        f"in {typed}/a/../../evil create two.txt with text: hi": f"Affected: {workspace}/two.txt.",
+        f"in {typed}/./../x create three.txt with text: hi": f"Affected: {workspace}/three.txt.",
+    }
+    shares = ["in //attkr9/s/../x create four.txt with text: hi", "in \\\\attkr9\\s\\..\\x create five.txt with text: hi"]
+
+    replies, touched = _served_turns(chat, recorder, [*planned, *shares])
+
+    assert touched == {}, touched
+    for text, affected in planned.items():
+        status, reply = replies[text]
+        assert status == 200 and affected in reply, (text, reply)
+    for text in shares:
+        status, reply = replies[text]
+        assert status == 200 and "attkr9" not in reply.partition("Affected:")[2], (text, reply)
+
+
 @pytest.mark.parametrize(
     "text",
     ["//attkr9/s/docs what files are in it", "what files are in //attkr9/s/docs"],
