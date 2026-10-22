@@ -204,6 +204,21 @@ def _write_intent_precedes(text: str, start: int) -> bool:
     return bool(_WRITE_INTENT_RE.search(window) and not _USER_OWN_ACTION_RE.search(window))
 
 
+def _write_intent_governs(text: str, start: int, passed_start: int) -> bool:
+    """Whether a destination verb governs the candidate at ``start``: one just before it, or one just
+    before the first candidate the check passed over earlier in the turn, at ``passed_start`` (-1 for
+    none). Base answered the turn at that candidate, so a path the turn names after it, past the
+    verb's reach (``write hello ... to /*x*/ //host/s``), is answered in its place."""
+    if _write_intent_precedes(text, start):
+        return True
+    return passed_start >= 0 and _write_intent_precedes(text, passed_start)
+
+
+# Where a share, a device or a URL can start inside one typed path: a doubled separator
+# (`/*x*///host/s`, `/*x*/\\host\s`), a `:` (`/*x*/file://host/s`) or a `?` (`/*x*/??/UNC/host/s`).
+_SHARE_CAN_START_INSIDE_RE = re.compile(r"[\\/]{2}|[:?]")
+
+
 def _fenced_spans(text: str) -> list[tuple[int, int]]:
     """(start, end) character spans of every COMPLETE ``` ... ``` fence in `text`. An unpaired
     trailing ``` opens no span -- nothing after it is fenced by an opener that never closed."""
@@ -331,18 +346,34 @@ def unreachable_write_target(text: str, *, source_context: dict[str, object] | N
 def non_local_write_target(text: str, *, network_only: bool = False) -> tuple[str, str]:
     """On Windows, the first path this turn asks us to write that names a share, a device or no full
     local folder (only a share or a device, with ``network_only``), with its kind; ``("", "")``
-    otherwise, and always off Windows. Nothing is looked up.
+    otherwise, and always off Windows. Nothing is looked up. A block comment opened against its text
+    (``/*eslint-disable*/``) is not one. A path named after one this passes over is judged by the verb
+    before that one too.
     """
     body = str(text or "")
+    passed_start = -1
     for start, candidate in _destination_candidates(body):
         if not candidate.strip("/\\*"):
-            # A bare `//` or `/*` (a code comment's marker in the text to write) names no host and no
-            # folder, and the lanes never receive it as a path, so it is nothing this turn would open.
+            # A bare `//`, `///`, `/*` or `/**` (a code comment's marker in the text to write) names no
+            # host and no folder as typed, so it is not answered here. The input normalizer can still
+            # join it to a host typed after a space (`(// host/s` becomes `(//host/s`); the lanes' own
+            # checks on that text answer it, as `unreachable_write_target` does for a write.
             continue
         kind = typed_path_kind(body, start, candidate)
         if network_only and kind not in windows_path_policy.NETWORK_KINDS:
             continue
-        if kind and _write_intent_precedes(body, start):
+        if (
+            kind not in windows_path_policy.NETWORK_KINDS
+            and candidate.startswith("/*")
+            and not _SHARE_CAN_START_INSIDE_RE.search(candidate)
+        ):
+            # A block comment opened against its text (`/*eslint-disable*/`, `a{color:red}/*x*/`) is
+            # root-relative only by its leading `/`, and `*` is never part of a Windows file or folder
+            # name, so no lane can open it as a folder. One a share, a device or a URL can start inside
+            # (`/*x*///host/s`) is answered as typed, as on base, and so is a share, device or NT path.
+            passed_start = start if passed_start < 0 else passed_start
+            continue
+        if kind and _write_intent_governs(body, start, passed_start):
             return candidate, kind
     return "", ""
 
