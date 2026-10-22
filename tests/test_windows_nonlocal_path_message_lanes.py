@@ -662,6 +662,25 @@ def test_the_write_finder_passes_over_comment_markers_and_never_over_a_share(rec
     assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
 
 
+def test_the_write_finder_answers_a_colon_after_a_comment_and_a_share_after_two_comments(recorder, windows_host) -> None:
+    from core.agent_runtime.write_root_honesty import non_local_write_target
+
+    windows_host.on()
+    # A `:` alone is where a URL can start inside a comment (`file:` then an escaped share), so that
+    # comment is answered as typed, as on base.
+    colon = "write hello to /*x*/file:%5C%5Cattkr9/s/x.txt"
+    # A share past the verb's reach is judged by the verb before the first comment passed over, not the
+    # last one.
+    two_comments = "write hello to /*a*/ " + "x" * 70 + " /*b*/ //attkr9/s/x.txt"
+    # A comment passed over in a question is no write, so a folder named after it is not answered either.
+    question = "why does /*x*/ break the /api/v1 route in express when the server restarts after a deploy?"
+
+    assert non_local_write_target(colon) == ("/*x*/file:%5C%5Cattkr9/s/x.txt", "root_relative")
+    assert non_local_write_target(two_comments) == ("//attkr9/s/x.txt", "unc")
+    assert non_local_write_target(question) == ("", "")
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+
+
 def test_a_share_inside_or_after_a_block_comment_is_still_refused_as_typed(monkeypatch, recorder, windows_host) -> None:
     # A comment a share, a device or a URL starts inside (`/*x*///host/s`) is refused whole, as typed, as
     # on base; a share typed after a comment the write verb reaches, past the verb's own reach, is refused
@@ -752,6 +771,28 @@ def test_the_build_subject_is_never_a_file_the_message_typed_as_a_share(windows_
     assert subject("audit app.py", "prove the bug you found") == ("app.py",)
     windows_host.off()
     assert subject("audit app.py", shares[0]) == ("attkr9/s/a.js",)
+
+
+def test_a_build_subject_typed_as_an_escaped_or_wrapped_share_url_or_typed_twice_is_no_subject(windows_host) -> None:
+    # Each reading of a typed place catches its own spelling: a percent-escaped file URL is a share only
+    # when read as a URL (its subject comes out as `5Cattkr9/s/a.js`), and a share glued to a prefix
+    # that is no separator (`URL:file://`) only when read with the whole word it ends. A target typed
+    # twice is no subject when either place types it as a share, the first or the last.
+    from core.agent_runtime.builder.controller import _audited_subject_paths
+
+    def subject(*messages: str) -> tuple[str, ...]:
+        history = [{"role": "user", "content": text} for text in messages]
+        return _audited_subject_paths({"conversation_history": history})
+
+    shares = [
+        'create a.js and save it to "file:///%5C%5Cattkr9/s/a.js"',
+        "create a.js and save it to URL:file://attkr9/s/a.js",
+        'create attkr9/s/a.js and save it to "//attkr9/s/a.js"',
+        'save "//attkr9/s/a.js" and then create attkr9/s/a.js',
+    ]
+    windows_host.on()
+
+    assert {text: subject("audit app.py", text) for text in shares} == dict.fromkeys(shares, ())
 
 
 def test_a_build_subject_typed_inside_a_device_or_nt_path_is_no_subject(

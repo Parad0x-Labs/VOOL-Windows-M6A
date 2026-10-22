@@ -412,6 +412,27 @@ def test_off_windows_a_typed_workspace_folder_is_placed_as_on_base_and_alike_wit
     assert windows == placed
 
 
+def test_off_windows_a_typed_folder_the_windows_reading_places_apart_is_placed_as_on_base(
+    tmp_path: Path, windows_host
+) -> None:
+    # The Windows reading of a drive-less workspace folder trims trailing punctuation and places no
+    # folder for a blank or padded part; POSIX resolves the same text as base does. These spellings
+    # tell the two readings apart, so the Windows reading must never run off Windows.
+    from core.execution.planner import _clean_workspace_directory_path
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(exist_ok=True)
+    root = str(workspace)
+    typed = [f"{root}/notes.", f"{root}/notes!", f"{root}/ /x", f"{root}/ ../x"]
+    windows_host.off()
+    posix = [_clean_workspace_directory_path(text, workspace_root=root) for text in typed]
+    windows_host.on()
+    windows = [_clean_workspace_directory_path(text, workspace_root=root) for text in typed]
+
+    assert posix == ["notes.", "notes!", " /x", " ../x"]
+    assert windows == ["notes", "notes", "", ""]
+
+
 def test_off_windows_the_tool_doors_tier_never_answers_and_reads_no_registry(monkeypatch, windows_host) -> None:
     # The executor, the authorized boundary and the runtime door ask `tool_call_refusal`, which picks the
     # network tier for MCP and plugin tools from the tool registry. Off Windows it answers None before it
