@@ -317,7 +317,12 @@ def _argument_kind(intent: str, key: str, value: str, network_only: bool) -> str
         # without opening it, so they are never judged.
         return ""
     if network_only and kind not in NETWORK_KINDS:
-        return ""
+        # The network tier hands a root- or drive-relative value on to the tool, which may expand the
+        # variables in it: on Windows `\%HOMEPATH%\x` is `\\Users\you\x`, a share, once expanded. So the
+        # value is judged again as expanded, once, and refused only for a network kind there.
+        expanded = ntpath.expandvars(value)
+        kind = _argument_kind(intent, key, expanded, False) if expanded != value else ""
+        return kind if kind in NETWORK_KINDS else ""
     return kind
 
 
@@ -352,7 +357,8 @@ def argument_refusal(intent: Any, arguments: Any, *, network_only: bool = False)
     gate and the dispatcher read (`core.tool_argument_aliases`) binds a model's near-miss names, such as
     `file_path` or `uri`, onto the contract's own fields. A code-task or repo step is also checked as the
     inner call it runs, under that inner intent's own key rules. `network_only` applies the network tier
-    to every argument; `tool_call_refusal` passes it for MCP and plugin tools.
+    to every argument, and judges a partial path that carries `%VAR%` or `$VAR` again as expanded;
+    `tool_call_refusal` passes it for MCP and plugin tools.
     """
     if not _IS_WINDOWS:
         return None
