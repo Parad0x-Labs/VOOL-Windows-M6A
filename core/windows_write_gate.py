@@ -19,10 +19,15 @@ notes) are not user-filesystem destinations and are not gated here. POSIX is una
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+from core import windows_path_policy
+
+logger = logging.getLogger(__name__)
 
 ENV_VAR = "VOOL_WINDOWS_DISPOSABLE_WORKSPACES"
 #: Patched by tests to drive the Windows decision on any platform.
@@ -55,12 +60,56 @@ _STEPS = frozenset({"code.task.step", "repo.step"})
 _ALWAYS_REFUSED = frozenset({"operator.cleanup_temp_files"})
 
 
+#: The skipped entries already warned about, so a list read on every gate check warns once.
+_WARNED: set[tuple[str, str]] = set()
+
+
+def _skip(part: str, reason: str) -> None:
+    if (part, reason) not in _WARNED:
+        _WARNED.add((part, reason))
+        logger.warning("%s entry \"%s\" is not flagged: %s. The other entries stay flagged.", ENV_VAR, part, reason)
+
+
+def _windows_root(part: str) -> str | None:
+    """The flagged root `part` gives on Windows, or None (with a warning) for an entry the broker
+    refuses too (Phase C picks 1, 5 and 10, owner 2026-10-23). A share or device path is judged by its
+    spelling before anything opens it, because checking whether a share is a folder connects to it.
+    On Linux CI every POSIX root spells as root-relative, so the full spelling rule applies only on
+    a real Windows host."""
+    kind = windows_path_policy.classify(part, network_only=True) or (
+        windows_path_policy.classify(part) if os.name == "nt" else ""
+    )
+    if kind:
+        _skip(part, "it is a network, device or incomplete path")
+        return None
+    if not os.path.isabs(part):
+        _skip(part, "it is not a full path")
+        return None
+    if os.path.islink(part) or getattr(os.path, "isjunction", lambda _path: False)(part):
+        _skip(part, "it is a junction or link; flag the folder it points at instead")
+        return None
+    if not os.path.isdir(part):
+        _skip(part, "it is not an existing folder")
+        return None
+    resolved = os.path.realpath(part)
+    if windows_path_policy.classify(resolved, network_only=True):
+        _skip(part, "it is on a network drive")
+        return None
+    return os.path.normcase(resolved)
+
+
 def flagged_roots(environ: dict[str, str] | None = None) -> list[str]:
     raw = (os.environ if environ is None else environ).get(ENV_VAR, "")
     roots = []
     for part in raw.split(os.pathsep):
         part = part.strip()
-        if part and os.path.isabs(part) and os.path.isdir(part):
+        if not part:
+            continue
+        if _IS_WINDOWS:
+            root = _windows_root(part)
+            if root is not None:
+                roots.append(root)
+        elif os.path.isabs(part) and os.path.isdir(part):
             roots.append(os.path.normcase(os.path.realpath(part)))
     return roots
 
