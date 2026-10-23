@@ -351,9 +351,22 @@ window.VoolComposerExtras = Object.freeze({
 """
 
 
+#: (fragment source everywhere else, fragment source on Windows): the chat filter's shortcut hint says Ctrl, and asks
+#: the catalog for the key's Windows sibling.
+_WINDOWS_FILTER_HINT = (
+    "extrasT('chats.filter_placeholder', 'Search chats\\u2026  \\u2318F')",
+    "extrasT('chats.filter_placeholder.windows', 'Search chats\\u2026  Ctrl+F')",
+)
+
+
 def render_composer_extras_fragment() -> str:
     """Composer extras as an appended fragment."""
-    return "<style>" + _EXTRAS_CSS + "</style><script>" + _EXTRAS_JS + "</script>"
+    from core.generated_files import host_is_windows
+
+    script = _EXTRAS_JS
+    if host_is_windows():
+        script = script.replace(*_WINDOWS_FILTER_HINT)
+    return "<style>" + _EXTRAS_CSS + "</style><script>" + script + "</script>"
 
 
 __all__ = ["render_composer_extras_fragment"]
