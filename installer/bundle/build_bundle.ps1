@@ -8,6 +8,7 @@ Layout produced:
   <Stage>\python\        embedded Python + Lib\site-packages (lean deps)
   <Stage>\app\           VOOL source (apps, core, adapters, config)
   <Stage>\ollama\        ollama.exe + lib\ollama\ runner support files
+  <Stage>\broker\        the Windows broker, self-contained (windows\broker\publish.ps1)
   <Stage>\models\        Ollama model store (populated only with -IncludeModel)
   <Stage>\VOOL.cmd      launcher
 
@@ -22,7 +23,10 @@ param(
   # qwen3:8b is the certified local author. qwen2.5:7b fails the local-model certification
   # (result_continuation, missing_tool_calls), so VOOL refuses to let it write answers.
   [string]$Model = "qwen3:8b",
-  [switch]$IncludeModel
+  [switch]$IncludeModel,
+  # The dotnet that publishes the broker (SDK 10.0.402), and an optional local package folder.
+  [string]$Dotnet = "dotnet",
+  [string]$BrokerPackages = ""
 )
 $ErrorActionPreference = "Stop"
 # `Resolve-Path`.Path can be provider-qualified when the checkout is reached through a WSL UNC
@@ -146,6 +150,16 @@ if (-not (Test-Path -LiteralPath $ollamaRunner -PathType Leaf)) {
   throw "Ollama runner missing from the installation: $ollamaRunner. Install or repair Ollama before building the bundle."
 }
 Copy-Item $ollamaSupportSource (Join-Path $Stage "ollama\lib\ollama") -Recurse -Force
+
+# --- 4b. Windows broker ------------------------------------------------------------------
+# Self-contained, so the installed app needs no .NET. The API starts {app}\broker\VoolBroker.exe
+# with VOOL (core\windows_broker\process.py); nothing is routed through it yet.
+$brokerDir = Join-Path $Stage "broker"
+if (Test-Path $brokerDir) { Remove-Item $brokerDir -Recurse -Force }
+& (Join-Path $RepoRoot "windows\broker\publish.ps1") -Output $brokerDir -Dotnet $Dotnet -Source $BrokerPackages
+if (-not (Test-Path -LiteralPath (Join-Path $brokerDir "VoolBroker.exe") -PathType Leaf)) {
+  throw "Broker publish produced no VoolBroker.exe in $brokerDir"
+}
 New-Item -ItemType Directory -Force (Join-Path $Stage "models") | Out-Null
 Copy-Item (Join-Path $PSScriptRoot "vool-launch.cmd") (Join-Path $Stage "VOOL.cmd") -Force
 Copy-Item (Join-Path $PSScriptRoot "vool.vbs") (Join-Path $Stage "vool.vbs") -Force

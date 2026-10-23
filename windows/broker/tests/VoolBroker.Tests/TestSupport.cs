@@ -485,6 +485,50 @@ internal static class TestSupport
             throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), $"Rename {source} -> {destination} failed.");
     }
 
+    // Renames a folder after its broker was killed. Another program (a virus scanner on a hosted
+    // runner) can hold a just-released folder for a moment, so a refusal is retried for a few seconds
+    // and then fails the test. The Restart Manager names file holders, not folder holders, so the
+    // broker is checked by its own process id instead: if it is still running, the test fails at
+    // once. Each attempt is logged with whatever holders the Restart Manager does name, and a VOOL
+    // broker or this test process among them also fails at once.
+    public static void RenameAfterRelease(string source, string destination, int brokerId, DateTime brokerStart)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        for (var attempt = 1; ; attempt++)
+        {
+            if (MoveFileExW(source, destination, 0)) return;
+            var code = Marshal.GetLastWin32Error();
+            var message = $"Rename {source} -> {destination} failed (error {code}).";
+            if (code is not (ErrorAccessDenied or ErrorSharingViolation))
+                throw new System.ComponentModel.Win32Exception(code, message);
+            if (IsRunning(brokerId, brokerStart))
+                throw new System.ComponentModel.Win32Exception(code, $"{message} Broker process {brokerId} is still running.");
+            var holders = Holders(source);
+            var named = holders.Count == 0 ? "no process named by the Restart Manager" : string.Join(", ", holders.Select(holder => $"{holder.Name} (process {holder.Id})"));
+            var diagnosis = $"{message} Broker process {brokerId} has exited. Held by {named}.";
+            TestContext.Current.TestOutputHelper?.WriteLine($"Rename attempt {attempt} at {DateTime.UtcNow:HH:mm:ss.fff}: {diagnosis}");
+            if (holders.Any(holder => holder.Id == Environment.ProcessId || holder.Name.Equals("VoolBroker", StringComparison.OrdinalIgnoreCase)))
+                throw new System.ComponentModel.Win32Exception(code, $"A VOOL broker still holds a folder it should have let go of. {diagnosis}");
+            if (DateTime.UtcNow >= deadline)
+                throw new System.ComponentModel.Win32Exception(code, $"Still refused after {attempt} attempts over 5 seconds. {diagnosis}");
+            Thread.Sleep(100);
+        }
+    }
+
+    // True while the process with this id and start time runs (an id can be reused after it exits).
+    private static bool IsRunning(int id, DateTime start)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(id);
+            return !process.HasExited && process.StartTime == start;
+        }
+        catch (Exception error) when (error is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return false;
+        }
+    }
+
     public static bool TryRemoveDirectory(string path) => RemoveDirectoryW(path);
 
     public static void HardLink(string newName, string existing)
@@ -698,6 +742,8 @@ internal static class TestSupport
 
     // HRESULT_FROM_WIN32(ERROR_SHARING_VIOLATION).
     private const int SharingViolation = unchecked((int)0x80070020);
+    private const int ErrorAccessDenied = 5;
+    private const int ErrorSharingViolation = 32;
     private const int ErrorMoreData = 234;
 
     // The processes the Restart Manager sees holding a path. The test process itself counts as a
