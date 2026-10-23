@@ -514,6 +514,372 @@ def test_a_code_comment_in_a_write_or_build_message_is_not_a_path(monkeypatch, r
     assert refused == {}, refused
 
 
+def _approval_asks(tmp_path: Path, monkeypatch, recorder, windows_host, planned: dict[str, str], others: list[str]):
+    """Served replies with the write gate on and the workspace marked, as on a Windows host, so a write that
+    goes ahead reaches the approval ask naming where it would land."""
+    workspace = tmp_path / "workspace"
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    monkeypatch.setenv(gate.ENV_VAR, str(workspace))
+    chat = _served_chat(monkeypatch)
+    windows_host.on()
+    replies, touched = _served_turns(chat, recorder, [*planned, *others])
+    assert touched == {}, touched
+    asked = {text: replies[text] for text in planned}
+    missed = {
+        text: reply
+        for text, (status, reply) in asked.items()
+        if status != 200 or f"Affected: {workspace}/{planned[text]}." not in reply
+    }
+    assert missed == {}, missed
+    return replies
+
+
+def test_a_block_comment_attached_to_its_text_reaches_the_write_approval(
+    tmp_path: Path, monkeypatch, recorder, windows_host
+) -> None:
+    # A block comment opened against its text (`/*eslint-disable*/`, `a{color:red}/*x*/`) is root-relative
+    # only by its leading `/`, and `*` is never part of a Windows name, so no lane can open it: the write
+    # goes ahead to the approval ask for the workspace file, as on base, and is not refused as "not a full
+    # local path". A question about such a comment is no write, and is not refused either.
+    planned = {
+        "create a.js with: /*eslint-disable*/ const x = 1;": "a.js",
+        "create style.css with /*reset*/ body { margin: 0 }": "style.css",
+        "create app.css with: a{color:red}/*x*/": "app.css",
+        "create a.ts with: /**@type {number}*/ let n = 1": "a.ts",
+    }
+    question = "why does adding /*x*/ to my css break the minifier?"
+
+    replies = _approval_asks(tmp_path, monkeypatch, recorder, windows_host, planned, [question])
+
+    status, reply = replies[question]
+    assert status == 200 and reply.strip() and _not_refused(reply), reply
+
+
+def test_doc_comment_markers_in_a_write_message_reach_the_write_approval(
+    tmp_path: Path, monkeypatch, recorder, windows_host
+) -> None:
+    # `///` (Rust, C#) and `/**`, `/**/` (JSDoc, C) are, like `//` and `/*`, only separators and asterisks:
+    # they name no host and no folder, so the write goes ahead to the approval ask. The two messages in
+    # `others` are taken by other lanes, and are not refused either.
+    planned = {
+        "create lib.rs with: /// Adds two numbers": "lib.rs",
+        "create a.ts with: /** Adds two numbers */ export const x = 1;": "a.ts",
+        "create a.c with: /**/ int x;": "a.c",
+    }
+    others = ["write hello to out.txt /// banner", "create a.ts with: /** docs */ export {}"]
+
+    replies = _approval_asks(tmp_path, monkeypatch, recorder, windows_host, planned, others)
+
+    refused = {text: replies[text] for text in others if replies[text][0] != 200 or not _not_refused(replies[text][1])}
+    assert refused == {}, refused
+
+
+def test_a_share_with_a_wildcard_or_a_comment_beside_it_is_still_refused_as_typed(
+    monkeypatch, recorder, windows_host
+) -> None:
+    # A `*` in a share, device or NT path, or a block comment typed next to one, never lets it through: the
+    # write and build lanes refuse it as typed, before anything is looked up.
+    chat = _served_chat(monkeypatch)
+    windows_host.on()
+    shares = {
+        "write hello to //attkr9/s/*": "//attkr9/s/*",
+        "write hello to //attkr9/s/a*b": "//attkr9/s/a*b",
+        "write hello to //*/s/x.txt": "//*/s/x.txt",
+        "write hello to ~///attkr9/s/*": "~///attkr9/s/*",
+        "write hello to //?/UNC/attkr9/s/*": "//?/UNC/attkr9/s/*",
+        "write hello to /??/UNC/attkr9/s/*": "/??/UNC/attkr9/s/*",
+        "create a flask app that saves uploads to //attkr9/s/*": "//attkr9/s/*",
+        "create a flask app that saves uploads to /*x*/ //attkr9/s/uploads": "//attkr9/s/uploads",
+    }
+
+    replies, touched = _served_turns(chat, recorder, list(shares))
+
+    assert touched == {}, touched
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+    wrong = {text: replies[text] for text, typed in shares.items() if not _refused_as_typed(replies[text][1], typed)}
+    assert wrong == {}, wrong
+
+
+def test_a_block_comment_before_a_share_does_not_hide_the_share(monkeypatch, recorder, windows_host) -> None:
+    # The comment is passed over, so the answer is about the share the turn names as its destination, as
+    # typed, and not about the comment.
+    chat = _served_chat(monkeypatch)
+    windows_host.on()
+    shares = {
+        "create a.js with: /*x*/ and save it to //attkr9/s/a.js": "//attkr9/s/a.js",
+        "create /*x*/ //attkr9/s/y.txt": "//attkr9/s/y.txt",
+    }
+
+    replies, touched = _served_turns(chat, recorder, list(shares))
+
+    assert touched == {}, touched
+    wrong = {text: replies[text] for text, typed in shares.items() if not _refused_as_typed(replies[text][1], typed)}
+    assert wrong == {}, wrong
+
+
+def test_the_write_finder_passes_over_comment_markers_and_never_over_a_share(recorder, windows_host) -> None:
+    from core.agent_runtime.write_root_honesty import non_local_write_target
+
+    windows_host.on()
+    comments = [
+        "create a.js with: /*eslint-disable*/ const x = 1;",
+        "create app.css with: a{color:red}/*x*/",
+        "create a.js with: /*global $*/",
+        "create a.ts with: /**@type {number}*/ let n = 1",
+        "create lib.rs with: /// Adds two numbers",
+        "create a.ts with: /** docs */ export {}",
+        "create a.c with: /*** banner ***/",
+    ]
+    found = {
+        "write hello to //attkr9/s/*": ("//attkr9/s/*", "unc"),
+        "write hello to //attkr9/s/a*b": ("//attkr9/s/a*b", "unc"),
+        "write hello to //*/s/x.txt": ("//*/s/x.txt", "unc"),
+        "write hello to ///attkr9/s/*": ("///attkr9/s/*", "unc"),
+        "write hello to ~///attkr9/s/*": ("~///attkr9/s/*", "unc"),
+        "write hello to //?/UNC/attkr9/s/*": ("//?/UNC/attkr9/s/*", "device"),
+        "write hello to //./pipe/*": ("//./pipe/*", "device"),
+        "write hello to /??/UNC/attkr9/s/*": ("/??/UNC/attkr9/s/*", "nt_namespace"),
+        "create a.js with: /*x*/ and save it to //attkr9/s/a.js": ("//attkr9/s/a.js", "unc"),
+        # Not a comment: a folder typed without its drive is still answered as typed.
+        "write hello to /tmp/*.log": ("/tmp/*.log", "root_relative"),
+        "create todo.txt in /notes": ("/notes", "root_relative"),
+        # A share, a device or a URL can start inside these: each is answered as typed, as on base.
+        "write hello to /*x*///attkr9/s/x.txt": ("/*x*///attkr9/s/x.txt", "root_relative"),
+        "write hello to /*x*/\\\\attkr9\\s\\x.txt": ("/*x*/\\\\attkr9\\s\\x.txt", "root_relative"),
+        "write hello to /*x*/://?/UNC/attkr9/s/x.txt": ("/*x*/://?/UNC/attkr9/s/x.txt", "root_relative"),
+        "write hello to /*x*/??/UNC/attkr9/s/x.txt": ("/*x*/??/UNC/attkr9/s/x.txt", "root_relative"),
+        "write hello to /*x*/file://attkr9/s/x.txt": ("/*x*/file://attkr9/s/x.txt", "root_relative"),
+    }
+    # The verb reaches the comment but not the share after it: the share is answered in its place.
+    far = "write hello to /*" + "x" * 70 + "*/ //attkr9/s/x.txt"
+
+    assert {text: non_local_write_target(text) for text in comments} == dict.fromkeys(comments, ("", ""))
+    assert {text: non_local_write_target(text) for text in found} == found
+    assert non_local_write_target(far) == ("//attkr9/s/x.txt", "unc")
+    # The build lane's network tier finds the same shares and devices.
+    network = {text: path for text, path in found.items() if path[1] != "root_relative"}
+    assert {text: non_local_write_target(text, network_only=True) for text in network} == network
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+
+
+def test_the_write_finder_answers_a_colon_after_a_comment_and_a_share_after_two_comments(recorder, windows_host) -> None:
+    from core.agent_runtime.write_root_honesty import non_local_write_target
+
+    windows_host.on()
+    # A `:` alone is where a URL can start inside a comment (`file:` then an escaped share), so that
+    # comment is answered as typed, as on base.
+    colon = "write hello to /*x*/file:%5C%5Cattkr9/s/x.txt"
+    # A share past the verb's reach is judged by the verb before the first comment passed over, not the
+    # last one.
+    two_comments = "write hello to /*a*/ " + "x" * 70 + " /*b*/ //attkr9/s/x.txt"
+    # A comment passed over in a question is no write, so a folder named after it is not answered either.
+    question = "why does /*x*/ break the /api/v1 route in express when the server restarts after a deploy?"
+
+    assert non_local_write_target(colon) == ("/*x*/file:%5C%5Cattkr9/s/x.txt", "root_relative")
+    assert non_local_write_target(two_comments) == ("//attkr9/s/x.txt", "unc")
+    assert non_local_write_target(question) == ("", "")
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+
+
+def test_the_write_finder_answers_a_comment_with_two_separators_after_it_as_typed(recorder, windows_host) -> None:
+    from core.agent_runtime.write_root_honesty import non_local_write_target
+
+    windows_host.on()
+    # Two separators anywhere in the candidate are where a share can start, the comment's own closing `/`
+    # counted: each of these is answered as typed, as on base, and never passed over as a comment.
+    typed = [
+        "/*x*//attkr9/s/x.txt",
+        "/**//attkr9/s/x.txt",
+        "/*x*/a//attkr9/s/x.txt",
+        "/*x*/\\attkr9\\s\\x.txt",
+    ]
+
+    found = {path: non_local_write_target(f"write hello to {path}") for path in typed}
+
+    assert found == {path: (path, "root_relative") for path in typed}
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+
+
+def test_a_share_inside_or_after_a_block_comment_is_still_refused_as_typed(monkeypatch, recorder, windows_host) -> None:
+    # A comment a share, a device or a URL starts inside (`/*x*///host/s`) is refused whole, as typed, as
+    # on base; a share typed after a comment the write verb reaches, past the verb's own reach, is refused
+    # as typed. Nothing names the marker.
+    chat = _served_chat(monkeypatch)
+    windows_host.on()
+    glued = [
+        "/*x*///attkr9/s/x.txt",
+        "/*x*/\\\\attkr9\\s\\x.txt",
+        "/*x*/://?/UNC/attkr9/s/x.txt",
+        "/*x*/??/UNC/attkr9/s/x.txt",
+        "/*x*/file://attkr9/s/x.txt",
+    ]
+    far = "write hello to /*" + "x" * 70 + "*/ //attkr9/s/x.txt"
+
+    replies, touched = _served_turns(chat, recorder, [*(f"write hello to {path}" for path in glued), far])
+
+    assert touched == {}, touched
+    assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+    wrong = {
+        path: replies[f"write hello to {path}"]
+        for path in glued
+        if not (PARTIAL in replies[f"write hello to {path}"][1] and f"`{path}`" in replies[f"write hello to {path}"][1])
+    }
+    assert wrong == {}, wrong
+    assert _refused_as_typed(replies[far][1], "//attkr9/s/x.txt"), replies[far]
+
+
+def test_a_build_whose_file_is_typed_as_a_share_reads_no_file_by_that_name(
+    tmp_path: Path, monkeypatch, recorder, windows_host
+) -> None:
+    # A file a build names as a share (quoted, backticked or as a `file://` URL, which the write check
+    # does not read as a destination), with or without a block comment beside it, is not the build's
+    # subject: the builder neither opens the share nor joins `attkr9/s/a.js` onto the workspace and reads
+    # that. A file named relative to the workspace is still read there, and only there.
+    workspace = tmp_path / "workspace"
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    monkeypatch.setenv(gate.ENV_VAR, str(workspace))
+    chat = _served_chat(monkeypatch)
+    windows_host.on()
+    shares = [
+        'create a.js and save it to "//attkr9/s/a.js"',
+        'create a.js and save it to "//attkr9/s/a.js" /*x*/',
+        'create a.js /*x*/ and save it to "//attkr9/s/a.js"',
+        'create a.js and save it to /*x*/ "//attkr9/s/a.js"',
+        "create a.js and save it to `//attkr9/s/a.js` /*x*/",
+        "create a.js and save it to file://attkr9/s/a.js",
+        "create a.js and save it to file://attkr9/s/a.js /*x*/",
+    ]
+    local = ["create a.js and save it to 'attkr9/s/a.js' /*x*/", "create attkr9.js /*x*/"]
+
+    replies, touched = _served_turns(chat, recorder, [*shares, *local])
+
+    assert all(status == 200 and reply.strip() for status, reply in replies.values()), replies
+    assert {text: found for text, found in touched.items() if text in shares} == {}, touched
+    # The local controls may read `<workspace>/attkr9/s/a.js` and `<workspace>/attkr9.js`: nothing else.
+    inside = os.path.normcase(str(workspace)) + os.sep
+    outside = [
+        touch for touch in recorder.touches if not os.path.normcase(os.path.normpath(touch.path)).startswith(inside)
+    ]
+    assert outside == [] and recorder.marker_popen == [], recorder.report()
+
+
+def test_the_build_subject_is_never_a_file_the_message_typed_as_a_share(windows_host) -> None:
+    # The builder reads its subject from the newest user message that names a file, joined onto the
+    # workspace. On Windows a file that message typed as a share or a device path is no subject, and no
+    # older message stands in for it; a file named relative to the workspace, or none at all, is read as
+    # before. Off Windows the subject is the file named, as on base. Nothing here looks anything up.
+    from core.agent_runtime.builder.controller import _audited_subject_paths
+
+    def subject(*messages: str) -> tuple[str, ...]:
+        history = [{"role": "user", "content": text} for text in messages]
+        return _audited_subject_paths({"conversation_history": history})
+
+    shares = [
+        'create a.js and save it to "//attkr9/s/a.js"',
+        "create a.js and save it to `//attkr9/s/a.js` /*x*/",
+        "create a.js and save it to file://attkr9/s/a.js",
+        'create a.js and save it to "file:////attkr9/s/a.js"',
+        'create a.js and save it to "///attkr9/s/a.js"',
+        'create a.js and save it to "//./UNC/attkr9/s/a.js"',
+    ]
+    windows_host.on()
+
+    assert {text: subject("audit app.py", text) for text in shares} == dict.fromkeys(shares, ())
+    assert subject("audit app.py", "create a.js and save it to 'attkr9/s/a.js'") == ("attkr9/s/a.js",)
+    assert subject("audit app.py", "create attkr9.js") == ("attkr9.js",)
+    assert subject("audit app.py", "prove the bug you found") == ("app.py",)
+    windows_host.off()
+    assert subject("audit app.py", shares[0]) == ("attkr9/s/a.js",)
+
+
+def test_a_build_subject_typed_as_an_escaped_or_wrapped_share_url_or_typed_twice_is_no_subject(windows_host) -> None:
+    # Each reading of a typed place catches its own spelling: a percent-escaped file URL is a share only
+    # when read as a URL (its subject comes out as `5Cattkr9/s/a.js`), and a share glued to a prefix
+    # that is no separator (`URL:file://`) only when read with the separators typed right before it
+    # (`//attkr9/s/a.js`): the whole word is no share, as a path or as a URL. A target typed twice is
+    # no subject when either place types it as a share, the first or the last.
+    from core.agent_runtime.builder.controller import _audited_subject_paths
+
+    def subject(*messages: str) -> tuple[str, ...]:
+        history = [{"role": "user", "content": text} for text in messages]
+        return _audited_subject_paths({"conversation_history": history})
+
+    shares = [
+        'create a.js and save it to "file:///%5C%5Cattkr9/s/a.js"',
+        "create a.js and save it to URL:file://attkr9/s/a.js",
+        'create attkr9/s/a.js and save it to "//attkr9/s/a.js"',
+        'save "//attkr9/s/a.js" and then create attkr9/s/a.js',
+    ]
+    windows_host.on()
+
+    assert {text: subject("audit app.py", text) for text in shares} == dict.fromkeys(shares, ())
+
+
+def test_a_build_subject_glued_to_a_backslash_share_is_no_subject_and_a_local_one_still_is(windows_host) -> None:
+    # The separators typed right before a target are read whether they are `/` or `\`, so a share typed
+    # with backslashes after a prefix that is no separator is no subject either. The guard refuses only
+    # shares, devices and NT paths: a target typed root-relative, drive-relative or as a file URL with no
+    # host is still the subject, as off Windows.
+    from core.agent_runtime.builder.controller import _audited_subject_paths
+
+    def subject(*messages: str) -> tuple[str, ...]:
+        history = [{"role": "user", "content": text} for text in messages]
+        return _audited_subject_paths({"conversation_history": history})
+
+    shares = [
+        "create a.js and save it to URL:file:\\\\attkr9/s/a.js",
+        "create a.js and save it to (\\\\attkr9/s/a.js)",
+        "create a.js and save it to =\\\\attkr9/s/a.js",
+    ]
+    local = {
+        "fix the bug in /src/app.py": ("src/app.py",),
+        "fix the bug in C:src/app.py": ("src/app.py",),
+        "create a.js and save it to file:/src/a.js": ("src/a.js",),
+    }
+    windows_host.off()
+    off_windows = {text: subject("audit app.py", text) for text in local}
+    windows_host.on()
+
+    assert {text: subject("audit app.py", text) for text in shares} == dict.fromkeys(shares, ())
+    assert {text: subject("audit app.py", text) for text in local} == local == off_windows
+
+
+def test_a_build_subject_typed_inside_a_device_or_nt_path_is_no_subject(
+    tmp_path: Path, monkeypatch, recorder, windows_host
+) -> None:
+    # The file the builder takes can start inside a device or NT path typed with mixed separators
+    # (`\\?\UNC/host/s/a.js` gives `UNC/host/s/a.js`), after no separator of its own. The whole word it
+    # ends is read, so that is no subject either, and a build naming one, with a block comment or the
+    # workspace folder ahead of it, reads no file by that name.
+    from core.agent_runtime.builder.controller import _audited_subject_paths
+
+    workspace = tmp_path / "workspace"
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    monkeypatch.setenv(gate.ENV_VAR, str(workspace))
+    chat = _served_chat(monkeypatch)
+    windows_host.on()
+    typed = os.path.splitdrive(str(workspace))[1].replace("\\", "/")
+    devices = [
+        'create a.js and save it to "\\\\?\\UNC/attkr9/s/a.js"',
+        'create a.js and save it to "\\??\\UNC/attkr9/s/a.js"',
+        'create a.js and save it to "//?/UNC/attkr9/s/a.js"',
+        'create a.js and save it to "//-attkr9/s/a.js"',
+    ]
+    builds = [
+        "create a.js /*x*/ and save it to \\\\?\\UNC/attkr9/s/x.txt",
+        f"create todo.txt in {typed}/notes and save a copy to \\\\?\\UNC/attkr9/s/x.txt",
+    ]
+
+    subjects = {
+        text: _audited_subject_paths({"conversation_history": [{"role": "user", "content": text}]}) for text in devices
+    }
+    replies, touched = _served_turns(chat, recorder, builds)
+
+    assert subjects == dict.fromkeys(devices, ()), subjects
+    assert touched == {}, touched
+    assert all(status == 200 and reply.strip() for status, reply in replies.values()), replies
+
+
 def test_a_full_drive_path_split_by_the_normalizer_keeps_its_drive(monkeypatch, recorder, windows_host) -> None:
     # The input normalizer turns `C:/Users/you/x.txt` into `C: /Users/you/x.txt`. This test's home
     # stands in for `C:/Users/you`: its rooted half exists, as `\\Users\\you` does on the current drive
@@ -610,6 +976,175 @@ def test_a_typed_folder_inside_the_workspace_is_that_workspace_folder(tmp_path: 
     for text, affected in planned.items():
         status, reply = replies[text]
         assert status == 200 and affected in reply, (text, reply)
+
+
+def test_a_typed_workspace_folder_keeps_its_dot_and_reads_dot_dot_as_windows_does(windows_host) -> None:
+    # The workspace's own folder typed without its drive is read as typed, not resolved, and must name
+    # the folder base's resolve on the workspace's drive found: a leading dot stays (`.github`, not
+    # `github`), `.` and `..` are read as Windows reads them (`a\..\b` is `b`), and trailing sentence
+    # punctuation or a closing separator is not part of the folder.
+    from core.execution.planner import _clean_workspace_directory_path
+
+    windows_host.on()
+    workspace = "C:\\Users\\you\\ws"
+    placed = {
+        "/Users/you/ws/.github/workflows": ".github/workflows",
+        "\\Users\\you\\ws\\.vscode": ".vscode",
+        "/Users/you/ws/./notes": "notes",
+        "/Users/you/ws/a/../b": "b",
+        "\\Users\\you\\ws\\a\\..\\b": "b",
+        "/Users/you/ws/a/./b/../c": "a/c",
+        "/Users/you/ws/../ws/notes": "notes",
+        "/Users/you/ws/a/..": "",
+        "/Users/you/ws/notes.": "notes",
+        "/Users/you/ws/notes/": "notes",
+        # A last part made only of trailing dots or punctuation leaves a closing separator once it is
+        # stripped, and that separator is not a blank part: `x/...` is `x`, as Windows trims `...`.
+        "/Users/you/ws/x/...": "x",
+        "/Users/you/ws/x/!": "x",
+    }
+
+    observed = {typed: _clean_workspace_directory_path(typed, workspace_root=workspace) for typed in placed}
+
+    assert observed == placed
+
+
+def test_a_typed_workspace_folder_named_like_a_filler_word_is_that_folder(windows_host) -> None:
+    # The lexical clean drops words such as `repo` or `code` as no folder at all, because in a sentence
+    # they usually are not one. Typed after the workspace's own folder they are a folder name, the one
+    # base's resolve found, so the file goes there and not to the workspace root.
+    from core.execution.planner import _clean_workspace_directory_path
+
+    windows_host.on()
+    names = ["repo", "a", "code", "files", "desktop", "workspace"]
+
+    observed = {
+        name: _clean_workspace_directory_path(f"/Users/you/ws/{name}", workspace_root="C:\\Users\\you\\ws")
+        for name in names
+    }
+
+    assert observed == {name: name for name in names}
+
+
+def test_a_typed_folder_that_steps_out_of_the_workspace_is_no_workspace_folder(windows_host) -> None:
+    # `..` past the workspace names a folder beside it. It is never re-rooted into the workspace as
+    # `evil`, and never kept as `../evil`: the planner places no folder, as base did once its resolve
+    # found the path outside the workspace and the lexical clean refused the `..`.
+    from core.execution.planner import _clean_workspace_directory_path, _workspace_folder_as_typed
+
+    windows_host.on()
+    stepping_out = [
+        "/Users/you/ws/../evil",
+        "/Users/you/ws/a/../../evil",
+        "/Users/you/ws/./../x",
+        "/Users/you/ws/../../Users/you/evil",
+    ]
+    for workspace in ("C:\\Users\\you\\ws", "/Users/you/ws"):
+        as_typed = {
+            typed: _workspace_folder_as_typed(typed, workspace)
+            for typed in [*stepping_out, "\\Users\\you\\ws\\..\\evil"]
+        }
+        cleaned = {typed: _clean_workspace_directory_path(typed, workspace_root=workspace) for typed in stepping_out}
+
+        assert as_typed == dict.fromkeys(as_typed), (workspace, as_typed)
+        assert cleaned == dict.fromkeys(stepping_out, ""), (workspace, cleaned)
+
+
+def test_a_typed_workspace_folder_with_a_blank_or_padded_part_is_no_workspace_folder(windows_host) -> None:
+    # The planner and the writer strip the whole folder, so a blank part or a `.` or `..` padded with
+    # spaces or a tab would come out there as a root (`/x`) or a step out (`../x`). Such a folder is no
+    # workspace folder: the planner places none. A padded name that a later `..` removes, as Windows
+    # removes it, leaves nothing padded behind and is placed (`a/ ../../x` is `a/x`), and a name with a
+    # space before it is the name the writer keeps once it strips the folder.
+    from core.execution.planner import _clean_workspace_directory_path
+
+    windows_host.on()
+    blank_or_padded = [
+        "/Users/you/ws/ ../x",
+        "/Users/you/ws/a/../ ../x",
+        "/Users/you/ws/.. /evil",
+        "/Users/you/ws/a/.. /x",
+        "/Users/you/ws/ ./x",
+        "/Users/you/ws/a/. /x",
+        "/Users/you/ws/ /x",
+        "/Users/you/ws/ / /attkr9/s",
+        "/Users/you/ws/a/ /b",
+        "/Users/you/ws/ ..",
+        "/Users/you/ws/\t../x",
+        "/Users/you/ws/\t/x",
+        "/Users/you/ws/a/\t/b",
+        "\\Users\\you\\ws\\ ..\\x",
+        "\\Users\\you\\ws\\ \\x",
+    ]
+    for workspace in ("C:\\Users\\you\\ws", "/Users/you/ws"):
+        observed = {typed: _clean_workspace_directory_path(typed, workspace_root=workspace) for typed in blank_or_padded}
+        kept = {
+            typed: _clean_workspace_directory_path(typed, workspace_root=workspace)
+            for typed in ("/Users/you/ws/a/ ../../x", "/Users/you/ws/ x")
+        }
+
+        assert observed == dict.fromkeys(blank_or_padded, ""), (workspace, observed)
+        assert kept == {"/Users/you/ws/a/ ../../x": "a/x", "/Users/you/ws/ x": "x"}, (workspace, kept)
+
+
+def test_a_typed_folder_is_read_without_the_workspace_drive(windows_host) -> None:
+    # On Windows the workspace is `C:\Users\you\ws` and the typed folder has no drive. The drive is not
+    # part of the comparison, or the folder would be nested again as `Users/you/ws/notes`. On Linux CI
+    # the test workspace has no drive, so only a Windows-spelled root shows the difference.
+    from core.execution.planner import _clean_workspace_directory_path
+
+    windows_host.on()
+    placed = {
+        ("\\Users\\you\\ws\\notes", "C:\\Users\\you\\ws"): "notes",
+        ("/Users/you/ws/notes", "C:\\Users\\you\\ws"): "notes",
+        ("/USERS/YOU/WS/Docs", "C:\\Users\\you\\ws"): "Docs",
+        ("/Users/you/ws/notes", "C:/Users/you/ws"): "notes",
+        ("\\Users\\you\\ws\\notes", "C:/Users/you/ws"): "notes",
+        ("\\Users\\you\\ws", "C:\\Users\\you\\ws"): "",
+        ("/Users/you/ws", "C:/Users/you/ws"): "",
+    }
+
+    observed = {
+        (typed, workspace): _clean_workspace_directory_path(typed, workspace_root=workspace)
+        for typed, workspace in placed
+    }
+
+    assert observed == placed
+
+
+def test_a_typed_dot_or_dot_dot_workspace_folder_is_placed_where_windows_reads_it(
+    tmp_path: Path, monkeypatch, recorder, windows_host
+) -> None:
+    # Served: the approval ask names where the file would land. The workspace's folder is typed without
+    # its drive (on a Windows host too), the spelling the planner reads as typed: `.github` keeps its
+    # dot, `a/../b` is `b`, `repo` is a folder, and a `..` past the workspace places no folder, so the
+    # file stays at the workspace root. A share spelled with `..` is touched by nothing and placed
+    # under no share folder.
+    workspace = tmp_path / "workspace"
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    monkeypatch.setenv(gate.ENV_VAR, str(workspace))
+    chat = _served_chat(monkeypatch)
+    windows_host.on()
+    typed = os.path.splitdrive(workspace.as_posix())[1]
+    planned = {
+        f"in {typed}/.github/workflows create ci.yml with text: hi": f"Affected: {workspace}/.github/workflows/ci.yml.",
+        f"in {typed}/a/../b create todo.txt with text: hi": f"Affected: {workspace}/b/todo.txt.",
+        f"in {typed}/repo create notes.txt with text: hi": f"Affected: {workspace}/repo/notes.txt.",
+        f"in {typed}/../evil create one.txt with text: hi": f"Affected: {workspace}/one.txt.",
+        f"in {typed}/a/../../evil create two.txt with text: hi": f"Affected: {workspace}/two.txt.",
+        f"in {typed}/./../x create three.txt with text: hi": f"Affected: {workspace}/three.txt.",
+    }
+    shares = ["in //attkr9/s/../x create four.txt with text: hi", "in \\\\attkr9\\s\\..\\x create five.txt with text: hi"]
+
+    replies, touched = _served_turns(chat, recorder, [*planned, *shares])
+
+    assert touched == {}, touched
+    for text, affected in planned.items():
+        status, reply = replies[text]
+        assert status == 200 and affected in reply, (text, reply)
+    for text in shares:
+        status, reply = replies[text]
+        assert status == 200 and "attkr9" not in reply.partition("Affected:")[2], (text, reply)
 
 
 @pytest.mark.parametrize(

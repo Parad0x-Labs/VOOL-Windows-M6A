@@ -1234,13 +1234,12 @@ def _execute_tool_intent_impl(
     # On Windows, a path argument naming a share, a device or no full local folder is refused HERE,
     # before the sandbox, workspace, Windows-gate and permission checks below: each of them looks the
     # path up, and on Windows a lookup of `\\host\share` is already the SMB connection. MCP and plugin
-    # tools are judged again by the network tier alone, because their arguments mean whatever their
-    # server says. Off Windows the first call answers None before it reads anything.
+    # tools are judged by the network tier alone, because their arguments mean whatever their server
+    # says; the authorized boundary and the runtime door ask the same question, so an approved call is
+    # not refused after its approval. Off Windows this answers None before it reads anything.
     from core import windows_path_policy
 
-    path_refusal = windows_path_policy.argument_refusal(intent, arguments)
-    if path_refusal is not None and (is_mcp_intent(intent) or _is_plugin_contract(intent)):
-        path_refusal = windows_path_policy.argument_refusal(intent, arguments, network_only=True)
+    path_refusal = windows_path_policy.tool_call_refusal(intent, arguments)
     if path_refusal is None:
         # The workspace the checks below resolve: a share there (an unbound chat's default folder on a
         # redirected Desktop) is refused with the sentence, not raised from the resolver as a 500.

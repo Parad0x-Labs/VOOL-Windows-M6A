@@ -403,3 +403,50 @@ def test_command_input_refusal_names_only_filesystem_fields(monkeypatch) -> None
     # A route path in `path` is an HTTP route, not a file: never refused.
     for command_id, input_data in route_calls.items():
         assert policy.command_input_refusal(command_id, input_data) is None, command_id
+
+
+def test_a_command_base_url_is_judged_as_the_url_its_handler_opens(monkeypatch) -> None:
+    # A team start, a council convene and a council resume send their own HTTP calls to `base_url` plus
+    # a route, through urllib, whose file handler stats a `file:` URL's path.
+    url_fields = (("agents.start", "base_url"), ("council.convene", "base_url"), ("council.resume", "base_url"))
+    commands = registry()
+    for command_id, field in url_fields:
+        spec = commands.lookup(command_id)
+        assert spec is not None, command_id
+        assert field in {f.name for f in dataclasses.fields(spec.input_schema)}, (command_id, field)
+    refused = {
+        "file://attkr9/s": "unc",
+        "file:////attkr9/s": "unc",
+        "file://localhost//attkr9/s": "unc",
+        r"\\attkr9\s": "unc",
+        "//attkr9/s": "unc",
+        "//?/UNC/attkr9/s": "device",
+        "file:///attkr9/x": "root_relative",
+        # urllib drops a `URL:` wrapper before it opens the URL.
+        "URL:file:////attkr9/s": "unc",
+        " URL: file://attkr9/s": "unc",
+        # With no host and no path, the route the handler appends names the server:
+        # `file:///` plus `/api/cloud/status` is `file:////api/cloud/status`.
+        "file:///": "unc",
+        "file:////": "unc",
+        "file://localhost/": "unc",
+    }
+    # An http(s) base URL is a web request, to this machine or to another one: never a path.
+    allowed = ("http://attkr9:8080", "https://attkr9/v1", "http://127.0.0.1:11435", "")
+
+    _windows(monkeypatch, on=False)
+    for command_id, field in url_fields:
+        for value in (*refused, *allowed):
+            assert policy.command_input_refusal(command_id, {field: value}) is None, (command_id, value)
+
+    _windows(monkeypatch)
+    for command_id, field in url_fields:
+        for value, kind in refused.items():
+            refusal = policy.command_input_refusal(command_id, {field: value})
+            assert refusal is not None and tuple(refusal) == (field, value, kind), (command_id, value, refusal)
+        for value in allowed:
+            assert policy.command_input_refusal(command_id, {field: value}) is None, (command_id, value)
+    # The workspace is still judged as a path, and first.
+    refusal = policy.command_input_refusal("agents.start", {"workspace": "//attkr9/s", "base_url": "file:////attkr9/t"})
+    assert refusal is not None and tuple(refusal) == ("workspace", "//attkr9/s", "unc"), refusal
+    assert policy.command_input_refusal("agents.start", {"workspace": "ws", "base_url": "http://attkr9:8080"}) is None
