@@ -1,6 +1,7 @@
 """Pass #2: canonical effect truth, repository bootstrap, CI repair loop."""
 from __future__ import annotations
 
+import os
 import subprocess
 
 import pytest
@@ -146,6 +147,50 @@ def test_clone_into_symlink_target_refused(tmp_path):
     link.symlink_to(real_dir)
     with pytest.raises(BootstrapError):
         clone("https://github.com/acme/api.git", str(link))
+
+
+def _source_repo(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    for args in (["init", "-q"], ["-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                                   "commit", "-q", "--allow-empty", "-m", "first"]):
+        subprocess.run(["git", "-C", str(source), *args], check=True, capture_output=True)
+    return source
+
+
+def test_clone_on_windows_never_hard_links_the_source_objects(tmp_path, monkeypatch):
+    # Phase C pick 3 (owner, 2026-10-23): the Windows broker refuses hard-linked files, so a clone
+    # from a folder on the same disk must copy git's objects, not hard link them.
+    import core.repoops.bootstrap as bootstrap
+    from core.remote_forge.identity import IdentityError
+
+    monkeypatch.setattr(bootstrap, "_IS_WINDOWS", True, raising=False)
+    source = _source_repo(tmp_path)
+    dest = tmp_path / "dest"
+    with pytest.raises(IdentityError):
+        # A local path is no forge URL, so naming the clone fails after git has already cloned.
+        clone(str(source), str(dest))
+    objects = [p for p in (dest / ".git" / "objects").rglob("*") if p.is_file()]
+    assert objects
+    assert all(os.stat(p).st_nlink == 1 for p in objects), [str(p) for p in objects if os.stat(p).st_nlink > 1]
+
+
+def test_clone_passes_no_hardlinks_only_on_windows(tmp_path, monkeypatch):
+    import core.repoops.bootstrap as bootstrap
+
+    seen = []
+
+    def fake_run(args, **kwargs):
+        seen.append(list(args))
+        return subprocess.CompletedProcess(args, 1, "", "stopped by the test")
+
+    monkeypatch.setattr(bootstrap.subprocess, "run", fake_run)
+    for windows in (True, False):
+        monkeypatch.setattr(bootstrap, "_IS_WINDOWS", windows, raising=False)
+        with pytest.raises(BootstrapError):
+            clone("https://github.com/acme/api.git", str(tmp_path / f"dest-{windows}"))
+    assert "--no-hardlinks" in seen[0]
+    assert "--no-hardlinks" not in seen[1]
 
 
 # ================================================================ PART C — create remote repo
