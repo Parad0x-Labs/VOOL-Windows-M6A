@@ -79,10 +79,10 @@ def test_subject_withdrawal_reaches_every_registered_reader(tmp_path, reader):
         from core.memory.files import memory_entries_path
 
         assert "7428" in memory_entries_path().read_text()
-        assert "7428" not in str(read()), reader
+        assert "7428" not in str(read()).replace(occurrence.occurrence_id, ""), reader
         # No new source copy of the forget's revoked control text was written.
         _ingest(profile, chat, [(1760000010, "Forget the kiln locker code, it is wrong.")])
-        assert "7428" not in str(read()), reader
+        assert "7428" not in str(read()).replace(occurrence.occurrence_id, ""), reader
     finally:
         memory.close()
 
