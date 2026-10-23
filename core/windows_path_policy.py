@@ -34,9 +34,9 @@ from __future__ import annotations
 import ntpath
 import os
 import re
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any, NamedTuple
-from urllib.parse import unquote
+from urllib.parse import unquote, unwrap
 
 #: Patched by tests to drive the Windows decision on any platform; read at call time.
 _IS_WINDOWS: bool = os.name == "nt"
@@ -90,6 +90,14 @@ _COMMAND_PATH_FIELDS: dict[str, tuple[str, ...]] = {
     "council.convene": ("workspace_root",),
     "update.rollback": ("expected_app_path", "expected_data_dir"),
     "logs.verify": ("segment_id",),
+}
+#: The command-registry fields that carry the base URL a command's own HTTP calls are sent to, by
+#: command. The handler appends a route (`base_url + "/api/chat"`) and urllib opens the result, and
+#: urllib's file handler stats a `file:` URL's path: `file:////host/s` opens `\\host\s\api\chat`.
+_COMMAND_URL_FIELDS: dict[str, tuple[str, ...]] = {
+    "agents.start": ("base_url",),
+    "council.convene": ("base_url",),
+    "council.resume": ("base_url",),
 }
 #: The fields of a chat request, and of its source context, that name the folder the turn works in,
 #: and the VOOL home it opens its memory store under (`runtime_home`, which the served turn keeps when
@@ -309,7 +317,12 @@ def _argument_kind(intent: str, key: str, value: str, network_only: bool) -> str
         # without opening it, so they are never judged.
         return ""
     if network_only and kind not in NETWORK_KINDS:
-        return ""
+        # The network tier hands a root- or drive-relative value on to the tool, which may expand the
+        # variables in it: on Windows `\%HOMEPATH%\x` is `\\Users\you\x`, a share, once expanded. So the
+        # value is judged again as expanded, once, and refused only for a network kind there.
+        expanded = ntpath.expandvars(value)
+        kind = _argument_kind(intent, key, expanded, False) if expanded != value else ""
+        return kind if kind in NETWORK_KINDS else ""
     return kind
 
 
@@ -344,7 +357,8 @@ def argument_refusal(intent: Any, arguments: Any, *, network_only: bool = False)
     gate and the dispatcher read (`core.tool_argument_aliases`) binds a model's near-miss names, such as
     `file_path` or `uri`, onto the contract's own fields. A code-task or repo step is also checked as the
     inner call it runs, under that inner intent's own key rules. `network_only` applies the network tier
-    to every argument; the executor passes it for MCP and plugin tools.
+    to every argument, and judges a partial path that carries `%VAR%` or `$VAR` again as expanded;
+    `tool_call_refusal` passes it for MCP and plugin tools.
     """
     if not _IS_WINDOWS:
         return None
@@ -359,10 +373,57 @@ def argument_refusal(intent: Any, arguments: Any, *, network_only: bool = False)
     return refusal
 
 
-def _fields_refusal(fields: Mapping[str, Any], names: tuple[str, ...]) -> PathRefusal | None:
+def _server_defined_tool(intent: str) -> bool:
+    """Whether `intent` is an MCP tool or a registered plugin tool. A registry that cannot be read
+    answers False, which keeps the full rule."""
+    try:
+        from core.execution.mcp_bridge import is_mcp_intent
+        from core.tool_registry import tool_for_intent
+
+        if is_mcp_intent(intent):
+            return True
+        contract = tool_for_intent(intent)
+    except Exception:
+        return False
+    return contract is not None and str(getattr(contract, "source", "") or "").startswith("plugin:")
+
+
+def tool_call_refusal(intent: Any, arguments: Any) -> PathRefusal | None:
+    """On Windows, `argument_refusal` in the tier the tool doors judge `intent(arguments)` on, or None.
+    Off Windows, always None.
+
+    An MCP or plugin tool is judged on the network tier, because its arguments mean whatever its server
+    says; every other tool, a step that runs one included, on the full rule. The model executor, the
+    authorized execution boundary and the runtime door all ask this, so a call the executor put to the
+    operator is not refused by the next door once it is approved. The network tier is applied directly,
+    not only to what the full rule refuses: the full rule judges a URL name, and an ambiguous name of a
+    tool that is not a file tool, on the network tier as typed, and only the network tier judges such a
+    value again as expanded.
+    """
+    if not _IS_WINDOWS:
+        return None
+    if _server_defined_tool(str(intent or "")):
+        return argument_refusal(intent, arguments, network_only=True)
+    return argument_refusal(intent, arguments)
+
+
+def _base_url_kind(value: str) -> str:
+    """`classify_url` for a base URL that a route is appended to before urllib opens it.
+
+    The URL urllib opens is judged as well as the value: urllib first drops a `URL:` wrapper
+    (`URL:file:////host/s` opens the share), and a file URL with no host and no path names a share
+    once the route is appended (`file:///` plus `/api/chat` is `file:////api/chat`, the share
+    `\\\\api\\chat`).
+    """
+    return classify_url(value) or classify_url(unwrap(value) + "/api")
+
+
+def _fields_refusal(
+    fields: Mapping[str, Any], names: tuple[str, ...], judge: Callable[[str], str] = classify
+) -> PathRefusal | None:
     for name in names:
         for text in _texts(fields.get(name)):
-            kind = classify(text)
+            kind = judge(text)
             if kind:
                 return PathRefusal(name, text, kind)
     return None
@@ -370,12 +431,16 @@ def _fields_refusal(fields: Mapping[str, Any], names: tuple[str, ...]) -> PathRe
 
 def command_input_refusal(command_id: Any, input_data: Any) -> PathRefusal | None:
     """On Windows, the first filesystem field of a command-registry call that the full rule refuses, or
-    None. Off Windows, always None. Only the fields in `_COMMAND_PATH_FIELDS` are read."""
+    None. Off Windows, always None. Only the fields in `_COMMAND_PATH_FIELDS` are read, and the base
+    URLs in `_COMMAND_URL_FIELDS`, which are judged as the URL their handler opens."""
     if not _IS_WINDOWS:
         return None
     if not isinstance(input_data, Mapping):
         return None
-    return _fields_refusal(input_data, _COMMAND_PATH_FIELDS.get(str(command_id or ""), ()))
+    command = str(command_id or "")
+    return _fields_refusal(input_data, _COMMAND_PATH_FIELDS.get(command, ())) or _fields_refusal(
+        input_data, _COMMAND_URL_FIELDS.get(command, ()), _base_url_kind
+    )
 
 
 def chat_workspace_refusal(body: Any, source_context: Any) -> PathRefusal | None:

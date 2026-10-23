@@ -45,6 +45,7 @@ import contextlib
 import errno
 import hashlib
 import json
+import logging
 import os
 import platform
 import re
@@ -191,6 +192,7 @@ _JPEG_PRIVATE_MARKERS = frozenset({0xE1, 0xED, 0xFE})
 _WEBP_PRIVATE_CHUNKS = frozenset({b"EXIF", b"XMP "})
 
 _LOCK = threading.RLock()
+_LOGGER = logging.getLogger(__name__)
 
 
 class AttachmentRefused(Exception):
@@ -2603,6 +2605,28 @@ def _erase_record(record: dict[str, Any]) -> None:
     _write_manifest(record)
 
 
+def _forget_activity(record: dict[str, Any], token: str, *, erased: bool, before: str, words: Iterable[str] = ()) -> None:
+    """The Activity row every document-store write leaves (BLACKBOX_DOCUMENT_STORE_CAPABILITY):
+    names, ids and hashes, never contents -- and never a name that itself holds the forgotten words."""
+    from core.runtime_task_events import emit_runtime_event
+
+    session = str(record.get("session_id") or "")
+    name = str(record.get("name") or "")
+    label = (name if name and not _name_carries(name, token, words, forget_written=_forget_written(record))
+             else str(record.get("id") or "a document"))
+    event_type = "attachment_erased" if erased else "attachment_redacted"
+    message = (f"Forget erased {label}: it held words this chat asked to forget" if erased
+               else f"Forget removed the forgotten words from {label}; the rest of it stays")
+    details = {"attachment_id": str(record.get("id") or ""), "reason": "forget", "state": str(record.get("state") or ""),
+               "sha256_before": before, "sha256_after": "" if erased else str(record.get("sha256") or "")}
+    try:
+        emit_runtime_event({"session_id": session, "runtime_session_id": session},
+                           event_type=event_type, message=message, details=details)
+    except Exception as exc:  # the erasure stands; the missing row is reported, never its contents
+        _LOGGER.warning("forget: the %s Activity row for %s could not be written: %s",
+                        event_type, details["attachment_id"], type(exc).__name__)
+
+
 def forget_in_documents(session_id: str, token: str) -> int:
     """Remove `token` from every stored record of THIS chat. Returns how many records changed.
 
@@ -2637,27 +2661,32 @@ def forget_in_documents(session_id: str, token: str) -> int:
             plans.append((record, text_hit, name_hit, renamed))
         for record, text_hit, name_hit, renamed in plans:
             changed += 1
+            before = str(record.get("sha256") or "")
             if name_hit:
                 # The name is sent to the model and shown on receipts: it goes like content does.
                 record["name"] = renamed
                 record["renamed_by_forget_at"] = _iso(_utcnow())
                 if not text_hit:
                     _write_manifest(record)
+                    _forget_activity(record, token, erased=False, before=before, words=words)
                     continue
             path = _bytes_path(record["id"])
             derivative = _derivative_path(record["id"])
             if record.get("kind") != "text" or derivative.exists() or not path.exists() or path.is_symlink():
                 _erase_record(record)
+                _forget_activity(record, token, erased=True, before=before, words=words)
                 continue
             original = _open_regular(path)
             rewritten = _without_carrying_lines(original.decode("utf-8", errors="replace"), token)
             data = rewritten.encode("utf-8")
             if _carries(rewritten, token) or not data:
                 _erase_record(record)
+                _forget_activity(record, token, erased=True, before=before, words=words)
                 continue
             _write_atomic(path, data)
             if _open_regular(path) != data:
                 _erase_record(record)
+                _forget_activity(record, token, erased=True, before=before, words=words)
                 continue
             record["original_sha256"] = record.get("original_sha256") or record.get("sha256")
             record["sha256"] = hashlib.sha256(data).hexdigest()
@@ -2667,6 +2696,7 @@ def forget_in_documents(session_id: str, token: str) -> int:
             record["redacted_at"] = _iso(_utcnow())
             record["forget_redactions"] = int(record.get("forget_redactions") or 0) + 1
             _write_manifest(record)
+            _forget_activity(record, token, erased=False, before=before, words=words)
     return changed
 
 
@@ -2883,9 +2913,9 @@ BLACKBOX_DOCUMENT_STORE_CAPABILITY: dict[str, Any] = {
     "receipt_lifecycle": "terminal_only",
     "rollback_support": "none",
     "recorder": "core.chat_attachments",
-    "notes": "stage_document / stage_attachment write <id>.bin then <id>.json under active_data_dir()/chat_attachments; erase_document and erase_session_documents unlink them; every write leaves an Activity row named for the write.",
+    "notes": "stage_document / stage_attachment write <id>.bin then <id>.json under active_data_dir()/chat_attachments; erase_document and erase_session_documents unlink them; a forget rewrites (attachment_redacted) or erases (attachment_erased) a document of its chat; every write leaves an Activity row named for the write.",
     "paths": ["{data_dir}/chat_attachments/{attachment_id}.bin", "{data_dir}/chat_attachments/{attachment_id}.json"],
-    "receipts": ["attachment_staged", "attachment_bound", "attachment_read", "attachment_released", "attachment_erased", "attachment_removed", "attachment_refused"],
+    "receipts": ["attachment_staged", "attachment_bound", "attachment_read", "attachment_released", "attachment_erased", "attachment_removed", "attachment_refused", "attachment_redacted"],
 }
 
 

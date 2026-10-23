@@ -381,3 +381,77 @@ def test_off_windows_a_heartbeat_poll_reads_a_double_slash_path_as_on_base(tmp_p
     windows_host.on()
     refused = heartbeat_poll_fast_path(poll, source_context={})
     assert refused is not None and "is a network or device path" in refused, refused
+
+
+def test_off_windows_a_typed_workspace_folder_is_placed_as_on_base_and_alike_with_the_seam_on(
+    tmp_path: Path, windows_host
+) -> None:
+    # Off Windows the planner resolves a folder typed inside the workspace, as on base. With the seam on,
+    # the same text is a drive-less path that the planner reads without resolving it. That reading must
+    # give the folder POSIX resolved: a dot folder keeps its dot, `.` and `..` are read alike, and a
+    # folder named `repo` is that folder.
+    from core.execution.planner import _clean_workspace_directory_path
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(exist_ok=True)
+    root = str(workspace)
+    placed = {
+        f"{root}/.github/workflows": ".github/workflows",
+        f"{root}/./notes": "notes",
+        f"{root}/a/../b": "b",
+        f"{root}/../workspace/notes": "notes",
+        f"{root}/a/..": "",
+        f"{root}/repo": "repo",
+    }
+    windows_host.off()
+    posix = {typed: _clean_workspace_directory_path(typed, workspace_root=root) for typed in placed}
+    windows_host.on()
+    windows = {typed: _clean_workspace_directory_path(typed, workspace_root=root) for typed in placed}
+
+    assert posix == placed
+    assert windows == placed
+
+
+def test_off_windows_a_typed_folder_the_windows_reading_places_apart_is_placed_as_on_base(
+    tmp_path: Path, windows_host
+) -> None:
+    # The Windows reading of a drive-less workspace folder trims trailing punctuation and places no
+    # folder for a blank or padded part; POSIX resolves the same text as base does. These spellings
+    # tell the two readings apart, so the Windows reading must never run off Windows.
+    from core.execution.planner import _clean_workspace_directory_path
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(exist_ok=True)
+    root = str(workspace)
+    typed = [f"{root}/notes.", f"{root}/notes!", f"{root}/ /x", f"{root}/ ../x"]
+    windows_host.off()
+    posix = [_clean_workspace_directory_path(text, workspace_root=root) for text in typed]
+    windows_host.on()
+    windows = [_clean_workspace_directory_path(text, workspace_root=root) for text in typed]
+
+    assert posix == ["notes.", "notes!", " /x", " ../x"]
+    assert windows == ["notes", "notes", "", ""]
+
+
+def test_off_windows_the_tool_doors_tier_never_answers_and_reads_no_registry(monkeypatch, windows_host) -> None:
+    # The executor, the authorized boundary and the runtime door ask `tool_call_refusal`, which picks the
+    # network tier for MCP and plugin tools from the tool registry. Off Windows it answers None before it
+    # reads anything, the registry included; with the seam on, the MCP calls naming a share are refused.
+    from core import tool_registry
+
+    lookups = _spy(monkeypatch, tool_registry, "tool_for_intent")
+    calls = [
+        (intent, {"path": value})
+        for intent in ("mcp.demo.read_file", "demo.reader", "machine.read_file")
+        for value in ("//attkr9/s/x", "\\\\attkr9\\s\\x", "/attkr9/x", "C:attkr9\\x")
+    ]
+    windows_host.off()
+
+    answers = [windows_path_policy.tool_call_refusal(intent, arguments) for intent, arguments in calls]
+    assert answers == [None] * len(calls), answers
+    assert lookups == [], "the tier was looked up in the registry off Windows"
+
+    windows_host.on()
+    for intent, arguments in calls[:2]:
+        refused = windows_path_policy.tool_call_refusal(intent, arguments)
+        assert refused is not None and refused.kind == "unc", (intent, arguments, refused)
