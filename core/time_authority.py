@@ -53,7 +53,7 @@ class TimeAuthority:
         identifier.  Never silently falls back to UTC or local time.
         """
         tz = self.ZONE_INFO(timezone_name)
-        return datetime.now(tz)
+        return self.now_utc().astimezone(tz)  # the one UTC source, so a swapped clock moves this too
 
     def monotonic_now(self) -> float:
         """Return a monotonic float suitable for measuring elapsed time.
