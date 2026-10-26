@@ -8,53 +8,45 @@ from core.context_manifest import (
     context_manifest_storage_dict,
 )
 from storage.db import get_connection
+from storage.lazy_schema import ensure_schema
 
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _init_table() -> None:
-    conn = get_connection()
-    try:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS provenance_manifests (
-                manifest_id TEXT PRIMARY KEY,
-                task_id TEXT NOT NULL,
-                trace_id TEXT NOT NULL,
-                manifest_json TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_provenance_trace_id ON provenance_manifests(trace_id)"
-        )
-        conn.executescript(
-            """
-            CREATE TRIGGER IF NOT EXISTS provenance_manifest_no_update
-            BEFORE UPDATE ON provenance_manifests
-            BEGIN
-                SELECT RAISE(
-                    ABORT,
-                    'context assembly manifests are immutable'
-                );
-            END;
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS provenance_manifests (
+    manifest_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    trace_id TEXT NOT NULL,
+    manifest_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_provenance_trace_id ON provenance_manifests(trace_id);
 
-            CREATE TRIGGER IF NOT EXISTS provenance_manifest_no_delete
-            BEFORE DELETE ON provenance_manifests
-            BEGIN
-                SELECT RAISE(
-                    ABORT,
-                    'context assembly manifests are immutable'
-                );
-            END;
-            """
-        )
-        conn.commit()
-    finally:
-        conn.close()
+CREATE TRIGGER IF NOT EXISTS provenance_manifest_no_update
+BEFORE UPDATE ON provenance_manifests
+BEGIN
+    SELECT RAISE(
+        ABORT,
+        'context assembly manifests are immutable'
+    );
+END;
+
+CREATE TRIGGER IF NOT EXISTS provenance_manifest_no_delete
+BEFORE DELETE ON provenance_manifests
+BEGIN
+    SELECT RAISE(
+        ABORT,
+        'context assembly manifests are immutable'
+    );
+END;
+"""
+
+
+def _init_table() -> None:
+    ensure_schema(_SCHEMA)
 
 
 def store_manifest(manifest: ContextManifest) -> None:

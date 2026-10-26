@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from storage.db import get_connection
+from storage.lazy_schema import ensure_schema
 
 # Reservations written to record money that was ALREADY spent (a retry the provider billed under
 # a reservation that had closed). They are charges, not fresh calls, so they must not consume a
@@ -36,32 +37,28 @@ class SpendReservation:
     status: str
 
 
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS model_spend_reservations (
+    reservation_id TEXT PRIMARY KEY,
+    model_call_id TEXT NOT NULL UNIQUE,
+    task_id TEXT NOT NULL,
+    subtask_id TEXT NOT NULL DEFAULT '',
+    model_id TEXT NOT NULL,
+    reserved_usd REAL NOT NULL,
+    actual_usd REAL NOT NULL DEFAULT 0,
+    status TEXT NOT NULL,
+    billing_ambiguous INTEGER NOT NULL DEFAULT 0,
+    created_ts REAL NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_model_spend_task ON model_spend_reservations(task_id, created_ts);
+CREATE INDEX IF NOT EXISTS idx_model_spend_status ON model_spend_reservations(status, created_ts);
+"""
+
+
 def _init_table() -> None:
-    conn = get_connection()
-    try:
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS model_spend_reservations (
-                reservation_id TEXT PRIMARY KEY,
-                model_call_id TEXT NOT NULL UNIQUE,
-                task_id TEXT NOT NULL,
-                subtask_id TEXT NOT NULL DEFAULT '',
-                model_id TEXT NOT NULL,
-                reserved_usd REAL NOT NULL,
-                actual_usd REAL NOT NULL DEFAULT 0,
-                status TEXT NOT NULL,
-                billing_ambiguous INTEGER NOT NULL DEFAULT 0,
-                created_ts REAL NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_model_spend_task ON model_spend_reservations(task_id, created_ts);
-            CREATE INDEX IF NOT EXISTS idx_model_spend_status ON model_spend_reservations(status, created_ts);
-            """
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    ensure_schema(_SCHEMA)
 
 
 def reserve_spend(
