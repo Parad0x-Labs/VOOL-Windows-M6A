@@ -528,10 +528,17 @@ def test_the_window_watchdog_decides_a_stall_of_the_api(
     assert reopened_on == str(popen.last("api").pid)
 
 
+@pytest.mark.parametrize("earlier_run", [False, True], ids=["first run", "after a run an answer ended"])
 def test_two_unanswered_checks_are_never_a_restart_even_across_a_slow_pass(
-    supervisor: BundleSupervisor, machine: _Machine, monkeypatch: pytest.MonkeyPatch, popen: _Children, stops: list[str]
+    supervisor: BundleSupervisor,
+    machine: _Machine,
+    monkeypatch: pytest.MonkeyPatch,
+    popen: _Children,
+    stops: list[str],
+    earlier_run: bool,
 ) -> None:
     # However long the supervisor's own work makes a pass, two unanswered checks are never a restart.
+    # Nor do misses from an earlier run that a good answer ended count toward a later one: "3 in a row".
     # Here the machine is loaded: every step of the pass takes 4 s longer than it should (under the 5 s
     # that would make it a pause), and Ollama, which never answered, is stopped for its startup timeout
     # with the whole 18 s a stop may take. All of it is awake time that counts toward the API's span.
@@ -559,6 +566,9 @@ def test_two_unanswered_checks_are_never_a_restart_even_across_a_slow_pass(
         return False
 
     _answering_for_a_while(supervisor, machine, "api", popen)
+    if earlier_run:
+        _passes(supervisor, machine, "api", False, popen, 2)  # a busy moment...
+        _passes(supervisor, machine, "api", True, popen, 1)  # ...that a good answer ended
     _passes(supervisor, machine, "api", False, popen, 1)  # the API's first unanswered check
     first_miss = machine.tick
     machine.awake(load)
