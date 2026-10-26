@@ -684,6 +684,9 @@ class BundleSupervisor:
                 capture_output=True,
                 check=False,
                 timeout=_STALE_API_CLEANUP_TIMEOUT_SECONDS,
+                # The supervisor runs under pythonw.exe, with no console: without this, PowerShell
+                # gets a console window of its own until -WindowStyle Hidden takes effect.
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except OSError as exc:
             self._log(f"stale api cleanup unavailable: {type(exc).__name__}: {exc}")
