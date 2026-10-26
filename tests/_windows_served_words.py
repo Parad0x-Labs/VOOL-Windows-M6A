@@ -61,12 +61,29 @@ CONTACTS_WORDS: tuple[tuple[str, str, int], ...] = (
 )
 
 
+#: (Mac text, Windows text) for the shortcut key caps, as the chat page's palette and companion drawer fragments carry
+#: them: every shortcut already answers Ctrl, and on Windows its key cap says so.
+SHORTCUT_WORDS: tuple[tuple[str, str], ...] = (
+    ("p.newChat(); }, '\\⌘N');", "p.newChat(); }, 'Ctrl+N');"),
+    ("p.togglePanel(); }, '\\⌘J');", "p.togglePanel(); }, 'Ctrl+J');"),
+    ("p.openModelMenu(); }, '\\⌘M');", "p.openModelMenu(); }, 'Ctrl+M');"),
+    ("p.openSettings(); }, '\\⌘,');", "p.openSettings(); }, 'Ctrl+,');"),
+    *((f"<kbd>⌘{key}</kbd>", f"<kbd>Ctrl+{key}</kbd>") for key in "KNJ/F,"),
+    ("chip.textContent = '\\u2318N';", "chip.textContent = 'Ctrl+N';"),
+    ("toggleDrawer, '\\u2318/');", "toggleDrawer, 'Ctrl+/');"),
+)
+
+
 def as_the_mac_page(page: str, host: str = "win32") -> str:
     """``page``, served on ``host`` (a sys.platform value), with that host's texts above put back to their Mac text:
     every text on Windows, only the card on any other host that is not a Mac."""
     pairs: tuple[tuple[str, str], ...] = ((MAC_CARD, NEUTRAL_CARD),)
     if host == "win32":
-        pairs += (*FILE_ACTION_WORDS, *((mac, windows) for mac, windows, _drawn in WALLET_WORDS + CONTACTS_WORDS))
+        pairs += (
+            *FILE_ACTION_WORDS,
+            *((mac, windows) for mac, windows, _drawn in WALLET_WORDS + CONTACTS_WORDS),
+            *SHORTCUT_WORDS,
+        )
     for mac_text, windows_text in pairs:
         page = page.replace(windows_text, mac_text)
     return page
