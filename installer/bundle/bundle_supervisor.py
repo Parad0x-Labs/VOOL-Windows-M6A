@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import http.client
 import json
 import os
 import subprocess
@@ -70,6 +71,19 @@ _POWERSHELL_SINGLE_QUOTES = "'\u2018\u2019\u201a\u201b"
 
 
 _NOTES_COPY_MARKER = "notes-copied-from-program-folder.json"
+
+
+class _NoProbeRedirect(urllib.request.HTTPRedirectHandler):
+    """A health check judges the answer of 127.0.0.1 itself, never a page it points elsewhere."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+# No proxy: urllib otherwise sends a 127.0.0.1 probe to the proxy in HTTP_PROXY or the Windows
+# Internet settings (their "<local>" bypass covers only names without a dot). The window host's
+# probe already goes direct; the two must agree on whether the API answers.
+_PROBE_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoProbeRedirect())
 
 
 def _tick() -> float:
@@ -361,9 +375,14 @@ class BundleSupervisor:
 
     def _healthy(self, url: str) -> bool:
         try:
-            with urllib.request.urlopen(url, timeout=_PROBE_TIMEOUT_SECONDS) as response:
-                return 200 <= int(response.status) < 400
-        except (OSError, urllib.error.URLError, ValueError):
+            with _PROBE_OPENER.open(url, timeout=_PROBE_TIMEOUT_SECONDS) as response:
+                # Only a 2xx answer is healthy. The opener raises HTTPError for any other status, a
+                # redirect included (_NoProbeRedirect follows none), so a redirect or any other
+                # status is unhealthy.
+                return 200 <= int(response.status) < 300
+        except (OSError, urllib.error.URLError, ValueError, http.client.HTTPException):
+            # HTTPException: an answer that is not HTTP (BadStatusLine from another program on the
+            # port) is an unhealthy child, not an error that ends run() and stops every child.
             return False
 
     def _absorb_pause(self, expected: float, where: str) -> None:
