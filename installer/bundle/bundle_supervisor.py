@@ -16,9 +16,44 @@ from typing import Any
 
 from core.runtime_paths import native_runtime_home
 
+# Every age, retry time and unanswered span below is measured on _tick(), never the wall clock: a
+# clock set forward or back is not child age. _tick() is time.monotonic moved on by a fixed origin, so
+# a 0 left in started_at or next_attempt always reads as long past, however recently the host booted.
+# On Windows monotonic is GetTickCount64, which DOES count time the machine sleeps; _absorb_pause
+# takes such a pause back out.
+_TICK_ORIGIN_SECONDS = 86_400.0
 _POLL_SECONDS = 2.0
+# A child that has never answered its health check is stopped once it is this old.
 _STARTUP_TIMEOUT_SECONDS = 60.0
 _MAX_BACKOFF_SECONDS = 30.0
+# Each health probe waits at most this long per socket step, as the window host's probe does.
+_PROBE_TIMEOUT_SECONDS = 1.5
+# A child that HAS answered is stopped only after this many health checks in a row went unanswered
+# AND those checks span at least its time here. One slow answer (a busy API, a model pull on a slow
+# disk) is never a restart. The API's span is longer than the window host's own 30 s grace
+# (native_runtime_supervisor unhealthy_grace), so the window decides a stall of the API: one of up
+# to 30 s keeps the API and the window; a longer one closes the window on its own grace (exit 3),
+# and it reopens on the same API once that answers again. An API that stays hung is restarted 40 s
+# plus up to two passes after its first unanswered check (about 45 s; 48 s with Ollama hung too; up
+# to about 56 s when an Ollama stop with an 8 s taskkill falls inside the API's 40 s), and the window
+# reopens on the new one. Ollama has no window watching it, and a restart drops its loaded model and
+# any pull in progress.
+_UNANSWERED_CHECKS_BEFORE_RESTART = 3
+_UNANSWERED_SECONDS_BEFORE_RESTART = {"api": 40.0, "ollama": 60.0}
+# The restart backoff forgets earlier failures once a child has kept answering this long; a child
+# that answers once and then hangs keeps backing off further.
+_ANSWERING_SECONDS_BEFORE_BACKOFF_RESET = 60.0
+# A wait that overruns what it should take by more than this means this process was not running
+# (sleep, hibernation, a paused VM): the overrun is not counted as child age or unanswered time.
+# The supervisor's own work (a stop, a start, the state write) is awake time up to its own limit;
+# an overrun of more than this beyond that limit is a pause too. So a sleep that starts inside a
+# stop is not seen while the stop and the sleep together stay within 23 s (18 s plus this), and it
+# then counts in full as awake time toward every child's age and run of unanswered checks.
+# Each span is measured once, from where the one before it ended (_absorb_pause).
+_PAUSE_SECONDS = 5.0
+# The longest a stop of a child can take awake: taskkill's 8 s, then 5 s for the child to exit and
+# 5 s more after a kill.
+_STOP_SECONDS = 18.0
 # A relaunch that arrives while the window is still closing (the user clicked X, then the
 # shortcut) still reopens it if that window exits within this many seconds.
 _REOPEN_GRACE_SECONDS = 10.0
@@ -35,6 +70,11 @@ _POWERSHELL_SINGLE_QUOTES = "'\u2018\u2019\u201a\u201b"
 
 
 _NOTES_COPY_MARKER = "notes-copied-from-program-folder.json"
+
+
+def _tick() -> float:
+    """The clock of every child age, retry time and unanswered span (see the top of this file)."""
+    return time.monotonic() + _TICK_ORIGIN_SECONDS
 
 
 def _is_link(path: Path) -> bool:
@@ -139,6 +179,12 @@ class BundleSupervisor:
         self.next_attempt: dict[str, float] = {"ollama": 0.0, "api": 0.0, "window": 0.0}
         self.last_exit: dict[str, dict[str, Any]] = {}
         self.health: dict[str, dict[str, Any]] = {}
+        # When the current child first answered, and the run of unanswered checks since then.
+        self.answered_at: dict[str, float] = {}
+        self.unanswered: dict[str, int] = {}
+        self.unanswered_since: dict[str, float] = {}
+        # Where the last measured span ended (_absorb_pause); None before the first.
+        self._last_activity: float | None = None
         self.supervisor_started_at = time.time()
         self._lock_handle: Any | None = None
         self.window_started = False
@@ -315,13 +361,50 @@ class BundleSupervisor:
 
     def _healthy(self, url: str) -> bool:
         try:
-            with urllib.request.urlopen(url, timeout=1.5) as response:
+            with urllib.request.urlopen(url, timeout=_PROBE_TIMEOUT_SECONDS) as response:
                 return 200 <= int(response.status) < 400
         except (OSError, urllib.error.URLError, ValueError):
             return False
 
-    def _health_probe(self, name: str, url: str) -> bool:
+    def _absorb_pause(self, expected: float, where: str) -> None:
+        """Measure the span from the last measured instant to now, and take a pause of this whole
+        process in it back out of every child's age and unanswered span. The next span starts here,
+        so no span is measured twice or skipped; ages and spans are stamped at a measured instant
+        (_last_measured), so a pause after one is measured from there.
+
+        A span that overran ``expected`` by more than _PAUSE_SECONDS means the machine slept,
+        hibernated or its VM was paused. Only the overrun is taken out, so each pass still counts its
+        own poll interval and a hung child is still restarted after a bounded number of passes. The
+        answering time that resets the backoff is shifted too: a sleep is not a minute of answers."""
+        now = _tick()
+        since, self._last_activity = self._last_activity, now
+        if since is None:
+            return
+        overrun = now - since - expected
+        if overrun > _PAUSE_SECONDS:
+            for table in (self.started_at, self.unanswered_since, self.answered_at):
+                for name in table:
+                    table[name] += overrun
+            self._log(
+                f"supervisor was paused {overrun:.0f}s {where} (sleep, hibernation or a paused VM); "
+                "not counted as child age or unanswered time"
+            )
+
+    def _last_measured(self) -> float:
+        """The instant the last measured span ended (now, before any was measured)."""
+        return _tick() if self._last_activity is None else self._last_activity
+
+    def _checked(self, url: str, what: str) -> bool:
+        """One health check, with a pause of this process before or during it taken back out. Every
+        health check goes through here, the window's included: it runs on every pass until the API
+        first answers, and a sleep that starts while it waits is as much a pause as any other."""
+        self._absorb_pause(_POLL_SECONDS, f"before {what}")
         healthy = self._healthy(url)
+        self._absorb_pause(_PROBE_TIMEOUT_SECONDS, f"during {what}")
+        return healthy
+
+    def _health_probe(self, name: str, url: str) -> bool:
+        healthy = self._checked(url, f"the {name} health check")
         previous = self.health.get(name, {}).get("healthy")
         self.health[name] = {
             "url": url,
@@ -339,7 +422,7 @@ class BundleSupervisor:
         return env
 
     def _start(self, name: str, argv: list[str], *, cwd: Path, extra_env: dict[str, str] | None = None) -> None:
-        now = time.time()
+        now = _tick()
         if now < self.next_attempt[name]:
             return
         log_path = self.log_dir / f"{name}.log"
@@ -363,9 +446,13 @@ class BundleSupervisor:
             handle.close()
             self._schedule_retry(name, f"failed to start: {type(exc).__name__}: {exc}")
             return
+        # Our own work, expected to be quick: awake time up to that, a pause beyond (see _PAUSE_SECONDS).
+        # The child's age starts once it exists.
+        self._absorb_pause(0.0, f"while starting {name}")
         self.processes[name] = child
         self.handles[name] = handle
-        self.started_at[name] = now
+        self.started_at[name] = self._last_measured()
+        self._forget_answers(name)
         self.next_attempt[name] = now
         self.restart_counts[name] += 1
         self._write_state()
@@ -374,7 +461,7 @@ class BundleSupervisor:
     def _schedule_retry(self, name: str, reason: str) -> None:
         self.failures[name] += 1
         delay = min(_MAX_BACKOFF_SECONDS, 2 ** min(self.failures[name], 5))
-        self.next_attempt[name] = time.time() + delay
+        self.next_attempt[name] = _tick() + delay
         self.last_exit[name] = {
             "reason": str(reason)[:240],
             "at": time.time(),
@@ -384,6 +471,10 @@ class BundleSupervisor:
         self._write_state()
 
     def _stop_child(self, name: str) -> None:
+        # The first pass after a sleep can stop a child it finds exited before any health check has
+        # measured that sleep: measure the span up to the stop on its own, with the poll's allowance,
+        # so none of that sleep passes for the stop's own 18 s of awake time.
+        self._absorb_pause(_POLL_SECONDS, f"before stopping {name}")
         child = self.processes.pop(name, None)
         handle = self.handles.pop(name, None)
         if child is not None and child.poll() is None:
@@ -413,6 +504,24 @@ class BundleSupervisor:
             with contextlib.suppress(OSError):
                 handle.close()
         self.started_at.pop(name, None)
+        self._forget_answers(name)
+        # Our own work: awake time up to its own limit, a pause beyond that (see _PAUSE_SECONDS).
+        self._absorb_pause(_STOP_SECONDS, f"while stopping {name}")
+
+    def _forget_answers(self, name: str) -> None:
+        self.answered_at.pop(name, None)
+        self.unanswered.pop(name, None)
+        self.unanswered_since.pop(name, None)
+
+    def _answered(self, name: str, now: float) -> None:
+        """The current child answered a health check: its run of unanswered checks is over, and once
+        it has answered for long enough the restart backoff forgets earlier failures."""
+        self.unanswered.pop(name, None)
+        self.unanswered_since.pop(name, None)
+        answered_at = self.answered_at.setdefault(name, now)
+        if self.failures[name] and now - answered_at >= _ANSWERING_SECONDS_BEFORE_BACKOFF_RESET:
+            self._log(f"{name} answering for {now - answered_at:.0f}s; restart backoff reset")
+            self.failures[name] = 0
 
     def _reap_dead(self, name: str) -> None:
         child = self.processes.get(name)
@@ -422,29 +531,50 @@ class BundleSupervisor:
         self._stop_child(name)
         self._schedule_retry(name, f"exited returncode={returncode}")
 
+    def _watch_child(self, name: str, url: str) -> bool:
+        """Check one supervised child's health. True: start nothing this pass (the endpoint answers,
+        the live child still has time, or it was just stopped with its retry scheduled). False:
+        there is no live child, so the caller may start one.
+
+        A child that has never answered keeps the startup rule: stopped once it is
+        _STARTUP_TIMEOUT_SECONDS old. A child that has answered is stopped only after
+        _UNANSWERED_CHECKS_BEFORE_RESTART unanswered checks in a row spanning its
+        _UNANSWERED_SECONDS_BEFORE_RESTART."""
+        healthy = self._health_probe(name, url)
+        # When that check ended: a pause after it (one that starts while a change of health is logged
+        # included) is measured from there, once.
+        now = self._last_measured()
+        if healthy:
+            self._answered(name, now)
+            return True
+        child = self.processes.get(name)
+        if child is None or child.poll() is not None:
+            return False
+        if name not in self.answered_at:
+            if now - self.started_at.setdefault(name, now) <= _STARTUP_TIMEOUT_SECONDS:
+                return True
+            self._stop_child(name)
+            self._schedule_retry(name, "startup timeout")
+            return True
+        count = self.unanswered.get(name, 0) + 1
+        self.unanswered[name] = count
+        span = now - self.unanswered_since.setdefault(name, now)
+        if count < _UNANSWERED_CHECKS_BEFORE_RESTART or span < _UNANSWERED_SECONDS_BEFORE_RESTART[name]:
+            return True
+        self._stop_child(name)
+        self._schedule_retry(name, f"unresponsive: {count} health checks unanswered over {span:.0f}s")
+        return True
+
     def _ensure_ollama(self) -> None:
-        if self._health_probe("ollama", "http://127.0.0.1:11434/api/tags"):
-            return
-        child = self.processes.get("ollama")
-        if child is not None and child.poll() is None:
-            if time.time() - self.started_at.get("ollama", time.time()) <= _STARTUP_TIMEOUT_SECONDS:
-                return
-            self._stop_child("ollama")
-            self._schedule_retry("ollama", "startup timeout")
+        if self._watch_child("ollama", "http://127.0.0.1:11434/api/tags"):
             return
         self._start("ollama", [str(self.root / "ollama" / "ollama.exe"), "serve"], cwd=self.root)
 
     def _ensure_api(self) -> None:
-        if self._health_probe("api", "http://127.0.0.1:11435/healthz"):
-            return
-        child = self.processes.get("api")
-        if child is not None and child.poll() is None:
-            if time.time() - self.started_at.get("api", time.time()) <= _STARTUP_TIMEOUT_SECONDS:
-                return
-            self._stop_child("api")
-            self._schedule_retry("api", "startup timeout")
+        if self._watch_child("api", "http://127.0.0.1:11435/healthz"):
             return
         self._clear_stale_api_processes()
+        self._last_activity = _tick()  # the scan is our own work, not a pause
         self._start(
             "api",
             [str(self.root / "python" / "python.exe"), str(self.root / "app" / "apps" / "vool_api_server.py"), "--port", "11435"],
@@ -499,7 +629,16 @@ class BundleSupervisor:
 
     def _ensure_window(self) -> None:
         """Open the native UI once the API is reachable; closing the UI is user intent."""
-        if self.window_started or not self._healthy("http://127.0.0.1:11435/healthz"):
+        if self.window_started:
+            return
+        healthy = self._checked("http://127.0.0.1:11435/healthz", "the window's health check")
+        api = self.processes.get("api")
+        if healthy and api is not None and api.poll() is None:
+            # The API this supervisor started answered, as if to its own check: it is past the
+            # startup rule (one late /healthz right after the window opens on it is no startup
+            # timeout), and its run of unanswered checks starts over.
+            self._answered("api", self._last_measured())
+        if not healthy:
             return
         # This supervisor owns the API, so the window host attaches to it instead of trying to
         # own one: it refuses an occupied port in owned mode, and refuses any runtime when it
@@ -557,22 +696,28 @@ class BundleSupervisor:
             self.window_reopen_until = 0.0
 
     def _write_state(self) -> None:
+        wall, tick = time.time(), _tick()
         payload = {
             "schema": "vool.bundle_supervisor.v1",
             "root": str(self.root),
             "supervisor_pid": os.getpid(),
             "started_at": self.supervisor_started_at,
-            "updated_at": time.time(),
+            "updated_at": wall,
             "pids": {name: child.pid for name, child in self.processes.items() if child.poll() is None},
             "model": self._model(),
             "health": self.health,
             "failures": self.failures,
             "restart_counts": self.restart_counts,
-            "next_attempt": self.next_attempt,
+            # Kept on _tick(); written as wall-clock epoch seconds (0.0: never scheduled) for whoever
+            # reads the file.
+            "next_attempt": {name: wall + at - tick if at else 0.0 for name, at in self.next_attempt.items()},
             "last_exit": self.last_exit,
         }
         with contextlib.suppress(OSError):
             self.state_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        # Our own work, expected to be quick: awake time up to that, a pause beyond (see _PAUSE_SECONDS).
+        # Measured from the last measured instant, so the bookkeeping since then is measured too.
+        self._absorb_pause(0.0, "while writing the state file")
 
     def run(self, *, once: bool = False) -> int:
         self.run_dir.mkdir(parents=True, exist_ok=True)
