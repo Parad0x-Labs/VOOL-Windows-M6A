@@ -62,6 +62,17 @@ _STALE_API_CLEANUP_TIMEOUT_SECONDS = 30.0
 # A relaunch that arrives while the window is still closing (the user clicked X, then the
 # shortcut) still reopens it if that window exits within this many seconds.
 _REOPEN_GRACE_SECONDS = 10.0
+# A window reopened after its runtime was lost whose host exits 1 within this much awake time of its
+# start never attached: the host checks the API once as it starts, and exits 1 at once without
+# showing a window when that check misses. Its life is measured up to the first measured instant
+# after its exit (_absorb_pause notes the exit there), not up to the pass that finds it exited: that
+# overshoots the exit by at most one step of the supervisor's own work, the step's own time plus
+# _PAUSE_SECONDS (35 s for the stale-API scan). Such a window is opened again with the restart
+# backoff, at most _WINDOW_REOPEN_RETRIES times in a row (2 + 4 + 8 + 16 + 30 + 30 s, about 90 s of
+# tries), and each new runtime loss starts the tries over. A reopened window that lived longer had
+# attached: its exit 1 is a forced end, and it stays closed.
+_WINDOW_ATTACH_SECONDS = 60.0
+_WINDOW_REOPEN_RETRIES = 6
 _WINDOWS_SCRIPT_ARGUMENT_PREFIX = (
     r'^(?:\x22(?:[^\x22]*\\)?pythonw?\.exe\x22|(?:[^\s\x22]*\\)?pythonw?\.exe)'
     r'(?:\s+-[bBdEhIiOPqRsSuvVx]+'
@@ -207,6 +218,11 @@ class BundleSupervisor:
         self._lock_handle: Any | None = None
         self.window_started = False
         self.window_reopen_until = 0.0
+        # Set by a window's exit 3 and cleared by any exit but 1: the window opening or open now is
+        # one this supervisor reopened after its runtime was lost.
+        self._window_lost_runtime = False
+        # The first measured instant at which such a window was seen exited (_absorb_pause).
+        self.exit_seen_at: dict[str, float] = {}
 
     def _manifest(self) -> dict[str, Any]:
         path = self.root / "bundle_manifest.json"
@@ -398,20 +414,28 @@ class BundleSupervisor:
         A span that overran ``expected`` by more than _PAUSE_SECONDS means the machine slept,
         hibernated or its VM was paused. Only the overrun is taken out, so each pass still counts its
         own poll interval and a hung child is still restarted after a bounded number of passes. The
-        answering time that resets the backoff is shifted too: a sleep is not a minute of answers."""
+        answering time that resets the backoff is shifted too: a sleep is not a minute of answers.
+
+        The exit of a window reopened after a runtime loss is noted at the first measured instant
+        after it, once this span's pause is taken out: _reap_window measures the window's life to
+        there. No other window is polled here."""
         now = _tick()
         since, self._last_activity = self._last_activity, now
         if since is None:
             return
         overrun = now - since - expected
         if overrun > _PAUSE_SECONDS:
-            for table in (self.started_at, self.unanswered_since, self.answered_at):
+            for table in (self.started_at, self.unanswered_since, self.answered_at, self.exit_seen_at):
                 for name in table:
                     table[name] += overrun
             self._log(
                 f"supervisor was paused {overrun:.0f}s {where} (sleep, hibernation or a paused VM); "
                 "not counted as child age or unanswered time"
             )
+        window = self.processes.get("window")
+        if self._window_lost_runtime and window is not None and "window" not in self.exit_seen_at:
+            if window.poll() is not None:
+                self.exit_seen_at["window"] = now
 
     def _last_measured(self) -> float:
         """The instant the last measured span ended (now, before any was measured)."""
@@ -475,6 +499,7 @@ class BundleSupervisor:
         self.processes[name] = child
         self.handles[name] = handle
         self.started_at[name] = self._last_measured()
+        self.exit_seen_at.pop(name, None)
         self._forget_answers(name)
         self.next_attempt[name] = now
         self.restart_counts[name] += 1
@@ -527,6 +552,7 @@ class BundleSupervisor:
             with contextlib.suppress(OSError):
                 handle.close()
         self.started_at.pop(name, None)
+        self.exit_seen_at.pop(name, None)
         self._forget_answers(name)
         # Our own work: awake time up to its own limit, a pause beyond that (see _PAUSE_SECONDS).
         self._absorb_pause(_STOP_SECONDS, f"while stopping {name}")
@@ -692,16 +718,39 @@ class BundleSupervisor:
 
     def _reap_window(self) -> None:
         """A window that closed because its runtime was lost (vool_window exit 3, e.g. the API was
-        restarted) reopens once the API answers again. Any other exit -- the user closing the
+        restarted) reopens once the API answers again. A window reopened that way that exits 1 soon
+        after its start never attached, and is tried again with the restart backoff, a few times
+        (_WINDOW_ATTACH_SECONDS, _WINDOW_REOPEN_RETRIES). Any other exit -- the user closing the
         window included -- stays closed until the user launches VOOL again."""
         child = self.processes.get("window")
         if child is None or child.poll() is None:
             return
         returncode = child.poll()
+        # Its life in awake time, up to the first measured instant its exit was seen at (the last
+        # one, if it exited after that); _stop_child forgets its start.
+        started = self.started_at.get("window")
+        exited = self.exit_seen_at.get("window", self._last_measured())
+        lived = 0.0 if started is None else exited - started
         self._stop_child("window")
         self._log(f"window exited returncode={returncode}")
         if returncode == 3:
             self.window_started = False
+            self._window_lost_runtime = True
+            # Its watchdog runs only once it has attached: the retries of a reopen start over.
+            self.failures["window"] = 0
+        elif (
+            returncode == 1
+            and self._window_lost_runtime
+            and lived <= _WINDOW_ATTACH_SECONDS
+            and self.failures["window"] < _WINDOW_REOPEN_RETRIES
+        ):
+            # The reopened window's host made its one readiness check of the API, which had just
+            # answered ours, got no answer, and exited 1 without showing a window: not the user's
+            # close. It opens again once the API answers and its retry is due.
+            self.window_started = False
+            self._schedule_retry("window", "the reopened window did not attach to the API (returncode=1)")
+        else:
+            self._window_lost_runtime = False
 
     def _request_window_reopen(self) -> None:
         """A second launch while this home's supervisor runs asks that supervisor to show the
