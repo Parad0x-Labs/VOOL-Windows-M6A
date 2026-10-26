@@ -12,7 +12,9 @@ reopened. Around that rule:
   the child could answer for 127.0.0.1 (now only the child's own 2xx answer is healthy; a redirect
   or any other status is unhealthy);
 - an answer that is not HTTP (BadStatusLine) escaped run(), whose finally stopped every child with
-  nothing left to restart them.
+  nothing left to restart them;
+- the stale-API PowerShell scan ran on every 2 s pass while the API backed off, with no timeout,
+  and asked for its output decoded as text, which it never reads.
 
 A child that has answered is now restarted only after three unanswered checks in a row spanning
 40 s (the API) or 60 s (Ollama). That leaves a stall of the API to the window host's own 30 s grace:
@@ -1407,3 +1409,116 @@ def test_a_non_http_answer_on_the_child_ports_does_not_end_the_supervisor(
         assert _outcome(supervisor.run) == 0
     assert machine.sleeps == 3
     assert popen.count("ollama") == 1 and popen.count("api") == 1
+
+
+# The stale-API PowerShell scan runs once per API start attempt, never for long, keeps the output it
+# never reads as bytes, and is awake time only up to its 30 s limit.
+
+
+def test_the_stale_api_scan_runs_once_per_start_attempt_and_has_a_timeout(
+    supervisor: BundleSupervisor, machine: _Machine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scans: list[tuple[list[str], dict]] = []
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        scans.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+    def popen(*_: object, **__: object) -> None:
+        raise OSError("the API would not start")
+
+    _windows_with(monkeypatch, run, popen)
+    with mock.patch.object(supervisor, "_healthy", return_value=False):
+        supervisor._ensure_api()  # scan, the start fails, back off 2 s
+        for _ in range(5):
+            machine.awake(0.3)
+            supervisor._ensure_api()
+        assert len(scans) == 1
+        machine.awake(2.0)
+        supervisor._ensure_api()
+    assert len(scans) == 2
+    assert all(argv[0] == "powershell.exe" for argv, _ in scans)
+    assert all(0 < float(kwargs.get("timeout") or 0) <= 60 for _, kwargs in scans)
+
+
+def test_a_hung_stale_api_scan_is_given_up_and_the_api_still_starts(
+    supervisor: BundleSupervisor, machine: _Machine, monkeypatch: pytest.MonkeyPatch, popen: _Children
+) -> None:
+    def run(argv: list[str], **kwargs: object) -> None:
+        raise subprocess.TimeoutExpired(argv, kwargs.get("timeout") or 0)
+
+    _windows_with(monkeypatch, run, popen)
+    with mock.patch.object(supervisor, "_healthy", return_value=False):
+        assert _outcome(supervisor._ensure_api) is None
+    assert popen.count("api") == 1
+    assert "stale api cleanup gave up" in _log(supervisor)
+
+
+def test_the_stale_api_scan_keeps_the_output_it_never_reads_as_bytes(
+    supervisor: BundleSupervisor, machine: _Machine, monkeypatch: pytest.MonkeyPatch, popen: _Children
+) -> None:
+    """PowerShell writes in the console's code page. These bytes are text in neither UTF-8 (the
+    bundled Python runs with PYTHONUTF8=1) nor cp1252. Decoded as text, they raise UnicodeDecodeError
+    out of subprocess.run on POSIX; on Windows subprocess's reader thread swallows that error and
+    the output is lost. So the real-child check below discriminates only on POSIX, and the scan's
+    run options are pinned directly too."""
+    output = b"\x81\x8d\x8f\x90\x9d\r\n"
+    scans: list[tuple[list[str], dict]] = []
+
+    def recorded(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        scans.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, output, b"")
+
+    _windows_with(monkeypatch, recorded, popen)
+    with mock.patch.object(supervisor, "_healthy", return_value=False):
+        supervisor._ensure_api()
+    [(argv, kwargs)] = scans
+    assert argv[0] == "powershell.exe"
+    decoding = {key: kwargs[key] for key in ("text", "encoding", "errors", "universal_newlines") if kwargs.get(key)}
+    assert decoding == {}
+    assert popen.count("api") == 1
+
+    # A real Python child writes the bytes; the supervisor's own run options say how they are read.
+    read: list[object] = []
+
+    def real_child(argv: list[str], **kwargs: object) -> object:
+        completed = subprocess.run([sys.executable, "-c", f"import sys; sys.stdout.buffer.write({output!r})"], **kwargs)
+        read.append(completed.stdout)
+        return completed
+
+    _windows_with(monkeypatch, real_child, popen)
+    supervisor._clear_stale_api_processes()
+    assert read == [output]
+
+
+def test_a_sleep_during_the_stale_api_scan_is_not_counted_as_ollamas_startup_age(
+    supervisor: BundleSupervisor,
+    machine: _Machine,
+    monkeypatch: pytest.MonkeyPatch,
+    popen: _Children,
+) -> None:
+    # At launch Ollama is started first, then the scan runs before the API's start. The scan is our
+    # own work, awake time up to its 30 s limit: a sleep that starts inside it is a pause.
+    scans: list[list[str]] = []
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if argv[0] == "powershell.exe":
+            scans.append(argv)
+            if len(scans) == 1:
+                machine.asleep(3600)  # the lid closes while PowerShell asks WMI for stale APIs
+        return subprocess.CompletedProcess(argv, 0, b"", b"")  # the scan, or taskkill at the stop request
+
+    _windows_with(monkeypatch, run, popen)
+
+    def healthy(url: str) -> bool:
+        # Each answers once it runs, Ollama 4 s and the API 6 s awake after the resume.
+        name = "ollama" if ":11434/" in url else "api"
+        return name in supervisor.processes and machine.sleeps >= (2 if name == "ollama" else 3)
+
+    _run(supervisor, machine, monkeypatch, popen, healthy, lambda n: _stop_after(supervisor, n, 5))
+    assert len(scans) == 1
+    assert popen.count("ollama") == 1
+    assert popen.count("api") == 1
+    log = _log(supervisor)
+    assert "startup timeout" not in log
+    assert "during the stale-API scan" in log
