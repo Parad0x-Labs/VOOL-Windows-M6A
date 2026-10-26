@@ -46,15 +46,19 @@ _UNANSWERED_SECONDS_BEFORE_RESTART = {"api": 40.0, "ollama": 60.0}
 _ANSWERING_SECONDS_BEFORE_BACKOFF_RESET = 60.0
 # A wait that overruns what it should take by more than this means this process was not running
 # (sleep, hibernation, a paused VM): the overrun is not counted as child age or unanswered time.
-# The supervisor's own work (a stop, a start, the state write) is awake time up to its own limit;
-# an overrun of more than this beyond that limit is a pause too. So a sleep that starts inside a
-# stop is not seen while the stop and the sleep together stay within 23 s (18 s plus this), and it
-# then counts in full as awake time toward every child's age and run of unanswered checks.
-# Each span is measured once, from where the one before it ended (_absorb_pause).
+# The supervisor's own work (a stop, a start, the state write, the stale-API scan) is awake time up
+# to its own limit; an overrun of more than this beyond that limit is a pause too. So a sleep that
+# starts inside a stop or the scan, or just before the scan, is not seen while the step and the
+# sleep together stay within 23 s or 35 s (18 s or 30 s plus this), and it then counts in full as
+# awake time toward every child's age and run of unanswered checks. Each span is measured once,
+# from where the one before it ended (_absorb_pause).
 _PAUSE_SECONDS = 5.0
 # The longest a stop of a child can take awake: taskkill's 8 s, then 5 s for the child to exit and
 # 5 s more after a kill.
 _STOP_SECONDS = 18.0
+# The PowerShell scan for stale VOOL API processes is given up after this long, so a hung WMI never
+# stops the supervisor from watching Ollama and the window.
+_STALE_API_CLEANUP_TIMEOUT_SECONDS = 30.0
 # A relaunch that arrives while the window is still closing (the user clicked X, then the
 # shortcut) still reopens it if that window exits within this many seconds.
 _REOPEN_GRACE_SECONDS = 10.0
@@ -592,8 +596,11 @@ class BundleSupervisor:
     def _ensure_api(self) -> None:
         if self._watch_child("api", "http://127.0.0.1:11435/healthz"):
             return
+        if _tick() < self.next_attempt["api"]:
+            return  # backing off: no process scan and no start until the retry is due
         self._clear_stale_api_processes()
-        self._last_activity = _tick()  # the scan is our own work, not a pause
+        # Our own work: awake time up to its own limit, a pause beyond that (see _PAUSE_SECONDS).
+        self._absorb_pause(_STALE_API_CLEANUP_TIMEOUT_SECONDS, "during the stale-API scan")
         self._start(
             "api",
             [str(self.root / "python" / "python.exe"), str(self.root / "app" / "apps" / "vool_api_server.py"), "--port", "11435"],
@@ -639,12 +646,18 @@ class BundleSupervisor:
                     "-Command",
                     command,
                 ],
+                # The scan's output is never read, so it is never decoded. Text in a code page Python
+                # cannot decode (a localized PowerShell message) would raise UnicodeDecodeError out of
+                # run() on POSIX; on Windows, where the scan runs, subprocess's reader thread swallows
+                # that error and loses the output.
                 capture_output=True,
-                text=True,
                 check=False,
+                timeout=_STALE_API_CLEANUP_TIMEOUT_SECONDS,
             )
         except OSError as exc:
             self._log(f"stale api cleanup unavailable: {type(exc).__name__}: {exc}")
+        except subprocess.TimeoutExpired:
+            self._log(f"stale api cleanup gave up after {_STALE_API_CLEANUP_TIMEOUT_SECONDS:.0f}s; starting the API")
 
     def _ensure_window(self) -> None:
         """Open the native UI once the API is reachable; closing the UI is user intent."""
