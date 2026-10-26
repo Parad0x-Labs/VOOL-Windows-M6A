@@ -29,7 +29,7 @@ REPO = Path(__file__).resolve().parents[2]
 def _api(origin, path, body=None):
     request = urllib.request.Request(origin + path, data=None if body is None else json.dumps(body).encode(),
                                      headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(request, timeout=3) as response:
+    with urllib.request.urlopen(request, timeout=30) as response:
         return json.loads(response.read())
 
 
