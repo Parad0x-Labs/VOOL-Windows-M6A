@@ -67,7 +67,7 @@ def _init_table(db_path: str) -> None:
         _READY.add(db_path)
 
 
-def _with_table(db_path: str | Path | None, work: Callable[[sqlite3.Connection], _T]) -> _T:
+def _with_table(db_path: str | Path | None, work: Callable[[sqlite3.Connection], _T], *, write: bool = False) -> _T:
     """Run ``work`` on a connection to ``db_path`` (the active database when None), its certification table set up.
 
     A database deleted or replaced while VOOL runs (a reused path) loses the table the memo remembers: that path
@@ -76,20 +76,29 @@ def _with_table(db_path: str | Path | None, work: Callable[[sqlite3.Connection],
     path = str(db_path) if db_path is not None else active_default_db_path()
     _init_table(path)
     try:
-        return _run(path, work)
+        return _run(path, work, write=write)
     except sqlite3.OperationalError as exc:
         if "no such table: local_model_tool_certification_runs" not in str(exc):
             raise
     with _READY_LOCK:
         _READY.discard(path)
     _init_table(path)
-    return _run(path, work)
+    return _run(path, work, write=write)
 
 
-def _run(db_path: str, work: Callable[[sqlite3.Connection], _T]) -> _T:
+def _run(db_path: str, work: Callable[[sqlite3.Connection], _T], *, write: bool = False) -> _T:
+    """Run ``work`` inside one transaction (BEGIN IMMEDIATE when it writes), committed at the end.
+
+    Measured 2026-10-26 (#66 CI, tests (9)): an autocommit read beside this store answered "database schema has
+    changed" while another connection committed a schema change; inside a transaction it does not.
+    """
     conn = get_connection(db_path)
     try:
-        return work(conn)
+        conn.execute("BEGIN IMMEDIATE" if write else "BEGIN")
+        result = work(conn)
+        if conn.in_transaction:
+            conn.commit()
+        return result
     finally:
         conn.close()
 
@@ -141,7 +150,7 @@ def begin_certification_run(
         )
         conn.commit()
 
-    _with_table(db_path, work)
+    _with_table(db_path, work, write=True)
 
 
 def complete_certification_run(
@@ -202,14 +211,13 @@ def complete_certification_run(
                 run_id,
             ),
         )
-        conn.commit()
         row = conn.execute(
             "SELECT * FROM local_model_tool_certification_runs WHERE run_id = ?",
             (run_id,),
         ).fetchone()
         return _row_payload(row) if row else {}
 
-    return _with_table(db_path, work)
+    return _with_table(db_path, work, write=True)
 
 
 def latest_certification_run(
