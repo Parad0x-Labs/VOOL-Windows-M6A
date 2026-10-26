@@ -14,7 +14,10 @@ reopened. Around that rule:
 - an answer that is not HTTP (BadStatusLine) escaped run(), whose finally stopped every child with
   nothing left to restart them;
 - the stale-API PowerShell scan ran on every 2 s pass while the API backed off, with no timeout,
-  and asked for its output decoded as text, which it never reads.
+  and asked for its output decoded as text, which it never reads;
+- a window the supervisor reopened after its runtime was lost, whose host's one readiness check of
+  the API missed so that it exited 1 without showing a window, was taken for the user's close: no
+  window came back while that API ran.
 
 A child that has answered is now restarted only after three unanswered checks in a row spanning
 40 s (the API) or 60 s (Ollama). That leaves a stall of the API to the window host's own 30 s grace:
@@ -1522,3 +1525,336 @@ def test_a_sleep_during_the_stale_api_scan_is_not_counted_as_ollamas_startup_age
     log = _log(supervisor)
     assert "startup timeout" not in log
     assert "during the stale-API scan" in log
+
+
+# A window the supervisor reopened after its runtime was lost that exits 1 within its first minute
+# awake never attached: its host's one readiness check of the API missed. It is tried again, with the
+# restart backoff, once the API answers, six times at most. Its life runs up to where its exit is first
+# seen, not to the pass that finds it exited. Any other exit of it, a later exit 1 (a forced end), and
+# an exit 1 of any other window, stays closed.
+
+
+def test_a_window_reopened_on_an_api_that_answers_unevenly_is_opened_again_until_it_attaches(
+    supervisor: BundleSupervisor,
+    machine: _Machine,
+    monkeypatch: pytest.MonkeyPatch,
+    popen: _Children,
+) -> None:
+    """The API stalls for over half a minute, then answers again, unevenly at first. The window gives
+    up on its own 30 s grace (exit 3); the API, under its 40 s, is kept; the window is reopened on it.
+    The reopened window's host checks the API once before it attaches, that check lands on a late
+    answer, and the host exits 1 without showing a window. That is no close by the user: the window
+    is tried again once its 2 s retry is due, and attaches to the same API."""
+    reaped = {"at": math.inf}
+
+    def healthy(url: str) -> bool:
+        answers = ":11434/" in url or (machine.sleeps >= 1 and not 2 <= machine.sleeps < 12)
+        if not answers:
+            machine.awake(_PROBE)  # the probe waits out its timeout
+        return answers
+
+    def after_sleep(n: int) -> None:
+        windows = [child for child, _ in popen.of("window")]
+        if n == 11:
+            windows[0].poll.return_value = 3  # 31.5 s into the stall, the window gives up on it
+        if len(windows) == 2 and windows[1].poll.return_value is None:
+            windows[1].poll.return_value = 1  # the reopened window's one readiness check missed
+            reaped["at"] = machine.tick  # the next pass finds it exited
+        _stop_after(supervisor, n, 20)
+
+    _run(supervisor, machine, monkeypatch, popen, healthy, after_sleep)
+    windows = popen.of("window")
+    assert len(windows) == 3
+    api = popen.last("api")
+    assert popen.count("api") == 1
+    assert [env["VOOL_NATIVE_VOUCHING_PID"] for _, env in windows] == [str(api.pid)] * 3
+    attached = windows[2][0]
+    assert popen.started_tick[attached.pid] - reaped["at"] >= 2.0  # after the restart backoff
+    assert popen.stopped_tick[attached.pid] == machine.tick  # open until the stop request's teardown
+    assert supervisor.last_exit["window"]["retry_in"] == 2
+    log = _log(supervisor)
+    assert "the reopened window did not attach to the API (returncode=1)" in log
+    assert "unresponsive" not in log and "startup timeout" not in log
+
+
+def _window_passes(supervisor: BundleSupervisor, machine: _Machine, popen: _Children, count: int) -> None:
+    """`count` passes of the supervisor loop's window steps, each after its 2 s poll, with the API
+    answering: reap a window that exited, honor a relaunch, then the window's own check of the API."""
+    for _ in range(count):
+        machine.awake(_POLL)
+        with mock.patch("installer.bundle.bundle_supervisor.subprocess.Popen", popen), \
+                mock.patch.object(supervisor, "_healthy", return_value=True):
+            supervisor._reap_window()
+            supervisor._consume_window_reopen()
+            supervisor._ensure_window()
+
+
+def _awake_until_a_window_opens(supervisor: BundleSupervisor, machine: _Machine, popen: _Children) -> float:
+    """Window passes until another window opens: the awake time from the first of them, which finds
+    the last window exited, to that opening (math.inf if none opens within a minute)."""
+    opened, reaped_at = popen.count("window"), machine.tick + _POLL
+    for _ in range(30):
+        _window_passes(supervisor, machine, popen, 1)
+        if popen.count("window") > opened:
+            return popen.started_tick[popen.last("window").pid] - reaped_at
+    return math.inf
+
+
+def _with_a_window(supervisor: BundleSupervisor, machine: _Machine, popen: _Children) -> None:
+    _check(supervisor, "api", False, popen)  # our API, which answers every check from here on
+    _window_passes(supervisor, machine, popen, 1)
+    assert popen.count("window") == 1
+
+
+def test_a_first_window_that_exits_1_stays_closed(
+    supervisor: BundleSupervisor, machine: _Machine, popen: _Children
+) -> None:
+    # The rule this guards is unchanged, so this test passes on 4899671 too: only a window reopened
+    # after a runtime loss is tried again.
+    _with_a_window(supervisor, machine, popen)
+    popen.last("window").poll.return_value = 1  # it never attached
+    assert _awake_until_a_window_opens(supervisor, machine, popen) == math.inf
+    assert popen.count("window") == 1
+    assert "window" not in supervisor.last_exit
+
+
+def test_a_reopened_window_the_user_closes_stays_closed(
+    supervisor: BundleSupervisor, machine: _Machine, popen: _Children
+) -> None:
+    _with_a_window(supervisor, machine, popen)
+    popen.last("window").poll.return_value = 3  # it loses its runtime
+    assert _awake_until_a_window_opens(supervisor, machine, popen) == 0.0  # reopened at once
+    popen.last("window").poll.return_value = 1  # the reopened window does not attach
+    # 4899671 fails this test here, before its claim: it never tries a reopened window again.
+    assert _awake_until_a_window_opens(supervisor, machine, popen) == 2.0
+    popen.last("window").poll.return_value = 0  # the user closes it
+    assert _awake_until_a_window_opens(supervisor, machine, popen) == math.inf
+    assert popen.count("window") == 3
+    # Its close ends the reopen: a window the user's next launch opens, that exits 1, stays closed.
+    supervisor._request_window_reopen()
+    assert _awake_until_a_window_opens(supervisor, machine, popen) == 0.0
+    popen.last("window").poll.return_value = 1
+    assert _awake_until_a_window_opens(supervisor, machine, popen) == math.inf
+    assert popen.count("window") == 4
+
+
+def test_each_runtime_loss_starts_the_retries_of_the_reopened_window_over(
+    supervisor: BundleSupervisor, machine: _Machine, popen: _Children
+) -> None:
+    _with_a_window(supervisor, machine, popen)
+    waits = []
+    for misses in (2, 1):  # the window reopened after the first loss misses twice, after the second once
+        popen.last("window").poll.return_value = 3  # the window loses its runtime
+        assert _awake_until_a_window_opens(supervisor, machine, popen) == 0.0
+        for _ in range(misses):
+            popen.last("window").poll.return_value = 1  # the reopened window does not attach
+            waits.append(_awake_until_a_window_opens(supervisor, machine, popen))
+            assert waits[-1] < math.inf  # 4899671 fails this test here: it never tries it again
+    # The restart backoff, started over by the second loss: the window that lost its runtime had attached.
+    assert waits == [2.0, 4.0, 2.0]
+
+
+def test_a_reopened_window_that_never_attaches_is_opened_six_more_times_then_stays_closed(
+    supervisor: BundleSupervisor, machine: _Machine, popen: _Children
+) -> None:
+    # After a runtime loss another VOOL (another Windows user's, or another profile's) can win the API's
+    # port and answer the supervisor's checks; every window host refuses that runtime and exits 1 at
+    # once without showing a window. That is tried for about 90 s, not for as long as it lasts.
+    _with_a_window(supervisor, machine, popen)
+    popen.last("window").poll.return_value = 3  # it loses its runtime
+    assert _awake_until_a_window_opens(supervisor, machine, popen) == 0.0
+    waits = []
+    for _ in range(7):
+        popen.last("window").poll.return_value = 1  # its host refuses the runtime on the port
+        waits.append(_awake_until_a_window_opens(supervisor, machine, popen))
+    # 4899671 fails this here: it never opens a reopened window that exits 1 again.
+    assert waits == [2.0, 4.0, 8.0, 16.0, 30.0, 30.0, math.inf]
+    _window_passes(supervisor, machine, popen, 300)  # ten minutes more
+    assert popen.count("window") == 8
+    # The user's next launch opens it again; once that window has attached, its runtime loss starts
+    # the tries over.
+    supervisor._request_window_reopen()
+    assert _awake_until_a_window_opens(supervisor, machine, popen) == 0.0
+    popen.last("window").poll.return_value = 3
+    assert _awake_until_a_window_opens(supervisor, machine, popen) == 0.0
+    popen.last("window").poll.return_value = 1
+    assert _awake_until_a_window_opens(supervisor, machine, popen) == 2.0
+
+
+def _a_reopened_window_exits_1(
+    supervisor: BundleSupervisor,
+    machine: _Machine,
+    monkeypatch: pytest.MonkeyPatch,
+    popen: _Children,
+    open_for: float,
+    lid: str = "",
+    missed_first: bool = False,
+) -> float:
+    """Through run(): the API stalls for over half a minute and the window gives up on it (exit 3);
+    the window reopened on the same API, which answers from then on, attaches -- or, if
+    `missed_first`, that window's one check of the API misses (exit 1 at once) and the window tried
+    again attaches. Its host exits 1 once it has been open `open_for` seconds awake, and the run goes
+    on for another minute. The lid closes for an hour after that exit if `lid` says where: "after the
+    exit", "during the next check", or "before the reap" (as the supervisor turns to the window).
+    Returns the tick it exited at (math.inf if no window was open that long)."""
+    attached = 2 if missed_first else 1  # the window that attaches
+    ended = {"at": math.inf, "pass": math.inf}
+    slept: list[float] = []
+
+    def lid_closes(where: str) -> None:
+        if lid == where and ended["at"] < math.inf and not slept:
+            slept.append(machine.tick)
+            machine.asleep(3600)
+
+    real_reap_window = supervisor._reap_window
+
+    def reap_window() -> None:
+        lid_closes("before the reap")
+        real_reap_window()
+
+    monkeypatch.setattr(supervisor, "_reap_window", reap_window)
+
+    def healthy(url: str) -> bool:
+        lid_closes("during the next check")
+        answers = ":11434/" in url or (machine.sleeps >= 1 and not 2 <= machine.sleeps < 12)
+        if not answers:
+            machine.awake(_PROBE)  # the probe waits out its timeout
+        return answers
+
+    def after_sleep(n: int) -> None:
+        windows = [child for child, _ in popen.of("window")]
+        if n == 11:
+            windows[0].poll.return_value = 3  # 31.5 s into the stall, the window gives up on it
+        if missed_first and len(windows) == 2:
+            windows[1].poll.return_value = 1  # the reopened window's one readiness check missed
+        open_now = machine.tick - popen.started_tick[windows[attached].pid] if len(windows) == attached + 1 else 0.0
+        if ended["at"] == math.inf and open_now >= open_for:
+            windows[attached].poll.return_value = 1
+            ended.update({"at": machine.tick, "pass": n})
+            lid_closes("after the exit")
+        _stop_after(supervisor, n, int(min(ended["pass"], 100)) + 30)
+
+    _run(supervisor, machine, monkeypatch, popen, healthy, after_sleep)
+    assert popen.count("api") == 1
+    windows = popen.of("window")
+    assert [env["VOOL_NATIVE_VOUCHING_PID"] for _, env in windows] == [str(popen.last("api").pid)] * len(windows)
+    if ended["at"] < math.inf:
+        assert popen.started_tick[windows[attached][0].pid] + open_for == ended["at"]
+        assert len(slept) == (1 if lid else 0)
+    return ended["at"]
+
+
+@pytest.mark.parametrize(
+    "lid", [pytest.param("", id="awake"), pytest.param("during the next check", id="asleep-after-the-exit")]
+)
+def test_a_reopened_window_that_attached_and_is_ended_with_exit_1_stays_closed(
+    supervisor: BundleSupervisor, machine: _Machine, monkeypatch: pytest.MonkeyPatch, popen: _Children, lid: str
+) -> None:
+    # A guard: 4899671 passes this too, as it never opens a window that exits 1 again. Exit 1 after the
+    # window's first minute is a forced end (taskkill /F) of a window that had attached: the user's. An
+    # hour's sleep during the check after that exit is taken out of its start and its exit alike.
+    ended = _a_reopened_window_exits_1(supervisor, machine, monkeypatch, popen, open_for=62.0, lid=lid)
+    assert ended < math.inf
+    assert popen.count("window") == 2
+    assert "window retry scheduled" not in _log(supervisor)
+
+
+def test_a_reopened_window_tried_again_that_attached_and_is_ended_with_exit_1_stays_closed(
+    supervisor: BundleSupervisor, machine: _Machine, monkeypatch: pytest.MonkeyPatch, popen: _Children
+) -> None:
+    # The reopened window's one check misses and it is tried again. The window tried again attaches, and
+    # its exit 1 after its first minute is a forced end: the exit of the window before it is no part of
+    # its life.
+    ended = _a_reopened_window_exits_1(supervisor, machine, monkeypatch, popen, open_for=62.0, missed_first=True)
+    # 4899671 fails this here, before its claim: it never tries the reopened window that missed again.
+    assert popen.count("window") == 3
+    assert ended < math.inf
+    assert _log(supervisor).count("window retry scheduled") == 1
+
+
+@pytest.mark.parametrize(
+    "lid", [pytest.param("before the reap", id="asleep-before-the-reap"), pytest.param("after the exit", id="asleep-after-the-exit")]
+)
+def test_a_reopened_window_that_exits_1_within_its_first_minute_awake_is_opened_again(
+    supervisor: BundleSupervisor, machine: _Machine, monkeypatch: pytest.MonkeyPatch, popen: _Children, lid: str
+) -> None:
+    # Its host exits 1 a full minute awake after its start, and the lid closes for an hour, right after
+    # that exit or just before the supervisor finds it exited: that hour is no part of the window's life.
+    ended = _a_reopened_window_exits_1(supervisor, machine, monkeypatch, popen, open_for=60.0, lid=lid)
+    windows = popen.of("window")
+    # 4899671 fails this here: it never opens a window that exits 1 again.
+    assert len(windows) == 3
+    attached = windows[2][0]
+    assert popen.started_tick[attached.pid] - ended - 3600 == 2.0  # after its 2 s retry, awake
+    assert popen.stopped_tick[attached.pid] == machine.tick  # open until the stop request's teardown
+    assert "paused" in _log(supervisor)
+
+
+def test_a_reopened_window_that_exits_1_at_once_is_opened_again_however_long_the_pass_that_finds_it(
+    supervisor: BundleSupervisor, machine: _Machine, monkeypatch: pytest.MonkeyPatch, popen: _Children
+) -> None:
+    # The window loses its runtime (exit 3) and is reopened. The API then crashes under the reopened
+    # window, whose host, finding no API, exits 1 four seconds after its start. The pass after that is
+    # long, all of it awake time within the code's own limits: each 2 s wait wakes 3 s late on a loaded
+    # machine, a hung Ollama's probe waits out both its 1.5 s steps and its stop takes 18 s (taskkill's
+    # 8 s, 5 s for Ollama to exit, a kill and 5 s more), and the stale-API scan is given up 4.9 s past
+    # its 30 s. That pass restarts the API and only then finds the window exited, 60.9 s after its
+    # start: the window's life ends where its exit was first seen, five seconds in.
+    late, scan = 3.0, 34.9
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        if argv[0] == "taskkill.exe":
+            machine.awake(8.0)
+        else:
+            machine.awake(scan)  # WMI is slow to answer the stale-API scan
+            if kwargs.get("timeout"):
+                raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+        return subprocess.CompletedProcess(argv, 0, b"", b"")
+
+    _windows_with(monkeypatch, run, popen)
+
+    def stubborn_wait(timeout: float | None = None) -> int:
+        machine.awake(5.0)
+        if not popen.of("ollama")[0][0].kill.called:
+            raise subprocess.TimeoutExpired("ollama.exe", timeout or 0)
+        return 0
+
+    def healthy(url: str) -> bool:
+        if ":11434/" in url:
+            ollama = supervisor.processes.get("ollama")
+            if ollama is not None and ollama is popen.of("ollama")[0][0] and machine.sleeps >= 3:
+                machine.awake(2 * _PROBE)  # the first Ollama hangs: its probe waits out connect and read
+                return False
+            return ollama is not None
+        api = supervisor.processes.get("api")
+        return api is not None and api.poll() is None
+
+    def after_sleep(n: int) -> None:
+        machine.awake(late)
+        windows = [child for child, _ in popen.of("window")]
+        if n == 1:
+            popen.of("ollama")[0][0].wait.side_effect = stubborn_wait
+        if n == 10:
+            windows[0].poll.return_value = 3  # the window loses its runtime
+        if n == 11 and len(windows) == 2:
+            popen.last("api").poll.return_value = 1  # the API crashes under the reopened window...
+            exits_at = popen.started_tick[windows[1].pid] + 4.0
+            windows[1].poll.side_effect = lambda: 1 if machine.tick >= exits_at else None  # ...which exits 1
+        _stop_after(supervisor, n, 20)
+
+    _run(supervisor, machine, monkeypatch, popen, healthy, after_sleep)
+    windows = popen.of("window")
+    # 4899671 fails this here: it never opens a window that exits 1 again. So does a supervisor that
+    # measures the window's life up to the pass that finds it exited: 60.9 s, a forced end.
+    assert len(windows) == 3
+    reopened, (retried, env) = windows[1][0], windows[2]
+    api = popen.last("api")
+    assert popen.count("api") == 2
+    assert popen.started_tick[api.pid] - popen.started_tick[reopened.pid] > 60.0  # found exited after this
+    assert env["VOOL_NATIVE_VOUCHING_PID"] == str(api.pid)  # opened on the restarted API
+    log = _log(supervisor)
+    assert "the reopened window did not attach to the API (returncode=1)" in log
+    assert "ollama retry scheduled reason=unresponsive" in log
+    assert "stale api cleanup gave up" in log
+    assert "paused" not in log
+    assert log.count("window exited") == 2  # the retried window stays open until the stop request
