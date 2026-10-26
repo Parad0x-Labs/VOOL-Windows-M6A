@@ -202,11 +202,21 @@ def erase_capsule_versions_for_forget(conn: Any, *, chat_id: str, token: str) ->
 
     if not str(chat_id).strip() or not str(token).strip():
         return 0
+    # Take the write lock before the first read. A deferred transaction that reads and then writes
+    # fails at once with SQLITE_BUSY_SNAPSHOT ("database is locked"; busy_timeout is not consulted)
+    # when any other connection commits in between -- web0-task-poll's audit rows, the fact
+    # extractor's provider receipts -- which left the chain in place and failed the forget
+    # (CI run 40361736417).
+    own_transaction = not conn.in_transaction
+    if own_transaction:
+        conn.execute("BEGIN IMMEDIATE")
     conn.execute("SAVEPOINT forget_capsule_versions")
     try:
         schema = conn.execute("PRAGMA table_info(context_capsule_versions)").fetchall()
         if not schema:
             conn.execute("RELEASE SAVEPOINT forget_capsule_versions")
+            if own_transaction:
+                conn.commit()
             return 0
         names = {str(column[1]) for column in schema}
         if "chat_id" not in names:
@@ -238,6 +248,8 @@ def erase_capsule_versions_for_forget(conn: Any, *, chat_id: str, token: str) ->
                 carrying = carrying or text_carries_forget_token(str(value or ""), token)
         if not carrying:
             conn.execute("RELEASE SAVEPOINT forget_capsule_versions")
+            if own_transaction:
+                conn.commit()
             return 0
         trigger = conn.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?",
@@ -255,10 +267,14 @@ def erase_capsule_versions_for_forget(conn: Any, *, chat_id: str, token: str) ->
         ).fetchone() is not None:
             raise ValueError("capsule erasure could not be verified")
         conn.execute("RELEASE SAVEPOINT forget_capsule_versions")
+        if own_transaction:
+            conn.commit()
         return len(rows)
     except Exception:
         conn.execute("ROLLBACK TO SAVEPOINT forget_capsule_versions")
         conn.execute("RELEASE SAVEPOINT forget_capsule_versions")
+        if own_transaction:
+            conn.rollback()
         raise
 
 def _claim_from_dict(payload: Any) -> CapsuleClaim | None:
