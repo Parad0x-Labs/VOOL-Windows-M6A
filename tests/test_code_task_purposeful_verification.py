@@ -313,7 +313,11 @@ def test_a_quoted_example_fix_does_not_authorize_mutation(project):
     task_id = _door("code.task.open", {"objective": "repair total()"}, ctx).details["task_id"]
     red = _door("code.task.step", {"task_id": task_id, "step_id": "repro", "intent": "workspace.run_tests",
                                    "arguments": {"command": "python3 check.py"}}, ctx)
-    assert red.details["tool_result"]["success"] is False
+    tool_result = red.details.get("tool_result") or {}
+    assert red.details.get("executed") is True and "success" in tool_result, (
+        f"repro step did not run: status={red.status!r} reason={red.details.get('reason')!r} "
+        f"tool_result_keys={sorted(tool_result)}")
+    assert tool_result["success"] is False
     attempt = _door("code.task.step", {"task_id": task_id, "step_id": "quote-1", "intent": "workspace.write_file",
                                        "arguments": quoted}, ctx)
     assert attempt.ok is False and attempt.status == "stage_violation", attempt.status
