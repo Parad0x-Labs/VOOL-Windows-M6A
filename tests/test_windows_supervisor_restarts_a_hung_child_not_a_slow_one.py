@@ -7,7 +7,12 @@ reopened. Around that rule:
 
 - ages and retry times ran on the wall clock, so a clock change or a sleep counted as age, and a
   clock set back held a retry back for as long as it was set back;
-- the restart backoff never forgot old failures, so it only grew over the app's life.
+- the restart backoff never forgot old failures, so it only grew over the app's life;
+- the probe went through any configured HTTP proxy and followed redirects, so something other than
+  the child could answer for 127.0.0.1 (now only the child's own 2xx answer is healthy; a redirect
+  or any other status is unhealthy);
+- an answer that is not HTTP (BadStatusLine) escaped run(), whose finally stopped every child with
+  nothing left to restart them.
 
 A child that has answered is now restarted only after three unanswered checks in a row spanning
 40 s (the API) or 60 s (Ollama). That leaves a stall of the API to the window host's own 30 s grace:
@@ -26,12 +31,17 @@ from __future__ import annotations
 
 import contextlib
 import heapq
+import http.client
 import json
 import math
 import os
+import socket
 import subprocess
+import sys
+import threading
 import time
 from collections.abc import Callable, Iterator
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -42,6 +52,8 @@ from installer.bundle import bundle_supervisor
 from installer.bundle import native_runtime_supervisor as nrs
 from installer.bundle.bundle_supervisor import BundleSupervisor
 
+# The repository, where a fresh interpreter imports the supervisor from.
+_ROOT = Path(__file__).resolve().parents[1]
 # The supervisor waits this long between passes.
 _POLL = 2.0
 # A health probe that gets no answer waits this long, in the supervisor and in the window host.
@@ -183,6 +195,14 @@ def _window_check(supervisor: BundleSupervisor, answers: bool, popen: _Children)
             mock.patch.object(supervisor, "_healthy", return_value=answers):
         supervisor._reap_window()
         supervisor._ensure_window()
+
+
+def _outcome(call: Callable[[], object]) -> object:
+    """What `call` returns, or the exception it raises: an escape fails at the assertion on it."""
+    try:
+        return call()
+    except Exception as exc:
+        return exc
 
 
 def _log(supervisor: BundleSupervisor) -> str:
@@ -1247,3 +1267,143 @@ def test_a_sleep_while_a_pause_in_the_windows_check_is_logged_is_taken_out_of_th
     assert slept
     assert popen.count("api") == 2
     assert popen.count("window") == 1
+
+
+# The probe asks the child itself: no proxy, no redirect, and an answer that is not HTTP is an
+# unhealthy child, not an error that ends the supervisor. Only a 2xx answer is healthy; a redirect or
+# any other status is unhealthy.
+
+
+@contextlib.contextmanager
+def _http_stub(status: int, headers: dict[str, str] | None = None) -> Iterator[tuple[str, list[str]]]:
+    hits: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            hits.append(self.requestline)
+            self.send_response(status)
+            for key, value in (headers or {}).items():
+                self.send_header(key, value)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *_: object) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}", hits
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(5)
+
+
+_PROBE_FROM_A_FRESH_SUPERVISOR = (
+    "import json, sys\n"
+    "from installer.bundle.bundle_supervisor import BundleSupervisor\n"
+    "probe = object.__new__(BundleSupervisor)\n"
+    "print(json.dumps([probe._healthy(url) for url in sys.argv[1:]]))\n"
+)
+
+
+def test_the_health_check_goes_straight_to_127_0_0_1_past_a_configured_proxy() -> None:
+    # A supervisor process started with a proxy configured, as installed: urllib reads the proxy
+    # settings (HTTP_PROXY here; the Windows Internet settings reach it the same way) when it builds
+    # its handlers, at import or on first use, so the probe runs in a fresh interpreter.
+    with _http_stub(200) as (child, child_hits), _http_stub(404) as (missing, missing_hits), \
+            _http_stub(503) as (failing, failing_hits), _http_stub(502) as (proxy, proxy_hits):
+        env = {key: value for key, value in os.environ.items() if key.lower() not in {"no_proxy", "http_proxy"}}
+        env["http_proxy"] = proxy
+        probe = subprocess.run(
+            [sys.executable, "-c", _PROBE_FROM_A_FRESH_SUPERVISOR, f"{child}/healthz", f"{missing}/healthz", f"{failing}/healthz"],
+            cwd=_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    assert probe.returncode == 0, probe.stderr
+    healthy, missing_healthy, failing_healthy = json.loads(probe.stdout.strip().splitlines()[-1])
+    assert proxy_hits == []
+    assert child_hits and healthy is True
+    # Only a 2xx answer is healthy: a 404 or a 503 from the child itself is unhealthy through the same
+    # opener (tests/test_bundle_tooling.py pins the 404 rule with a mock of the opener this no longer uses).
+    assert missing_hits and missing_healthy is False
+    assert failing_hits and failing_healthy is False
+
+
+def test_the_health_check_does_not_follow_a_redirect_away_from_the_child(supervisor: BundleSupervisor) -> None:
+    with _http_stub(200) as (elsewhere, elsewhere_hits), \
+            _http_stub(302, {"Location": f"{elsewhere}/healthz"}) as (child, child_hits):
+        healthy = supervisor._healthy(f"{child}/healthz")
+    assert child_hits
+    assert elsewhere_hits == []
+    assert healthy is False  # a redirect is unhealthy, whatever it points at
+
+
+@contextlib.contextmanager
+def _not_http_stub() -> Iterator[tuple[str, list[bytes]]]:
+    """A program that is not an HTTP server on 127.0.0.1. It accepts one connection, reads the whole
+    request, records it, and answers with a line that is not HTTP."""
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    requests: list[bytes] = []
+
+    def answer_once() -> None:
+        with contextlib.suppress(OSError):
+            connection, _ = listener.accept()
+            with connection:
+                connection.settimeout(2.0)
+                request = b""
+                # Read the whole request first: closing on unread bytes is a reset on Windows.
+                while b"\r\n\r\n" not in request:
+                    chunk = connection.recv(4096)
+                    if not chunk:
+                        break
+                    request += chunk
+                requests.append(request)
+                connection.sendall(b"SSH-2.0-OpenSSH_9.6\r\n")
+
+    thread = threading.Thread(target=answer_once, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{port}/healthz", requests
+    finally:
+        listener.close()
+        thread.join(5)
+
+
+def test_a_port_answered_by_something_that_is_not_http_is_unhealthy(supervisor: BundleSupervisor) -> None:
+    with _not_http_stub() as (url, requests):
+        healthy = _outcome(lambda: supervisor._healthy(url))
+    # The stub was reached and read the whole probe: the answer judged is its, not a dead port's.
+    assert len(requests) == 1 and requests[0].startswith(b"GET /healthz HTTP/1.1\r\n")
+    assert requests[0].endswith(b"\r\n\r\n")
+    assert healthy is False
+
+
+def test_a_non_http_answer_on_the_child_ports_does_not_end_the_supervisor(
+    supervisor: BundleSupervisor, machine: _Machine, monkeypatch: pytest.MonkeyPatch, popen: _Children
+) -> None:
+    _run_without_the_lease(supervisor, monkeypatch)
+
+    def no_request(self: http.client.HTTPConnection, *_: object, **__: object) -> None:
+        return None
+
+    def not_http(self: http.client.HTTPConnection) -> None:
+        raise http.client.BadStatusLine("SSH-2.0-OpenSSH_9.6\r\n")
+
+    # Every probe -- 11434, 11435 -- gets an answer that is not HTTP; nothing touches the network.
+    monkeypatch.setattr(http.client.HTTPConnection, "request", no_request)
+    monkeypatch.setattr(http.client.HTTPConnection, "getresponse", not_http)
+    machine.after_sleep = lambda n: n >= 3 and supervisor.stop_path.write_text("stop\n", encoding="utf-8")
+    with mock.patch("installer.bundle.bundle_supervisor.subprocess.Popen", popen):
+        assert _outcome(supervisor.run) == 0
+    assert machine.sleeps == 3
+    assert popen.count("ollama") == 1 and popen.count("api") == 1
