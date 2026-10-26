@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -741,7 +742,10 @@ def test_served_javascript_repo_journey(served_factory, request_text, test_sourc
         task = _journal_task(store_dir, task_id)
         assert task["stage"] == "report", task["stage"]
         assert task["narrow"]["success"] is True and task["cumulative"]["success"] is True
-        assert "# tests 1" in task["steps"]["cum"]["result"]["stdout"]
+        # When its output is not a terminal, older Node prints the TAP summary ("# tests 1") and newer
+        # Node the spec reporter's ("ℹ tests 1"); either proves exactly one test ran.
+        stdout = task["steps"]["cum"]["result"]["stdout"]
+        assert re.search(r"^(?:# |ℹ )tests 1\r?$", stdout, re.MULTILINE), stdout
         assert task["git_diff_paths"] == ["calc.js"], task["git_diff_paths"]
         report = turn("code__task__report", {"task_id": task_id}, "rp1")
         text = _reply_text(report)

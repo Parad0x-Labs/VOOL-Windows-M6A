@@ -392,7 +392,13 @@ def test_claimed_target_extraction_is_bounded(script, tmp_path):
 
 
 def _run_bounded_claim_worker(script, tmp_path):
-    """Cold package import has its own bound; the actual parser retains its three seconds."""
+    """Cold package import has its own bound; the actual parser retains its three seconds.
+
+    Both budgets count the worker's own CPU seconds, not wall-clock seconds: a runaway parser burns
+    CPU, while a slow or shared runner only stretches the wall clock (CI 39849470438 ran out the old
+    three wall-clock seconds twice on a loaded runner). A call that blocks without burning CPU is
+    still stopped after 30 wall-clock seconds.
+    """
     import json
 
     setup, call = script.rsplit(";", 1)
@@ -402,18 +408,24 @@ def _run_bounded_claim_worker(script, tmp_path):
         "from pathlib import Path",
         f"record = Path({str(record)!r})",
         "record.write_text(json.dumps({'pid': os.getpid(), 'phase': 'startup'}))",
-        "startup = time.monotonic()",
+        "startup = time.process_time()",
         f"exec({setup!r})",
-        "import_seconds = time.monotonic() - startup",
+        "import_seconds = time.process_time() - startup",
         "assert import_seconds < 30, import_seconds",
         "record.write_text(json.dumps({'pid': os.getpid(), 'phase': 'execution', 'imports': import_seconds}))",
-        "deadline = threading.Timer(3, lambda: os._exit(124))",
-        "deadline.daemon = True",
+        "started = time.process_time()",
+        "walled = time.monotonic()",
+        "finished = threading.Event()",
+        "def _deadline():",
+        "    while time.process_time() - started < 3 and time.monotonic() - walled < 30:",
+        "        if finished.wait(0.05):",
+        "            return",
+        "    os._exit(124)",
+        "deadline = threading.Thread(target=_deadline, daemon=True)",
         "deadline.start()",
-        "started = time.monotonic()",
         f"exec({call.strip()!r})",
-        "seconds = time.monotonic() - started",
-        "deadline.cancel()",
+        "seconds = time.process_time() - started",
+        "finished.set()",
         "deadline.join()",
         "assert seconds < 3, seconds",
         "result = {'pid': os.getpid(), 'phase': 'finished', 'imports': import_seconds, 'execution': seconds}",
@@ -421,7 +433,7 @@ def _run_bounded_claim_worker(script, tmp_path):
         "print(json.dumps(result))",
     ])
     result = subprocess.run(
-        [sys.executable, "-c", worker], check=True, timeout=35,
+        [sys.executable, "-c", worker], check=True, timeout=95,
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}, capture_output=True, text=True,
     )
     evidence = json.loads(result.stdout)

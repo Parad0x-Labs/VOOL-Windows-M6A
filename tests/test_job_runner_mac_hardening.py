@@ -97,8 +97,10 @@ def test_launcher_is_never_looked_up_on_path(tmp_path, monkeypatch):
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX ownership and modes")
 def test_launcher_must_be_a_root_owned_regular_file_in_a_root_owned_directory(tmp_path):
-    # A real root-owned binary in a root-owned, non-writable directory on every POSIX host.
-    trusted = "/usr/bin/env"
+    # A real root-owned binary in a root-owned, non-writable directory on every POSIX host. Ubuntu
+    # 26.04's /usr/bin/env is a link into its multi-call coreutils, which the check rightly refuses,
+    # so the trusted example is the file that link names.
+    trusted = os.path.realpath("/usr/bin/env")
     with patch.object(jr, "_SANDBOX_EXEC", trusted):
         assert _trusted_sandbox_exec() == trusted
 
