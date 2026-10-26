@@ -7,6 +7,7 @@ full page proving the fragment evaluates and freezes its namespace without a bro
 from __future__ import annotations
 
 import re
+import sys
 
 from core.council_fragment import render_council_fragment
 from core.vool_chat_page import _VOOL_CHAT_HTML, render_vool_chat_html
@@ -136,7 +137,9 @@ def test_drawer_retains_actual_pet_controls() -> None:
         assert assignment.startswith("Vool"), f"drawer leaks window.{assignment}"
 
 
-def test_shortcut_map_is_fully_visible() -> None:
+def test_shortcut_map_is_fully_visible(monkeypatch) -> None:
+    # The Mac key caps; a Windows host is served Ctrl (tests/test_windows_shortcut_labels.py).
+    monkeypatch.setattr(sys, "platform", "darwin")
     from core.command_palette_fragment import render_palette_fragment
     from core.companion_drawer_fragment import render_companion_drawer_fragment
     from core.composer_extras_fragment import render_composer_extras_fragment
