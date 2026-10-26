@@ -582,8 +582,8 @@ class BundleSupervisor:
 
     def _watch_child(self, name: str, url: str) -> bool:
         """Check one supervised child's health. True: start nothing this pass (the endpoint answers,
-        the live child still has time, or it was just stopped with its retry scheduled). False:
-        there is no live child, so the caller may start one.
+        the live child still has time, or it was just stopped, or found exited, with its retry
+        scheduled). False: there is no child, so the caller may start one.
 
         A child that has never answered keeps the startup rule: stopped once it is
         _STARTUP_TIMEOUT_SECONDS old. A child that has answered is stopped only after
@@ -597,8 +597,13 @@ class BundleSupervisor:
             self._answered(name, now)
             return True
         child = self.processes.get(name)
-        if child is None or child.poll() is not None:
+        if child is None:
             return False
+        if child.poll() is not None:
+            # It exited during this pass, after the pass's own _reap_dead found it running: the same
+            # exit, recorded, counted and backed off the same way, not started again at once.
+            self._reap_dead(name)
+            return True
         if name not in self.answered_at:
             if now - self.started_at.setdefault(name, now) <= _STARTUP_TIMEOUT_SECONDS:
                 return True
