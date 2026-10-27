@@ -39,7 +39,11 @@ CHECK = "from calc import total\nassert total(40, 8) == 48, total(40, 8)\nprint(
 def _git(root: Path, *args: str) -> None:
     env = {**os.environ, "GIT_AUTHOR_NAME": "fx", "GIT_AUTHOR_EMAIL": "fx@local",
            "GIT_COMMITTER_NAME": "fx", "GIT_COMMITTER_EMAIL": "fx@local"}
-    out = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, timeout=30, env=env)
+    # No automatic maintenance: after the seed commit git 2.54+ repacks in the background (when its
+    # sample of objects/17/ finds two objects) and deletes loose objects while the first step's
+    # Blackbox preimage scan walks .git, which refuses the step as capture-incomplete.
+    out = subprocess.run(["git", "-c", "maintenance.auto=false", "-c", "gc.auto=0", "-C", str(root), *args],
+                         capture_output=True, text=True, timeout=30, env=env)
     assert out.returncode == 0, out.stderr
 
 
