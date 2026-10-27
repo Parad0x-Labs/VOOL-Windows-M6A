@@ -496,7 +496,7 @@ function controlFolder(host, step) {
   const bind = async (root) => {
     const clean = String(root || '').trim();
     if (!clean) { fail(host, T('setup.folder.err_empty', 'Type or choose a folder first.')); return; }
-    const name = clean.split('/').filter(Boolean).pop() || 'Project';
+    const name = clean.split(/[\\/]/).filter(Boolean).pop() || 'Project';
     use.disabled = true;
     const res = await postJSON('/api/projects', { name: name, root: clean });
     use.disabled = false;
@@ -662,14 +662,15 @@ def setup_steps_model(ui_locale: str = "en") -> list[dict]:
     locations) translate as whole strings — no prose parsing anywhere.
     """
     from core.i18n.catalog import catalog_for
+    from core.i18n.host_text import host_key
 
     catalog = catalog_for(ui_locale)
     return [
         {
             "id": s.id,
-            "title": catalog.text(f"setup.step.{s.id}.title") if s.title else "",
-            "sentence": catalog.text(f"setup.step.{s.id}.sentence") if s.sentence else "",
-            "later": catalog.text(f"setup.step.{s.id}.later") if s.later else "",
+            "title": catalog.text(host_key(f"setup.step.{s.id}.title")) if s.title else "",
+            "sentence": catalog.text(host_key(f"setup.step.{s.id}.sentence")) if s.sentence else "",
+            "later": catalog.text(host_key(f"setup.step.{s.id}.later")) if s.later else "",
         }
         for s in STEPS
     ]
@@ -703,9 +704,35 @@ def _localized_copy(ui_locale: str) -> dict:
 
 def _localized_captions(ui_locale: str) -> dict:
     from core.i18n.catalog import catalog_for
+    from core.i18n.host_text import host_key
 
     catalog = catalog_for(ui_locale)
-    return {step_id: catalog.text(f"setup.caption.{step_id}") for step_id in CAPTIONS}
+    return {step_id: catalog.text(host_key(f"setup.caption.{step_id}")) for step_id in CAPTIONS}
+
+
+#: (page source everywhere else, page source on Windows) for each setup text the page script words for a Mac: the
+#: script asks the catalog for the key's Windows sibling, and its inline English fallback says the same.
+_WINDOWS_SCRIPT_WORDS: tuple[tuple[str, str], ...] = (
+    ("T('setup.thinking.local_title', 'On my Mac')",
+     "T('setup.thinking.local_title.windows', 'On this computer')"),
+    ("T('setup.thinking.online_sub', 'Smarter answers. You paste a key from a company you pay; it is kept only on this Mac.')",
+     "T('setup.thinking.online_sub.windows', 'Smarter answers. You paste a key from a company you pay; it is kept only on this computer.')"),
+    ("T('setup.status.saved_thinking', 'Saved: VOOL thinks on this Mac.')",
+     "T('setup.status.saved_thinking.windows', 'Saved: VOOL thinks on this computer.')"),
+    ("T('setup.folder.placeholder', 'Type the folder’s full path, e.g. /Users/you/Documents')",
+     "T('setup.folder.placeholder.windows', 'Type the folder’s full path, e.g. C:\\\\Users\\\\you\\\\Documents')"),
+)
+
+
+def _host_setup_script() -> str:
+    from core.generated_files import host_is_windows
+
+    if not host_is_windows():
+        return _SETUP_JS
+    script = _SETUP_JS
+    for mac, windows in _WINDOWS_SCRIPT_WORDS:
+        script = script.replace(mac, windows)
+    return script
 
 
 def render_vool_setup_html(*, build_commit: str = "", ui_locale: str = "en") -> str:
@@ -723,7 +750,7 @@ def render_vool_setup_html(*, build_commit: str = "", ui_locale: str = "en") -> 
 
     tag = catalog_for(ui_locale).locale
     direction = (get_locale(tag) or get_locale("en")).direction
-    page = (_SETUP_HTML + _SETUP_JS).replace("__VOOL_PALETTE_CSS__", DARK_PALETTE_CSS)
+    page = (_SETUP_HTML + _host_setup_script()).replace("__VOOL_PALETTE_CSS__", DARK_PALETTE_CSS)
     return (
         page.replace("__SETUP_STEPS__", json.dumps(setup_steps_model(ui_locale), separators=(",", ":"), ensure_ascii=False))
         .replace("__SETUP_COPY__", json.dumps(_localized_copy(ui_locale), separators=(",", ":"), ensure_ascii=False))

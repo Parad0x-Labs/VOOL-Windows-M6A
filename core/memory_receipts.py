@@ -739,6 +739,11 @@ def find_changes(new_facts: Sequence[Fact], earlier: Sequence[dict[str, Any]], *
         for receipt in earlier:
             if receipt.get("role") != "user":
                 continue
+            if statement_at is not None and receipt.get("statement_at") is not None and float(statement_at) < float(receipt["statement_at"]):
+                # statement days decide, not write order, as for states above: a receipt rebuilt late (its first
+                # write failed) never replaces a value the user stated after it (measured 2026-10-27, CI run
+                # 40441789238: "31 km [REPLACED later by "26 km" stated 2025-03-10]")
+                continue
             for old in receipt.get("facts") or []:
                 if old.get("value_type") != fact.value_type or old.get("norm") == fact.norm or old.get("replaced_by"):
                     continue
