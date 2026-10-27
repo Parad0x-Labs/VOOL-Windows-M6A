@@ -47,3 +47,24 @@ def test_a_card_number_beside_an_id_is_still_kept_out(text):
     assert redactable_personal_kinds(beside) == ("card_number",)
     assert CARD_SHAPED_IDS[0] in redact_personal_secrets(beside)
     assert "[redacted-card-number]" in redact_personal_secrets(beside)
+
+
+@pytest.mark.parametrize("action_id", CARD_SHAPED_IDS)
+@pytest.mark.parametrize("shape", [
+    "approve move {id} 4111 1111 1111 1111",
+    "4111 1111 1111 1111 {id}",
+    "credit card {id} 4111111111111111",
+])
+def test_a_card_number_a_space_after_an_id_is_still_kept_out(action_id, shape):
+    # the card-run rule lets a space join digit groups: the card must not be swallowed into a run that starts in the id
+    text = shape.format(id=action_id)
+    assert redactable_personal_kinds(text) == ("card_number",), text
+    redacted = redact_personal_secrets(text)
+    assert action_id in redacted and "[redacted-card-number]" in redacted, redacted
+    assert "4111" not in redacted.replace(action_id, ""), redacted
+
+
+def test_no_card_number_beside_a_random_uuid_escapes():
+    escaped = [u for u in (str(uuid.uuid4()) for _ in range(2000))
+               if "4111" in redact_personal_secrets(f"approve move {u} 4111 1111 1111 1111").replace(u, "")]
+    assert escaped == []
