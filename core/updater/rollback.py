@@ -1,6 +1,7 @@
 """Explicit previous-code rollback. Successful rollback never restores old user data."""
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -224,7 +225,8 @@ def run_manual_rollback(subsystem, candidate: dict, txid: str) -> dict:
             subsystem.status.publish(UpdatePhase.FAILED, detail=str(exc), fault=UpdateFault.VERIFICATION_FAILED)
             return {'ok': False, 'detail': str(exc)}
         state['reason'] = str(exc)
-        _save(path, state, state['phase'])
+        with contextlib.suppress(OSError):  # The reason is diagnostic; never let writing it stop the restore.
+            _save(path, state, state['phase'])
         try:
             return _restore_current(subsystem, path, state)
         except Exception as restore:
