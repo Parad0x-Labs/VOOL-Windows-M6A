@@ -636,11 +636,23 @@ def _revoked_tokens_locked(chat_id=None, runtime_home=None, *, owner_memory=None
             memory.close()
 
 
+def _revoked_tokens_read_again_once(chat_id=None, runtime_home=None, *, owner_memory=None) -> tuple[str, ...]:
+    """"database schema has changed" (SQLITE_SCHEMA) only says another connection changed the schema under the
+    statement (measured 2026-10-27: a lazily created table), so the read is made once more. Any other storage error,
+    and a second failure, propagates and the caller fails closed."""
+    try:
+        return revoked_tokens(chat_id, runtime_home, owner_memory=owner_memory)
+    except sqlite3.OperationalError as exc:
+        if "schema has changed" not in str(exc):
+            raise
+        return revoked_tokens(chat_id, runtime_home, owner_memory=owner_memory)
+
+
 def authorize_payload(payload, chat_id=None, runtime_home=None, *, owner_memory=None) -> bool:
     from core.memory.carriers import carries, memory_words
     from core.memory.withdrawals import payload_is_withdrawn
     try:
-        tokens = revoked_tokens(chat_id, runtime_home, owner_memory=owner_memory)
+        tokens = _revoked_tokens_read_again_once(chat_id, runtime_home, owner_memory=owner_memory)
         # Served rows answer for their words: a forgotten "14" does not withhold a row recorded on the 14th.
         payload = memory_words(payload)
         return not any(carries(payload, token) for token in tokens) and not payload_is_withdrawn(payload, tokens)
