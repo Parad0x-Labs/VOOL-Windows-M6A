@@ -153,6 +153,10 @@ _STOP = frozenset(["the", "a", "an", "and", "or", "of", "to", "in", "on", "at", 
 _COUNT_NOUN_STOP = frozenset(["days", "weeks", "months", "years", "hours", "minutes", "mins", "hrs", "seconds", "times", "time", "ago", "am", "pm", "percent", "dollars", "euros", "pounds", "year", "month", "week", "day", "hour", "minute"])
 
 
+# find_changes' mark for a value the user stated before a record already written: the writer links it, then drops it
+REPLACED_BY_LATER = "replaced-by-later"
+
+
 @dataclass
 class Fact:
     sentence: str
@@ -736,14 +740,14 @@ def find_changes(new_facts: Sequence[Fact], earlier: Sequence[dict[str, Any]], *
         if fact.value_type in ("event", "preference") or len(fact.slot) < 2:
             continue
         best: tuple[float, dict[str, Any], dict[str, Any]] | None = None
+        replacing: tuple[tuple[float, float], dict[str, Any], dict[str, Any]] | None = None
         for receipt in earlier:
             if receipt.get("role") != "user":
                 continue
-            if statement_at is not None and receipt.get("statement_at") is not None and float(statement_at) < float(receipt["statement_at"]):
-                # statement days decide, not write order, as for states above: a receipt rebuilt late (its first
-                # write failed) never replaces a value the user stated after it (measured 2026-10-27, CI run
-                # 40441789238: "31 km [REPLACED later by "26 km" stated 2025-03-10]")
-                continue
+            # statement days decide, not write order, as for states above: a receipt rebuilt late (its first write
+            # failed) never replaces a value the user stated after it (measured 2026-10-27, CI run 40441789238:
+            # "31 km [REPLACED later by "26 km" stated 2025-03-10]"); the first such value replaces it instead
+            later = statement_at is not None and receipt.get("statement_at") is not None and float(statement_at) < float(receipt["statement_at"])
             for old in receipt.get("facts") or []:
                 if old.get("value_type") != fact.value_type or old.get("norm") == fact.norm or old.get("replaced_by"):
                     continue
@@ -764,8 +768,19 @@ def find_changes(new_facts: Sequence[Fact], earlier: Sequence[dict[str, Any]], *
                     continue
                 if fact.value_type == "list":
                     continue
-                if best is None or overlap > best[0]:
+                if later:
+                    order = (float(receipt["statement_at"]), -overlap)
+                    if replacing is None or order < replacing[0]:
+                        replacing = (order, receipt, old)
+                elif best is None or overlap > best[0]:
                     best = (overlap, receipt, old)
+        if replacing is not None:
+            (_, overlap), receipt, old = replacing
+            # applied by the writer: the later receipt gains the change, this fact its replaced_by (never stored here)
+            changes.append({"slot": list(fact.slot), "old_value": fact.value, "value_type": fact.value_type, "kind": REPLACED_BY_LATER,
+                            "new_receipt": receipt["receipt_id"], "new_occurrence": receipt["occurrence_id"], "new_value": old.get("value"),
+                            "new_statement_at": receipt.get("statement_at"), "rule": "same-slot-same-role-disjoint-value",
+                            "slot_overlap": round(-overlap, 3)})
         if best is not None:
             overlap, receipt, old = best
             changes.append({"slot": list(fact.slot), "old_occurrence": receipt["occurrence_id"], "old_receipt": receipt["receipt_id"],
@@ -980,6 +995,24 @@ class ReceiptWriteResult:
     reason: str = ""
 
 
+def _stored_receipt_with_said(mem, receipt_id):
+    """A stored receipt with the words of its active source turn, from which its head is rendered; None without both."""
+    with mem._lock:
+        cur = mem._conn.execute("SELECT * FROM memory_receipts WHERE agent_id = ? AND receipt_id = ?", (mem._agent_id, str(receipt_id)))
+        row = cur.fetchone()
+        if row is None:
+            return None
+        receipt = _row_to_receipt(dict(zip([column[0] for column in cur.description], row, strict=True)))
+        source = mem._conn.execute(
+            "SELECT body FROM source_occurrences WHERE agent_id = ? AND occurrence_id = ? AND status = 'active'",
+            (mem._agent_id, receipt["occurrence_id"]),
+        ).fetchone()
+    if source is None or not source[0]:
+        return None
+    receipt["said"] = _strip_envelope(str(source[0]))[0]
+    return receipt
+
+
 def _raw_receipt_for_occurrence(mem, occurrence_id):
     with mem._lock:
         cur = mem._conn.execute(
@@ -1036,6 +1069,9 @@ def _write_receipt(mem: Any, occurrence: Any, *, chat_scope: str, said: str | No
     if role == "user":
         earlier = receipts_for_scope(mem, chat_scope, role="user", strict=True)
     changes = find_changes(facts, earlier, role=role, statement_at=float(statement_at) if statement_at is not None else None)
+    # a later record whose source turn is gone cannot carry the change: the value then stays unlinked, as before
+    replaced_later = [c for c in changes if c.get("kind") == REPLACED_BY_LATER and _stored_receipt_with_said(mem, c["new_receipt"]) is not None]
+    changes = [c for c in changes if c.get("kind") != REPLACED_BY_LATER]
     withdraws = []
     marker = retraction_marker(_strip_envelope(body)[0])
     if marker is not None:
@@ -1048,6 +1084,12 @@ def _write_receipt(mem: Any, occurrence: Any, *, chat_scope: str, said: str | No
                "statement_at": float(statement_at) if statement_at is not None else None, "event_at": event_at, "event_grain": event_grain,
                "facts": [f.as_dict() for f in facts], "changes": changes, "withdraws": withdraws, "replaced_by": [],
                "said": _strip_envelope(body)[0], "writer": WRITER, "model": "", "cost_calls": 0, "cost_tokens": 0, "created_at": time.time()}
+    for later in replaced_later:
+        for f in receipt["facts"]:
+            if f.get("value") == later["old_value"] and f.get("value_type") == later["value_type"] and not f.get("replaced_by"):
+                f["replaced_by"] = later["new_receipt"]
+        receipt["replaced_by"].append({"receipt_id": later["new_receipt"], "occurrence_id": later["new_occurrence"], "slot": later["slot"],
+                                       "new_value": later["new_value"], "statement_at": later["new_statement_at"]})
     receipt["head_text"] = head_text(receipt)
     from core.memory.revocation import writing
 
@@ -1060,7 +1102,7 @@ def _write_receipt(mem: Any, occurrence: Any, *, chat_scope: str, said: str | No
                 " facts_json, changes_json, withdraws_json, replaced_by_json, head_text, writer, model, cost_calls, cost_tokens, created_at)"
                 " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (receipt["receipt_id"], receipt["agent_id"], receipt["chat_scope"], occ_id, role, receipt["speaker"], receipt["statement_at"],
-                 event_at, event_grain, json.dumps(receipt["facts"]), json.dumps(changes), json.dumps(withdraws), "[]", receipt["head_text"],
+                 event_at, event_grain, json.dumps(receipt["facts"]), json.dumps(changes), json.dumps(withdraws), json.dumps(receipt["replaced_by"]), receipt["head_text"],
                  WRITER, "", 0, 0, receipt["created_at"]))
             # back-reference on every replaced receipt, so outdating is a written fact on both ends
             for change in changes:
@@ -1076,6 +1118,17 @@ def _write_receipt(mem: Any, occurrence: Any, *, chat_scope: str, said: str | No
                                "statement_at": receipt["statement_at"]})
                 mem._conn.execute("UPDATE memory_receipts SET facts_json = ?, replaced_by_json = ? WHERE receipt_id = ?",
                                   (json.dumps(old_facts), json.dumps(old_rb), change["old_receipt"]))
+            # the value stated after this one carries the change, as if the two had been written in statement order
+            for later in replaced_later:
+                stored = _stored_receipt_with_said(mem, later["new_receipt"])
+                if stored is None:
+                    continue
+                stored["changes"].append({"slot": later["slot"], "old_occurrence": occ_id, "old_receipt": receipt["receipt_id"],
+                                          "old_value": later["old_value"], "old_statement_at": receipt["statement_at"], "new_value": later["new_value"],
+                                          "value_type": later["value_type"], "kind": "replaced", "rule": later["rule"], "slot_overlap": later["slot_overlap"]})
+                # its head names its changes, so it is written again with them (a stale head would read as authored text)
+                mem._conn.execute("UPDATE memory_receipts SET changes_json = ?, head_text = ? WHERE receipt_id = ?",
+                                  (json.dumps(stored["changes"]), head_text(stored), later["new_receipt"]))
             persisted = _raw_receipt_for_occurrence(mem, occ_id)
             if persisted is None:
                 raise RuntimeError("receipt verification failed")
