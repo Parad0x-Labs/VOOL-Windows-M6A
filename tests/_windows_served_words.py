@@ -61,6 +61,19 @@ CONTACTS_WORDS: tuple[tuple[str, str, int], ...] = (
 )
 
 
+#: (Mac text, Windows text) for the shortcut key caps, as the chat page's palette and companion drawer fragments carry
+#: them: every shortcut already answers Ctrl, and on Windows its key cap says so.
+SHORTCUT_WORDS: tuple[tuple[str, str], ...] = (
+    ("p.newChat(); }, '\\⌘N');", "p.newChat(); }, 'Ctrl+N');"),
+    ("p.togglePanel(); }, '\\⌘J');", "p.togglePanel(); }, 'Ctrl+J');"),
+    ("p.openModelMenu(); }, '\\⌘M');", "p.openModelMenu(); }, 'Ctrl+M');"),
+    ("p.openSettings(); }, '\\⌘,');", "p.openSettings(); }, 'Ctrl+,');"),
+    *((f"<kbd>⌘{key}</kbd>", f"<kbd>Ctrl+{key}</kbd>") for key in "KNJ/F,"),
+    ("chip.textContent = '\\u2318N';", "chip.textContent = 'Ctrl+N';"),
+    ("toggleDrawer, '\\u2318/');", "toggleDrawer, 'Ctrl+/');"),
+)
+
+
 #: (Mac text, Windows text) for the chat filter's shortcut hint, as the chat page's sidebar fragment carries it.
 FILTER_HINT_WORDS = (
     "extrasT('chats.filter_placeholder', 'Search chats\\u2026  \\u2318F')",
@@ -99,6 +112,7 @@ def as_the_mac_page(page: str, host: str = "win32") -> str:
     if host == "win32":
         pairs += (*FILE_ACTION_WORDS, *((mac, windows) for mac, windows, _drawn in WALLET_WORDS + CONTACTS_WORDS))
         pairs += (FILTER_HINT_WORDS, *settings_catalog_words())
+        pairs += SHORTCUT_WORDS
     for mac_text, windows_text in pairs:
         page = page.replace(windows_text, mac_text)
     return page

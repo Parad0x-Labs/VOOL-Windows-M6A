@@ -14,6 +14,8 @@ Pins the follow-up named by the 2026-10-01 localization delivery's "remaining ga
 
 from __future__ import annotations
 
+import sys
+
 from core.i18n.catalog import catalog_for, clear_catalog_cache
 from core.setup_progress import snapshot
 from core.vool_chat_page import render_vool_chat_html
@@ -88,7 +90,9 @@ def test_chat_greetings_openers_and_line_resolve_through_voolt() -> None:
         assert f"emptyT('{call}'" in html, call
 
 
-def test_palette_hint_translates_labels_not_keycaps() -> None:
+def test_palette_hint_translates_labels_not_keycaps(monkeypatch) -> None:
+    # The Mac key caps; a Windows host is served Ctrl (tests/test_windows_shortcut_labels.py).
+    monkeypatch.setattr(sys, "platform", "darwin")
     from core.command_palette_fragment import render_palette_fragment
 
     fragment = render_palette_fragment()
