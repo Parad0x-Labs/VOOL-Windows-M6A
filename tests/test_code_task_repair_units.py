@@ -55,7 +55,10 @@ PRICING_ENTRY = "- pricing: totals add tax\n"
 def _git(root: Path, *args: str) -> None:
     env = {**os.environ, "GIT_AUTHOR_NAME": "fx", "GIT_AUTHOR_EMAIL": "fx@local",
            "GIT_COMMITTER_NAME": "fx", "GIT_COMMITTER_EMAIL": "fx@local"}
-    out = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, timeout=30, env=env)
+    # No automatic maintenance: see test_code_task_purposeful_verification._git (background repack
+    # after the seed commit races the first step's Blackbox preimage scan of .git).
+    out = subprocess.run(["git", "-c", "maintenance.auto=false", "-c", "gc.auto=0", "-C", str(root), *args],
+                         capture_output=True, text=True, timeout=30, env=env)
     assert out.returncode == 0, out.stderr
 
 
