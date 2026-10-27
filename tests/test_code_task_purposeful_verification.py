@@ -39,7 +39,11 @@ CHECK = "from calc import total\nassert total(40, 8) == 48, total(40, 8)\nprint(
 def _git(root: Path, *args: str) -> None:
     env = {**os.environ, "GIT_AUTHOR_NAME": "fx", "GIT_AUTHOR_EMAIL": "fx@local",
            "GIT_COMMITTER_NAME": "fx", "GIT_COMMITTER_EMAIL": "fx@local"}
-    out = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, timeout=30, env=env)
+    # No automatic maintenance: after the seed commit git 2.54+ repacks in the background (when its
+    # sample of objects/17/ finds two objects) and deletes loose objects while the first step's
+    # Blackbox preimage scan walks .git, which refuses the step as capture-incomplete.
+    out = subprocess.run(["git", "-c", "maintenance.auto=false", "-c", "gc.auto=0", "-C", str(root), *args],
+                         capture_output=True, text=True, timeout=30, env=env)
     assert out.returncode == 0, out.stderr
 
 
@@ -313,7 +317,11 @@ def test_a_quoted_example_fix_does_not_authorize_mutation(project):
     task_id = _door("code.task.open", {"objective": "repair total()"}, ctx).details["task_id"]
     red = _door("code.task.step", {"task_id": task_id, "step_id": "repro", "intent": "workspace.run_tests",
                                    "arguments": {"command": "python3 check.py"}}, ctx)
-    assert red.details["tool_result"]["success"] is False
+    tool_result = red.details.get("tool_result") or {}
+    assert red.details.get("executed") is True and "success" in tool_result, (
+        f"repro step did not run: status={red.status!r} reason={red.details.get('reason')!r} "
+        f"tool_result_keys={sorted(tool_result)}")
+    assert tool_result["success"] is False
     attempt = _door("code.task.step", {"task_id": task_id, "step_id": "quote-1", "intent": "workspace.write_file",
                                        "arguments": quoted}, ctx)
     assert attempt.ok is False and attempt.status == "stage_violation", attempt.status
