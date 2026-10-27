@@ -61,12 +61,44 @@ CONTACTS_WORDS: tuple[tuple[str, str, int], ...] = (
 )
 
 
+#: (Mac text, Windows text) for the chat filter's shortcut hint, as the chat page's sidebar fragment carries it.
+FILTER_HINT_WORDS = (
+    "extrasT('chats.filter_placeholder', 'Search chats\\u2026  \\u2318F')",
+    "extrasT('chats.filter_placeholder.windows', 'Search chats\\u2026  Ctrl+F')",
+)
+#: Settings model texts that name a Mac; on Windows the page's model carries each one's ".windows" catalog text.
+SETTINGS_CATALOG_KEYS = (
+    "settings.group.notifications.blurb",
+    "settings.row.notifications_panel.label",
+    "settings.row.notifications_panel.help",
+    "settings.row.calendar_accounts_panel.help",
+)
+
+
+def settings_catalog_words() -> tuple[tuple[str, str], ...]:
+    """(Mac text, Windows text) for each Settings model text above, in every shipped language, as the page's JSON
+    model carries them: each with its field name, since the page's i18n bundle carries both texts under their keys."""
+    import json
+
+    from core.i18n.catalog import CATALOGS_DIR
+
+    pairs: list[tuple[str, str]] = []
+    for path in sorted(CATALOGS_DIR.glob("*.json")):
+        messages = json.loads(path.read_text(encoding="utf-8"))["messages"]
+        for key in SETTINGS_CATALOG_KEYS:
+            field = key.rsplit(".", 1)[1]
+            mac, windows = (f'"{field}":' + json.dumps(messages[k], ensure_ascii=False) for k in (key, key + ".windows"))
+            pairs.append((mac, windows))
+    return tuple(pairs)
+
+
 def as_the_mac_page(page: str, host: str = "win32") -> str:
     """``page``, served on ``host`` (a sys.platform value), with that host's texts above put back to their Mac text:
     every text on Windows, only the card on any other host that is not a Mac."""
     pairs: tuple[tuple[str, str], ...] = ((MAC_CARD, NEUTRAL_CARD),)
     if host == "win32":
         pairs += (*FILE_ACTION_WORDS, *((mac, windows) for mac, windows, _drawn in WALLET_WORDS + CONTACTS_WORDS))
+        pairs += (FILTER_HINT_WORDS, *settings_catalog_words())
     for mac_text, windows_text in pairs:
         page = page.replace(windows_text, mac_text)
     return page
