@@ -256,10 +256,9 @@ def _clause_before(text: str, start: int) -> str:
 def _luhn_digit_run_spans(value: str):
     # an id (a pending action's uuid) holds grouped digit runs that can pass the checksum: it is never a card number
     # (measured 2026-10-27: "approve move <uuid>" read as a card number for 47 of 200,000 random uuids)
-    ids = [match.span() for match in _UUID_RE.finditer(value)]
-    for match in _CARD_RUN_RE.finditer(value):
-        if any(start < match.end() and match.start() < end for start, end in ids):
-            continue
+    # the id is masked, not skipped: a run that starts in the id must not swallow a card number written after it
+    masked = _UUID_RE.sub(lambda match: "x" * len(match.group(0)), value)
+    for match in _CARD_RUN_RE.finditer(masked):
         raw = match.group(0)
         digits = re.sub(r"[ -]", "", raw)
         if not 13 <= len(digits) <= 19:
