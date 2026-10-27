@@ -2688,7 +2688,7 @@ class VoolMemory:
             pending_where = where + " AND status != 'complete'" if scope else " WHERE status != 'complete'"
             params = (scope, scope) if scope else ()
             with self._lock:
-                rows = self._conn.execute(
+                rows = self._read_in_transaction(
                     "SELECT 'revoked' AS state, token, revoked_at AS event_at FROM memory_revocations"
                     + where
                     + " UNION ALL SELECT 'pending' AS state, token, started_at AS event_at "
@@ -2696,19 +2696,35 @@ class VoolMemory:
                     + pending_where
                     + " ORDER BY event_at, token",
                     params,
-                ).fetchall()
+                )
             if any(row["state"] == "pending" for row in rows):
                 raise RuntimeError("owner erasure is incomplete")
             return tuple(str(row["token"]) for row in rows)
         if not scope:
             return ()
         with self._lock:
-            rows = self._conn.execute(
+            rows = self._read_in_transaction(
                 "SELECT token FROM memory_revocations WHERE chat_id = ? "
                 "ORDER BY revoked_at, token",
                 (scope,),
-            ).fetchall()
+            )
         return tuple(str(row["token"]) for row in rows)
+
+    def _read_in_transaction(self, sql: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
+        """Run one read inside a read transaction; the caller holds ``self._lock``.
+
+        A bare autocommit SELECT answers "database schema has changed" (SQLITE_SCHEMA) when another connection
+        commits a schema change under it, and every lazily created table does on its first use (measured
+        2026-10-27, CI run 40441789238 tests (0)). Inside a transaction the statement reads one stable schema.
+        A read inside the caller's own open transaction already has one.
+        """
+        if self._conn.in_transaction:
+            return self._conn.execute(sql, params).fetchall()
+        self._conn.execute("BEGIN")
+        try:
+            return self._conn.execute(sql, params).fetchall()
+        finally:
+            self._conn.rollback()
 
     def occurrence_delete_by_lineage(self, request_id: str) -> int:
         """A8 erasure traversal hook: remove occurrences of one request id."""

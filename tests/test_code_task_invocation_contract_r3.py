@@ -86,7 +86,12 @@ def _drive_to_narrow(root: Path, session: str, *, command: str, cwd: str | None,
     arguments = {"command": command, **({"cwd": cwd} if cwd else {})}
     red = _door("code.task.step", {"task_id": task_id, "step_id": "repro", "intent": "workspace.run_tests",
                                    "arguments": arguments}, ctx)
-    assert red.details["tool_result"]["success"] is False
+    tool_result = red.details.get("tool_result") or {}
+    # A refused or crashed step carries no `success` (it never ran); say which, instead of KeyError.
+    assert red.details.get("executed") is True and "success" in tool_result, (
+        f"repro step did not run: status={red.status!r} reason={red.details.get('reason')!r} "
+        f"tool_result_keys={sorted(tool_result)}")
+    assert tool_result["success"] is False
     assert "can't open file" not in str(red.details["tool_result"].get("stderr") or ""), red.details["tool_result"]
     assert _journal(task_id)["reproduced_failure"]["cwd"] == (cwd or "")
     assert _door("code.task.identify", {"task_id": task_id, "path": owner, "line": 2,
