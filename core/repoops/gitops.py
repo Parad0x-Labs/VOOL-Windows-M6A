@@ -173,7 +173,7 @@ class GitRunner:
             probe_remote = f"vool-push-target-{uuid.uuid4().hex}"
             probe = subprocess.run(
                 safe_git.hardened_argv(self.root, "-c", f"remote.{probe_remote}.url={name}", "remote", "-v"),
-                capture_output=True, text=True, timeout=self.timeout, env=safe_git.safe_env(),
+                capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=self.timeout, env=safe_git.safe_env(),
             )
             code = probe.returncode
             prefix, suffix = f"{probe_remote}\t", " (push)"
@@ -184,7 +184,7 @@ class GitRunner:
             return [], f"the push destination of {_shown(name)!r} could not be read"
         vcs = subprocess.run(
             safe_git.hardened_argv(self.root, "config", "--get", f"remote.{name}.vcs"),
-            capture_output=True, text=True, timeout=self.timeout, env=safe_git.safe_env(),
+            capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=self.timeout, env=safe_git.safe_env(),
         )
         if vcs.returncode == 0 and vcs.stdout.strip():
             return [], f"remote {_shown(name)!r} names a remote helper (its vcs setting), which VOOL does not run"
@@ -216,7 +216,7 @@ class GitRunner:
             hooks = safe_git.active_hooks(git_dir, timeout=self.timeout)
             update = subprocess.run(
                 ["git", "--git-dir", str(git_dir), "config", "--get", "receive.denycurrentbranch"],
-                capture_output=True, text=True, timeout=self.timeout, env=safe_git.safe_env(),
+                capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=self.timeout, env=safe_git.safe_env(),
             )
         except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
             return f"the push destination {url!r} could not be checked ({type(exc).__name__})"
@@ -232,7 +232,7 @@ class GitRunner:
     def _push_base(self) -> Path:
         for option in ("--show-toplevel", "--absolute-git-dir"):
             probe = subprocess.run(safe_git.hardened_argv(self.root, "rev-parse", option), capture_output=True,
-                                   text=True, timeout=self.timeout, env=safe_git.safe_env())
+                                   encoding="utf-8", errors="surrogateescape", timeout=self.timeout, env=safe_git.safe_env())
             if probe.returncode == 0 and probe.stdout.strip():
                 return Path(probe.stdout.strip())
         raise RuntimeError("the repository's top folder could not be resolved")
@@ -249,7 +249,7 @@ class GitRunner:
             return -1, "", f"git was not run: {refusal}"
         command = safe_git.hardened_argv(self.root, *argv)
         try:
-            completed = subprocess.run(command, capture_output=True, text=True, timeout=self.timeout,
+            completed = subprocess.run(command, capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=self.timeout,
                                        env=safe_git.safe_env())
         except subprocess.TimeoutExpired:
             self.log.append({"argv": list(argv), "returncode": -1, "timed_out": True})
@@ -560,7 +560,7 @@ def _windows_destination_refusal(url: str, git_dir: Path, *, timeout: float) -> 
         return ""
     probe = subprocess.run(
         ["git", "--git-dir", str(git_dir), "rev-parse", "--path-format=absolute", "--git-common-dir"],
-        capture_output=True, text=True, timeout=timeout, env=safe_git.safe_env(),
+        capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_git.safe_env(),
     )
     common = probe.stdout.strip()
     if probe.returncode != 0 or not common:
@@ -594,7 +594,7 @@ def _windows_push_source_refusal(root: Path, *, timeout: float) -> str:
         return ""
     probe = subprocess.run(
         safe_git.hardened_argv(root, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"),
-        capture_output=True, text=True, timeout=timeout, env=safe_git.safe_env(),
+        capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_git.safe_env(),
     )
     lines = probe.stdout.splitlines()
     if probe.returncode != 0 or len(lines) != 2 or not all(os.path.isabs(line) for line in lines):
@@ -620,7 +620,7 @@ def _receiving_git_dir(path: Path, *, timeout: float) -> Path | None:
             continue
         probe = subprocess.run(
             ["git", "--git-dir", str(candidate), "rev-parse", "--absolute-git-dir"],
-            capture_output=True, text=True, timeout=timeout, env=safe_git.safe_env(),
+            capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_git.safe_env(),
         )
         if probe.returncode == 0 and probe.stdout.strip():
             return Path(probe.stdout.strip())
