@@ -4883,20 +4883,29 @@ def _localized_settings_groups(ui_locale: str) -> list[dict]:
     text under the stable ``settings.group.<id>.*`` / ``settings.row.<id>.*`` keys, falling
     back visibly to English per the engine's law. Search keywords stay as authored: they
     are a match aid against typed queries, not displayed prose, and translated keywords
-    would silently narrow what the search box finds.
+    would silently narrow what the search box finds. On Windows, in every locale English
+    included, a text that names a Mac is served from its ``.windows`` key instead
+    (core.i18n.host_text).
     """
     import copy
 
+    from core.generated_files import host_is_windows
     from core.i18n.catalog import catalog_for
+    from core.i18n.host_text import host_key
 
     groups = settings_groups()
     catalog = catalog_for(ui_locale)
-    if catalog.locale == "en":
+    windows = host_is_windows()
+    if catalog.locale == "en" and not windows:
         return groups
     en_keys = set(catalog_for("en").keys)
 
     def resolved(key: str, fallback: str) -> str:
-        if key not in en_keys:
+        # On Windows a text that names a Mac is served from its ".windows" sibling, in English too.
+        windows_key = host_key(key, windows=windows)
+        if windows_key != key:
+            return catalog.text(windows_key)
+        if catalog.locale == "en" or key not in en_keys:
             return fallback
         return catalog.text(key)
 
