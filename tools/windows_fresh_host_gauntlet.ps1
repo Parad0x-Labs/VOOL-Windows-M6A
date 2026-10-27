@@ -177,6 +177,8 @@ function Invoke-WindowsRuntimeRegression {
         "tests\test_windows_mutation_ledger_names.py",
         "tests\test_windows_relaunch_reopens_a_closed_window.py",
         "tests\test_windows_supervisor_restarts_a_hung_child_not_a_slow_one.py",
+        "tests\test_windows_supervisor_backs_off_a_child_that_exits_mid_pass.py",
+        "tests\test_windows_supervisor_scan_opens_no_console.py",
         "tests\test_windows_junction_boundary.py",
         "tests\test_windows_write_gate.py",
         "tests\test_windows_write_gate_before_approval.py",
