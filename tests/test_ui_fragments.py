@@ -8,6 +8,7 @@ string-level truths about the one document the server actually serves.
 from __future__ import annotations
 
 import re
+import sys
 
 from core.ui_chip_fragment import render_chip_fragment
 from core.vool_chat_page import _VOOL_CHAT_HTML, render_vool_chat_html
@@ -479,7 +480,9 @@ def test_scene_lab_is_dev_labelled_and_not_mounted_in_beta() -> None:
     assert "DEV" in engine and "vnDevPuppet" in engine
 
 
-def test_hint_bar_ships_with_the_shortcut_owner() -> None:
+def test_hint_bar_ships_with_the_shortcut_owner(monkeypatch) -> None:
+    # The Mac key caps; a Windows host is served Ctrl (tests/test_windows_shortcut_labels.py).
+    monkeypatch.setattr(sys, "platform", "darwin")
     from core.command_palette_fragment import render_palette_fragment
 
     fragment = render_palette_fragment()
