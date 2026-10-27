@@ -760,7 +760,7 @@ def active_hooks(cwd: Path, *, timeout: float = 20) -> list[str]:
     instead, so a pre-commit check is never skipped silently."""
     probe = subprocess.run(
         ["git", "--no-optional-locks", "-c", "core.fsmonitor=false", "-C", str(cwd), "rev-parse", "--git-path", "hooks"],
-        capture_output=True, text=True, timeout=timeout, env=safe_env(),
+        capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env(),
     )
     if probe.returncode != 0:
         raise RuntimeError(f"git hooks directory could not be resolved ({probe.returncode})")

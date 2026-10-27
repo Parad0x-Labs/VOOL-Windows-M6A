@@ -227,7 +227,7 @@ def _git_places(folder: str) -> list[tuple[str, str]] | str:
         probe = subprocess.run(
             safe_git.hardened_argv(Path(folder), "rev-parse", "--path-format=absolute", "--show-toplevel",
                                    "--git-dir", "--git-common-dir"),
-            capture_output=True, text=True, timeout=30, env=safe_git.safe_env(),
+            capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=30, env=safe_git.safe_env(),
         )
     except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired):
         return unplaceable
