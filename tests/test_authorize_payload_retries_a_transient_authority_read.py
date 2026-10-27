@@ -51,8 +51,9 @@ def test_one_transient_authority_read_error_does_not_withhold_the_payload(mem, m
 
 
 def test_an_authority_read_that_keeps_failing_still_withholds(mem, monkeypatch):
-    _failing(mem, monkeypatch, failures=10)
+    calls = _failing(mem, monkeypatch, failures=10)
     assert revocation.authorize_payload(PAYLOAD, CHAT, mem._authority_home, owner_memory=mem) is False
+    assert calls["n"] == 2
 
 
 def test_a_revoked_payload_is_still_withheld_after_a_transient_error(mem, monkeypatch):

@@ -36,16 +36,21 @@ def test_the_revocation_read_is_not_failed_by_another_connections_schema_change(
     stop = time.monotonic() + CHURN_SECONDS
     failures: list[str] = []
     rounds: list[int] = []
+    churned: list[int] = []
+    churn_errors: list[str] = []
 
     def churn() -> None:
         conn = sqlite3.connect(str(mem.db_path), timeout=10.0, isolation_level=None)
+        index = 0
         try:
-            index = 0
             while time.monotonic() < stop:
                 conn.execute(f"CREATE TABLE IF NOT EXISTS lazily_created_{index} (value TEXT)")
                 conn.execute(f"DROP TABLE lazily_created_{index}")
                 index += 1
+        except Exception as exc:  # a churn that stopped early would leave the readers unraced
+            churn_errors.append(f"{type(exc).__name__}: {exc}")
         finally:
+            churned.append(index)
             conn.close()
 
     def reader() -> None:
@@ -64,7 +69,8 @@ def test_the_revocation_read_is_not_failed_by_another_connections_schema_change(
     for thread in threads:
         thread.join()
 
-    assert sum(rounds) >= 3, rounds
+    assert not churn_errors, churn_errors
+    assert churned[0] >= 100 and sum(rounds) >= 100, (churned, rounds)
     assert not failures, f"{len(failures)} failed reads in {sum(rounds)}: {sorted(set(failures))}"
 
 
