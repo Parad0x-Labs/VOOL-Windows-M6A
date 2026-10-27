@@ -223,5 +223,20 @@ window.VoolCompanionDrawer = Object.freeze({
 """
 
 
+# The New chat key cap and the palette's Pet appearance row say ⌘, which a Windows keyboard does not
+# have; both shortcuts already answer Ctrl. A Windows host is served these exact pieces with Ctrl;
+# every other host gets the script byte for byte.
+_WINDOWS_SHORTCUT_LABELS = (
+    ("chip.textContent = '\\u2318N';", "chip.textContent = 'Ctrl+N';"),
+    ("toggleDrawer, '\\u2318/');", "toggleDrawer, 'Ctrl+/');"),
+)
+
+
 def render_companion_drawer_fragment() -> str:
-    return "<style>" + _DRAWER_CSS + "</style>\n<script>" + _DRAWER_JS + "</script>"
+    from core.generated_files import host_is_windows
+
+    script = _DRAWER_JS
+    if host_is_windows():
+        for mac, windows in _WINDOWS_SHORTCUT_LABELS:
+            script = script.replace(mac, windows)
+    return "<style>" + _DRAWER_CSS + "</style>\n<script>" + script + "</script>"
