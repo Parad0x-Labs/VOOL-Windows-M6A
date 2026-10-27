@@ -225,7 +225,7 @@ def test_bundle_supervisor_treats_http_error_as_unhealthy(tmp_path) -> None:
     response.__enter__.return_value = response
     response.__exit__.return_value = None
 
-    with mock.patch("installer.bundle.bundle_supervisor.urllib.request.urlopen", return_value=response):
+    with mock.patch("installer.bundle.bundle_supervisor._PROBE_OPENER.open", return_value=response):
         assert supervisor._healthy("http://127.0.0.1:11435/healthz") is False
 
 
