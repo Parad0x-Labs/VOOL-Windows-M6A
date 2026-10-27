@@ -203,7 +203,7 @@ def _link_in(root: Path) -> str:
 def _git_folders(folder: Path, *, timeout: float) -> tuple[str, str]:
     probe = subprocess.run(
         safe_git.hardened_argv(folder, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"),
-        capture_output=True, text=True, timeout=timeout, env=safe_git.safe_env(),
+        capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_git.safe_env(),
     )
     lines = probe.stdout.splitlines()
     if probe.returncode != 0 or len(lines) != 2 or not all(os.path.isabs(line) for line in lines):
