@@ -420,6 +420,12 @@ def _run_bounded_claim_worker(script, tmp_path):
         "    while time.process_time() - started < 3 and time.monotonic() - walled < 30:",
         "        if finished.wait(0.05):",
         "            return",
+        "    import faulthandler, sys",
+        "    cpu, wall = time.process_time() - started, time.monotonic() - walled",
+        "    record.write_text(json.dumps({'pid': os.getpid(), 'phase': 'deadline', 'imports': import_seconds,",
+        "                                  'cpu': cpu, 'wall': wall, 'budget': 'cpu' if cpu >= 3 else 'wall'}))",
+        "    print(f'deadline: cpu={cpu:.2f}s wall={wall:.2f}s', file=sys.stderr, flush=True)",
+        "    faulthandler.dump_traceback(file=sys.stderr, all_threads=True)",
         "    os._exit(124)",
         "deadline = threading.Thread(target=_deadline, daemon=True)",
         "deadline.start()",
@@ -433,9 +439,14 @@ def _run_bounded_claim_worker(script, tmp_path):
         "print(json.dumps(result))",
     ])
     result = subprocess.run(
-        [sys.executable, "-c", worker], check=True, timeout=95,
+        [sys.executable, "-c", worker], check=False, timeout=95,
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}, capture_output=True, text=True,
     )
+    if result.returncode:
+        # Say which budget ran out and where the worker was, instead of only "exit status 124".
+        print(f"claim worker record: {record.read_text() if record.exists() else '<none>'}", file=sys.stderr)
+        print(result.stderr[-8000:], file=sys.stderr)
+        raise subprocess.CalledProcessError(result.returncode, ["claim-worker"], result.stdout, result.stderr)
     evidence = json.loads(result.stdout)
     assert evidence["execution"] < 3
     assert evidence["imports"] < 30
@@ -448,7 +459,9 @@ def test_the_claim_execution_deadline_stops_a_real_nonreturning_worker(tmp_path)
     with pytest.raises(subprocess.CalledProcessError) as error:
         _run_bounded_claim_worker("pass; while True: pass", tmp_path)
     assert error.value.returncode == 124
-    assert json.loads((tmp_path / "claim-worker.json").read_text())["phase"] == "execution"
+    record = json.loads((tmp_path / "claim-worker.json").read_text())
+    assert record["phase"] == "deadline"
+    assert record["budget"] == "cpu"
 
 
 @pytest.mark.parametrize("tail", ["a" * 50000, "a/" * 30000 + "z"], ids=["long-word", "long-path"])
