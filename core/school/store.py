@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from storage.db import get_connection
+from storage.lazy_schema import ensure_schema
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS school_school (
@@ -146,7 +147,7 @@ def school_db() -> Iterator[sqlite3.Connection]:
     conn = get_connection()
     try:
         conn.row_factory = sqlite3.Row
-        conn.executescript(_SCHEMA)
+        ensure_schema(_SCHEMA, conn=conn)
         yield conn
         conn.commit()
     except Exception:
