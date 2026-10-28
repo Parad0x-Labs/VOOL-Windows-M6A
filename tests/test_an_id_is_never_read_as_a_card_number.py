@@ -68,3 +68,13 @@ def test_no_card_number_beside_a_random_uuid_escapes():
     escaped = [u for u in (str(uuid.uuid4()) for _ in range(2000))
                if "4111" in redact_personal_secrets(f"approve move {u} 4111 1111 1111 1111").replace(u, "")]
     assert escaped == []
+
+
+@pytest.mark.parametrize("action_id", CARD_SHAPED_IDS)
+@pytest.mark.parametrize("shape", ["{id}4111 1111 1111 1111", "4111 1111 1111 1111{id}", "{id}-4111-1111-1111-1111"])
+def test_a_card_number_touching_an_id_is_still_kept_out(action_id, shape):
+    # a digit touching the id must not hide the id from the mask, or the card from the scan
+    text = "approve move " + shape.format(id=action_id)
+    redacted = redact_personal_secrets(text)
+    assert action_id in redacted and "[redacted-card-number]" in redacted, redacted
+    assert "4111" not in redacted.replace(action_id, ""), redacted
