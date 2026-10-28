@@ -89,11 +89,11 @@ Each enforcement point was read at e8f607d. Each test file and function exists t
 | No unconfined plugins, MCP servers or process agents on Windows | core/plugin_executor.py:confined_argv:254; core/agent_team/coordinator.py:_launch_process:260 | tests/test_windows_never_runs_unconfined_children.py::test_windows_still_refuses_the_default_mode, ::test_windows_refuses_to_start_a_process_agent |
 | File locks work without fcntl | core/os_file_lock.py:lock_exclusive:37 | tests/test_os_file_lock.py::test_a_held_lock_excludes_another_process_until_released |
 | A liveness probe never signals | core/process_liveness.py:pid_alive:18 | tests/test_process_liveness_never_kills.py::test_a_live_process_reads_alive_and_survives_the_probe |
-| Installer, Stop and supervisor stop only this installation's VOOL processes (gap 10) | installer/bundle/vool.iss:StopNulla:91 (filter 112; run from PrepareToInstall 121 and InitializeUninstall 127); installer/vool_stop.py:kill_listener:114 (predicate 132-137), kill_api_by_pidfile:148 (predicate 164-169); installer/bundle/bundle_supervisor.py:_clear_stale_api_processes:636 (match 657-659) | tests/test_windows_installer_ownership.py::test_the_installer_never_stops_a_process_just_because_it_owns_the_api_port, ::test_the_installer_still_stops_vools_own_python_processes; tests/test_bundle_tooling.py::test_bundle_supervisor_clears_stale_api_processes_before_bundle_start; Windows only: tests/test_windows_installer_stops_only_this_install.py::test_every_bundle_stop_stops_only_this_install_for_real; tests/test_windows_stop_spares_foreign_listeners.py::test_the_stop_leaves_a_foreign_listener_running |
+| Installer, Stop and supervisor stop only this installation's VOOL processes (gap 10) | installer/bundle/vool.iss:StopNulla:91 (filter 112; run from PrepareToInstall 121 and InitializeUninstall 127); installer/vool_stop.py:kill_listener:114 (predicate 132-137), kill_api_by_pidfile:148 (predicate 164-169); installer/bundle/bundle_supervisor.py:_clear_stale_api_processes:641 (match 662-664) | tests/test_windows_installer_ownership.py::test_the_installer_never_stops_a_process_just_because_it_owns_the_api_port, ::test_the_installer_still_stops_vools_own_python_processes; tests/test_bundle_tooling.py::test_bundle_supervisor_clears_stale_api_processes_before_bundle_start; Windows only: tests/test_windows_installer_stops_only_this_install.py::test_every_bundle_stop_stops_only_this_install_for_real; tests/test_windows_stop_spares_foreign_listeners.py::test_the_stop_leaves_a_foreign_listener_running |
 | Ledger names are ones Windows can create | core/execution/artifacts.py (`_WINDOWS_LEDGER_NAMES`:759) | tests/test_windows_mutation_ledger_names.py::test_a_key_windows_cannot_use_gets_a_digest_name_inside_the_ledger_dir |
 | Window attaches only to the supervisor's API process | installer/bundle/bundle_supervisor.py; installer/bundle/native_runtime_supervisor.py (`vouching_pid`:82, env 125) | tests/test_windows_window_attaches_to_supervised_api.py::test_the_window_is_told_the_exact_api_process_this_supervisor_started; tests/test_windows_window_vouched_attach.py::test_it_attaches_only_to_the_process_the_supervisor_started |
 | Uninstall removes only program files | installer/bundle/vool.iss [UninstallDelete]:84-88 | tests/test_windows_uninstall_removes_program_files.py::test_every_uninstall_delete_stays_inside_the_program_folder |
-| Supervisor state stays out of the program folder | installer/bundle/bundle_supervisor.py:main:838 (VOOL_HOME default 842) | tests/test_windows_supervisor_keeps_state_out_of_the_program_folder.py::test_a_direct_stop_runs_its_preflight_in_the_native_home |
+| Supervisor state stays out of the program folder | installer/bundle/bundle_supervisor.py:main:846 (VOOL_HOME default 850) | tests/test_windows_supervisor_keeps_state_out_of_the_program_folder.py::test_a_direct_stop_runs_its_preflight_in_the_native_home |
 | The model is never an effect-truth source | core/runtime_continuity.py:resolve_unresolved_effect:4160 (refusal 4175) | tests/test_a6_effect_reconciliation.py::ModelCannotResolve::test_model_source_resolution_is_refused |
 
 ## 4. Receipt states
@@ -265,10 +265,10 @@ tests/test_a6_resolution_surface.py::test_user_resolution_releases_the_block.
     pidfile's pid, only when it is a python.exe or pythonw.exe whose exe lies under the root, or that
     runs `<root>\apps\vool_api_server.py` as its script, or that runs `-m apps.vool_api_server` with a
     parent exe under the root (a checkout's venv launcher) (predicates 132-137, 164-169). The bundle
-    supervisor's stale-API cleanup (installer/bundle/bundle_supervisor.py:_clear_stale_api_processes:636,
-    called at 627, just before the API's `_start` at 630) stops a python.exe or pythonw.exe that runs
-    `<root>\app\apps\vool_api_server.py` as its script (657-659), but never its own PowerShell or its
-    own ancestors (649-656). Tests that run everywhere:
+    supervisor's stale-API cleanup (installer/bundle/bundle_supervisor.py:_clear_stale_api_processes:641,
+    called at 632, just before the API's `_start` at 635) stops a python.exe or pythonw.exe that runs
+    `<root>\app\apps\vool_api_server.py` as its script (662-664), but never its own PowerShell or its
+    own ancestors (654-661). Tests that run everywhere:
     tests/test_windows_installer_ownership.py::test_the_installer_still_stops_vools_own_python_processes;
     tests/test_windows_installer_setup_initializes.py::test_install_and_uninstall_still_stop_vool_before_touching_files;
     tests/test_windows_stop_root_quoting.py::test_installer_stop_keeps_an_install_folder_with_any_quote_whole,
@@ -283,11 +283,11 @@ tests/test_a6_resolution_surface.py::test_user_resolution_releases_the_block.
     tests/test_windows_stop_spares_foreign_listeners.py::test_the_stop_leaves_a_foreign_listener_running.
     Known residuals, not fixed (VERIFIED in source, impact UNVERIFIED):
     every matcher compares one spelling of the root as text (Setup's `{app}`, the Stop module's
-    --project-root, the supervisor's --root after `resolve()`, bundle_supervisor.py:193, 852), so a VOOL
+    --project-root, the supervisor's --root after `resolve()`, bundle_supervisor.py:193, 860), so a VOOL
     process started through a junction, a subst drive or an 8.3 short name of the same folder can be
     missed. It is then left running and nothing outside the install is stopped (fails safe). No test
     covers it. Setup's filter takes only python.exe and pythonw.exe (vool.iss:112), so it does not stop
-    `{app}\ollama\ollama.exe`, which the supervisor starts (bundle_supervisor.py:620). Start_VOOL.bat:95
+    `{app}\ollama\ollama.exe`, which the supervisor starts (bundle_supervisor.py:625). Start_VOOL.bat:95
     still stops every python.exe or pythonw.exe whose command line contains `apps.vool_api_server` or
     `vool_api_server.py`, from any folder, when the API on 11435 fails its health check (89-94).
 11. **Closed by PR #20 for the intents the gate covers. At e8f607d the Media Studio editor's HTTP
@@ -321,7 +321,7 @@ tests/test_a6_resolution_surface.py::test_user_resolution_releases_the_block.
     writers accept only Desktop, Downloads and Documents in the home (runtime_execution_tools.py:4663-4667),
     machine.move_path needs both paths in those folders or the workspace (machine_file_ops.py:182-191)
     plus an OS consent (197-206), and media.export's writer has no root check of its own. Tests,
-    which tools/windows_fresh_host_gauntlet.ps1:183 also runs on Windows:
+    which tools/windows_fresh_host_gauntlet.ps1:185 also runs on Windows:
     tests/test_machine_writes_are_checked_where_they_land.py::test_a_flagged_chat_workspace_no_longer_lets_a_write_into_the_real_documents_folder,
     ::test_an_export_writes_only_where_the_gate_checked, ::test_windows_refuses_a_temp_cleanup_even_from_a_flagged_folder,
     ::test_the_approval_ask_names_the_file_a_machine_write_changes.
@@ -398,7 +398,7 @@ tests/test_a6_resolution_surface.py::test_user_resolution_releases_the_block.
     installer/bundle/build_bundle.ps1:150) sets only VOOL_HOME, to `%LOCALAPPDATA%\VOOL` unless one is
     already set (vool-launch.cmd:13-15), a home Windows does not count as isolated
     (runtime_paths.py:runtime_home_is_isolated:174-177), and the supervisor starts the API in `{app}\app`
-    (installer/bundle/bundle_supervisor.py:633), which is PROJECT_ROOT (runtime_paths.py:14). So the
+    (installer/bundle/bundle_supervisor.py:638), which is PROJECT_ROOT (runtime_paths.py:14). So the
     installed app's notes go to `{app}\app\notes`, which uninstall deletes (installer/bundle/vool.iss:88).
     Either way notes land in VOOL's own folders, unless VOOL_WORKSPACE_ROOT names another folder or VOOL
     is started from another working directory; then they land there, ungated, though
