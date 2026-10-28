@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import sqlite3
 import threading
 from dataclasses import dataclass, field
@@ -175,6 +176,7 @@ _TURN_ID_FIELDS = (
 )
 
 _LOCK = threading.RLock()
+_log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -593,7 +595,8 @@ def record_execution(
                 conn.commit()
             finally:
                 conn.close()
-    except Exception:
+    except Exception as exc:
+        _log.warning("record_execution failed (%s); the execution fact was not recorded", type(exc).__name__)
         return ""
     return fact_id
 
@@ -646,7 +649,8 @@ def facts_for_turn(turn_key: str, *, session_id: str = "", limit: int = 200) -> 
                 rows = conn.execute(sql, args).fetchall()
             finally:
                 conn.close()
-    except Exception:
+    except Exception as exc:
+        _log.warning("facts_for_turn failed (%s); the turn reads as having no execution facts", type(exc).__name__)
         return []
     return [_fact_from_row(row) for row in rows]
 
