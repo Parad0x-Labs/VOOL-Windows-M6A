@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._windows_run_refusal import stop_if_windows_refused, stops_at_windows_run_refusal
+
 
 @pytest.fixture(autouse=True)
 def _node_available() -> None:
@@ -75,9 +77,10 @@ def _door(intent: str, arguments: dict, ctx: dict):
 
     result = execute_runtime_tool(intent, arguments, source_context=ctx)
     assert result is not None, intent
-    return result
+    return stop_if_windows_refused(result)
 
 
+@stops_at_windows_run_refusal
 def test_javascript_journey_projects_a_truthful_pr_description(js_repo: Path) -> None:
     ctx = _ctx(js_repo)
     command = "node --test test/slug.test.mjs"

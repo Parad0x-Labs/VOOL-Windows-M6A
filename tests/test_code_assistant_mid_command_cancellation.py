@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from core.runtime_execution_tools import execute_runtime_tool
+from tests._windows_run_refusal import stop_if_windows_refused, stops_at_windows_run_refusal
 
 SLEEP_SCRIPT = "import time\ntime.sleep(30)\n"
 
@@ -101,6 +102,7 @@ def _run(intent: str, arguments: dict, ctx: dict, *, timeout: float = 25.0):
     return box["result"]
 
 
+@stops_at_windows_run_refusal
 def test_a_callable_cancel_token_cancels_the_running_job(tmp_path: Path) -> None:
     """The conductor/router shape: cancellation is a callable, not an Event. A callable that
     reports cancelled must kill the child exactly like the served Event does."""
@@ -126,12 +128,13 @@ def test_a_callable_cancel_token_cancels_the_running_job(tmp_path: Path) -> None
 
     assert not worker.is_alive(), "a callable cancel token must interrupt the job, not be ignored"
     assert elapsed < 15.0, f"cancel must interrupt the job promptly, took {elapsed:.1f}s"
-    result = box["result"]
+    result = stop_if_windows_refused(box["result"])
     assert result.ok is False, "a cancelled command is never a success"
     assert "cancel" in str(result.status or "") or int(result.details.get("returncode", 0) or 0) == 125, result.details
     assert not str(result.details.get("stdout") or "").strip()
 
 
+@stops_at_windows_run_refusal
 def test_an_unreadable_cancel_token_is_not_permission_to_run(tmp_path: Path) -> None:
     """A signal that cannot be read counts as SET. The alternative -- letting the exception
     escape, or treating an unreadable token as 'not cancelled' -- runs a child the operator may
@@ -147,7 +150,7 @@ def test_an_unreadable_cancel_token_is_not_permission_to_run(tmp_path: Path) -> 
     ctx["cancel_event"] = _explode
 
     started = time.monotonic()
-    result = _run("sandbox.run_command", {"command": "python3 sleep.py"}, ctx)
+    result = stop_if_windows_refused(_run("sandbox.run_command", {"command": "python3 sleep.py"}, ctx))
     elapsed = time.monotonic() - started
 
     assert elapsed < 15.0, f"an unreadable token must not sleep out the 30s command, took {elapsed:.1f}s"

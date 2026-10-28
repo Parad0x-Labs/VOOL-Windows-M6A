@@ -31,6 +31,7 @@ import pytest
 from core.code_assistant import task_runtime as task_runtime_module
 from core.code_assistant.task_runtime import code_task_runtime, task_dir
 from core.mode_permission_policy import PermissionEffect, decide_tool_call
+from tests._windows_run_refusal import stop_if_windows_refused, stops_at_windows_run_refusal
 from tests.repoops._harness import context, door
 from tests.repoops.test_forge_actions import world
 
@@ -58,8 +59,8 @@ def _open_and_identify(ctx: dict, path: str) -> str:
                                    "arguments": {"path": path}}, ctx)
     assert read.ok, read.response_text
     probe = f"import runpy; assert runpy.run_path({path!r})['vat'](10) == 2"
-    reproduced = door("code.task.step", {"task_id": task_id, "step_id": f"repro-{path}", "intent": "workspace.run_tests",
-                                         "arguments": {"command": "python -c " + shlex.quote(probe)}}, ctx)
+    reproduced = stop_if_windows_refused(door("code.task.step", {"task_id": task_id, "step_id": f"repro-{path}", "intent": "workspace.run_tests",
+                                         "arguments": {"command": "python -c " + shlex.quote(probe)}}, ctx))
     assert reproduced.details["tool_result"]["success"] is False, reproduced.details
     identified = door("code.task.identify", {"task_id": task_id, "path": path, "line": 2,
                                              "reason": "vat multiplies by two instead of taking a fifth"}, ctx)
@@ -206,6 +207,7 @@ def test_reviewed_bytes_that_change_after_approval_unbind_it_and_nothing_is_writ
     assert _new_effects(turns_before) == [("invoice/tax.py", "refused", "stale_base")]
 
 
+@stops_at_windows_run_refusal
 def test_a_link_retargeted_between_proposal_and_approval_cannot_be_approved(world) -> None:
     root, _bare, _forge = world
     (root / "rules").mkdir()
@@ -248,6 +250,7 @@ def test_an_unchanged_link_stays_approved_and_the_write_lands_on_its_reviewed_ta
     assert _journal(task_id)["steps"]["apply"]["bytes_match_approved_patch"] is True
 
 
+@stops_at_windows_run_refusal
 def test_an_ordinary_file_stays_approved_across_a_restart_and_applies_once(world) -> None:
     root, _bare, _forge = world
     (root / "invoice").mkdir()
@@ -267,6 +270,7 @@ def test_an_ordinary_file_stays_approved_across_a_restart_and_applies_once(world
     assert replay.details.get("replayed") is True and replay.details.get("executed") is False, replay.details
 
 
+@stops_at_windows_run_refusal
 def test_an_atomic_replacement_with_the_reviewed_bytes_stays_approved(world) -> None:
     """The identity is the canonical destination and the reviewed bytes, not an inode: an editor's
     atomic save that leaves the same bytes at the same path is still the reviewed file."""
@@ -292,6 +296,7 @@ def test_an_atomic_replacement_with_the_reviewed_bytes_stays_approved(world) -> 
 # ---------------------------------------------------------------------------
 
 
+@stops_at_windows_run_refusal
 def test_a_cancelled_task_approval_binds_nothing_and_executes_nothing(world) -> None:
     root, _bare, _forge = world
     (root / "invoice").mkdir()
@@ -305,6 +310,7 @@ def test_a_cancelled_task_approval_binds_nothing_and_executes_nothing(world) -> 
     assert (root / "invoice" / "tax.py").read_text(encoding="utf-8") == TAX_BUGGY
 
 
+@stops_at_windows_run_refusal
 def test_an_expired_task_approval_binds_nothing(world, monkeypatch) -> None:
     root, _bare, _forge = world
     (root / "invoice").mkdir()
@@ -317,6 +323,7 @@ def test_an_expired_task_approval_binds_nothing(world, monkeypatch) -> None:
     assert (root / "invoice" / "tax.py").read_text(encoding="utf-8") == TAX_BUGGY
 
 
+@stops_at_windows_run_refusal
 def test_a_rolled_back_task_approval_binds_nothing(world) -> None:
     root, _bare, _forge = world
     (root / "invoice").mkdir()
@@ -342,6 +349,7 @@ def test_a_rolled_back_task_approval_binds_nothing(world) -> None:
     assert (root / "invoice" / "rate.py").read_text(encoding="utf-8") == RATE_BUGGY
 
 
+@stops_at_windows_run_refusal
 def test_the_approval_binds_its_own_tool_and_its_own_task(world, tmp_path, monkeypatch) -> None:
     root, _bare, _forge = world
     (root / "Documents").mkdir()
@@ -377,6 +385,7 @@ def _strip_recorded_destination(task_id: str, proposal_id: str) -> None:
     _restart()
 
 
+@stops_at_windows_run_refusal
 def test_an_approved_proposal_from_an_older_journal_must_be_reviewed_again(world) -> None:
     root, _bare, _forge = world
     (root / "invoice").mkdir()
@@ -426,6 +435,7 @@ def test_an_unapproved_proposal_from_an_older_journal_cannot_be_approved_until_r
 # ---------------------------------------------------------------------------
 
 
+@stops_at_windows_run_refusal
 def test_a_retarget_after_the_permission_decision_is_refused_at_admission(world) -> None:
     root, _bare, _forge = world
     (root / "rules").mkdir()
@@ -443,6 +453,7 @@ def test_a_retarget_after_the_permission_decision_is_refused_at_admission(world)
     assert (root / "rules" / "b.py").read_text(encoding="utf-8") == TAX_BUGGY
 
 
+@stops_at_windows_run_refusal
 def test_a_retarget_after_admission_is_refused_by_the_writer(world, monkeypatch) -> None:
     import core.runtime_execution_tools as runtime_tools
 
@@ -469,6 +480,7 @@ def test_a_retarget_after_admission_is_refused_by_the_writer(world, monkeypatch)
     assert (root / "rules" / "b.py").read_text(encoding="utf-8") == TAX_BUGGY
 
 
+@stops_at_windows_run_refusal
 def test_a_replacement_retargeted_after_admission_preserves_both_files(world, monkeypatch) -> None:
     import core.runtime_execution_tools as runtime_tools
 
@@ -643,6 +655,7 @@ def _billing_world(root: Path) -> None:
     (root / "billing" / "NOTES.md").write_text("untouched\n", encoding="utf-8")
 
 
+@stops_at_windows_run_refusal
 def test_an_approved_multi_file_patch_applies_to_exactly_its_reviewed_files(world) -> None:
     root, _bare, _forge = world
     _billing_world(root)
@@ -703,6 +716,7 @@ def test_a_patch_link_retargeted_after_admission_is_refused_by_the_writer_before
     assert (root / "pricing" / "rate.py").read_text(encoding="utf-8") == RATE_BUGGY
 
 
+@stops_at_windows_run_refusal
 def test_a_patch_refused_part_way_restores_the_files_it_already_wrote(world, monkeypatch) -> None:
     from core.execution import artifacts
 
@@ -776,6 +790,7 @@ def _approved_directory(ctx: dict, path: str) -> tuple[str, dict]:
     return task_id, args
 
 
+@stops_at_windows_run_refusal
 def test_an_approved_directory_is_created_where_it_was_reviewed(world) -> None:
     root, _bare, _forge = world
     (root / "archive" / "a").mkdir(parents=True)
@@ -1095,6 +1110,7 @@ def test_an_approved_patch_the_protected_writer_cannot_reproduce_byte_for_byte_i
     assert "workspace.write_file" in refused.response_text
 
 
+@stops_at_windows_run_refusal
 def test_an_approved_patch_to_lf_utf8_text_still_applies_byte_for_byte(world) -> None:
     root, _bare, _forge = world
     (root / "billing").mkdir()

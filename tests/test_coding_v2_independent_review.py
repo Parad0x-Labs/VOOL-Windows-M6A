@@ -5,6 +5,7 @@ import hashlib
 
 import pytest
 
+from tests._windows_run_refusal import stop_if_windows_refused, stops_at_windows_run_refusal
 from tests.test_code_task_model_surface import _ctx, _door, _journal, fixture_repo
 
 CASES = [
@@ -24,7 +25,7 @@ def setup_task(root, case):
     assert opened.ok
     tid = opened.details['task_id']
     def step(sid, intent, args):
-        return _door('code.task.step',{'task_id':tid,'step_id':sid,'intent':intent,'arguments':args},ctx)
+        return stop_if_windows_refused(_door('code.task.step',{'task_id':tid,'step_id':sid,'intent':intent,'arguments':args},ctx))
     red = step('reproduce','workspace.run_tests',{'command':'node review_check.js'})
     assert red.details['executed'] and red.details['tool_result']['success'] is False
     assert _door('code.task.identify',{'task_id':tid,'path':path,'reason':'Existing assertion proves the wrong operation'},ctx).ok
@@ -46,6 +47,7 @@ def approve(ctx,tid,pid):
 
 
 @pytest.mark.parametrize('case',CASES,ids=['arithmetic','labels'])
+@stops_at_windows_run_refusal
 def test_new_repair_cannot_reuse_previous_failed_verification(fixture_repo,case):
     root=fixture_repo;path,bug,wrong,fixed,check=case
     ctx,tid,step=setup_task(root,case)
@@ -86,6 +88,7 @@ def test_independent_pending_repair_does_not_block_validation_checkpoint(fixture
 
 
 @pytest.mark.parametrize('case',CASES,ids=['arithmetic','labels'])
+@stops_at_windows_run_refusal
 def test_approved_repair_cannot_replace_its_reviewed_base_hash(fixture_repo,case):
     root=fixture_repo;path,bug,wrong,fixed,check=case
     ctx,tid,step=setup_task(root,case)
@@ -98,6 +101,7 @@ def test_approved_repair_cannot_replace_its_reviewed_base_hash(fixture_repo,case
 
 
 @pytest.mark.parametrize('case',CASES,ids=['arithmetic','labels'])
+@stops_at_windows_run_refusal
 def test_revised_proposal_id_cannot_silently_replay_old_content(fixture_repo,case):
     root=fixture_repo;path,bug,wrong,fixed,check=case
     ctx,tid,step=setup_task(root,case)

@@ -11,6 +11,7 @@ from core.code_assistant.fixture import (
     OWNER_PATH,
     REGRESSION_COMMAND,
 )
+from tests._windows_run_refusal import stops_at_windows_run_refusal
 
 from .conftest import door, drive_to_approved_proposal
 
@@ -32,6 +33,7 @@ def test_fix_is_refused_before_reproduction(auto_context):
     assert "reproduce" in early.response_text
 
 
+@stops_at_windows_run_refusal
 def test_propose_requires_a_rationale(auto_context):
     """Inherited invariant (fix_without_owner_rationale): a repair proposal must name the owner
     and root cause, so the approval the operator gives is one they can judge."""
@@ -73,6 +75,7 @@ def test_propose_requires_a_rationale(auto_context):
     assert auto_context["workspace_root"]
 
 
+@stops_at_windows_run_refusal
 def test_propose_is_refused_before_the_owner_is_read(auto_context):
     """Inherited invariant (fix_without_owner): the owning file must be READ through the boundary
     before its repair is proposed -- the journal's read set, never the model's word."""
@@ -128,6 +131,7 @@ def test_propose_is_refused_before_the_owner_is_read(auto_context):
     assert read.ok, read.response_text
 
 
+@stops_at_windows_run_refusal
 def test_command_cannot_act_outside_evidence_stages(auto_context, workspace):
     """Inherited invariant (family/stage table): commands are evidence acts -- reproduce, diagnose,
     narrow, cumulative. A command between an approval and its mutation is order disobedience."""
@@ -146,6 +150,7 @@ def test_command_cannot_act_outside_evidence_stages(auto_context, workspace):
     assert smuggled.details["executed"] is False
 
 
+@stops_at_windows_run_refusal
 def test_a_refusal_is_never_reproduction_evidence(auto_context):
     opened = door("code.task.open", {"objective": "x"}, auto_context)
     task_id = opened.details["task_id"]
@@ -169,6 +174,7 @@ def test_a_refusal_is_never_reproduction_evidence(auto_context):
     assert task.stage in {"reproduce", "identify"}
 
 
+@stops_at_windows_run_refusal
 def test_a_passing_test_before_a_fix_is_not_a_narrow_test(auto_context):
     """Inherited invariant (narrow_test_before_fix): the narrow test proves A FIX; a green test
     with no journaled mutation advances nothing."""
@@ -191,6 +197,7 @@ def test_a_passing_test_before_a_fix_is_not_a_narrow_test(auto_context):
     assert task.stage == "reproduce" and task.narrow is None
 
 
+@stops_at_windows_run_refusal
 def test_happy_path_records_every_stage_in_order(auto_context):
     from core.code_assistant.task_runtime import code_task_runtime
 

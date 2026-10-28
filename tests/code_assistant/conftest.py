@@ -14,6 +14,7 @@ from core.mode_permission_policy import (
     reset_mode_permission_state,
     set_active_mode,
 )
+from tests._windows_run_refusal import stop_if_windows_refused
 
 SESSION = "code-assist-sess"
 
@@ -97,7 +98,7 @@ def door(intent: str, arguments: dict, ctx: dict):
 
     result = execute_runtime_tool(intent, arguments, source_context=ctx)
     assert result is not None, f"{intent} is not contracted at the production door"
-    return result
+    return stop_if_windows_refused(result)
 
 
 def drive_to_approved_proposal(ctx: dict, *, proposal_id: str = "p") -> str:

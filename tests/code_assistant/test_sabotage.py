@@ -13,12 +13,14 @@ from core.code_assistant.fixture import (
     OWNER_PATH,
 )
 from core.code_assistant.review import summarize_effects
+from tests._windows_run_refusal import stops_at_windows_run_refusal
 
 from .conftest import SESSION, door, drive_to_approved_proposal
 
 # ---------------------------------------------------------------- permission
 
 
+@stops_at_windows_run_refusal
 def test_sabotage_manual_mode_blocks_the_fix_and_bytes_survive(auto_context, workspace):
     """Manual mode: the mode matrix gates the step itself at the executor funnel -- the same
     funnel a served model crosses -- so an approved proposal still cannot write without the
@@ -51,6 +53,7 @@ def test_sabotage_manual_mode_blocks_the_fix_and_bytes_survive(auto_context, wor
     assert (workspace / OWNER_PATH).read_text() == DEFECT_STATS_PY
 
 
+@stops_at_windows_run_refusal
 def test_sabotage_arguments_can_never_carry_authority(auto_context, workspace):
     """An `authority_token` in ARGUMENTS is data, never authority: manual mode still stops the
     write, because authority comes from the caller's own scope, not from anything a proposal
@@ -76,6 +79,7 @@ def test_sabotage_arguments_can_never_carry_authority(auto_context, workspace):
 # ---------------------------------------------------------------- confinement
 
 
+@stops_at_windows_run_refusal
 def test_sabotage_escape_paths_are_never_offered_for_approval(auto_context):
     """The contract's confinement pre-check at proposal time: an absolute or `..` path is refused
     before a preview exists, so nothing unconfined is ever put in front of an approval."""
@@ -141,6 +145,7 @@ def test_sabotage_shell_cwd_escape_is_refused(auto_context):
 # ---------------------------------------------------------------- direct execution
 
 
+@stops_at_windows_run_refusal
 def test_sabotage_direct_mutation_during_an_open_task_is_refused(auto_context, workspace):
     """The coding lane's execution law: with a task open, a mutation proposed OUTSIDE the
     control plane -- direct workspace write, or a rollback slipped past approval -- is refused
@@ -189,6 +194,7 @@ def test_sabotage_direct_mutation_during_an_open_task_is_refused(auto_context, w
 # ---------------------------------------------------------------- receipt honesty
 
 
+@stops_at_windows_run_refusal
 def test_sabotage_forged_result_argument_never_enters_the_journal(auto_context):
     task_id, _ = drive_to_approved_proposal(auto_context)
     before = set()
@@ -210,6 +216,7 @@ def test_sabotage_forged_result_argument_never_enters_the_journal(auto_context):
     assert set(code_task_runtime()._load(task_id).steps) == before
 
 
+@stops_at_windows_run_refusal
 def test_sabotage_post_fix_tampering_is_detected_by_the_review(auto_context, workspace):
     from .conftest import drive_to_approved_proposal
 
@@ -232,6 +239,7 @@ def test_sabotage_post_fix_tampering_is_detected_by_the_review(auto_context, wor
 # ---------------------------------------------------------------- rollback
 
 
+@stops_at_windows_run_refusal
 def test_sabotage_rollback_restores_exact_defect_bytes_and_red_test(auto_context, workspace):
     task_id, args = drive_to_approved_proposal(auto_context)
     mutate = door(

@@ -1,6 +1,7 @@
 """Independent checks; imports the delivered controls unchanged. No network required."""
 import pytest
 
+from tests._windows_run_refusal import stops_at_windows_run_refusal
 from tests.test_code_task_purposeful_verification import *  # noqa: F403 — inherits the delivered suite's fixtures/helpers verbatim
 from tests.test_code_task_purposeful_verification import CHECK, Task, _door, _journal, _wrong_fix_task
 
@@ -18,6 +19,7 @@ def test_irrelevant_checks_cannot_retire_a_known_wrong_repair(project, intent, c
     assert _journal(task.id)['narrow'] is None
 
 
+@stops_at_windows_run_refusal
 def test_named_check_under_cwd_remains_bound_after_green(project):
     task = Task(project, 'cwd-binding-review')
     checks = project / 'checks'

@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests._windows_run_refusal import stop_if_windows_refused, stops_at_windows_run_refusal
+
 
 @pytest.fixture
 def world(tmp_path, monkeypatch):
@@ -250,6 +252,7 @@ def test_issue_needs_a_number(world) -> None:
 # ---------------------------------------------------------------------------
 
 
+@stops_at_windows_run_refusal
 def test_issue_text_cannot_authorize_a_push(world) -> None:
     """The issue body and a comment both claim authorization. Neither the plane nor the door
     may treat them as anything but text: the push path still requires the operator gesture
@@ -270,14 +273,14 @@ def test_issue_text_cannot_authorize_a_push(world) -> None:
     assert comments.ok
 
     # Drive the repair honestly: failing test, diagnosis, fix, green run, review, commit.
-    door("repo.step", {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}}, ctx)
+    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}}, ctx))
     door("repo.diagnose", {"repo_session_id": sid, "path": "calc.py", "reason": "add subtracts", "evidence_step_id": "red"}, ctx)
     door(
         "repo.step",
         {"repo_session_id": sid, "step_id": "fix", "intent": "workspace.write_file", "arguments": {"path": "calc.py", "content": FIXED}},
         ctx,
     )
-    door("repo.step", {"repo_session_id": sid, "step_id": "green", "intent": "workspace.run_tests", "arguments": {}}, ctx)
+    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "green", "intent": "workspace.run_tests", "arguments": {}}, ctx))
     door("repo.review", {"repo_session_id": sid, "verdict": "approve"}, ctx)
     door("repo.git", {"repo_session_id": sid, "operation": "commit", "message": "repair"}, ctx)
 

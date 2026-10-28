@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from core.code_assistant.fixture import DEFECT_STATS_PY, FIXED_STATS_PY, build_fixture_repo
+from tests._windows_run_refusal import stop_if_windows_refused, stops_at_windows_run_refusal
 
 
 @pytest.fixture
@@ -40,7 +41,7 @@ def _door(intent: str, arguments: dict, ctx: dict):
 
     result = execute_runtime_tool(intent, arguments, source_context=ctx)
     assert result is not None, intent
-    return result
+    return stop_if_windows_refused(result)
 
 
 def _open_task_at_mutate(root: Path, ctx: dict) -> tuple[str, str]:
@@ -75,6 +76,7 @@ def _open_task_at_mutate(root: Path, ctx: dict) -> tuple[str, str]:
     return task_id, before
 
 
+@stops_at_windows_run_refusal
 def test_unrelated_user_edits_survive_the_repair(repo: Path) -> None:
     """A dirty file the task never touches is preserved byte-for-byte through the whole
     journey, and the diff the task reports names only the file it repaired."""

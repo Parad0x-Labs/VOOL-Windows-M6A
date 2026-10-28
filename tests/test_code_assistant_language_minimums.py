@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._windows_run_refusal import stops_at_windows_run_refusal
 from tests.test_code_assistant_task_runtime import _ctx, _door, _git, _sha
 
 
@@ -120,6 +121,7 @@ JS_TEST = (
 )
 
 
+@stops_at_windows_run_refusal
 def test_javascript_root_cause_journey(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from core.mode_permission_policy import reset_mode_permission_state
 
@@ -165,6 +167,7 @@ TS_TEST = (
 )
 
 
+@stops_at_windows_run_refusal
 def test_typescript_root_cause_journey(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from core.mode_permission_policy import reset_mode_permission_state
 
@@ -219,6 +222,7 @@ SH_HARNESS = (
 )
 
 
+@stops_at_windows_run_refusal
 def test_shell_root_cause_journey(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The seeded bug: summarize.sh cats the file (its CONTENT) where the consumer counts
     lines — the focused harness fails, and the repair is a one-file shell fix."""

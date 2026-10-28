@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._windows_run_refusal import stop_if_windows_refused, stops_at_windows_run_refusal
 from tests.repoops._forge_fixture import RecordedForge, github_pull_request
 from tests.repoops._harness import FIXED, build_repo, context, door, git, head, remote_ref
 
@@ -60,7 +61,7 @@ def _to_repair_stage(root: Path, forge: RecordedForge, ctx: dict) -> str:
     sid = _open(root, ctx, pull_request="7")
     door("repo.inspect", {"repo_session_id": sid}, ctx)
     door("repo.bind", {"repo_session_id": sid}, ctx)
-    door("repo.step", {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}}, ctx)
+    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}}, ctx))
     door(
         "repo.diagnose",
         {"repo_session_id": sid, "path": "calc.py", "reason": "add subtracts", "evidence_step_id": "red"},
@@ -161,7 +162,7 @@ def test_gate0_refuses_a_repair_with_no_independent_reviewer_before_any_model_ca
     sid = opened.details["repo_session_id"]
     door("repo.inspect", {"repo_session_id": sid}, ctx)
     door("repo.bind", {"repo_session_id": sid}, ctx)
-    door("repo.step", {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}}, ctx)
+    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}}, ctx))
     door(
         "repo.diagnose",
         {"repo_session_id": sid, "path": "calc.py", "reason": "add subtracts", "evidence_step_id": "red"},
@@ -254,6 +255,7 @@ def test_a_push_without_an_authorization_is_refused_and_the_remote_does_not_move
     assert remote_ref(bare, "feature") == ""
 
 
+@stops_at_windows_run_refusal
 def test_a_turn_cannot_author_its_own_authorize_push(world) -> None:
     root, _bare, forge = world
     ctx = context(root)
@@ -276,6 +278,7 @@ def test_the_authorization_key_is_stripped_from_an_inbound_request_body() -> Non
     assert "repo_push_authorization" not in cleaned
 
 
+@stops_at_windows_run_refusal
 def test_a_plan_that_changed_after_consent_invalidates_the_authorization(world) -> None:
     root, bare, forge = world
     ctx = context(root)
@@ -294,6 +297,7 @@ def test_a_plan_that_changed_after_consent_invalidates_the_authorization(world) 
     assert remote_ref(bare, "feature") == ""
 
 
+@stops_at_windows_run_refusal
 def test_force_push_and_branch_deletion_are_denied_by_default(world) -> None:
     root, bare, forge = world
     ctx = context(root)
@@ -333,7 +337,7 @@ def _finish_to_authorize(root: Path, sid: str, ctx: dict) -> None:
         },
         ctx,
     )
-    door("repo.step", {"repo_session_id": sid, "step_id": "green", "intent": "workspace.run_tests", "arguments": {}}, ctx)
+    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "green", "intent": "workspace.run_tests", "arguments": {}}, ctx))
     door("repo.review", {"repo_session_id": sid, "verdict": "approve"}, ctx)
     door("repo.git", {"repo_session_id": sid, "operation": "commit", "message": "repair"}, ctx)
 
@@ -341,6 +345,7 @@ def _finish_to_authorize(root: Path, sid: str, ctx: dict) -> None:
 # --- evidence discipline ----------------------------------------------------------------
 
 
+@stops_at_windows_run_refusal
 def test_a_review_cannot_approve_without_a_green_run_this_session_executed(world) -> None:
     root, _bare, forge = world
     ctx = context(root)
@@ -362,7 +367,7 @@ def test_a_review_cannot_approve_without_a_green_run_this_session_executed(world
 
     # Reach the review stage honestly with a green run, then regress the repair and re-run: the
     # session is AT review and the last executed run is red, which is the second gate.
-    door("repo.step", {"repo_session_id": sid, "step_id": "green", "intent": "workspace.run_tests", "arguments": {}}, ctx)
+    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "green", "intent": "workspace.run_tests", "arguments": {}}, ctx))
     from tests.repoops._harness import BUGGY
 
     door(
@@ -375,13 +380,14 @@ def test_a_review_cannot_approve_without_a_green_run_this_session_executed(world
         },
         ctx,
     )
-    door("repo.step", {"repo_session_id": sid, "step_id": "red2", "intent": "workspace.run_tests", "arguments": {}}, ctx)
+    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "red2", "intent": "workspace.run_tests", "arguments": {}}, ctx))
 
     refused = door("repo.review", {"repo_session_id": sid, "verdict": "approve"}, ctx)
     assert refused.status == "unsupported_claim"
     assert "green" in refused.response_text.lower()
 
 
+@stops_at_windows_run_refusal
 def test_a_diagnosis_cannot_cite_a_step_this_session_never_ran(world) -> None:
     root, _bare, forge = world
     ctx = context(root)
@@ -389,7 +395,7 @@ def test_a_diagnosis_cannot_cite_a_step_this_session_never_ran(world) -> None:
     sid = _open(root, ctx, pull_request="7")
     door("repo.inspect", {"repo_session_id": sid}, ctx)
     door("repo.bind", {"repo_session_id": sid}, ctx)
-    door("repo.step", {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}}, ctx)
+    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}}, ctx))
     refused = door(
         "repo.diagnose",
         {"repo_session_id": sid, "path": "calc.py", "reason": "because", "evidence_step_id": "never-ran"},
@@ -457,6 +463,7 @@ def test_a_cancelled_turn_stops_the_session_before_any_further_effect(world) -> 
     assert later.status == "cancelled"
 
 
+@stops_at_windows_run_refusal
 def test_a_re_issued_step_id_replays_and_never_executes_twice(world) -> None:
     root, _bare, forge = world
     ctx = context(root)
@@ -489,6 +496,7 @@ def test_a_re_issued_step_id_replays_and_never_executes_twice(world) -> None:
     assert (root / "calc.py").read_text(encoding="utf-8") == "tampered\n"
 
 
+@stops_at_windows_run_refusal
 def test_concurrent_writers_to_one_path_are_serialized(world) -> None:
     root, _bare, forge = world
     ctx = context(root)
