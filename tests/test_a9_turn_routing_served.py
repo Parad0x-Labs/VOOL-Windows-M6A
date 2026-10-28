@@ -191,7 +191,7 @@ class CountingProvider:
 _SEED = textwrap.dedent(
     '''
     import sys
-    sys.path.insert(0, "{root}")
+    sys.path.insert(0, {root!r})
     from storage.db import get_connection
     from storage.migrations import run_migrations
     from storage.model_provider_manifest import (
@@ -269,7 +269,7 @@ _SEED = textwrap.dedent(
 _RULE_SEED = textwrap.dedent(
     '''
     import sys
-    sys.path.insert(0, "{root}")
+    sys.path.insert(0, {root!r})
     from core.turn_routing import arm_rule
 
     rule = arm_rule(
@@ -340,7 +340,7 @@ class _RoutingServed:
         seed_in_home(
             self.home,
             _SEED.format(
-                root=REPO_ROOT,
+                root=str(REPO_ROOT),
                 local_base=self.local.base_url,
                 paid_base=self.paid.base_url,
                 remote_base=(self.remote.base_url if self.remote else ""),
@@ -578,7 +578,7 @@ class TestServedTemporaryRules(unittest.TestCase):
             seed_in_home(
                 served.home,
                 _RULE_SEED.format(
-                    root=REPO_ROOT, chat_id=runtime_chat_id, remote_mid=REMOTE_MID, turns=2
+                    root=str(REPO_ROOT), chat_id=runtime_chat_id, remote_mid=REMOTE_MID, turns=2
                 ),
             )
             served.remote.calls.clear()

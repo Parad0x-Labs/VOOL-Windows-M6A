@@ -199,17 +199,18 @@ def test_served_run_once_write_is_journaled_and_operator_rollback_restores_exact
 _ROLLBACK_SCRIPT = textwrap.dedent(
     '''
     import json, sys
-    sys.path.insert(0, "{root}")
+    from pathlib import Path as WindowsPath, Path as PosixPath
+    sys.path.insert(0, str({root!r}))
     from core.blackbox.operator import rollback_turn
     from core.mode_permission_policy import PermissionAction, grant_internal_authority, set_active_mode
     session = "operator:served-proof"
     set_active_mode(session, "auto")
     token = grant_internal_authority(
         label="blackbox-served-proof-operator", duration_seconds=120, intents=["workspace.rollback_last_change"],
-        workspace_root="{ws}",
+        workspace_root=str({ws!r}),
         actions=[PermissionAction.DELETE_FILES, PermissionAction.OVERWRITE_EXISTING_FILES, PermissionAction.MODIFY_FILES],
     )
-    result = rollback_turn("{turn}", workspace_root="{ws}", session_id=session, operator="served-proof-operator",
+    result = rollback_turn("{turn}", workspace_root=str({ws!r}), session_id=session, operator="served-proof-operator",
                            source_context={{"operating_mode": "auto", "surface": "cli"}}, authority_token=token)
     print(json.dumps({{"ok": result.ok, "status": result.status, "response_text": result.response_text, "details": result.details}}, default=str))
     '''
