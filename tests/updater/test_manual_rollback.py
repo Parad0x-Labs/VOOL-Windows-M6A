@@ -1,6 +1,7 @@
 """Real protected-code swaps and SQLite recovery for explicit rollback."""
 import json
 import sqlite3
+from contextlib import closing
 from types import SimpleNamespace
 
 import pytest
@@ -21,7 +22,7 @@ def installed(tmp_path):
     (home / 'config').mkdir()
     (home / 'config/keys.json').write_text('latest disposable key and preference')
     (data / 'conversation.jsonl').write_text('history written AFTER updating')
-    with sqlite3.connect(data / 'chat.db') as db:
+    with closing(sqlite3.connect(data / 'chat.db')) as db, db:
         db.execute('CREATE TABLE chats(value TEXT)')
         db.execute("INSERT INTO chats VALUES ('chat written AFTER updating')")
     target, new = tmp_path / 'installed', tmp_path / 'new'
@@ -51,7 +52,7 @@ def installed(tmp_path):
 
 
 def retained(home):
-    with sqlite3.connect(home / 'data/chat.db') as db:
+    with closing(sqlite3.connect(home / 'data/chat.db')) as db, db:
         return db.execute('SELECT * FROM chats').fetchall(), (home / 'config/keys.json').read_text()
 
 
@@ -75,7 +76,7 @@ def test_bad_previous_runtime_restores_current_code_and_current_data(installed):
 
     def probe(**kw):
         if (target / 'core/version').read_text() == '0.7.0':
-            with sqlite3.connect(home / 'data/chat.db') as db:
+            with closing(sqlite3.connect(home / 'data/chat.db')) as db, db:
                 db.execute('DELETE FROM chats')
             (home / 'config/keys.json').write_text('broken old runtime mutated keys')
             (home / 'data/conversation.jsonl').unlink()
