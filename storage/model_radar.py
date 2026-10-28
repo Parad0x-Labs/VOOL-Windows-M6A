@@ -27,6 +27,7 @@ from core.model_radar import (
     RadarPreferences,
 )
 from storage.db import get_connection
+from storage.lazy_schema import ensure_schema
 
 
 def _utcnow() -> str:
@@ -37,58 +38,58 @@ def _connect():
     return get_connection()
 
 
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS model_radar_observations (
+    provider_id TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    evidence_fetched_at TEXT NOT NULL,
+    source_feed TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (provider_id, model_id)
+);
+CREATE TABLE IF NOT EXISTS model_radar_findings (
+    fingerprint TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    provider_id TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    viewed_at TEXT,
+    dismissed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_model_radar_findings_model
+  ON model_radar_findings(provider_id, model_id, created_at);
+CREATE TABLE IF NOT EXISTS model_radar_dismissals (
+    fingerprint TEXT PRIMARY KEY,
+    dismissed_at TEXT NOT NULL,
+    origin TEXT NOT NULL DEFAULT 'ui'
+);
+CREATE TABLE IF NOT EXISTS model_radar_prefs (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    payload_json TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS model_radar_conflicts (
+    provider_id TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    detected_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS model_radar_try_once (
+    token TEXT PRIMARY KEY,
+    fingerprint TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    provider_id TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    granted_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    consumed_at TEXT
+);
+"""
+
+
 def _init_tables(conn) -> None:
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS model_radar_observations (
-            provider_id TEXT NOT NULL,
-            model_id TEXT NOT NULL,
-            payload_json TEXT NOT NULL,
-            evidence_fetched_at TEXT NOT NULL,
-            source_feed TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            PRIMARY KEY (provider_id, model_id)
-        );
-        CREATE TABLE IF NOT EXISTS model_radar_findings (
-            fingerprint TEXT PRIMARY KEY,
-            kind TEXT NOT NULL,
-            provider_id TEXT NOT NULL,
-            model_id TEXT NOT NULL,
-            payload_json TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            viewed_at TEXT,
-            dismissed_at TEXT
-        );
-        CREATE INDEX IF NOT EXISTS idx_model_radar_findings_model
-          ON model_radar_findings(provider_id, model_id, created_at);
-        CREATE TABLE IF NOT EXISTS model_radar_dismissals (
-            fingerprint TEXT PRIMARY KEY,
-            dismissed_at TEXT NOT NULL,
-            origin TEXT NOT NULL DEFAULT 'ui'
-        );
-        CREATE TABLE IF NOT EXISTS model_radar_prefs (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            payload_json TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS model_radar_conflicts (
-            provider_id TEXT NOT NULL,
-            model_id TEXT NOT NULL,
-            payload_json TEXT NOT NULL,
-            detected_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS model_radar_try_once (
-            token TEXT PRIMARY KEY,
-            fingerprint TEXT NOT NULL,
-            session_id TEXT NOT NULL,
-            provider_id TEXT NOT NULL,
-            model_id TEXT NOT NULL,
-            granted_at TEXT NOT NULL,
-            expires_at TEXT NOT NULL,
-            consumed_at TEXT
-        );
-        """
-    )
-    conn.commit()
+    ensure_schema(_SCHEMA, conn=conn)
 
 
 # ---- observations (the recorded baseline) ---------------------------------------------

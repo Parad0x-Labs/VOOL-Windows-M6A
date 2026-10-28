@@ -58,7 +58,7 @@ def daemon(tmp_path: Path):
         provider.__exit__(None, None, None)
 
 
-REPLY_SELECTOR = ".msg.assistant:not(.pending):not(.vw-card)"
+REPLY_SELECTOR = ".msg.assistant:not(.pending):has(.msg-time):not(.vw-card)"
 
 
 def _wait_replies(page, count: int, *, daemon: dict[str, Any] | None = None, timeout_s: float = 180.0) -> None:

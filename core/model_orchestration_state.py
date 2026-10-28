@@ -8,6 +8,7 @@ from typing import Any
 
 from core.enum_compat import StrEnum
 from storage.db import get_connection
+from storage.lazy_schema import ensure_schema
 
 
 class ModelOrchestrationState(StrEnum):
@@ -132,53 +133,49 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS model_orchestration_runs (
+    run_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    turn_id TEXT NOT NULL,
+    subtask_id TEXT NOT NULL,
+    session_id TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL,
+    active_lane TEXT NOT NULL DEFAULT '',
+    active_model TEXT NOT NULL DEFAULT '',
+    version INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(task_id, turn_id, subtask_id)
+);
+CREATE TABLE IF NOT EXISTS model_orchestration_transitions (
+    transition_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    turn_id TEXT NOT NULL,
+    subtask_id TEXT NOT NULL,
+    from_state TEXT NOT NULL,
+    to_state TEXT NOT NULL,
+    source_model TEXT NOT NULL,
+    target_model TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    context_capsule_ref TEXT NOT NULL DEFAULT '',
+    spend_estimate_usd REAL NOT NULL DEFAULT 0,
+    actual_spend_usd REAL NOT NULL DEFAULT 0,
+    policy_decision TEXT NOT NULL DEFAULT '',
+    verification_result TEXT NOT NULL DEFAULT '',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    FOREIGN KEY(run_id) REFERENCES model_orchestration_runs(run_id)
+);
+CREATE INDEX IF NOT EXISTS idx_model_orchestration_scope
+  ON model_orchestration_runs(task_id, turn_id, subtask_id);
+"""
+
+
 def _init_tables() -> None:
-    conn = get_connection()
-    try:
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS model_orchestration_runs (
-                run_id TEXT PRIMARY KEY,
-                task_id TEXT NOT NULL,
-                turn_id TEXT NOT NULL,
-                subtask_id TEXT NOT NULL,
-                session_id TEXT NOT NULL DEFAULT '',
-                state TEXT NOT NULL,
-                active_lane TEXT NOT NULL DEFAULT '',
-                active_model TEXT NOT NULL DEFAULT '',
-                version INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                UNIQUE(task_id, turn_id, subtask_id)
-            );
-            CREATE TABLE IF NOT EXISTS model_orchestration_transitions (
-                transition_id TEXT PRIMARY KEY,
-                run_id TEXT NOT NULL,
-                task_id TEXT NOT NULL,
-                turn_id TEXT NOT NULL,
-                subtask_id TEXT NOT NULL,
-                from_state TEXT NOT NULL,
-                to_state TEXT NOT NULL,
-                source_model TEXT NOT NULL,
-                target_model TEXT NOT NULL,
-                reason TEXT NOT NULL,
-                context_capsule_ref TEXT NOT NULL DEFAULT '',
-                spend_estimate_usd REAL NOT NULL DEFAULT 0,
-                actual_spend_usd REAL NOT NULL DEFAULT 0,
-                policy_decision TEXT NOT NULL DEFAULT '',
-                verification_result TEXT NOT NULL DEFAULT '',
-                metadata_json TEXT NOT NULL DEFAULT '{}',
-                created_at TEXT NOT NULL,
-                version INTEGER NOT NULL,
-                FOREIGN KEY(run_id) REFERENCES model_orchestration_runs(run_id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_model_orchestration_scope
-              ON model_orchestration_runs(task_id, turn_id, subtask_id);
-            """
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    ensure_schema(_SCHEMA)
 
 
 class ModelOrchestrationStore:
