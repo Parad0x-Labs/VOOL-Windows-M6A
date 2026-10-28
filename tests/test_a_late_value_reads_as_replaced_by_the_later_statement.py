@@ -3,7 +3,8 @@
 Found 2026-10-27 in the review of the receipt-authority fix: once a receipt rebuilt late no longer replaces a value
 stated after it, the late value ("26 km", stated 10 March, written after "now 31 km", stated 2 April) was linked to
 nothing, so both read as current. Written in statement order, the same turns read "26 km [REPLACED later by "31 km"]".
-Statement days decide the link whatever the write order: the later record replaces the late value.
+Statement days decide the link whatever the write order: the earliest later record replaces the late value, and a
+rebuilt receipt links once. A value already replaced before the late one is written keeps its link (it is not relinked).
 """
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ CHAT = "late-value"
 JANUARY_20 = 1737370800.0
 MARCH_10 = 1741597200.0
 APRIL_2 = 1743584400.0
+MAY_5 = 1746442800.0
 
 
 @pytest.fixture()
@@ -98,7 +100,7 @@ def test_written_in_either_order_the_turns_read_the_same(mem, tmp_path, monkeypa
     assert current(in_order) == current(written_late) == ["31 km"]
 
 
-def test_the_late_value_still_replaces_the_value_stated_before_it(mem):
+def test_a_value_replaced_before_the_late_one_was_written_keeps_its_link(mem):
     first = _write(mem, "My longest tunnel route so far is 20 km.", JANUARY_20)
     correction = _write(mem, "Correction, my longest tunnel route is now 31 km.", APRIL_2)
     earlier = _write(mem, "My longest tunnel route so far is 26 km.", MARCH_10)
@@ -107,3 +109,38 @@ def test_the_late_value_still_replaces_the_value_stated_before_it(mem):
     assert _fact(receipts, first["receipt_id"], "20 km").get("replaced_by") == correction["receipt_id"]
     assert _fact(receipts, earlier["receipt_id"], "26 km").get("replaced_by") == correction["receipt_id"]
     assert _fact(receipts, correction["receipt_id"], "31 km").get("replaced_by") is None
+
+
+def _rebuild(mem, receipt_id):
+    mem._conn.execute("DELETE FROM memory_receipts WHERE receipt_id = ?", (receipt_id,))
+    mem._conn.commit()
+    assert mr.rebuild_missing_receipts(mem, CHAT) == 1
+
+
+@pytest.mark.parametrize("late", [True, False], ids=["written-late", "written-in-order"])
+def test_a_rebuilt_earlier_receipt_links_once(mem, late):
+    if late:
+        correction = _write(mem, "Correction, my longest tunnel route is now 31 km.", APRIL_2)
+        earlier = _write(mem, "My longest tunnel route so far is 26 km.", MARCH_10)
+    else:
+        earlier = _write(mem, "My longest tunnel route so far is 26 km.", MARCH_10)
+        correction = _write(mem, "Correction, my longest tunnel route is now 31 km.", APRIL_2)
+    _rebuild(mem, earlier["receipt_id"])
+    receipts = _receipts(mem)
+
+    assert _links(receipts) == [("26 km", "31 km")]
+    change = receipts[correction["receipt_id"]]["changes"][0]
+    assert change["old_receipt"] in receipts and change["old_receipt"] != earlier["receipt_id"]
+    assert _fact(receipts, change["old_receipt"], "26 km").get("replaced_by") == correction["receipt_id"]
+    assert _head_is_current(mem, correction["receipt_id"])
+
+
+def test_the_earliest_later_value_replaces_the_late_value(mem):
+    first = _write(mem, "Correction, my longest tunnel route is now 31 km.", APRIL_2)
+    second = _write(mem, "Correction again, my longest tunnel route is now 35 km.", MAY_5)
+    earlier = _write(mem, "My longest tunnel route so far is 26 km.", MARCH_10)
+    receipts = _receipts(mem)
+
+    assert _fact(receipts, first["receipt_id"], "31 km").get("replaced_by") == second["receipt_id"]
+    assert _fact(receipts, earlier["receipt_id"], "26 km").get("replaced_by") == first["receipt_id"]
+    assert _links(receipts) == [("26 km", "31 km"), ("31 km", "35 km")]
