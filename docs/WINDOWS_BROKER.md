@@ -4,7 +4,7 @@ Status: Phase A built: channel, roots, handle walk, file operations, batches and
 confined launcher (section 7) is not built: it is later work, and section 7 is design only. Not
 wired: nothing in VOOL calls the broker. Where the build differs from the design, this document
 describes the build, and section 12 lists the design decisions behind it. Read against
-windows/v0.7.1-port `1c26068`: every file:line into VOOL's own code was read at that commit;
+windows/v0.7.1-port `1c26068`: every file:line into VOOL's own code was read at that commit, and most were later moved to the matching code at `d6866a4`;
 file:line references into the broker (windows/broker) are to the code this PR adds.
 docs/WINDOWS_PORT_CONTRACTS.md (PR #21, read at `637fc6a`) is the source of truth for routes,
 invariants, receipt states and gaps; this design redefines none of them, and section 11 lists the
@@ -162,7 +162,7 @@ with approval ingress; it starts only after **both Job 6 and Job 7 have merged**
   keeps those handles for its lifetime. Each entry is checked against the rules below. A change
   to the variable needs a VOOL restart.
 
-  Rules for flagged folders, as built. G is core/windows_write_gate.py at `1c26068`
+  Rules for flagged folders, as built. G is core/windows_write_gate.py (read at `1c26068`, line numbers at `d6866a4`)
   (`flagged_roots`:58, `_inside`:68); J6 is Job 6's design, whose resolver feeds Step 3; C is the
   contracts doc (PR #21) at a7caed3; B is this document. The rule for the comparison:
   for the same input, the broker is never looser than G or J6.
@@ -310,7 +310,7 @@ Operations (Step 2 set):
 The protocol also has `ping` (no fields) and `close_root(root_id)`, which releases a root and the
 folders it holds; a connection's roots are also released when it closes. A root is known only on
 the connection that opened it (`unknown_root` elsewhere), and an unknown operation is refused
-`unknown_op` (Channel.cs:227-243, 286, 326). For `rename`, `to_root_id` is optional; a rename
+`unknown_op` (Channel.cs:227-246, 286, 326). For `rename`, `to_root_id` is optional; a rename
 inside `apply_batch` stays in the batch's root.
 
 - Every change goes through one runner: `write_file`, `ensure_directory`, `delete`, `rename` and
@@ -352,7 +352,7 @@ inside `apply_batch` stays in the batch's root.
 - **Replies for a finished change:** `ok:true` with `batch_id`, one result per operation
   (`results`) and `cleanup_left`. `restore_batch` replies `ok:true` with `batch_id` and
   `committed`, or `restore_incomplete` with `batch {batch_id, ran: null, restored: false, left}`
-  (Channel.cs:282-283).
+  (Channel.cs:282-283, 319-320).
 - **Replies for a batch that made changes and then stopped:** `ok:false` with `batch {batch_id,
   ran, restored, left}`.
   - When `restored` is true, `error.code` is the cause.
