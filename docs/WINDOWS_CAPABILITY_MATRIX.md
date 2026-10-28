@@ -10,7 +10,7 @@
 
 ## KAS Windows validation handoff
 
-The frozen rows below describe the Windows 10 / GTX 1080 audit at `1e4fd82`; their wording and measurements remain untouched. Most file:line citations in this document were later moved to the matching code at `d6866a4`; the sentences still describe the code as it was when each was written.
+The frozen rows below describe the Windows 10 / GTX 1080 audit at `1e4fd82`; their wording and measurements remain untouched. Most file:line citations in this document were later moved to the matching code at `9a15d6a`; the sentences still describe the code as it was when each was written.
 This KAS-owned section records Windows 11 / RTX 4060 evidence through the Windows 0.4.4 closed-test
 release built from exact clean `main` `e35b634`.
 

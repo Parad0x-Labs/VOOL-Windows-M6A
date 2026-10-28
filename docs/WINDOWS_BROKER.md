@@ -4,7 +4,7 @@ Status: Phase A built: channel, roots, handle walk, file operations, batches and
 confined launcher (section 7) is not built: it is later work, and section 7 is design only. Not
 wired: nothing in VOOL calls the broker. Where the build differs from the design, this document
 describes the build, and section 12 lists the design decisions behind it. Read against
-windows/v0.7.1-port `1c26068`: every file:line into VOOL's own code was read at that commit, and most were later moved to the matching code at `d6866a4`;
+windows/v0.7.1-port `1c26068`: every file:line into VOOL's own code was read at that commit, and its line number now points at the matching code at `9a15d6a` (the sentences still describe the code as read then);
 file:line references into the broker (windows/broker) are to the code this PR adds.
 docs/WINDOWS_PORT_CONTRACTS.md (PR #21, read at `637fc6a`) is the source of truth for routes,
 invariants, receipt states and gaps; this design redefines none of them, and section 11 lists the
@@ -162,8 +162,8 @@ with approval ingress; it starts only after **both Job 6 and Job 7 have merged**
   keeps those handles for its lifetime. Each entry is checked against the rules below. A change
   to the variable needs a VOOL restart.
 
-  Rules for flagged folders, as built. G is core/windows_write_gate.py (read at `1c26068`, line numbers at `d6866a4`)
-  (`flagged_roots`:58, `_inside`:68); J6 is Job 6's design, whose resolver feeds Step 3; C is the
+  Rules for flagged folders, as built. G is core/windows_write_gate.py (read at `1c26068`, line numbers at `9a15d6a`)
+  (`flagged_roots`:101, `_inside`:117); J6 is Job 6's design, whose resolver feeds Step 3; C is the
   contracts doc (PR #21) at a7caed3; B is this document. The rule for the comparison:
   for the same input, the broker is never looser than G or J6.
 
@@ -171,7 +171,7 @@ with approval ingress; it starts only after **both Job 6 and Job 7 have merged**
 |---|---|---|---|---|
 | F1 | Entry not absolute, or no drive letter (including a fully qualified `\\?\Volume{GUID}\...` or `\\?\GLOBALROOT\...` spelling) | G drops it silently (`os.path.isabs`). J6 refuses a folder that isn't absolute. | Refuse start, `invalid_flagged`. Checked after the F5 network/device checks, so F5 spellings keep their own code. | stricter: fails start instead of dropping |
 | F2 | Entry doesn't exist or isn't a directory | G drops it silently (`isdir`) | Refuse start, `invalid_flagged` | stricter |
-| F3 | Entry is a junction, symlink or other reparse point (any tag) | G resolves it with realpath and accepts it (windows_write_gate.py:64). C §3 treats name-surrogate tags as links. | Refuse start, `reparse_point`. Opened with FILE_FLAG_OPEN_REPARSE_POINT, checked with FileAttributeTagInfo. | stricter (B §4, §10 item 5) |
+| F3 | Entry is a junction, symlink or other reparse point (any tag) | G resolves it with realpath and accepts it (windows_write_gate.py:113). C §3 treats name-surrogate tags as links. | Refuse start, `reparse_point`. Opened with FILE_FLAG_OPEN_REPARSE_POINT, checked with FileAttributeTagInfo. | stricter (B §4, §10 item 5) |
 | F4 | Entry spelled through subst, an 8.3 short name, `\\?\X:\` or different case | G normcase + realpath gives one spelling | Accepted. Identity is volume serial + 128-bit file id (FileIdInfo). The reported final path is GetFinalPathNameByHandleW (long name). | same object, same result |
 | F5 | UNC `\\server\share`, `\\?\UNC\`, `\\.\` device path, or a mapped network drive | G accepts any isdir | Refuse start, `unsupported_filesystem`: UNC, `\\?\UNC\` and `\\.\` by text before any open (before F1's drive-letter check); a mapped drive passes F1 and is refused when its final path is UNC. Real-broker rows: unc, long_unc, device. A mapped-drive row needs a share, so it runs on the hosted runner (section 9.2). | stricter |
 | F6 | Volume root (`C:\`) | G accepts | Refuse start, `invalid_flagged` (B §4) | stricter |
@@ -188,7 +188,7 @@ with approval ingress; it starts only after **both Job 6 and Job 7 have merged**
 - **One list for gate and broker.** At start the broker returns, for each flagged folder, an id
   (from the volume serial number and the 128-bit file id, `FileIdInfo`) and its current final path.
   From Step 3 the Windows gate uses that list as its only list of flagged folders, instead of
-  re-reading the variable per call (`flagged_roots`, windows_write_gate.py:58-65). Before handing
+  re-reading the variable per call (`flagged_roots`, windows_write_gate.py:101-114). Before handing
   a call to the broker, Python asks for the folder's current final path and refuses on a mismatch,
   so the path the gate checked and the approval ask showed is the one the broker writes in.
 - **Roots for a call.** `open_root(flagged_id, rel)` walks `rel` from that folder's handle
@@ -200,7 +200,7 @@ with approval ingress; it starts only after **both Job 6 and Job 7 have merged**
   handle, and that handle is not opened again.
 - Roots are compared by file id, never by spelling, so a junction, subst drive or 8.3 short name
   for the same folder is the same root. Behaviour difference from the gate: the gate resolves a
-  flagged folder that is a junction and accepts it (by design, windows_write_gate.py:64); the
+  flagged folder that is a junction and accepts it (by design, windows_write_gate.py:113); the
   broker refuses it (section 10, item 5).
 - Holding the flagged folders without `FILE_SHARE_DELETE` means the user cannot rename or delete
   a flagged folder while VOOL runs, nor its parent folders (Documents or a development folder);
@@ -370,14 +370,14 @@ Not covered by any broker file operation:
 - `media.export`: written by the separate media worker; it can only be confined through the
   launcher (contracts gap 8).
 - `operator.cleanup_temp_files`: stays refused on Windows (`_ALWAYS_REFUSED`,
-  windows_write_gate.py:55).
+  windows_write_gate.py:60).
 - Operator notes: not gated today (contracts gap 13); the broker could serve them later.
 
 ### 6.1 Git, steps and patches (target for Step 3)
 
 This describes the contract Step 3 needs, not what the gate does today. At 1c26068 the gate's
 `refusal()` returns allow or refuse and hands over no roots, and for `repo.git` and
-`workspace.apply_unified_diff` it checks only the chat's workspace (`_GATED`:39, 42 are empty;
+`workspace.apply_unified_diff` it checks only the chat's workspace (`_GATED`:44, 47 are empty;
 contracts gaps 14 and 15). Job 6 (branch windows/port-landing-gate, not merged at the time of
 writing) plans a public resolver in core/windows_write_gate.py, called by `refusal()`, that
 places each call's writes and refuses any call it cannot place or that falls outside the flagged
