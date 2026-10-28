@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -226,6 +227,19 @@ def test_is_safe_value(key: str, value: str | None, safe: bool) -> None:
 
 _NEEDS_LFS = pytest.mark.skipif(subprocess.run(["git", "lfs", "version"], capture_output=True).returncode != 0,
                                 reason="git-lfs is not installed")
+
+#: git-lfs 3.8.1 (a 22 Oct 2026 security release) reads only ``remote.<name>.lfsurl`` from a committed
+#: .lfsconfig: it ignores ``remote.lfsdefault``, warns, and falls back to origin. Older git-lfs follows it.
+_LFS_IGNORES_A_PICKED_REMOTE = (3, 8, 1)
+
+
+def _lfs_version() -> tuple[int, ...] | None:
+    try:
+        out = subprocess.run(["git", "lfs", "version"], capture_output=True, text=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = re.search(r"git-lfs/(\d+)\.(\d+)\.(\d+)", out)
+    return tuple(int(part) for part in match.groups()) if match else None
 
 
 @pytest.fixture
@@ -598,10 +612,18 @@ def test_control_git_lfs_goes_to_a_url_the_lfsconfig_picks_as_its_remote(tmp_pat
     repo = _lfs_repo(tmp_path, monkeypatch, port)
     _commit_lfsconfig(repo, f"http://127.0.0.1:{port}/picked.git", key="remote.lfsdefault")
 
-    subprocess.run(safe_git.hardened_argv(repo, "cherry-pick", "lfs"), capture_output=True, timeout=120,
-                   env=safe_git.safe_env())
+    run = subprocess.run(safe_git.hardened_argv(repo, "cherry-pick", "lfs"), capture_output=True, text=True,
+                         errors="replace", timeout=120, env=safe_git.safe_env())
 
-    assert any("/picked.git/" in hit for hit in hits), f"git-lfs did not use remote.lfsdefault; the case below proves nothing: {hits}"
+    version = _lfs_version()
+    assert version is not None, "git lfs version printed no version"
+    if version >= _LFS_IGNORES_A_PICKED_REMOTE:
+        # This git-lfs refuses the key itself; the case below still guards users with an older one.
+        assert not any("/picked.git/" in hit for hit in hits), f"git-lfs {version} used remote.lfsdefault: {hits}\n{run.stderr}"
+        assert "remote.lfsdefault" in run.stderr, f"git-lfs {version} did not say it ignored remote.lfsdefault: {hits}\n{run.stderr}"
+    else:
+        assert any("/picked.git/" in hit for hit in hits), (
+            f"git-lfs {version} did not use remote.lfsdefault; the case below proves nothing: {hits}\n{run.stderr}")
 
 
 @_NEEDS_LFS
