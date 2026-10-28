@@ -311,22 +311,29 @@ def test_signal_handler_restores_before_reraising_the_signal(signum) -> None:
     """Exercise the handler caller itself, not just mutation-matrix source wiring."""
     original = _subject_bytes()
     marker = f"signal-{int(signum)}-marker"
+    # Windows delivers no signal from one process to another: Popen.send_signal(SIGTERM) is
+    # TerminateProcess, which runs no handler (the kill test covers that case), and SIGINT is
+    # refused outright. There the child raises the signal on itself when told to.
     script = """
-import sys, time
+import signal, sys, time
 from tests import _source_guard as guard
-relative, marker = sys.argv[1], sys.argv[2]
+relative, marker, signum = sys.argv[1], sys.argv[2], int(sys.argv[3])
 path = guard.REPO_ROOT / relative
 original = path.read_bytes()
 guard._write_journal(relative, original)
 path.write_bytes(original + ('\\n# ' + marker + '\\n').encode())
 guard.install_restore_on_signal(lambda: path.write_bytes(original))
 print('READY', flush=True)
+if sys.platform == 'win32':
+    sys.stdin.readline()
+    signal.raise_signal(signum)
 while True:
     time.sleep(0.05)
 """
     child = subprocess.Popen(
-        [sys.executable, "-c", script, _SUBJECT, marker],
+        [sys.executable, "-c", script, _SUBJECT, marker, str(int(signum))],
         cwd=str(guard.REPO_ROOT),
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -334,7 +341,12 @@ while True:
     try:
         assert child.stdout and child.stdout.readline().strip() == "READY"
         assert marker.encode() in _subject_bytes()
-        child.send_signal(signum)
+        if sys.platform == "win32":
+            assert child.stdin
+            child.stdin.write("raise\n")
+            child.stdin.flush()
+        else:
+            child.send_signal(signum)
         child.wait(timeout=30)
         assert child.returncode != 0
         assert _subject_bytes() == original
@@ -343,6 +355,8 @@ while True:
         if child.poll() is None:
             child.kill()
             child.wait(timeout=30)
+        if child.stdin:
+            child.stdin.close()
         if child.stdout:
             child.stdout.close()
         if child.stderr:
