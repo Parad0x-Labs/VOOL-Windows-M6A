@@ -20,7 +20,7 @@ from tests.wallet._rig_provider import MODEL, PromptRoutedProvider, seed_daemon
 
 pytestmark = [pytest.mark.safety, pytest.mark.served]
 
-REPLY_SELECTOR = ".msg.assistant:not(.pending):not(.vw-card)"
+REPLY_SELECTOR = ".msg.assistant:not(.pending):has(.msg-time):not(.vw-card)"
 
 
 @pytest.fixture(scope="module")
