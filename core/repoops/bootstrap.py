@@ -26,6 +26,9 @@ from core.platform.broker import EffectOutcome, EffectRequest, ExecutionBroker
 from core.remote_forge.identity import RepoIdentity, parse_remote_url
 from core.repoops.identity import RepositoryWorkspace, WorkspaceError
 
+#: Patched by tests to drive the Windows decision on any platform.
+_IS_WINDOWS = os.name == "nt"
+
 
 class BootstrapError(RuntimeError):
     pass
@@ -103,7 +106,10 @@ def clone(source_url: str, dest_path: str) -> RepositoryWorkspace:
         raise BootstrapError(f"{dest} is a symlink; refusing as clone target")
     if dest.exists():
         raise BootstrapError(f"{dest} already exists; use attach() instead")
-    proc = subprocess.run(["git", "clone", "-q", source_url, str(dest)],
+    # On Windows a clone from a folder on the same disk must copy git's objects: the Windows broker
+    # refuses hard-linked files (Phase C pick 3, owner 2026-10-23).
+    links = ["--no-hardlinks"] if _IS_WINDOWS else []
+    proc = subprocess.run(["git", "clone", "-q", *links, source_url, str(dest)],
                           capture_output=True, text=True, timeout=300)
     if proc.returncode != 0:
         raise BootstrapError(f"clone failed: {proc.stderr.strip()[:200]}")
