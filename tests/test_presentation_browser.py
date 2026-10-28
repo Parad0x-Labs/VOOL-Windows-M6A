@@ -175,7 +175,7 @@ def _send(page) -> None:
     page.fill("#input", "show me")
     page.click("#send")
     page.wait_for_function(
-        "() => document.querySelectorAll('.msg.assistant:not(.pending)').length === 1",
+        "() => document.querySelectorAll('.msg.assistant:not(.pending):has(.msg-time)').length === 1",
         timeout=15000,
     )
 
