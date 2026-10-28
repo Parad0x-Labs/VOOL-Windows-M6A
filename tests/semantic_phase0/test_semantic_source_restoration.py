@@ -88,6 +88,12 @@ def test_the_journal_is_written_before_the_mutation_not_after() -> None:
     assert _subject_bytes() == original
 
 
+def test_recovery_can_read_the_subject_from_git_head() -> None:
+    """Recovery trusts a journal only once git HEAD agrees with it. A host where the trusted git
+    cannot be found refuses every journal, and a killed child's mutation stays in the tree."""
+    assert guard._trusted_head_bytes(_SUBJECT) == _subject_bytes()
+
+
 def test_a_sigkilled_worker_leaves_a_journal_that_recovery_repairs() -> None:
     """The case `finally` cannot reach, driven end to end with a real signal 9."""
     original = _subject_bytes()
