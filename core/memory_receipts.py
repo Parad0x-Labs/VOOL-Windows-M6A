@@ -749,7 +749,8 @@ def find_changes(new_facts: Sequence[Fact], earlier: Sequence[dict[str, Any]], *
             # "31 km [REPLACED later by "26 km" stated 2025-03-10]"); the first such value replaces it instead
             later = statement_at is not None and receipt.get("statement_at") is not None and float(statement_at) < float(receipt["statement_at"])
             for old in receipt.get("facts") or []:
-                if old.get("value_type") != fact.value_type or old.get("norm") == fact.norm or old.get("replaced_by"):
+                # a later value already replaced still came first after this one: the earliest later statement wins
+                if old.get("value_type") != fact.value_type or old.get("norm") == fact.norm or (old.get("replaced_by") and not later):
                     continue
                 overlap = _jaccard(fact.slot, old.get("slot") or [])
                 shared = len(set(fact.slot) & set(old.get("slot") or []))
@@ -1123,6 +1124,9 @@ def _write_receipt(mem: Any, occurrence: Any, *, chat_scope: str, said: str | No
                 stored = _stored_receipt_with_said(mem, later["new_receipt"])
                 if stored is None:
                     continue
+                # a receipt written again (rebuilt, or rewritten by the forget sweep) replaces its change, never adds a second
+                stored["changes"] = [c for c in stored["changes"] if not (c.get("old_occurrence") == occ_id and c.get("old_value") == later["old_value"]
+                                                                          and c.get("value_type") == later["value_type"])]
                 stored["changes"].append({"slot": later["slot"], "old_occurrence": occ_id, "old_receipt": receipt["receipt_id"],
                                           "old_value": later["old_value"], "old_statement_at": receipt["statement_at"], "new_value": later["new_value"],
                                           "value_type": later["value_type"], "kind": "replaced", "rule": later["rule"], "slot_overlap": later["slot_overlap"]})
