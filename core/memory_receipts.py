@@ -1126,7 +1126,8 @@ def _write_receipt(mem: Any, occurrence: Any, *, chat_scope: str, said: str | No
                     continue
                 # a receipt written again (rebuilt, or rewritten by the forget sweep) replaces its change, never adds a second
                 stored["changes"] = [c for c in stored["changes"] if not (c.get("old_occurrence") == occ_id and c.get("old_value") == later["old_value"]
-                                                                          and c.get("value_type") == later["value_type"])]
+                                                                          and c.get("value_type") == later["value_type"]
+                                                                          and c.get("old_receipt") != receipt["receipt_id"])]
                 stored["changes"].append({"slot": later["slot"], "old_occurrence": occ_id, "old_receipt": receipt["receipt_id"],
                                           "old_value": later["old_value"], "old_statement_at": receipt["statement_at"], "new_value": later["new_value"],
                                           "value_type": later["value_type"], "kind": "replaced", "rule": later["rule"], "slot_overlap": later["slot_overlap"]})
