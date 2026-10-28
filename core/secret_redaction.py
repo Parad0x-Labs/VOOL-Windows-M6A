@@ -227,7 +227,7 @@ _CARD_CONTEXT_RE = re.compile(
     r"|diners|jcb|unionpay|credit|debit|pan|cc)\b"
 )
 _CARD_CONTEXT_WINDOW = 60
-_UUID_RE = re.compile(r"(?i)(?<![0-9a-f-])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9a-f-])")
+_UUID_RE = re.compile(r"(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")  # no card number has this shape
 _LABEL_CLAUSE_BOUNDARY_RE = re.compile(r"[.;!?\n]\s")
 _MASKED_VALUE_PREFIX = "[redacted"
 
