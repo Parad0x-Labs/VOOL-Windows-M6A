@@ -19,6 +19,7 @@ from core.provider_execution_boundary import provider_execution_boundary
 from core.secret_redaction import redact_secrets
 from network import signer
 from storage.db import get_connection
+from storage.lazy_schema import ensure_schema
 
 _CONSUME_LOCK = threading.Lock()
 _SAFE_IDENTIFIER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:@-]{0,255}")
@@ -777,50 +778,46 @@ class ProviderInvocationPermit:
         return ebm.release_unclaimed(self._money_liability_id, reason=reason)
 
 
+_PROVIDER_MANIFEST_SCHEMA = """
+CREATE TABLE IF NOT EXISTS provider_invocation_manifests (
+    manifest_id TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL,
+    chat_id TEXT NOT NULL DEFAULT '',
+    project_id TEXT NOT NULL DEFAULT '',
+    provider_id TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    payload_hash TEXT NOT NULL,
+    manifest_json TEXT NOT NULL,
+    signature TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_provider_manifest_request
+    ON provider_invocation_manifests(request_id, created_at);
+
+CREATE TRIGGER IF NOT EXISTS provider_manifest_no_update
+BEFORE UPDATE ON provider_invocation_manifests
+BEGIN
+    SELECT RAISE(
+        ABORT,
+        'provider invocation manifests are immutable'
+    );
+END;
+
+CREATE TRIGGER IF NOT EXISTS provider_manifest_no_delete
+BEFORE DELETE ON provider_invocation_manifests
+BEGIN
+    SELECT RAISE(
+        ABORT,
+        'provider invocation manifests are immutable'
+    );
+END;
+"""
+
+
 def ensure_provider_manifest_schema() -> None:
-    conn = get_connection()
-    try:
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS provider_invocation_manifests (
-                manifest_id TEXT PRIMARY KEY,
-                request_id TEXT NOT NULL,
-                chat_id TEXT NOT NULL DEFAULT '',
-                project_id TEXT NOT NULL DEFAULT '',
-                provider_id TEXT NOT NULL,
-                model_id TEXT NOT NULL,
-                operation TEXT NOT NULL,
-                payload_hash TEXT NOT NULL,
-                manifest_json TEXT NOT NULL,
-                signature TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_provider_manifest_request
-                ON provider_invocation_manifests(request_id, created_at);
-
-            CREATE TRIGGER IF NOT EXISTS provider_manifest_no_update
-            BEFORE UPDATE ON provider_invocation_manifests
-            BEGIN
-                SELECT RAISE(
-                    ABORT,
-                    'provider invocation manifests are immutable'
-                );
-            END;
-
-            CREATE TRIGGER IF NOT EXISTS provider_manifest_no_delete
-            BEFORE DELETE ON provider_invocation_manifests
-            BEGIN
-                SELECT RAISE(
-                    ABORT,
-                    'provider invocation manifests are immutable'
-                );
-            END;
-            """
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    ensure_schema(_PROVIDER_MANIFEST_SCHEMA)
 
 
 def store_provider_manifest(
