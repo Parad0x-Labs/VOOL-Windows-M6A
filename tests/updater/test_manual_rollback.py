@@ -94,6 +94,48 @@ def test_bad_previous_runtime_restores_current_code_and_current_data(installed):
     assert subsystem.status.load().phase.value == 'failed'
 
 
+def test_failed_rollback_records_why_before_restoring_current(installed):
+    subsystem, _, target, _, _ = installed
+    state = subsystem.paths.root / 'manual_rollbacks/rollback-reason/state.json'
+    seen = []
+
+    def probe(**kw):
+        if (target / 'core/version').read_text() == '0.7.0':
+            return HealthResult(False, 'previous runtime failed')
+        seen.append(json.loads(state.read_text()).get('reason'))
+        return HealthResult(True, 'current code healthy')
+
+    subsystem._make_probe = lambda: probe
+    assert run_manual_rollback(subsystem, rollback_candidate(subsystem), 'rollback-reason') == {
+        'ok': False, 'restored_current': True}
+    recorded = json.loads(state.read_text())
+    assert recorded['phase'] == 'restored'
+    assert recorded['reason'] == 'previous version did not return healthy'
+    assert seen == ['previous version did not return healthy']
+
+
+def test_unwritable_reason_still_restores_current(installed, monkeypatch):
+    import core.updater.rollback as rollback
+
+    subsystem, _, target, _, _ = installed
+    real_save = rollback._save
+
+    def save(path, state, phase):
+        if 'reason' in state and phase == state['phase'] == 'swapped':
+            raise OSError('state.json is held open')
+        real_save(path, state, phase)
+
+    monkeypatch.setattr(rollback, '_save', save)
+    subsystem._make_probe = lambda: lambda **kw: HealthResult(
+        (target / 'core/version').read_text() == '0.7.1', 'only the current version starts')
+    assert run_manual_rollback(subsystem, rollback_candidate(subsystem), 'rollback-unwritable') == {
+        'ok': False, 'restored_current': True}
+    assert (target / 'core/version').read_text() == '0.7.1'
+    recorded = json.loads((subsystem.paths.root / 'manual_rollbacks/rollback-unwritable/state.json').read_text())
+    assert recorded['phase'] == 'restored'
+    assert recorded['reason'] == 'previous version did not return healthy'
+
+
 def test_damaged_backup_refused_before_stop_or_data_change(installed):
     subsystem, home, target, stopped, _ = installed
     candidate = rollback_candidate(subsystem)
