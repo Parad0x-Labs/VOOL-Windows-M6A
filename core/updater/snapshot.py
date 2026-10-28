@@ -6,6 +6,7 @@ import os
 import shutil
 import sqlite3
 import time
+from contextlib import closing
 from pathlib import Path
 from urllib.parse import quote
 
@@ -46,8 +47,10 @@ def snapshot_runtime(data_dir: Path, destination: Path) -> None:
             if time.monotonic() > deadline:
                 raise TimeoutError("SQLite snapshot did not finish in time")
 
-        with sqlite3.connect(f"file:{quote(str(database))}?mode=ro", uri=True, timeout=5) as source:
-            with sqlite3.connect(target) as backup:
+        # Close both explicitly: 'with' alone commits but leaves the file open until GC, and Windows then
+        # refuses the restore's rename over it.
+        with closing(sqlite3.connect(f"file:{quote(str(database))}?mode=ro", uri=True, timeout=5)) as source:
+            with closing(sqlite3.connect(target)) as backup, backup:
                 source.backup(backup, pages=256, progress=bounded, sleep=0.05)
                 if backup.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
                     raise ValueError("SQLite snapshot failed its integrity check")
