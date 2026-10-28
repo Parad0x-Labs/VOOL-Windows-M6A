@@ -237,8 +237,10 @@ def backup_and_swap(release_root: Path, project_root: Path, preserve: set[str], 
         replaced.append(name)
         manifest = backup_dir / "_replaced.json"
         temporary = manifest.with_suffix(".tmp")
-        temporary.write_text(json.dumps(replaced, sort_keys=True), encoding="utf-8")
-        with temporary.open("rb") as durable:
+        # Windows only fsyncs a handle opened for writing, so sync while it is still open.
+        with temporary.open("w", encoding="utf-8") as durable:
+            durable.write(json.dumps(replaced, sort_keys=True))
+            durable.flush()
             os.fsync(durable.fileno())
         os.replace(temporary, manifest)
         if current.exists() or current.is_symlink():

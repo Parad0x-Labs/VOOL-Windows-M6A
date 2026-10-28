@@ -6,33 +6,30 @@ from typing import Any
 
 from core.cloud_provider_contract import CloudModelMetadata
 from storage.db import get_connection
+from storage.lazy_schema import ensure_schema
 
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS cloud_model_catalog (
+    provider_id TEXT NOT NULL,
+    model_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    discovered_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (provider_id, model_id)
+);
+CREATE INDEX IF NOT EXISTS idx_cloud_model_catalog_expiry
+  ON cloud_model_catalog(provider_id, expires_at);
+"""
+
+
 def _init_table() -> None:
-    conn = get_connection()
-    try:
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS cloud_model_catalog (
-                provider_id TEXT NOT NULL,
-                model_id TEXT NOT NULL,
-                payload_json TEXT NOT NULL,
-                discovered_at TEXT NOT NULL,
-                expires_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY (provider_id, model_id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_cloud_model_catalog_expiry
-              ON cloud_model_catalog(provider_id, expires_at);
-            """
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    ensure_schema(_SCHEMA)
 
 
 def replace_provider_catalog(provider_id: str, models: tuple[CloudModelMetadata, ...]) -> None:
