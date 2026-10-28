@@ -182,6 +182,7 @@ function Invoke-WindowsRuntimeRegression {
         "tests\test_windows_junction_boundary.py",
         "tests\test_windows_write_gate.py",
         "tests\test_windows_write_gate_before_approval.py",
+        "tests\test_windows_write_gate_flagged_roots_match_the_broker.py",
         "tests\test_machine_writes_are_checked_where_they_land.py",
         "tests\test_media_editor_export_asks_the_windows_gate.py",
         "tests\test_git_tools_repository_config_cannot_run_programs.py",
