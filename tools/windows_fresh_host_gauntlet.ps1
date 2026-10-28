@@ -180,6 +180,7 @@ function Invoke-WindowsRuntimeRegression {
         "tests\test_windows_supervisor_backs_off_a_child_that_exits_mid_pass.py",
         "tests\test_windows_supervisor_scan_opens_no_console.py",
         "tests\test_windows_junction_boundary.py",
+        "tests\test_plugin_package_windows_capture.py",
         "tests\test_windows_write_gate.py",
         "tests\test_windows_write_gate_before_approval.py",
         "tests\test_windows_write_gate_flagged_roots_match_the_broker.py",
