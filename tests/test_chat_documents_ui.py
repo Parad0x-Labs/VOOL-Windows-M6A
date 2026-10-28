@@ -312,7 +312,7 @@ def test_sending_carries_the_document_id_and_the_bubble_chip_previews_from_the_s
     page.keyboard.press("End")
     page.keyboard.type("summarise this log")
     page.click("#send")
-    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending)').length === 1", timeout=15000)
+    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending):has(.msg-time)').length === 1", timeout=15000)
     assert len(server.chat_bodies) == 1
     body = server.chat_bodies[0]
     assert body["attachments"] == ["att_" + f"{1:032x}"] and body["session_id"] == chat_id
@@ -401,7 +401,7 @@ def test_an_offline_paste_is_retried_in_place_and_blocks_the_send_until_it_lands
     _wait_chips(page, "chips.length === 1 && chips[0].dataset.state === 'ready'", timeout=10000)
     assert server.uploads[-1]["data"] == LONG_PASTE.encode("utf-8"), "the retry did not resend the exact bytes"
     page.click("#send")
-    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending)').length === 1", timeout=15000)
+    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending):has(.msg-time)').length === 1", timeout=15000)
     assert len(server.chat_bodies) == 1 and len(server.chat_bodies[0]["attachments"]) == 1
 
 
@@ -418,7 +418,7 @@ def test_two_chats_keep_their_documents_apart(page) -> None:
     _wait_chips(page, "chips.length === 1 && chips[0].dataset.state === 'ready'")
     page.fill("#input", "what is this")
     page.click("#send")
-    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending)').length === 1", timeout=15000)
+    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending):has(.msg-time)').length === 1", timeout=15000)
     body = server.chat_bodies[-1]
     assert body["session_id"] == second and body["attachments"] == ["att_" + f"{2:032x}"]
     page.evaluate("(id) => openSession(id)", first)
@@ -448,7 +448,7 @@ def test_the_same_contract_at_a_phone_width(browser) -> None:
         assert geometry["send"]["l"] >= 0 and geometry["send"]["r"] <= geometry["vw"], geometry
         page.fill("#input", "summarise")
         page.click("#send")
-        page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending)').length === 1", timeout=15000)
+        page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending):has(.msg-time)').length === 1", timeout=15000)
         assert server.chat_bodies[-1]["attachments"] == ["att_" + f"{1:032x}"]
         after = page.evaluate("() => { const de = document.documentElement; return de.scrollWidth > de.clientWidth; }")
         assert not after, "the sent bubble's chip overflowed the phone width"
@@ -588,7 +588,7 @@ def test_served_end_to_end_paste_door_retained_bytes_receipt_restart_retry_and_d
     assert on_disk == LONG_PASTE.encode("utf-8"), "the real door did not keep the pasted bytes exactly"
     page.fill("#input", "summarise this log")
     page.click("#send")
-    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending)').length === 1", timeout=30000)
+    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending):has(.msg-time)').length === 1", timeout=30000)
     assert len(served.captured) == 1
     context = served.captured[0]["source_context"]
     evidence = context["external_evidence"]
@@ -617,7 +617,7 @@ def test_served_end_to_end_paste_door_retained_bytes_receipt_restart_retry_and_d
         timeout=30000,
     )
     page.evaluate("() => resendLastTurn(displayedChat)")
-    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending)').length === 1 && document.querySelectorAll('.msg.user').length === 1", timeout=30000)
+    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending):has(.msg-time)').length === 1 && document.querySelectorAll('.msg.user').length === 1", timeout=30000)
     page.wait_for_timeout(500)
     assert len(served.captured) == 2, "the retry never reached the runtime"
     retried = served.captured[1]["source_context"]
@@ -663,7 +663,7 @@ def test_long_clipboard_prompt_can_send_without_a_document_instruction(page) -> 
     page.wait_for_function("(text) => inputEl.value === text", arg=LONG_PASTE)
     assert _chips(page) == [] and server.uploads == []
     page.click("#send")
-    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending)').length === 1")
+    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending):has(.msg-time)').length === 1")
     assert server.chat_bodies[-1]["messages"][-1]["content"] == LONG_PASTE
     assert errors == []
 
@@ -676,6 +676,6 @@ def test_document_can_be_explicitly_moved_back_into_editable_message(page) -> No
     page.wait_for_function("(text) => inputEl.value === text", arg=LONG_PASTE)
     assert _chips(page) == [] and server.chat_bodies == []
     page.click("#send")
-    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending)').length === 1")
+    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending):has(.msg-time)').length === 1")
     assert server.chat_bodies[-1]["messages"][-1]["content"] == LONG_PASTE
     assert errors == []
