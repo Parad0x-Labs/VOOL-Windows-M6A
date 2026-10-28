@@ -144,3 +144,15 @@ def test_the_earliest_later_value_replaces_the_late_value(mem):
     assert _fact(receipts, first["receipt_id"], "31 km").get("replaced_by") == second["receipt_id"]
     assert _fact(receipts, earlier["receipt_id"], "26 km").get("replaced_by") == first["receipt_id"]
     assert _links(receipts) == [("26 km", "31 km"), ("31 km", "35 km")]
+
+
+@pytest.mark.parametrize("late", [True, False], ids=["written-late", "written-in-order"])
+def test_two_equal_values_in_one_turn_are_each_replaced(mem, late):
+    turns = [("My longest tunnel route so far is 26 km. My longest river swim so far is 26 km.", MARCH_10),
+             ("Correction, my longest tunnel route is now 31 km. Correction, my longest river swim is now 31 km.", APRIL_2)]
+    for body, statement_at in (reversed(turns) if late else turns):
+        _write(mem, body, statement_at)
+    receipts = _receipts(mem)
+
+    assert _links(receipts) == [("26 km", "31 km"), ("26 km", "31 km")]
+    assert all(f.get("replaced_by") for r in receipts.values() for f in r["facts"] if f.get("value") == "26 km")
