@@ -42,14 +42,15 @@ _AUTH_HEADER_RE = re.compile(
 
 # --- home paths / usernames -------------------------------------------------------------
 # /Users/<name>, /home/<name>, C:\Users\<name>, C:/Users/<name>: mask just the username
-# segment; the project-relative remainder is what reproduction needs.
+# segment; the project-relative remainder is what reproduction needs. The name class is \w (any
+# letter, so ``Łukasz`` and ``José`` are masked whole), not ASCII only.
 _HOME_SEGMENT_RE = re.compile(
-    r"(?i)([a-z]:)?[\\/](users|home)[\\/][A-Za-z0-9._-]+"
+    r"(?i)([a-z]:)?[\\/](users|home)[\\/][\w.-]+"
 )
 # The same shape with every separator also accepted doubled (``C:\\Users\\alice``, as a Python repr
 # or JSON shows it). Runs in addition to the pattern above, which only knows one separator.
 _ESCAPED_HOME_SEGMENT_RE = re.compile(
-    r"(?i)([a-z]:)?" + SEP + r"(users|home)" + SEP + r"[A-Za-z0-9._-]+"
+    r"(?i)([a-z]:)?" + SEP + r"(users|home)" + SEP + r"[\w.-]+"
 )
 _TILDE_HOME_RE = re.compile(r"(?<![A-Za-z0-9])~(?=/|\\|\s|$)")
 _HOME_ENV_RE = re.compile(r"(?<![A-Za-z0-9])\$HOME\b", re.IGNORECASE)

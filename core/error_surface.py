@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 
-from core.path_scrub import path_basename, scrub_windows_paths
+from core.path_scrub import ends_at_home_account, path_basename, scrub_windows_paths
 from core.secret_redaction import redact_secrets
 
 # Absolute POSIX and Windows paths -> the basename only, so "/Users/alice/Desktop/x/y.py" leaks
@@ -28,6 +28,9 @@ _GENERIC = "Something went wrong on this machine while handling that turn."
 
 def _strip_paths(text: str) -> str:
     def _posix(match: re.Match[str]) -> str:
+        # a path that ends at the account folder (/Users/alice) would publish the account as its name
+        if ends_at_home_account([part for part in match.group(0).split("/") if part]):
+            return "<path>"
         tail = match.group(0).rstrip("/").rsplit("/", 1)[-1]
         return tail or "<path>"
 

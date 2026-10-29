@@ -30,15 +30,25 @@ _TAIL = _SEG + r"(?:" + SEP + _SEG + r")*" + SEP + r"?"
 #: The ACCOUNT segment of a home directory (``Users\John Smith``, ``Users\al-ice.o'neil``): the one
 #: place a space or an apostrophe is part of the name. It is at most three words joined by single
 #: spaces (no leading, trailing or doubled space), at most 64 characters, and it must END right at
-#: a separator, at a line end, before a ``,`` or ``;``, or at the end of the text, so prose after
-#: a plain name (``Users\bob failed to start``, ``Users\bob then run x/y``) is never swallowed.
+#: a separator, at a line end, before a ``,`` ``;`` or a closing quote or bracket, before a full stop
+#: that ends a sentence, or at the end of the text, so prose after a plain name
+#: (``Users\bob failed to start``, ``Users\bob then run x/y``) is never swallowed.
 #: Every class excludes the separators and whitespace, so matching is linear (no nested unbounded
 #: quantifiers); anything else falls back to the strict ``_SEG``.
-_ACCT_WORD = r"[^\\/\s\"<>|*?:,;]+"
-#: Where an account may end without a separator: a line end, ``,`` ``;`` or the end of the text.
-_ACCT_STOP = r"(?=[,;\r\n]|$)"
+#: One word of the account. An apostrophe or a dot counts only between two name characters
+#: (``al-ice.o'neil``), and a closing bracket never does, so the quote, bracket or full stop that
+#: closes a value or a sentence is never read as part of the name.
+_ACCT_CHAR = r"[^\\/\s\"'.<>|*?:,;)\]}]"
+_ACCT_WORD = _ACCT_CHAR + r"+(?:['.]" + _ACCT_CHAR + r"+)*"
+#: Where an account may end without a separator: a line end, ``,`` ``;``, a closing quote or bracket
+#: (a JSON ``"cwd": "C:\\Users\\Bob Smith"`` ends at its ``"``), a full stop that ends a sentence,
+#: or the end of the text.
+_CLOSERS = "\"')\\]}>"
+_ACCT_STOP = r"(?=[,;\r\n" + _CLOSERS + r"]|\.(?:\s|$)|$)"
 _ACCT = (
-    r"(?=[^\\/\r\n,;]{1,64}(?:[\\/,;\r\n]|$))" + _ACCT_WORD + r"(?: " + _ACCT_WORD + r"){0,2}"
+    r"(?=[^\\/\r\n,;" + _CLOSERS + r"]{1,64}(?:[\\/,;\r\n" + _CLOSERS + r"]|\.(?:\s|$)|$))"
+    # lazy: the first word count that reaches a stop wins, so ". Retry" after a name stays prose
+    + _ACCT_WORD + r"(?: " + _ACCT_WORD + r"){0,2}?"
     + r"(?:(?=[\\/])|" + _ACCT_STOP + r")"
 )
 #: The same segment, but only when the name actually holds a space or an apostrophe (what the
@@ -87,12 +97,20 @@ SPACED_HOME_RE = re.compile(
 )
 
 _SPLIT_RE = re.compile(r"[\\/]+")
-_HOME_DIRS = frozenset({"users", "home"})
+#: Folders whose children are accounts: local homes, and the profile shares a server publishes
+#: (``\\\\fs01\\users$``, ``\\\\fs01\\profiles``), with or without the hidden-share ``$``.
+_HOME_DIRS = frozenset({"users", "home", "homes", "profiles"})
 
 
 def path_parts(path: str) -> list[str]:
     """The non-empty segments of ``path`` split on any run of backslashes or slashes."""
     return [part for part in _SPLIT_RE.split(path) if part]
+
+
+def ends_at_home_account(parts: list[str]) -> bool:
+    """Whether a path split into ``parts`` ends AT a home directory's account folder
+    (``.../Users/alice``, ``/home/alice/``), where its last segment is the account name itself."""
+    return len(parts) >= 2 and parts[-2].lower().rstrip("$") in _HOME_DIRS
 
 
 def path_basename(match: re.Match[str]) -> str:
@@ -101,11 +119,20 @@ def path_basename(match: re.Match[str]) -> str:
     A path that ends AT a home directory's account folder (``...\\Users\\alice``) would name the
     account as its "basename", so that case yields the placeholder instead.
     """
-    parts = path_parts(match.group(0))
+    text = match.group(0)
+    parts = path_parts(text)
     if not parts:
         return "<path>"
-    if len(parts) >= 2 and parts[-2].lower() in _HOME_DIRS:
+    if ends_at_home_account(parts):
         return "<path>"
+    if text[:1] == "\\" and text[1:2] == "\\":
+        # A share path: its first segments are the server, the share and the folder in it, which
+        # name a person as often as a file does (``\\\\fs01\\jsmith$``, ``\\\\fs01\\share\\jsmith``).
+        named = parts[2:] if parts[0] in ("?", ".") else parts
+        if named and named[0].lower() == "unc":
+            named = named[1:]
+        if len(named) <= 3:
+            return "<path>"
     return parts[-1]
 
 
@@ -126,6 +153,7 @@ __all__ = [
     "SEP",
     "SPACED_HOME_RE",
     "WINDOWS_PATH_RE",
+    "ends_at_home_account",
     "path_basename",
     "path_parts",
     "scrub_windows_paths",

@@ -22,13 +22,17 @@ from core.secret_redaction import contains_secret, redact_secrets
 _HOME_PLACEHOLDER = "[redacted-home]"
 _VOOL_HOME_PLACEHOLDER = "[redacted-vool-home]"
 
-_POSIX_HOME_RE = re.compile(r"(?<![\w/])/Users/[A-Za-z0-9._-]+|(?<![\w/])/home/[A-Za-z0-9._-]+")
-_WINDOWS_HOME_RE = re.compile(r"[A-Za-z]:\\Users\\[A-Za-z0-9._ -]+")
+# The name classes are \w (any letter, so ``Łukasz`` and ``José`` are masked whole), not ASCII only.
+_POSIX_HOME_RE = re.compile(r"(?<![\w/])/Users/[\w.-]+|(?<![\w/])/home/[\w.-]+")
+_WINDOWS_HOME_RE = re.compile(r"[A-Za-z]:\\Users\\[\w. -]+")
 _TMP_VOLATILE_RE = re.compile(r"/private/var/folders/[\w/+_-]+|/var/folders/[\w/+_-]+")
 # Escaped spelling of the Windows home (doubled backslashes, as a repr or JSON shows it), then
-# UNC and \\?\ device paths whole. Both run after the patterns above, never instead of them.
+# UNC and \\?\ device paths whole. Both run after the patterns above, never instead of them. It needs
+# a drive or a backslash before ``users``: a bare ``/users/123`` is a URL path, and POSIX homes are
+# _POSIX_HOME_RE's. No space in the name class: SPACED_HOME_RE has already taken a spaced account,
+# and here a space would swallow the prose after a plain one.
 _ESCAPED_WINDOWS_HOME_RE = re.compile(
-    r"(?<![\w\\/])(?:[A-Za-z]:)?" + SEP + r"(?i:users)" + SEP + r"[A-Za-z0-9._ -]+"
+    r"(?<![\w\\/])(?:[A-Za-z]:" + SEP + r"|\\\\|\\)(?i:users)" + SEP + r"[\w.-]+"
 )
 
 _REDACTION_MARKER = "[export-redacted]"
