@@ -220,4 +220,41 @@ public sealed class JournalHandleTests : IDisposable
         Assert.Equal("journal_unavailable", Assert.Throws<BrokerRefusal>(() => journal.Begin(Journal.NewId(), 1)).Code);
         Assert.Empty(Directory.GetFileSystemEntries(target));
     }
+
+    // A test the hold alone cannot pass (c0b security review, minor 2: NTFS refuses to rename a
+    // folder above an open one, so the swap tests above never got their junction in). The journal
+    // is opened through a junction above it, and that junction is then re-pointed at a crafted
+    // journal. The held folder never moved, so only opens relative to its handle stay out of the
+    // crafted one.
+    [Fact]
+    public void A_junction_above_the_journal_repointed_after_open_is_never_used()
+    {
+        var real = Path.Combine(home, "real-broker");
+        var realJournal = Path.Combine(real, "journal");
+        Directory.CreateDirectory(realJournal);
+        TestSupport.CreateJunction(BrokerFolder, real);
+        var journal = Open(JournalFolder);
+        Assert.True(journal.Available);
+        var craftedId = Crafted(out var craftedJournal);
+        var craftedFile = Path.Combine(craftedJournal, $"batch-{craftedId}.jsonl");
+        // Removes the junction only, never what it points at.
+        Directory.Delete(BrokerFolder);
+        TestSupport.CreateJunction(BrokerFolder, Path.GetDirectoryName(craftedJournal)!);
+        Assert.Equal(craftedFile, Path.Combine(craftedJournal, Path.GetFileName(Assert.Single(Directory.GetFiles(JournalFolder)))));
+
+        Assert.Empty(journal.Pending());
+        Assert.False(journal.Holds(craftedId));
+        using var registry = new RootRegistry();
+        var runner = new BatchRunner(registry, journal);
+        Assert.Equal("unknown_batch", Assert.Throws<BrokerRefusal>(() => runner.Restore(craftedId)).Code);
+
+        var batchId = Journal.NewId();
+        using (var log = journal.Begin(batchId, 1)) { }
+        Assert.Equal(batchId, Assert.Single(journal.Pending()));
+        Assert.True(File.Exists(Path.Combine(realJournal, $"batch-{batchId}.jsonl")));
+        Assert.True(runner.Restore(batchId).Complete);
+        Assert.Empty(Directory.GetFileSystemEntries(realJournal));
+        Assert.Equal(BeginOnly(craftedId), File.ReadAllBytes(craftedFile));
+        Assert.Equal(craftedFile, Assert.Single(Directory.GetFiles(craftedJournal)));
+    }
 }
