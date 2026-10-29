@@ -6,6 +6,9 @@ import os
 from core import windows_write_gate as gate
 from tests._windows_disposable_tmp import mark_own_tmp_path_disposable
 
+# what the shell running the suite set, if anything: off Windows the suite must leave it as it found it
+_INHERITED = os.environ.get(gate.ENV_VAR)
+
 
 def test_on_windows_only_the_tests_own_tmp_path_is_listed(tmp_path, monkeypatch):
     monkeypatch.delenv(gate.ENV_VAR, raising=False)
@@ -23,5 +26,5 @@ def test_the_suite_lists_this_tests_folder_on_windows_and_nothing_elsewhere(tmp_
     if os.name == "nt":
         assert os.environ.get(gate.ENV_VAR) == str(tmp_path)
     else:
-        assert os.environ.get(gate.ENV_VAR) is None
+        assert os.environ.get(gate.ENV_VAR) == _INHERITED
 
