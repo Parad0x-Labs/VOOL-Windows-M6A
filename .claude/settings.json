@@ -2,16 +2,12 @@
   "permissions": {
     "allow": [
       "Bash(python -m pytest:*)",
-      "Bash(python -m ruff check:*)",
-      "Bash(ruff check:*)",
+      "Bash(python -m ruff check .)",
+      "Bash(ruff check .)",
       "Bash(git status:*)",
-      "Bash(git diff:*)",
-      "Bash(git log:*)",
-      "Bash(git show:*)",
-      "Bash(git fetch:*)",
       "Bash(git rev-parse:*)",
-      "Bash(git ls-remote:*)",
-      "Bash(git worktree list:*)"
+      "Bash(git worktree list:*)",
+      "Bash(git fetch origin)"
     ]
   }
 }
