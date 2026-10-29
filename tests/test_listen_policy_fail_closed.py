@@ -51,12 +51,21 @@ class _RecordingSocket:
 
 def _fake_socket_module(*, with_exclusiveaddruse: bool) -> tuple[SimpleNamespace, list[tuple]]:
     """A stand-in for ``socket`` whose SO_EXCLUSIVEADDRUSE can be deleted,
-    plus the call log of the socket it hands out."""
+    plus the call log of the socket it hands out. getaddrinfo resolves every
+    host to the AF_INET address it was asked for (the family the multi-address
+    binder must resolve through)."""
     calls: list[tuple] = []
     attributes: dict[str, object] = {
+        "AF_INET": socket.AF_INET,
+        "AF_INET6": socket.AF_INET6,
+        "AF_UNSPEC": socket.AF_UNSPEC,
+        "AI_PASSIVE": socket.AI_PASSIVE,
         "SOL_SOCKET": socket.SOL_SOCKET,
         "SO_REUSEADDR": socket.SO_REUSEADDR,
         "SOCK_STREAM": socket.SOCK_STREAM,
+        "getaddrinfo": lambda host, port, *args, **kwargs: [
+            (socket.AF_INET, socket.SOCK_STREAM, 0, "", (host, int(port)))
+        ],
         "socket": lambda *args, **kwargs: _RecordingSocket(calls),
     }
     if with_exclusiveaddruse:
