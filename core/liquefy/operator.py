@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from core.liquefy import hooks
-from core.liquefy.store import LiquefyLogStore, LiquefyStoreError
+from core.liquefy.store import LiquefyLogStore, LiquefyStoreError, _write_flags
 
 REBUILD_STATE_SCHEMA = "vool.liquefy.rebuild_state.v1"
 
@@ -701,7 +701,7 @@ def _append_receipt_line(path: Path, receipt: dict) -> None:
     import os
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    fd = os.open(str(path), _write_flags(os.O_WRONLY | os.O_CREAT | os.O_APPEND), 0o600)
     try:
         os.write(fd, json.dumps(receipt, ensure_ascii=False).encode("utf-8") + b"\n")
         os.fsync(fd)

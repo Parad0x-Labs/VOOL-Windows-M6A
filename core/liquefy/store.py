@@ -93,6 +93,11 @@ def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _write_flags(flags: int) -> int:
+    # Windows opens in text mode unless O_BINARY is passed, turning every LF written into CRLF.
+    return flags | getattr(os, "O_BINARY", 0)
+
+
 def _fsync_directory(path: Path) -> None:
     try:
         fd = os.open(str(path), os.O_RDONLY)
@@ -107,7 +112,7 @@ def _fsync_directory(path: Path) -> None:
 def _atomic_write_json(path: Path, payload: dict) -> None:
     tmp = path.with_name(f".{path.name}.tmp-{os.getpid()}")
     data = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
-    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd = os.open(str(tmp), _write_flags(os.O_WRONLY | os.O_CREAT | os.O_TRUNC), 0o600)
     try:
         os.write(fd, data)
         os.fsync(fd)
@@ -118,7 +123,7 @@ def _atomic_write_json(path: Path, payload: dict) -> None:
 
 
 def _append_receipt_line(path: Path, receipt: dict) -> None:
-    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    fd = os.open(str(path), _write_flags(os.O_WRONLY | os.O_CREAT | os.O_APPEND), 0o600)
     try:
         os.write(fd, json.dumps(receipt, ensure_ascii=False).encode("utf-8") + b"\n")
         os.fsync(fd)
@@ -209,7 +214,7 @@ class LiquefyLogStore:
         quarantine = self.receipts_dir / f"hot-torn-{_sha256_hex(raw)[:12]}.jsonl"
         if not quarantine.exists():
             quarantine.write_bytes(raw)
-        fd = os.open(str(self.hot_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        fd = os.open(str(self.hot_path), _write_flags(os.O_WRONLY | os.O_CREAT | os.O_TRUNC), 0o600)
         try:
             os.write(fd, keep)
             os.fsync(fd)
@@ -259,7 +264,7 @@ class LiquefyLogStore:
                 lines.append(json.dumps(envelope, ensure_ascii=False, allow_nan=False).encode("utf-8"))
                 seqs.append(next_seq)
                 next_seq += 1
-            fd = os.open(str(self.hot_path), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            fd = os.open(str(self.hot_path), _write_flags(os.O_WRONLY | os.O_CREAT | os.O_APPEND), 0o600)
             try:
                 for line in lines:
                     os.write(fd, line + b"\n")
@@ -334,7 +339,7 @@ class LiquefyLogStore:
             frame = MAGIC + len(header_json).to_bytes(4, "big") + header_json + stored_blob
             final_path = self.segments_dir / f"{segment_id}.lsegh"
             tmp_path = self.segments_dir / f".{segment_id}.tmp-{os.getpid()}"
-            fd = os.open(str(tmp_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            fd = os.open(str(tmp_path), _write_flags(os.O_WRONLY | os.O_CREAT | os.O_TRUNC), 0o600)
             try:
                 os.write(fd, frame)
                 os.fsync(fd)
@@ -393,7 +398,7 @@ class LiquefyLogStore:
         active = [env for seq, env in self._hot_lines() if seq > self._last_sealed_seq]
         data = b"".join(json.dumps(env, ensure_ascii=False, allow_nan=False).encode("utf-8") + b"\n" for env in active)
         tmp = self.root / f".hot.jsonl.tmp-{os.getpid()}"
-        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        fd = os.open(str(tmp), _write_flags(os.O_WRONLY | os.O_CREAT | os.O_TRUNC), 0o600)
         try:
             os.write(fd, data)
             os.fsync(fd)
@@ -784,7 +789,7 @@ class LiquefyLogStore:
         header_json = json.dumps(header, ensure_ascii=False).encode("utf-8")
         frame = MAGIC + len(header_json).to_bytes(4, "big") + header_json + raw[8 + header_len :]
         tmp = self.segments_dir / f".{first['segment_id']}.relink-{os.getpid()}"
-        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        fd = os.open(str(tmp), _write_flags(os.O_WRONLY | os.O_CREAT | os.O_TRUNC), 0o600)
         try:
             os.write(fd, frame)
             os.fsync(fd)
