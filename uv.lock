@@ -4895,6 +4895,7 @@ dependencies = [
     { name = "solders", version = "0.26.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.11' and extra == 'extra-4-vool-pay') or (extra == 'extra-4-vool-models' and extra == 'extra-4-vool-pay')" },
     { name = "solders", version = "0.29.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11' or extra == 'extra-4-vool-models' or extra != 'extra-4-vool-pay'" },
     { name = "starlette" },
+    { name = "tzdata", marker = "sys_platform == 'win32' or (extra == 'extra-4-vool-models' and extra == 'extra-4-vool-pay')" },
     { name = "uvicorn" },
     { name = "xlrd" },
 ]
@@ -5016,6 +5017,7 @@ requires-dist = [
     { name = "torch", marker = "(platform_machine != 'x86_64' and extra == 'runtime') or (sys_platform != 'darwin' and extra == 'runtime')", specifier = ">=2.13.0" },
     { name = "transformers", marker = "extra == 'models'", specifier = ">=4.48" },
     { name = "transformers", marker = "extra == 'runtime'", specifier = ">=4.48" },
+    { name = "tzdata", marker = "sys_platform == 'win32'", specifier = ">=2024.1" },
     { name = "uvicorn", specifier = ">=0.30,<1.0" },
     { name = "x402", extras = ["evm"], marker = "extra == 'x402'", specifier = "==2.25.0" },
     { name = "xlrd", specifier = "==2.0.2" },
