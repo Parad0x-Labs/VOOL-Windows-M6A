@@ -406,10 +406,10 @@ def _run_bounded_claim_worker(script, tmp_path):
     worker = "\n".join([
         "import json, os, threading, time",
         "from pathlib import Path",
-        f"record = Path({str(record)!r})",
+        f"record = Path({str(record)!a})",
         "record.write_text(json.dumps({'pid': os.getpid(), 'phase': 'startup'}))",
         "startup = time.process_time()",
-        f"exec({setup!r})",
+        f"exec({setup!a})",
         "import_seconds = time.process_time() - startup",
         "assert import_seconds < 30, import_seconds",
         "record.write_text(json.dumps({'pid': os.getpid(), 'phase': 'execution', 'imports': import_seconds}))",
@@ -429,7 +429,7 @@ def _run_bounded_claim_worker(script, tmp_path):
         "    os._exit(124)",
         "deadline = threading.Thread(target=_deadline, daemon=True)",
         "deadline.start()",
-        f"exec({call.strip()!r})",
+        f"exec({call.strip()!a})",
         "seconds = time.process_time() - started",
         "finished.set()",
         "deadline.join()",
@@ -440,6 +440,8 @@ def _run_bounded_claim_worker(script, tmp_path):
     ])
     # The script goes in on stdin: inlined 50k-60k character claims would overflow Windows' 32,767
     # character command line (WinError 206). "-" keeps the working directory first on sys.path as -c did.
+    # The !a literals above keep the script ASCII: text=True writes stdin in the locale code page, and
+    # the worker reads its script as UTF-8.
     result = subprocess.run(
         [sys.executable, "-"], input=worker, check=False, timeout=95,
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}, capture_output=True, text=True,
