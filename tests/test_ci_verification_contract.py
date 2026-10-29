@@ -650,3 +650,26 @@ def test_draft_selection_shows_pytest_output_when_collection_fails(monkeypatch, 
     assert "no attribute 'geteuid'" in err
     assert "interpreter warning" in err
     assert "line 0\n" not in err, "only the tail of a long collection log is echoed"
+
+
+def test_draft_selection_maps_a_changed_test_helper_module_to_its_importers():
+    """A rig under tests/ that is not itself a test file still reaches every test importing it.
+
+    Measured: #143 changed tests/pa_beta_gate/_caldav_service.py, imported by 22 test files,
+    and run 40921712410 selected 0 affected tests."""
+    texts = {
+        "tests/pa_beta_gate/test_rel.py": "from ._caldav_service import start_caldav_fixture\n",
+        "tests/pa_beta_gate/test_dot.py": "from . import _caldav_service\n",
+        "tests/pa_beta_gate/test_abs.py": "from tests.pa_beta_gate._caldav_service import start_caldav_fixture\n",
+        "tests/pa_beta_gate/test_pkg.py": "from tests.pa_beta_gate import _caldav_service\n",
+        "tests/other/test_rel_elsewhere.py": "from ._caldav_service import start_caldav_fixture\n",
+        "tests/pa_beta_gate/test_unrelated.py": "import os\n",
+    }
+    selected, wide = _select({"tests/pa_beta_gate/_caldav_service.py"}, texts)
+    assert selected == [
+        "tests/pa_beta_gate/test_abs.py",
+        "tests/pa_beta_gate/test_dot.py",
+        "tests/pa_beta_gate/test_pkg.py",
+        "tests/pa_beta_gate/test_rel.py",
+    ]
+    assert wide == []
