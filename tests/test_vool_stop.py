@@ -8,8 +8,16 @@ from __future__ import annotations
 import sys
 import types
 
+import pytest
+
 from installer import vool_stop
 from installer.vool_stop import STOPPED_MARKER, hard_stop, kill_api_by_pidfile, kill_listener
+from tests._windows_system32 import POWERSHELL, TASKKILL, trust_system32
+
+
+@pytest.fixture(autouse=True)
+def _windows_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    trust_system32(monkeypatch)
 
 
 class _FakeRun:
@@ -45,12 +53,12 @@ def test_hard_stop_disables_watchdog_then_kills_gateway_and_api(tmp_path) -> Non
     assert any("schtasks /end /tn VOOL_Daemon" in c for c in cmds)
     assert any("schtasks /change /tn VOOL_Daemon /disable" in c for c in cmds)
     assert any("vool_background" in c for c in cmds)  # watchdog process kill
-    assert any("taskkill /PID 8765 /T /F" in c for c in cmds)  # gateway
-    assert any("taskkill /PID 4321 /T /F" in c for c in cmds)  # api
+    assert any("taskkill.exe /PID 8765 /T /F" in c for c in cmds)  # gateway
+    assert any("taskkill.exe /PID 4321 /T /F" in c for c in cmds)  # api
 
     # Ordering: the watchdog is disabled before the API is killed, so nothing respawns mid-stop.
     disable_idx = next(i for i, c in enumerate(cmds) if "/disable" in c)
-    api_idx = next(i for i, c in enumerate(cmds) if "taskkill /PID 4321" in c)
+    api_idx = next(i for i, c in enumerate(cmds) if "taskkill.exe /PID 4321" in c)
     assert disable_idx < api_idx
 
     assert result["gateway_pid"] == 8765 and result["api_pid"] == 4321
@@ -66,7 +74,7 @@ def test_hard_stop_signals_bundle_supervisor_before_killing_api(tmp_path) -> Non
 
     assert result["bundle_supervisor_signaled"] is True
     assert (home / "run" / "stop").read_text(encoding="utf-8").strip() == "stop"
-    assert any("taskkill /PID 4321 /T /F" in c for c in cmds)
+    assert any("taskkill.exe /PID 4321 /T /F" in c for c in cmds)
 
 
 def test_api_falls_back_to_pidfile_when_port_lookup_is_empty(tmp_path) -> None:
@@ -75,7 +83,7 @@ def test_api_falls_back_to_pidfile_when_port_lookup_is_empty(tmp_path) -> None:
     run = _FakeRun(port_pids={18789: 8765}, python_pids={5555})  # 11435 absent -> port lookup empty
     result = hard_stop(tmp_path, None, run=run)
     assert result["api_pid"] == 5555
-    assert any("taskkill /PID 5555 /T /F" in c for c in run.joined())
+    assert any("taskkill.exe /PID 5555 /T /F" in c for c in run.joined())
 
 
 def test_pidfile_kill_refuses_a_non_python_pid(tmp_path) -> None:
@@ -84,7 +92,7 @@ def test_pidfile_kill_refuses_a_non_python_pid(tmp_path) -> None:
     pidfile.write_text("9999", encoding="utf-8")
     run = _FakeRun(python_pids=set())  # the ownership query reports 9999 is NOT this install's API
     assert kill_api_by_pidfile(run, pidfile, tmp_path) is None
-    assert not any("taskkill /PID 9999" in c for c in run.joined())
+    assert not any("taskkill.exe /PID 9999" in c for c in run.joined())
 
 
 def test_kill_listener_returns_none_when_nothing_listens(tmp_path) -> None:
@@ -218,3 +226,18 @@ def test_disable_systemd_service_noop_without_systemctl(monkeypatch) -> None:
     run = _FakePosixRun()
     assert vool_stop.disable_systemd_service(run) is False
     assert run.calls == []
+
+
+def test_taskkill_and_powershell_run_from_system32_only(tmp_path) -> None:
+    run = _FakeRun(port_pids={11435: 4321})
+    hard_stop(tmp_path, None, run=run)
+    programs = {c[0] for c in run.calls if c[0].lower().endswith(("taskkill.exe", "powershell.exe"))}
+    assert programs == {TASKKILL, POWERSHELL}
+    assert not any(c[0] in ("taskkill", "powershell") for c in run.calls)
+
+
+def test_without_a_trusted_windows_folder_no_taskkill_or_powershell_runs(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("SystemRoot", raising=False)
+    run = _FakeRun(port_pids={11435: 4321})
+    hard_stop(tmp_path, None, run=run)
+    assert not any("taskkill" in c[0] or "powershell" in c[0] for c in run.calls)
