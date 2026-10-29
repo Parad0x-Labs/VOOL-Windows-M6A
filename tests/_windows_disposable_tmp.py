@@ -18,9 +18,17 @@ from pathlib import Path
 
 from core.windows_write_gate import ENV_VAR
 
+#: the prefix root conftest.py gives the session home it makes with mkdtemp
+SESSION_HOME_PREFIX = "vool_pytest_home_"
+
 
 def mark_own_tmp_path_disposable(
-    monkeypatch, tmp_path: Path, *, windows: bool, tempfile_root: Path | None = None
+    monkeypatch,
+    tmp_path: Path,
+    *,
+    windows: bool,
+    tempfile_root: Path | None = None,
+    session_workspace: Path | None = None,
 ) -> None:
     if not windows:
         return
@@ -28,7 +36,17 @@ def mark_own_tmp_path_disposable(
     if tempfile_root is not None:
         monkeypatch.setattr(tempfile, "tempdir", str(tempfile_root))
         listed.append(str(tempfile_root))
+    if session_workspace is not None:
+        listed.append(str(session_workspace))
     monkeypatch.setenv(ENV_VAR, os.pathsep.join(listed))
+
+
+def session_pytest_workspace() -> Path | None:
+    """VOOL_HOME/workspace when VOOL_HOME is the suite's own session home (root conftest.py), else None."""
+    home = os.environ.get("VOOL_HOME", "")
+    if not home or not Path(home).name.startswith(SESSION_HOME_PREFIX):
+        return None
+    return Path(home) / "workspace"
 
 
 def running_on_windows() -> bool:
