@@ -33,9 +33,11 @@ def test_main_refuses_off_posix_before_writing(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(module, "OUT", out)
     monkeypatch.setattr(module, "JOURNEYS", {})
     monkeypatch.setattr(sys, "argv", [str(SCRIPT)])
-    monkeypatch.setattr(os, "name", "nt")
+    with monkeypatch.context() as windows:  # undone before pytest formats any failure
+        windows.setattr(os, "name", "nt")
+        code = module.main()
 
-    assert module.main() == 2
+    assert code == 2
 
     assert not out.exists()
     assert "unsupported platform" in capsys.readouterr().err
