@@ -4,7 +4,7 @@ Status: Phase A built: channel, roots, handle walk, file operations, batches and
 confined launcher (section 7) is not built: it is later work, and section 7 is design only. Not
 wired: nothing in VOOL calls the broker. Where the build differs from the design, this document
 describes the build, and section 12 lists the design decisions behind it. Read against
-windows/v0.7.1-port `1c26068`: every file:line into VOOL's own code was read at that commit;
+windows/v0.7.1-port `1c26068`: every file:line into VOOL's own code was read at that commit, and its line number now points at the matching code at `9a15d6a` (the sentences still describe the code as read then);
 file:line references into the broker (windows/broker) are to the code this PR adds.
 docs/WINDOWS_PORT_CONTRACTS.md (PR #21, read at `637fc6a`) is the source of truth for routes,
 invariants, receipt states and gaps; this design redefines none of them, and section 11 lists the
@@ -59,13 +59,13 @@ with approval ingress; it starts only after **both Job 6 and Job 7 have merged**
   routed through it before Step 3. The flagged folders are the entries of
   VOOL_WINDOWS_DISPOSABLE_WORKSPACES as written, so the broker applies its own checks.
   As built, the broker also exits when its stdin closes or when the API process (matched by id
-  and creation time) exits (Program.cs:236-239).
+  and creation time) exits (Program.cs:79-82).
 - Program files: `{app}\broker\` in the installed layout (installer/bundle/vool.iss, staged by
   build_bundle.ps1), `windows\broker\publish\` in a source checkout (windows/broker/publish.ps1,
   git-ignored). A checkout without a published broker starts VOOL without one. The broker never writes in the program folder at run time.
 - State: the journal (section 7.4) in `VOOL_HOME\broker\journal\`, a folder of its own, separate
   from the workspace and notes that Job 7 places under VOOL_HOME. In the installed app VOOL_HOME is
-  computed by installer/bundle/vool-launch.cmd:13-17 and passed on by bundle_supervisor.py:112
+  computed by installer/bundle/vool-launch.cmd:13-17 and passed on by bundle_supervisor.py:272
   (%LOCALAPPDATA%\VOOL); a source checkout sets it in Start_VOOL.bat:30-37 (by default
   `.vool_runtime` next to the checkout). The broker refuses to start if the journal folder lies
   inside a flagged folder, so a developer who flags the folder holding a source checkout must set
@@ -89,7 +89,7 @@ with approval ingress; it starts only after **both Job 6 and Job 7 have merged**
   (never argv, never the environment, never a file). As built, this bootstrap is one
   length-prefixed JSON frame of at most 64 KiB with exactly the fields `secret`, `api_pid`,
   `api_creation_time`, `flagged` and `journal_dir`; anything else is refused `invalid_bootstrap`
-  (Program.cs:12, 180).
+  (Program.cs:12, 23-24).
 - The broker creates `\\.\pipe\vool-broker-<random 128-bit hex>` with
   `FILE_FLAG_FIRST_PIPE_INSTANCE` for the first instance, `PIPE_REJECT_REMOTE_CLIENTS`, at most 16
   instances, and a DACL that grants access only to the current user's SID. That DACL is what keeps
@@ -169,8 +169,8 @@ with approval ingress; it starts only after **both Job 6 and Job 7 have merged**
   keeps those handles for its lifetime. Each entry is checked against the rules below. A change
   to the variable needs a VOOL restart.
 
-  Rules for flagged folders, as built. G is core/windows_write_gate.py at `1c26068`
-  (`flagged_roots`:51, `_inside`:61); J6 is Job 6's design, whose resolver feeds Step 3; C is the
+  Rules for flagged folders, as built. G is core/windows_write_gate.py (read at `1c26068`, line numbers at `9a15d6a`)
+  (`flagged_roots`:101, `_inside`:117); J6 is Job 6's design, whose resolver feeds Step 3; C is the
   contracts doc (PR #21) at a7caed3; B is this document. The rule for the comparison:
   for the same input, the broker is never looser than G or J6.
 
@@ -178,7 +178,7 @@ with approval ingress; it starts only after **both Job 6 and Job 7 have merged**
 |---|---|---|---|---|
 | F1 | Entry not absolute, or no drive letter (including a fully qualified `\\?\Volume{GUID}\...` or `\\?\GLOBALROOT\...` spelling) | G drops it silently (`os.path.isabs`). J6 refuses a folder that isn't absolute. | Refuse start, `invalid_flagged`. Checked after the F5 network/device checks, so F5 spellings keep their own code. | stricter: fails start instead of dropping |
 | F2 | Entry doesn't exist or isn't a directory | G drops it silently (`isdir`) | Refuse start, `invalid_flagged` | stricter |
-| F3 | Entry is a junction, symlink or other reparse point (any tag) | G resolves it with realpath and accepts it (windows_write_gate.py:57). C §3 treats name-surrogate tags as links. | Refuse start, `reparse_point`. Opened with FILE_FLAG_OPEN_REPARSE_POINT, checked with FileAttributeTagInfo. | stricter (B §4, §10 item 5) |
+| F3 | Entry is a junction, symlink or other reparse point (any tag) | G resolves it with realpath and accepts it (windows_write_gate.py:113). C §3 treats name-surrogate tags as links. | Refuse start, `reparse_point`. Opened with FILE_FLAG_OPEN_REPARSE_POINT, checked with FileAttributeTagInfo. | stricter (B §4, §10 item 5) |
 | F4 | Entry spelled through subst, an 8.3 short name, `\\?\X:\` or different case | G normcase + realpath gives one spelling | Accepted. Identity is volume serial + 128-bit file id (FileIdInfo). The reported final path is GetFinalPathNameByHandleW (long name). | same object, same result |
 | F5 | UNC `\\server\share`, `\\?\UNC\`, `\\.\` device path, or a mapped network drive | G accepts any isdir | Refuse start, `unsupported_filesystem`: UNC, `\\?\UNC\` and `\\.\` by text before any open (before F1's drive-letter check); a mapped drive passes F1 and is refused when its final path is UNC. Real-broker rows: unc, long_unc, device. A mapped-drive row needs a share, so it runs on the hosted runner (section 9.2). | stricter |
 | F6 | Volume root (`C:\`) | G accepts | Refuse start, `invalid_flagged` (B §4) | stricter |
@@ -195,7 +195,7 @@ with approval ingress; it starts only after **both Job 6 and Job 7 have merged**
 - **One list for gate and broker.** At start the broker returns, for each flagged folder, an id
   (from the volume serial number and the 128-bit file id, `FileIdInfo`) and its current final path.
   From Step 3 the Windows gate uses that list as its only list of flagged folders, instead of
-  re-reading the variable per call (`flagged_roots`, windows_write_gate.py:51-58). Before handing
+  re-reading the variable per call (`flagged_roots`, windows_write_gate.py:101-114). Before handing
   a call to the broker, Python asks for the folder's current final path and refuses on a mismatch,
   so the path the gate checked and the approval ask showed is the one the broker writes in.
 - **Roots for a call.** `open_root(flagged_id, rel)` walks `rel` from that folder's handle
@@ -207,7 +207,7 @@ with approval ingress; it starts only after **both Job 6 and Job 7 have merged**
   handle, and that handle is not opened again.
 - Roots are compared by file id, never by spelling, so a junction, subst drive or 8.3 short name
   for the same folder is the same root. Behaviour difference from the gate: the gate resolves a
-  flagged folder that is a junction and accepts it (by design, windows_write_gate.py:57); the
+  flagged folder that is a junction and accepts it (by design, windows_write_gate.py:113); the
   broker refuses it (section 10, item 5).
 - Holding the flagged folders without `FILE_SHARE_DELETE` means the user cannot rename or delete
   a flagged folder while VOOL runs, nor its parent folders (Documents or a development folder);
@@ -317,7 +317,7 @@ Operations (Step 2 set):
 The protocol also has `ping` (no fields) and `close_root(root_id)`, which releases a root and the
 folders it holds; a connection's roots are also released when it closes. A root is known only on
 the connection that opened it (`unknown_root` elsewhere), and an unknown operation is refused
-`unknown_op` (Channel.cs:221-240, 280, 320). For `rename`, `to_root_id` is optional; a rename
+`unknown_op` (Channel.cs:227-246, 286, 326). For `rename`, `to_root_id` is optional; a rename
 inside `apply_batch` stays in the batch's root.
 
 - Every change goes through one runner: `write_file`, `ensure_directory`, `delete`, `rename` and
@@ -359,7 +359,7 @@ inside `apply_batch` stays in the batch's root.
 - **Replies for a finished change:** `ok:true` with `batch_id`, one result per operation
   (`results`) and `cleanup_left`. `restore_batch` replies `ok:true` with `batch_id` and
   `committed`, or `restore_incomplete` with `batch {batch_id, ran: null, restored: false, left}`
-  (Channel.cs:276-277, 313-314).
+  (Channel.cs:282-283, 319-320).
 - **Replies for a batch that made changes and then stopped:** `ok:false` with `batch {batch_id,
   ran, restored, left}`.
   - When `restored` is true, `error.code` is the cause.
@@ -369,7 +369,7 @@ inside `apply_batch` stays in the batch's root.
     the journal and the next restore finishes it (undo is idempotent).
 
 Moves across volumes are refused (`cross_volume`). Today `machine.move_path` copies across volumes
-(core/machine_file_ops.py:203 `shutil.move`), so this is a behaviour change (section 10, item 5);
+(core/machine_file_ops.py:209 `shutil.move`), so this is a behaviour change (section 10, item 5);
 a copy-then-delete by handle, with its own partial-failure receipt, is later work.
 
 Not covered by any broker file operation:
@@ -377,14 +377,14 @@ Not covered by any broker file operation:
 - `media.export`: written by the separate media worker; it can only be confined through the
   launcher (contracts gap 8).
 - `operator.cleanup_temp_files`: stays refused on Windows (`_ALWAYS_REFUSED`,
-  windows_write_gate.py:48).
+  windows_write_gate.py:60).
 - Operator notes: not gated today (contracts gap 13); the broker could serve them later.
 
 ### 6.1 Git, steps and patches (target for Step 3)
 
 This describes the contract Step 3 needs, not what the gate does today. At 1c26068 the gate's
 `refusal()` returns allow or refuse and hands over no roots, and for `repo.git` and
-`workspace.apply_unified_diff` it checks only the chat's workspace (`_GATED`:32, 35 are empty;
+`workspace.apply_unified_diff` it checks only the chat's workspace (`_GATED`:44, 47 are empty;
 contracts gaps 14 and 15). Job 6 (branch windows/port-landing-gate, not merged at the time of
 writing) plans a public resolver in core/windows_write_gate.py, called by `refusal()`, that
 places each call's writes and refuses any call it cannot place or that falls outside the flagged
@@ -403,8 +403,8 @@ Job 6.
   contains the workspace even when `.git` is inside the flagged folder (contracts gap 15, at
   `637fc6a`).
 - **Resolving safely.** `rev-parse` runs only after `safe_git.executable_local_config`
-  (core/safe_git.py:89) has passed, with `safe_git.hardening_args()` (78) and
-  `safe_git.safe_env()` (68-75, which removes every inherited `GIT_*` variable except the
+  (core/safe_git.py:129) has passed, with `safe_git.hardening_args()` (110) and
+  `safe_git.safe_env()` (100-107, which removes every inherited `GIT_*` variable except the
   identity ones). The resolver refuses when the config read fails (not a repository, or an
   unreadable config) or the config has a program-running key. The resolution happens at check
   time and the launch later, and the config can change between them, so the enforcement is the
@@ -611,7 +611,7 @@ Which existing state each outcome lands in (contracts §4 and §5); no new recei
 | A file request was written and no response came (broker died, pipe broke, timeout) | the client raises `EffectOutcomeUnknown` (core/effect_reconciliation.py:61); it never returns `ok=False` for this. That becomes A6 `unknown` only for an A6-reserved intent holding a claim (`a6_reserved_intent`:53, contracts §4 and §5); every other case (an intent that is not reserved, or a reserved one with no `checkpoint_id`) ends as today's plain `error`, which is contracts gap 6. Mechanical resolvers exist only for workspace.write_file and machine.write_file (effect_reconciliation.py:219-220). Phase C fixes the list of which broker-backed intents (the moves, the patch, the rollbacks) are A6-reserved; Step 2 does not. A broker change takes effect step by step (section 6): a batch with several operations changes the tree one step at a time before its commit, and any batch that stops part way is undone by the journal, so "written, no response" may mean it happened |
 | A launched child ran and the broker died | the child is dead (its Job closed); its result goes through `PluginToolResult` (or the process agent's own result), not A6, as `ok=False` with the reason, naming that its effects are unknown. No receipt state says "unknown" there today; that is recorded as part of gap 6 |
 | `apply_batch` stopped part way by an I/O error | `ok=False` with the ops that ran and whether the broker's own restore (section 6) completed. If the restore did not complete, the entry stays in the journal and the result says what is left (gap 6) |
-| A handler returns `ok=False` after the broker changed files (a part-done batch whose restore did not complete) | as today: the executor ack records it as A6 `failed_safe_to_retry` / `dispatch_ack` (tool_intent_executor.py:1538-1549), the third outcome of contracts gap 6 |
+| A handler returns `ok=False` after the broker changed files (a part-done batch whose restore did not complete) | as today: the executor ack records it as A6 `failed_safe_to_retry` / `dispatch_ack` (tool_intent_executor.py:1574-1586), the third outcome of contracts gap 6 |
 | Executed | `executed`, with file ids and new hashes |
 
 Client outcomes as built (`core/windows_broker/client.py`):
