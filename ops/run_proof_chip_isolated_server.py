@@ -50,6 +50,9 @@ def main() -> int:
     # SO_EXCLUSIVEADDRUSE sockets because uvicorn's bind sets no port-reuse option
     # there, leaving the port stealable by any same-user process.
     run_server_with_listen_policy(server, "127.0.0.1", PORT)
+    if not server.started:
+        # uvicorn.run's own startup-failure exit (uvicorn.config.STARTUP_FAILURE).
+        sys.exit(3)
     return 0
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -84,7 +85,14 @@ def main(argv=None) -> int:
         # loop.create_server resolves, dual-stack included); Windows runs on pre-bound
         # SO_EXCLUSIVEADDRUSE sockets because uvicorn's bind sets no port-reuse option
         # there, leaving the port stealable by any same-user process.
-        run_server_with_listen_policy(server, "127.0.0.1", int(args.port))
+        try:
+            run_server_with_listen_policy(server, "127.0.0.1", int(args.port))
+        except OSError:
+            print(f"Registry startup refused: 127.0.0.1:{int(args.port)} could not be bound for exclusive use.")
+            return 1
+        if not server.started:
+            # uvicorn.run's own startup-failure exit (uvicorn.config.STARTUP_FAILURE).
+            sys.exit(3)
         return 0
     except (RegistryError, OSError, ValueError, KeyError, TypeError):
         print("Registry startup refused: incomplete configuration, stale signatures or missing immutable artifacts.")

@@ -124,26 +124,23 @@ def pre_bind_listen_sockets(host: str, port: int) -> list[socket.socket]:
 
 
 def run_server_on_listen_sockets(server: Any, listen_sockets: list[socket.socket]) -> None:
-    """Run a uvicorn Server, closing every pre-bound socket a failed run leaves.
+    """Run a uvicorn Server, then close every pre-bound socket, however run() ends.
 
     An empty list is the POSIX path: ``server.run()`` with no ``sockets=``,
     exactly the call the sites made before this policy existed. With sockets,
-    a run() that returns normally handed them to uvicorn, which closes the
-    sockets it took in its own shutdown; a run() that RAISES can exit before
-    taking them (a failed lifespan startup sys.exits with ``started`` still
-    false, so uvicorn's shutdown never runs) -- every socket is closed before
-    the error propagates, so nothing leaks a held port. Sockets a run() leaves
-    untouched belong to its caller.
+    uvicorn owns them only while it serves; once run() returns or raises (a
+    failed lifespan startup sys.exits before uvicorn takes them), every
+    pre-bound socket is closed so nothing keeps holding the port. Closing a
+    socket uvicorn already closed does nothing.
     """
     if not listen_sockets:
         server.run()
         return
     try:
         server.run(sockets=listen_sockets)
-    except BaseException:
+    finally:
         for sock in listen_sockets:
             sock.close()
-        raise
 
 
 def run_server_with_listen_policy(server: Any, host: str, port: int) -> None:
