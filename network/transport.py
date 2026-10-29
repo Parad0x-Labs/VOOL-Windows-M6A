@@ -6,6 +6,7 @@ import errno
 import os
 import secrets
 import socket
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -35,6 +36,8 @@ _FRAG_HEADER_LEN = 32
 _ENC_MAGIC = b"NEN1"
 _ENC_AAD = b"vool-mesh-v1"
 _EPHEMERAL_PAIR_RETRIES = 16
+
+_IS_WINDOWS = sys.platform == "win32"
 
 
 def _datagram_limit() -> int:
@@ -228,7 +231,15 @@ def _is_bind_conflict(error: OSError) -> bool:
         98,
         10048,
     }
-    return int(getattr(error, "errno", -1) or -1) in codes or int(getattr(error, "winerror", -1) or -1) in codes
+    err_no = int(getattr(error, "errno", -1) or -1)
+    winerror = int(getattr(error, "winerror", -1) or -1)
+    if _IS_WINDOWS and (err_no == int(getattr(errno, "EACCES", 13)) or winerror == 10013):
+        # Windows names a second bind of a port another socket holds through
+        # SO_EXCLUSIVEADDRUSE WSAEACCES (winerror 10013, errno EACCES), not
+        # EADDRINUSE: that refusal is the same conflict. POSIX EACCES keeps its
+        # own meaning there, so this clause is Windows-only.
+        return True
+    return err_no in codes or winerror in codes
 
 
 def _configure_udp_socket_buffers(sock: socket.socket) -> None:
@@ -312,12 +323,18 @@ class UDPTransportServer:
             sock, self._stream_server, self._stream_endpoint = self._bind_ephemeral_pair()
         else:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            _configure_udp_socket_buffers(sock)
-            apply_udp_listen_socket_policy(sock)
             try:
+                _configure_udp_socket_buffers(sock)
+                apply_udp_listen_socket_policy(sock)
                 sock.bind((self.host, requested_port))
             except OSError as bind_err:
+                # Recovery closes the socket on every path it takes (conflict or
+                # not), so the buffer/policy setup above cannot leak it either.
                 sock = self._recover_udp_bind_conflict(sock, requested_port, bind_err)
+            except BaseException:
+                # A failure that is not a bind error must not leak the socket.
+                sock.close()
+                raise
 
         bound_port = int(sock.getsockname()[1])
 
@@ -453,6 +470,13 @@ class UDPTransportServer:
                     _is_bind_conflict(exc) or isinstance(exc, PermissionError)
                 ):
                     raise
+            except BaseException:
+                # Not a bind outcome (a stream half that refuses its socket, an
+                # interrupt): every socket this attempt created still closes.
+                if sock is not None:
+                    sock.close()
+                stream_sock.close()
+                raise
         audit_logger.log(
             "stream_transport_start_failed",
             target_id=f"{self.host}:ephemeral",

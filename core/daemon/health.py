@@ -13,7 +13,7 @@ from starlette.responses import Response
 from starlette.routing import Route
 
 from core.web.request_ids import log_http_request, resolve_request_id, response_headers_with_request_id
-from network.listen_policy import pre_bind_listen_sockets, run_server_on_listen_sockets
+from network.listen_policy import close_listen_sockets, pre_bind_listen_sockets, run_server_on_listen_sockets
 from network.signer import get_local_peer_id as local_peer_id
 
 from .models import is_loopback_host
@@ -103,13 +103,19 @@ def start_health_server(daemon: Any) -> None:
     # Windows runs on pre-bound SO_EXCLUSIVEADDRUSE sockets because uvicorn's
     # bind sets no port-reuse option there, leaving the port stealable same-user.
     listen_sockets = pre_bind_listen_sockets(str(daemon.config.health_bind_host), int(daemon.config.health_bind_port))
-    daemon._health_server = server
-    daemon._health_thread = threading.Thread(
-        target=lambda: run_server_on_listen_sockets(server, listen_sockets),
-        name="vool-daemon-health",
-        daemon=True,
-    )
-    daemon._health_thread.start()
+    try:
+        daemon._health_server = server
+        daemon._health_thread = threading.Thread(
+            target=lambda: run_server_on_listen_sockets(server, listen_sockets),
+            name="vool-daemon-health",
+            daemon=True,
+        )
+        daemon._health_thread.start()
+    except BaseException:
+        # The pre-bound sockets are this thread's until the worker takes them:
+        # a worker that never started must not leave the port held.
+        close_listen_sockets(listen_sockets)
+        raise
 
 
 def health_snapshot(daemon: Any) -> dict[str, Any]:

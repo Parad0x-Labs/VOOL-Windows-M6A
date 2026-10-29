@@ -374,6 +374,11 @@ class _X402Server:
         self.deliveries = 0
         self.accepted_signatures: list[str] = []
         self.rejections: list[str] = []
+        # The handler threads (one per request, ExclusiveThreadingHTTPServer)
+        # update the counters above while the proof reads them for its record:
+        # one lock makes the membership check + append and the counted reads one
+        # operation each, so a re-presented signature is accepted exactly once.
+        self._bookkeeping_lock = threading.Lock()
         self._server: ExclusiveThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
@@ -405,7 +410,8 @@ class _X402Server:
 
     # -- wire -----------------------------------------------------------------------------
     def _offer(self) -> bytes:
-        self.offers_issued += 1
+        with self._bookkeeping_lock:
+            self.offers_issued += 1
         return json.dumps({
             "x402Version": 1,
             "error": "payment required",
@@ -435,7 +441,8 @@ class _X402Server:
                     return
                 ok, signature, reason = outer._verify(header)
                 if not ok:
-                    outer.rejections.append(reason)
+                    with outer._bookkeeping_lock:
+                        outer.rejections.append(reason)
                     body = outer._offer()
                     self.send_response(402)
                     self.send_header("Content-Type", "application/json")
@@ -443,9 +450,10 @@ class _X402Server:
                     self.end_headers()
                     self.wfile.write(body)
                     return
-                if signature not in outer.accepted_signatures:
-                    outer.accepted_signatures.append(signature)
-                outer.deliveries += 1
+                with outer._bookkeeping_lock:
+                    if signature not in outer.accepted_signatures:
+                        outer.accepted_signatures.append(signature)
+                    outer.deliveries += 1
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain")
                 self.send_header("Content-Length", str(len(RESOURCE_BODY)))
@@ -771,22 +779,27 @@ def cmd_prove(args: argparse.Namespace) -> int:
             if r.get("state") == "delivered" and r.get("proposal_id") == offer_outcome.proposal_id
         ]
         expected_digest = hashlib.sha256(f"GET|{url}".encode()).hexdigest()
-        x402_record["single_payment"] = {
-            "repeat_fetch_status": repeat.status, "repeat_fetch_tx_signature": repeat.tx_signature,
-            "replay_retry_status": replay.status, "replay_retry_tx_signature": replay.tx_signature,
-            "payer_signature_count_before_x402": payer_signatures_before_x402,
-            "payer_signature_count_after_all_x402_calls": signature_count(payer_key),
-            "origin_offers_issued": server.offers_issued, "origin_deliveries": server.deliveries,
-            "origin_distinct_accepted_signatures": len(server.accepted_signatures),
-            "origin_rejections": server.rejections,
-            "delivered_receipts_recorded": len(delivered_receipts),
-            "request_digest_matches_sha256_of_method_and_url": binding.get("request_digest") == expected_digest,
-            "binding_binds": {
-                "request_digest": binding.get("request_digest"),
-                "tx_signature": binding.get("tx_signature"),
-                "resource_digest": binding.get("resource_digest"),
-            },
-        }
+        payer_signature_count_after_all_x402_calls = signature_count(payer_key)
+        # The origin is still serving (the repeat fetch above just hit it), so
+        # the counters are read under the same lock the handlers update them
+        # with, and the rejection list is read as a snapshot.
+        with server._bookkeeping_lock:
+            x402_record["single_payment"] = {
+                "repeat_fetch_status": repeat.status, "repeat_fetch_tx_signature": repeat.tx_signature,
+                "replay_retry_status": replay.status, "replay_retry_tx_signature": replay.tx_signature,
+                "payer_signature_count_before_x402": payer_signatures_before_x402,
+                "payer_signature_count_after_all_x402_calls": payer_signature_count_after_all_x402_calls,
+                "origin_offers_issued": server.offers_issued, "origin_deliveries": server.deliveries,
+                "origin_distinct_accepted_signatures": len(server.accepted_signatures),
+                "origin_rejections": list(server.rejections),
+                "delivered_receipts_recorded": len(delivered_receipts),
+                "request_digest_matches_sha256_of_method_and_url": binding.get("request_digest") == expected_digest,
+                "binding_binds": {
+                    "request_digest": binding.get("request_digest"),
+                    "tx_signature": binding.get("tx_signature"),
+                    "resource_digest": binding.get("resource_digest"),
+                },
+            }
         single = x402_record["single_payment"]
         broadcasts = single["payer_signature_count_after_all_x402_calls"] - single["payer_signature_count_before_x402"]
         single["x402_broadcasts"] = broadcasts

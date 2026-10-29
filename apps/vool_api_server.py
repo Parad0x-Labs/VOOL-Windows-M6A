@@ -93,7 +93,11 @@ from core.web.api.service import (
     json_response,
     raw_upload_body_ceiling,
 )
-from network.listen_policy import pre_bind_listen_sockets, run_server_on_listen_sockets
+from network.listen_policy import (
+    close_listen_sockets,
+    pre_bind_listen_sockets,
+    run_server_on_listen_sockets,
+)
 
 logger = logging.getLogger("vool.api")
 
@@ -580,6 +584,38 @@ def _start_parent_death_watch(server: Any) -> None:
     threading.Thread(target=_watch, name="vool-parent-watch", daemon=True).start()
 
 
+def _serve_with_exclusive_listen_sockets(server: Any, *, host: str, port: int) -> None:
+    """Serve through the one listen policy, with the shutdown cooperators armed.
+
+    The pre-bound sockets are this process's from the pre-bind until
+    ``run_server_on_listen_sockets`` takes them: any failure in that span -- the
+    parent-death watch thread, the SIGTERM shim -- closes them before the error
+    surfaces, so a boot that never serves never holds the port either.
+    """
+    import signal
+
+    listen_sockets = pre_bind_listen_sockets(str(host), int(port))
+    try:
+        _start_parent_death_watch(server)
+        # Uvicorn restores and re-raises SIGTERM after its ASGI shutdown. Keep a
+        # cooperative handler underneath it so that re-raise also returns through
+        # our finally block, which owns the pidfile and background services.
+        def request_shutdown(_signum: int, _frame: object) -> None:
+            server.should_exit = True
+
+        owns_signals = threading.current_thread() is threading.main_thread()
+        if owns_signals:
+            previous_sigterm = signal.signal(signal.SIGTERM, request_shutdown)
+    except BaseException:
+        close_listen_sockets(listen_sockets)
+        raise
+    try:
+        run_server_on_listen_sockets(server, listen_sockets)
+    finally:
+        if owns_signals:
+            signal.signal(signal.SIGTERM, previous_sigterm)
+
+
 def main() -> int:
     # Diagnosability law (F46): a served turn spent a measured ~97 s idle between
     # task_classified and model_routing — no events, no model call, no network — and the
@@ -726,22 +762,7 @@ def main() -> int:
         # loop.create_server resolves, dual-stack included); Windows pre-binds
         # SO_EXCLUSIVEADDRUSE sockets here because uvicorn's bind sets no port-reuse
         # option there, leaving the port stealable by any same-user process.
-        listen_sockets = pre_bind_listen_sockets(str(args.bind), int(args.port))
-        _start_parent_death_watch(server)
-        # Uvicorn restores and re-raises SIGTERM after its ASGI shutdown. Keep a
-        # cooperative handler underneath it so that re-raise also returns through
-        # our finally block, which owns the pidfile and background services.
-        def request_shutdown(_signum: int, _frame: object) -> None:
-            server.should_exit = True
-
-        owns_signals = threading.current_thread() is threading.main_thread()
-        if owns_signals:
-            previous_sigterm = signal.signal(signal.SIGTERM, request_shutdown)
-        try:
-            run_server_on_listen_sockets(server, listen_sockets)
-        finally:
-            if owns_signals:
-                signal.signal(signal.SIGTERM, previous_sigterm)
+        _serve_with_exclusive_listen_sockets(server, host=str(args.bind), port=int(args.port))
     finally:
         _remove_pidfile()
         if windows_broker is not None:

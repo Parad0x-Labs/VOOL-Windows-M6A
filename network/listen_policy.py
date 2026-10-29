@@ -123,6 +123,18 @@ def pre_bind_listen_sockets(host: str, port: int) -> list[socket.socket]:
     return bind_listen_socket(host, int(port))
 
 
+def close_listen_sockets(listen_sockets: list[socket.socket]) -> None:
+    """Close every pre-bound policy socket.
+
+    The one named operation for giving the sockets back, used both after a
+    serving run and on a span that failed BEFORE the server took them: closing
+    a socket the server already closed is a no-op, so a failed boot (which owns
+    the sockets until run() takes them) never leaves the port held.
+    """
+    for sock in listen_sockets:
+        sock.close()
+
+
 def run_server_on_listen_sockets(server: Any, listen_sockets: list[socket.socket]) -> None:
     """Run a uvicorn Server, then close every pre-bound socket, however run() ends.
 
@@ -139,8 +151,7 @@ def run_server_on_listen_sockets(server: Any, listen_sockets: list[socket.socket
     try:
         server.run(sockets=listen_sockets)
     finally:
-        for sock in listen_sockets:
-            sock.close()
+        close_listen_sockets(listen_sockets)
 
 
 def run_server_with_listen_policy(server: Any, host: str, port: int) -> None:
