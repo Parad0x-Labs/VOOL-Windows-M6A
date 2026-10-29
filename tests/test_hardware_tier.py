@@ -14,6 +14,7 @@ from core.hardware_tier import (
     tier_summary,
 )
 from core.local_model_bundles import capacity_bucket_for_machine, local_multi_llm_fit_from_probe
+from tests._windows_system32 import trust_system32
 
 
 def test_select_qwen_tier_honors_env_override(monkeypatch) -> None:
@@ -282,6 +283,7 @@ def test_windows_multi_gpu_inventory_selects_best_usable_cuda_device(monkeypatch
 def test_windows_gpu_inventory_adds_nonduplicate_directml_devices(monkeypatch) -> None:
     monkeypatch.delenv("VOOL_ALLOW_LEGACY_CUDA", raising=False)
     monkeypatch.setattr("core.hardware_tier._try_torch_cuda_devices", lambda: ())
+    trust_system32(monkeypatch)
 
     def fake_run(*args, **kwargs) -> subprocess.CompletedProcess[str]:
         command = args[0]
@@ -295,10 +297,10 @@ def test_windows_gpu_inventory_adds_nonduplicate_directml_devices(monkeypatch) -
         return subprocess.CompletedProcess(
             args=command,
             returncode=0,
+            # Get-CimInstance Win32_VideoController, one "AdapterRAM,Name" line per adapter.
             stdout=(
-                "Node,AdapterRAM,Name\n"
-                "DESKTOP,25769803776,NVIDIA GeForce RTX 4090\n"
-                "DESKTOP,17179869184,AMD Radeon RX 7900 XTX\n"
+                "25769803776,NVIDIA GeForce RTX 4090\n"
+                "17179869184,AMD Radeon RX 7900 XTX\n"
             ),
             stderr="",
         )

@@ -29,6 +29,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from ops.process_tree import process_group_kwargs, stop_process_tree
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VENV_PYTHON = sys.executable
 PROVIDER_MODEL = "probe-model"
@@ -283,7 +285,7 @@ class ServedDaemon:
             [VENV_PYTHON, str(REPO_ROOT / "apps" / "vool_api_server.py"),
              "--port", str(self.port), "--bind", "127.0.0.1"],
             cwd=str(REPO_ROOT), env=env, stdout=log, stderr=log,
-            start_new_session=True,
+            **process_group_kwargs(),
         )
         if wait:
             self.wait_ready()
@@ -305,17 +307,22 @@ class ServedDaemon:
             return
         import time as _time
 
-        for sig in (signal.SIGTERM, signal.SIGKILL):
-            try:
-                os.killpg(os.getpgid(self.proc.pid), sig)
-            except (ProcessLookupError, PermissionError):
-                break
-            for _ in range(50):
+        if os.name == "nt":
+            # Windows has no signal.SIGKILL, os.killpg or os.getpgid: stop this rig's
+            # OWN daemon and the processes it started (taskkill /T /F of its pid).
+            stop_process_tree(self.proc, grace_seconds=10.0)
+        else:
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                try:
+                    os.killpg(os.getpgid(self.proc.pid), sig)
+                except (ProcessLookupError, PermissionError):
+                    break
+                for _ in range(50):
+                    if self.proc.poll() is not None:
+                        break
+                    _time.sleep(0.2)
                 if self.proc.poll() is not None:
                     break
-                _time.sleep(0.2)
-            if self.proc.poll() is not None:
-                break
         self.proc = None
         # Zero-leak sweep: the boot pidfile and any stragglers on OUR port are this rig's mess.
         pidfile = self.home / ".vool_api_server.pid"

@@ -92,7 +92,7 @@ def test_stop_returns_once_the_killed_server_is_gone(pidfile, monkeypatch) -> No
     _alive(monkeypatch, [True, False])
     monkeypatch.setattr(self_update, "_pid_is_python", lambda pid: True)
     killed: list[int] = []
-    monkeypatch.setattr(self_update, "_terminate", killed.append)
+    monkeypatch.setattr(self_update, "_terminate", lambda pid, *_: killed.append(pid) or True)
 
     self_update._default_stop_server(home, root)
 
@@ -104,7 +104,7 @@ def test_stop_raises_when_the_killed_server_outlives_the_wait(pidfile, monkeypat
     _alive(monkeypatch, [True])
     monkeypatch.setattr(self_update, "_pid_is_python", lambda pid: True)
     killed: list[int] = []
-    monkeypatch.setattr(self_update, "_terminate", killed.append)
+    monkeypatch.setattr(self_update, "_terminate", lambda pid, *_: killed.append(pid) or True)
 
     with pytest.raises(self_update.ServerStillRunning, match="4242"):
         self_update._default_stop_server(home, root)
@@ -118,7 +118,7 @@ def test_stop_raises_without_killing_a_live_pid_it_cannot_confirm_is_vool(pidfil
     _alive(monkeypatch, [True])
     monkeypatch.setattr(self_update, "_pid_is_python", lambda pid: False)
     killed: list[int] = []
-    monkeypatch.setattr(self_update, "_terminate", killed.append)
+    monkeypatch.setattr(self_update, "_terminate", lambda pid, *_: killed.append(pid) or True)
 
     with pytest.raises(self_update.ServerStillRunning, match="4242"):
         self_update._default_stop_server(home, root)
@@ -129,7 +129,7 @@ def test_stop_is_done_when_the_pidfile_names_no_running_process(pidfile, monkeyp
     home, root, _path = pidfile
     _alive(monkeypatch, [False])
     killed: list[int] = []
-    monkeypatch.setattr(self_update, "_terminate", killed.append)
+    monkeypatch.setattr(self_update, "_terminate", lambda pid, *_: killed.append(pid) or True)
 
     self_update._default_stop_server(home, root)
 
@@ -140,7 +140,7 @@ def test_stop_raises_on_an_unreadable_pidfile(pidfile, monkeypatch) -> None:
     home, root, path = pidfile
     path.write_text("not-a-pid", encoding="utf-8")
     killed: list[int] = []
-    monkeypatch.setattr(self_update, "_terminate", killed.append)
+    monkeypatch.setattr(self_update, "_terminate", lambda pid, *_: killed.append(pid) or True)
 
     with pytest.raises(self_update.ServerStillRunning):
         self_update._default_stop_server(home, root)

@@ -13,6 +13,7 @@ from unittest import mock
 from core.runtime_install_profiles import default_ollama_models_path
 from installer.bundle import bundle_supervisor
 from installer.bundle.bundle_supervisor import BundleSupervisor
+from tests._windows_system32 import POWERSHELL, TASKKILL, trust_system32
 
 _BUNDLE = Path(__file__).resolve().parent.parent / "installer" / "bundle"
 
@@ -132,6 +133,7 @@ def test_bundle_supervisor_stops_the_windows_process_tree(tmp_path, monkeypatch)
     # Path() construction, so a global flip poisons every other Path in the process --
     # including pytest's own failure formatter (run 36063857499 shard 5).
     monkeypatch.setattr(bundle_supervisor, "_is_windows_platform", lambda: True)
+    trust_system32(monkeypatch)
 
     with mock.patch(
         "installer.bundle.bundle_supervisor.subprocess.run",
@@ -139,7 +141,7 @@ def test_bundle_supervisor_stops_the_windows_process_tree(tmp_path, monkeypatch)
     ) as run:
         supervisor._stop_child("ollama")
 
-    assert run.call_args.args[0] == ["taskkill.exe", "/PID", "404", "/T", "/F"]
+    assert run.call_args.args[0] == [TASKKILL, "/PID", "404", "/T", "/F"]
     assert run.call_args.kwargs["timeout"] == 8
     child.terminate.assert_not_called()
     child.wait.assert_called_once_with(timeout=5)
@@ -200,6 +202,7 @@ def test_bundle_supervisor_clears_stale_api_processes_before_bundle_start(tmp_pa
     supervisor = BundleSupervisor(root, env={"VOOL_HOME": str(home)})
     supervisor._prepare()
     monkeypatch.setattr(bundle_supervisor, "_is_windows_platform", lambda: True)
+    trust_system32(monkeypatch)
 
     with mock.patch.object(supervisor, "_health_probe", return_value=False), mock.patch.object(
         supervisor, "_start"
@@ -208,7 +211,7 @@ def test_bundle_supervisor_clears_stale_api_processes_before_bundle_start(tmp_pa
 
     assert start.called
     command = run.call_args.args[0]
-    assert command[0] == "powershell.exe"
+    assert command[0] == POWERSHELL
     # Only this bundle's own API script, as python's script argument under the bundle root: the
     # wildcard match on any command line that merely mentions the server is gone.
     assert f"$r = '{root}'" in command[-1]

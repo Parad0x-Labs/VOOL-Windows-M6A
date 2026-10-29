@@ -199,20 +199,35 @@ def tier_summary(probe: MachineProbe | None = None) -> dict:
 # Internal probes
 # ---------------------------------------------------------------------------
 
+# PowerShell opens no console window of its own; 0 (no flag) off Windows.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+# A cold PowerShell start (Defender scanning it) can take several seconds; match machine_diagnostics.
+_CIM_TIMEOUT = 12
+
+
+def _cim_query(command: str) -> str:
+    """Run a read-only WMI query through System32's PowerShell; OSError when it can't be trusted."""
+    from core.process_liveness import system_powershell
+
+    result = subprocess.run(
+        [system_powershell(), "-NoProfile", "-NonInteractive", "-Command", command],
+        capture_output=True, text=True, timeout=_CIM_TIMEOUT, creationflags=_NO_WINDOW,
+    )
+    if result.returncode != 0:
+        raise OSError(f"Get-CimInstance failed with exit code {result.returncode}")
+    return result.stdout or ""
+
+
 def _detect_ram_gb() -> float:
     try:
         import psutil  # type: ignore
         return float(psutil.virtual_memory().total) / (1024.0 ** 3)
     except Exception:
         pass
-    # Fallback: Windows wmic
+    # Fallback on Windows: WMI through Get-CimInstance (wmic is gone from Windows 11 24H2).
     if platform.system().lower() == "windows":
         try:
-            import subprocess
-            out = subprocess.check_output(
-                ["wmic", "ComputerSystem", "get", "TotalPhysicalMemory"],
-                text=True, timeout=5,
-            )
+            out = _cim_query("(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory")
             for line in out.strip().splitlines():
                 line = line.strip()
                 if line.isdigit():
@@ -427,27 +442,22 @@ def _try_directml() -> tuple[str | None, float | None, str, str, str]:
 
 
 def _try_directml_devices() -> tuple[GPUDevice, ...]:
-    """Detect AMD/Intel GPUs on Windows via WMI."""
+    """Detect AMD/Intel GPUs on Windows via WMI (Get-CimInstance; wmic is gone from 24H2)."""
     if platform.system().lower() != "windows":
         return ()
     try:
-        result = subprocess.run(
-            ["wmic", "path", "Win32_VideoController", "get",
-             "Name,AdapterRAM", "/format:csv"],
-            capture_output=True, text=True, timeout=5,
+        # One "AdapterRAM,Name" line per adapter; only the first comma splits, as names can hold one.
+        out = _cim_query(
+            'Get-CimInstance Win32_VideoController | ForEach-Object { "$($_.AdapterRAM),$($_.Name)" }'
         )
-        if result.returncode != 0:
-            return ()
         devices: list[GPUDevice] = []
-        for line in (result.stdout or "").strip().splitlines():
-            parts = [p.strip() for p in line.split(",")]
-            if len(parts) < 3:
-                continue
+        for line in out.strip().splitlines():
+            ram, _, name = line.partition(",")
             try:
-                vram_bytes = int(parts[1])
+                vram_bytes = int(ram.strip())
             except ValueError:
                 continue
-            name = parts[2]
+            name = name.strip()
             if vram_bytes > 512 * 1024 * 1024 and name:  # >512 MB = real GPU
                 devices.append(
                     GPUDevice(
@@ -457,7 +467,7 @@ def _try_directml_devices() -> tuple[GPUDevice, ...]:
                         vram_gb=float(vram_bytes) / (1024.0 ** 3),
                         backend="directml",
                         status="usable",
-                        source="wmic",
+                        source="cim",
                     )
                 )
         return tuple(devices)

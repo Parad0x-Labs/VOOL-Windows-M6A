@@ -56,6 +56,7 @@ this repository's branch head (see RESULT ``head_identity``).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -196,16 +197,34 @@ def _run_bounded(command: list[str], *, cwd: Path, env: dict[str, str],
             exit_code: int | None = process.wait(timeout=max(timeout, 0.0))
         except subprocess.TimeoutExpired:
             timed_out = True
-            for sig, grace in ((signal.SIGTERM, 5.0), (signal.SIGKILL, 5.0)):
-                try:
-                    os.killpg(process.pid, sig)
-                except ProcessLookupError:
-                    break
-                try:
-                    process.wait(timeout=grace)
-                    break
-                except subprocess.TimeoutExpired:
-                    continue
+            if os.name == "nt":
+                # Windows has no signal.SIGKILL, os.killpg or process groups, and
+                # start_new_session=True above is a no-op there. Stop this step's
+                # OWN child and its tree: taskkill /T /F first, while the child is
+                # still alive (/T finds descendants from that living pid; once the
+                # root is gone they can no longer be found), then kill()
+                # (TerminateProcess) for the child itself. Nothing outside this
+                # child is ever addressed.
+                with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+                    subprocess.run(
+                        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                        capture_output=True, check=False, timeout=10.0,
+                    )
+                with contextlib.suppress(OSError):
+                    process.kill()
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    process.wait(timeout=5.0)
+            else:
+                for sig, grace in ((signal.SIGTERM, 5.0), (signal.SIGKILL, 5.0)):
+                    try:
+                        os.killpg(process.pid, sig)
+                    except ProcessLookupError:
+                        break
+                    try:
+                        process.wait(timeout=grace)
+                        break
+                    except subprocess.TimeoutExpired:
+                        continue
             exit_code = None
     return {
         "exit": exit_code,
@@ -1260,6 +1279,17 @@ def execute_run(repo: Path, run_dir: Path, profile_root: Path, python: str,
                 if process.poll() is not None:
                     break
                 interruption = "wall-budget-exceeded"
+                if os.name == "nt":
+                    # Popen.send_signal accepts no SIGINT on Windows. Stop THIS tool's
+                    # own child and its tree, by its recorded pid, while it is alive.
+                    with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+                        subprocess.run(
+                            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                            capture_output=True, check=False, timeout=10.0,
+                        )
+                    with contextlib.suppress(OSError):
+                        process.kill()
+                    break
                 # Only the process THIS tool started, by its recorded pid, is
                 # ever signalled; the watchdog owns and stops its own group.
                 process.send_signal(signal.SIGINT)

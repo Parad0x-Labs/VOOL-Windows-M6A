@@ -26,6 +26,7 @@ import json
 import logging
 import os
 import shutil
+import subprocess
 import time
 import urllib.request
 import zipfile
@@ -34,6 +35,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 logger = logging.getLogger("vool.self_update")
+# Windows' console tools open no console window of their own; 0 (no flag) off Windows.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 # Hex Ed25519 public key of the release publisher. Empty until a maintainer generates a
 # signing keypair and pins the public half here (or via VOOL_UPDATE_PUBLISHER_PUBKEY). While
@@ -478,16 +481,19 @@ class ServerStillRunning(RuntimeError):
 _STOP_WAIT_SECONDS = 15.0
 
 
-def _terminate(pid: int) -> None:
+def _terminate(pid: int, pidfile: Path, project_root: Path) -> bool:
+    """Ask the server at ``pid`` to stop; False when it is not this installation's server."""
     import signal
-    import subprocess
     import sys
 
     if sys.platform == "win32":
-        # /T kills the process tree, /F forces it.
-        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, check=False)
-    else:
-        os.kill(pid, signal.SIGTERM)
+        # A recycled pid can be any python.exe. vool_stop tree-kills (System32's taskkill /T /F)
+        # only after it proves the pid is this installation's own API server.
+        from installer.vool_stop import kill_api_by_pidfile
+
+        return kill_api_by_pidfile(subprocess.run, pidfile, project_root) is not None
+    os.kill(pid, signal.SIGTERM)
+    return True
 
 
 def _default_stop_server(vool_home: Path | None, project_root: Path) -> None:
@@ -514,9 +520,12 @@ def _default_stop_server(vool_home: Path | None, project_root: Path) -> None:
         logger.warning("stop_server: pid %s is not confirmed as a python process; refusing to kill", pid)
         raise ServerStillRunning(f"pid {pid} is running and could not be confirmed as VOOL's server")
     try:
-        _terminate(pid)
+        owned = _terminate(pid, pf, project_root)
     except Exception as exc:
         logger.warning("stop_server: could not terminate pid %s: %s", pid, exc)
+        owned = True  # a kill that failed part-way: the wait below decides
+    if not owned:
+        raise ServerStillRunning(f"pid {pid} is running and is not this installation's API server")
     deadline = time.monotonic() + _STOP_WAIT_SECONDS
     while process_liveness.pid_alive(pid):
         if time.monotonic() >= deadline:
@@ -526,16 +535,19 @@ def _default_stop_server(vool_home: Path | None, project_root: Path) -> None:
 
 def _pid_is_python(pid: int) -> bool:
     """Best-effort check that `pid` is a live python process (guards stale-pid reuse)."""
-    import subprocess
     import sys
 
     try:
         if sys.platform == "win32":
+            from core.process_liveness import system_tool
+
+            # System32's tasklist, never a copy on PATH; an untrusted folder raises, so not python.
             out = subprocess.run(
-                ["tasklist", "/FI", f"PID eq {int(pid)}", "/FO", "CSV", "/NH"],
+                [system_tool("tasklist"), "/FI", f"PID eq {int(pid)}", "/FO", "CSV", "/NH"],
                 capture_output=True,
                 text=True,
                 check=False,
+                creationflags=_NO_WINDOW,
             ).stdout.lower()
             return ("python.exe" in out) or ("pythonw.exe" in out)
         if sys.platform == "darwin":
@@ -561,7 +573,6 @@ def _default_start_server(project_root: Path) -> None:
     Windows uses Start_VOOL.bat; macOS/Linux use the installer-generated Start_VOOL.sh (or the
     .command twin on macOS) -- never bash a .bat, which cannot be interpreted by the shell.
     """
-    import subprocess
     import sys
 
     if sys.platform == "win32":
@@ -570,8 +581,12 @@ def _default_start_server(project_root: Path) -> None:
             logger.warning("start_server: %s not found; relying on the watchdog to restart", bat)
             return
         try:
+            from core.process_liveness import system_tool
+
             flags = 0x00000008 | 0x00000200 | 0x08000000  # DETACHED | NEW_GROUP | NO_WINDOW
-            subprocess.Popen(["cmd", "/c", str(bat)], cwd=str(project_root), creationflags=flags, close_fds=True)
+            subprocess.Popen(
+                [system_tool("cmd"), "/c", str(bat)], cwd=str(project_root), creationflags=flags, close_fds=True
+            )
         except Exception as exc:
             logger.warning("start_server: launch failed: %s", exc)
         return
