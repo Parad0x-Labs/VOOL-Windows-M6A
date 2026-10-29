@@ -28,10 +28,16 @@ _BS = r"(?:\\\\|\\)"
 _SEG = r"[^\\/\s\"'<>|*?:]+"
 _TAIL = _SEG + r"(?:" + SEP + _SEG + r")*" + SEP + r"?"
 #: The ACCOUNT segment of a home directory (``Users\John Smith``, ``Users\al-ice.o'neil``): the one
-#: place a space or an apostrophe is part of the name. One bounded class that excludes the
-#: separators (and the reserved characters, newlines and the clause punctuation ``,`` ``;``), so it
-#: runs linearly and cannot merge prose across a path boundary.
-_ACCT = r"[^\\/\"<>|*?:,;\r\n]{1,64}"
+#: place a space or an apostrophe is part of the name. It is at most three words joined by single
+#: spaces (no leading, trailing or doubled space), at most 64 characters, and it must END right at
+#: a separator or at the end of the text, so prose after a plain name (``Users\bob failed to
+#: start``, ``Users\bob then run x/y``) is never swallowed. Every class excludes the separators and
+#: whitespace, so matching is linear (no nested unbounded quantifiers); anything else falls back
+#: to the strict ``_SEG``.
+_ACCT_WORD = r"[^\\/\s\"<>|*?:,;]+"
+_ACCT = (
+    r"(?=[^\\/\r\n]{1,64}(?:[\\/]|$))" + _ACCT_WORD + r"(?: " + _ACCT_WORD + r"){0,2}(?=[\\/]|$)"
+)
 #: The same segment, but only when the name actually holds a space or an apostrophe (what the
 #: strict ``_SEG`` cannot take), so names without either keep today's handling.
 _ACCT_SPACED = r"(?=[^\\/\r\n]{0,64}[ '])" + _ACCT
@@ -39,6 +45,7 @@ _ACCT_SPACED = r"(?=[^\\/\r\n]{0,64}[ '])" + _ACCT
 #: path), the account running to the end of the text, or -- when neither holds -- the strict tail.
 _USERS_REST = (
     r"(?i:users)" + SEP + r"(?:" + _ACCT + r"(?:" + SEP + r"(?:" + _TAIL + r")?|$)|" + _TAIL + r")"
+    # (``_ACCT`` already ends at a separator or the end of the text)
 )
 #: What may follow a prefix (drive, UNC server/share, device): a home directory, or any path.
 _AFTER_PREFIX = r"(?:" + _USERS_REST + r"|" + _TAIL + r")"
@@ -71,8 +78,7 @@ WINDOWS_PATH_RE = re.compile(
 #: holds a space or an apostrophe, up to its closing separator; for redactors that mask just the
 #: home prefix. Runs BEFORE their strict-account patterns, which would stop inside the name.
 SPACED_HOME_RE = re.compile(
-    r"(?:(?<![A-Za-z0-9\\])([A-Za-z]:))?" + SEP + r"(users|home)" + SEP + _ACCT_SPACED
-    + r"(?=" + SEP + r"|$)",
+    r"(?:(?<![A-Za-z0-9\\])([A-Za-z]:))?" + SEP + r"(users|home)" + SEP + _ACCT_SPACED,
     re.IGNORECASE,
 )
 
