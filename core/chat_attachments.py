@@ -323,6 +323,14 @@ def _valid_session(value: Any) -> str:
 def _open_regular(path: Path) -> bytes:
     """Read a staged file without ever following a symbolic link."""
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    if os.name == "nt" and path.is_symlink():
+        # Windows defines no O_NOFOLLOW: os.open would follow a planted link silently and
+        # the ELOOP verdict below can never fire there. Refuse the link before opening it,
+        # exactly the pre-check _read_manifest applies to manifests. POSIX keeps the
+        # O_NOFOLLOW/ELOOP path unchanged.
+        raise AttachmentRefused(
+            "symlink_refused", "A staged attachment was replaced by a symbolic link; refusing to read it."
+        )
     try:
         fd = os.open(path, flags)
     except OSError as exc:
