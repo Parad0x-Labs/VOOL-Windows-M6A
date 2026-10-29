@@ -154,8 +154,18 @@ def test_redactor_takes_a_spaced_account_at_end_of_text(name, text):
 # --- reviewer-requested leak checks: a bare spaced account with one trailing folder ----------------------
 BOB_SMITH_SINGLE = "C:\\Users\\Bob Smith\\x"
 BOB_SMITH_ESCAPED = "C:\\\\Users\\\\Bob Smith\\\\x"
-BOB_SMITH_CASES = [BOB_SMITH_SINGLE, BOB_SMITH_ESCAPED]
-BOB_SMITH_IDS = ["single_backslash", "escaped_double_backslash"]
+#: The account as the last thing on a line or before clause punctuation, as log lines and error
+#: messages put it.
+BOB_SMITH_AT_LINE_END = [
+    "C:\\Users\\Bob Smith, then it stopped",
+    "C:\\Users\\Bob Smith; then it stopped",
+    "C:\\Users\\Bob Smith\nnext line",
+    "C:\\Users\\Bob Smith\r\nnext line",
+    "C:\\\\Users\\\\Bob Smith\nnext line",
+]
+BOB_SMITH_CASES = [BOB_SMITH_SINGLE, BOB_SMITH_ESCAPED, *BOB_SMITH_AT_LINE_END]
+BOB_SMITH_IDS = ["single_backslash", "escaped_double_backslash", "comma", "semicolon", "newline", "crlf",
+                 "escaped_newline"]
 
 
 @pytest.mark.parametrize("text", BOB_SMITH_CASES, ids=BOB_SMITH_IDS)
