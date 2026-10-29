@@ -318,7 +318,7 @@ set /p HARDWARE_SUMMARY=<"%TEMP%\vool_hw.txt"
 del /f /q "%TEMP%\vool_hw.txt" >nul 2>&1
 set "INSTALL_PROFILE=local-only"
 set "RECOMMENDED_INSTALL_PROFILE=local-only"
-"%VENV_DIR%\Scripts\python.exe" -c "from core.runtime_backbone import build_provider_registry_snapshot; from core.runtime_install_profiles import build_install_profile_truth; snapshot = build_provider_registry_snapshot(); print(build_install_profile_truth(selected_model=r'%MODEL_TAG%', runtime_home=r'%VOOL_HOME%', provider_capability_truth=snapshot.capability_truth).profile_id)" 2>nul > "%TEMP%\vool_install_profile.txt"
+"%VENV_DIR%\Scripts\python.exe" -c "import os; from core.runtime_backbone import build_provider_registry_snapshot; from core.runtime_install_profiles import build_install_profile_truth; snapshot = build_provider_registry_snapshot(); print(build_install_profile_truth(selected_model=r'%MODEL_TAG%', runtime_home=os.environ.get('VOOL_HOME', ''), provider_capability_truth=snapshot.capability_truth).profile_id)" 2>nul > "%TEMP%\vool_install_profile.txt"
 if exist "%TEMP%\vool_install_profile.txt" (
   set /p RECOMMENDED_INSTALL_PROFILE=<"%TEMP%\vool_install_profile.txt"
   del /f /q "%TEMP%\vool_install_profile.txt" >nul 2>&1
@@ -335,13 +335,13 @@ if "%INSTALL_PROFILE_OVERRIDE%"=="" (
 )
 set "VOOL_INSTALL_PROFILE=%INSTALL_PROFILE_OVERRIDE%"
 set "INSTALL_PROFILE_SUMMARY=%RECOMMENDED_INSTALL_PROFILE% -> %MODEL_TAG%"
-"%VENV_DIR%\Scripts\python.exe" -c "from core.runtime_backbone import build_provider_registry_snapshot; from core.runtime_install_profiles import build_install_profile_truth; snapshot = build_provider_registry_snapshot(); print(build_install_profile_truth(requested_profile=r'%VOOL_INSTALL_PROFILE%', selected_model=r'%MODEL_TAG%', runtime_home=r'%VOOL_HOME%', provider_capability_truth=snapshot.capability_truth).display_summary())" 2>nul > "%TEMP%\vool_install_profile_summary.txt"
+"%VENV_DIR%\Scripts\python.exe" -c "import os; from core.runtime_backbone import build_provider_registry_snapshot; from core.runtime_install_profiles import build_install_profile_truth; snapshot = build_provider_registry_snapshot(); print(build_install_profile_truth(requested_profile=r'%VOOL_INSTALL_PROFILE%', selected_model=r'%MODEL_TAG%', runtime_home=os.environ.get('VOOL_HOME', ''), provider_capability_truth=snapshot.capability_truth).display_summary())" 2>nul > "%TEMP%\vool_install_profile_summary.txt"
 if exist "%TEMP%\vool_install_profile_summary.txt" (
   set /p INSTALL_PROFILE_SUMMARY=<"%TEMP%\vool_install_profile_summary.txt"
   del /f /q "%TEMP%\vool_install_profile_summary.txt" >nul 2>&1
 )
 set "INSTALL_PROFILE=%RECOMMENDED_INSTALL_PROFILE%"
-"%VENV_DIR%\Scripts\python.exe" -c "from core.runtime_backbone import build_provider_registry_snapshot; from core.runtime_install_profiles import build_install_profile_truth; snapshot = build_provider_registry_snapshot(); print(build_install_profile_truth(requested_profile=r'%VOOL_INSTALL_PROFILE%', selected_model=r'%MODEL_TAG%', runtime_home=r'%VOOL_HOME%', provider_capability_truth=snapshot.capability_truth).profile_id)" 2>nul > "%TEMP%\vool_selected_install_profile.txt"
+"%VENV_DIR%\Scripts\python.exe" -c "import os; from core.runtime_backbone import build_provider_registry_snapshot; from core.runtime_install_profiles import build_install_profile_truth; snapshot = build_provider_registry_snapshot(); print(build_install_profile_truth(requested_profile=r'%VOOL_INSTALL_PROFILE%', selected_model=r'%MODEL_TAG%', runtime_home=os.environ.get('VOOL_HOME', ''), provider_capability_truth=snapshot.capability_truth).profile_id)" 2>nul > "%TEMP%\vool_selected_install_profile.txt"
 if exist "%TEMP%\vool_selected_install_profile.txt" (
   set /p INSTALL_PROFILE=<"%TEMP%\vool_selected_install_profile.txt"
   del /f /q "%TEMP%\vool_selected_install_profile.txt" >nul 2>&1
