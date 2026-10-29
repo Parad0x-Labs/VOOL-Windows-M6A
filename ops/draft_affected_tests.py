@@ -31,6 +31,7 @@ import yaml
 
 WIDE_REACH_NAMES = {"conftest.py", "pyproject.toml", "uv.lock", "setup.cfg", "pytest.ini"}
 MIN_NAME_MATCH_LENGTH = 8
+COLLECTION_LOG_TAIL_LINES = 200
 
 
 def changed_files(repo: Path, base: str, head: str) -> list[str]:
@@ -42,11 +43,15 @@ def changed_files(repo: Path, base: str, head: str) -> list[str]:
 
 
 def collected_files(repo: Path) -> list[str]:
-    out = subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"],
-        cwd=repo, capture_output=True, text=True, check=True,
-    ).stdout
-    return sorted({line.split("::", 1)[0] for line in out.splitlines() if "::" in line})
+    argv = [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"]
+    result = subprocess.run(argv, cwd=repo, capture_output=True, text=True)
+    if result.returncode != 0:
+        # The node list is long; the collection errors and summary are at its end.
+        tail = result.stdout.splitlines()[-COLLECTION_LOG_TAIL_LINES:]
+        print("\n".join(tail), file=sys.stderr)
+        print(result.stderr, file=sys.stderr)
+        raise subprocess.CalledProcessError(result.returncode, argv, result.stdout, result.stderr)
+    return sorted({line.split("::", 1)[0] for line in result.stdout.splitlines() if "::" in line})
 
 
 def macos_job_files(workflow_text: str) -> set[str]:
