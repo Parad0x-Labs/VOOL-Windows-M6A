@@ -78,6 +78,19 @@ def _full_local_path(value: str) -> bool:
     return not windows_path_policy.classify(value) and ntpath.isabs(value) and bool(ntpath.splitdrive(value)[0])
 
 
+def _resolved(value: str) -> str:
+    """Where `value` really leads. Every caller resolves the folder before using it, so a junction
+    (`mklink /J` needs no admin) is judged by its target, not its own spelling."""
+    return os.path.realpath(value)
+
+
+def _usable(value: str, profile: str) -> bool:
+    if not _full_local_path(value) or _too_wide(value, profile):
+        return False
+    drive = ntpath.splitdrive(value)[0]
+    return not drive or _drive_is_remote(drive) is False
+
+
 def _norm(value: str) -> str:
     return ntpath.normcase(ntpath.normpath(value))
 
@@ -105,9 +118,13 @@ def safe_folder(name: str, home: Path) -> Path:
     if not profile or not _same_folder(str(home), profile):
         return fallback
     reported = _shell_known_folder(name)
-    if not reported or not _full_local_path(reported) or _too_wide(reported, profile):
+    if not reported or not _usable(reported, profile):
         return fallback
-    drive = ntpath.splitdrive(reported)[0]
-    if drive and _drive_is_remote(drive) is not False:
+    try:
+        resolved = _resolved(reported)
+        real_profile = _resolved(profile)
+    except (OSError, ValueError):
         return fallback
-    return Path(reported)
+    if not _usable(resolved, profile) or _too_wide(resolved, real_profile):
+        return fallback
+    return Path(resolved)
