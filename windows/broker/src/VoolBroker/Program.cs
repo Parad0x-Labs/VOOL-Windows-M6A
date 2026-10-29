@@ -57,9 +57,10 @@ internal static class Program
             // Held, without delete sharing, until the broker exits: every batch file is reached
             // through this handle, never by the path again (Phase C pick 19).
             using var journal = Journal.Open(journalDirectory);
-            // Checked again now the folder exists: Open created any missing part of it, and a
-            // junction made in between would have been followed.
-            try { roots.ValidateJournalOutsideFlagged(journalDirectory); }
+            // Checked again now the folder exists, on the folder the journal holds: Open created any
+            // missing part of it, and a junction made or re-pointed in between would have been
+            // followed (c0b security review, minor 1).
+            try { roots.ValidateJournalOutsideFlagged(journal); }
             catch (BrokerRefusal refusal) { return RefuseEntry(journalDirectory, refusal.Code, refusal.Message); }
             var recovered = journal.RecoverAll(roots);
             var journalReport = new

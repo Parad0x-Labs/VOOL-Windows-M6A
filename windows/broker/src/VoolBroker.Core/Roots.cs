@@ -124,6 +124,22 @@ public sealed class RootRegistry : IDisposable
         if (handle.IsInvalid) throw new BrokerRefusal("invalid_bootstrap", $"journal_dir cannot be resolved: {new Win32Exception(Marshal.GetLastWin32Error()).Message}");
         var resolved = DisplayPath(Native.GetFinalPath(handle, Native.VolumeNameDos)).TrimEnd('\\');
         foreach (var part in missing) resolved += "\\" + part;
+        RefuseInsideFlagged(resolved);
+    }
+
+    /// <summary>
+    /// The same check on the folder an open journal holds, read from its handle (Phase C pick 19):
+    /// a junction above the journal re-pointed between Open and this check cannot move the answer.
+    /// A journal that holds no folder changes nothing, so it has nothing to check.
+    /// </summary>
+    public void ValidateJournalOutsideFlagged(Journal journal)
+    {
+        if (journal.Handle is not { IsClosed: false } held) return;
+        RefuseInsideFlagged(DisplayPath(Native.GetFinalPath(held, Native.VolumeNameDos)).TrimEnd('\\'));
+    }
+
+    private void RefuseInsideFlagged(string resolved)
+    {
         foreach (var entry in flagged.Values)
         {
             if (resolved.Equals(entry.Path, StringComparison.OrdinalIgnoreCase) || resolved.StartsWith(entry.Path + "\\", StringComparison.OrdinalIgnoreCase))

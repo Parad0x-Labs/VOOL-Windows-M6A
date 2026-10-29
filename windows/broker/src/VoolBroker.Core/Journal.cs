@@ -30,6 +30,9 @@ public sealed class Journal : IDisposable
 
     private Journal(string folder, SafeFileHandle? held) { Folder = folder; this.held = held; }
 
+    /// <summary>The held journal folder, or null; for checks on the folder itself (Roots.ValidateJournalOutsideFlagged).</summary>
+    internal SafeFileHandle? Handle => held;
+
     /// <summary>The path the journal was opened by; used only to report it, never to reach a file.</summary>
     public string Folder { get; }
 
