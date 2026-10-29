@@ -17,6 +17,7 @@ import re
 import signal
 import socket
 import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -159,6 +160,18 @@ class _StubHandler(BaseHTTPRequestHandler):
 
 
 class _QuietServer(ThreadingHTTPServer):
+    """Scripted-provider listener. Windows SO_REUSEADDR (HTTPServer's default)
+    would let any second socket bind this server's live port and split its
+    connections; SO_EXCLUSIVEADDRUSE refuses that. POSIX reuse semantics are
+    unchanged."""
+
+    allow_reuse_address = sys.platform != "win32"
+
+    def server_bind(self) -> None:
+        if sys.platform == "win32":
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
     def handle_error(self, request, client_address) -> None:
         return
 

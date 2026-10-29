@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from core import audit_logger, policy_engine
 from network.chunk_protocol import decode_frame
+from network.listen_policy import apply_listen_socket_policy
 from network.stream_transport import (
     StreamClientTlsConfig,
     StreamEndpoint,
@@ -425,7 +426,7 @@ class UDPTransportServer:
             stream_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock: socket.socket | None = None
             try:
-                stream_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                apply_listen_socket_policy(stream_sock)
                 stream_sock.bind((self.host, 0))
                 stream_port = int(stream_sock.getsockname()[1])
                 if stream_port <= 1:
