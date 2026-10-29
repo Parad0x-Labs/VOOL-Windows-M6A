@@ -356,3 +356,46 @@ def test_a_live_wallet_devnet_x402_server_port_cannot_be_double_bound():
             _thief_bind(("127.0.0.1", port))
     finally:
         server.stop()
+
+
+def test_a_live_health_server_holds_every_resolved_localhost_address_exclusively():
+    """start_health_server on "localhost" must hold EVERY address the platform
+    resolves (the bind set asyncio's create_server would bind): the Windows
+    path replaces uvicorn's own bind, and a single-family bind would leave the
+    other loopback family unheld. Every held socket carries the exclusive
+    option and every resolved address refuses a SO_REUSEADDR thief."""
+    port = _free_port()
+    resolved = {
+        info[0]: info[4]
+        for info in socket.getaddrinfo("localhost", port, socket.AF_UNSPEC, socket.SOCK_STREAM, 0, socket.AI_PASSIVE)
+    }
+    daemon = _HealthDaemon(host="localhost", port=port)
+    start_health_server(daemon)
+    server = daemon._health_server
+    thread = daemon._health_thread
+    assert server is not None and thread is not None
+    try:
+        deadline = time.monotonic() + 30.0
+        while time.monotonic() < deadline and not server.started:
+            if not thread.is_alive():
+                break
+            time.sleep(0.05)
+        assert server.started, "health server never started listening"
+        held = {sock.family: sock.getsockname() for srv in server.servers for sock in (srv.sockets or [])}
+        assert set(held) == set(resolved), f"bound {sorted(held)} but resolved {sorted(resolved)}"
+        for family, sockname in held.items():
+            assert sockname[:2] == resolved[family][:2], f"{family} socket bound {sockname}, not {resolved[family]}"
+        for srv in server.servers:
+            for sock in srv.sockets or []:
+                _assert_socket_holds_exclusiveaddruse(sock, "multi-address health server")
+        for family, address in resolved.items():
+            thief = socket.socket(family, socket.SOCK_STREAM)
+            try:
+                thief.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                with pytest.raises(OSError):
+                    thief.bind(address)
+            finally:
+                thief.close()
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10.0)
