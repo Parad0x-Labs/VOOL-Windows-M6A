@@ -23,6 +23,8 @@ import threading
 import uuid
 from pathlib import Path
 
+from core.process_liveness import system_taskkill
+
 
 class MediaWorkerError(RuntimeError):
     def __init__(self, code: str, message: str):
@@ -160,7 +162,7 @@ class NebulaWorkerClient:
                             # TREE of the recorded child is taken down instead, so an
                             # in-flight ffmpeg child cannot keep writing either.
                             subprocess.run(
-                                ["taskkill", "/PID", str(self._proc.pid), "/T", "/F"],
+                                [system_taskkill(), "/PID", str(self._proc.pid), "/T", "/F"],
                                 capture_output=True, check=False, timeout=5,
                             )
                         else:

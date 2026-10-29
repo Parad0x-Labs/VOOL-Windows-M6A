@@ -13,6 +13,7 @@ import tempfile
 from typing import Any
 
 from core import policy_engine, windows_path_policy
+from core.process_liveness import system_taskkill
 from core.remote_fetch_policy import note_remote_fetch_attempt, remote_fetch_forbidden
 from core.vool_browser.engine import CREDENTIAL_ISOLATION_FLAGS
 from tools.web.browser_identity import DESKTOP_ACCEPT_LANGUAGE, DESKTOP_USER_AGENT
@@ -330,7 +331,7 @@ def _run_chrome(argv: list[str], *, timeout_s: float) -> tuple[int, bytes, bytes
                 # signalling, so the whole tree of the recorded child is taken down
                 # instead, or the helpers would hold the port and the profile lock.
                 subprocess.run(
-                    ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                    [system_taskkill(), "/PID", str(process.pid), "/T", "/F"],
                     capture_output=True, check=False, timeout=5,
                 )
             else:

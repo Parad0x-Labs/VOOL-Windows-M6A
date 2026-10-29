@@ -23,7 +23,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from core.process_liveness import pid_alive
+from core.process_liveness import pid_alive, system_taskkill
 from core.runtime_paths import active_vool_home, runtime_home_identity
 
 
@@ -351,7 +351,7 @@ class NativeRuntimeSupervisor:
                         child.send_signal(signal.CTRL_BREAK_EVENT)
                         child.wait(timeout=3)
                     subprocess.run(
-                        ("taskkill", "/PID", str(child.pid), "/T", "/F"),
+                        (system_taskkill(), "/PID", str(child.pid), "/T", "/F"),
                         capture_output=True, check=False, timeout=8,
                     )
                 else:
