@@ -23,8 +23,8 @@ def test_the_windows_folder_copy_is_returned(monkeypatch) -> None:
     assert seen == ["C:\\Windows\\System32\\taskkill.exe"]
 
 
-@pytest.mark.parametrize("root", [None, "", "Windows", "..\\Windows", "\\Windows"])
-def test_a_missing_or_relative_systemroot_fails_closed(monkeypatch, root) -> None:
+@pytest.mark.parametrize("root", [None, "", "Windows", "..\\Windows", "\\Windows", "\\\\server\\share\\Windows"])
+def test_a_missing_relative_or_network_systemroot_fails_closed(monkeypatch, root) -> None:
     if root is None:
         monkeypatch.delenv("SystemRoot", raising=False)
     else:

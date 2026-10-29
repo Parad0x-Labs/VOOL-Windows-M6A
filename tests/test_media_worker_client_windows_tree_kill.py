@@ -68,3 +68,21 @@ def test_without_systemroot_no_taskkill_is_looked_up_and_only_the_child_is_kille
     assert ran == [], ran  # fail closed: never a bare "taskkill" found on PATH
     assert worker.killed is True
     assert client._proc is None
+
+
+@pytest.mark.parametrize("outcome", ["exit 128", "hung"])
+def test_a_failed_or_hung_tree_kill_still_kills_the_recorded_child(monkeypatch, outcome) -> None:
+    client = NebulaWorkerClient()
+    worker = _RunningWorker(4242)
+    client._proc = worker
+
+    def run(argv, **k):
+        if outcome == "hung":
+            raise subprocess.TimeoutExpired(argv, k.get("timeout") or 5)
+        return subprocess.CompletedProcess(argv, 128)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    client._kill()
+    assert worker.killed is True
+    assert worker.waited is True
+    assert client._proc is None

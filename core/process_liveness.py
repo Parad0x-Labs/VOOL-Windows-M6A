@@ -52,14 +52,15 @@ def _system32(*parts: str) -> str:
 
     A bare tool name is looked up through the app's folder, the current folder and PATH, so a
     planted copy there would run instead. Only ``%SystemRoot%\\System32`` is trusted; a missing,
-    relative or drive-less SystemRoot, or no such file there, fails closed and the caller falls
-    back to what it does when the tool cannot run.
+    relative, drive-less or network-share SystemRoot, or no such file there, fails closed and the
+    caller falls back to what it does when the tool cannot run.
     """
     import ntpath
 
     root = os.environ.get("SystemRoot") or ""
     drive, rest = ntpath.splitdrive(root)
-    if not drive or not rest.startswith(("\\", "/")):
+    # A drive letter only: a \\server\share root would run a network copy of the tool.
+    if len(drive) != 2 or drive[1] != ":" or not rest.startswith(("\\", "/")):
         raise OSError("SystemRoot is not an absolute Windows folder; Windows tools are not trusted")
     exe = ntpath.join(root, "System32", *parts)
     if not os.path.isfile(exe):

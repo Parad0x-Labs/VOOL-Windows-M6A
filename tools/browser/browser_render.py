@@ -330,13 +330,16 @@ def _run_chrome(argv: list[str], *, timeout_s: float) -> tuple[int, bytes, bytes
                 # Chrome forks helpers (GPU, network, renderer): Windows has no group
                 # signalling, so the whole tree of the recorded child is taken down
                 # instead, or the helpers would hold the port and the profile lock.
-                subprocess.run(
+                # A tree kill that fails or hangs still kills the recorded child.
+                completed = subprocess.run(
                     [system_taskkill(), "/PID", str(process.pid), "/T", "/F"],
                     capture_output=True, check=False, timeout=5,
                 )
+                if completed.returncode != 0:
+                    process.kill()
             else:
                 os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError, OSError):
+        except (ProcessLookupError, PermissionError, OSError, subprocess.SubprocessError):
             process.kill()
         with contextlib.suppress(Exception):
             process.communicate(timeout=5)
