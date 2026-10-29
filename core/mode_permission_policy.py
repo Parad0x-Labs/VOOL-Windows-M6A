@@ -11,7 +11,6 @@ one of those harder boundaries.
 
 from __future__ import annotations
 
-import contextlib
 import difflib
 import hashlib
 import hmac
@@ -1705,6 +1704,29 @@ def _valid_until_off_grant_shape(token: str, grant: Any) -> bool:
     return isinstance(grant.get("revoked"), bool)
 
 
+def _quarantine_file(path: Path) -> None:
+    """Move a bad store file aside under a unique `.corrupt-` name, or fail closed.
+
+    The name never repeats (ns clock + random suffix) and `os.replace` overwrites on every
+    platform, so two quarantines in one second cannot collide. If the file cannot be moved aside
+    it is unlinked; if it cannot be removed either, the failure is raised -- a corrupt file left
+    live is never silently tolerated. A file that is already gone is not an error.
+    """
+    target = path.with_name(f"{path.name}.corrupt-{time.time_ns()}-{secrets.token_hex(4)}")
+    try:
+        os.replace(path, target)
+        return
+    except FileNotFoundError:
+        return
+    except OSError as move_error:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            return
+        except OSError:
+            raise BypassStoreError(f"could not quarantine corrupt store file {path.name}") from move_error
+
+
 def restore_persisted_bypass_grants() -> int:
     """Load until-off chat grants from disk into memory, after full validation.
 
@@ -1769,16 +1791,14 @@ def restore_persisted_bypass_grants() -> int:
         ):
             # Corrupt or tampered: quarantine so the NEXT restart does not read the same bytes,
             # and restore nothing. Dropping is safe -- the owner re-approves; forging is not.
-            with contextlib.suppress(OSError):
-                path.rename(path.with_name(f"{path.name}.corrupt-{int(time.time())}"))
+            _quarantine_file(path)
             return 0
 
         def _quarantine_store() -> None:
             for doomed in (path, _bypass_revocations_path(), _bypass_revocations_head_path()):
                 if doomed is None:
                     continue
-                with contextlib.suppress(OSError):
-                    doomed.rename(doomed.with_name(f"{doomed.name}.corrupt-{int(time.time())}"))
+                _quarantine_file(doomed)
 
         journal_path = _bypass_revocations_path()
         journal_exists = journal_path is not None and journal_path.exists()
