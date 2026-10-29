@@ -235,16 +235,20 @@ def _devnet_transaction(pay_to: str, amount: int) -> dict:
 def test_concurrent_paid_deliveries_are_counted_exactly(monkeypatch):
     """The x402 origin is served by ExclusiveThreadingHTTPServer: one handler
     thread per request, all mutating outer.deliveries and
-    outer.accepted_signatures. The chain read is the one stand-in (the counter
-    race is under test, not devnet): it parks every handler thread on one
-    barrier, so all ``threads`` handler threads reach the bookkeeping section
-    TOGETHER -- the interleaving plain attribute updates cannot survive -- and
-    the GIL is forced to switch at every bytecode. The count must still be
-    EXACT: every delivered payment lands once, every distinct signature once,
-    nothing rejected."""
+    outer.accepted_signatures. The production flow PRESENTS THE SAME SIGNATURE
+    more than once (the repeat fetch and the replay retry both re-present it),
+    and the membership check and the append are separate bytecode boundaries a
+    thread switch can land between: two handler threads that both pass "not in"
+    both append, and the proof's exactly-once check then counts two acceptances
+    of one payment. The chain read is the one stand-in (the counter race is
+    under test, not devnet): it parks every handler thread on one barrier so
+    all ``threads`` handler threads reach the bookkeeping section TOGETHER and
+    the GIL is forced to switch at every chance it gets. Every delivery must
+    land, the signature must be accepted exactly once, nothing rejected."""
     from ops import wallet_devnet_external_proof as proof
 
     threads, per_thread = 10, 50
+    replayed_signature = "5" * 88
     released_together = threading.Barrier(threads, timeout=60)
 
     def synchronized_get_transaction(signature, url=""):
@@ -253,18 +257,14 @@ def test_concurrent_paid_deliveries_are_counted_exactly(monkeypatch):
 
     monkeypatch.setattr(proof, "get_transaction", synchronized_get_transaction)
 
-    threads, per_thread = 10, 50
-    expected = {f"sig-{t:02d}-{i:02d}" for t in range(threads) for i in range(per_thread)}
-
     server = _X402Server(pay_to=_PAY_TO, amount=_AMOUNT)
     url = server.start()
     failures: list[Exception] = []
 
     def buyer(which: int) -> None:
         for i in range(per_thread):
-            signature = f"sig-{which:02d}-{i:02d}"
             try:
-                request = urllib.request.Request(url, headers={"X-PAYMENT": _paid_header(signature)})
+                request = urllib.request.Request(url, headers={"X-PAYMENT": _paid_header(replayed_signature)})
                 with urllib.request.urlopen(request, timeout=60) as response:
                     if response.status != 200:
                         failures.append(RuntimeError(f"paid fetch came back {response.status}"))
@@ -285,11 +285,12 @@ def test_concurrent_paid_deliveries_are_counted_exactly(monkeypatch):
 
     assert not failures, f"paid fetches failed: {failures[:3]}"
     total = threads * per_thread
-    assert len(expected) == total
     assert server.deliveries == total, (
         f"{total} payments were delivered but the counter recorded {server.deliveries}"
     )
-    assert sorted(server.accepted_signatures) == sorted(expected)
+    assert server.accepted_signatures == [replayed_signature], (
+        f"one replayed payment was accepted {len(server.accepted_signatures)} times"
+    )
     assert server.rejections == [], f"verified payments were rejected: {server.rejections[:3]}"
 
 
