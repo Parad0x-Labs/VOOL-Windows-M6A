@@ -9,7 +9,8 @@ Selection, over the canonically collected files only:
   * a changed test file;
   * a test file that names a changed Python module (``core.safe_git``, ``from core
     import safe_git`` or its repo path) or the ``tests/test_<stem>.py`` file of a changed
-    module; modules reached only through other modules are not followed;
+    module, including helpers and rigs under tests/ imported relatively from their own
+    directory; modules reached only through other modules are not followed;
   * a test file that names a changed non-Python file by its repo path or file name.
 Files the ``macos`` job runs are left out (they are macOS-only). A change to shared test
 setup (a conftest.py, pyproject.toml, requirements, uv.lock) is reported, not expanded:
@@ -31,6 +32,7 @@ import yaml
 
 WIDE_REACH_NAMES = {"conftest.py", "pyproject.toml", "uv.lock", "setup.cfg", "pytest.ini"}
 MIN_NAME_MATCH_LENGTH = 8
+COLLECTION_LOG_TAIL_LINES = 200
 
 
 def changed_files(repo: Path, base: str, head: str) -> list[str]:
@@ -42,11 +44,15 @@ def changed_files(repo: Path, base: str, head: str) -> list[str]:
 
 
 def collected_files(repo: Path) -> list[str]:
-    out = subprocess.run(
-        [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"],
-        cwd=repo, capture_output=True, text=True, check=True,
-    ).stdout
-    return sorted({line.split("::", 1)[0] for line in out.splitlines() if "::" in line})
+    argv = [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider"]
+    result = subprocess.run(argv, cwd=repo, capture_output=True, text=True)
+    if result.returncode != 0:
+        # The node list is long; the collection errors and summary are at its end.
+        tail = result.stdout.splitlines()[-COLLECTION_LOG_TAIL_LINES:]
+        print("\n".join(tail), file=sys.stderr)
+        print(result.stderr, file=sys.stderr)
+        raise subprocess.CalledProcessError(result.returncode, argv, result.stdout, result.stderr)
+    return sorted({line.split("::", 1)[0] for line in result.stdout.splitlines() if "::" in line})
 
 
 def macos_job_files(workflow_text: str) -> set[str]:
@@ -76,6 +82,17 @@ def _module_patterns(path: str) -> list[re.Pattern[str]]:
     return patterns
 
 
+def _relative_import_patterns(path: str) -> list[re.Pattern[str]]:
+    """``from .name import x`` and ``from . import name``, as written beside the module."""
+    name = Path(path).stem
+    if name == "__init__" or not name.isidentifier():
+        return []
+    return [
+        re.compile(r"from\s+\." + re.escape(name) + r"\s+import\b"),
+        re.compile(r"from\s+\.\s+import\s+(\([^)]*|[^\n]*)\b" + re.escape(name) + r"\b"),
+    ]
+
+
 def select(changed: list[str], collected: list[str], macos_only: set[str], read_text) -> tuple[list[str], list[str]]:
     """Return (selected test files, wide-reach changes that were reported, not expanded)."""
     candidates = [f for f in collected if f not in macos_only]
@@ -93,17 +110,24 @@ def select(changed: list[str], collected: list[str], macos_only: set[str], read_
         if path in candidate_set:
             selected.add(path)
             continue
-        if is_wide_reach(path) or path.startswith("tests/"):
+        if is_wide_reach(path):
             continue
         if path.endswith(".py"):
+            # Also covers rigs and helpers under tests/ that are not test files themselves.
             sibling = f"tests/test_{Path(path).stem}.py"
             if sibling in candidate_set:
                 selected.add(sibling)
             patterns = _module_patterns(path)
+            relative = _relative_import_patterns(path)
+            directory = Path(path).parent
             for test_file in candidates:
                 body = text(test_file)
-                if path in body or any(p.search(body) for p in patterns):
+                names_it = path in body or any(p.search(body) for p in patterns)
+                beside_it = Path(test_file).parent == directory
+                if names_it or (beside_it and any(p.search(body) for p in relative)):
                     selected.add(test_file)
+        elif path.startswith("tests/"):
+            continue
         else:
             needles = [path]
             name = Path(path).name
