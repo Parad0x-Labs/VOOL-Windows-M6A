@@ -89,13 +89,15 @@ REM %VOOL_LOG_DIR%\vool_api_server.log (and the runtime SQLite DB) locked, so th
 REM fails with "The process cannot access the file because it is being used by another process" and
 REM the launcher retries forever. If the API is already healthy, don't start a duplicate; otherwise
 REM terminate any stale server process (it is not serving, since 11435 is unhealthy) to free the locks.
+REM Only this checkout's server: its process, or its parent (a venv's Scripts\python(w).exe is a
+REM launcher that runs the base interpreter as a child), runs from this checkout's .venv\Scripts folder.
 powershell -NoProfile -Command "try { $null = Invoke-WebRequest -Uri 'http://127.0.0.1:11435/healthz' -UseBasicParsing -TimeoutSec 2; exit 0 } catch { exit 1 }" >nul 2>&1
 if not errorlevel 1 (
   echo VOOL API already healthy on http://127.0.0.1:11435 - not starting a duplicate.
   endlocal
   exit /b 0
 )
-powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { ($_.Name -eq 'pythonw.exe' -or $_.Name -eq 'python.exe') -and ($_.CommandLine -like '*apps.vool_api_server*' -or $_.CommandLine -like '*vool_api_server.py*') } | ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }" >nul 2>&1
+powershell -NoProfile -Command "$venv = (Join-Path $env:SCRIPT_ROOT '.venv\Scripts\'); $all = @(Get-CimInstance Win32_Process); $byId = @{}; foreach ($p in $all) { $byId[[int]$p.ProcessId] = $p }; function Test-Own($p) { $p -and ([string]$p.ExecutablePath).StartsWith($venv, [System.StringComparison]::OrdinalIgnoreCase) }; $all | Where-Object { ($_.Name -eq 'pythonw.exe' -or $_.Name -eq 'python.exe') -and ($_.CommandLine -like '*apps.vool_api_server*' -or $_.CommandLine -like '*vool_api_server.py*') -and ((Test-Own $_) -or (Test-Own $byId[[int]$_.ParentProcessId])) } | ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} }" >nul 2>&1
 powershell -NoProfile -Command "Start-Sleep -Milliseconds 800" >nul 2>&1
 "%PYTHONW_EXE%" -m apps.vool_api_server >> "%VOOL_LOG_DIR%\vool_api_server.log" 2>&1
 endlocal
