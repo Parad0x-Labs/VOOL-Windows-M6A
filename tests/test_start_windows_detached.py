@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from unittest import mock
 
+import pytest
+
 from installer import start_windows_detached
 from installer.start_windows_detached import (
     CREATE_BREAKAWAY_FROM_JOB,
@@ -29,13 +31,18 @@ def test_wrap_command_wraps_batch_launchers_on_windows(monkeypatch) -> None:
     monkeypatch.setattr(start_windows_detached, "_is_windows_platform", lambda: True)
     monkeypatch.setenv("COMSPEC", "C:\\Windows\\System32\\cmd.exe")
 
-    assert _wrap_command_for_windows(["C:\\Users\\test\\.local\\bin\\openclaw.cmd", "gateway", "run"]) == [
-        "C:\\Windows\\System32\\cmd.exe",
-        "/c",
-        "C:\\Users\\test\\.local\\bin\\openclaw.cmd",
-        "gateway",
-        "run",
-    ]
+    # One string, not a list: list2cmdline would leave a path holding & or ( ) unquoted for cmd, and
+    # cmd strips quotes it did not expect. /s with an outer pair keeps every argument quoted.
+    assert _wrap_command_for_windows(["C:\\Users\\A&B (x86)\\bin\\openclaw.cmd", "gateway", "run"]) == (
+        '"C:\\Windows\\System32\\cmd.exe" /s /c ""C:\\Users\\A&B (x86)\\bin\\openclaw.cmd" "gateway" "run""'
+    )
+
+
+def test_wrap_command_refuses_a_batch_argument_holding_a_quote(monkeypatch) -> None:
+    # cmd has no escape for a quote inside a quoted argument; refusing beats guessing.
+    monkeypatch.setattr(start_windows_detached, "_is_windows_platform", lambda: True)
+    with pytest.raises(ValueError):
+        _wrap_command_for_windows(["C:\\vool\\Start_VOOL.bat", 'say "hi"'])
 
 
 def test_creationflags_hide_windows_on_windows(monkeypatch) -> None:
