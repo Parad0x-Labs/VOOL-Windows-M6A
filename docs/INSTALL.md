@@ -143,33 +143,28 @@ Ubuntu 22.04 and 24.04 on x86_64. The tarball is the only Linux package in 0.7.0
 
 ## Windows: installing an unsigned build
 
-The Windows installer is `VOOL-Setup.exe` (an Inno Setup installer, per-user, no administrator
-rights needed). A build made without a code-signing certificate is **unsigned**, and Windows
-warns about it. That is expected; the steps below make it safe. Do them in order.
-
-Rule: signing never blocks a release. Unsigned builds are supported. Once signed builds exist,
-this unsigned path stays documented for builds made without a certificate.
-
-Placeholders: the release asset name of the Windows setup file is not yet recorded in this repo
-beyond the build output name `VOOL-Setup.exe`; use the exact file name shown on the release page
-in place of `VOOL-Setup.exe` if it differs.
+The Windows installer is `VOOL-Setup.exe`, an Inno Setup installer that installs for the current
+user only and never asks for administrator rights. A build made without a code-signing
+certificate is **unsigned**, and Windows warns about it. That is expected. Signing never blocks a
+release: unsigned builds are supported, and once signed builds exist this path stays documented
+for any build made without a certificate.
 
 ### Step 1: verify the download
 
-Download the setup file and `SHA256SUMS` from the same release page into the same folder (for
+Download `VOOL-Setup.exe` and `SHA256SUMS` from the same release page into the same folder (for
 example `Downloads`). Open PowerShell in that folder and print the file's SHA-256:
 
 ```powershell
 (Get-FileHash .\VOOL-Setup.exe -Algorithm SHA256).Hash
 ```
 
-Open `SHA256SUMS` in Notepad, find the line for your file name, and compare it with the printed
-value. Case does not matter; every character must match.
+Open `SHA256SUMS` in Notepad, find the line ending in `VOOL-Setup.exe`, and compare its first
+field with the printed value. Case does not matter; every character must match.
 
 Or let PowerShell compare for you. It prints `MATCH` or `MISMATCH`:
 
 ```powershell
-$f='VOOL-Setup.exe'; $want=((Get-Content .\SHA256SUMS | Where-Object { $_ -match [regex]::Escape($f)+'$' }) -split '\s+')[0]; if ($want -and ((Get-FileHash ".\$f" -Algorithm SHA256).Hash -eq $want)) { 'MATCH' } else { 'MISMATCH' }
+$f='VOOL-Setup.exe'; $want=((Get-Content .\SHA256SUMS | Where-Object { $_ -match ('\s\*?'+[regex]::Escape($f)+'$') }) -split '\s+')[0]; if ($want -and ((Get-FileHash ".\$f" -Algorithm SHA256).Hash -eq $want)) { 'MATCH' } else { 'MISMATCH' }
 ```
 
 `MISMATCH` also appears if `SHA256SUMS` has no line for that file name.
@@ -177,42 +172,35 @@ $f='VOOL-Setup.exe'; $want=((Get-Content .\SHA256SUMS | Where-Object { $_ -match
 **On a mismatch, do not run the file.** Delete it, download it again from the release page, and
 check again. If it still does not match, stop and report it; do not install it.
 
-(screenshot: PowerShell Get-FileHash output next to SHA256SUMS, Baseline-v4 VM)
+A match proves the file is the one listed in `SHA256SUMS`. When the release also publishes
+`SHA256SUMS.asc`, check that signature with the release key as shown in
+[the 0.7 readiness notes](releases/0.7-readiness.md) so you know `SHA256SUMS` itself came from
+the VOOL release.
 
 ### Step 2: get past SmartScreen
 
-When you double-click an unsigned or new-publisher installer, Windows may show a blue
-**Windows protected your PC** screen. It appears because the file has no publisher signature
-Windows recognises, or the publisher has not yet built download reputation. It does not mean
-the file is malicious, but it also means Windows cannot vouch for it.
+When you open an unsigned installer, Windows may show a blue **Windows protected your PC**
+screen. It appears because the file has no publisher signature Windows recognises, or the
+publisher has not yet built download reputation. It does not mean the file is malicious, but it
+also means Windows cannot vouch for it.
 
 Proceed **only for a build you verified in step 1**:
 
 1. Click **More info**.
 2. Click **Run anyway**.
 
-(screenshot: SmartScreen More info, Baseline-v4 VM)
-
-(screenshot: SmartScreen Run anyway, Baseline-v4 VM)
-
 If you did not verify the file, or step 1 reported a mismatch, click **Don't run** instead.
 
-### Step 3: the "Unknown publisher" prompt
+### Step 3: the "Unknown Publisher" warning
 
-Windows may then show a User Account Control (UAC) prompt that reads **Publisher: Unknown**. It
-means the program carries no valid digital signature, so Windows cannot tell you who made it. It
-is the same reason as step 2, not a separate problem. The VOOL installer installs for the current
-user and normally does not need administrator rights, so if you see this prompt for a build you
-verified in step 1, continue with **Yes**; if the file is unverified, choose **No**.
+Windows may instead, or afterwards, show an **Open File - Security Warning** dialog that reads
+**Publisher: Unknown Publisher**. It means the same thing as step 2: the file carries no valid
+signature, so Windows cannot name its maker. For a build you verified in step 1, click **Run**;
+otherwise click **Cancel**.
 
-(screenshot: UAC Unknown publisher prompt, Baseline-v4 VM)
-
-### Step 4: signing policy
-
-Signing never blocks a release. If a build has no certificate it ships unsigned, with
-`SHA256SUMS` as the way to check it. When signed builds exist they open without these warnings
-(SmartScreen reputation can still take time to build), and the steps above remain the supported
-path for any unsigned build.
+The VOOL installer never asks for administrator rights. If a User Account Control prompt
+(**Do you want to allow this app to make changes to your device?**) appears while you install
+VOOL, choose **No** and report it: the file you opened is not behaving like the VOOL installer.
 
 ## What The Source Installer Does
 
