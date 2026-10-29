@@ -40,7 +40,7 @@ reference in `turn_frontdoor.py`). `core/orchestration/executor.py` runs a SECON
 system (envelope capability ids) — do not confuse them. Conductor fetch operations
 (weather/market/fx/place/research) do NOT use the tool seam: they fetch under `_turn_forbids`
 plus `remote_fetch_policy.open_remote`, which is the only socket door.
-Remote-fetch authority: `open_remote`; `core/execution/web_tools.py:41` additionally gates on the
+Remote-fetch authority: `open_remote`; `core/execution/web_tools.py:42` additionally gates on the
 process-global fallback switch (known, deliberately left).
 
 ## 2. Which state is authoritative
@@ -69,7 +69,7 @@ Chat-turn obligations/work items may be created ONLY by:
 
 Fourth minter, OUTSIDE the chat-obligation sense but live in production: `core/task_decomposer.py`
 mints mesh/order-book work items, reachable from a chat turn via
-`core/agent_runtime/turn_reasoning.py:~552` (gated by `should_decompose` + budget) and from the
+`core/agent_runtime/turn_reasoning.py:897` (gated by `should_decompose` + budget) and from the
 daemon. It does not feed chat finality; do not extend it to.
 
 Canonicalization of identities happens ONLY at:
@@ -120,16 +120,16 @@ Canonicalization of identities happens ONLY at:
 
 | Seam | Earliest boundary | Repair type |
 |---|---|---|
-| Water-temperature veto granularity | `_live_data_classification` (`core/execution_requirements.py:129`): whole-message boolean vetoes weather when a water clause coexists. Both the classifier and `live_data_plan`'s weather enumeration must read air-weather-eligible clauses, one shared helper in `core/measurement_medium.py` | ownership consolidation |
+| Water-temperature veto granularity | `_live_data_classification` (`core/execution_requirements.py:88`): whole-message boolean vetoes weather when a water clause coexists. Both the classifier and `live_data_plan`'s weather enumeration must read air-weather-eligible clauses, one shared helper in `core/measurement_medium.py` | ownership consolidation |
 | `turn_slices` vs `turn_ir` splitter split + FX multi-target ("and EUR" drops) | `core/agent_runtime/answer_coverage.py::_split_spans` (sentence grammar) vs `core/turn_ir.py` (request grammar) — measured 29/337 corpus divergence, DIFFERENT semantics; do not unify blindly. FX multi-target: `core/currency_intent.py::fx_conversion_intent` keeps one target | parser replacement (needs its own measured run) |
-| Currency whole-turn reparse leak | REPAIRED 2026-08-19: a whole-turn-currency multi-clause turn now answers EVERY owned slice deterministically; the per-slice arm is the fallback when any clause cannot be answered (`turn_frontdoor.py:1122`+) | done |
+| Currency whole-turn reparse leak | REPAIRED 2026-08-19: a whole-turn-currency multi-clause turn now answers EVERY owned slice deterministically; the per-slice arm is the fallback when any clause cannot be answered (`turn_frontdoor.py:1392`+) | done |
 | Live-data turn-trace finality vs attempt store | REPAIRED 2026-08-19: both live-data arms set an explicit `fulfillment_outcome` from the finalized attempt lifecycle (`fulfillment_outcome_from_attempt_lifecycle`), which the outcome authority reads before any prose fallback | done |
 | Local-fact backstop lexical authority ("can I drive from Rome to Paris") | REPAIRED 2026-08-19: `\b[a-z] drive\b` matched the pronoun-verb "i drive"; the drive-letter arm now excludes the two one-letter English words (closed-class, not domain vocabulary) | done |
 | Epistemic authority (stable vs needs-retrieval) | MEASURED 2026-08-19: three lexical authorities (`requirements_for`, `_live_data_classification`, `live_info_mode`) can ALL miss an explicit freshness ask ("what is diesel selling for in Vilnius now?" → DIRECT, tools-less). No bounded lexical repair exists — the miss is open-vocabulary. Target: a per-obligation epistemic state (stable / retrieval-required / retrieval-optional / unavailable-under-mode / subject-unresolved) proposed through the EXISTING bounded proposer seam (`core/conductor/semantic_proof.py`) and owned by the runtime; lexical tables demoted to fast-path proposals that may only accelerate proven closed cases | missing capability (next run, use the proposer seam — no new framework) |
 | Model identity/size for residency vs inference cost | REPAIRED 2026-08-19: `model_total_parameter_billions` (metadata-first, MoE-product, largest-token fallback) now owns residency/heavy-lane eligibility in both router gates; `model_parameter_billions` (active count) keeps inference-cost lanes. A pinned MoE name yields one number per question — the flag and the gate agree (`memory_first_router.py`, `core/local_model_bundles.py`). The frontdoor's literal heavy-marker block list (`fast_paths_utility.py`) and the user-text size scan in `_explicit_heavy_requested` are pinned product behavior (prose "use the 70b model" is a tested contract), NOT repaired — the remaining surface is that prose, not the parsers | done |
 | Live-data lane ungated + sibling loss | `apps/vool_agent.py::_maybe_answer_live_data_turn` — no coverage/mixed check; sibling clauses outside registered families are dropped when the conductor declines. Also `_named_live_data_entity_count` (~:1110) re-extracts entities with independent recognizers to pick single vs multipart arms | ownership consolidation (needs registry coverage for the sibling families first) |
 | Ungated pre-agent web0 exit | `core/web/api/runtime.py` first `finalize_turn_trace` (web0/null grounding) has no coverage gate — fires on mixed input (measured) | ownership consolidation (small) |
-| Image-generation prompt contamination | `turn_frontdoor.py:~1546`: ungated exit; sibling clause text is absorbed into the image prompt (measured) | ownership consolidation (small) |
+| Image-generation prompt contamination | `turn_frontdoor.py:~1950`: ungated exit; sibling clause text is absorbed into the image prompt (measured) | ownership consolidation (small) |
 | Live-data turn-trace finality vs attempt store | `terminal_fulfillment_outcome` default-FULFILLED arm; the lane never sets explicit `fulfillment_outcome` from the attempt lifecycle | accounting change (small) |
 | Weather bare-space list fusion ("kaunas riga") | `tools/web/web_research.py::_split_weather_candidates` — needs a place-membership authority (gazetteer/geocoder); do NOT split without one ("New York" is the adversarial case) | missing capability |
 | Open-world entity grounding (Toyota Touareg / iPhone Galaxy S5) | model/research lane has NO unresolved-subject gate; `UNRESOLVED_SUBJECT` / `Establishment.AMBIGUOUS` exist as types (`core/conductor/realization.py`, `core/semantic/preflight.py`) with no consumer on that path. Cheapest honest version: the model lane declares the subjects it will answer; the runtime compares against the requested subject spans; mismatch -> typed refusal. Requires a way to ESTABLISH requested subjects — currently missing | missing capability (candidate: declare-back contract; no dictionaries) |

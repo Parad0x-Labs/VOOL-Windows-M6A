@@ -88,10 +88,19 @@ def test_the_journal_is_written_before_the_mutation_not_after() -> None:
     assert _subject_bytes() == original
 
 
+def test_recovery_can_read_the_subject_from_git_head() -> None:
+    """Recovery trusts a journal only once git HEAD agrees with it. A host where the trusted git
+    cannot be found refuses every journal, and a killed child's mutation stays in the tree."""
+    assert guard._trusted_head_bytes(_SUBJECT) == _subject_bytes()
+
+
 def test_a_sigkilled_worker_leaves_a_journal_that_recovery_repairs() -> None:
     """The case `finally` cannot reach, driven end to end with a real signal 9."""
     original = _subject_bytes()
     marker = "vool-kill-test-marker"
+    # A marker already in the subject means an earlier kill was never repaired and got committed:
+    # every assertion below would then hold before the child had written anything.
+    assert marker.encode() not in original, f"{_SUBJECT} already carries {marker!r}"
     child = subprocess.Popen(
         [sys.executable, "-m", "tests._source_guard", _SUBJECT, marker],
         cwd=str(guard.REPO_ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,

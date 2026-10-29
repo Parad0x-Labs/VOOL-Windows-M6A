@@ -439,6 +439,7 @@ def test_machine_write_file_overwrite_is_resolved_against_the_real_home_not_work
     real_file = desktop / "resume.txt"
     real_file.write_text("the user's real, pre-existing resume", encoding="utf-8")
     monkeypatch.setenv("HOME", str(disposable_home))
+    monkeypatch.setenv("USERPROFILE", str(disposable_home))  # Path.home() reads USERPROFILE on Windows
 
     unrelated_workspace = tmp_path / "unrelated_workspace"
     unrelated_workspace.mkdir()
@@ -486,6 +487,7 @@ def test_machine_write_file_overwrite_approval_carries_a_real_diff_preview(tmp_p
     desktop.mkdir(parents=True)
     (desktop / "resume.txt").write_text("the user's real, pre-existing resume", encoding="utf-8")
     monkeypatch.setenv("HOME", str(disposable_home))
+    monkeypatch.setenv("USERPROFILE", str(disposable_home))  # Path.home() reads USERPROFILE on Windows
 
     ctx = _context(mode="manual", workspace_root=str(tmp_path / "unrelated_workspace"))
     decision = _decision(

@@ -72,8 +72,11 @@ def worker_alive(data_dir: Path) -> bool:
     marker = str(lease.get("plan") or "")
     if pid <= 1 or not marker or _pid_has_exited(pid):
         return False
-    # A stale/reused pid is insufficient. It must still run this exact plan.
-    command = subprocess.run(["ps", "-p", str(pid), "-o", "args="],
+    # A stale/reused pid is insufficient. It must still run this exact plan. `-ww` asks for
+    # the whole command line (macOS ps and Linux procps both take it): without it ps may cut
+    # `args=` to the terminal width, and a live worker whose plan path sits past that width
+    # would read as dead.
+    command = subprocess.run(["ps", "-ww", "-p", str(pid), "-o", "args="],
                              capture_output=True, text=True, check=False)
     return command.returncode == 0 and marker in command.stdout
 

@@ -196,6 +196,7 @@ def test_deleting_the_chat_erases_its_documents_and_nothing_of_another_chat() ->
         (b"binary \x00 looking " * 300, "not_text", 422),
         (b"\xff\xfe\xfd not utf-8 " * 300, "not_text", 422),
     ],
+    ids=["too_large", "nul_byte", "not_utf8"],
 )
 def test_oversized_binary_and_non_utf8_pastes_fail_visibly_at_the_door(data: bytes, code: str, status: int) -> None:
     app = _app()

@@ -38,7 +38,7 @@ def test_real_file_request_keeps_typographic_literal_value(monkeypatch, tmp_path
     )
     assert target is not None
     assert target["content"] == "“quoted text”"
-    assert Path(target["path"]) == root / "fresh.txt"
+    assert Path(target["path"]).expanduser() == root / "fresh.txt"
 
 def test_real_image_request_keeps_typographic_literal_subject() -> None:
     assert image_generation_intent(
