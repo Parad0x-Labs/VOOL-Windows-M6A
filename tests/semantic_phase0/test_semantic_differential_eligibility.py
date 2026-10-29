@@ -278,8 +278,12 @@ def test_the_corpus_is_a_pinned_artifact_the_candidate_does_not_compute() -> Non
     import subprocess
 
     root = Path(_SCRIPT).resolve().parents[1]
+    safe_git = module._safe_git
+    git = safe_git.trusted_git_executable()
+    assert git is not None, "no trusted git is installed, so the pinned corpus cannot be read"
     raw = subprocess.check_output(
-        [str(module._safe_git.trusted_git_executable()), "-C", str(root), "show", module.FROZEN_CORPUS_SOURCE_SHA]
+        [str(git), *safe_git.hardening_args(), "-C", str(root), "show", module.FROZEN_CORPUS_SOURCE_SHA],
+        env=safe_git.trusted_git_env(git),
     )
     payload = json.loads(raw)
     turns = [str(t) for t in payload["turns"]]
