@@ -279,7 +279,7 @@ def test_the_corpus_is_a_pinned_artifact_the_candidate_does_not_compute() -> Non
 
     root = Path(_SCRIPT).resolve().parents[1]
     raw = subprocess.check_output(
-        ["/usr/bin/git", "-C", str(root), "show", module.FROZEN_CORPUS_SOURCE_SHA]
+        [str(module._safe_git.trusted_git_executable()), "-C", str(root), "show", module.FROZEN_CORPUS_SOURCE_SHA]
     )
     payload = json.loads(raw)
     turns = [str(t) for t in payload["turns"]]
