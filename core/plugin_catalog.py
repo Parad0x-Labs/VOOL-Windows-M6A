@@ -351,6 +351,37 @@ def _classify_probe_error(errno_value: Any, message: str) -> tuple[str, str]:
     return STORAGE_FAILED, message
 
 
+def _probe_spawn_kwargs() -> dict[str, Any]:
+    """Start the probe in its own process group (POSIX) / without a console window (Windows)."""
+    import subprocess
+
+    if os.name == "nt":
+        return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+    return {"start_new_session": True}
+
+
+def _kill_probe_tree(proc: Any) -> None:
+    """Kill the probe and everything it started. The probe can have a child of its own (a venv's
+    python.exe on Windows is a launcher whose child is the real interpreter), and that child is the
+    one blocked on the folder."""
+    import signal
+    import subprocess
+
+    if os.name == "nt":
+        from core.process_liveness import system_taskkill
+
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
+            subprocess.run(
+                [system_taskkill(), "/PID", str(proc.pid), "/T", "/F"], capture_output=True, check=False,
+                timeout=_KILL_WAIT_S, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+    else:
+        with contextlib.suppress(OSError):
+            os.killpg(proc.pid, signal.SIGKILL)
+    with contextlib.suppress(OSError):
+        proc.kill()
+
+
 def probe_plugin_storage(plugins_dir: Path, *, budget_s: float) -> dict[str, Any]:
     """Open the plugin folder in a bounded, killable subprocess and report what happened.
 
@@ -368,7 +399,7 @@ def probe_plugin_storage(plugins_dir: Path, *, budget_s: float) -> dict[str, Any
     try:
         proc = subprocess.Popen(
             command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL, **_probe_spawn_kwargs(),
         )
     except OSError as exc:
         return {
@@ -379,12 +410,16 @@ def probe_plugin_storage(plugins_dir: Path, *, budget_s: float) -> dict[str, Any
         out, err = proc.communicate(timeout=max(0.05, float(budget_s)))
     except subprocess.TimeoutExpired:
         lingering = False
-        with contextlib.suppress(OSError):
-            proc.kill()
+        _kill_probe_tree(proc)
         try:
             proc.wait(timeout=_KILL_WAIT_S)
         except subprocess.TimeoutExpired:
             lingering = True
+        else:
+            # Ends the pipe readers communicate() started on Windows: the pipes close once the
+            # whole tree is gone, so this returns at once.
+            with contextlib.suppress(subprocess.TimeoutExpired, OSError, ValueError):
+                proc.communicate(timeout=_KILL_WAIT_S)
         return {
             "state": STORAGE_STALLED, "entries": (),
             "detail": f"the folder did not answer within {float(budget_s):.1f} s",
