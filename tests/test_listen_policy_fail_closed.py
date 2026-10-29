@@ -335,7 +335,7 @@ def test_run_server_on_listen_sockets_runs_bare_without_prebound_sockets(monkeyp
     server.run.assert_called_once_with()
 
 
-def test_run_server_on_listen_sockets_hands_every_socket_to_uvicorn_and_closes_untaken_ones(monkeypatch):
+def test_run_server_on_listen_sockets_leaves_untaken_sockets_to_the_caller(monkeypatch):
     fake_socket, created, _ = _resolving_socket_module(
         [(socket.AF_INET6, ("::1", 8123, 0, 0)), (socket.AF_INET, ("127.0.0.1", 8123))]
     )
@@ -345,9 +345,12 @@ def test_run_server_on_listen_sockets_hands_every_socket_to_uvicorn_and_closes_u
 
     listen_policy.run_server_on_listen_sockets(server, listen_policy.pre_bind_listen_sockets("localhost", 8123))
 
+    # A run() that returns normally handed the sockets to uvicorn's own shutdown
+    # (uvicorn closes the sockets it took); sockets a run() leaves untouched stay
+    # open for their caller -- the uvicorn-contract tests close the socket they
+    # inspect, so the policy must not close it under them.
     server.run.assert_called_once_with(sockets=created)
-    # Even a run() that returns without taking the sockets must not leak one.
-    assert all(sock.calls[-1] == ("close",) for sock in created)
+    assert all(("close",) not in sock.calls for sock in created)
 
 
 def test_run_server_on_listen_sockets_closes_prebound_sockets_when_run_raises(monkeypatch):
