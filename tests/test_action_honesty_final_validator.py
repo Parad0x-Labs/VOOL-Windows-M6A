@@ -562,3 +562,18 @@ def test_claim_worker_command_line_fits_windows(monkeypatch, tmp_path):
     monkeypatch.setattr(subprocess, "run", fake_run)
     test_new_file_claim_shapes_remain_bounded("a/" * 30000 + "z", tmp_path)
     assert len(subprocess.list2cmdline(launched[0])) < 32767
+
+
+def test_claim_worker_script_survives_any_stdin_code_page(monkeypatch, tmp_path):
+    """text=True writes stdin in the locale code page and the worker reads it as UTF-8, so the script must be ASCII."""
+    launched = []
+
+    def fake_run(argv, **kwargs):
+        launched.append(kwargs["input"])
+        return subprocess.CompletedProcess(argv, 0, '{"execution": 0, "imports": 0}', "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    home = tmp_path / "Jörg"
+    home.mkdir()
+    _run_bounded_claim_worker("pass; 'é'", home)
+    assert launched[0].isascii()
