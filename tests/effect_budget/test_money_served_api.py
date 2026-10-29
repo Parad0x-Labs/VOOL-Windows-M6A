@@ -193,7 +193,10 @@ def test_the_daemon_serves_money_state_written_by_independent_processes_and_keep
             assert (detail["judged_instance_id"], detail["proof"]) == (killed["instance_id"], eb.INSTANCE_DEATH_PROCESS_GONE), detail
             judge_rows = [row for row in _money_table_rows("effect_budget_instances") if row["instance_id"] == detail["reconciler_instance_id"]]
             assert judged[0]["instance_id"] == detail["reconciler_instance_id"] and len(judge_rows) == 1, (judged, judge_rows)
-            assert int(judge_rows[0]["pid"]) == daemon.process.pid, "the served daemon itself judged the killed claimant"
+            # The daemon's own interpreter, as it reports itself: on Windows a venv's python.exe is a
+            # launcher whose child runs the server, so daemon.process.pid is not the judge's pid there.
+            served_pid = int((home / "data" / "vool_api.pid").read_text(encoding="utf-8"))
+            assert int(judge_rows[0]["pid"]) == served_pid, "the served daemon itself judged the killed claimant"
 
             status, body = _http(daemon, "POST", "/api/money/grants/revoke", {"grant_id": grant.grant_id, "reason": "owner stopped the task"})
             assert status == 200 and body["grant"]["state"] == ebm.GRANT_REVOKED, body
