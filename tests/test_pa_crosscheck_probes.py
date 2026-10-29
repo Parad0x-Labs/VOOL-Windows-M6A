@@ -113,6 +113,10 @@ class _NSDate:
         return self._ts
 
 
+@pytest.mark.skipif(
+    not hasattr(time, "tzset"),
+    reason="EventKit is macOS-only; the probe moves the process zone with time.tzset, which Windows lacks",
+)
 def test_eventkit_all_day_date_is_the_local_day(monkeypatch):
     from core.kas.adapters.eventkit_mac import _ek_to_cal
 
