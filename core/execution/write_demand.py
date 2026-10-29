@@ -825,11 +825,14 @@ def _clean_relative_path(candidate: str) -> str:
         return ""
     if ".." in re.split(r"[\\/]", clean):
         return ""
+    # `.\` and `./` name the current folder: drop each one whole, so `.\x.txt` is `x.txt`. The
+    # character-set strips below would leave its `\`, a path rooted on the current drive.
+    clean = re.sub(r"^(?:\.[\\/](?![\\/]))+", "", clean)
     clean = clean.lstrip("/")
     clean = clean.lstrip("./")
     if not clean or clean.lower() in _PATH_STOP_WORDS:
         return ""
-    if ntpath.splitdrive(clean)[0] or ".." in re.split(r"[\\/]", clean):
+    if ntpath.splitdrive(clean)[0] or clean.startswith(("\\", "/")) or ".." in re.split(r"[\\/]", clean):
         return ""
     if "." not in posixpath.normpath(clean).rpartition("/")[2]:
         return ""
