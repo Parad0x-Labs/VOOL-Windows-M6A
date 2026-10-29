@@ -13,14 +13,23 @@ on:
       - 'uv.lock'
       - 'requirements*.txt'
       - '.github/workflows/release-linux.yml'
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     tags: ['v*']
+
+# Keyed on the branch (head_ref for a PR event, ref otherwise): a newer push or a dispatch on
+# the same branch cancels the older run still queued or in flight.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
   build:
+    # Draft PRs skip this suite (smoke and release need build); it runs once the PR is ready for review.
+    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     outputs:
