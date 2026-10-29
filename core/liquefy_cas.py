@@ -3,11 +3,11 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
-import os
 import uuid
 from pathlib import Path
 from typing import Any
 
+from core import windows_sharing_retry
 from core.runtime_paths import data_path
 from storage.cas_integrity import (
     CasCorruptionError,
@@ -159,7 +159,7 @@ def reconstruct_object(root_hash: str, output_path: str) -> None:
             raise CasCorruptionError(
                 root_hash, reason="file_digest_mismatch", expected=declared, observed=whole.hexdigest()
             )
-        os.replace(tmp, out)
+        windows_sharing_retry.replace(tmp, out)
     except BaseException:
         with contextlib.suppress(FileNotFoundError):
             tmp.unlink()
