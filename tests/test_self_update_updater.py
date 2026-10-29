@@ -7,6 +7,7 @@ from unittest import mock
 
 import pytest
 
+from installer import self_update
 from installer.self_update import (
     backup_and_swap,
     compute_preserve_names,
@@ -336,8 +337,9 @@ def test_stop_server_skips_non_python_pid(tmp_path) -> None:
     (home / "data").mkdir(parents=True)
     (home / "data" / "vool_api.pid").write_text("4242", encoding="utf-8")
     with mock.patch("installer.self_update._pid_is_python", return_value=False), mock.patch(
-        "subprocess.run"
-    ) as run:
+        "core.process_liveness.pid_alive", return_value=True
+    ), mock.patch("subprocess.run") as run, pytest.raises(self_update.ServerStillRunning):
+        # A live pid it can't confirm is VOOL's: not killed, and not reported stopped either.
         _default_stop_server(home, tmp_path)
     run.assert_not_called()  # never issued taskkill on a non-python pid
 
