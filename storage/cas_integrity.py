@@ -22,11 +22,17 @@ import contextlib
 import hashlib
 import os
 import re
+import time
 import uuid
 from pathlib import Path
 
 CANONICAL_DIGEST = "sha256"
 _ADDRESS = re.compile(r"^[0-9a-f]{64}$")
+_WINDOWS = os.name == "nt"
+# Windows refuses to open a path while os.replace moves another file onto it (a sharing violation,
+# PermissionError). That window is short: a read is retried for up to about 0.1 s before it counts.
+_SHARING_RETRIES = 20
+_SHARING_PAUSE_SECONDS = 0.005
 
 
 class CasIntegrityError(Exception):
@@ -97,7 +103,7 @@ def verified_read(path: Path, address: str) -> bytes:
     """Read ``path`` and return its bytes only if they hash to ``address``."""
     address = validate_address(address)
     try:
-        data = path.read_bytes()
+        data = _read_through_publish(path)
     except FileNotFoundError as exc:
         raise CasMissingError(address, reason="missing") from exc
     except OSError as exc:
@@ -109,6 +115,16 @@ def verified_read(path: Path, address: str) -> bytes:
             address, reason="digest_mismatch", expected=address, observed=observed
         )
     return data
+
+
+def _read_through_publish(path: Path) -> bytes:
+    """``path.read_bytes()``, waiting out a Windows publish that is renaming onto ``path``."""
+    for _ in range(_SHARING_RETRIES - 1 if _WINDOWS else 0):
+        try:
+            return path.read_bytes()
+        except PermissionError:
+            time.sleep(_SHARING_PAUSE_SECONDS)
+    return path.read_bytes()
 
 
 def atomic_publish(path: Path, data: bytes) -> None:
