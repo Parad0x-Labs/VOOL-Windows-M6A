@@ -29,6 +29,7 @@ REPO_ROOT = _repo_root()
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from core.path_scrub import NETWORK_PATH_RE, SEP, SPACED_HOME_RE
 from core.proof_manifest import build_proof_manifest, write_proof_manifest
 
 DEFAULT_PROFILE_PATH = REPO_ROOT / "config" / "acceptance" / "local_ollama_bundle_profile.json"
@@ -36,6 +37,9 @@ LEGACY_PROFILE_PATH = REPO_ROOT / "config" / "acceptance" / "local_qwen25_7b_pro
 DEFAULT_START_SCRIPT = REPO_ROOT / "run.sh"
 DEFAULT_RUNTIME_LAUNCH_AGENT_LABEL = "ai.vool.runtime"
 DEFAULT_BASE_URL = "http://127.0.0.1:11435"
+# The Windows home in the spellings the /Users pattern misses: doubled backslashes (as a repr or
+# JSON shows it), a slash or backslash after the drive, or a rooted \Users.
+_WINDOWS_HOME_RE = re.compile(r"(?<![\w\\/])([A-Za-z]:)?" + SEP + r"(?i:users)" + SEP + r"[^\\/\s\"'<>|*?:]+")
 
 
 @dataclass(frozen=True)
@@ -69,7 +73,12 @@ def _sanitize_text(value: str, *, repo_root: Path) -> str:
         pass
     for variant in sorted((item for item in repo_variants if item), key=len, reverse=True):
         sanitized = sanitized.replace(variant, "<repo>")
+    # Network and device paths whole first; a spaced account before the strict pattern, which
+    # would stop inside the name and keep its tail.
+    sanitized = NETWORK_PATH_RE.sub("<redacted>", sanitized)
+    sanitized = SPACED_HOME_RE.sub(lambda m: f"{m.group(1) or ''}/{m.group(2)}/<redacted>", sanitized)
     sanitized = re.sub(r"/Users/[^/\s]+", "/Users/<redacted>", sanitized)
+    sanitized = _WINDOWS_HOME_RE.sub(lambda m: f"{m.group(1) or ''}/Users/<redacted>", sanitized)
     return sanitized
 
 
