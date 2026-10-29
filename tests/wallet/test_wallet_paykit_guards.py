@@ -248,7 +248,7 @@ def test_a_request_whose_payment_is_in_flight_is_never_parked_again(env):
 @pytest.mark.parametrize(("method", "body", "reason"), [
     ("TRACE", b"", "request_method_not_supported"),
     ("CONNECT", b"", "request_method_not_supported"),
-    ("POST", b"x" * (64 * 1024 + 1), "request_body_too_large"),
+    pytest.param("POST", b"x" * (64 * 1024 + 1), "request_body_too_large", id="oversized"),
 ])
 def test_a_request_outside_the_bounds_is_refused_before_it_is_sent(env, method, body, reason):
     from core.wallet import paykit_x402, proposals

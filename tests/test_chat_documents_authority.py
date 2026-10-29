@@ -128,6 +128,7 @@ def test_json_is_typed_by_parsing_and_a_declared_name_wins_when_given() -> None:
         (b"MZ" + b"\x90" * 5000, "executable_masquerade", 422),
         (b"", "empty_file", 422),
     ],
+    ids=["too_large", "nul_byte", "not_utf8", "executable_masquerade", "empty_file"],
 )
 def test_oversized_binary_and_malformed_input_is_refused_before_anything_persists(data: bytes, code: str, status: int) -> None:
     with pytest.raises(ca.AttachmentRefused) as refused:
