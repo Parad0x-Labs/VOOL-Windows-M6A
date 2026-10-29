@@ -543,7 +543,7 @@ if not exist "%BACKGROUND_CMD_PATH%" (
   exit /b 1
 )
 REM Register with Task Scheduler (runs at logon, no admin required)
-schtasks /create /tn "VOOL_Daemon" /tr "\"%SystemRoot%\System32\wscript.exe\" \"%VBS_PATH%\"" /sc onlogon /rl limited /f >nul 2>&1
+schtasks /create /tn "VOOL_Daemon" /tr "\"%SystemRoot%\System32\wscript.exe\" \"!VBS_PATH!\"" /sc onlogon /rl limited /f >nul 2>&1
 if !errorlevel! equ 0 (
   echo VOOL registered as startup task.
 ) else (

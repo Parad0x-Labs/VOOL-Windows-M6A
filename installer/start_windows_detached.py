@@ -25,7 +25,7 @@ def _is_windows_platform() -> bool:
     return os.name == "nt"
 
 
-def _wrap_command_for_windows(command: list[str]) -> list[str]:
+def _wrap_command_for_windows(command: list[str]) -> list[str] | str:
     if not _is_windows_platform() or not command:
         return command
     # Use os.path (string-only) rather than Path(command[0]).suffix here. When a
@@ -36,7 +36,14 @@ def _wrap_command_for_windows(command: list[str]) -> list[str]:
     suffix = os.path.splitext(command[0])[1].lower()
     if suffix not in {".bat", ".cmd"}:
         return command
-    return [os.environ.get("COMSPEC") or "cmd.exe", "/c", *command]
+    # One command line, not a list: list2cmdline leaves an argument holding & or ( ) unquoted, and
+    # cmd /c strips quotes it did not expect. With /s and an outer pair, cmd removes only that pair
+    # and every argument keeps its own quotes. cmd has no escape for a quote inside a quoted
+    # argument, so one is refused.
+    if any('"' in part for part in command):
+        raise ValueError("a batch launcher argument holds a double quote cmd cannot keep")
+    quoted = " ".join(f'"{part}"' for part in command)
+    return f'"{os.environ.get("COMSPEC") or "cmd.exe"}" /s /c "{quoted}"'
 
 
 def _creationflags(*, include_breakaway: bool) -> int:
