@@ -56,6 +56,7 @@ this repository's branch head (see RESULT ``head_identity``).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -1260,6 +1261,17 @@ def execute_run(repo: Path, run_dir: Path, profile_root: Path, python: str,
                 if process.poll() is not None:
                     break
                 interruption = "wall-budget-exceeded"
+                if os.name == "nt":
+                    # Popen.send_signal accepts no SIGINT on Windows. Stop THIS tool's
+                    # own child and its tree, by its recorded pid, while it is alive.
+                    with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+                        subprocess.run(
+                            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                            capture_output=True, check=False, timeout=10.0,
+                        )
+                    with contextlib.suppress(OSError):
+                        process.kill()
+                    break
                 # Only the process THIS tool started, by its recorded pid, is
                 # ever signalled; the watchdog owns and stops its own group.
                 process.send_signal(signal.SIGINT)

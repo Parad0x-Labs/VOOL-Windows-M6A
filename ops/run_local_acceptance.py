@@ -1021,7 +1021,8 @@ def _stop_runtime(base_url: str) -> None:
     if pid <= 0:
         return
     try:
-        os.kill(pid, signal.SIGKILL)
+        # Windows has no SIGKILL; os.kill with SIGTERM is already TerminateProcess there.
+        os.kill(pid, getattr(signal, "SIGKILL", signal.SIGTERM))
     except ProcessLookupError:
         return
     kill_deadline = time.time() + 5.0
