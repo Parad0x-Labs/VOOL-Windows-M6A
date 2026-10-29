@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib.util
 import signal
 import subprocess
+import sys
 from pathlib import Path
 
 from core import safe_git
@@ -20,11 +21,17 @@ _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "semantic_phase0_bas
 _POSIX_GITS = (Path("/usr/bin/git"), Path("/bin/git"), Path("/usr/local/bin/git"))
 
 
-def test_windows_trusts_the_git_for_windows_install_under_program_files(tmp_path) -> None:
-    git = tmp_path / "Git" / "cmd" / "git.exe"
+def test_windows_trusts_the_git_for_windows_install_under_program_files(tmp_path, monkeypatch) -> None:
+    if sys.platform == "win32":
+        program_files = tmp_path
+    else:
+        # Off Windows "C:\\Program Files" is one relative file name, so it can be planted under a cwd.
+        monkeypatch.chdir(tmp_path)
+        program_files = Path("C:\\Program Files")
+    git = program_files / "Git" / "cmd" / "git.exe"
     git.parent.mkdir(parents=True)
     git.write_bytes(b"")
-    found = safe_git.trusted_git_executable(os_name="nt", environ={"ProgramFiles": str(tmp_path)})
+    found = safe_git.trusted_git_executable(os_name="nt", environ={"ProgramFiles": str(program_files)})
     assert found == git
 
 
