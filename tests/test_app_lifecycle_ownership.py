@@ -29,6 +29,8 @@ from pathlib import Path
 
 import pytest
 
+from core.process_liveness import pid_alive
+
 REPO = Path(__file__).resolve().parents[1]
 WINDOW_SCRIPT = REPO / "installer" / "bundle" / "vool_window.py"
 SUPERVISOR_SCRIPT = REPO / "installer" / "bundle" / "native_runtime_supervisor.py"
@@ -376,17 +378,11 @@ def test_supervisor_teardown_kills_grandchildren_of_the_owned_runtime(tmp_path: 
     while not marker.exists() and time.time() < deadline:
         time.sleep(0.02)
     grandchild = int(marker.read_text().strip())
-    try:
-        os.kill(grandchild, 0)
-    except OSError:
+    if not pid_alive(grandchild):
         pytest.fail("grandchild never started")
     supervisor.shutdown()
     time.sleep(0.3)
-    try:
-        os.kill(grandchild, 0)
-    except OSError:
-        pass
-    else:
+    if pid_alive(grandchild):
         pytest.fail("grandchild survived the owned teardown")
 
 

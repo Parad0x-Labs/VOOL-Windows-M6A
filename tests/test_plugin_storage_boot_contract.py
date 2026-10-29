@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from core import plugin_catalog as pc
+from core.process_liveness import pid_alive
 from tests._toolchain_fixtures import PLUGIN_ID, make_plugin, reset_toolchain_state
 
 
@@ -195,8 +196,7 @@ def test_a_stalled_folder_is_killed_within_budget_and_the_app_keeps_serving(home
     assert state["loaded"] == [] and state["entries"] == []
     pid = state["probe_pid"]
     assert isinstance(pid, int) and pid > 0
-    with pytest.raises(ProcessLookupError):
-        os.kill(pid, 0)  # the stalled probe is gone, not parked
+    assert not pid_alive(pid), "the stalled probe is gone, not parked"
     assert threading.active_count() == threads_before, "no thread of ours is left waiting on the folder"
     assert "did not answer within 0.5 s" in state["detail"]
     assert f"plugin:{PLUGIN_ID}" not in _registered_plugin_sources()

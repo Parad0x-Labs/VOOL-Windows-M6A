@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
+from core.process_liveness import pid_alive
 from ops.verify import REQUIRED_PYTHON, REQUIRED_TOOLS, StageResult, run_stage, run_verification
 
 PY312 = SimpleNamespace(major=3, minor=12, micro=13)
@@ -423,8 +424,4 @@ time.sleep(30)
 
 
 def _process_exists(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    return True
+    return pid_alive(pid)

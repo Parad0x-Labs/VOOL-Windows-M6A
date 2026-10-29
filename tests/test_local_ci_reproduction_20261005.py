@@ -63,6 +63,8 @@ from pathlib import Path
 
 import pytest
 
+from core.process_liveness import pid_alive
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _RUNNER = _REPO_ROOT / "ops" / "local_ci_reproduction.py"
 _OPS_INSTRUMENTS = (
@@ -900,8 +902,7 @@ def test_hung_canonical_collection_is_bounded(tmp_path, bound):
     assert result["executed"] is False
     assert result["collection"]["collection_timed_out"] is True
     assert result["collection"]["collection_command_exit"] is None
-    with pytest.raises(ProcessLookupError):
-        os.kill(result["collection"]["collection_pid"], 0)  # existence probe only
+    assert not pid_alive(result["collection"]["collection_pid"])
     assert not (run_dir / "run-stdout.txt").exists()
 
 
