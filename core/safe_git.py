@@ -39,7 +39,7 @@ import fnmatch
 import os
 import subprocess
 from collections.abc import Mapping, Sequence
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from urllib.parse import urlsplit
 
 #: Final key segments (lowercase) whose value git runs as a program or shell command.
@@ -135,10 +135,14 @@ def trusted_git_executable(*, os_name: str | None = None,
 
     On Windows that is Git for Windows under %ProgramFiles%. The POSIX spellings are not tried
     there: ``/usr/bin/git`` would mean ``\\usr\\bin\\git`` on the current drive, a folder any user
-    may create. None when no trusted git is installed; callers fail closed."""
+    may create. %ProgramFiles% must be an absolute local path: a relative one resolves against the
+    working directory and a UNC one names another machine. None when no trusted git is installed;
+    callers fail closed."""
     if (os.name if os_name is None else os_name) == "nt":
         program_files = (os.environ if environ is None else environ).get("ProgramFiles", "")
-        candidates = (Path(program_files) / "Git" / "cmd" / "git.exe",) if program_files else ()
+        local = PureWindowsPath(program_files)
+        trusted = local.is_absolute() and len(local.drive) == 2 and local.drive.endswith(":")
+        candidates = (Path(program_files) / "Git" / "cmd" / "git.exe",) if trusted else ()
     else:
         candidates = _POSIX_TRUSTED_GITS
     return next((path for path in candidates if path.is_file()), None)
