@@ -210,6 +210,7 @@ function Invoke-WindowsRuntimeRegression {
         "tests\test_forget_profile_derivatives_takes_the_fence.py",
         "tests\test_a8_sweep_steps_hold_the_fence.py",
         "tests\test_email_store_recovery_surface.py",
+        "tests\liquefy\test_windows_binary_writes.py",
         "tests\test_windows_default_local_model.py",
         "tests\test_windows_bundle_default_reaches_auto.py",
         "tests\test_windows_path_policy.py",
