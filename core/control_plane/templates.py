@@ -226,7 +226,7 @@ def paths_from_payload(payload: dict[str, Any], *, path_key_pattern: Pattern[str
         text = str(obj or "").strip()
         if not text:
             return
-        if path_key_pattern.search(key) or text.startswith("/") or re.match(r"^[A-Za-z]:\\\\", text):
+        if path_key_pattern.search(key) or text.startswith("/") or re.match(r"^(?:[A-Za-z]:[\\/]|\\\\)", text):
             paths.add(text)
 
     _visit(payload)
