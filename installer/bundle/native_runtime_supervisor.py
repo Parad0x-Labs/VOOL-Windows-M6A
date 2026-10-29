@@ -23,7 +23,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from core.process_liveness import pid_alive, system_taskkill
+from core.process_liveness import pid_alive, system_taskkill, system_tool
 from core.runtime_paths import active_vool_home, runtime_home_identity
 
 
@@ -107,7 +107,13 @@ class NativeRuntimeSupervisor:
             # The Windows bundle ships Start_VOOL.bat; there is no bash. A missing .bat is refused
             # by ensure_ready before anything is spawned.
             starter = root / "Start_VOOL.bat"
-            command = [os.environ.get("ComSpec") or "cmd.exe", "/d", "/s", "/c", str(starter)]
+            # System32's cmd.exe only, never ComSpec or a cmd found on PATH (#97). When it can't be
+            # trusted the command keeps an empty interpreter and ensure_ready refuses to spawn.
+            try:
+                cmd = system_tool("cmd")
+            except OSError:
+                cmd = ""
+            command = [cmd, "/d", "/s", "/c", str(starter)]
         else:
             starter = root / "Start_VOOL.sh"
             command = ["bash", str(starter)]
@@ -280,6 +286,8 @@ class NativeRuntimeSupervisor:
             raise NativeRuntimeError(f"runtime starter is missing: {self.command[1]}")
         cmd_starter = _windows_cmd_starter(self.command)
         if cmd_starter is not None:
+            if not self.command[0]:
+                raise NativeRuntimeError("Windows' own cmd.exe in System32 can't be trusted here; nothing was started")
             if not Path(cmd_starter).is_file():
                 raise NativeRuntimeError(f"runtime starter is missing: {cmd_starter}")
             if '"' in cmd_starter or "%" in cmd_starter:
@@ -377,16 +385,6 @@ class NativeRuntimeSupervisor:
         """Tear down only the process group this native host actually created."""
         child, self.process = self.process, None
         if child is not None and child.poll() is None:
-            if os.name == "nt" and _windows_cmd_starter(self.command) is not None:
-                # terminate() would end only cmd.exe and leave its API child serving the port.
-                # taskkill /T reaches the tree only while the cmd root is still alive.
-                with contextlib.suppress(Exception):
-                    subprocess.run(
-                        ["taskkill", "/PID", str(child.pid), "/T", "/F"],
-                        capture_output=True,
-                        check=False,
-                        timeout=15,
-                    )
             with contextlib.suppress(Exception):
                 if os.name == "posix":
                     os.killpg(os.getpgid(child.pid), signal.SIGTERM)
