@@ -171,7 +171,9 @@ def _deliver_while_held(call_log: str, entered, release):
 def _deliver_at_barrier(call_log: str, barrier, title: str, body: str, task: str):
     def runner(command, **kwargs):
         barrier.wait(10)
-        with open(call_log, "a", encoding="utf-8") as handle:
+        # One log per child: an append on Windows is a seek then a write, so two children
+        # appending to one file can land on the same offset and lose a line.
+        with open(f"{call_log}.{task}", "a", encoding="utf-8") as handle:
             handle.write(f"{title}\n")
         return SimpleNamespace(returncode=0, stdout=f"note id x-coredata://{task}/p1", stderr="")
 
@@ -240,7 +242,8 @@ def test_two_processes_delivering_different_notes_lose_no_update(workspace, tmp_
     for child in children:
         child.join(30)
     assert [child.exitcode for child in children] == [0, 0]
-    assert sorted(call_log.read_text().splitlines()) == ["Pump station A", "Pump station B"]
+    logged = [line for log in sorted(tmp_path.glob(f"{call_log.name}.*")) for line in log.read_text().splitlines()]
+    assert sorted(logged) == ["Pump station A", "Pump station B"]
     journal = _journal(workspace)
     confirmed = {op["title"]: op["note_reference"] for op in journal["operations"].values() if op["state"] == "confirmed"}
     assert confirmed == {"Pump station A": "note id x-coredata://pump-a/p1", "Pump station B": "note id x-coredata://pump-b/p1"}
@@ -350,13 +353,24 @@ def test_unreadable_journal_refuses_without_touching_it(workspace, monkeypatch):
     journal.parent.mkdir(parents=True)
     raw = json.dumps({"schema": "vool.apple_notes_delivery_journal.v2", "operations": {}}).encode("utf-8")
     journal.write_bytes(raw)
-    journal.chmod(0)
+    real_read_bytes = Path.read_bytes
+    if os.name == "nt":
+        # chmod cannot make a file unreadable on Windows, so refuse the read itself.
+        def refuse_journal_read(self):
+            if self == journal:
+                raise PermissionError("synthetic: the journal cannot be read")
+            return real_read_bytes(self)
+
+        monkeypatch.setattr(Path, "read_bytes", refuse_journal_read)
+    else:
+        journal.chmod(0)
     try:
         result = _save('save a note to Apple Notes titled "Seed order" with: tomatoes, basil', task="seed-1")
     finally:
-        journal.chmod(0o600)
+        if os.name != "nt":
+            journal.chmod(0o600)
     assert result.status == "effect_journal_unreadable" and not bridge.calls, result.response_text
-    assert journal.read_bytes() == raw
+    assert real_read_bytes(journal) == raw
 
 
 # ---------------------------------------------------------------------------------------------
