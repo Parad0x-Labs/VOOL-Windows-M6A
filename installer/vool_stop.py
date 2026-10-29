@@ -55,6 +55,12 @@ Runner = Callable[..., Any]
 
 def _run(run: Runner, cmd: list[str]) -> Any:
     try:
+        # Windows' own taskkill and PowerShell by absolute path, never a copy found on PATH; when
+        # either can't be trusted the step is skipped like any other command that could not run.
+        if cmd[0] in ("taskkill", "powershell"):
+            from core.process_liveness import system_powershell, system_taskkill
+
+            cmd = [(system_taskkill if cmd[0] == "taskkill" else system_powershell)(), *cmd[1:]]
         return run(cmd, capture_output=True, text=True, check=False)
     except Exception:
         return None

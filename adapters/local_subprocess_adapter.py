@@ -10,6 +10,7 @@ from shutil import which
 from typing import Any
 
 from adapters.base_adapter import ModelAdapter, ModelRequest, ModelResponse
+from core.process_liveness import system_taskkill
 from core.provider_invocation_gateway import seal_provider_invocation
 
 
@@ -132,7 +133,7 @@ def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
     try:
         if os.name == "nt":
             subprocess.run(
-                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                [system_taskkill(), "/PID", str(process.pid), "/T", "/F"],
                 capture_output=True,
                 check=False,
                 timeout=5,

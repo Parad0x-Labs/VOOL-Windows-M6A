@@ -18,6 +18,8 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from core.process_liveness import system_powershell
+
 _GiB = 1024 ** 3
 _MiB = 1024 ** 2
 # How long a CPU ranking samples for. Long enough that the percentages mean something, short
@@ -84,7 +86,7 @@ def display_info(*, runner: Runner = subprocess.run) -> dict[str, Any]:
     try:
         proc = _run(
             [
-                "powershell",
+                system_powershell(),
                 "-NoProfile",
                 "-NonInteractive",
                 "-Command",
@@ -113,7 +115,7 @@ def display_info(*, runner: Runner = subprocess.run) -> dict[str, Any]:
     try:
         proc = _run(
             [
-                "powershell",
+                system_powershell(),
                 "-NoProfile",
                 "-NonInteractive",
                 "-Command",
@@ -461,7 +463,7 @@ def _windows_chassis(runner: Runner) -> str:
     """
     try:
         result = _run(
-            ["powershell", "-NoProfile", "-Command",
+            [system_powershell(), "-NoProfile", "-Command",
              "(Get-CimInstance Win32_SystemEnclosure).ChassisTypes -join ','"],
             runner,
         )

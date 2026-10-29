@@ -47,21 +47,31 @@ def pid_alive(pid: int) -> bool:
         kernel32.CloseHandle(handle)
 
 
-def system_taskkill() -> str:
-    """Windows' own taskkill.exe by absolute path, or OSError.
+def _system32(*parts: str) -> str:
+    """A Windows tool under ``%SystemRoot%\\System32`` by absolute path, or OSError.
 
-    A bare ``taskkill`` is looked up through the app's folder, the current folder and PATH, so a
-    planted copy there would run at every child stop. Only ``%SystemRoot%\\System32`` is trusted;
-    a missing, relative or drive-less SystemRoot, or no taskkill.exe there, fails closed and the
-    caller kills just its recorded child instead.
+    A bare tool name is looked up through the app's folder, the current folder and PATH, so a
+    planted copy there would run instead. Only ``%SystemRoot%\\System32`` is trusted; a missing,
+    relative or drive-less SystemRoot, or no such file there, fails closed and the caller falls
+    back to what it does when the tool cannot run.
     """
     import ntpath
 
     root = os.environ.get("SystemRoot") or ""
     drive, rest = ntpath.splitdrive(root)
     if not drive or not rest.startswith(("\\", "/")):
-        raise OSError("SystemRoot is not an absolute Windows folder; taskkill is not trusted")
-    exe = ntpath.join(root, "System32", "taskkill.exe")
+        raise OSError("SystemRoot is not an absolute Windows folder; Windows tools are not trusted")
+    exe = ntpath.join(root, "System32", *parts)
     if not os.path.isfile(exe):
         raise OSError(f"{exe} is missing")
     return exe
+
+
+def system_taskkill() -> str:
+    """Windows' own taskkill.exe by absolute path, or OSError (see ``_system32``)."""
+    return _system32("taskkill.exe")
+
+
+def system_powershell() -> str:
+    """Windows PowerShell 5.1's powershell.exe by absolute path, or OSError (see ``_system32``)."""
+    return _system32("WindowsPowerShell", "v1.0", "powershell.exe")

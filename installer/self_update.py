@@ -482,8 +482,10 @@ def _default_stop_server(vool_home: Path | None, project_root: Path) -> None:
         return
     try:
         if sys.platform == "win32":
+            from core.process_liveness import system_taskkill
+
             # /T kills the process tree, /F forces it.
-            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, check=False)
+            subprocess.run([system_taskkill(), "/PID", str(pid), "/T", "/F"], capture_output=True, check=False)
         else:
             os.kill(pid, signal.SIGTERM)
     except Exception as exc:
