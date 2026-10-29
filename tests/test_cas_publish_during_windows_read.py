@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+import time
+import types
 from pathlib import Path
 
 import pytest
@@ -20,6 +22,12 @@ from storage.cas_integrity import atomic_publish
 
 DATA = b"whole object\n"
 ADDRESS = hashlib.sha256(DATA).hexdigest()
+
+
+def _module_with(module, **overrides) -> types.SimpleNamespace:
+    namespace = types.SimpleNamespace(**{name: getattr(module, name) for name in dir(module) if not name.startswith("__")})
+    namespace.__dict__.update(overrides)
+    return namespace
 
 
 def _replaces(monkeypatch, failures: int, *, land_first: bytes | None = None) -> list[int]:
@@ -39,8 +47,10 @@ def _replaces(monkeypatch, failures: int, *, land_first: bytes | None = None) ->
             raise PermissionError(13, "Permission denied", str(dst))
         return real(src, dst)
 
-    monkeypatch.setattr(cas_integrity.os, "replace", replace)
-    monkeypatch.setattr(cas_integrity.time, "sleep", lambda _s: None)
+    # Swap only cas_integrity's view of os and time: patching the shared modules would also fail
+    # renames and skip sleeps in pytest's own plugins (the CI watchdog renames progress.json).
+    monkeypatch.setattr(cas_integrity, "os", _module_with(os, replace=replace))
+    monkeypatch.setattr(cas_integrity, "time", _module_with(time, sleep=lambda _s: None))
     return calls
 
 

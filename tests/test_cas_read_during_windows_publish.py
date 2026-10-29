@@ -9,6 +9,7 @@ unreadable is still corruption (fail closed), and POSIX keeps its single read.
 from __future__ import annotations
 
 import hashlib
+import types
 from pathlib import Path
 
 import pytest
@@ -35,7 +36,8 @@ def _reads(monkeypatch, path: Path, outcomes: list[object]) -> list[int]:
         return outcome
 
     monkeypatch.setattr(Path, "read_bytes", read_bytes)
-    monkeypatch.setattr(cas_integrity.time, "sleep", lambda _s: None)
+    # Only cas_integrity's view of time: a shared-module patch would also skip other plugins' sleeps.
+    monkeypatch.setattr(cas_integrity, "time", types.SimpleNamespace(sleep=lambda _s: None))
     return calls
 
 
