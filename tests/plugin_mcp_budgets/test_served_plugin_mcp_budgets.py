@@ -90,7 +90,7 @@ def _mcp_config(tmp_path: Path, mcp_cwd: Path) -> Path:
 
 _SEED_BUDGET = """
 import sys
-sys.path.insert(0, "__ROOT__")
+sys.path.insert(0, __ROOT__)
 from core import effect_budget as eb
 token = eb.grant_operator_budget_authority("served budgets lane seed")
 rules = __RULES__
@@ -110,7 +110,7 @@ print("SEEDED", len(eb.active_budgets()))
 
 
 def _seed_budget(home: Path, *rules: dict[str, Any]) -> None:
-    script = _SEED_BUDGET.replace("__ROOT__", str(REPO_ROOT)).replace(
+    script = _SEED_BUDGET.replace("__ROOT__", repr(str(REPO_ROOT))).replace(
         "__RULES__", json.dumps(list(rules))
     )
     out = run_in_home(home, script)
