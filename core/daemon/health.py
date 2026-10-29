@@ -13,7 +13,7 @@ from starlette.responses import Response
 from starlette.routing import Route
 
 from core.web.request_ids import log_http_request, resolve_request_id, response_headers_with_request_id
-from network.listen_policy import bind_listen_socket
+from network.listen_policy import pre_bind_listen_sockets, run_server_on_listen_sockets
 from network.signer import get_local_peer_id as local_peer_id
 
 from .models import is_loopback_host
@@ -96,13 +96,16 @@ def start_health_server(daemon: Any) -> None:
             log_level="warning",
         )
     )
-    # Bind through the ONE listen policy (SO_EXCLUSIVEADDRUSE on Windows) instead of
-    # uvicorn's loop.create_server, which sets no port-reuse option there: any same-user
-    # process could otherwise bind this live port and take a share of its connections.
-    listen_socket = bind_listen_socket(str(daemon.config.health_bind_host), int(daemon.config.health_bind_port))
+    # The ONE listen policy, bound on THIS thread before the worker starts so a
+    # refused bind fails start_health_server itself instead of dying silently
+    # inside the thread: POSIX gets no pre-bound sockets and keeps uvicorn's own
+    # bind path (every address loop.create_server resolves, dual-stack included);
+    # Windows runs on pre-bound SO_EXCLUSIVEADDRUSE sockets because uvicorn's
+    # bind sets no port-reuse option there, leaving the port stealable same-user.
+    listen_sockets = pre_bind_listen_sockets(str(daemon.config.health_bind_host), int(daemon.config.health_bind_port))
     daemon._health_server = server
     daemon._health_thread = threading.Thread(
-        target=lambda: server.run(sockets=[listen_socket]),
+        target=lambda: run_server_on_listen_sockets(server, listen_sockets),
         name="vool-daemon-health",
         daemon=True,
     )

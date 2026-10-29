@@ -8,7 +8,7 @@ from pathlib import Path
 
 from core.registry.codec import RegistryError, decode, require
 from core.registry.trust import TrustedCatalog
-from network.listen_policy import bind_listen_socket
+from network.listen_policy import run_server_with_listen_policy
 from registry_service.api import create_app
 from registry_service.auth import Auth, Provider
 from registry_service.store import Store
@@ -70,10 +70,6 @@ def main(argv=None) -> int:
             "loggers": {name: {"handlers": ["discard"], "propagate": False}
                         for name in ("uvicorn", "uvicorn.error", "uvicorn.access")}}
         discovery = decode(Path(config["catalog_file"]).read_bytes())["entries"]
-        # uvicorn.run has no sockets= parameter, so bind through the ONE listen policy
-        # (SO_EXCLUSIVEADDRUSE on Windows) and hand the socket to Server.run directly;
-        # uvicorn's own loop.create_server sets no port-reuse option there.
-        listen_socket = bind_listen_socket("127.0.0.1", int(args.port))
         server = uvicorn.Server(
             uvicorn.Config(
                 create_app(store, auth, trust, config["target"], discovery=discovery),
@@ -84,7 +80,11 @@ def main(argv=None) -> int:
                 proxy_headers=False,
             )
         )
-        server.run(sockets=[listen_socket])
+        # The ONE listen policy: POSIX keeps uvicorn's own bind path (every address
+        # loop.create_server resolves, dual-stack included); Windows runs on pre-bound
+        # SO_EXCLUSIVEADDRUSE sockets because uvicorn's bind sets no port-reuse option
+        # there, leaving the port stealable by any same-user process.
+        run_server_with_listen_policy(server, "127.0.0.1", int(args.port))
         return 0
     except (RegistryError, OSError, ValueError, KeyError, TypeError):
         print("Registry startup refused: incomplete configuration, stale signatures or missing immutable artifacts.")

@@ -39,17 +39,17 @@ def main() -> int:
 
     import uvicorn
 
-    from network.listen_policy import bind_listen_socket
+    from network.listen_policy import run_server_with_listen_policy
 
     app = create_app(runtime)
-    # uvicorn.run has no sockets= parameter, so bind through the ONE listen policy
-    # (SO_EXCLUSIVEADDRUSE on Windows) and hand the socket to Server.run directly;
-    # uvicorn's own loop.create_server sets no port-reuse option there.
-    listen_socket = bind_listen_socket("127.0.0.1", PORT)
     server = uvicorn.Server(
         uvicorn.Config(app, host="127.0.0.1", port=PORT, log_level="warning", access_log=False)
     )
-    server.run(sockets=[listen_socket])
+    # The ONE listen policy: POSIX keeps uvicorn's own bind path (every address
+    # loop.create_server resolves, dual-stack included); Windows runs on pre-bound
+    # SO_EXCLUSIVEADDRUSE sockets because uvicorn's bind sets no port-reuse option
+    # there, leaving the port stealable by any same-user process.
+    run_server_with_listen_policy(server, "127.0.0.1", PORT)
     return 0
 
 

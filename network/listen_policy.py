@@ -15,6 +15,7 @@ from __future__ import annotations
 import socket
 import sys
 from http.server import ThreadingHTTPServer
+from typing import Any
 
 _WINDOWS = sys.platform == "win32"
 
@@ -44,25 +45,106 @@ def apply_udp_listen_socket_policy(sock: socket.socket) -> None:
         apply_listen_socket_policy(sock)
 
 
-def bind_listen_socket(host: str, port: int, family: int = socket.AF_INET) -> socket.socket:
-    """Create, apply the platform listen policy to, and bind a listen socket.
+def bind_listen_socket(host: str, port: int) -> list[socket.socket]:
+    """Bind one policy listen socket per address getaddrinfo resolves.
 
-    For servers whose own bind path (uvicorn's loop.create_server) sets no
-    port-reuse option on Windows: bind through THIS policy instead and hand
-    the socket to uvicorn via ``Server.run(sockets=[sock])``. The socket is
-    bound but NOT listening -- asyncio puts it on the accept loop itself --
-    and is not inheritable by child processes. A failed bind closes the
-    socket before re-raising, so nothing leaks a half-bound port.
+    The address set is what asyncio's create_server binds for (host, port):
+    ``socket.getaddrinfo(host, port, AF_UNSPEC, SOCK_STREAM, 0, AI_PASSIVE)``,
+    one socket per returned address (IPv6 and dual-stack "localhost" included),
+    ``IPV6_V6ONLY`` set on AF_INET6 sockets the way create_server sets it, and
+    every socket non-inheritable by child processes. If any bind fails, every
+    socket bound so far is closed again before the error surfaces, and an
+    empty resolution raises: an unknown or half-bound state must never reach
+    a caller (fail closed, never a silently unbound "success").
+
+    The sockets are bound but NOT listening -- asyncio puts them on the accept
+    loop itself -- and belong together in one ``Server.run(sockets=...)`` call.
     """
-    sock = socket.socket(family, socket.SOCK_STREAM)
+    addresses = socket.getaddrinfo(host, int(port), socket.AF_UNSPEC, socket.SOCK_STREAM, 0, socket.AI_PASSIVE)
+    sockets: list[socket.socket] = []
+    completed = False
     try:
-        apply_listen_socket_policy(sock)
-        sock.bind((host, int(port)))
-    except BaseException:
-        sock.close()
-        raise
-    sock.set_inheritable(False)
-    return sock
+        seen: set[tuple] = set()
+        for family, socktype, proto, _canonname, address in addresses:
+            if address in seen:
+                # getaddrinfo may repeat an address; create_server binds it once.
+                continue
+            seen.add(address)
+            try:
+                sock = socket.socket(family, socktype, proto)
+            except OSError:
+                # A family this platform cannot open (create_server skips these
+                # too); the other addresses still bind.
+                continue
+            try:
+                apply_listen_socket_policy(sock)
+                if (
+                    family == socket.AF_INET6
+                    and getattr(socket, "has_ipv6", True)
+                    and hasattr(socket, "IPPROTO_IPV6")
+                    and hasattr(socket, "IPV6_V6ONLY")
+                ):
+                    # create_server disables dual-stack on AF_INET6 sockets so one
+                    # socket cannot silently listen on both families.
+                    sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+                sock.bind(address)
+            except OSError as bind_error:
+                sock.close()
+                raise OSError(
+                    bind_error.errno,
+                    f"error while attempting to bind on address {address!r}: {bind_error}",
+                ) from None
+            except BaseException:
+                sock.close()
+                raise
+            sock.set_inheritable(False)
+            sockets.append(sock)
+        if not sockets:
+            raise OSError(f"getaddrinfo({host!r}) bound no address for port {int(port)}")
+        completed = True
+    finally:
+        if not completed:
+            for sock in sockets:
+                sock.close()
+    return sockets
+
+
+def pre_bind_listen_sockets(host: str, port: int) -> list[socket.socket]:
+    """[] on POSIX; on Windows the pre-bound policy sockets for a uvicorn Server.
+
+    POSIX keeps uvicorn's own bind path exactly as it was: loop.create_server
+    binds every address getaddrinfo returns, so dual-stack "localhost" and
+    IPv6 binds stay unchanged. Windows pre-binds through bind_listen_socket
+    instead, because create_server sets no port-reuse option there and any
+    same-user SO_REUSEADDR process could take a share of the live port.
+    """
+    if not _WINDOWS:
+        return []
+    return bind_listen_socket(host, int(port))
+
+
+def run_server_on_listen_sockets(server: Any, listen_sockets: list[socket.socket]) -> None:
+    """Run a uvicorn Server, closing any pre-bound socket it does not take.
+
+    An empty list is the POSIX path: ``server.run()`` with no ``sockets=``,
+    exactly the call the sites made before this policy existed. With sockets,
+    run() may also exit without taking them (a failed lifespan startup calls
+    sys.exit before its bind loop), so every socket is closed on the way out --
+    normal return or raise, nothing leaks a held port.
+    """
+    if not listen_sockets:
+        server.run()
+        return
+    try:
+        server.run(sockets=listen_sockets)
+    finally:
+        for sock in listen_sockets:
+            sock.close()
+
+
+def run_server_with_listen_policy(server: Any, host: str, port: int) -> None:
+    """One-line uvicorn launch through this policy (see pre_bind_listen_sockets)."""
+    run_server_on_listen_sockets(server, pre_bind_listen_sockets(host, int(port)))
 
 
 class ExclusiveListenMixin:

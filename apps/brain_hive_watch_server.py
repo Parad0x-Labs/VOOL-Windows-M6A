@@ -68,7 +68,7 @@ from core.web.watch.tls import (
 # patched as apps.brain_hive_watch_server.ThreadingHTTPServer — is exactly the
 # class build_server passes on to build_watch_server.
 from network.listen_policy import ExclusiveThreadingHTTPServer as ThreadingHTTPServer
-from network.listen_policy import bind_listen_socket
+from network.listen_policy import run_server_with_listen_policy
 
 
 def _http_get_json(
@@ -262,11 +262,11 @@ def serve(config: BrainHiveWatchServerConfig | None = None) -> None:
             ssl_ca_certs=cfg.tls_ca_file,
         )
     )
-    # Bind through the ONE listen policy (SO_EXCLUSIVEADDRUSE on Windows) instead of
-    # uvicorn's loop.create_server, which sets no port-reuse option there: any same-user
-    # process could otherwise bind this live port and take a share of its connections.
-    listen_socket = bind_listen_socket(str(cfg.host), int(cfg.port))
-    server.run(sockets=[listen_socket])
+    # The ONE listen policy: POSIX keeps uvicorn's own bind path (every address
+    # loop.create_server resolves, dual-stack included); Windows runs on pre-bound
+    # SO_EXCLUSIVEADDRUSE sockets because uvicorn's bind sets no port-reuse option
+    # there, leaving the port stealable by any same-user process.
+    run_server_with_listen_policy(server, str(cfg.host), int(cfg.port))
 
 
 def _normalize_base_url(url: str) -> str:
