@@ -91,7 +91,9 @@ def provenance_chain(*, max_depth: int = _PROVENANCE_DEPTH) -> list[ProvenanceEn
     """
     chain: list[ProvenanceEntry] = []
     pid = os.getpid()
-    ppid = os.getppid()
+    # Windows never reparents, so a raw parent pid may already belong to a newer, unrelated
+    # process; _ps_ppid there only returns a parent psutil has checked against reuse.
+    ppid = _ps_ppid(pid) if _IS_WINDOWS else os.getppid()
     for _ in range(max_depth):
         argv = _ps_command(pid) or ()
         chain.append(ProvenanceEntry(pid=pid, ppid=ppid, argv=argv))
@@ -105,7 +107,30 @@ def provenance_chain(*, max_depth: int = _PROVENANCE_DEPTH) -> list[ProvenanceEn
     return chain
 
 
+#: Windows has no ``/bin/ps``; the command line and parent pid come from psutil instead.
+_IS_WINDOWS = os.name == "nt"
+
+
+def _psutil_process(pid: int):
+    """The psutil handle for ``pid``, or None when it is gone, denied or psutil is unusable."""
+    try:
+        import psutil
+
+        return psutil.Process(pid)
+    except Exception:
+        return None  # unknown, never "safe": an empty argv matches no VOOL marker
+
+
 def _ps_command(pid: int) -> tuple[str, ...] | None:
+    if _IS_WINDOWS:
+        proc = _psutil_process(pid)
+        if proc is None:
+            return None
+        try:
+            argv = tuple(str(part) for part in proc.cmdline())
+        except Exception:
+            return None
+        return argv or None
     try:
         out = subprocess.run(
             ["/bin/ps", "-o", "command=", "-p", str(pid)],
@@ -120,6 +145,15 @@ def _ps_command(pid: int) -> tuple[str, ...] | None:
 
 
 def _ps_ppid(pid: int) -> int:
+    if _IS_WINDOWS:
+        proc = _psutil_process(pid)
+        if proc is None:
+            return 1  # unknown parent ends the walk, as on POSIX
+        try:
+            parent = proc.parent()  # None when the pid was reused by a newer process
+            return int(parent.pid) if parent is not None else 1
+        except Exception:
+            return 1
     try:
         out = subprocess.run(
             ["/bin/ps", "-o", "ppid=", "-p", str(pid)],
