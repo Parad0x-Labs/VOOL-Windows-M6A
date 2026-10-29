@@ -52,14 +52,15 @@ def system_taskkill() -> str:
 
     A bare ``taskkill`` is looked up through the app's folder, the current folder and PATH, so a
     planted copy there would run at every child stop. Only ``%SystemRoot%\\System32`` is trusted;
-    a missing, relative or drive-less SystemRoot, or no taskkill.exe there, fails closed and the
-    caller kills just its recorded child instead.
+    a missing, relative, drive-less or network-share SystemRoot, or no taskkill.exe there, fails
+    closed and the caller kills just its recorded child instead.
     """
     import ntpath
 
     root = os.environ.get("SystemRoot") or ""
     drive, rest = ntpath.splitdrive(root)
-    if not drive or not rest.startswith(("\\", "/")):
+    # A drive letter only: a \\server\share root would run a network copy of taskkill.
+    if len(drive) != 2 or drive[1] != ":" or not rest.startswith(("\\", "/")):
         raise OSError("SystemRoot is not an absolute Windows folder; taskkill is not trusted")
     exe = ntpath.join(root, "System32", "taskkill.exe")
     if not os.path.isfile(exe):
