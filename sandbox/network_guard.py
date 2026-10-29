@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import os
 import shlex
-from pathlib import PurePath
+from pathlib import PurePath, PureWindowsPath
+
+#: Patched by tests to drive the Windows rules on any platform.
+_WINDOWS = os.name == "nt"
 
 _NETWORK_BINARIES = {
     "curl",
@@ -69,6 +73,10 @@ def _basename(token: str) -> str:
     value = str(token or "").strip()
     if not value:
         return ""
+    if _WINDOWS:
+        # C:\...\curl.exe is curl: Windows paths split on either slash, and .exe names the same program
+        name = PureWindowsPath(value).name.lower()
+        return name[:-4] if name.endswith(".exe") else name
     return PurePath(value).name.lower()
 
 
@@ -94,6 +102,15 @@ def command_uses_network(argv: list[str]) -> bool:
 
 
 def parse_command(cmd: str) -> list[str]:
+    if _WINDOWS:
+        # A backslash is a path separator on Windows, never an escape: the POSIX split turned
+        # C:\Users\me\python.exe into C:Usersmepython.exe. Quotes still group words, and '#' is
+        # an ordinary character, as in shlex.split.
+        lexer = shlex.shlex(cmd, posix=True)
+        lexer.whitespace_split = True
+        lexer.escape = ""
+        lexer.commenters = ""
+        return list(lexer)
     return shlex.split(cmd, posix=True)
 
 
