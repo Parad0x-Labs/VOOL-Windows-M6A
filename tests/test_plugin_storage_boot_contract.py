@@ -140,7 +140,7 @@ def test_a_missing_folder_is_a_reported_state_not_an_error(home, monkeypatch) ->
 # --- denied ----------------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory modes")
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores directory modes")
 def test_a_denied_folder_serves_without_plugins_and_recovers_when_access_is_granted(
     home, monkeypatch
 ) -> None:
