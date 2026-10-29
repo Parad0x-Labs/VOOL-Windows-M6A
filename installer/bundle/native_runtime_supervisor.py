@@ -96,6 +96,11 @@ class NativeRuntimeSupervisor:
         mode = str(os.environ.get("VOOL_RUNTIME_MODE") or "wrapper").strip().lower()
         if mode == "self-contained":
             command = [sys.executable, "-m", "apps.vool_api_server"]
+        elif sys.platform == "win32":
+            # The Windows bundle ships Start_VOOL.bat; there is no bash. A missing .bat is refused
+            # by ensure_ready before anything is spawned.
+            starter = root / "Start_VOOL.bat"
+            command = [os.environ.get("ComSpec") or "cmd.exe", "/c", str(starter)]
         else:
             starter = root / "Start_VOOL.sh"
             command = ["bash", str(starter)]
@@ -247,6 +252,8 @@ class NativeRuntimeSupervisor:
             raise NativeRuntimeError("native runtime start command is empty")
         if self.command[0] == "bash" and len(self.command) > 1 and not Path(self.command[1]).is_file():
             raise NativeRuntimeError(f"runtime starter is missing: {self.command[1]}")
+        if len(self.command) == 3 and self.command[1].lower() == "/c" and not Path(self.command[2]).is_file():
+            raise NativeRuntimeError(f"runtime starter is missing: {self.command[2]}")
 
         log_dir = active_vool_home(self.env) / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
