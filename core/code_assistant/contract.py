@@ -12,6 +12,7 @@ the former in-process ``execute_proposal`` door was the second execution path an
 """
 from __future__ import annotations
 
+import ntpath
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -106,7 +107,8 @@ def _refuse_unconfined(value: str) -> None:
     text = str(value or "").strip()
     if not text:
         return
-    if text.startswith(("/", "~")) or text.startswith("\\\\"):
+    # `\x` is the root of the current drive and `C:x`, `C:/x` name a drive: none is workspace-relative.
+    if text.startswith(("/", "~", "\\")) or ntpath.splitdrive(text)[0]:
         raise ContractRefused(
             REASON_UNCONFINED_PATH,
             f"`{text}` is absolute or home-relative; coding-assistant paths must be workspace-relative.",
