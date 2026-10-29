@@ -4,6 +4,7 @@ import http.client
 import json
 import os
 import socket
+import sys
 import threading
 import time
 import unittest
@@ -216,7 +217,18 @@ class BrainHiveWatchServerTests(unittest.TestCase):
         self.assertEqual(config.ssl_certfile, "/tmp/watch-cert.pem")
         self.assertEqual(config.ssl_keyfile, "/tmp/watch-key.pem")
         self.assertEqual(config.ssl_ca_certs, "/tmp/watch-ca.pem")
-        server.run.assert_called_once_with()
+        if sys.platform == "win32":
+            # Windows runs uvicorn on the pre-bound SO_EXCLUSIVEADDRUSE sockets of
+            # network.listen_policy; the test closes the socket so it leaks none.
+            server.run.assert_called_once()
+            (sock,) = server.run.call_args.kwargs["sockets"]
+            try:
+                self.assertNotEqual(sock.getsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE), 0)
+            finally:
+                sock.close()
+        else:
+            # POSIX keeps uvicorn's own bind path: run() with no sockets.
+            server.run.assert_called_once_with()
 
     def test_fetch_dashboard_falls_back_to_second_upstream(self) -> None:
         calls: list[tuple[str, str | None]] = []

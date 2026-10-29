@@ -5,6 +5,7 @@ import importlib
 import json
 import socket
 import ssl
+import sys
 import tempfile
 import unittest
 import uuid
@@ -2121,7 +2122,18 @@ def test_meet_main_runs_uvicorn_with_factory_app_and_tls_settings() -> None:
     assert kwargs["ssl_ca_certs"] == "ca.pem"
     assert kwargs["ssl_cert_reqs"] == ssl.CERT_REQUIRED
     assert fake_uvicorn.Config.call_args.args[0] is unittest.mock.sentinel.app
-    fake_server.run.assert_called_once_with()
+    if sys.platform == "win32":
+        # Windows runs uvicorn on the pre-bound SO_EXCLUSIVEADDRUSE sockets of
+        # network.listen_policy; the test closes the socket so it leaks none.
+        assert fake_server.run.call_count == 1
+        (sock,) = fake_server.run.call_args.kwargs["sockets"]
+        try:
+            assert sock.getsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE) != 0
+        finally:
+            sock.close()
+    else:
+        # POSIX keeps uvicorn's own bind path: run() with no sockets.
+        fake_server.run.assert_called_once_with()
 
 
 def test_meet_main_hands_every_resolved_address_to_uvicorn_sockets(monkeypatch):
