@@ -106,6 +106,7 @@ def test_a_bounded_ci_step_stops_its_own_child_without_posix_signals(tmp_path, m
         alive_at_taskkill.append(psutil.pid_exists(int(command[2])))
 
     with monkeypatch.context() as windows:  # undone before pytest formats any failure
+        trust_system32(windows)
         windows.setattr(local_ci_reproduction.os, "name", "nt")
         windows.setattr(local_ci_reproduction.os, "killpg", _no_killpg, raising=False)
         windows.setattr(local_ci_reproduction.subprocess, "run", _record_taskkill)
@@ -118,7 +119,7 @@ def test_a_bounded_ci_step_stops_its_own_child_without_posix_signals(tmp_path, m
 
     assert result["exit"] is None and result["timed_out"] is True
     assert result["stopped"] is True
-    assert taskkill_calls == [["taskkill", "/PID", str(result["pid"]), "/T", "/F"]]
+    assert taskkill_calls == [[TASKKILL, "/PID", str(result["pid"]), "/T", "/F"]]
     assert alive_at_taskkill == [True], "taskkill /T ran after the root was already gone"
 
 

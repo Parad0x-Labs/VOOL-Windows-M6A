@@ -6,6 +6,7 @@ import subprocess
 import pytest
 
 from ops.restart_repro import harness
+from tests._windows_system32 import TASKKILL, trust_system32
 
 
 class _FakeProcess:
@@ -50,6 +51,7 @@ def calls(monkeypatch):
         recorded["run"].append(list(args))
         return subprocess.CompletedProcess(args, 0, b"", b"")
 
+    trust_system32(monkeypatch)
     monkeypatch.setattr(harness.os, "kill", fake_os_kill)
     monkeypatch.setattr(harness.subprocess, "run", fake_run)
     return recorded
@@ -64,7 +66,7 @@ def test_windows_stop_uses_taskkill_tree_then_kill_without_sigkill(tmp_path, mon
     daemon.terminate()
 
     assert calls["os_kill"] == []
-    assert calls["run"] == [["taskkill", "/PID", "424242", "/T", "/F"]]
+    assert calls["run"] == [[TASKKILL, "/PID", "424242", "/T", "/F"]]
     assert process.killed is True
     assert daemon.process is None
 
@@ -83,6 +85,20 @@ def test_windows_stop_survives_taskkill_failure(tmp_path, monkeypatch, calls):
     daemon.terminate()
 
     assert calls["os_kill"] == []
+    assert process.killed is True
+    assert daemon.process is None
+
+
+def test_windows_stop_without_a_trusted_system32_runs_no_bare_taskkill(tmp_path, monkeypatch, calls):
+    monkeypatch.setattr(harness, "_IS_WINDOWS", True, raising=False)
+    monkeypatch.delattr(signal, "SIGKILL", raising=False)
+    monkeypatch.setenv("SystemRoot", "")  # System32 can't be trusted: never a taskkill found on PATH
+    process = _FakeProcess()
+    daemon = _daemon(tmp_path, process)
+
+    daemon.terminate()
+
+    assert calls["run"] == []
     assert process.killed is True
     assert daemon.process is None
 

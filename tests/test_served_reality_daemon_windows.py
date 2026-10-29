@@ -12,6 +12,7 @@ import pytest
 
 from ops.served_reality import daemon
 from ops.served_reality.classify import BenchError
+from tests._windows_system32 import TASKKILL, trust_system32
 
 
 class _FakeProcess:
@@ -30,6 +31,7 @@ def _forbid_posix_paths(monkeypatch: pytest.MonkeyPatch, calls: list[list[str]])
     def fail_kill(pid, sig):
         raise AssertionError(f"os.kill({pid}, {sig}) must not be used on Windows")
 
+    trust_system32(monkeypatch)
     monkeypatch.setattr(daemon, "_IS_WINDOWS", True)
     monkeypatch.setattr(daemon.subprocess, "run", fake_run)
     monkeypatch.setattr(daemon.os, "kill", fail_kill)
@@ -45,7 +47,7 @@ def test_windows_terminate_tree_uses_taskkill_and_waits_for_exit(monkeypatch):
 
     def fake_run(cmd, *args, **kwargs):
         calls.append([str(part) for part in cmd])
-        if cmd[0] == "taskkill":
+        if cmd[0] == TASKKILL:
             state["alive"] = False
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
@@ -55,7 +57,7 @@ def test_windows_terminate_tree_uses_taskkill_and_waits_for_exit(monkeypatch):
 
     daemon.terminate_tree(4242, term_wait_s=2.0, process=process)
 
-    assert calls == [["taskkill", "/PID", "4242", "/T", "/F"]]
+    assert calls == [[TASKKILL, "/PID", "4242", "/T", "/F"]]
     assert process.killed is False
 
 
@@ -77,7 +79,7 @@ def test_windows_terminate_tree_falls_back_to_kill_when_still_alive(monkeypatch)
 
     daemon.terminate_tree(4242, term_wait_s=0.2, process=process)
 
-    assert calls == [["taskkill", "/PID", "4242", "/T", "/F"]]
+    assert calls == [[TASKKILL, "/PID", "4242", "/T", "/F"]]
     assert process.killed is True
 
 

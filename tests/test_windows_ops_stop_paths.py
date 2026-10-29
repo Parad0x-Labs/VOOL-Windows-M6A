@@ -12,6 +12,8 @@ import os
 import signal
 import sys
 
+from tests._windows_system32 import TASKKILL, trust_system32
+
 
 class _NtOs:
     """`os` as this module sees it on Windows; pathlib elsewhere keeps the real platform."""
@@ -100,6 +102,7 @@ def test_a_wall_budget_overrun_stops_its_own_child_tree_on_windows(tmp_path, mon
         return child
 
     with monkeypatch.context() as windows:  # undone before pytest formats any failure
+        trust_system32(windows)
         windows.setattr(local_ci_reproduction, "os", _NtOs())
         windows.setattr(local_ci_reproduction.subprocess.Popen, "send_signal", _windows_send_signal)
         windows.setattr(local_ci_reproduction.subprocess.Popen, "kill",  # Windows: kill is terminate
@@ -113,5 +116,5 @@ def test_a_wall_budget_overrun_stops_its_own_child_tree_on_windows(tmp_path, mon
         )
 
     assert payload["runner_interruption"] == "wall-budget-exceeded"
-    assert taskkill_calls == [["taskkill", "/PID", str(children[0].pid), "/T", "/F"]]
+    assert taskkill_calls == [[TASKKILL, "/PID", str(children[0].pid), "/T", "/F"]]
     assert children[0].poll() is not None
