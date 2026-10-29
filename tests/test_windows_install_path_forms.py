@@ -529,3 +529,89 @@ def test_a_root_that_cannot_be_canonicalized_fails_closed(
     assert captured == [], "a refused root must not run any stop command"
     assert not any("taskkill" in " ".join(args) for args in captured)
     assert any("canonical" in message.lower() for message in logs), logs
+
+
+def test_the_canonical_parent_check_is_gated_on_the_m_argument(tmp_path: Path) -> None:
+    """Both parent spellings of the module rule sit inside the ``-m apps.vool_api_server`` gate.
+
+    PowerShell gives ``-and`` and ``-or`` equal precedence and evaluates left to right, so a
+    branch written ``(gate -and rawParent) -or canonicalParent`` runs the canonical parent
+    check for every python, gated on nothing -- and ``$parentExe`` is assigned inside the raw
+    parent check, so a python that never ran ``-m`` reads a ``$parentExe`` left over from an
+    earlier pipeline item. The rendered predicate must open one ``-and (`` group right after
+    the ``-m`` match whose matching close comes only after the canonical parent check, so both
+    parent checks and the assignment feeding ``Canon`` sit inside the gate.
+    """
+    command = _listener_command(tmp_path / "VOOL checkout")
+    gate = "([string]$_.CommandLine -match $moduleCommand)"
+    start = command.index(gate) + len(gate)
+    opener = " -and ("
+    assert command[start : start + len(opener)] == opener, command[start : start + 40]
+    body = start + len(opener) - 1  # the "(" of the -and group itself
+    depth = 1
+    i = body + 1
+    while depth and i < len(command):
+        char = command[i]
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        i += 1
+    assert depth == 0, "the -and group opened after the -m gate is never closed"
+    group = command[body:i]
+    assert "$parentExe = [string](Get-CimInstance" in group, group
+    assert "(Canon $parentExe) -match $exeUnderRoot" in group, group
+
+
+def test_a_foreign_python_after_a_module_listener_is_not_owned(tmp_path: Path) -> None:
+    """A python that never ran ``-m apps.vool_api_server`` stays foreign.
+
+    The module rule's ``$parentExe`` is the parent of the process being tested, so it must
+    never outlive that process: the real predicate runs in Windows PowerShell over a pipeline
+    of rows -- first this install's module listener (its venv launcher parent is under the
+    root), then a foreign python with no ``-m`` argument at all -- and only the listener may
+    be matched. With the canonical parent check outside the ``-m`` gate the foreign row is
+    claimed through the parent the listener's row left in ``$parentExe``.
+    """
+    root = tmp_path / "VOOL checkout"
+    launcher = root / ".venv" / "Scripts" / "pythonw.exe"
+    launcher.parent.mkdir(parents=True)
+    launcher.write_bytes(b"MZ")
+
+    command = _listener_command(root)
+    markers = (command.find("$p = Get-NetTCPConnection"), command.find("$v = Get-CimInstance"))
+    marker = min(found for found in markers if found >= 0)
+    assert marker > 0, command
+    setup = command[:marker]
+    module = '"C:\\Python312\\pythonw.exe" -m apps.vool_api_server --port 11435'
+    foreign = '"C:\\Python\\python.exe" "C:\\Elsewhere\\worker.py"'
+    ps = (
+        setup
+        + "$launcher = [pscustomobject]@{Name='pythonw.exe';ExecutablePath=" + _ps_literal(str(launcher))
+        + ";CommandLine='';ProcessId=4200;ParentProcessId=0}; "
+        + "$listener = [pscustomobject]@{Name='pythonw.exe';ExecutablePath="
+        + _ps_literal(r"C:\Python312\pythonw.exe")
+        + ";CommandLine=" + _ps_literal(module)
+        + ";ProcessId=4100;ParentProcessId=4200}; "
+        + "$foreign = [pscustomobject]@{Name='python.exe';ExecutablePath="
+        + _ps_literal(r"C:\Python\python.exe")
+        + ";CommandLine=" + _ps_literal(foreign)
+        + ";ProcessId=4300;ParentProcessId=0}; "
+        + "$all = @($launcher, $listener, $foreign); "
+        + "function Get-CimInstance { [CmdletBinding()] param([string]$ClassName, [string]$Filter); "
+        + "if ($Filter -match 'ProcessId=(\\d+)') { $requestedId = [int]$Matches[1]; "
+        + "return $all | Where-Object { [int]$_.ProcessId -eq $requestedId } | Select-Object -First 1 }; "
+        + "return $all }; "
+        + "$owned = @($all | Where-Object {" + _predicate(command) + "} "
+        + "| ForEach-Object { [int]$_.ProcessId }); "
+        + "'listener-owned=' + [string]($owned -contains 4100); "
+        + "'foreign-owned=' + [string]($owned -contains 4300)"
+    )
+    result = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", ps],
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, f"{result.stderr or result.stdout}\nPowerShell={ps}"
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    observed = dict(line.split("=", 1) for line in lines)
+    assert observed == {"listener-owned": "True", "foreign-owned": "False"}, result.stdout
