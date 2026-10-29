@@ -14,6 +14,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from core import safe_git
 from tests import _source_guard as guard
 
@@ -93,10 +95,9 @@ def test_the_corpus_loader_runs_the_same_trusted_git_hardened(monkeypatch) -> No
     fake = Path("/trusted/git")
     calls = _capture_run(monkeypatch, module, fake)
     monkeypatch.setattr(module._safe_git, "trusted_git_executable", lambda: fake)
-    try:
+    # The empty fake corpus must still fail the digest pin: the loader keeps validating.
+    with pytest.raises(module.CorpusIntegrityError, match="does not match the digest"):
         module.load_frozen_corpus(_SCRIPT.parents[1])
-    except module.CorpusIntegrityError:
-        pass  # the empty fake corpus fails the digest pin; only the git call is under test here
     (call,) = calls
     hardening = safe_git.hardening_args()
     assert call["argv"][: 1 + len(hardening)] == [str(fake), *hardening]
@@ -123,3 +124,22 @@ def test_windows_refuses_a_program_files_that_is_relative_or_a_network_share(tmp
     for program_files in ("Program Files", "\\\\server\\share", "//server/share"):
         found = safe_git.trusted_git_executable(os_name="nt", environ={"ProgramFiles": program_files})
         assert found is None, program_files
+
+
+
+def test_windows_prefers_the_64_bit_program_files_over_a_32_bit_python_view(tmp_path, monkeypatch) -> None:
+    # Under a 32-bit Python on 64-bit Windows %ProgramFiles% is "Program Files (x86)", while a
+    # 64-bit Git for Windows lives under %ProgramW6432%.
+    if sys.platform == "win32":
+        native, x86 = tmp_path / "native", tmp_path / "x86"
+    else:
+        monkeypatch.chdir(tmp_path)  # drive-shaped names are relative file names off Windows
+        native, x86 = Path("C:\\native"), Path("C:\\x86")
+    for root in (native, x86):
+        (root / "Git" / "cmd").mkdir(parents=True)
+        (root / "Git" / "cmd" / "git.exe").write_bytes(b"")
+    environ = {"ProgramW6432": str(native), "ProgramFiles": str(x86)}
+    found = safe_git.trusted_git_executable(os_name="nt", environ=environ)
+    assert found == native / "Git" / "cmd" / "git.exe"
+    del environ["ProgramW6432"]
+    assert safe_git.trusted_git_executable(os_name="nt", environ=environ) == x86 / "Git" / "cmd" / "git.exe"
