@@ -38,7 +38,7 @@ from __future__ import annotations
 import fnmatch
 import os
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -124,6 +124,38 @@ def hardening_args() -> list[str]:
         "-c", "maintenance.auto=false",
         "-c", "gc.auto=0",
     ]
+
+
+_POSIX_TRUSTED_GITS = (Path("/usr/bin/git"), Path("/bin/git"), Path("/usr/local/bin/git"))
+
+
+def trusted_git_executable(*, os_name: str | None = None,
+                           environ: Mapping[str, str] | None = None) -> Path | None:
+    """The git a proof harness may trust: a system install location, never whatever PATH finds.
+
+    On Windows that is Git for Windows under %ProgramFiles%. The POSIX spellings are not tried
+    there: ``/usr/bin/git`` would mean ``\\usr\\bin\\git`` on the current drive, a folder any user
+    may create. None when no trusted git is installed; callers fail closed."""
+    if (os.name if os_name is None else os_name) == "nt":
+        program_files = (os.environ if environ is None else environ).get("ProgramFiles", "")
+        candidates = (Path(program_files) / "Git" / "cmd" / "git.exe",) if program_files else ()
+    else:
+        candidates = _POSIX_TRUSTED_GITS
+    return next((path for path in candidates if path.is_file()), None)
+
+
+def trusted_git_env(git: Path, *, os_name: str | None = None,
+                    environ: Mapping[str, str] | None = None) -> dict[str, str]:
+    """A minimal environment for trusted_git_executable(): nothing inherited but what Windows
+    needs to start a program, then scrubbed by safe_env()."""
+    if (os.name if os_name is None else os_name) == "nt":
+        source = os.environ if environ is None else environ
+        base = {"PATH": str(git.parent), "LC_ALL": "C"}
+        if source.get("SystemRoot"):
+            base["SystemRoot"] = source["SystemRoot"]
+    else:
+        base = {"PATH": "/usr/bin:/bin:/usr/local/bin", "LC_ALL": "C"}
+    return safe_env(base)
 
 
 def executable_local_config(cwd: Path, *, timeout: float = 20) -> list[str]:
