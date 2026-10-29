@@ -257,4 +257,26 @@ public sealed class JournalHandleTests : IDisposable
         Assert.Equal(BeginOnly(craftedId), File.ReadAllBytes(craftedFile));
         Assert.Equal(craftedFile, Assert.Single(Directory.GetFiles(craftedJournal)));
     }
+
+    // The start check that the journal lies outside every flagged folder is made on the folder the
+    // journal holds, not on the path again (c0b security review, minor 1): a junction above the
+    // journal that pointed into a flagged folder at Open and was re-pointed before the check would
+    // otherwise pass it.
+    [Fact]
+    public void The_journal_outside_flagged_check_judges_the_held_folder()
+    {
+        var flagged = Path.Combine(home, "flagged");
+        Directory.CreateDirectory(Path.Combine(flagged, "journal"));
+        using var registry = new RootRegistry();
+        registry.AddFlaggedRoot(flagged);
+        TestSupport.CreateJunction(BrokerFolder, flagged);
+        var journal = Open(JournalFolder);
+        Assert.True(journal.Available);
+        Directory.Delete(BrokerFolder);
+        Directory.CreateDirectory(JournalFolder);
+
+        // By path the journal is now outside; the folder it holds is inside the flagged one.
+        registry.ValidateJournalOutsideFlagged(JournalFolder);
+        Assert.Equal("journal_inside_flagged", Assert.Throws<BrokerRefusal>(() => registry.ValidateJournalOutsideFlagged(journal)).Code);
+    }
 }
