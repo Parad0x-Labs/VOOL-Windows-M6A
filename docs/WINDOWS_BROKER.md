@@ -50,12 +50,19 @@ with approval ingress; it starts only after **both Job 6 and Job 7 have merged**
 
 - The VOOL API process starts `VoolBroker.exe` as its own child, inside a Job object the API holds
   with `KILL_ON_JOB_CLOSE`, so the broker cannot outlive the API. When the supervisor restarts the
-  API, a new broker starts with a new pipe and secret; nothing carries over. Wiring this into
-  installer/bundle/bundle_supervisor.py, installer/bundle/vool.iss and Start_VOOL.bat is phase B.
+  API, a new broker starts with a new pipe and secret; nothing carries over. Phase B built this:
+  apps/vool_api_server.py calls `core.windows_broker.process.start_for_api` at start-up and stops
+  the broker in its exit path. The broker is assigned to the Job before it is sent its bootstrap.
+  The start runs in the background, so the API binds its port without waiting on the broker, and
+  a stop during the start ends it at once. A broker that is missing, refused or slow (10 s to take
+  its bootstrap and send its start line) is logged and VOOL runs without it, because nothing is
+  routed through it before Step 3. The flagged folders are the entries of
+  VOOL_WINDOWS_DISPOSABLE_WORKSPACES as written, so the broker applies its own checks.
   As built, the broker also exits when its stdin closes or when the API process (matched by id
   and creation time) exits (Program.cs:79-82).
-- Program files: `{app}\broker\` in the installed layout, `windows\broker\bin\` in a source
-  checkout. The broker never writes in the program folder at run time.
+- Program files: `{app}\broker\` in the installed layout (installer/bundle/vool.iss, staged by
+  build_bundle.ps1), `windows\broker\publish\` in a source checkout (windows/broker/publish.ps1,
+  git-ignored). A checkout without a published broker starts VOOL without one. The broker never writes in the program folder at run time.
 - State: the journal (section 7.4) in `VOOL_HOME\broker\journal\`, a folder of its own, separate
   from the workspace and notes that Job 7 places under VOOL_HOME. In the installed app VOOL_HOME is
   computed by installer/bundle/vool-launch.cmd:13-17 and passed on by bundle_supervisor.py:272
@@ -635,9 +642,13 @@ contracts-doc round at Phase C.
 - There is no `VoolConfine` project and no launcher code. The confined launcher (section 7) is not
   built in this PR; it is later work.
 - .NET 10, x64 (`net10.0-windows`). The SDK is pinned to 10.0.402 in `windows/broker/global.json`
-  and the test packages in `Directory.Packages.props`. The Phase A build is framework-dependent;
-  the self-contained publish decided in section 10 belongs to shipping (Phase B).
+  and the test packages in `Directory.Packages.props`. Builds and tests are framework-dependent.
+  windows/broker/publish.ps1 publishes self-contained for win-x64 (Phase B), pinned to runtime
+  10.0.13 (the one SDK 10.0.402 bundles), with `DisableTransitiveFrameworkReferenceDownloads` so
+  the ASP.NET Core and Windows Desktop runtime packs the broker never uses are not needed.
 - `core/windows_broker/client.py`: the Python client. Nothing imports it before Step 3.
+- `core/windows_broker/process.py`: starts and stops the broker with the API (Phase B). It is the
+  one module outside the tests that production code may import (tests/windows_broker/test_no_imports.py).
 - Tests on real Windows (a non-admin Windows 11 development machine, and the hosted Windows runner
   in windows-broker.yml), each against the real broker, never mocks. Built in this PR:
   - escapes: `..`; a junction and a symlink inside a root pointing out; one swapped in during a
