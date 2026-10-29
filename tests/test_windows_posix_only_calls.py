@@ -13,6 +13,7 @@ import signal
 
 from core.execution.artifacts import atomic_write_text
 from core.vool_browser import sessions
+from tests._windows_system32 import TASKKILL, trust_system32
 
 
 def test_an_atomic_write_leaves_exactly_the_reviewed_bytes(tmp_path) -> None:
@@ -136,6 +137,8 @@ def _stop_a_rig_daemon_as_windows(monkeypatch, rig_module, daemon, attribute) ->
     taskkill_calls: list[list[str]] = []
     try:
         with monkeypatch.context() as windows:  # undone before pytest formats any failure
+            # The rigs stop through ops.process_tree, which runs System32's taskkill only (#97).
+            trust_system32(windows)
             windows.setattr(rig_module.os, "name", "nt")
             windows.delattr(rig_module.signal, "SIGKILL", raising=False)
             windows.setattr(rig_module.signal, "CTRL_BREAK_EVENT", signal.SIGTERM, raising=False)
@@ -147,7 +150,7 @@ def _stop_a_rig_daemon_as_windows(monkeypatch, rig_module, daemon, attribute) ->
             child.terminate()
         child.wait(timeout=15)
     assert getattr(daemon, attribute) is None
-    assert taskkill_calls == [["taskkill", "/PID", str(child.pid), "/T", "/F"]]
+    assert taskkill_calls == [[TASKKILL, "/PID", str(child.pid), "/T", "/F"]]
 
 
 def test_the_served_skill_rig_stops_its_daemon_tree_without_posix_signals(tmp_path, monkeypatch) -> None:
