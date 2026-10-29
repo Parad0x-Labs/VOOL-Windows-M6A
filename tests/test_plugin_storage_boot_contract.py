@@ -53,6 +53,24 @@ def _registered_plugin_sources() -> set[str]:
     return {str(getattr(c, "source", "")) for c in tool_registry.registry_map().values()}
 
 
+@contextlib.contextmanager
+def _denied(folder: Path):
+    """Refuse the folder to this process: mode 000 on POSIX, an ACL deny entry on Windows (which
+    has no folder mode bits). Access comes back when the block ends."""
+    if os.name == "nt":
+        from tests._windows_acl import LIST, refused
+
+        with refused(folder, LIST):
+            yield
+        return
+    mode = stat.S_IMODE(folder.stat().st_mode)
+    folder.chmod(0)
+    try:
+        yield
+    finally:
+        folder.chmod(mode)
+
+
 class _Stall:
     """Swap the probe for an interpreter that sleeps; count every probe the parent starts."""
 
@@ -139,24 +157,6 @@ def test_a_missing_folder_is_a_reported_state_not_an_error(home, monkeypatch) ->
 
 
 # --- denied ----------------------------------------------------------------------------------
-
-
-@contextlib.contextmanager
-def _denied(folder: Path):
-    """Refuse the folder to this process: mode 000 on POSIX, an ACL deny entry on Windows (which
-    has no folder mode bits). Access comes back when the block ends."""
-    if os.name == "nt":
-        from tests._windows_acl import LIST, refused
-
-        with refused(folder, LIST):
-            yield
-        return
-    mode = stat.S_IMODE(folder.stat().st_mode)
-    folder.chmod(0)
-    try:
-        yield
-    finally:
-        folder.chmod(mode)
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory modes")
