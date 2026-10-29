@@ -17,10 +17,10 @@ from __future__ import annotations
 import json
 import threading
 from datetime import datetime, timedelta, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 
-from ._caldav_service import ALLOCATED_PORT
+from ._caldav_service import ALLOCATED_PORT, FixtureHTTPServer
 
 
 class JsonCalendarState:
@@ -336,7 +336,7 @@ def start_json_calendar_fixture(*, dialect: str, calendars: dict[str, str] | Non
         (_JsonHandler,),
         {"state": state, "dialect": dialect},
     )
-    server = ThreadingHTTPServer(("127.0.0.1", preferred_port or 0), handler_class)
+    server = FixtureHTTPServer(("127.0.0.1", preferred_port or 0), handler_class)
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server, state, f"http://127.0.0.1:{server.server_address[1]}/"

@@ -36,6 +36,7 @@ it never imports the adapter it checks.
 from __future__ import annotations
 
 import re
+import sys
 import threading
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -47,6 +48,18 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 _DAV = "DAV:"
 _CALDAV = "urn:ietf:params:xml:ns:caldav"
 ALLOCATED_PORT = 12462  # the mission's allocated test port; falls back if occupied
+
+
+class FixtureHTTPServer(ThreadingHTTPServer):
+    """A fixture server whose bind fails when another listener already holds the port.
+
+    HTTPServer turns on SO_REUSEADDR. On POSIX that only lets a port in TIME_WAIT be rebound, but
+    on Windows it lets a second socket bind a port another server is listening on, so two fixtures
+    shared 127.0.0.1:12462 and the occupied-port fallback below never ran. Windows binds without it;
+    POSIX keeps it so a restarted fixture can take its port back.
+    """
+
+    allow_reuse_address = sys.platform != "win32"
 _WEEKDAYS = ("MO", "TU", "WE", "TH", "FR", "SA", "SU")
 #: Properties an expanded instance does not carry (its identity and times are written fresh, in UTC).
 _INSTANCE_REWRITTEN = frozenset({"DTSTART", "DTEND", "DURATION", "RECURRENCE-ID", "RRULE", "RDATE", "EXRULE", "EXDATE"})
@@ -778,7 +791,7 @@ def start_caldav_fixture(*, calendars: dict[str, str] | None = None, preferred_p
     server = None
     for attempt in (0, 1):
         try:
-            server = ThreadingHTTPServer(("127.0.0.1", port), handler_factory)
+            server = FixtureHTTPServer(("127.0.0.1", port), handler_factory)
             break
         except OSError:
             if attempt == 1 or port == 0:
@@ -791,4 +804,4 @@ def start_caldav_fixture(*, calendars: dict[str, str] | None = None, preferred_p
     return server, state, f"http://127.0.0.1:{actual_port}/", actual_port
 
 
-__all__ = ["ALLOCATED_PORT", "CalDavState", "UidConflict", "start_caldav_fixture"]
+__all__ = ["ALLOCATED_PORT", "CalDavState", "FixtureHTTPServer", "UidConflict", "start_caldav_fixture"]
