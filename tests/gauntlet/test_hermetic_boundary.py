@@ -276,3 +276,33 @@ def test_child_env_strips_the_developers_shell_state() -> None:
     assert env["VOOL_HOME"] == "/tmp/gauntlet-fake-home"
     assert env["VOOL_DISABLE_MESH_DAEMON"] == "1"
     assert env["VOOL_DAEMON_BIND_PORT"] == "49999"
+
+
+#: Every cloud-provider credential name the runtime reads: the canonical table
+#: (core/cloud_providers.py PROVIDERS.env_names) plus the alias sets that live only in
+#: core/runtime_provider_defaults.py (generic remote, tether). Restated, never imported: this file
+#: must not import the runtime. Keep in sync with runner._STRIPPED.
+_CLOUD_CREDENTIALS = (
+    "OPENAI_API_KEY", "VOOL_OPENAI_API_KEY", "VOOL_REMOTE_API_KEY", "VOOL_CLOUD_API_KEY",
+    "OPENROUTER_API_KEY", "VOOL_OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "VOOL_ANTHROPIC_API_KEY",
+    "GROQ_API_KEY", "VOOL_GROQ_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "VOOL_GEMINI_API_KEY",
+    "DEEPSEEK_API_KEY", "VOOL_DEEPSEEK_API_KEY", "KIMI_API_KEY", "MOONSHOT_API_KEY", "VOOL_KIMI_API_KEY",
+    "TETHER_API_KEY", "VOOL_TETHER_API_KEY", "VOOL_CUSTOM_API_KEY", "VOOL_USEPOD_TOKEN",
+)
+
+
+def test_child_env_strips_cloud_credentials_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hermeticity: an inherited cloud key registered a REAL paid lane inside the child.
+
+    On the Windows baseline the child auto-registered openai-compatible-remote:gpt-4.1-mini and
+    made it the default provider only because the invoking shell exported OPENAI_API_KEY, inside a
+    rig whose contract is no internet and no developer shell state. No key may reach the child.
+    """
+    for name in _CLOUD_CREDENTIALS:
+        monkeypatch.setenv(name, "sk-gauntlet-must-not-leak")
+
+    env = child_env(Path("/tmp/gauntlet-fake-home"), port=49999)
+
+    leaked = sorted(name for name in _CLOUD_CREDENTIALS if name in env)
+    assert not leaked, f"cloud credentials reached the hermetic child: {leaked}"
+    assert "PATH" in env, "the strip is targeted at credentials, not the whole environment"
