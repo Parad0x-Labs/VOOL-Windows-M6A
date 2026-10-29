@@ -6,14 +6,16 @@ override: a test run, lint run or command ends ``sandbox_unavailable`` with noth
 The owner chose to keep that refusal (option A, 28 Oct 2026; the test list is in
 jobs/windows-run-tools-decision/OPTION-A-PLAN.md).
 
-A test that drives a run passes each run step's result through ``stop_if_windows_refused``. On
-Mac and Linux it returns the result untouched, so every later line runs exactly as before. On
-Windows, inside a test marked ``@stops_at_windows_run_refusal``, a refused step is checked for
-what the refusal must look like (the Windows reason, nothing executed, no workspace change
+A test that drives a run passes each step's result through ``stop_if_windows_refused`` with
+the step's intent. On Mac and Linux it returns the result untouched, so every later line runs
+exactly as before. On Windows, inside a test marked ``@stops_at_windows_run_refusal``, a refused
+RUN step (run tests, run lint or run command, also as a repo or code-task step's own intent) is
+checked for what the refusal must look like (the Windows reason, nothing executed, no workspace change
 recorded) and then ``WindowsRefusedTheRun`` is raised; the decorator catches that one exception
 and ends the test there, so the test passes only after the refusal was checked. A test without
 the decorator gets its result back untouched on Windows too, so a test that expects a refusal
-itself is never cut short.
+itself is never cut short. A refused step that is not a run (a write, diff or rollback) also
+comes back untouched, so the test's own assertions fail on it instead of ending it.
 """
 from __future__ import annotations
 
@@ -44,9 +46,21 @@ def _fields(result) -> tuple[str, dict, str]:
     return str(getattr(result, "status", "") or ""), details, text
 
 
-def stop_if_windows_refused(result):
-    """Return ``result`` unchanged, unless this is Windows, the test is marked, and the step was refused."""
-    if not WINDOWS or not _STOPS_HERE.get():
+RUN_INTENTS = frozenset({"workspace.run_tests", "workspace.run_lint", "sandbox.run_command"})
+
+_STEP_DOORS = frozenset({"repo.step", "code.task.step"})
+
+
+def _is_run_step(intent: str, arguments: dict | None) -> bool:
+    if intent in _STEP_DOORS:
+        intent = str((arguments or {}).get("intent") or "")
+    return intent in RUN_INTENTS
+
+
+def stop_if_windows_refused(result, intent: str, arguments: dict | None = None):
+    """Return ``result`` unchanged, unless this is Windows, the test is marked, the step is a run
+    and the step was refused."""
+    if not WINDOWS or not _STOPS_HERE.get() or not _is_run_step(intent, arguments):
         return result
     status, details, text = _fields(result)
     tool_result = details.get("tool_result") if isinstance(details.get("tool_result"), dict) else {}
@@ -62,9 +76,6 @@ def stop_if_windows_refused(result):
     raise WindowsRefusedTheRun(status)
 
 
-RUN_INTENTS = frozenset({"workspace.run_tests", "workspace.run_lint", "sandbox.run_command"})
-
-
 def stop_if_journal_shows_windows_refusal(journal: dict) -> None:
     """The same check for a served rig, whose run happens inside the server: read the code
     task journal's first run step, the one every later stage of the task depends on."""
@@ -73,7 +84,8 @@ def stop_if_journal_shows_windows_refusal(journal: dict) -> None:
         if step.get("intent") in RUN_INTENTS:
             result = step.get("result") or {}
             stop_if_windows_refused({"status": result.get("status", ""),
-                                     "details": {"executed": step.get("executed"), "tool_result": result}})
+                                     "details": {"executed": step.get("executed"), "tool_result": result}},
+                                    step["intent"])
             return
 
 

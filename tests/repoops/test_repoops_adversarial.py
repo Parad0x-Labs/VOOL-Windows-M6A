@@ -61,7 +61,7 @@ def _to_repair_stage(root: Path, forge: RecordedForge, ctx: dict) -> str:
     sid = _open(root, ctx, pull_request="7")
     door("repo.inspect", {"repo_session_id": sid}, ctx)
     door("repo.bind", {"repo_session_id": sid}, ctx)
-    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}}, ctx))
+    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}}, ctx), "workspace.run_tests")
     door(
         "repo.diagnose",
         {"repo_session_id": sid, "path": "calc.py", "reason": "add subtracts", "evidence_step_id": "red"},
@@ -162,7 +162,7 @@ def test_gate0_refuses_a_repair_with_no_independent_reviewer_before_any_model_ca
     sid = opened.details["repo_session_id"]
     door("repo.inspect", {"repo_session_id": sid}, ctx)
     door("repo.bind", {"repo_session_id": sid}, ctx)
-    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}}, ctx))
+    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}}, ctx), "workspace.run_tests")
     door(
         "repo.diagnose",
         {"repo_session_id": sid, "path": "calc.py", "reason": "add subtracts", "evidence_step_id": "red"},
@@ -337,7 +337,7 @@ def _finish_to_authorize(root: Path, sid: str, ctx: dict) -> None:
         },
         ctx,
     )
-    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "green", "intent": "workspace.run_tests", "arguments": {}}, ctx))
+    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "green", "intent": "workspace.run_tests", "arguments": {}}, ctx), "workspace.run_tests")
     door("repo.review", {"repo_session_id": sid, "verdict": "approve"}, ctx)
     door("repo.git", {"repo_session_id": sid, "operation": "commit", "message": "repair"}, ctx)
 
@@ -367,7 +367,7 @@ def test_a_review_cannot_approve_without_a_green_run_this_session_executed(world
 
     # Reach the review stage honestly with a green run, then regress the repair and re-run: the
     # session is AT review and the last executed run is red, which is the second gate.
-    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "green", "intent": "workspace.run_tests", "arguments": {}}, ctx))
+    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "green", "intent": "workspace.run_tests", "arguments": {}}, ctx), "workspace.run_tests")
     from tests.repoops._harness import BUGGY
 
     door(
@@ -380,7 +380,7 @@ def test_a_review_cannot_approve_without_a_green_run_this_session_executed(world
         },
         ctx,
     )
-    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "red2", "intent": "workspace.run_tests", "arguments": {}}, ctx))
+    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "red2", "intent": "workspace.run_tests", "arguments": {}}, ctx), "workspace.run_tests")
 
     refused = door("repo.review", {"repo_session_id": sid, "verdict": "approve"}, ctx)
     assert refused.status == "unsupported_claim"
@@ -395,7 +395,7 @@ def test_a_diagnosis_cannot_cite_a_step_this_session_never_ran(world) -> None:
     sid = _open(root, ctx, pull_request="7")
     door("repo.inspect", {"repo_session_id": sid}, ctx)
     door("repo.bind", {"repo_session_id": sid}, ctx)
-    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}}, ctx))
+    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}}, ctx), "workspace.run_tests")
     refused = door(
         "repo.diagnose",
         {"repo_session_id": sid, "path": "calc.py", "reason": "because", "evidence_step_id": "never-ran"},

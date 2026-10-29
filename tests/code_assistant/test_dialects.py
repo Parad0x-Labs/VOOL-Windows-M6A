@@ -240,7 +240,7 @@ def test_twin_engagements_produce_identical_journals_and_bytes(tmp_path, monkeyp
             "code.task.step",
             {"task_id": task_id, "step_id": "r", "intent": repro["intent"], "arguments": repro["arguments"]},
             source_context=ctx,
-        ))
+        ), repro["intent"])
         assert result.details["tool_result"]["success"] is False
         execute_runtime_tool(
             "code.task.identify",

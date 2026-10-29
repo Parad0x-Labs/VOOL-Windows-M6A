@@ -62,7 +62,7 @@ def _drive_to_authorized_push(root: Path, forge: RecordedForge, ctx: dict) -> tu
     sid = door("repo.session.open", {"objective": "push", "pull_request": "7", **OPEN}, ctx).details["repo_session_id"]
     door("repo.inspect", {"repo_session_id": sid}, ctx)
     door("repo.bind", {"repo_session_id": sid}, ctx)
-    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}}, ctx))
+    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}}, ctx), "workspace.run_tests")
     door(
         "repo.diagnose",
         {"repo_session_id": sid, "path": "calc.py", "reason": "add subtracts", "evidence_step_id": "red"},
@@ -78,7 +78,7 @@ def _drive_to_authorized_push(root: Path, forge: RecordedForge, ctx: dict) -> tu
         },
         ctx,
     )
-    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "green", "intent": "workspace.run_tests", "arguments": {}}, ctx))
+    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "green", "intent": "workspace.run_tests", "arguments": {}}, ctx), "workspace.run_tests")
     door("repo.review", {"repo_session_id": sid, "verdict": "approve"}, ctx)
     door("repo.git", {"repo_session_id": sid, "operation": "commit", "message": "repair"}, ctx)
     plan_hash = door("repo.push.request", {"repo_session_id": sid, "ref": "feature"}, ctx).details["plan_hash"]

@@ -179,7 +179,7 @@ def test_the_vertical_from_inspect_to_a_sealed_receipt(world) -> None:
         "repo.step",
         {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}},
         ctx,
-    ))
+    ), "workspace.run_tests")
     assert red.details["executed"] is True
     assert red.details["tool_result"]["returncode"] != 0
 
@@ -214,7 +214,7 @@ def test_the_vertical_from_inspect_to_a_sealed_receipt(world) -> None:
         "repo.step",
         {"repo_session_id": sid, "step_id": "green", "intent": "workspace.run_tests", "arguments": {}},
         ctx,
-    ))
+    ), "workspace.run_tests")
     assert green.details["executed"] is True
     assert green.details["tool_result"]["returncode"] == 0
 
@@ -278,7 +278,7 @@ def test_a_simulated_push_never_moves_the_remote_and_claims_nothing(world) -> No
         "repo.step",
         {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}},
         ctx,
-    ))
+    ), "workspace.run_tests")
     door(
         "repo.diagnose",
         {"repo_session_id": sid, "path": "calc.py", "reason": "add subtracts", "evidence_step_id": "red"},
@@ -298,7 +298,7 @@ def test_a_simulated_push_never_moves_the_remote_and_claims_nothing(world) -> No
         "repo.step",
         {"repo_session_id": sid, "step_id": "green", "intent": "workspace.run_tests", "arguments": {}},
         ctx,
-    ))
+    ), "workspace.run_tests")
     door("repo.review", {"repo_session_id": sid, "verdict": "approve"}, ctx)
     plan_hash = door("repo.push.request", {"repo_session_id": sid, "ref": "feature"}, ctx).details["plan_hash"]
     operator_ctx = context(root, repo_push_authorization={"plan_hash": plan_hash})

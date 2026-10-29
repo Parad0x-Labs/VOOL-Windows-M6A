@@ -77,7 +77,7 @@ def _door(intent: str, arguments: dict, ctx: dict):
 
     result = execute_runtime_tool(intent, arguments, source_context=ctx)
     assert result is not None, intent
-    return stop_if_windows_refused(result)
+    return stop_if_windows_refused(result, intent, arguments)
 
 
 @stops_at_windows_run_refusal

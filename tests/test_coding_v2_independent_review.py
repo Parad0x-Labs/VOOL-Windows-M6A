@@ -25,7 +25,7 @@ def setup_task(root, case):
     assert opened.ok
     tid = opened.details['task_id']
     def step(sid, intent, args):
-        return stop_if_windows_refused(_door('code.task.step',{'task_id':tid,'step_id':sid,'intent':intent,'arguments':args},ctx))
+        return stop_if_windows_refused(_door('code.task.step',{'task_id':tid,'step_id':sid,'intent':intent,'arguments':args},ctx), intent)
     red = step('reproduce','workspace.run_tests',{'command':'node review_check.js'})
     assert red.details['executed'] and red.details['tool_result']['success'] is False
     assert _door('code.task.identify',{'task_id':tid,'path':path,'reason':'Existing assertion proves the wrong operation'},ctx).ok

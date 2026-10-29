@@ -53,7 +53,7 @@ def _approved(ctx: dict, path: str = MONEY) -> tuple[str, dict]:
         {"task_id": task_id, "step_id": "repro", "intent": "workspace.run_tests",
          "arguments": {"command": "python -c " + shlex.quote(check)}},
         ctx,
-    ))
+    ), "workspace.run_tests")
     assert reproduced.details["tool_result"]["success"] is False, reproduced.details
     identified = door(
         "code.task.identify", {"task_id": task_id, "path": path, "line": 2, "reason": "cents multiplies by ten"}, ctx

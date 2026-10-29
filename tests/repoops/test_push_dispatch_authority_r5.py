@@ -71,10 +71,10 @@ def _drive(root: Path, forge, ctx: dict, *, notes: str | None, pull_request: str
     sid = door("repo.session.open", {"objective": "push the reviewed release", "pull_request": pull_request, **OPEN}, ctx).details["repo_session_id"]
     door("repo.inspect", {"repo_session_id": sid}, ctx)
     assert door("repo.bind", {"repo_session_id": sid}, ctx).ok
-    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}}, ctx))
+    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}}, ctx), "workspace.run_tests")
     door("repo.diagnose", {"repo_session_id": sid, "path": "calc.py", "reason": "add subtracts", "evidence_step_id": "red"}, ctx)
     door("repo.step", {"repo_session_id": sid, "step_id": "fix", "intent": "workspace.write_file", "arguments": {"path": "calc.py", "content": FIXED}}, ctx)
-    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "green", "intent": "workspace.run_tests", "arguments": {}}, ctx))
+    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "green", "intent": "workspace.run_tests", "arguments": {}}, ctx), "workspace.run_tests")
     door("repo.review", {"repo_session_id": sid, "verdict": "approve"}, ctx)
     door("repo.git", {"repo_session_id": sid, "operation": "commit", "message": "repair"}, ctx)
     planned = door("repo.push.request", {"repo_session_id": sid, "ref": ref}, ctx)

@@ -113,7 +113,7 @@ def _repair_through_code_task(world, ctx: dict, *, module: str = "calc") -> str:
     repro = stop_if_windows_refused(door(
         "code.task.step",
         {"task_id": task_id, "step_id": "repro", "intent": "workspace.run_tests", "arguments": {"command": f"python -m pytest -q test_{module}.py"}},
-    ))
+    ), "workspace.run_tests")
     assert repro.details["tool_result"]["success"] is False
     identified = door(
         "code.task.identify",
@@ -143,12 +143,12 @@ def _repair_through_code_task(world, ctx: dict, *, module: str = "calc") -> str:
     narrow = stop_if_windows_refused(door(
         "code.task.step",
         {"task_id": task_id, "step_id": "narrow", "intent": "workspace.run_tests", "arguments": {"command": f"python -m pytest -q test_{module}.py"}},
-    ))
+    ), "workspace.run_tests")
     assert narrow.details["tool_result"]["success"] is True, narrow.details
     cumulative = stop_if_windows_refused(door(
         "code.task.step",
         {"task_id": task_id, "step_id": "cumulative", "intent": "workspace.run_tests", "arguments": {"command": "python -m pytest -q"}},
-    ))
+    ), "workspace.run_tests")
     assert cumulative.details["tool_result"]["success"] is True, cumulative.details
     diffed = door("code.task.step", {"task_id": task_id, "step_id": "diff", "intent": "workspace.git_diff", "arguments": {}})
     assert diffed.ok, diffed.response_text
@@ -160,14 +160,14 @@ def _land(world, ctx: dict, sid: str, *, ref: str = "feature", message: str = "r
     from tests.repoops._harness import FIXED, door, git, head, remote_ref
 
     root, bare, forge = world
-    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}}, ctx))
+    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}}, ctx), "workspace.run_tests")
     door("repo.diagnose", {"repo_session_id": sid, "path": "calc.py", "reason": "add subtracts", "evidence_step_id": "red"}, ctx)
     door(
         "repo.step",
         {"repo_session_id": sid, "step_id": "fix", "intent": "workspace.write_file", "arguments": {"path": "calc.py", "content": FIXED}},
         ctx,
     )
-    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "green", "intent": "workspace.run_tests", "arguments": {}}, ctx))
+    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "green", "intent": "workspace.run_tests", "arguments": {}}, ctx), "workspace.run_tests")
     door("repo.review", {"repo_session_id": sid, "verdict": "approve"}, ctx)
     committed = door("repo.git", {"repo_session_id": sid, "operation": "commit", "message": message}, ctx)
     assert committed.ok, committed.response_text

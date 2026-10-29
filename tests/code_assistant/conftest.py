@@ -98,7 +98,7 @@ def door(intent: str, arguments: dict, ctx: dict):
 
     result = execute_runtime_tool(intent, arguments, source_context=ctx)
     assert result is not None, f"{intent} is not contracted at the production door"
-    return stop_if_windows_refused(result)
+    return stop_if_windows_refused(result, intent, arguments)
 
 
 def drive_to_approved_proposal(ctx: dict, *, proposal_id: str = "p") -> str:

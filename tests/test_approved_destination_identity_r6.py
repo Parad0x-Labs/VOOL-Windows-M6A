@@ -60,7 +60,7 @@ def _open_and_identify(ctx: dict, path: str) -> str:
     assert read.ok, read.response_text
     probe = f"import runpy; assert runpy.run_path({path!r})['vat'](10) == 2"
     reproduced = stop_if_windows_refused(door("code.task.step", {"task_id": task_id, "step_id": f"repro-{path}", "intent": "workspace.run_tests",
-                                         "arguments": {"command": "python -c " + shlex.quote(probe)}}, ctx))
+                                         "arguments": {"command": "python -c " + shlex.quote(probe)}}, ctx), "workspace.run_tests")
     assert reproduced.details["tool_result"]["success"] is False, reproduced.details
     identified = door("code.task.identify", {"task_id": task_id, "path": path, "line": 2,
                                              "reason": "vat multiplies by two instead of taking a fifth"}, ctx)

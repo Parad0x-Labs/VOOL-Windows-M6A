@@ -148,7 +148,7 @@ def test_served_workflow_git_worktrees_lists_real_worktrees(tmp_path, monkeypatc
         "sandbox.run_command", {"command": "git status --porcelain", "cwd": str(repo)}
     )
     assert read_only is not None, "sandbox.run_command did not dispatch"
-    stop_if_windows_refused(read_only)
+    stop_if_windows_refused(read_only, "sandbox.run_command")
     assert read_only.ok is True, read_only.response_text
 
     # And the mutation the gate cannot prove read-only is refused verbatim — the door fails
