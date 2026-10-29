@@ -30,22 +30,26 @@ _TAIL = _SEG + r"(?:" + SEP + _SEG + r")*" + SEP + r"?"
 #: The ACCOUNT segment of a home directory (``Users\John Smith``, ``Users\al-ice.o'neil``): the one
 #: place a space or an apostrophe is part of the name. It is at most three words joined by single
 #: spaces (no leading, trailing or doubled space), at most 64 characters, and it must END right at
-#: a separator or at the end of the text, so prose after a plain name (``Users\bob failed to
-#: start``, ``Users\bob then run x/y``) is never swallowed. Every class excludes the separators and
-#: whitespace, so matching is linear (no nested unbounded quantifiers); anything else falls back
-#: to the strict ``_SEG``.
+#: a separator, at a line end, before a ``,`` or ``;``, or at the end of the text, so prose after
+#: a plain name (``Users\bob failed to start``, ``Users\bob then run x/y``) is never swallowed.
+#: Every class excludes the separators and whitespace, so matching is linear (no nested unbounded
+#: quantifiers); anything else falls back to the strict ``_SEG``.
 _ACCT_WORD = r"[^\\/\s\"<>|*?:,;]+"
+#: Where an account may end without a separator: a line end, ``,`` ``;`` or the end of the text.
+_ACCT_STOP = r"(?=[,;\r\n]|$)"
 _ACCT = (
-    r"(?=[^\\/\r\n]{1,64}(?:[\\/]|$))" + _ACCT_WORD + r"(?: " + _ACCT_WORD + r"){0,2}(?=[\\/]|$)"
+    r"(?=[^\\/\r\n,;]{1,64}(?:[\\/,;\r\n]|$))" + _ACCT_WORD + r"(?: " + _ACCT_WORD + r"){0,2}"
+    + r"(?:(?=[\\/])|" + _ACCT_STOP + r")"
 )
 #: The same segment, but only when the name actually holds a space or an apostrophe (what the
 #: strict ``_SEG`` cannot take), so names without either keep today's handling.
 _ACCT_SPACED = r"(?=[^\\/\r\n]{0,64}[ '])" + _ACCT
 #: What follows ``Users`` + separator: the account up to the next separator (then the rest of the
-#: path), the account running to the end of the text, or -- when neither holds -- the strict tail.
+#: path), the account ending at a line end, ``,`` ``;`` or the end of the text, or -- when neither
+#: holds -- the strict tail.
 _USERS_REST = (
-    r"(?i:users)" + SEP + r"(?:" + _ACCT + r"(?:" + SEP + r"(?:" + _TAIL + r")?|$)|" + _TAIL + r")"
-    # (``_ACCT`` already ends at a separator or the end of the text)
+    r"(?i:users)" + SEP
+    + r"(?:" + _ACCT + r"(?:" + SEP + r"(?:" + _TAIL + r")?|" + _ACCT_STOP + r")|" + _TAIL + r")"
 )
 #: What may follow a prefix (drive, UNC server/share, device): a home directory, or any path.
 _AFTER_PREFIX = r"(?:" + _USERS_REST + r"|" + _TAIL + r")"
@@ -62,7 +66,7 @@ _ROOTED_USERS = r"(?<![\w\\:/.\]])" + _BS + _USERS_REST
 #: POSIX ``/home/<name>`` and ``/Users/<name>`` whose name holds a space or an apostrophe.
 _POSIX_SPACED_HOME = (
     r"(?<![\w/\\.:\]])/(?i:home|users)/" + _ACCT_SPACED
-    + r"(?:/(?:" + _SEG + r"(?:/" + _SEG + r")*/?)?|$)"
+    + r"(?:/(?:" + _SEG + r"(?:/" + _SEG + r")*/?)?|" + _ACCT_STOP + r")"
 )
 
 #: The `\\?\...`, `\\.\...` and `\\server\share` forms: network and device paths.
