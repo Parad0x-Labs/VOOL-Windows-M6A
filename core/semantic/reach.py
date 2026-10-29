@@ -399,5 +399,3 @@ __all__ = [
     "reach_enabled",
     "record",
 ]
-
-# vool-kill-test-marker
