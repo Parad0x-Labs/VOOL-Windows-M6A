@@ -22,6 +22,8 @@ APPROVAL_SCHEMA = "vool.plugin_approval.v1"
 MAX_FILES = 4096
 MAX_BYTES = 128 * 1024 * 1024
 MAX_FILE_BYTES = 64 * 1024 * 1024
+_WINDOWS = os.name == "nt"
+_REPARSE_POINT = 0x400  # FILE_ATTRIBUTE_REPARSE_POINT: symlinks, junctions, mount points
 
 
 class PackageError(RuntimeError):
@@ -43,8 +45,34 @@ def approval_digest(package_digest: str, dependencies: dict[str, str]) -> str:
 
 
 def _stamp(info: os.stat_result) -> tuple:
+    if _WINDOWS:
+        # Windows derives permission bits from the file name for a path and from attributes for a
+        # handle, and its st_ctime is the creation time: compare only what both report the same way.
+        return (info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode), info.st_nlink,
+                info.st_size, info.st_mtime_ns, getattr(info, "st_file_attributes", 0))
     return (info.st_dev, info.st_ino, info.st_mode, info.st_nlink,
             info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _open_no_follow(path: str, *, directory: bool) -> int:
+    """Open a Windows path without following a reparse point, as a read-only descriptor.
+
+    The handle shares no delete access, so while it is held the entry (and, for a directory, every
+    entry it is the parent of) cannot be renamed or swapped for a link. A file shares no write access
+    either, so its bytes cannot change while they are read.
+    """
+    import _winapi
+    import msvcrt
+
+    access = 0x0081 if directory else 0x80000000  # FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES; GENERIC_READ
+    share = 0x3 if directory else 0x1  # FILE_SHARE_READ | FILE_SHARE_WRITE; FILE_SHARE_READ
+    flags = 0x00200000 | (0x02000000 if directory else 0)  # OPEN_REPARSE_POINT, BACKUP_SEMANTICS
+    handle = _winapi.CreateFile(path, access, share, 0, 3, flags, 0)  # 3 = OPEN_EXISTING
+    try:
+        return msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+    except BaseException:
+        _winapi.CloseHandle(handle)
+        raise
 
 
 def capture_package(root: Path, *, destination: Path | None = None) -> PackageIdentity:
@@ -57,17 +85,32 @@ def capture_package(root: Path, *, destination: Path | None = None) -> PackageId
     base = Path(root)
     if base.is_symlink():
         raise PackageError("package root must not be a link")
-    if not hasattr(os, "O_NOFOLLOW") or os.open not in os.supports_dir_fd:
+    if not _WINDOWS and (not hasattr(os, "O_NOFOLLOW") or os.open not in os.supports_dir_fd):
         raise PackageError("safe package capture is unavailable on this host")
     entries: list[dict] = []
     manifests: list[bytes] = []
     total = 0
-    flags = os.O_RDONLY | os.O_NOFOLLOW
+    flags = os.O_RDONLY if _WINDOWS else os.O_RDONLY | os.O_NOFOLLOW
 
-    def walk(directory: int, relative: str, target: Path | None) -> None:
+    # Windows has no dir_fd: entries are reached by path, under directory handles that are held
+    # (and so cannot be renamed or replaced) for as long as their entries are read.
+    def entry_stat(directory: int, location: str, name: str) -> os.stat_result:
+        if not _WINDOWS:
+            return os.stat(name, dir_fd=directory, follow_symlinks=False)
+        info = os.stat(os.path.join(location, name), follow_symlinks=False)
+        if getattr(info, "st_file_attributes", 0) & _REPARSE_POINT:
+            raise PackageError("package links and special files are refused")
+        return info
+
+    def entry_open(directory: int, location: str, name: str, *, is_directory: bool) -> int:
+        if _WINDOWS:
+            return _open_no_follow(os.path.join(location, name), directory=is_directory)
+        return os.open(name, flags | os.O_DIRECTORY if is_directory else flags, dir_fd=directory)
+
+    def walk(directory: int, location: str, relative: str, target: Path | None) -> None:
         nonlocal total
         before = os.fstat(directory)
-        names = sorted(os.listdir(directory))
+        names = sorted(os.listdir(location if _WINDOWS else directory))
         if len({name.casefold() for name in names}) != len(names):
             raise PackageError("case-colliding package paths")
         for name in names:
@@ -76,25 +119,25 @@ def capture_package(root: Path, *, destination: Path | None = None) -> PackageId
                 raise PackageError("ambiguous or oversized package path")
             if len(entries) >= MAX_FILES:
                 raise PackageError("package file limit exceeded")
-            info = os.stat(name, dir_fd=directory, follow_symlinks=False)
+            info = entry_stat(directory, location, name)
             if info.st_mode & (stat.S_ISUID | stat.S_ISGID | stat.S_ISVTX):
                 raise PackageError("privileged package mode refused")
             output = target / name if target is not None else None
             if stat.S_ISDIR(info.st_mode):
-                child = os.open(name, flags | os.O_DIRECTORY, dir_fd=directory)
+                child = entry_open(directory, location, name, is_directory=True)
                 try:
                     if _stamp(info) != _stamp(os.fstat(child)):
                         raise PackageError("package directory changed during capture")
                     entries.append({"path": path, "type": "directory"})
                     if output is not None:
                         output.mkdir(mode=0o700)
-                    walk(child, path, output)
+                    walk(child, os.path.join(location, name), path, output)
                 finally:
                     os.close(child)
             elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
                 if info.st_size > MAX_FILE_BYTES or total + info.st_size > MAX_BYTES:
                     raise PackageError("package byte limit exceeded")
-                source = os.open(name, flags, dir_fd=directory)
+                source = entry_open(directory, location, name, is_directory=False)
                 digest = hashlib.sha256()
                 size = 0
                 content: list[bytes] = []
@@ -115,7 +158,7 @@ def capture_package(root: Path, *, destination: Path | None = None) -> PackageId
                             if size > 1024 * 1024:
                                 raise PackageError("plugin manifest is oversized")
                             content.append(chunk)
-                    after = os.stat(name, dir_fd=directory, follow_symlinks=False)
+                    after = entry_stat(directory, location, name)
                     if _stamp(info) != _stamp(os.fstat(source)) or _stamp(info) != _stamp(after):
                         raise PackageError("package file changed during capture")
                 finally:
@@ -123,7 +166,8 @@ def capture_package(root: Path, *, destination: Path | None = None) -> PackageId
                         writer.close()
                     os.close(source)
                 total += size
-                executable = stat.S_IMODE(info.st_mode) & 0o111
+                # Windows has no executable bit: its st_mode reports one from the file name's extension.
+                executable = 0 if _WINDOWS else stat.S_IMODE(info.st_mode) & 0o111
                 entries.append({"path": path, "type": "file", "bytes": size,
                                 "executable": executable, "sha256": digest.hexdigest()})
                 if output is not None:
@@ -141,9 +185,14 @@ def capture_package(root: Path, *, destination: Path | None = None) -> PackageId
     try:
         if destination is not None:
             destination.mkdir(mode=0o700)
-        descriptor = os.open(base, flags | os.O_DIRECTORY)
+        if _WINDOWS:
+            descriptor = _open_no_follow(str(base), directory=True)
+        else:
+            descriptor = os.open(base, flags | os.O_DIRECTORY)
         before = os.fstat(descriptor)
-        walk(descriptor, "", destination)
+        if _WINDOWS and getattr(before, "st_file_attributes", 0) & _REPARSE_POINT:
+            raise PackageError("package root must not be a link")
+        walk(descriptor, str(base), "", destination)
         if _stamp(before) != _stamp(os.stat(base, follow_symlinks=False)):
             raise PackageError("package root changed during capture")
         if len(manifests) != 1:
@@ -171,10 +220,22 @@ def execution_directory(parent: Path) -> Iterator[Path]:
     finally:
         # Captured directories are sealed. Restore only our directories' write
         # bits to remove them, without following links or touching source trees.
-        for current, directories, _ in os.walk(owned, followlinks=False):
+        # Windows also refuses to delete a read-only file, so captured files get theirs back.
+        # A junction is no symlink to os.walk or is_symlink(): never walk into or chmod one, or
+        # the write bits of whatever user folder it points at would be restored too.
+        for current, directories, files in os.walk(owned, followlinks=False):
             Path(current).chmod(0o700)
-            for name in directories:
+            directories[:] = [name for name in directories if not _is_reparse_point(Path(current) / name)]
+            for name in directories + (files if _WINDOWS else []):
                 path = Path(current) / name
-                if not path.is_symlink():
+                if not path.is_symlink() and not _is_reparse_point(path):
                     path.chmod(0o700)
         shutil.rmtree(owned)
+
+
+def _is_reparse_point(path: Path) -> bool:
+    """A symlink, junction or mount point on Windows (always False elsewhere)."""
+    try:
+        return bool(getattr(os.lstat(path), "st_file_attributes", 0) & _REPARSE_POINT)
+    except OSError:
+        return False
