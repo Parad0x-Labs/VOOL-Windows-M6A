@@ -276,7 +276,12 @@ def windows_own_tmp_path_is_disposable(request, monkeypatch):
     from tests._windows_disposable_tmp import mark_own_tmp_path_disposable, running_on_windows
 
     if running_on_windows():
-        mark_own_tmp_path_disposable(monkeypatch, request.getfixturevalue("tmp_path"), windows=True)
+        mark_own_tmp_path_disposable(
+            monkeypatch,
+            request.getfixturevalue("tmp_path"),
+            windows=True,
+            tempfile_root=request.getfixturevalue("tmp_path_factory").mktemp("tempfile-"),
+        )
     yield
 
 

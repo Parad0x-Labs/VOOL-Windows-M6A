@@ -5,18 +5,30 @@ VOOL_WINDOWS_DISPOSABLE_WORKSPACES (core/windows_write_gate.py). The suite never
 written for Mac and Linux, which write only into their own tmp_path, were refused there. Only that one
 test's folder is listed: never the home, Documents, TEMP or the checkout. A test that sets or clears the
 variable itself still decides for itself, since its own monkeypatch runs after this one.
+
+unittest rigs build their workspace with tempfile instead of tmp_path. On Windows each test also gets
+its own folder under pytest's basetemp (`tempfile_root`), tempfile puts its folders there for that
+test, and that folder is listed too. The system TEMP is still never listed.
 """
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 
 from core.windows_write_gate import ENV_VAR
 
 
-def mark_own_tmp_path_disposable(monkeypatch, tmp_path: Path, *, windows: bool) -> None:
-    if windows:
-        monkeypatch.setenv(ENV_VAR, str(tmp_path))
+def mark_own_tmp_path_disposable(
+    monkeypatch, tmp_path: Path, *, windows: bool, tempfile_root: Path | None = None
+) -> None:
+    if not windows:
+        return
+    listed = [str(tmp_path)]
+    if tempfile_root is not None:
+        monkeypatch.setattr(tempfile, "tempdir", str(tempfile_root))
+        listed.append(str(tempfile_root))
+    monkeypatch.setenv(ENV_VAR, os.pathsep.join(listed))
 
 
 def running_on_windows() -> bool:
