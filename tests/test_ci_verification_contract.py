@@ -76,6 +76,11 @@ EXPECTED_COLLECTION_COMMAND = (
     "python ops/pytest_manifest.py --repo-root . --output .verification-logs/pytest-manifest.json -- -q"
 )
 SHARD_FILE_LIST_REF = "shard-${{ matrix.shard }}-files.txt"
+#: The one gate the full-suite jobs may carry: they skip a DRAFT pull request (which runs the
+#: draft_affected_tests job instead) and run on every other event, the ready-for-review event and
+#: every push after it included. Pinned exactly: any other condition could switch the gate off.
+READY_GATE = "${{ !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}"
+DRAFT_ONLY = "github.event_name == 'pull_request' && github.event.pull_request.draft"
 EXPECTED_SHARDS = [str(index) for index in range(10)]
 
 
@@ -104,6 +109,7 @@ def _assert_authoritative_contract(workflow: dict[str, Any]) -> None:
     for event in ("push", "pull_request"):
         assert event in triggers
         assert "paths-ignore" not in triggers[event]
+    assert "ready_for_review" in triggers["pull_request"]["types"]
 
     verify = workflow["jobs"]["verify"]
     assert verify["if"] == "github.event_name != 'workflow_dispatch' || !inputs.focused_ci"
@@ -122,7 +128,7 @@ def _assert_authoritative_contract(workflow: dict[str, Any]) -> None:
 
     tests = workflow["jobs"]["tests"]
     assert tests["needs"] == "verify" or tests["needs"] == ["verify"]
-    assert "if" not in tests
+    assert tests["if"] == READY_GATE
     matrix_shards = tests["strategy"]["matrix"]["shard"]
     assert matrix_shards == EXPECTED_SHARDS, "every shard must stay in the matrix: none may be dropped"
 
@@ -155,12 +161,21 @@ def _assert_authoritative_contract(workflow: dict[str, Any]) -> None:
 
     macos = workflow["jobs"]["macos"]
     assert macos["needs"] == "verify" or macos["needs"] == ["verify"]
-    assert "if" not in macos
+    assert macos["if"] == READY_GATE
     macos_run = _named_step(macos, "Run the macOS-only suites")
     assert "if" not in macos_run
     _assert_upload_step(macos, "Upload macos job log")
 
     assert workflow["jobs"]["build"]["needs"] == ["verify", "tests", "macos"]
+    assert "if" not in workflow["jobs"]["build"]
+
+    # The draft job is a signal beside the gate, never part of it: it runs only on a draft PR,
+    # and build (the gate's end) does not wait on it.
+    draft = workflow["jobs"]["draft_affected_tests"]
+    assert draft["if"] == DRAFT_ONLY
+    assert draft["name"] == "draft-affected-tests-not-merge-gate"
+    assert draft["needs"] == "verify" or draft["needs"] == ["verify"]
+    assert "python ops/draft_affected_tests.py" in str(_named_step(draft, "Select the affected test files")["run"])
 
     for job in workflow["jobs"].values():
         assert not job.get("continue-on-error", False)
@@ -178,7 +193,10 @@ def test_push_and_pr_ci_use_the_exact_authoritative_gate() -> None:
 
 @pytest.mark.parametrize(
     "mutation",
-    ("floating_python", "collect_only", "step_disabled", "job_disabled", "watchdog_removed", "watchdog_unbounded"),
+    (
+        "floating_python", "collect_only", "step_disabled", "job_disabled", "watchdog_removed",
+        "watchdog_unbounded", "shards_gated_off", "macos_gated_off", "ready_event_dropped",
+    ),
 )
 def test_contract_mutations_are_rejected(mutation: str) -> None:
     workflow = copy.deepcopy(_load_workflow())
@@ -197,6 +215,13 @@ def test_contract_mutations_are_rejected(mutation: str) -> None:
     elif mutation == "watchdog_unbounded":
         gate = _named_step(workflow["jobs"]["tests"], "Run shard ${{ matrix.shard }}")
         gate["run"] = gate["run"].replace("--phase-timeout 600", "--phase-timeout 0")
+    elif mutation == "shards_gated_off":
+        workflow["jobs"]["tests"]["if"] = "false"
+    elif mutation == "macos_gated_off":
+        workflow["jobs"]["macos"]["if"] = "github.event_name == 'push'"
+    elif mutation == "ready_event_dropped":
+        triggers = workflow.get("on", workflow.get(True))
+        triggers["pull_request"]["types"] = ["opened", "synchronize", "reopened"]
     else:
         verify["if"] = False
 
@@ -551,3 +576,54 @@ def test_chromium_provisioning_accepted_and_refused_shapes(apparmor_rc, tmp_path
         assert "stub apparmor_parser diagnostic" in out
         assert not bins_log.exists(), "a refused profile must fail before any render probe"
     assert "sysctl" not in sudo_log
+
+
+# ---------------------------------------------------------------------------
+# Draft affected-test selection (ops/draft_affected_tests.py), folded here for the same
+# partition-stability reason as the contracts above.
+# ---------------------------------------------------------------------------
+
+
+def _select(changed, texts, macos_only=frozenset()):
+    from ops.draft_affected_tests import select
+
+    return select(sorted(changed), sorted(texts), set(macos_only), texts.__getitem__)
+
+
+def test_draft_selection_picks_changed_tests_and_tests_that_name_a_changed_module():
+    texts = {
+        "tests/test_a.py": "from core import safe_git\n",
+        "tests/test_b.py": "import core.safe_git as sg\n",
+        "tests/test_c.py": "from core.safe_gitlike import x\n",
+        "tests/test_d.py": "nothing here\n",
+        "tests/test_safe_git.py": "",
+        "tests/test_e.py": "from core import (\n    other,\n    safe_git,\n)\n",
+    }
+    selected, wide = _select({"core/safe_git.py", "tests/test_d.py"}, texts)
+    assert selected == ["tests/test_a.py", "tests/test_b.py", "tests/test_d.py", "tests/test_e.py", "tests/test_safe_git.py"]
+    assert wide == []
+
+
+def test_draft_selection_matches_non_python_files_by_path_and_leaves_out_macos_files():
+    texts = {
+        "tests/test_install.py": "Install_And_Run_VOOL.ps1",
+        "tests/test_mac.py": "Install_And_Run_VOOL.ps1",
+        "tests/test_other.py": "README",
+    }
+    selected, _ = _select({"Install_And_Run_VOOL.ps1"}, texts, macos_only={"tests/test_mac.py"})
+    assert selected == ["tests/test_install.py"]
+
+
+def test_draft_selection_reports_shared_setup_changes_without_expanding_them():
+    texts = {"tests/test_a.py": "conftest pyproject.toml"}
+    selected, wide = _select({"tests/conftest.py", "pyproject.toml", "requirements-dev.txt"}, texts)
+    assert selected == []
+    assert wide == ["pyproject.toml", "requirements-dev.txt", "tests/conftest.py"]
+
+
+def test_draft_selection_reads_the_macos_list_from_the_ci_workflow():
+    from ops.draft_affected_tests import macos_job_files
+
+    files = macos_job_files(CI_YML.read_text(encoding="utf-8"))
+    assert "tests/test_macos_app_packaging.py" in files
+    assert all(f.startswith("tests/") for f in files)
