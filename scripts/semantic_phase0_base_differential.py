@@ -52,7 +52,24 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Collection, Mapping
+from importlib import util as _importlib_util
 from pathlib import Path
+
+
+def _load_controller_safe_git():
+    """core/safe_git.py from THIS controller tree, loaded by path.
+
+    The controller runs ``-I`` with no tree on ``sys.path``, and the trusted-git rule must be the
+    one VOOL uses everywhere, not a copy. safe_git imports only the standard library."""
+    source = Path(__file__).resolve().parents[1] / "core" / "safe_git.py"
+    spec = _importlib_util.spec_from_file_location("vool_controller_safe_git", source)
+    assert spec and spec.loader
+    module = _importlib_util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_safe_git = _load_controller_safe_git()
 
 #: Fields a user or an integrator actually sees. `session_id`/`task_id` are per-run identities and
 #: `honesty_receipt`/`source_context` carry hashes and a mutated input dict, so they are compared
@@ -233,18 +250,15 @@ class CorpusIntegrityError(RuntimeError):
 def load_frozen_corpus(controller_tree: Path) -> tuple[list[str], str]:
     """Load the universe from an immutable git object in the trusted controller repository."""
     root = Path(controller_tree).resolve()
-    git = next(
-        (path for path in (Path("/usr/bin/git"), Path("/bin/git"), Path("/usr/local/bin/git")) if path.is_file()),
-        None,
-    )
+    git = _safe_git.trusted_git_executable()
     if git is None:
         raise CorpusIntegrityError("trusted git executable is unavailable")
     completed = subprocess.run(
         # A bare blob id: content-addressed, resolved from the object database of the trusted
         # controller repository regardless of which commit carries it. Never a worktree path.
-        [str(git), "-C", str(root), "show", FROZEN_CORPUS_SOURCE_SHA],
-        cwd="/",
-        env={"PATH": "/usr/bin:/bin:/usr/local/bin", "LC_ALL": "C"},
+        [str(git), *_safe_git.hardening_args(), "-C", str(root), "show", FROZEN_CORPUS_SOURCE_SHA],
+        cwd=root.anchor,
+        env=_safe_git.trusted_git_env(git),
         capture_output=True,
         check=False,
     )
