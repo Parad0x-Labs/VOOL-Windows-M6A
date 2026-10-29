@@ -627,3 +627,26 @@ def test_draft_selection_reads_the_macos_list_from_the_ci_workflow():
     files = macos_job_files(CI_YML.read_text(encoding="utf-8"))
     assert "tests/test_macos_app_packaging.py" in files
     assert all(f.startswith("tests/") for f in files)
+
+
+def test_draft_selection_shows_pytest_output_when_collection_fails(monkeypatch, capsys, tmp_path):
+    """A failed canonical collection must leave pytest's own error text in the job log."""
+    import subprocess
+
+    import ops.draft_affected_tests as affected
+
+    stdout = "tests/test_ok.py::test_a\n" + "".join(f"line {i}\n" for i in range(500)) + (
+        "ERROR tests/test_posix.py - AttributeError: module 'os' has no attribute 'geteuid'\n"
+        "1 error in 3.00s\n"
+    )
+
+    def fake_run(argv, **kwargs):
+        return subprocess.CompletedProcess(argv, 2, stdout=stdout, stderr="interpreter warning\n")
+
+    monkeypatch.setattr(affected.subprocess, "run", fake_run)
+    with pytest.raises(subprocess.CalledProcessError):
+        affected.collected_files(tmp_path)
+    err = capsys.readouterr().err
+    assert "no attribute 'geteuid'" in err
+    assert "interpreter warning" in err
+    assert "line 0\n" not in err, "only the tail of a long collection log is echoed"
