@@ -27,16 +27,36 @@ _BS = r"(?:\\\\|\\)"
 #: A path segment: anything that is not a separator, whitespace, a quote or a Windows-reserved char.
 _SEG = r"[^\\/\s\"'<>|*?:]+"
 _TAIL = _SEG + r"(?:" + SEP + _SEG + r")*" + SEP + r"?"
+#: The ACCOUNT segment of a home directory (``Users\John Smith``, ``Users\al-ice.o'neil``): the one
+#: place a space or an apostrophe is part of the name. One bounded class that excludes the
+#: separators (and the reserved characters, newlines and the clause punctuation ``,`` ``;``), so it
+#: runs linearly and cannot merge prose across a path boundary.
+_ACCT = r"[^\\/\"<>|*?:,;\r\n]{1,64}"
+#: The same segment, but only when the name actually holds a space or an apostrophe (what the
+#: strict ``_SEG`` cannot take), so names without either keep today's handling.
+_ACCT_SPACED = r"(?=[^\\/\r\n]{0,64}[ '])" + _ACCT
+#: What follows ``Users`` + separator: the account up to the next separator (then the rest of the
+#: path), the account running to the end of the text, or -- when neither holds -- the strict tail.
+_USERS_REST = (
+    r"(?i:users)" + SEP + r"(?:" + _ACCT + r"(?:" + SEP + r"(?:" + _TAIL + r")?|$)|" + _TAIL + r")"
+)
+#: What may follow a prefix (drive, UNC server/share, device): a home directory, or any path.
+_AFTER_PREFIX = r"(?:" + _USERS_REST + r"|" + _TAIL + r")"
 
 # The lookbehinds keep a match from starting in the middle of a longer path, or right after a
 # redaction marker's closing "]" (``C:/Users/[redacted-user]\\AppData`` is already handled).
 _DEVICE = (
     r"(?<![\w\\:\]])" + _BS + _BS + r"[?.]" + _BS
-    + r"(?:[A-Za-z]:" + SEP + _TAIL + r"|" + _SEG + SEP + _TAIL + r")"
+    + r"(?:[A-Za-z]:" + SEP + _AFTER_PREFIX + r"|" + _SEG + SEP + _AFTER_PREFIX + r")"
 )
-_DRIVE = r"(?<![A-Za-z0-9\\])[A-Za-z]:" + SEP + _TAIL
-_UNC = r"(?<![\w\\:/.\]])(?:\\\\){1,2}[A-Za-z0-9._-]{2,}" + SEP + _TAIL
-_ROOTED_USERS = r"(?<![\w\\:/.\]])" + _BS + r"(?i:users)" + SEP + _TAIL
+_DRIVE = r"(?<![A-Za-z0-9\\])[A-Za-z]:" + SEP + _AFTER_PREFIX
+_UNC = r"(?<![\w\\:/.\]])(?:\\\\){1,2}[A-Za-z0-9._-]{2,}" + SEP + _AFTER_PREFIX
+_ROOTED_USERS = r"(?<![\w\\:/.\]])" + _BS + _USERS_REST
+#: POSIX ``/home/<name>`` and ``/Users/<name>`` whose name holds a space or an apostrophe.
+_POSIX_SPACED_HOME = (
+    r"(?<![\w/\\.:\]])/(?i:home|users)/" + _ACCT_SPACED
+    + r"(?:/(?:" + _SEG + r"(?:/" + _SEG + r")*/?)?|$)"
+)
 
 #: The `\\?\...`, `\\.\...` and `\\server\share` forms: network and device paths.
 NETWORK_PATH_RE = re.compile(r"(?:" + _DEVICE + r")|(?:" + _UNC + r")")
@@ -44,7 +64,16 @@ NETWORK_PATH_RE = re.compile(r"(?:" + _DEVICE + r")|(?:" + _UNC + r")")
 DEVICE_PATH_RE = re.compile(_DEVICE)
 #: Every form above, as one pattern (no capture groups: ``findall`` counts matches).
 WINDOWS_PATH_RE = re.compile(
-    r"(?:" + _DEVICE + r")|(?:" + _DRIVE + r")|(?:" + _UNC + r")|(?:" + _ROOTED_USERS + r")"
+    r"(?:" + _DEVICE + r")|(?:" + _DRIVE + r")|(?:" + _UNC + r")|(?:" + _ROOTED_USERS + r")|(?:"
+    + _POSIX_SPACED_HOME + r")"
+)
+#: ``[drive:]<sep>users|home<sep><account>`` (groups: drive, users|home) for an account name that
+#: holds a space or an apostrophe, up to its closing separator; for redactors that mask just the
+#: home prefix. Runs BEFORE their strict-account patterns, which would stop inside the name.
+SPACED_HOME_RE = re.compile(
+    r"(?:(?<![A-Za-z0-9\\])([A-Za-z]:))?" + SEP + r"(users|home)" + SEP + _ACCT_SPACED
+    + r"(?=" + SEP + r"|$)",
+    re.IGNORECASE,
 )
 
 _SPLIT_RE = re.compile(r"[\\/]+")
@@ -85,6 +114,7 @@ __all__ = [
     "DEVICE_PATH_RE",
     "NETWORK_PATH_RE",
     "SEP",
+    "SPACED_HOME_RE",
     "WINDOWS_PATH_RE",
     "path_basename",
     "path_parts",

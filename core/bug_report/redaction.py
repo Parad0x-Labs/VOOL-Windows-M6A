@@ -23,7 +23,7 @@ import re
 import unicodedata
 
 from core.bug_report.schema import RedactionSummary
-from core.path_scrub import NETWORK_PATH_RE, SEP
+from core.path_scrub import NETWORK_PATH_RE, SEP, SPACED_HOME_RE
 from core.secret_redaction import redact_personal_secrets as _backstop_redact_personal
 from core.secret_redaction import redact_secrets as _backstop_redact
 
@@ -253,6 +253,9 @@ def redact_text(text: str) -> tuple[str, RedactionSummary]:
         drive = m.group(1) or ""
         return f"{drive}/{m.group(2)}/[redacted-user]"
 
+    # An account name with a space or an apostrophe first: the strict pattern below would stop
+    # inside the name and leave its tail ("Smith\x\f.py") in the report.
+    apply("home_path", SPACED_HOME_RE, _home_sub)
     apply("home_path", _HOME_SEGMENT_RE, _home_sub)
     apply("home_path", _TILDE_HOME_RE, "[redacted-home]")
     apply("home_path", _HOME_ENV_RE, "[redacted-home]")

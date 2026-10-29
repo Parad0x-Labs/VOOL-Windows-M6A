@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from core.path_scrub import NETWORK_PATH_RE, SEP
+from core.path_scrub import NETWORK_PATH_RE, SEP, SPACED_HOME_RE
 from core.privacy_guard import scrub_secret_material, secret_material_present
 from core.secret_redaction import contains_secret, redact_secrets
 
@@ -55,6 +55,7 @@ def _scrub_text(value: str, report: RedactionReport, private_roots: list[Path]) 
             scrubbed = redact_secrets(scrubbed)
             scrubbed = scrub_secret_material(scrubbed)
     for pattern in (
+        SPACED_HOME_RE,
         _POSIX_HOME_RE,
         _WINDOWS_HOME_RE,
         _TMP_VOLATILE_RE,
