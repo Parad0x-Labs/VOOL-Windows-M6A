@@ -16,6 +16,12 @@ LEAKING = (
     r"cannot open C:\Users\Satoshi\secret.txt for reading",
     r"missing file ..\x\y.py",
     "failed at c:/work/cfg.json today",
+    # Escaped spellings, as an OSError repr or a JSON string carries them.
+    r"PermissionError(13, 'Access is denied', '\\\\fileserv\\finance\\q3.xlsx')",
+    r'{"path": "\\\\fileserv\\finance\\q3.xlsx"}',
+    r"[WinError 3] '\\\\?\\C:\\Users\\x'",
+    r"FileNotFoundError: '..\\x\\y.py'",
+    r"'C:\\Users\\Satoshi\\secret.txt'",
 )
 
 CLEAN = (
