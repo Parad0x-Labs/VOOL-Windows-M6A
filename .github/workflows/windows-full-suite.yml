@@ -43,7 +43,11 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev,companion,evm]" -c .github/ci-constraints.txt
+          python -m pip install -e ".[dev,browser,companion,evm]" -c .github/ci-constraints.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # The browser tests import playwright at collection, as on the Linux shards (ci.yml).
+          python -m playwright install chromium
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Resolve this shard's test files
         shell: pwsh
         run: |
