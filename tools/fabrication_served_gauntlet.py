@@ -38,7 +38,7 @@ PROBE = "probe-certified:2b"  # the ":2b" matters: the resource governor sizes f
 _SEED = textwrap.dedent(
     '''
     import sys
-    sys.path.insert(0, "{root}")
+    sys.path.insert(0, {root!r})
     from storage.db import get_connection
     from storage.migrations import run_migrations
     from storage.model_provider_manifest import (
@@ -115,7 +115,7 @@ def main() -> int:
         seed_in_home(
             home,
             _SEED.format(
-                root=REPO, base_url=provider.base_url, registered=[PROBE], certified=[PROBE]
+                root=str(REPO), base_url=provider.base_url, registered=[PROBE], certified=[PROBE]
             ),
         )
         provider.reset()  # drop the boot-time health probes so counts mean something
