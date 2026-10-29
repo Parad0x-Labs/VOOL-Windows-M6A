@@ -30,6 +30,9 @@ CLEAN = (
     "Note: nothing to report",
     "ratio 3:1 at 10:30",
     "Option A: yes",
+    # Escaped prose: a single leading backslash pair is no doubled UNC prefix.
+    r"split on \\n\\n first",
+    r"matched \\d+\\.\\d+ in the version",
 )
 
 
