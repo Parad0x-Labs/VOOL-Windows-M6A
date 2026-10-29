@@ -18,13 +18,13 @@ from types import SimpleNamespace
 
 import pytest
 
+import registry_service.cli as registry_cli
 from core.daemon import DaemonConfig
 from core.daemon.health import start_health_server
 from network import listen_policy
 from network.listen_policy import ExclusiveListenMixin
 from ops.restart_repro.harness import _QuietServer
 from ops.served_reality.provider_stub import _QuietHTTPServer
-import registry_service.cli as registry_cli
 
 #: Arbitrary value standing in for the Windows-only constant. The policy must
 #: pass through exactly the socket module's own constant, whatever its value,
@@ -193,7 +193,7 @@ def _resolving_socket_module(
     getaddrinfo_calls: list[tuple[tuple, dict]] = []
 
     def _getaddrinfo(host, port, *args, **kwargs):
-        getaddrinfo_calls.append(((host, port) + tuple(args), kwargs))
+        getaddrinfo_calls.append(((host, port, *tuple(args)), kwargs))
         return [(family, socket.SOCK_STREAM, 0, "", sockaddr) for family, sockaddr in resolved]
 
     def _socket(*args, **kwargs):
