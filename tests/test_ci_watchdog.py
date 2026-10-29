@@ -135,6 +135,46 @@ def test_followup_normal():
     assert evidence["stalled_seconds"] < 2
 
 
+def test_a_suite_that_patches_os_file_calls_cannot_break_the_progress_file(tmp_path):
+    """A test may stand in for the filesystem by patching the shared ``os`` module and
+    ``pathlib.Path`` (a sharing-violation retry test replaces ``os.replace`` with one that
+    raises). The watchdog's own progress write ran through those same names, so its hook
+    raised inside the test's setup, call and teardown and turned a green suite red (T5 #156).
+    Its file calls are bound at import, as ``_MONOTONIC`` is, so the suite stays green and
+    the progress keeps advancing to the next test."""
+    source = """import os
+import pathlib
+import time
+import pytest
+
+def _refuse(*_args, **_kwargs):
+    raise PermissionError(32, "The process cannot access the file")
+
+@pytest.fixture
+def patched_filesystem():
+    saved = (os.replace, os.rename, pathlib.Path.write_text, pathlib.Path.replace)
+    os.replace = os.rename = _refuse
+    pathlib.Path.write_text = pathlib.Path.replace = _refuse
+    yield
+    time.sleep(0.6)
+    os.replace, os.rename, pathlib.Path.write_text, pathlib.Path.replace = saved
+
+def test_sharing_violation_shape(patched_filesystem):
+    with pytest.raises(PermissionError):
+        os.replace("a", "b")
+
+def test_followup_normal():
+    open('advanced.txt', 'w').write('reached')
+"""
+    result, evidence, output = _run(tmp_path, source)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert evidence["complete"] and not evidence["timed_out"]
+    assert "2 passed" in result.stdout
+    assert (tmp_path / "suite" / "advanced.txt").read_text() == "reached"
+    # The watchdog's own progress file kept advancing past the patched test.
+    assert json.loads((output / "progress.json").read_text())["phase"] == "session finish / process shutdown"
+
+
 def test_cancellation_reaps_the_owned_child_and_records_incomplete(tmp_path):
     suite = tmp_path / "suite"
     suite.mkdir()
