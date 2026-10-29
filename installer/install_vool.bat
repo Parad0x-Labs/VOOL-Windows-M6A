@@ -138,14 +138,14 @@ if not "%VOOL_HOME_OVERRIDE%"=="" (
   set "VOOL_HOME=%VOOL_HOME_DEFAULT%"
 ) else (
   set /p "VOOL_HOME=VOOL runtime folder [%VOOL_HOME_DEFAULT%]: "
-  if "%VOOL_HOME%"=="" set "VOOL_HOME=%VOOL_HOME_DEFAULT%"
+  if "!VOOL_HOME!"=="" set "VOOL_HOME=%VOOL_HOME_DEFAULT%"
 )
 if not "%AGENT_NAME_OVERRIDE%"=="" set "AGENT_NAME_DEFAULT=%AGENT_NAME_OVERRIDE%"
 if "%AUTO_YES%"=="1" (
   set "AGENT_NAME=%AGENT_NAME_DEFAULT%"
 ) else (
   set /p "AGENT_NAME=Agent display name [%AGENT_NAME_DEFAULT%]: "
-  if "%AGENT_NAME%"=="" set "AGENT_NAME=%AGENT_NAME_DEFAULT%"
+  if "!AGENT_NAME!"=="" set "AGENT_NAME=%AGENT_NAME_DEFAULT%"
 )
 
 if not exist "%VENV_DIR%\Scripts\python.exe" (
@@ -328,8 +328,8 @@ if "%INSTALL_PROFILE_OVERRIDE%"=="" (
     set "INSTALL_PROFILE_OVERRIDE=auto-recommended"
   ) else (
     set /p "INSTALL_PROFILE_OVERRIDE=Install profile [auto-recommended/local-only/local-max] [auto-recommended]: "
-    if "%INSTALL_PROFILE_OVERRIDE%"=="" set "INSTALL_PROFILE_OVERRIDE=auto-recommended"
-    call :validate_install_profile "%INSTALL_PROFILE_OVERRIDE%"
+    if "!INSTALL_PROFILE_OVERRIDE!"=="" set "INSTALL_PROFILE_OVERRIDE=auto-recommended"
+    call :validate_install_profile "!INSTALL_PROFILE_OVERRIDE!"
     if errorlevel 1 exit /b 2
   )
 )
