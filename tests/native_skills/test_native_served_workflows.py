@@ -7,6 +7,7 @@ the door refuses, the workflow fails here exactly as it would in a live turn.
 """
 from __future__ import annotations
 
+import shlex
 import subprocess
 import sys
 
@@ -114,7 +115,8 @@ def test_served_workflow_cumulative_testing_runs_the_real_test_pack(tmp_path, mo
 
     result = execute_runtime_tool(
         "workspace.run_tests",
-        {"command": f"{sys.executable} -m pytest -q tests/test_pack.py"},
+        # Quoted: a folder name with a space (`...\VOOL Windows\.venv`) would split the path apart.
+        {"command": shlex.join([sys.executable, "-m", "pytest", "-q", "tests/test_pack.py"])},
     )
     assert result is not None, "workspace.run_tests did not dispatch"
     details = result.details or {}
