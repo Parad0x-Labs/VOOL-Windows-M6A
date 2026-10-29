@@ -844,7 +844,11 @@ from Phase B.
     only touches objects inside folders flagged now, by file id, and only this batch's own temp and
     aside names. The fix: hold the journal folder's handle, without delete sharing, for the
     broker's life, and make batch files relative to it. Decide at Phase C, together with Phase B's
-    install layout.
+    install layout. **Decided 23 Oct (owner); built in Phase C (pick 19): the broker opens the
+    journal folder once at start, refusing one that is itself a reparse point, holds that handle
+    without delete sharing until it exits, and creates, appends, reads, lists, deletes and probes
+    every journal file relative to it (NtCreateFile with the held handle as root, no reparse point
+    followed; FileIdBothDirectoryInfo on the handle to list).**
 
 ## 11. Proposed changes to the contracts doc
 

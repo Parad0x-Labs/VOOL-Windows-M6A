@@ -54,7 +54,9 @@ internal static class Program
             // file change is refused journal_unavailable. Batches a crash left are finished or undone
             // now, before the pipe exists; any it cannot finish stay in the journal and are reported.
             BatchRunner.PauseAtFromEnvironment();
-            var journal = Journal.Open(journalDirectory);
+            // Held, without delete sharing, until the broker exits: every batch file is reached
+            // through this handle, never by the path again (Phase C pick 19).
+            using var journal = Journal.Open(journalDirectory);
             // Checked again now the folder exists: Open created any missing part of it, and a
             // junction made in between would have been followed.
             try { roots.ValidateJournalOutsideFlagged(journalDirectory); }
