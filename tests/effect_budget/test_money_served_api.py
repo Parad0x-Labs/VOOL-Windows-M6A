@@ -112,8 +112,6 @@ def _http(daemon, method, path, payload=None, *, origin=None):
 
 
 def test_the_daemon_serves_money_state_written_by_independent_processes_and_keeps_it_across_restart(tmp_path, monkeypatch):
-    import signal
-
     from tests._blackbox_served_rig import ScriptedProvider, ServedDaemon
 
     home = tmp_path / "served-money-home"
@@ -179,7 +177,7 @@ def test_the_daemon_serves_money_state_written_by_independent_processes_and_keep
                 "money_sequence",
                 [{"request": probe.prepaid_request("served-killed", kill_grant.grant_id, 1_000_000, task_id="served-kill"), "die_at": "after_claim", "evidence": {"kind": "provider_usage_receipt", "id": "never", "source": "provider"}}],
             )[0]
-            assert killed["returncode"] == -signal.SIGKILL, killed
+            assert killed["returncode"] == probe.KILLED_RETURNCODE, killed
             status, body = _http(daemon, "POST", "/api/money/reconcile", {})
             assert status == 200, body
             # the winner may already have been judged by an earlier process's first use; the killed
