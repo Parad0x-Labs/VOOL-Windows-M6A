@@ -39,6 +39,34 @@ if __name__ == "__main__" and not _bootstrap_sys.flags.isolated:
     _clean_env = dict(_bootstrap_os.environ)
     _clean_env.pop("PYTHONPATH", None)
     _clean_env.pop("PYTHONHOME", None)
+    if _bootstrap_sys.platform == "win32":
+        # ``os.execve`` on Windows is CRT emulation, not exec: the argv list is joined into ONE
+        # command line WITHOUT quoting, and the parent exits with a status of its own. A space in
+        # the interpreter path ("...VOOL Windows\.venv\Scripts\python.exe") split the re-exec
+        # command line, so the child opened a bogus script while the parent still exited 0, and
+        # the overlay teardown was also observed dying with 0xC0000005. Spawn the isolated child
+        # and exit with ITS return code; the isolation (-I, env minus PYTHONPATH/PYTHONHOME) is
+        # exactly what the POSIX exec below passes on.
+        _stdlib = _bootstrap_os.path.dirname(_bootstrap_os.path.abspath(_bootstrap_os.__file__))
+        # ``subprocess`` is stdlib, not builtin: import it with ``sys.path`` pinned to the real
+        # stdlib, so a planted scripts/subprocess.py cannot ride the script directory onto this
+        # bootstrap the way scripts/hashlib.py once tried to. The path is restored after.
+        _saved_path = list(_bootstrap_sys.path)
+        _bootstrap_sys.path[:] = [_stdlib]
+        import subprocess as _bootstrap_subprocess
+
+        _bootstrap_sys.path[:] = _saved_path
+        _bootstrap_sys.exit(
+            _bootstrap_subprocess.run(
+                [
+                    _bootstrap_sys.executable,
+                    "-I",
+                    _bootstrap_os.path.abspath(__file__),
+                    *_bootstrap_sys.argv[1:],
+                ],
+                env=_clean_env,
+            ).returncode
+        )
     _bootstrap_os.execve(
         _bootstrap_sys.executable,
         [_bootstrap_sys.executable, "-I", _bootstrap_os.path.abspath(__file__), *_bootstrap_sys.argv[1:]],
@@ -48,6 +76,7 @@ if __name__ == "__main__" and not _bootstrap_sys.flags.isolated:
 import _hashlib
 import argparse
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -140,7 +169,7 @@ asyncio.create_subprocess_shell = _blocked_async_process
 asyncio.BaseEventLoop.subprocess_exec = _blocked_async_process
 asyncio.BaseEventLoop.subprocess_shell = _blocked_async_process
 
-sys.path.insert(0, "__TREE__")
+sys.path.insert(0, __TREE__)
 os.chdir(tempfile.mkdtemp(prefix="vool_diff_cwd_"))
 
 from unittest.mock import Mock
@@ -203,8 +232,24 @@ def _run_corpus(tree: Path, label: str, texts: list[str]) -> list[dict]:
             "VOOL_SKIP_TORCH_GPU_PROBE": "1",
             "PYTHONDONTWRITEBYTECODE": "1",
         }
+        if sys.platform == "win32":
+            # The driver's first import is asyncio, and Winsock will not initialize without
+            # SystemRoot: the child used to die with OSError [WinError 10106] before either tree
+            # was imported, which surfaced as "driver produced no result". The driver also chdirs
+            # into a fresh tempfile directory, so Windows needs a writable temp: the throwaway
+            # home is exactly that, so nothing host-local is inherited. POSIX keeps the env above
+            # byte for byte.
+            env["SystemRoot"] = os.environ["SystemRoot"]
+            env["TEMP"] = home
+            env["TMP"] = home
         script = (
-            _DRIVER.replace("__TREE__", str(tree))
+            # The tree path is spliced into GENERATED source: a bare path inside the template's
+            # quotes made the backslashes of a Windows path into escape sequences
+            # (``SyntaxError: (unicode error) 'unicodeescape'``), so the driver died at parse
+            # time. Embed it as a Python literal -- the same shape as the __FIELDS__/__TEXTS__
+            # splices below -- so the rendered template holds exactly one string literal, valid
+            # on every platform.
+            _DRIVER.replace("__TREE__", repr(str(tree)))
             .replace("__FIELDS__", repr(list(PUBLIC_FIELDS)))
             .replace("__TEXTS__", repr(list(texts)))
         )
