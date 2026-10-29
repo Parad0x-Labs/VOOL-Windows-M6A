@@ -550,6 +550,19 @@ def _start_background_prewarm(runtime: RuntimeServices) -> None:
     threading.Thread(target=_worker, name="vool-provider-prewarm", daemon=True).start()
 
 
+_IS_WINDOWS = os.name == "nt"
+
+
+def _owner_create_time(pid: int) -> float | None:
+    """The owner's create time; None when it is gone. Any other failure raises (unknown, not gone)."""
+    import psutil
+
+    try:
+        return float(psutil.Process(pid).create_time())
+    except psutil.NoSuchProcess:
+        return None
+
+
 def _start_parent_death_watch(server: Any) -> None:
     """Orphan defense for app-owned runtimes: when the native window host that spawned us dies,
     this daemon must not outlive it as a headless listener on 11435. macOS has no PR_SET_PDEATHSIG,
@@ -566,9 +579,30 @@ def _start_parent_death_watch(server: Any) -> None:
     if parent <= 1:
         return
 
+    owner_created: float | None = None
+    if _IS_WINDOWS:
+        # Windows never reparents, and the wrapper's cmd.exe sits between the window host and this
+        # daemon, so getppid() proves nothing. Watch the owner itself, pinned by its create time so
+        # a recycled pid cannot keep a headless daemon alive.
+        try:
+            owner_created = _owner_create_time(parent)
+        except Exception as exc:
+            logger.warning("owning window host pid=%s cannot be watched (%s); parent watch not armed", parent, exc)
+            return
+
+    def _owner_gone() -> bool:
+        if not _IS_WINDOWS:
+            return os.getppid() != parent
+        if owner_created is None:
+            return True
+        try:
+            return _owner_create_time(parent) != owner_created
+        except Exception:
+            return False  # unreadable this tick is unknown, not gone
+
     def _watch() -> None:
         while not getattr(server, "should_exit", False):
-            if os.getppid() != parent:
+            if _owner_gone():
                 logger.warning(
                     "owning window host pid=%s is gone; stopping so no daemon outlives its window", parent
                 )
