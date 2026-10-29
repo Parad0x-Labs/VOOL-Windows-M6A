@@ -75,7 +75,7 @@ _UPDATING_LOCK_NAME = ".vool_updating.lock"
 @dataclass
 class UpdateResult:
     ok: bool
-    stage: str  # "verify" | "extract" | "swap" | "restart" | "done" | "rolled_back"
+    stage: str  # "verify" | "extract" | "stop" | "swap" | "restart" | "done" | "rolled_back"
     message: str
     target_version: str = ""
     rolled_back: bool = False
@@ -399,7 +399,17 @@ def run_update(
         try:
             stop_server()
         except Exception as exc:
-            logger.warning("stop_server failed (continuing): %s", exc)
+            # Swapping under a live server leaves the old code serving, and it would answer the
+            # health check as if updated. Change nothing; the server still runs, so start nothing.
+            logger.warning("stop_server could not confirm the server stopped; update aborted: %s", exc)
+            with contextlib.suppress(Exception):
+                updating_lock.unlink(missing_ok=True)
+            shutil.rmtree(work_dir, ignore_errors=True)
+            result = UpdateResult(
+                False, "stop", f"could not confirm the running VOOL stopped ({exc}); nothing was changed", target_version
+            )
+            _write_result(data_dir, result)
+            return result
 
     try:
         backup_and_swap(release_root, project_root, preserve, backup_dir)
@@ -460,34 +470,58 @@ def _pidfile(vool_home: Path | None, project_root: Path) -> Path:
     return data / "vool_api.pid"
 
 
-def _default_stop_server(vool_home: Path | None, project_root: Path) -> None:
-    """Terminate the running API server via its pidfile (falls back to no-op)."""
-    import os
+class ServerStillRunning(RuntimeError):
+    """The running API server could not be confirmed stopped."""
+
+
+# How long a terminated server gets to exit before the update gives up on it.
+_STOP_WAIT_SECONDS = 15.0
+
+
+def _terminate(pid: int) -> None:
     import signal
     import subprocess
     import sys
+
+    if sys.platform == "win32":
+        # /T kills the process tree, /F forces it.
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, check=False)
+    else:
+        os.kill(pid, signal.SIGTERM)
+
+
+def _default_stop_server(vool_home: Path | None, project_root: Path) -> None:
+    """Stop the running API server named by its pidfile, or raise ServerStillRunning.
+
+    Returns only when no server is running under the pidfile's pid: there is none, it was never
+    started, or it exited after being terminated. A live pid that can't be confirmed as a python
+    process (a reused pid, or a check that could not run) is never killed and never reported stopped.
+    """
+    from core import process_liveness
 
     pf = _pidfile(vool_home, project_root)
     if not pf.exists():
         return
     try:
         pid = int(pf.read_text(encoding="utf-8").strip() or "0")
-    except Exception:
-        return
+    except Exception as exc:
+        raise ServerStillRunning(f"pidfile {pf} is unreadable: {exc}") from exc
     if pid <= 0 or pid == os.getpid():
         return
-    if not _pid_is_python(pid):
-        # Stale pidfile whose pid was reused by an unrelated process — never kill it.
-        logger.warning("stop_server: pid %s is not a python process; refusing to kill (stale pidfile)", pid)
+    if not process_liveness.pid_alive(pid):
         return
+    if not _pid_is_python(pid):
+        logger.warning("stop_server: pid %s is not confirmed as a python process; refusing to kill", pid)
+        raise ServerStillRunning(f"pid {pid} is running and could not be confirmed as VOOL's server")
     try:
-        if sys.platform == "win32":
-            # /T kills the process tree, /F forces it.
-            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, check=False)
-        else:
-            os.kill(pid, signal.SIGTERM)
+        _terminate(pid)
     except Exception as exc:
         logger.warning("stop_server: could not terminate pid %s: %s", pid, exc)
+    deadline = time.monotonic() + _STOP_WAIT_SECONDS
+    while process_liveness.pid_alive(pid):
+        if time.monotonic() >= deadline:
+            raise ServerStillRunning(f"pid {pid} is still running after the stop")
+        time.sleep(0.05)
 
 
 def _pid_is_python(pid: int) -> bool:
