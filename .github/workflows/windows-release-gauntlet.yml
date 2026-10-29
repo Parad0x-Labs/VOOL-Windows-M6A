@@ -1,7 +1,7 @@
 name: Windows Release Gauntlet
 
 concurrency:
-  group: windows-release-gauntlet-${{ github.ref }}
+  group: windows-release-gauntlet-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 on:

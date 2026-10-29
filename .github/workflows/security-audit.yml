@@ -5,9 +5,10 @@ on:
     - cron: '0 8 * * 1'   # every Monday 08:00 UTC
   workflow_dispatch:        # run manually anytime
 
-# A newer push or dispatch on the same ref cancels the older run still queued or in flight.
+# Keyed on the branch (head_ref for a PR event, ref otherwise): a newer push or a dispatch on
+# the same branch cancels the older run still queued or in flight.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 # Every auditor's exit code is the only status authority here. No continue-on-error, no `|| true`,
