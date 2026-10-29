@@ -22,11 +22,17 @@ import contextlib
 import hashlib
 import os
 import re
+import time
 import uuid
 from pathlib import Path
 
 CANONICAL_DIGEST = "sha256"
 _ADDRESS = re.compile(r"^[0-9a-f]{64}$")
+_WINDOWS = os.name == "nt"
+# Windows refuses to open a path while os.replace moves another file onto it (a sharing violation,
+# PermissionError). That window is short: a read is retried for up to about 0.1 s before it counts.
+_SHARING_RETRIES = 20
+_SHARING_PAUSE_SECONDS = 0.005
 
 
 class CasIntegrityError(Exception):
@@ -97,7 +103,7 @@ def verified_read(path: Path, address: str) -> bytes:
     """Read ``path`` and return its bytes only if they hash to ``address``."""
     address = validate_address(address)
     try:
-        data = path.read_bytes()
+        data = _read_through_publish(path)
     except FileNotFoundError as exc:
         raise CasMissingError(address, reason="missing") from exc
     except OSError as exc:
@@ -109,6 +115,16 @@ def verified_read(path: Path, address: str) -> bytes:
             address, reason="digest_mismatch", expected=address, observed=observed
         )
     return data
+
+
+def _read_through_publish(path: Path) -> bytes:
+    """``path.read_bytes()``, waiting out a Windows publish that is renaming onto ``path``."""
+    for _ in range(_SHARING_RETRIES - 1 if _WINDOWS else 0):
+        try:
+            return path.read_bytes()
+        except PermissionError:
+            time.sleep(_SHARING_PAUSE_SECONDS)
+    return path.read_bytes()
 
 
 def atomic_publish(path: Path, data: bytes) -> None:
@@ -133,8 +149,33 @@ def atomic_publish(path: Path, data: bytes) -> None:
     tmp = path.parent / f".{path.name}.{uuid.uuid4().hex}.tmp"
     try:
         tmp.write_bytes(data)
-        os.replace(tmp, path)
-    except BaseException:
+        _replace_through_read(tmp, path, address)
+    finally:
         with contextlib.suppress(FileNotFoundError):
             tmp.unlink()
-        raise
+
+
+def _replace_through_read(tmp: Path, path: Path, address: str) -> None:
+    """``os.replace(tmp, path)``, waiting out a Windows reader that holds ``path`` open.
+
+    If the rename still cannot land, another publisher's object that verifies at the address is the
+    published result; anything else re-raises.
+    """
+    for _ in range(_SHARING_RETRIES - 1 if _WINDOWS else 0):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            time.sleep(_SHARING_PAUSE_SECONDS)
+    try:
+        os.replace(tmp, path)
+    except PermissionError:
+        if not _WINDOWS or not _holds(path, address):
+            raise
+
+
+def _holds(path: Path, address: str) -> bool:
+    try:
+        return canonical_digest(_read_through_publish(path)) == address
+    except OSError:
+        return False
