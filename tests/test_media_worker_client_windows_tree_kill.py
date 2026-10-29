@@ -76,13 +76,17 @@ def test_a_failed_or_hung_tree_kill_still_kills_the_recorded_child(monkeypatch, 
     worker = _RunningWorker(4242)
     client._proc = worker
 
+    ran: list[list[str]] = []
+
     def run(argv, **k):
+        ran.append(list(argv))
         if outcome == "hung":
             raise subprocess.TimeoutExpired(argv, k.get("timeout") or 5)
         return subprocess.CompletedProcess(argv, 128)
 
     monkeypatch.setattr(subprocess, "run", run)
     client._kill()
+    assert ran == [[_SYSTEM_TASKKILL, "/PID", "4242", "/T", "/F"]], ran
     assert worker.killed is True
     assert worker.waited is True
     assert client._proc is None

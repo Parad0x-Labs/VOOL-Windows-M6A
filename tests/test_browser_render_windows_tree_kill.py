@@ -52,20 +52,28 @@ def test_a_timeout_kills_the_recorded_child_tree_not_just_the_child(monkeypatch)
 def test_a_failed_tree_kill_still_kills_the_recorded_child(monkeypatch) -> None:
     chrome = _HungChrome()
     monkeypatch.setattr(br.subprocess, "Popen", lambda *a, **k: chrome)
-    monkeypatch.setattr(subprocess, "run", lambda argv, **k: subprocess.CompletedProcess(argv, 128))
+    ran: list[list[str]] = []
+    monkeypatch.setattr(
+        subprocess, "run", lambda argv, **k: ran.append(list(argv)) or subprocess.CompletedProcess(argv, 128)
+    )
     with pytest.raises(subprocess.TimeoutExpired):
         br._run_chrome(["C:\\fake\\chrome.exe"], timeout_s=1.0)
+    assert ran == [[_SYSTEM_TASKKILL, "/PID", "4242", "/T", "/F"]], ran
     assert chrome.killed is True
 
 
 def test_a_hung_tree_kill_still_kills_the_recorded_child(monkeypatch) -> None:
     chrome = _HungChrome()
 
+    ran: list[list[str]] = []
+
     def hung(argv, **k):
+        ran.append(list(argv))
         raise subprocess.TimeoutExpired(argv, k.get("timeout") or 5)
 
     monkeypatch.setattr(br.subprocess, "Popen", lambda *a, **k: chrome)
     monkeypatch.setattr(subprocess, "run", hung)
     with pytest.raises(subprocess.TimeoutExpired):
         br._run_chrome(["C:\\fake\\chrome.exe"], timeout_s=1.0)
+    assert ran == [[_SYSTEM_TASKKILL, "/PID", "4242", "/T", "/F"]], ran
     assert chrome.killed is True
