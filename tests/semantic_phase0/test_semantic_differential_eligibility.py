@@ -550,6 +550,47 @@ def test_proof_subprocess_freezes_disk_capacity_for_both_trees(tmp_path) -> None
     assert rows[0]["fields"]["response"] == repr(f"{total}:{total - free}:{free}")
 
 
+def test_corpus_driver_embeds_the_tree_path_as_a_python_literal(tmp_path) -> None:
+    r"""The driver is generated source: the tree path must arrive as one string literal.
+
+    A bare Windows path spliced inside the template's quotes made ``C:\Users\...`` a truncated
+    ``\U`` escape (`SyntaxError: (unicode error) 'unicodeescape'`), and a child env without
+    ``SystemRoot`` could not initialize Winsock for the driver's very first `import asyncio`
+    (`OSError [WinError 10106]`). Either way the child died before importing either tree and
+    the run surfaced as "driver produced no result". A tree path holding spaces exercises the
+    whole splice-and-run path end to end; the frozen reading proves the real driver answered.
+    """
+    module = _differential()
+    tree = tmp_path / "tree with spaces"
+    for package in ("apps", "core", "tests"):
+        package_dir = tree / package
+        package_dir.mkdir(parents=True)
+        (package_dir / "__init__.py").write_text("", encoding="utf-8")
+    (tree / "apps" / "vool_agent.py").write_text(
+        "import shutil\n"
+        "class _Loader: pass\n"
+        "class VoolAgent:\n"
+        "    def __init__(self, **kwargs): self.context_loader = _Loader()\n"
+        "    def start(self): pass\n"
+        "    def run_once(self, text, **kwargs):\n"
+        "        usage = shutil.disk_usage('/')\n"
+        "        return {'response': f'{usage.total}:{usage.used}:{usage.free}'}\n",
+        encoding="utf-8",
+    )
+    (tree / "core" / "policy_engine.py").write_text(
+        "_POLICY_CACHE = {}\ndef load(): return {}\n", encoding="utf-8"
+    )
+    (tree / "tests" / "conftest.py").write_text(
+        "def make_stub_context(): return {}\n", encoding="utf-8"
+    )
+
+    rows = module._run_corpus(tree, "literal_probe", ["disk free"])
+    total = 500 * 1024**3
+    free = 100 * 1024**3
+    assert rows[0]["raised"] == ""
+    assert rows[0]["fields"]["response"] == repr(f"{total}:{total - free}:{free}")
+
+
 def test_executable_controller_reexecs_isolated_from_cwd_and_pythonpath(tmp_path) -> None:
     import os
     import subprocess
@@ -571,6 +612,55 @@ def test_executable_controller_reexecs_isolated_from_cwd_and_pythonpath(tmp_path
     )
     assert completed.returncode == 0, completed.stderr
     assert "--candidate" in completed.stdout
+
+
+def test_executable_controller_reexec_quotes_spaced_paths_and_child_exit_code(tmp_path) -> None:
+    """The Windows re-exec must not lose arguments to unquoted argv joining.
+
+    `os.execve` on Windows is CRT emulation: argv is joined into ONE command line WITHOUT
+    quoting, so a space in the interpreter or script path split the re-exec (the child opened
+    a bogus script while the parent still exited 0), and the overlay teardown was observed
+    dying with 0xC0000005. The parent must exit with the CHILD's code, and the isolated child
+    must still ignore the hostile script directory, PYTHONPATH and cwd. POSIX `execve` passes
+    argv verbatim and keeps its behaviour byte for byte.
+    """
+    import os
+    import shutil
+    import subprocess
+    import sys
+
+    spaced = tmp_path / "controller dir with spaces"
+    spaced.mkdir()
+    shutil.copyfile(_SCRIPT, spaced / _SCRIPT.name)
+    # The controller loads core/safe_git.py from its own checkout, beside scripts/.
+    (tmp_path / "core").mkdir()
+    shutil.copyfile(_SCRIPT.parents[1] / "core" / "safe_git.py", tmp_path / "core" / "safe_git.py")
+    (spaced / "hashlib.py").write_text("raise RuntimeError('shadow imported')\n", encoding="utf-8")
+    (spaced / "json.py").write_text("raise RuntimeError('shadow imported')\n", encoding="utf-8")
+    (spaced / "subprocess.py").write_text("raise RuntimeError('shadow imported')\n", encoding="utf-8")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(spaced)
+    help_run = subprocess.run(
+        [sys.executable, str(spaced / _SCRIPT.name), "--help"],
+        cwd=str(spaced),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert help_run.returncode == 0, help_run.stderr
+    assert "--candidate" in help_run.stdout
+    bad_flag_run = subprocess.run(
+        [sys.executable, str(spaced / _SCRIPT.name), "--no-such-flag"],
+        cwd=str(spaced),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    # The unfixed parent exits 0 (spawn-and-exit overlay) or 0xC0000005, whatever the child did;
+    # the child's own argparse exit code 2 must be the one the caller sees.
+    assert bad_flag_run.returncode == 2, (bad_flag_run.returncode, bad_flag_run.stderr)
 
 
 def test_mixed_host_drift_never_launders_a_stable_candidate_regression() -> None:
