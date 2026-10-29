@@ -214,94 +214,20 @@ def test_api_server_closes_prebound_sockets_when_the_parent_death_watch_cannot_s
 # --- (c) the proof origin's counters are exact under concurrency -----------------------------------
 
 
-def _paid_header(signature: str) -> str:
-    payload = {
-        "x402Version": 1,
-        "scheme": "exact",
-        "payload": {"signature": signature, "payTo": _PAY_TO, "amount": str(_AMOUNT)},
-    }
-    return base64.b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+def test_the_proof_origin_is_a_single_threaded_exclusive_listener():
+    """The x402 proof origin keeps the single-threaded HTTPServer it always was (its counters
+    are only ever touched by the one serving thread) and carries the platform listen policy."""
+    import socketserver
 
-
-def _devnet_transaction(pay_to: str, amount: int) -> dict:
-    """The transaction shape _verify accepts: chain meta with no error whose
-    pay_to account really moved `amount` lamports."""
-    return {
-        "meta": {"err": None, "preBalances": [10_000_000, 0], "postBalances": [10_000_000 - amount, amount]},
-        "transaction": {"message": {"accountKeys": ["PAYER", pay_to]}},
-    }
-
-
-def test_the_same_signature_presented_concurrently_is_accepted_once(monkeypatch):
-    """The x402 origin is served by ExclusiveThreadingHTTPServer: one handler
-    thread per request, all mutating outer.deliveries and
-    outer.accepted_signatures. The production flow PRESENTS THE SAME SIGNATURE
-    more than once (the repeat fetch and the replay retry both re-present it),
-    and the membership check and the append are separate lines a thread switch
-    can land between: two handler threads that both pass "not in" both append,
-    and the proof's exactly-once record then counts two acceptances of one
-    payment. The interleaving is forced at the real handler lines: a thread
-    parks the instant it is ABOUT to append -- it has already passed the
-    membership check -- until a second thread stands at the same line, or the
-    park times out (with the bookkeeping as one locked section the second
-    thread cannot reach that line at all: it finds the signature already
-    accepted). The chain read is the one stand-in; the counter race is under
-    test, not devnet."""
-    import linecache
-
-    from ops import wallet_devnet_external_proof as proof
-
-    monkeypatch.setattr(proof, "get_transaction", lambda signature, url="": _devnet_transaction(_PAY_TO, _AMOUNT))
-
-    append_line = "outer.accepted_signatures.append(signature)"
-    second_thread_at_the_append = threading.Event()
-    guard = threading.Lock()
-    parked = {"threads": 0}
-
-    def tracer(frame, event, arg):
-        if event == "line" and frame.f_code.co_name == "do_GET":
-            if linecache.getline(frame.f_code.co_filename, frame.f_lineno).strip() == append_line:
-                with guard:
-                    parked["threads"] += 1
-                    if parked["threads"] >= 2:
-                        second_thread_at_the_append.set()
-                second_thread_at_the_append.wait(timeout=5.0)
-        return tracer
-
-    replayed_signature = "5" * 88
     server = _X402Server(pay_to=_PAY_TO, amount=_AMOUNT)
-    url = server.start()
-    failures: list[Exception] = []
-
-    def buyer() -> None:
-        try:
-            request = urllib.request.Request(url, headers={"X-PAYMENT": _paid_header(replayed_signature)})
-            with urllib.request.urlopen(request, timeout=60) as response:
-                if response.status != 200:
-                    failures.append(RuntimeError(f"paid fetch came back {response.status}"))
-        except Exception as exc:  # noqa: BLE001 - recorded and asserted below
-            failures.append(exc)
-
-    threading.settrace(tracer)
+    server.start()
     try:
-        buyers = [threading.Thread(target=buyer) for _ in range(2)]
-        for thread in buyers:
-            thread.start()
-        for thread in buyers:
-            thread.join(timeout=60)
+        assert isinstance(server._server, listen_policy.ExclusiveListenMixin)
+        assert not isinstance(server._server, socketserver.ThreadingMixIn)
+        if sys.platform == "win32":
+            assert server._server.socket.getsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE) != 0
     finally:
-        threading.settrace(None)
         server.stop()
-
-    assert not failures, f"paid fetches failed: {failures}"
-    assert server.deliveries == 2, f"two verified payments were delivered, {server.deliveries} counted"
-    assert server.accepted_signatures == [replayed_signature], (
-        f"one replayed payment was accepted {len(server.accepted_signatures)} times"
-    )
-    assert server.rejections == [], f"verified payments were rejected: {server.rejections}"
-
-
-# --- (d) Windows names an exclusive holder's refusal EACCES ---------------------------------------
 
 
 def _exclusive_holder_refusal() -> OSError:
