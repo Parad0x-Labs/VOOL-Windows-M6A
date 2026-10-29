@@ -247,13 +247,18 @@ public sealed class Channel(int apiPid, long apiCreationTime, byte[] secret, str
                 case "stat":
                 {
                     ExpectFields(request, "root_id", "rel");
-                    var stat = FileOps.Stat(RootOf(request, "root_id", connectionRoots), StringField(request, "rel"));
+                    var root = RootOf(request, "root_id", connectionRoots);
+                    var rel = StringField(request, "rel");
+                    var stat = Batches.Reading(() => FileOps.Stat(root, rel));
                     return new { id = idValue, ok = true, kind = stat.Kind, size = stat.Size, file_id = stat.FileId, read_only = stat.ReadOnly };
                 }
                 case "read":
                 {
                     ExpectFields(request, "root_id", "rel", "max_bytes");
-                    var (data, sha256) = FileOps.Read(RootOf(request, "root_id", connectionRoots), StringField(request, "rel"), IntField(request, "max_bytes"));
+                    var root = RootOf(request, "root_id", connectionRoots);
+                    var rel = StringField(request, "rel");
+                    var maxBytes = IntField(request, "max_bytes");
+                    var (data, sha256) = Batches.Reading(() => FileOps.Read(root, rel, maxBytes));
                     return new { id = idValue, ok = true, data = Convert.ToBase64String(data), size = data.Length, sha256 };
                 }
                 case "write_file" or "ensure_directory" or "delete" or "rename":

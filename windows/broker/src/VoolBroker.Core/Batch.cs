@@ -149,6 +149,16 @@ public sealed class BatchRunner(RootRegistry roots, Journal journal)
         return new BatchResult(batchId, results, left);
     }
 
+    /// <summary>
+    /// Runs a read (stat or read) between changes, never during one (Phase C pick 18, approved
+    /// 23 Oct). A replace sets the old object aside before it places the new one, so a read in
+    /// between would find no file; a read asked for meanwhile waits for the change to end instead.
+    /// </summary>
+    public T Reading<T>(Func<T> read)
+    {
+        lock (changing) return read();
+    }
+
     /// <summary>restore_batch: finishes (committed) or undoes (not committed) a batch the journal still holds.</summary>
     public RecoveryOutcome Restore(string batchId)
     {
