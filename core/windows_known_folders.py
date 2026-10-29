@@ -4,7 +4,8 @@ OneDrive's folder backup and the known-folder-move policy put the real Desktop s
 `%USERPROFILE%\\OneDrive\\Desktop`, so `Path.home() / "Desktop"` names a folder the user no longer
 looks in. Owner decision (2026-10-29): on Windows the safe machine folders follow
 SHGetKnownFolderPath, and a known folder that points at a share, a device or a network drive is
-never used. The shell's answer is also not used when the home was redirected (HOME/USERPROFILE
+never used, nor is one at a drive root or holding the profile, which would open the whole drive
+or profile. The shell's answer is also not used when the home was redirected (HOME/USERPROFILE
 naming another folder than the shell's own profile, as tests and portable setups do), since the
 redirect is the caller saying which home it means. Whenever the shell's answer is not used, the
 profile spelling `home / name` stays, as before. Off Windows nothing changes.
@@ -77,8 +78,22 @@ def _full_local_path(value: str) -> bool:
     return not windows_path_policy.classify(value) and ntpath.isabs(value) and bool(ntpath.splitdrive(value)[0])
 
 
+def _norm(value: str) -> str:
+    return ntpath.normcase(ntpath.normpath(value))
+
+
 def _same_folder(left: str, right: str) -> bool:
-    return ntpath.normcase(ntpath.normpath(left)) == ntpath.normcase(ntpath.normpath(right))
+    return _norm(left) == _norm(right)
+
+
+def _too_wide(reported: str, profile: str) -> bool:
+    """A drive root, the profile itself or a folder holding it: as a write root it would open the
+    whole drive or profile, so it is never used."""
+    folder = _norm(reported)
+    if ntpath.splitdrive(folder)[1] in ("", "\\"):
+        return True
+    held = _norm(profile)
+    return held == folder or held.startswith(folder.rstrip("\\") + "\\")
 
 
 def safe_folder(name: str, home: Path) -> Path:
@@ -90,7 +105,7 @@ def safe_folder(name: str, home: Path) -> Path:
     if not profile or not _same_folder(str(home), profile):
         return fallback
     reported = _shell_known_folder(name)
-    if not reported or not _full_local_path(reported):
+    if not reported or not _full_local_path(reported) or _too_wide(reported, profile):
         return fallback
     drive = ntpath.splitdrive(reported)[0]
     if drive and _drive_is_remote(drive) is not False:
