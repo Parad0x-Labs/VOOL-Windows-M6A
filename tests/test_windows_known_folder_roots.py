@@ -31,6 +31,7 @@ def _shell(answers: dict[str, str | None]):
 def on_windows(monkeypatch):
     monkeypatch.setattr(kf, "_IS_WINDOWS", True)
     monkeypatch.setattr(kf, "_drive_is_remote", lambda drive: False)
+    monkeypatch.setattr(kf, "_resolved", lambda value: value)
     return monkeypatch
 
 
@@ -90,6 +91,22 @@ def test_a_drive_root_or_a_folder_holding_the_profile_is_never_used(on_windows, 
     profile a write root."""
     on_windows.setattr(kf, "_shell_known_folder", _shell({"Profile": PROFILE, "Documents": reported}))
     assert kf.safe_folder("Documents", Path(PROFILE)) == Path(PROFILE) / "Documents"
+
+
+@pytest.mark.parametrize("target", ["\\\\srv\\share\\Desktop", "C:\\", "C:\\Users\\me", "Z:\\Desktop"])
+def test_a_junction_to_a_share_the_drive_or_the_profile_is_never_used(on_windows, target) -> None:
+    """The callers resolve the folder, so a junction (`mklink /J`, no admin needed) is judged by where
+    it leads, not by its own spelling."""
+    on_windows.setattr(kf, "_shell_known_folder", _shell({"Profile": PROFILE, **MOVED}))
+    on_windows.setattr(kf, "_resolved", lambda value: target if value == MOVED["Desktop"] else value)
+    on_windows.setattr(kf, "_drive_is_remote", lambda drive: drive.upper().startswith("Z:"))
+    assert kf.safe_folder("Desktop", Path(PROFILE)) == Path(PROFILE) / "Desktop"
+
+
+def test_the_resolved_folder_is_what_is_used(on_windows) -> None:
+    on_windows.setattr(kf, "_shell_known_folder", _shell({"Profile": PROFILE, **MOVED}))
+    on_windows.setattr(kf, "_resolved", lambda value: "C:\\Users\\me\\OneDrive - Org\\Desktop" if value == MOVED["Desktop"] else value)
+    assert str(kf.safe_folder("Desktop", Path(PROFILE))) == "C:\\Users\\me\\OneDrive - Org\\Desktop"
 
 
 def test_no_profile_answer_keeps_the_home_spelling(on_windows) -> None:
