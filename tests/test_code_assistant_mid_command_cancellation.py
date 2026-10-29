@@ -44,6 +44,7 @@ def _ctx(workspace: Path, cancel: threading.Event) -> dict:
         ("workspace.run_tests", {"command": "python3 sleep.py"}),
     ],
 )
+@stops_at_windows_run_refusal
 def test_cancel_pressed_mid_command_kills_the_job(tmp_path: Path, intent: str, arguments: dict) -> None:
     workspace = tmp_path / "repo"
     workspace.mkdir()
@@ -65,7 +66,7 @@ def test_cancel_pressed_mid_command_kills_the_job(tmp_path: Path, intent: str, a
 
     assert not worker.is_alive(), "the turn must not wait out a 30s command after cancel"
     assert elapsed < 15.0, f"cancel must interrupt the job promptly, took {elapsed:.1f}s"
-    result = result_box["result"]
+    result = stop_if_windows_refused(result_box["result"], intent)
     assert result is not None
     assert result.ok is False, "a cancelled command is never a success"
     status = str(result.status or "")
@@ -128,7 +129,7 @@ def test_a_callable_cancel_token_cancels_the_running_job(tmp_path: Path) -> None
 
     assert not worker.is_alive(), "a callable cancel token must interrupt the job, not be ignored"
     assert elapsed < 15.0, f"cancel must interrupt the job promptly, took {elapsed:.1f}s"
-    result = stop_if_windows_refused(box["result"])
+    result = stop_if_windows_refused(box["result"], "sandbox.run_command")
     assert result.ok is False, "a cancelled command is never a success"
     assert "cancel" in str(result.status or "") or int(result.details.get("returncode", 0) or 0) == 125, result.details
     assert not str(result.details.get("stdout") or "").strip()
@@ -150,7 +151,7 @@ def test_an_unreadable_cancel_token_is_not_permission_to_run(tmp_path: Path) -> 
     ctx["cancel_event"] = _explode
 
     started = time.monotonic()
-    result = stop_if_windows_refused(_run("sandbox.run_command", {"command": "python3 sleep.py"}, ctx))
+    result = stop_if_windows_refused(_run("sandbox.run_command", {"command": "python3 sleep.py"}, ctx), "sandbox.run_command")
     elapsed = time.monotonic() - started
 
     assert elapsed < 15.0, f"an unreadable token must not sleep out the 30s command, took {elapsed:.1f}s"
