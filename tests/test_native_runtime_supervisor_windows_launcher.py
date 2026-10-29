@@ -13,9 +13,11 @@ import pytest
 from core.runtime_paths import runtime_home_identity
 from installer.bundle import native_runtime_supervisor as nrs
 from installer.bundle.native_runtime_supervisor import NativeRuntimeError, NativeRuntimeSupervisor
+from tests._windows_system32 import CMD, TASKKILL, trust_system32
 
 SHA = "a" * 40
-COMSPEC = r"C:\Windows\System32\cmd.exe"
+# A ComSpec pointing anywhere else is never followed: only System32's cmd.exe runs the starter (#97).
+PLANTED_COMSPEC = r"C:\Users\Public\Downloads\cmd.exe"
 
 
 def _module(tmp_path: Path) -> Path:
@@ -29,7 +31,8 @@ def _wrapper_env(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("VOOL_PROJECT_ROOT", str(tmp_path))
     monkeypatch.setenv("VOOL_RUNTIME_MODE", "wrapper")
     monkeypatch.setenv("VOOL_EXPECTED_COMMIT", SHA)
-    monkeypatch.setenv("ComSpec", COMSPEC)
+    monkeypatch.setenv("ComSpec", PLANTED_COMSPEC)
+    trust_system32(monkeypatch)
     monkeypatch.setattr(sys, "platform", "win32")
 
 
@@ -42,8 +45,25 @@ def test_windows_wrapper_mode_runs_the_bat_through_cmd_not_bash(tmp_path, monkey
 
     supervisor = NativeRuntimeSupervisor.from_environment(module_path=module)
 
-    assert supervisor.command == [COMSPEC, "/d", "/s", "/c", str(bat.resolve())]
+    assert supervisor.command == [CMD, "/d", "/s", "/c", str(bat.resolve())]
     assert "bash" not in supervisor.command
+    assert PLANTED_COMSPEC not in supervisor.command
+
+
+def test_windows_wrapper_mode_without_a_trusted_system32_cmd_fails_closed_and_spawns_nothing(tmp_path, monkeypatch) -> None:
+    module = _module(tmp_path)
+    (tmp_path / "Start_VOOL.bat").write_text("@echo off\r\n")
+    _wrapper_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("SystemRoot", "")  # System32 can't be trusted; ComSpec still points elsewhere
+
+    supervisor = NativeRuntimeSupervisor.from_environment(module_path=module)
+    supervisor._health = mock.Mock(return_value=None)
+    popen = mock.Mock()
+    supervisor._popen = popen
+
+    with pytest.raises(NativeRuntimeError, match=r"cmd\.exe"):
+        supervisor.ensure_ready()
+    popen.assert_not_called()
 
 
 def test_windows_wrapper_mode_without_the_bat_fails_closed_and_spawns_nothing(tmp_path, monkeypatch) -> None:
@@ -153,12 +173,13 @@ def _windows_owned(tmp_path, monkeypatch, *, root: Path | None = None, tree=None
         child.events.append("taskkill")
         return types.SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
 
+    trust_system32(monkeypatch)
     monkeypatch.setattr(nrs, "os", _NtOs())
     monkeypatch.setattr(nrs.subprocess, "run", fake_run)
     monkeypatch.setitem(sys.modules, "psutil", _fake_psutil(tree if tree is not None else {child.pid: [9200]}))
     supervisor = NativeRuntimeSupervisor(
         root,
-        [COMSPEC, "/d", "/s", "/c", str(bat)],
+        [CMD, "/d", "/s", "/c", str(bat)],
         expected_sha=SHA,
         env={"VOOL_HOME": str(tmp_path / "home")},
         startup_timeout=1,
@@ -176,7 +197,7 @@ def test_windows_wrapper_spawn_keeps_quotes_for_a_path_cmd_would_split(tmp_path,
     supervisor.ensure_ready()
 
     spawned = supervisor._popen.call_args.args[0]
-    assert spawned == f'"{COMSPEC}" /d /s /c ""{bat}""'
+    assert spawned == f'"{CMD}" /d /s /c ""{bat}""'
 
 
 def test_windows_wrapper_starter_path_with_percent_is_refused_before_spawn(tmp_path, monkeypatch) -> None:
@@ -205,7 +226,7 @@ def test_windows_wrapper_rejects_an_api_outside_its_own_tree_and_stops_the_tree(
 
     with pytest.raises(NativeRuntimeError, match="identity mismatch"):
         supervisor.ensure_ready()
-    assert runs == [["taskkill", "/PID", "9100", "/T", "/F"]]
+    assert runs == [[TASKKILL, "/PID", "9100", "/T", "/F"]]
     assert supervisor.owns_runtime is False
 
 
@@ -216,7 +237,7 @@ def test_windows_wrapper_shutdown_stops_the_cmd_tree_while_the_root_is_alive(tmp
 
     supervisor.shutdown()
 
-    assert runs == [["taskkill", "/PID", "9100", "/T", "/F"]]
+    assert runs == [[TASKKILL, "/PID", "9100", "/T", "/F"]]
     assert child.events[0] == "taskkill"
     assert supervisor.owns_runtime is False
 
