@@ -24,13 +24,18 @@ def windows(monkeypatch):
 
 
 @pytest.fixture()
-def briefly_shared(monkeypatch):
-    """Every replace or unlink is refused twice for each target, as an open handle refuses it."""
+def briefly_shared(monkeypatch, tmp_path):
+    """Every replace or unlink of a file in this test's folder is refused twice, as an open handle
+    refuses it. Only that folder: `os` is patched for the whole process, so a path anywhere else
+    (another thread's log or state file) passes straight through."""
     refused: dict[str, int] = {}
     real_replace, real_unlink = os.replace, os.unlink
+    own = os.path.abspath(tmp_path)
 
     def _refuse(target) -> None:
         key = os.fspath(target)
+        if not Path(os.path.abspath(key)).is_relative_to(own):
+            return  # also a path on another drive, where commonpath would raise
         refused[key] = refused.get(key, 0) + 1
         if refused[key] <= 2:
             raise PermissionError(13, "The process cannot access the file because it is being used by another process", key)
@@ -59,7 +64,11 @@ def test_a_replace_is_retried_until_the_handle_closes(windows, briefly_shared, t
 def test_a_replace_still_refused_after_the_bound_raises(windows, monkeypatch, tmp_path):
     calls = []
 
-    def never(src, dst):
+    real_replace = os.replace
+
+    def never(src, dst, *args, **kwargs):
+        if Path(dst).parent != tmp_path:
+            return real_replace(src, dst, *args, **kwargs)
         calls.append(dst)
         raise PermissionError(13, "denied", os.fspath(dst))
 
