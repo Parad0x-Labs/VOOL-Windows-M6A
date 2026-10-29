@@ -118,7 +118,7 @@ class _FakePosixRun:
         self.systemd_units = systemd_units or []  # unit names reported by `systemctl list-unit-files`
         self._lsof_seen: set[int] = set()
 
-    def __call__(self, cmd, capture_output=False, text=False, check=False):
+    def __call__(self, cmd, capture_output=False, text=False, check=False, **_kwargs):
         self.calls.append(list(cmd))
         out = ""
         if cmd and cmd[0] == "lsof":

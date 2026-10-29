@@ -169,6 +169,8 @@ def test_ram_fallback_comes_from_get_ciminstance_not_wmic(monkeypatch) -> None:
     assert len(run.calls) == 1 and run.calls[0][0] == POWERSHELL
     assert "Get-CimInstance Win32_ComputerSystem" in run.calls[0][-1]
     assert run.kwargs[0].get("creationflags") == _NO_WINDOW
+    # A cold PowerShell start can take several seconds; a short timeout would drop the reading.
+    assert run.kwargs[0].get("timeout", 0) >= 12
 
 
 def test_hardware_probe_runs_nothing_without_a_trusted_windows_folder(monkeypatch) -> None:
