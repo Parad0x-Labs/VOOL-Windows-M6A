@@ -51,6 +51,7 @@ def _fake_socket_module(*, with_exclusiveaddruse: bool) -> tuple[SimpleNamespace
     attributes: dict[str, object] = {
         "SOL_SOCKET": socket.SOL_SOCKET,
         "SO_REUSEADDR": socket.SO_REUSEADDR,
+        "SOCK_STREAM": socket.SOCK_STREAM,
         "socket": lambda *args, **kwargs: _RecordingSocket(calls),
     }
     if with_exclusiveaddruse:
