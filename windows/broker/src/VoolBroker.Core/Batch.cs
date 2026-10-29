@@ -150,7 +150,7 @@ public sealed class BatchRunner(RootRegistry roots, Journal journal)
     }
 
     /// <summary>
-    /// Runs a read (stat or read) between changes, never during one (Phase C pick 18, approved
+    /// Runs a read (stat, read or open_root's walk) between changes, never during one (Phase C pick 18, approved
     /// 23 Oct). A replace sets the old object aside before it places the new one, so a read in
     /// between would find no file; a read asked for meanwhile waits for the change to end instead.
     /// </summary>

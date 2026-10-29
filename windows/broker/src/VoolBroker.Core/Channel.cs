@@ -232,7 +232,13 @@ public sealed class Channel(int apiPid, long apiCreationTime, byte[] secret, str
                     ExpectFields(request, "flagged_id", "rel");
                     if (connectionRoots.Count >= MaxRootsPerConnection)
                         throw new BrokerRefusal("too_many_roots", $"A connection may hold at most {MaxRootsPerConnection} roots open; close one first.");
-                    var rootId = Roots.OpenRoot(StringField(request, "flagged_id"), StringField(request, "rel"));
+                    var flaggedId = StringField(request, "flagged_id");
+                    var rel = StringField(request, "rel");
+                    // A walk by name, like read and stat: never in the middle of a change (pick 18). The
+                    // flagged folder itself ("") is the broker's held handle, with no walk to wait for.
+                    var rootId = rel.Length == 0
+                        ? Roots.OpenRoot(flaggedId, rel)
+                        : Batches.Reading(() => Roots.OpenRoot(flaggedId, rel));
                     connectionRoots.Add(rootId);
                     return new { id = idValue, ok = true, root_id = rootId };
                 }

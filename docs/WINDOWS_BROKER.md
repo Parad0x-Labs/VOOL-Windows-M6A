@@ -331,7 +331,7 @@ inside `apply_batch` stays in the batch's root.
   - place: rename into place, never replacing.
 
   A file is never overwritten in place. A replace is not one atomic step: between aside and place
-  the name is briefly empty. The broker's own `read` and `stat` wait for a running change to end
+  the name is briefly empty. The broker's own `read`, `stat` and `open_root` wait for a running change to end
   (`BatchRunner.Reading`, Phase C item 18), so VOOL never sees that moment; another program reading
   then finds no file once, and normally retries.
 - `write_file` requires `expect`: `any`, `absent` or `sha256:<64 lowercase hex>`. There is no
