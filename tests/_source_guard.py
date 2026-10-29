@@ -34,8 +34,6 @@ import sys
 from collections.abc import Iterator
 from pathlib import Path
 
-from core import safe_git
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 #: Journals live inside the repo on purpose: a run killed on a machine whose temp directory is
@@ -115,13 +113,16 @@ def _read_journal(journal: Path) -> dict:
 
 def _trusted_head_bytes(relative_path: str) -> bytes:
     """Bytes Git HEAD records for a tracked path, or fail closed."""
-    git = safe_git.trusted_git_executable()
+    git = next(
+        (path for path in (Path("/usr/bin/git"), Path("/bin/git"), Path("/usr/local/bin/git")) if path.is_file()),
+        None,
+    )
     if git is None:
         raise JournalIntegrityError("trusted git executable is unavailable")
     completed = subprocess.run(
-        [str(git), *safe_git.hardening_args(), "-C", str(REPO_ROOT), "show", f"HEAD:{relative_path}"],
-        cwd=REPO_ROOT.anchor,
-        env=safe_git.trusted_git_env(git),
+        [str(git), "-C", str(REPO_ROOT), "show", f"HEAD:{relative_path}"],
+        cwd="/",
+        env={"PATH": "/usr/bin:/bin:/usr/local/bin", "LC_ALL": "C"},
         capture_output=True,
         check=False,
     )
@@ -284,7 +285,7 @@ def assert_tree_is_clean(context: str, *, executable_only: bool = False) -> list
 
 
 def install_restore_on_signal(restore: "callable[[], None]") -> None:  # noqa: UP037
-    """Restore on SIGTERM/SIGINT (and SIGBREAK on Windows), then die of the original signal.
+    """Restore on SIGTERM/SIGINT, then die of the original signal.
 
     `finally` does not run when a supervisor sends SIGTERM, which is exactly how a proof worker is
     reaped on a timeout. Re-raising with the default handler afterwards keeps the exit status
@@ -299,11 +300,7 @@ def install_restore_on_signal(restore: "callable[[], None]") -> None:  # noqa: U
         signal.signal(signum, signal.SIG_DFL)
         os.kill(os.getpid(), signum)
 
-    # SIGBREAK is Windows' catchable stop (CTRL_BREAK_EVENT); there terminate() is TerminateProcess.
-    for name in ("SIGTERM", "SIGINT", "SIGBREAK"):
-        signum = getattr(signal, name, None)
-        if signum is None:
-            continue
+    for signum in (signal.SIGTERM, signal.SIGINT):
         with contextlib.suppress(Exception):
             signal.signal(signum, _handler)
 

@@ -297,15 +297,7 @@ def test_two_journals_for_one_path_fail_before_either_is_applied(tmp_path, monke
     assert any("disagrees with git HEAD" in item for item in problems)
 
 
-#: The stops a supervisor can send that the worker can catch. Windows has no catchable SIGTERM
-#: (`terminate()` is TerminateProcess) and cannot send ctrl-C into a child's own process group, so
-#: there the stop is CTRL_BREAK_EVENT, delivered to the child as SIGBREAK (ops/process_tree.py).
-_CATCHABLE_STOPS = (
-    [signal.CTRL_BREAK_EVENT] if sys.platform == "win32" else [signal.SIGTERM, signal.SIGINT]
-)
-
-
-@pytest.mark.parametrize("signum", _CATCHABLE_STOPS)
+@pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGINT])
 def test_signal_handler_restores_before_reraising_the_signal(signum) -> None:
     """Exercise the handler caller itself, not just mutation-matrix source wiring."""
     original = _subject_bytes()
@@ -329,7 +321,6 @@ while True:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
     )
     try:
         assert child.stdout and child.stdout.readline().strip() == "READY"
