@@ -537,7 +537,8 @@ def _default_start_server(project_root: Path) -> None:
             return
         try:
             flags = 0x00000008 | 0x00000200 | 0x08000000  # DETACHED | NEW_GROUP | NO_WINDOW
-            subprocess.Popen(["cmd", "/c", str(bat)], cwd=str(project_root), creationflags=flags, close_fds=True)
+            # A string, not a list: /s with doubled quotes keeps the path quoted even when it holds & or ( ).
+            subprocess.Popen(f'cmd /s /c ""{bat}""', cwd=str(project_root), creationflags=flags, close_fds=True)
         except Exception as exc:
             logger.warning("start_server: launch failed: %s", exc)
         return

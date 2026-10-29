@@ -75,7 +75,8 @@ def _start_bundle(root: Path) -> None:
         raise FileNotFoundError("VOOL.cmd is missing")
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
     subprocess.Popen(
-        [os.environ.get("ComSpec", "cmd.exe"), "/c", str(launcher)],
+        # A string, not a list: /s with doubled quotes keeps the path quoted even when it holds & or ( ).
+        f'"{os.environ.get("ComSpec", "cmd.exe")}" /s /c ""{launcher}""',
         cwd=str(root),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
