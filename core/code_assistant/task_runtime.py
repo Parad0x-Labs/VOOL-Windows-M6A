@@ -103,6 +103,10 @@ _PATH_KEYS = PATH_KEYS
 #: never held across a command run or a file write, so ten seconds only bounds waiting on another
 #: process's section before the call fails closed as ``journal_unavailable``.
 _JOURNAL_LOCK_WAIT_SECONDS = 10.0
+#: Wall clock, not budget: one approved write holds its target path's cross-process lock from its
+#: precondition through the physical write to the recorded outcome (milliseconds). Another process's
+#: write to the same path waits this long, then is refused unexecuted as ``approval_in_flight``.
+_PATH_LOCK_WAIT_SECONDS = _JOURNAL_LOCK_WAIT_SECONDS
 #: Wall clock, not budget: a claimed approval's workspace write completes in milliseconds. A claim
 #: held by ANOTHER runtime instance for this long belongs to a process that stopped mid-step; it is
 #: released, and the reviewed-base precondition -- not the claim -- decides whether the write may run.
@@ -116,6 +120,21 @@ _INVALIDATION_STATUS = {
     "bytes_diverged": "bytes_diverged",
     "destination_changed": "destination_changed",
 }
+
+
+def _acquire_within(lock: PublicationLock, seconds: float) -> None:
+    """Take a non-blocking cross-process lock, retrying for at most ``seconds``; else ``LockUnavailable``."""
+    import time as _time
+
+    deadline = _time.monotonic() + seconds
+    while True:
+        try:
+            lock.__enter__()
+            return
+        except LockUnavailable:
+            if _time.monotonic() >= deadline:
+                raise
+            _time.sleep(0.005)
 
 
 def _utcnow() -> str:
@@ -1346,17 +1365,7 @@ class CodeTaskRuntime:
             root = task_dir()
             root.mkdir(parents=True, exist_ok=True)
             lock = PublicationLock(root / f".{task_id}.lock")
-            import time as _time
-
-            deadline = _time.monotonic() + _JOURNAL_LOCK_WAIT_SECONDS
-            while True:
-                try:
-                    lock.__enter__()
-                    break
-                except LockUnavailable:
-                    if _time.monotonic() >= deadline:
-                        raise
-                    _time.sleep(0.005)
+            _acquire_within(lock, _JOURNAL_LOCK_WAIT_SECONDS)
             self._journal_lock_depth[task_id] = 1
             try:
                 yield
@@ -3375,6 +3384,11 @@ class CodeTaskRuntime:
                 lock = self._path_locks[key] = threading.Lock()
             return lock
 
+    @staticmethod
+    def _path_lock_file(workspace_root: str, target: str) -> Path:
+        """The cross-process lock file of one workspace path, shared by every task writing it."""
+        return task_dir() / f".path-{_sha(workspace_root + chr(0) + target)[:32]}.lock"
+
     def _task_mutation_lock(self, task_id: str) -> threading.Lock:
         with self._lock:
             lock = self._task_mutation_locks.get(task_id)
@@ -3566,13 +3580,32 @@ class CodeTaskRuntime:
         locks = [self._task_mutation_lock(task.task_id)] + [self._path_lock(task.workspace_root, t) for t in targets]
         for lock in locks:
             lock.acquire()
+        # And one writer per path across processes, held from the precondition through the write to
+        # the recorded outcome: the writer's own base check holds no lock, so without this another
+        # process's approved write on the same base could pass it in between and both would land.
+        held: list[PublicationLock] = []
+        busy = ""
         try:
+            for target in targets:
+                path_lock = PublicationLock(self._path_lock_file(task.workspace_root, target))
+                try:
+                    _acquire_within(path_lock, _PATH_LOCK_WAIT_SECONDS)
+                except LockUnavailable:
+                    busy = target
+                    break
+                held.append(path_lock)
             with self._transaction(task.task_id) as fresh:
                 if fresh is None or step_id not in fresh.steps:
                     return self._vanished(task.task_id)
                 step = fresh.steps[step_id]
                 proposal = fresh.proposals.get(proposal_id)
                 refusal, reason = self._mutation_precondition(fresh, step, proposal)
+                if not refusal and busy:
+                    refusal, reason = (
+                        "approval_in_flight",
+                        f"another approved write to `{busy}` is running in another process; wait for its result "
+                        "and re-read the file before executing this approval",
+                    )
                 if refusal:
                     step.status, step.reason, step.completed_at = refusal, reason, _utcnow()
                     if proposal is not None and proposal.reserved_by == step_id:
@@ -3610,6 +3643,8 @@ class CodeTaskRuntime:
             except (JournalConflictError, LockUnavailable) as exc:
                 return self._unrecorded_effect(task, step_id, intent, outcome, exc)
         finally:
+            for path_lock in reversed(held):
+                path_lock.__exit__(None, None, None)
             for lock in reversed(locks):
                 lock.release()
 

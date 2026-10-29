@@ -1,6 +1,7 @@
 """Real protected-code swaps and SQLite recovery for explicit rollback."""
 import json
 import sqlite3
+from contextlib import closing
 from types import SimpleNamespace
 
 import pytest
@@ -21,7 +22,7 @@ def installed(tmp_path):
     (home / 'config').mkdir()
     (home / 'config/keys.json').write_text('latest disposable key and preference')
     (data / 'conversation.jsonl').write_text('history written AFTER updating')
-    with sqlite3.connect(data / 'chat.db') as db:
+    with closing(sqlite3.connect(data / 'chat.db')) as db, db:
         db.execute('CREATE TABLE chats(value TEXT)')
         db.execute("INSERT INTO chats VALUES ('chat written AFTER updating')")
     target, new = tmp_path / 'installed', tmp_path / 'new'
@@ -51,7 +52,7 @@ def installed(tmp_path):
 
 
 def retained(home):
-    with sqlite3.connect(home / 'data/chat.db') as db:
+    with closing(sqlite3.connect(home / 'data/chat.db')) as db, db:
         return db.execute('SELECT * FROM chats').fetchall(), (home / 'config/keys.json').read_text()
 
 
@@ -75,7 +76,7 @@ def test_bad_previous_runtime_restores_current_code_and_current_data(installed):
 
     def probe(**kw):
         if (target / 'core/version').read_text() == '0.7.0':
-            with sqlite3.connect(home / 'data/chat.db') as db:
+            with closing(sqlite3.connect(home / 'data/chat.db')) as db, db:
                 db.execute('DELETE FROM chats')
             (home / 'config/keys.json').write_text('broken old runtime mutated keys')
             (home / 'data/conversation.jsonl').unlink()
@@ -91,6 +92,48 @@ def test_bad_previous_runtime_restores_current_code_and_current_data(installed):
     assert retained(home) == before
     assert (home / 'data/conversation.jsonl').read_text() == 'history written AFTER updating'
     assert subsystem.status.load().phase.value == 'failed'
+
+
+def test_failed_rollback_records_why_before_restoring_current(installed):
+    subsystem, _, target, _, _ = installed
+    state = subsystem.paths.root / 'manual_rollbacks/rollback-reason/state.json'
+    seen = []
+
+    def probe(**kw):
+        if (target / 'core/version').read_text() == '0.7.0':
+            return HealthResult(False, 'previous runtime failed')
+        seen.append(json.loads(state.read_text()).get('reason'))
+        return HealthResult(True, 'current code healthy')
+
+    subsystem._make_probe = lambda: probe
+    assert run_manual_rollback(subsystem, rollback_candidate(subsystem), 'rollback-reason') == {
+        'ok': False, 'restored_current': True}
+    recorded = json.loads(state.read_text())
+    assert recorded['phase'] == 'restored'
+    assert recorded['reason'] == 'previous version did not return healthy'
+    assert seen == ['previous version did not return healthy']
+
+
+def test_unwritable_reason_still_restores_current(installed, monkeypatch):
+    import core.updater.rollback as rollback
+
+    subsystem, _, target, _, _ = installed
+    real_save = rollback._save
+
+    def save(path, state, phase):
+        if 'reason' in state and phase == state['phase'] == 'swapped':
+            raise OSError('state.json is held open')
+        real_save(path, state, phase)
+
+    monkeypatch.setattr(rollback, '_save', save)
+    subsystem._make_probe = lambda: lambda **kw: HealthResult(
+        (target / 'core/version').read_text() == '0.7.1', 'only the current version starts')
+    assert run_manual_rollback(subsystem, rollback_candidate(subsystem), 'rollback-unwritable') == {
+        'ok': False, 'restored_current': True}
+    assert (target / 'core/version').read_text() == '0.7.1'
+    recorded = json.loads((subsystem.paths.root / 'manual_rollbacks/rollback-unwritable/state.json').read_text())
+    assert recorded['phase'] == 'restored'
+    assert recorded['reason'] == 'previous version did not return healthy'
 
 
 def test_damaged_backup_refused_before_stop_or_data_change(installed):

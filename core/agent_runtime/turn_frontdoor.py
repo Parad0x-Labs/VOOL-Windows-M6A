@@ -406,6 +406,59 @@ _ARBITRATE_ON_AMBIGUITY = "ambiguity"
 _ARBITRATE_ON_NEAR_MISS = "near_miss"
 
 
+def _non_local_typed_path(text: str, *lanes: str, network_only: bool = False) -> tuple[str, str]:
+    """On Windows, the first path in the user's own words that one of the named message lanes would
+    look up and that names a share, a device or no full local folder (only a share or a device, with
+    ``network_only``), with its kind; ("", "") otherwise, and always off Windows. Read with the lanes'
+    own parsers, in the order given: "skill" (an import's package), "write" (the write-root lane's
+    destination) and "pdf" (the PDF lane's file). Nothing is looked up."""
+    from core import windows_path_policy
+
+    if not windows_path_policy.active():
+        return "", ""
+    from core.agent_runtime.fast_paths_pdf import non_local_pdf
+    from core.agent_runtime.fast_paths_skill import non_local_package
+    from core.agent_runtime.write_root_honesty import non_local_write_target
+
+    finders = {
+        "skill": non_local_package,
+        "write": lambda body: non_local_write_target(body, network_only=network_only),
+        "pdf": non_local_pdf,
+    }
+    for lane in lanes:
+        path, kind = finders[lane](text)
+        if kind:
+            return path, kind
+    return "", ""
+
+
+def _non_local_path_turn(
+    agent: Any,
+    typed: tuple[str, str],
+    *,
+    session_id: str,
+    user_input: str,
+    source_context: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """The answer to a turn whose typed path `_non_local_typed_path` found, naming it as typed; None
+    when it found none."""
+    path, kind = typed
+    if not kind:
+        return None
+    from core import windows_path_policy
+
+    return {
+        "result": agent._fast_path_result(
+            session_id=session_id,
+            user_input=user_input,
+            response=windows_path_policy.refusal_text(path, kind),
+            confidence=0.95,
+            source_context=source_context,
+            reason="non_local_path_refused",
+        )
+    }
+
+
 def handle_turn_frontdoor(
     agent: Any,
     *,
@@ -1558,6 +1611,22 @@ def handle_turn_frontdoor(
     if housekeeping_turn is not None:
         return housekeeping_turn
 
+    # On Windows, a skill package the user typed that names a share, a device or no full local folder
+    # is answered here, ahead of the skill lane below, which would read it. That lane reads the
+    # normalized text, where `//host/share/x.zip` arrives split as `/ /host/share/x.zip`, so it refuses
+    # only what it can still recognise; this reads the words as typed, with the lane's own parser, and
+    # the refusal names the path the user wrote. The builder, write-root and PDF lanes are guarded the
+    # same way just ahead of each of them, below. Off Windows nothing is refused here.
+    non_local_turn = _non_local_path_turn(
+        agent,
+        _non_local_typed_path(raw_user_input, "skill"),
+        session_id=session_id,
+        user_input=effective_input,
+        source_context=source_context,
+    )
+    if non_local_turn is not None:
+        return non_local_turn
+
     # A named skill reaches the skill tools, for the same reason a named PDF reaches the PDF tools.
     # `skill.create`/`validate`/`install` work when called directly and NOTHING routed chat to them:
     # `plan_tool_workflow` returns handled=False for every create and validate phrasing measured, so
@@ -1597,6 +1666,18 @@ def handle_turn_frontdoor(
     if looks_like_agentic_build_request(effective_input) and str(
         (source_context or {}).get("workspace") or (source_context or {}).get("workspace_root") or ""
     ).strip():
+        # On Windows the builder joins the paths a build names onto the workspace and opens them, so a
+        # share or a device path it is asked to write is answered first, as typed. Only those: a route
+        # such as `/api/users` in a build request names no folder the builder is asked to reach.
+        non_local_turn = _non_local_path_turn(
+            agent,
+            _non_local_typed_path(raw_user_input, "write", network_only=True),
+            session_id=session_id,
+            user_input=effective_input,
+            source_context=source_context,
+        )
+        if non_local_turn is not None:
+            return non_local_turn
         return {"result": None}
 
     if action_forbidden:
@@ -1679,6 +1760,19 @@ def handle_turn_frontdoor(
         unreachable_write_target,
     )
 
+    # On Windows, a destination or a PDF the user typed that names a share, a device or no full local
+    # folder is answered here, read as typed with the write-root and PDF lanes' own parsers (those
+    # lanes read the normalizer's split of it). Here, and not above: the skill, build, hive, recall and
+    # memory lanes take their own turns first, as on base, and a fact to remember only mentions a path.
+    non_local_turn = _non_local_path_turn(
+        agent,
+        _non_local_typed_path(raw_user_input, "write", "pdf"),
+        session_id=session_id,
+        user_input=effective_input,
+        source_context=source_context,
+    )
+    if non_local_turn is not None:
+        return non_local_turn
     unreachable_target = unreachable_write_target(effective_input, source_context=source_context)
     if unreachable_target:
         return {

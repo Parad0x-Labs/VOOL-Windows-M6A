@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA = "vool.honesty_receipt.v1"
+_WINDOWS = os.name == "nt"
 
 # Verdicts.
 VERDICT_CLEAN = "clean"  # model claimed actions and every claim is backed by a real execution
@@ -317,6 +318,10 @@ def _read_ledger_strict(path: Path) -> list[dict[str, Any]]:
 
 
 def _sync_receipt_directory(path: Path) -> None:
+    # The Windows CRT cannot open directories for fsync; the ledger itself is
+    # fsynced before os.replace publishes it.
+    if _WINDOWS:
+        return
     fd = os.open(path, os.O_RDONLY)
     try:
         os.fsync(fd)
@@ -345,7 +350,7 @@ def record_honesty_receipt(receipt: HonestyReceipt) -> ReceiptRecordResult:
                 if existing != payload:
                     raise ValueError("receipt identity conflicts with its persisted content")
                 status = "already_exists"
-                with path.open("rb") as handle:
+                with path.open("ab") as handle:  # Windows only fsyncs a handle opened for writing.
                     os.fsync(handle.fileno())
             else:
                 previous = str(rows[-1]["content_hash"]) if rows else ""

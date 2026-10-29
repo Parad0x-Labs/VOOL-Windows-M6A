@@ -41,6 +41,7 @@ surface — a second window, never a second backend.
 from __future__ import annotations
 
 import json
+import sys
 
 from core.ui_palette import DARK_PALETTE_CSS
 
@@ -85,6 +86,20 @@ def _research_networking() -> bool:
     from core.runtime_mode import research_networking_enabled
 
     return research_networking_enabled()
+
+
+def _host_is_macos() -> bool:
+    """Whether the runtime serving this page runs on macOS.
+
+    The page is served by the runtime on the machine whose local models it describes, so the
+    server's own platform is that machine's. Anything on the page that names the machine asks here.
+    """
+    return sys.platform == "darwin"
+
+
+def _local_machine_name() -> str:
+    """The title of the local-models card under Models & Providers: Mac wording only on a Mac."""
+    return "This Mac" if _host_is_macos() else "This computer"
 
 
 def _row(**kw) -> dict:
@@ -3016,7 +3031,7 @@ function widgetModelsOverview(stack) {
       card.appendChild(btn);
       return card;
     };
-    cards.appendChild(mkCard('local', 'This Mac', 'Local models answer without a network.', 'View local models', true));
+    cards.appendChild(mkCard('local', '__LOCAL_MACHINE_NAME__', 'Local models answer without a network.', 'View local models', true));
     // A pending or allowed-but-unconfirmed consent is a RESUME state, not a fresh setup: the
     // card sends the operator to the detail with the saved approval, never through guided again
     // (a second proposal would duplicate the consent identity).
@@ -4868,20 +4883,29 @@ def _localized_settings_groups(ui_locale: str) -> list[dict]:
     text under the stable ``settings.group.<id>.*`` / ``settings.row.<id>.*`` keys, falling
     back visibly to English per the engine's law. Search keywords stay as authored: they
     are a match aid against typed queries, not displayed prose, and translated keywords
-    would silently narrow what the search box finds.
+    would silently narrow what the search box finds. On Windows, in every locale English
+    included, a text that names a Mac is served from its ``.windows`` key instead
+    (core.i18n.host_text).
     """
     import copy
 
+    from core.generated_files import host_is_windows
     from core.i18n.catalog import catalog_for
+    from core.i18n.host_text import host_key
 
     groups = settings_groups()
     catalog = catalog_for(ui_locale)
-    if catalog.locale == "en":
+    windows = host_is_windows()
+    if catalog.locale == "en" and not windows:
         return groups
     en_keys = set(catalog_for("en").keys)
 
     def resolved(key: str, fallback: str) -> str:
-        if key not in en_keys:
+        # On Windows a text that names a Mac is served from its ".windows" sibling, in English too.
+        windows_key = host_key(key, windows=windows)
+        if windows_key != key:
+            return catalog.text(windows_key)
+        if catalog.locale == "en" or key not in en_keys:
             return fallback
         return catalog.text(key)
 
@@ -4923,7 +4947,9 @@ def render_vool_settings_html(*, build_commit: str = "", ui_locale: str = "en") 
     )
     tag, direction, bootstrap = _ui_locale_head(ui_locale)
     return (
-        page.replace("__SETTINGS_MODEL__", model)
+        # Decided here, where the platform is known; on macOS the page is unchanged ('This Mac').
+        page.replace("__LOCAL_MACHINE_NAME__", _local_machine_name(), 1)
+        .replace("__SETTINGS_MODEL__", model)
         .replace("__LANGUAGE_CATALOG__", catalog)
         .replace("__KEY_PROVIDER_GUIDE__", json.dumps(provider_key_guide(tag), ensure_ascii=False).replace("<", "\\u003c"))
         .replace("__PAGE_BUILD_COMMIT__", str(build_commit or "").strip())

@@ -32,6 +32,10 @@ ROW_IDENTITIES = frozenset({
     # confidence. Measured on the 0.7.1 Mac smoke: a turn page of 114 bytes failed "Forget 14." as if it
     # still held the forgotten words.
     "bytes", "generation", "erased", "confidence", "task_id",
+    # A context grant's id hashes its chat and source, and its revocation is a timestamp. Measured 2026-10-21:
+    # "Forget 21." in chat openclaw:c3c3... refused every later "Remember ..." there, because the write's access
+    # policy carried that chat's grant id "grant-e92129353f...".
+    "grant_id", "revoked_at",
 })
 NODE_IDENTITIES = ROW_IDENTITIES | frozenset({
     "timestamp", "embedding", "linked_node_ids", "base_importance", "access_count",
@@ -304,6 +308,15 @@ def verify_forget_stores(
                    for path in session_metadata_carriers())
 
     verify("chat_session_metadata", session_metadata)
+
+    def chat_documents() -> bool:
+        # Every stored record of the chat, staged ones included, re-read; an unreadable one raises
+        # and stays incomplete (NO RECORD = REFUSE: unknown is never clean).
+        from core.chat_attachments import documents_carrying
+
+        return bool(documents_carrying(chat_id, token))
+
+    verify("chat_documents", chat_documents)
 
     from core.vool_memory import _node_forget_payload, _node_matches_session, _row_to_node
 

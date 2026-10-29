@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core import windows_path_policy
 from core.media_edit_project import (
     MediaEditError,
     MediaEditProject,
@@ -86,10 +87,19 @@ def _worker_call(op: str, params: dict[str, Any], *, timeout: float | None = Non
         raise MediaStudioServiceError(exc.code, exc.message) from exc
 
 
+def _refuse_non_local(path: str, *, network_only: bool = False) -> None:
+    """On Windows, refuse a share or device path, and unless `network_only` a root- or drive-relative
+    one too, by its spelling alone: looking a share up is already a network connection."""
+    kind = windows_path_policy.refused_form(path, network_only=network_only)
+    if kind:
+        raise MediaStudioServiceError(windows_path_policy.STATUS, windows_path_policy.refusal_text(path, kind))
+
+
 # ---------------------------------------------------------------- projects
 
 def open_project(source_path: str, *, now: float | None = None) -> MediaEditProject:
     """Open a source asset read-only and create a persisted edit project."""
+    _refuse_non_local(source_path)
     src = Path(source_path).expanduser()
     if not src.is_file():
         raise MediaStudioServiceError("io_error", f"source not found: {src}")
@@ -228,7 +238,10 @@ def ensure_proxy(project_id: str) -> dict[str, Any]:
 def export_destination(out_path: str) -> Path:
     """The file an export writes: `out_path` with `~` expanded and a relative path made absolute
     from VOOL's working directory here, so the media worker, a process of its own, writes this
-    same file. The Windows write gate checks this path and the folder holding it."""
+    same file. The Windows write gate checks this path and the folder holding it. On Windows a share
+    or device path is refused here first (MediaStudioServiceError), so neither the gate nor the worker
+    reaches for it."""
+    _refuse_non_local(out_path, network_only=True)
     return Path(out_path).expanduser().absolute()
 
 

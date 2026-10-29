@@ -45,7 +45,7 @@ jobs:
       - name: Install verification dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev,browser,companion,evm]"
+          python -m pip install -e ".[dev,browser,companion,evm]" -c .github/ci-constraints.txt
       - name: Lint (pinned ruff)
         run: python -m ruff check .
       - name: Canonical pytest collection
@@ -89,7 +89,7 @@ jobs:
       - name: Install verification dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev,browser,companion,evm]"
+          python -m pip install -e ".[dev,browser,companion,evm]" -c .github/ci-constraints.txt
       - name: Provision the kernel sandbox backend (bubblewrap)
         # The code-task lane's test steps run through the real sandbox runner, whose Linux
         # confinement is bwrap. Installing the package alone is NOT enough on these runners:
@@ -321,7 +321,7 @@ jobs:
       - name: Install verification dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev,browser,companion,evm]"
+          python -m pip install -e ".[dev,browser,companion,evm]" -c .github/ci-constraints.txt
       - name: Provision the served-browser lane (Playwright chromium)
         run: python -m playwright install --with-deps chromium
       - name: Run the macOS-only suites
@@ -361,7 +361,7 @@ jobs:
       - name: Install build tools
         run: |
           python -m pip install --upgrade pip
-          python -m pip install build
+          python -m pip install build -c .github/ci-constraints.txt
       - name: Build package
         run: python -m build
       - name: Smoke install built wheel
@@ -369,7 +369,7 @@ jobs:
           python -m venv /tmp/vool-wheel-venv
           . /tmp/vool-wheel-venv/bin/activate
           python -m pip install --upgrade pip
-          pip install dist/*.whl
+          pip install dist/*.whl -c .github/ci-constraints.txt
           cd /tmp
           python -c "import apps.vool_api_server; import apps.brain_hive_watch_server; import core.tool_intent_executor; import tools.registry; import relay.channel_outbound; import installer.register_openclaw_agent; import yaml; import psutil"
       - uses: actions/upload-artifact@v7
@@ -390,7 +390,7 @@ jobs:
         with:
           python-version: "3.12.13"
       - name: Install verification dependencies
-        run: python -m pip install -e ".[dev,browser,companion,evm]"
+        run: python -m pip install -e ".[dev,browser,companion,evm]" -c .github/ci-constraints.txt
       - name: Provision the kernel sandbox backend (bubblewrap)
         # Same provisioning as the tests matrix: the focused regression windows now include
         # sandbox-laned suites (job_runner containment, forge dispatch, the MCP stub that

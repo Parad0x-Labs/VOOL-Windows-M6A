@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from core import windows_path_policy
 from core.hive_activity_tracker import note_smalltalk_turn, session_hive_state
 from core.onboarding import get_agent_display_name
 from core.persistent_memory import recent_conversation_events
@@ -567,7 +568,15 @@ def heartbeat_poll_fast_path(user_input: str, *, source_context: dict[str, objec
         return None
 
     heartbeat_path = _resolve_heartbeat_poll_path(normalized, source_context=source_context)
-    if heartbeat_path is None or not heartbeat_path.exists():
+    if heartbeat_path is None:
+        return "HEARTBEAT_OK"
+    for spelled in (_explicit_heartbeat_path_text(normalized), str(heartbeat_path)):
+        # On Windows the stat below is already the SMB connection to a share, so a share or device
+        # path is refused as written. The poll runs on every turn, before any other lane.
+        kind = windows_path_policy.refused_form(spelled, network_only=True)
+        if kind:
+            return windows_path_policy.refusal_text(spelled, kind)
+    if not heartbeat_path.exists():
         return "HEARTBEAT_OK"
 
     try:
@@ -594,15 +603,19 @@ def _resolve_heartbeat_poll_path(
 
 
 def _extract_explicit_heartbeat_path(user_input: str) -> Path | None:
+    raw_path = _explicit_heartbeat_path_text(user_input)
+    if not raw_path:
+        return None
+    return Path(raw_path).expanduser()
+
+
+def _explicit_heartbeat_path_text(user_input: str) -> str:
     normalized = re.sub(r"\s*/\s*", "/", str(user_input or "").strip())
     normalized = re.sub(r"\s*\.\s*", ".", normalized)
     match = re.search(r"(?P<path>(?:~|/)[^\n`\"']*HEARTBEAT\.md)", normalized, re.IGNORECASE)
     if match is None:
-        return None
-    raw_path = str(match.group("path") or "").strip().strip("`\"'")
-    if not raw_path:
-        return None
-    return Path(raw_path).expanduser()
+        return ""
+    return str(match.group("path") or "").strip().strip("`\"'")
 
 
 def _heartbeat_file_has_actions(content: str) -> bool:

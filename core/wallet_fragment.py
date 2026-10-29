@@ -18,6 +18,7 @@ is absent the Receive view says so and offers the address and copy instead.
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 _WALLET_CSS = """
@@ -2728,9 +2729,34 @@ def _qr_vendor_js() -> str:
         return ""
 
 
+#: Device approval (Touch ID or the Mac password releasing a Keychain item) exists only on a Mac (core.wallet.device_auth).
+#: On Windows the same options and controls are drawn and the doors refuse them, so these words, swapped in on Windows
+#: only (every other host is served the text above), say so instead of promising a prompt that never comes. Text reached
+#: only by a device-approved or device-enrolled wallet, which cannot be made on Windows, is left as it is.
+_WINDOWS_WORDING: tuple[tuple[str, str], ...] = (
+    ("'Export private key — unlocks with Touch ID or your Mac password only; the PIN cannot export it.'",
+     "'Export private key — unlocks only with device approval on a Mac, which is not available on Windows; the PIN cannot export it.'"),
+    ("btn.disabled = true; setMsg('Confirm with Touch ID or your Mac password…');",
+     "btn.disabled = true; setMsg('Checking whether this wallet can be exported…');"),
+    ("device: 'Touch ID / Mac password' }", "device: 'Device approval (Mac only; not available on Windows)' }"),
+    ("['device', 'Touch ID or my Mac password']", "['device', 'Device approval (Mac only; not available on Windows)']"),
+    ("'Every payment and every export will ask for Touch ID or your Mac password. Nothing is stored behind a PIN.'",
+     "'Device approval is not available on Windows, so a wallet cannot be created with it here. Choose a PIN or a wallet password.'"),
+    ("'New PIN or password (none for Touch ID)'", "'New PIN or password'"),
+    ("'Touch ID / Mac password approval: '", "'Device approval (Mac only): '"),
+    ("'2. Recover with Touch ID or your Mac password'", "'2. Recover with device approval (Mac only; not available on Windows)'"),
+    ("'Device recovery was set up, but this Mac cannot release the copy right now ('",
+     "'Device recovery was set up on a Mac, but Windows cannot release that copy ('"),
+)
+
+
 def render_wallet_fragment() -> str:
     vendor = _qr_vendor_js()
-    js = _WALLET_JS.replace(_QR_VENDOR_PLACEHOLDER, vendor) if vendor else _WALLET_JS.replace(_QR_VENDOR_PLACEHOLDER, "")
+    source = _WALLET_JS
+    if sys.platform == "win32":
+        for mac, windows in _WINDOWS_WORDING:
+            source = source.replace(mac, windows)
+    js = source.replace(_QR_VENDOR_PLACEHOLDER, vendor) if vendor else source.replace(_QR_VENDOR_PLACEHOLDER, "")
     return "<style>" + _WALLET_CSS + "</style><script>" + js + "</script>"
 
 

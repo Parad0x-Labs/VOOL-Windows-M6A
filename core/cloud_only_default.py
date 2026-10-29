@@ -188,12 +188,32 @@ def no_route_hint() -> str:
     """
     try:
         from core.local_model_presence import local_model_running
+        from core.provider_routing import local_hardware_shortfall
 
-        if local_model_running():
+        # A local model that runs but is too big for this computer is still "nothing local here"
+        # for this turn: the hardware-fit gate left it out, so say that rather than nothing.
+        shortfall = local_hardware_shortfall()
+        if not shortfall and local_model_running():
             return ""
         has_cloud = bool(cloud_model_candidates())
     except Exception:
         return ""
+    if shortfall:
+        graphics = shortfall.get("memory") == "graphics"
+        lead = (
+            f"`{shortfall['model']}` needs about {shortfall['required_gb']:.1f} GB of graphics memory and this "
+            f"computer's graphics card can spare about {shortfall['available_gb']:.1f} GB for it, so I didn't start it."
+            if graphics
+            else f"`{shortfall['model']}` needs about {shortfall['required_gb']:.1f} GB of memory and this computer "
+            f"can spare about {shortfall['available_gb']:.1f} GB for it, so I didn't start it."
+        )
+        if has_cloud:
+            return (
+                f"{lead} Pick a cloud model in the model selector, or save one in Setup under "
+                "\u201cWhere should it think?\u201d so Auto uses it."
+            )
+        bigger = "a graphics card with more memory" if graphics else "a computer with more memory"
+        return f"{lead} Add a cloud key in Settings \u2192 API Keys, or run VOOL on {bigger}."
     if has_cloud:
         return (
             "no local model is running on this computer, and cloud models only answer once you "

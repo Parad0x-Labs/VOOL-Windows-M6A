@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+import threading
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
-from storage.db import get_connection
+from storage.db import active_default_db_path, get_connection
+
+_T = TypeVar("_T")
 
 #: What a certification row now DECIDES. It decided nothing when this store was written --
 #: every row went out stamped ``routing_effect: "none"``, which stopped being true the moment
@@ -40,12 +45,75 @@ ON local_model_tool_certification_runs(provider_name, model_name, started_at DES
 """
 
 
-def _connection(db_path: str | Path | None):
-    return get_connection(db_path) if db_path is not None else get_connection()
+#: Databases whose certification table this process has set up. Measured 2026-10-21 (CI run 39637534766, tests
+#: (4)): the setup ran as a bare executescript on every call, and POST /api/model-tool-certification/run answered
+#: 500 "database schema has changed" while another connection committed a schema change.
+_READY: set[str] = set()
+_READY_LOCK = threading.Lock()
 
 
-def _ensure_table(conn: Any) -> None:
-    conn.executescript(_TABLE_SQL)
+def _init_table(db_path: str) -> None:
+    """Set up the certification table once per database path, under the database's write lock.
+
+    BEGIN IMMEDIATE takes the write lock before any statement, so another connection's schema commit lands wholly
+    before or after the setup instead of under it.
+    """
+    if db_path in _READY:
+        return
+    with _READY_LOCK:
+        if db_path in _READY:
+            return
+        _create_table(db_path)
+        _READY.add(db_path)
+
+
+def _with_table(db_path: str | Path | None, work: Callable[[sqlite3.Connection], _T], *, write: bool = False) -> _T:
+    """Run ``work`` on a connection to ``db_path`` (the active database when None), its certification table set up.
+
+    A database deleted or replaced while VOOL runs (a reused path) loses the table the memo remembers: that path
+    is set up again, once, and ``work`` runs again.
+    """
+    path = str(db_path) if db_path is not None else active_default_db_path()
+    _init_table(path)
+    try:
+        return _run(path, work, write=write)
+    except sqlite3.OperationalError as exc:
+        if "no such table: local_model_tool_certification_runs" not in str(exc):
+            raise
+    with _READY_LOCK:
+        _READY.discard(path)
+    _init_table(path)
+    return _run(path, work, write=write)
+
+
+def _run(db_path: str, work: Callable[[sqlite3.Connection], _T], *, write: bool = False) -> _T:
+    """Run ``work`` inside one transaction (BEGIN IMMEDIATE when it writes), committed at the end.
+
+    Measured 2026-10-26 (#66 CI, tests (9)): an autocommit read beside this store answered "database schema has
+    changed" while another connection committed a schema change; inside a transaction it does not.
+    """
+    conn = get_connection(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE" if write else "BEGIN")
+        result = work(conn)
+        if conn.in_transaction:
+            conn.commit()
+        return result
+    finally:
+        conn.close()
+
+
+def _create_table(db_path: str) -> None:
+    conn = get_connection(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        # One statement at a time: executescript would commit the transaction above before running the script.
+        for statement in _TABLE_SQL.split(";"):
+            if statement.strip():
+                conn.execute(statement)
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _utcnow() -> str:
@@ -62,9 +130,7 @@ def begin_certification_run(
     adapter_type: str,
     db_path: str | Path | None = None,
 ) -> None:
-    conn = _connection(db_path)
-    try:
-        _ensure_table(conn)
+    def work(conn: sqlite3.Connection) -> None:
         conn.execute(
             """
             INSERT INTO local_model_tool_certification_runs (
@@ -83,8 +149,8 @@ def begin_certification_run(
             ),
         )
         conn.commit()
-    finally:
-        conn.close()
+
+    _with_table(db_path, work, write=True)
 
 
 def complete_certification_run(
@@ -98,9 +164,7 @@ def complete_certification_run(
     latency_ms: float,
     db_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    conn = _connection(db_path)
-    try:
-        _ensure_table(conn)
+    def work(conn: sqlite3.Connection) -> dict[str, Any]:
         previous = conn.execute(
             """
             SELECT state, successful, consecutive_failures
@@ -147,14 +211,13 @@ def complete_certification_run(
                 run_id,
             ),
         )
-        conn.commit()
         row = conn.execute(
             "SELECT * FROM local_model_tool_certification_runs WHERE run_id = ?",
             (run_id,),
         ).fetchone()
         return _row_payload(row) if row else {}
-    finally:
-        conn.close()
+
+    return _with_table(db_path, work, write=True)
 
 
 def latest_certification_run(
@@ -163,9 +226,7 @@ def latest_certification_run(
     model_name: str,
     db_path: str | Path | None = None,
 ) -> dict[str, Any] | None:
-    conn = _connection(db_path)
-    try:
-        _ensure_table(conn)
+    def work(conn: sqlite3.Connection) -> dict[str, Any] | None:
         row = conn.execute(
             """
             SELECT * FROM local_model_tool_certification_runs
@@ -175,8 +236,8 @@ def latest_certification_run(
             (provider_name, model_name),
         ).fetchone()
         return _row_payload(row) if row else None
-    finally:
-        conn.close()
+
+    return _with_table(db_path, work)
 
 
 def list_certification_runs(
@@ -184,9 +245,7 @@ def list_certification_runs(
     limit: int = 100,
     db_path: str | Path | None = None,
 ) -> list[dict[str, Any]]:
-    conn = _connection(db_path)
-    try:
-        _ensure_table(conn)
+    def work(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         rows = conn.execute(
             """
             SELECT * FROM local_model_tool_certification_runs
@@ -195,8 +254,8 @@ def list_certification_runs(
             (max(1, min(int(limit), 500)),),
         ).fetchall()
         return [_row_payload(row) for row in rows]
-    finally:
-        conn.close()
+
+    return _with_table(db_path, work)
 
 
 def _row_payload(row: Any) -> dict[str, Any]:

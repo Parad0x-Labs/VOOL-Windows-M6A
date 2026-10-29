@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from core import policy_engine
+from core import policy_engine, windows_path_policy
 from core.effect_reconciliation import (
     EffectOutcomeUnknown,
     peek_in_flight_effect,
@@ -1373,6 +1373,10 @@ def _resolved_existing_directory(value: str) -> str | None:
         return None
     looks_like_path = text.startswith(("~", "/", ".")) or os.sep in text or "/" in text
     if not looks_like_path:
+        return None
+    if windows_path_policy.refused_form(text, network_only=True):
+        # On Windows a share or device path is not looked up: the isdir below would be the SMB
+        # connection. It is no existing local directory, which is all this answers.
         return None
     try:
         candidate = os.path.abspath(os.path.expanduser(os.path.expandvars(text)))
@@ -3633,6 +3637,32 @@ def execute_runtime_tool(
     workspace root the dispatch resolves against is replaced by that workspace, so even an
     approved builder seat cannot reach the operator's checkout through a relative path.
     """
+    # On Windows, a path naming a share, a device or no full local folder is refused before the
+    # agent-team gate and the council fence, which both resolve the paths a call names: on Windows a
+    # lookup of `\\host\share` is already the SMB connection. Seats, code-task steps and sub-tasks
+    # reach this door directly, so it refuses for itself; an MCP or plugin tool on the network tier, as
+    # the executor judges it. Off Windows this answers None at once.
+    path_refusal = windows_path_policy.tool_call_refusal(intent, arguments) or (
+        # The workspace every dispatch below resolves (`_workspace_root`), when it is a share.
+        windows_path_policy.context_workspace_refusal(source_context)
+    )
+    if path_refusal is not None:
+        response = windows_path_policy.refusal_text(path_refusal.value, path_refusal.kind)
+        return RuntimeExecutionResult(
+            handled=True,
+            ok=False,
+            status=windows_path_policy.STATUS,
+            response_text=response,
+            details={
+                "executed": False,
+                "argument": path_refusal.key,
+                "kind": path_refusal.kind,
+                "observation": _tool_observation(
+                    intent=intent, tool_surface="path_policy", ok=False, status=windows_path_policy.STATUS
+                ),
+            },
+        )
+
     from core.agent_team import gate as agent_team_gate
 
     # Agent-team write gate: a call made for an agent's chat session may only read, or write
@@ -4554,6 +4584,9 @@ def _truncate(text: str, *, limit: int = 1800) -> str:
 
 
 def _home_relative_label(path: Path) -> str:
+    if windows_path_policy.refused_form(str(path), network_only=True):
+        # A share or device path is shown as written, never resolved to compare it with the home.
+        return path.as_posix()
     home = _machine_home().resolve()
     try:
         relative = path.resolve().relative_to(home)
@@ -4612,6 +4645,10 @@ def anchor_machine_path(raw_path: str | None) -> Path:
     alias = _MACHINE_DIRECTORY_ALIASES.get(raw.lower())
     if alias:
         return (_machine_home() / alias).resolve()
+    # On Windows a share or device path raises (a ValueError, which every caller already turns into
+    # its own refusal) before the resolve below reaches for it. Only the network tier: a machine path
+    # such as `C:Documents\x.txt` is placed in the home folder, as the Windows write gate expects.
+    windows_path_policy.check(raw, network_only=True)
     candidate = _expand_machine_user(raw)
     if not candidate.is_absolute():
         return (_machine_home() / candidate).resolve()

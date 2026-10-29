@@ -363,9 +363,32 @@ window.VoolPalette = Object.freeze({
 """
 
 
+# Every shortcut above already answers Ctrl as well as ⌘ (`ev.metaKey || ev.ctrlKey`), but its key
+# caps say ⌘, which a Windows keyboard does not have. A Windows host is served these exact pieces
+# with Ctrl; every other host gets the script byte for byte.
+_WINDOWS_SHORTCUT_LABELS = (
+    ("p.newChat(); }, '\\⌘N');", "p.newChat(); }, 'Ctrl+N');"),
+    ("p.togglePanel(); }, '\\⌘J');", "p.togglePanel(); }, 'Ctrl+J');"),
+    ("p.openModelMenu(); }, '\\⌘M');", "p.openModelMenu(); }, 'Ctrl+M');"),
+    ("p.openSettings(); }, '\\⌘,');", "p.openSettings(); }, 'Ctrl+,');"),
+    ("<kbd>⌘K</kbd>", "<kbd>Ctrl+K</kbd>"),
+    ("<kbd>⌘N</kbd>", "<kbd>Ctrl+N</kbd>"),
+    ("<kbd>⌘J</kbd>", "<kbd>Ctrl+J</kbd>"),
+    ("<kbd>⌘/</kbd>", "<kbd>Ctrl+/</kbd>"),
+    ("<kbd>⌘F</kbd>", "<kbd>Ctrl+F</kbd>"),
+    ("<kbd>⌘,</kbd>", "<kbd>Ctrl+,</kbd>"),
+)
+
+
 def render_palette_fragment() -> str:
     """The command palette + shortcuts + Esc cascade as an appended fragment."""
-    return "<style>" + _PALETTE_CSS + "</style><script>" + _PALETTE_JS + "</script>"
+    from core.generated_files import host_is_windows
+
+    script = _PALETTE_JS
+    if host_is_windows():
+        for mac, windows in _WINDOWS_SHORTCUT_LABELS:
+            script = script.replace(mac, windows)
+    return "<style>" + _PALETTE_CSS + "</style><script>" + script + "</script>"
 
 
 __all__ = ["render_palette_fragment"]

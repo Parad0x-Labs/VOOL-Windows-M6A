@@ -278,7 +278,7 @@ def test_upload_completion_order_never_reorders_chips_or_the_bound_message(page)
     names_by_id = {a["id"]: a["name"] for a in server.staged.get(page.evaluate("displayedChat"), [])}
     page.fill("#input", "in what order did they finish?")
     page.click("#send")
-    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending)').length === 1", timeout=10000)
+    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending):has(.msg-time)').length === 1", timeout=10000)
     assert [names_by_id[i] for i in server.chat_bodies[0]["attachments"]] == ["big-notes.txt", "late-shot.png"]
     bubble = page.evaluate(
         "() => [...document.querySelectorAll('.msg.user .msg-att .att-chip .att-name')].map((n) => n.textContent)"
@@ -293,7 +293,7 @@ def test_sending_binds_the_chips_to_one_turn_and_clears_the_draft(page) -> None:
     _wait_chips(page, "chips.length === 3 && chips.every((c) => c.dataset.state === 'ready')")
     page.fill("#input", "what do these say?")
     page.click("#send")
-    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending)').length === 1", timeout=10000)
+    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending):has(.msg-time)').length === 1", timeout=10000)
     assert len(server.chat_bodies) == 1
     body = server.chat_bodies[0]
     assert body["turn_id"] and len(body["attachments"]) == 3
@@ -311,7 +311,7 @@ def test_text_only_sends_carry_no_attachment_field_at_all(page) -> None:
     page, server, errors = page
     page.fill("#input", "plain text")
     page.click("#send")
-    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending)').length === 1", timeout=10000)
+    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending):has(.msg-time)').length === 1", timeout=10000)
     assert "attachments" not in server.chat_bodies[0]
     assert page.query_selector_all(".msg.user .msg-att") == []
     assert errors == []
@@ -337,7 +337,7 @@ def test_refusals_are_shown_on_the_chip_and_never_reach_a_send(page) -> None:
     page.click("#attachStrip .att-chip[data-state='failed'] .att-x")
     _wait_chips(page, "chips.length === 1")
     page.click("#send")
-    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending)').length === 1", timeout=10000)
+    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending):has(.msg-time)').length === 1", timeout=10000)
     assert len(server.chat_bodies) == 1 and len(server.chat_bodies[0]["attachments"]) == 1
     assert page.evaluate("() => document.querySelectorAll('.msg.user').length") == 1
     assert errors == []
@@ -370,7 +370,7 @@ def test_a_failed_upload_is_retried_in_place_without_duplicating_the_message(pag
     assert [u["name"] for u in server.uploads] == ["flaky.txt", "flaky.txt"]
     assert page.input_value("#input") == "read it", "the draft must survive a failed send attempt"
     page.click("#send")
-    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending)').length === 1", timeout=10000)
+    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending):has(.msg-time)').length === 1", timeout=10000)
     assert len(server.chat_bodies) == 1
     assert page.evaluate("() => document.querySelectorAll('.msg.user').length") == 1
     assert errors == []
@@ -389,7 +389,7 @@ def test_a_failed_send_keeps_the_same_turn_for_its_attachments_on_resend(page) -
     assert attachments_after_failure and first_turn
     page.unroute("**/api/chat")
     page.evaluate("() => resendLastTurn && resendLastTurn(displayedChat)")
-    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending)').length >= 1", timeout=10000)
+    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending):has(.msg-time)').length >= 1", timeout=10000)
     resend = server.chat_bodies[-1]
     assert resend["turn_id"] == first_turn and resend["attachments"] == attachments_after_failure
     assert page.evaluate("() => document.querySelectorAll('.msg.user').length") == 1
@@ -432,14 +432,14 @@ def test_two_chats_never_see_each_others_drafts_or_send_each_others_files(page) 
     _wait_chips(page, "chips.length === 1 && chips[0].dataset.state === 'ready'")
     page.fill("#input", "b question")
     page.click("#send")
-    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending)').length === 1", timeout=10000)
+    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending):has(.msg-time)').length === 1", timeout=10000)
     page.evaluate("(id) => openSession(id)", chat_a)
     page.wait_for_timeout(200)
     _wait_chips(page, "chips.length === 1")
     assert _chips(page)[0]["name"] == "for-a.txt"
     page.fill("#input", "a question")
     page.click("#send")
-    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending)').length === 1", timeout=10000)
+    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending):has(.msg-time)').length === 1", timeout=10000)
     by_session = {b["session_id"]: b for b in server.chat_bodies}
     a_ids = {a["id"] for a in server.staged.get(chat_a, [])} | set(by_session[chat_a]["attachments"])
     b_ids = set(by_session[chat_b]["attachments"])
@@ -563,7 +563,7 @@ def test_served_end_to_end_the_real_door_stages_binds_hands_over_and_releases(br
     assert len(staged_before) == 2
     page.fill("#input", "what is the capital?")
     page.click("#send")
-    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending)').length === 1", timeout=30000)
+    page.wait_for_function("() => document.querySelectorAll('.msg.assistant:not(.pending):has(.msg-time)').length === 1", timeout=30000)
     assert len(captured) == 1
     context = captured[0]["source_context"]
     evidence = context["external_evidence"]

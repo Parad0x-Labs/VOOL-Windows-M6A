@@ -209,12 +209,12 @@ BOUNDARIES: tuple[FailureBoundary, ...] = (
         owners=("core/dictation.py", "core/artifact_readers/speech_tool.py", "core/vool_chat_page.py"),
         codespace=BoundaryCodeSpace(
             kind="DictationUnavailable.code",
-            codes=("empty_recording", "recording_too_large", "speech_toolchain_unavailable", "speech_recognizer_unauthorized", "speech_recognizer_unavailable", "speech_recognizer_on_device_unavailable", "decoder_failed"),
+            codes=("empty_recording", "recording_too_large", "speech_platform_unsupported", "speech_toolchain_unavailable", "speech_recognizer_unauthorized", "speech_recognizer_unavailable", "speech_recognizer_on_device_unavailable", "decoder_failed"),
             declared_in="core/dictation.py + core/artifact_readers/speech_tool.py",
         ),
         mapped_at="DictationUnavailable(code, message, remediation); local-only by design",
         user_surface="pre-record availability probe shows message + remediation; browser fallbacks say 'Type your message instead.'",
-        recovery="Every typed unavailability carries a remediation (install CLT, grant Speech Recognition, add a dictation language).",
+        recovery="Every typed unavailability carries a remediation (type instead on a host that is not macOS, install CLT, grant Speech Recognition, add a dictation language).",
     ),
     FailureBoundary(
         name="reporting",

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import ntpath
 import re
 from pathlib import Path
 from typing import Any
 
+from core import windows_path_policy
 from core.response_constraints import parse_response_constraint
 from core.runtime_execution_tools import (
     _find_folder_name_from_phrase,
@@ -50,6 +52,7 @@ from .constants import (
     _VERB_NAME_FOLDER_RE,
     _extend_path_over_spaces,
     bound_chat_attachment_present,
+    drive_left_behind,
     machine_diagnostics_intent,
     machine_disk_scope,
     machine_display_intent,
@@ -1040,10 +1043,43 @@ def _clean_workspace_path(candidate: str) -> str:
     return clean
 
 
+def _workspace_folder_as_typed(typed: str, workspace_root: str) -> str | None:
+    """The workspace folder a drive-less `typed` path names, read without resolving it: `notes` for
+    `\\Users\\you\\ws\\notes` with the workspace at `C:\\Users\\you\\ws`, "" for the workspace itself, and
+    None when it does not lie inside the workspace. `.` and `..` are read first, as Windows reads them
+    (`\\Users\\you\\ws\\a\\..\\b` is `b`), so one that steps out (`\\Users\\you\\ws\\..\\evil`) is None.
+    The read leaves no `.` or `..` part, only one padded with a space (` ..`), which the caller refuses."""
+    root = [part.lower() for part in re.split(r"[\\/]+", ntpath.splitdrive(str(workspace_root))[1]) if part]
+    parts = [part for part in re.split(r"[\\/]+", ntpath.normpath(typed)) if part]
+    if not root or [part.lower() for part in parts[: len(root)]] != root:
+        return None
+    return "/".join(parts[len(root) :])
+
+
 def _clean_workspace_directory_path(candidate: str, *, workspace_root: str = "") -> str:
     raw = str(candidate or "").strip().strip("`\"'")
+    typed_kind = windows_path_policy.refused_form(raw)
+    if typed_kind in windows_path_policy.NETWORK_KINDS:
+        # On Windows a share or a device path names no workspace folder, and is not resolved to find
+        # out: resolving `\\host\share` is already the SMB connection.
+        return ""
     clean = ""
-    if raw and workspace_root:
+    # A root- or drive-relative folder (`/notes`, `C:notes`) is not resolved either: the lexical clean
+    # below places it, as it does on base once the resolve finds it outside the workspace (`/notes` is
+    # the workspace folder `notes`). One that spells the workspace's own folder without its drive is
+    # read against the workspace as typed, where base's resolve on that drive found it.
+    if typed_kind == "root_relative" and workspace_root:
+        inside = _workspace_folder_as_typed(raw, workspace_root)
+        if inside is not None:
+            # The workspace's own folder skips the lexical clean, whose `lstrip("./")` and stop words
+            # would make `.github` `github` and `repo` the workspace root. The planner and the writer
+            # strip the whole path, so a blank or padded part (`ws/ /x`, `ws/ ../x`) would surface
+            # there as a root or a `..`: such a folder is no workspace folder.
+            folder = inside.rstrip(".,!?").strip().rstrip("/")
+            if any(part.strip() in {"", ".", ".."} for part in folder.split("/")):
+                return ""
+            return folder
+    if raw and workspace_root and not typed_kind:
         try:
             resolved_workspace_root = Path(workspace_root).expanduser().resolve()
             resolved_candidate = Path(raw).expanduser().resolve()
@@ -1125,11 +1161,14 @@ def _explicit_home_rooted_path(text: str) -> str:
     """A concrete path under Desktop/Downloads/Documents that the user wrote out, else ''."""
     for match in _HOME_ROOTED_PATH_RE.finditer(str(text or "")):
         candidate = str(match.group("path") or "").rstrip(".,;:!?)")
+        # On Windows a full local path the input normalizer split (`C: /Users/you/Desktop`) keeps
+        # its drive, as typed: without it the list tool refuses it as no full local path.
+        drive = drive_left_behind(str(text or ""), match.start("path"), candidate)
         # Second extractor, same cut-at-the-space bug as `explicit_path_in`. Measured on the
         # deployed build 2026-07-30: "check ~/Documents/Vool testing and tell me whats there"
         # became "~/Documents/Vool", which does not exist, and the turn ended in "I wasn't able to
         # turn that into a completed action" for a folder sitting right there.
-        candidate = _extend_path_over_spaces(str(text or ""), candidate, match.end("path"))
+        candidate = _extend_path_over_spaces(str(text or ""), drive + candidate, match.end("path"))[len(drive) :]
         segments = [part for part in candidate.split("/") if part and part != "~"]
         # Drop the /Users/<name> prefix so the first meaningful segment is the home folder.
         if segments and segments[0].lower() in {"users", "home"}:
@@ -1137,7 +1176,7 @@ def _explicit_home_rooted_path(text: str) -> str:
         if not segments:
             continue
         if any(segments[0].lower() == root.lower() for root in _SAFE_LISTING_ROOTS):
-            return candidate
+            return drive + candidate
     return ""
 
 

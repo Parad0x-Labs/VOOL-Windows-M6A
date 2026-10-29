@@ -13,6 +13,9 @@ of the active database when it lives elsewhere. They hold the SQLite database wi
 and their pending changes, the operator credential's verifiers and attempt counters, the node signing key (data/keys) and
 wallet custody.
 
+Git metadata -- no write: any repository's ``.git`` (its hooks and config are programs git runs for the user;
+core.git_metadata_protection).
+
 Protected code -- no write: the running code root (``core.runtime_paths.PROJECT_ROOT``), except workspace folders strictly
 inside it, so a generic tool cannot rewrite the checks that guard it.
 
@@ -127,6 +130,10 @@ def refusal(path: str | Path, *, write: bool) -> str:
     if _linked_into_state(forms):
         return (f"{REFUSAL_PREFIX}: `{candidate}` is a hard link to a file of this runtime's protected state. "
                 "Generic tools cannot use it; nothing was touched.")
+    if write:
+        from core import git_metadata_protection
+
+        return git_metadata_protection.refusal(candidate)
     return ""
 
 

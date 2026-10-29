@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+import threading
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from storage.db import get_connection
+from storage.db import active_default_db_path, get_connection
+
+_T = TypeVar("_T")
 
 ProviderSourceType = Literal["local_path", "http", "subprocess"]
 WeightLocation = Literal["external", "user-supplied", "bundled"]
@@ -133,9 +138,68 @@ def _add_column_if_missing(conn: Any, name: str, definition: str) -> None:
         conn.execute(f"ALTER TABLE model_provider_manifests ADD COLUMN {name} {definition}")
 
 
-def _init_table() -> None:
-    conn = get_connection()
+#: Databases whose manifest table this process has set up. Measured 2026-10-21 (CI run 39536779199): the setup ran
+#: as bare autocommit statements on every manifest read, and the first certification after the daemon started answered
+#: 500 "database schema has changed" while the fresh home was still creating its other tables.
+_READY: set[str] = set()
+_READY_LOCK = threading.Lock()
+
+
+def _init_table(db_path: str) -> None:
+    """Set up the manifest table once per database path, under the database's write lock.
+
+    BEGIN IMMEDIATE takes the write lock before any statement, so another connection's schema commit lands wholly
+    before or after the setup instead of under it.
+    """
+    if db_path in _READY:
+        return
+    with _READY_LOCK:
+        if db_path in _READY:
+            return
+        _create_table(db_path)
+        _READY.add(db_path)
+
+
+def _with_table(work: Callable[[sqlite3.Connection], _T], *, write: bool = False) -> _T:
+    """Run ``work`` on a connection to the active database, its manifest table set up.
+
+    A database deleted or replaced while VOOL runs (a reused path) loses the table the memo remembers: that path
+    is set up again, once, and ``work`` runs again.
+    """
+    db_path = active_default_db_path()
+    _init_table(db_path)
     try:
+        return _run(db_path, work, write=write)
+    except sqlite3.OperationalError as exc:
+        if "no such table: model_provider_manifests" not in str(exc):
+            raise
+    with _READY_LOCK:
+        _READY.discard(db_path)
+    _init_table(db_path)
+    return _run(db_path, work, write=write)
+
+
+def _run(db_path: str, work: Callable[[sqlite3.Connection], _T], *, write: bool = False) -> _T:
+    """Run ``work`` inside one transaction (BEGIN IMMEDIATE when it writes), committed at the end.
+
+    Measured 2026-10-26 (#66 CI, tests (9)): a plain autocommit read here answered "database schema has changed"
+    while another connection committed a schema change; inside a transaction it does not.
+    """
+    conn = get_connection(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE" if write else "BEGIN")
+        result = work(conn)
+        if conn.in_transaction:
+            conn.commit()
+        return result
+    finally:
+        conn.close()
+
+
+def _create_table(db_path: str) -> None:
+    conn = get_connection(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS model_provider_manifests (
@@ -172,9 +236,7 @@ def _init_table() -> None:
 
 
 def upsert_provider_manifest(manifest: ModelProviderManifest) -> None:
-    _init_table()
-    conn = get_connection()
-    try:
+    def work(conn: sqlite3.Connection) -> None:
         conn.execute(
             """
             INSERT OR REPLACE INTO model_provider_manifests (
@@ -213,15 +275,14 @@ def upsert_provider_manifest(manifest: ModelProviderManifest) -> None:
             ),
         )
         conn.commit()
-    finally:
-        conn.close()
+
+    _with_table(work, write=True)
 
 
 def list_provider_manifests(*, enabled_only: bool = False, limit: int = 256) -> list[ModelProviderManifest]:
-    _init_table()
-    conn = get_connection()
-    try:
-        where = "WHERE enabled = 1" if enabled_only else ""
+    where = "WHERE enabled = 1" if enabled_only else ""
+
+    def work(conn: sqlite3.Connection) -> list[ModelProviderManifest]:
         rows = conn.execute(
             f"""
             SELECT *
@@ -233,14 +294,12 @@ def list_provider_manifests(*, enabled_only: bool = False, limit: int = 256) -> 
             (limit,),
         ).fetchall()
         return [_row_to_manifest(dict(row)) for row in rows]
-    finally:
-        conn.close()
+
+    return _with_table(work)
 
 
 def get_provider_manifest(provider_name: str, model_name: str) -> ModelProviderManifest | None:
-    _init_table()
-    conn = get_connection()
-    try:
+    def work(conn: sqlite3.Connection) -> ModelProviderManifest | None:
         row = conn.execute(
             """
             SELECT *
@@ -251,8 +310,8 @@ def get_provider_manifest(provider_name: str, model_name: str) -> ModelProviderM
             (provider_name, model_name),
         ).fetchone()
         return _row_to_manifest(dict(row)) if row else None
-    finally:
-        conn.close()
+
+    return _with_table(work)
 
 
 def set_provider_manifest_enabled(

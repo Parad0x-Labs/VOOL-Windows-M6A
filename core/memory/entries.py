@@ -43,7 +43,7 @@ from core.memory.files import (
     write_text_atomic,
 )
 from core.memory.policies import ensure_session_policy_table, session_memory_policy
-from core.memory.revocation import RevokedContentWrite, fenced_writer
+from core.memory.revocation import RevokedContentWrite, fenced_writer, serialized
 from core.privacy_guard import keyword_tokens, normalize_share_scope
 from core.secret_redaction import contains_secret
 
@@ -231,7 +231,8 @@ def forget_profile_derivatives(
     def carries(value: Any) -> bool:
         return payload_carries(value, token)
 
-    with _MEMORY_ENTRY_LOCK:
+    # Fence first, as in forget_memory_record: _forget_session_metadata enters it under this lock.
+    with serialized(), _MEMORY_ENTRY_LOCK:
         _forget_session_metadata(token, chat_id=access_policy.chat_id, erasures=erasures)
         try:
             rows = _load_erasure_rows(user_heuristics_path())
@@ -881,7 +882,9 @@ def forget_memory_record(record_id: str) -> bool:
     if not wanted:
         return False
     _ensure_memory_files()
-    with _MEMORY_ENTRY_LOCK:
+    # The forget fence before the entry lock, the order a forget takes them in ("Forget X" holds the
+    # fence for its whole command and takes the entry lock inside it): never the other way round.
+    with serialized(), _MEMORY_ENTRY_LOCK:
         erased_texts = _erase_rows_locked([wanted])
         if not erased_texts:
             return False
@@ -904,7 +907,7 @@ def sweep_governed_memory_rows(request_id: str) -> bool:
     if not clean_request_id:
         return False
     _ensure_memory_files()
-    with _MEMORY_ENTRY_LOCK:
+    with serialized(), _MEMORY_ENTRY_LOCK:  # fence first, as in forget_memory_record
         rows = _load_jsonl(memory_entries_path())
         kept = [
             row
@@ -2054,7 +2057,9 @@ def forget_structured_memory(
 
     subject_key = _forget_subject_fact_key(clean_token)
     summary_error: Exception | None = None
-    with _MEMORY_ENTRY_LOCK:
+    # Fence first, as in forget_memory_record. "Forget X" already holds it (re-entered here), but a
+    # Correction erases the old value through this function with no command fence of its own.
+    with serialized(), _MEMORY_ENTRY_LOCK:
         rows = _load_erasure_rows(memory_entries_path())
         target_ids = [
             str(row.get("record_id") or "").strip()
@@ -2157,7 +2162,6 @@ def _forget_session_metadata(token: str, *, chat_id: str, erasures: dict[str, An
         session_metadata_carriers,
         session_metadata_payload,
     )
-    from core.memory.revocation import serialized
 
     removed = 0
     incomplete = False
@@ -2197,7 +2201,7 @@ def forget_sessions_memory(session_ids: Any) -> int:
     if not ids:
         return 0
     _ensure_memory_files()
-    with _MEMORY_ENTRY_LOCK:
+    with serialized(), _MEMORY_ENTRY_LOCK:  # fence first, as in forget_memory_record
         target_ids = [
             str(row.get("record_id") or "").strip()
             for row in _load_jsonl(memory_entries_path())
@@ -2364,36 +2368,42 @@ def delete_conversation_session(session_id: str) -> bool:
             conn.close()
     except Exception:
         pass
-    for path in (conversation_log_path(), session_summaries_path()):
-        rows = _load_jsonl(path)
-        kept = [row for row in rows if str(row.get("session_id") or "").strip() != sid]
-        if len(kept) != len(rows):
-            rewrite_jsonl(path, kept)
-            removed = True
-    # P0 erasure law: the chat's memory rows become durable tombstones and the
-    # mirror projection is rewritten, so deleting a chat cannot leave its
-    # facts alive in (or resurrectable from) MEMORY.md.
-    with _MEMORY_ENTRY_LOCK:
-        target_ids = [
-            str(row.get("record_id") or "").strip()
-            for row in _load_jsonl(memory_entries_path())
-            if str(row.get("session_id") or "").strip() == sid
-            and str(row.get("record_id") or "").strip()
-        ]
-        erased_texts = _erase_rows_locked(target_ids)
-        if erased_texts:
-            removed = True
-            _rewrite_memory_mirror_locked()
-    if erased_texts:
-        _verify_erasure(erased_texts, target_ids)
+    # The forget fence from the transcript read through the meta write, and before the entry lock: a
+    # forget holds the fence for its whole command and takes the entry lock inside it, so the entry
+    # lock first deadlocked a delete and another chat's forget. Read outside the fence, the kept
+    # transcript rows could also miss a forget that landed before the write, which the fence then
+    # refused. The A8 erase above stays outside: its traversal takes A8_TRAVERSAL_LOCK and then the fence.
     from core.memory.revocation import writing
 
-    with writing({}, sid), _SESSION_META_LOCK:
-        meta = _load_session_meta_raw()
-        if sid in meta:
-            del meta[sid]
-            _write_session_meta_atomic(meta)
-            removed = True
+    with serialized():
+        for path in (conversation_log_path(), session_summaries_path()):
+            rows = _load_jsonl(path)
+            kept = [row for row in rows if str(row.get("session_id") or "").strip() != sid]
+            if len(kept) != len(rows):
+                rewrite_jsonl(path, kept)
+                removed = True
+        # P0 erasure law: the chat's memory rows become durable tombstones and the
+        # mirror projection is rewritten, so deleting a chat cannot leave its
+        # facts alive in (or resurrectable from) MEMORY.md.
+        with _MEMORY_ENTRY_LOCK:
+            target_ids = [
+                str(row.get("record_id") or "").strip()
+                for row in _load_jsonl(memory_entries_path())
+                if str(row.get("session_id") or "").strip() == sid
+                and str(row.get("record_id") or "").strip()
+            ]
+            erased_texts = _erase_rows_locked(target_ids)
+            if erased_texts:
+                removed = True
+                _rewrite_memory_mirror_locked()
+        if erased_texts:
+            _verify_erasure(erased_texts, target_ids)
+        with writing({}, sid), _SESSION_META_LOCK:
+            meta = _load_session_meta_raw()
+            if sid in meta:
+                del meta[sid]
+                _write_session_meta_atomic(meta)
+                removed = True
     from core.context_namespace import load_chat_namespace, set_chat_namespace_state
 
     namespace = load_chat_namespace(sid)
