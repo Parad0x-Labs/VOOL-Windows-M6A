@@ -16,7 +16,10 @@ def _no_ps(*_args, **_kwargs):
 
 
 class _FakePsutil(types.ModuleType):
-    """Process table: pid -> (ppid, cmdline). Unknown pids raise like psutil."""
+    """Process table: pid -> (ppid, cmdline[, create_time]). Unknown pids raise like psutil.
+
+    ``parent()`` follows psutil: a parent created after its child is a reused pid, so it is None.
+    """
 
     class Error(Exception):
         pass
@@ -30,19 +33,32 @@ class _FakePsutil(types.ModuleType):
     def Process(self, pid):  # mirrors psutil
         if pid not in self._table:
             raise self.Error(pid)
-        ppid, cmd = self._table[pid]
+        ppid, cmd, *rest = self._table[pid]
+        ctime = rest[0] if rest else 0.0
         outer = self
 
         class _P:
             def ppid(self):
                 return ppid
 
+            def create_time(self):
+                return ctime
+
+            def parent(self):
+                try:
+                    candidate = outer.Process(ppid)
+                except outer.Error:
+                    return None
+                return candidate if candidate.create_time() <= ctime else None
+
             def cmdline(self):
                 if cmd is None:
                     raise outer.Error("denied")
                 return list(cmd)
 
-        return _P()
+        p = _P()
+        p.pid = pid
+        return p
 
 
 @pytest.fixture
@@ -81,6 +97,39 @@ def test_windows_unreadable_ancestor_is_unknown_not_owned(monkeypatch, windows):
     chain = up.provenance_chain()
 
     assert chain and all(e.argv == () for e in chain)
+    assert up.classify_provenance(chain, repo_root="C:\\nowhere") is False
+
+
+def test_windows_reused_parent_pid_ends_the_chain(monkeypatch, windows):
+    # Windows never reparents: a dead ancestor's pid can belong to a newer, unrelated process
+    # (here a pytest run). Its argv must not vouch for this process.
+    me = os.getpid()
+    table = {
+        me: (6001, ["C:\\py\\python.exe", "worker.py"], 100.0),
+        6001: (6002, ["C:\\py\\python.exe", "worker.py"], 50.0),
+        6002: (1, ["C:\\py\\python.exe", "-m", "pytest"], 75.0),  # created after 6001: reused
+    }
+    monkeypatch.setitem(sys.modules, "psutil", _FakePsutil(table))
+
+    chain = up.provenance_chain()
+
+    assert [e.pid for e in chain] == [me, 6001]
+    assert chain[-1].ppid == 1
+    assert up.classify_provenance(chain, repo_root="C:\\nowhere") is False
+
+
+def test_windows_reused_first_parent_pid_is_not_followed(monkeypatch, windows):
+    me = os.getpid()
+    table = {
+        me: (6001, ["C:\\py\\python.exe", "worker.py"], 100.0),
+        6001: (1, ["C:\\py\\python.exe", "-m", "pytest"], 200.0),  # newer than this process
+    }
+    monkeypatch.setitem(sys.modules, "psutil", _FakePsutil(table))
+
+    chain = up.provenance_chain()
+
+    assert [e.pid for e in chain] == [me]
+    assert chain[0].ppid == 1
     assert up.classify_provenance(chain, repo_root="C:\\nowhere") is False
 
 
