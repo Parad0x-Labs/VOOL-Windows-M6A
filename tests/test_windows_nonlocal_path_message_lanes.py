@@ -528,7 +528,7 @@ def _approval_asks(tmp_path: Path, monkeypatch, recorder, windows_host, planned:
     missed = {
         text: reply
         for text, (status, reply) in asked.items()
-        if status != 200 or f"Affected: {workspace}/{planned[text]}." not in reply
+        if status != 200 or f"Affected: {workspace / planned[text]}." not in reply
     }
     assert missed == {}, missed
     return replies
@@ -943,8 +943,8 @@ def test_a_file_created_in_a_typed_folder_stays_in_that_workspace_folder(tmp_pat
     chat = _served_chat(monkeypatch)
     windows_host.on()
     planned = {
-        "in /notes create todo.txt with text: hi": f"Affected: {workspace}/notes/todo.txt.",
-        "inside /docs create readme.md with text: hello": f"Affected: {workspace}/docs/readme.md.",
+        "in /notes create todo.txt with text: hi": f"Affected: {workspace / 'notes/todo.txt'}.",
+        "inside /docs create readme.md with text: hello": f"Affected: {workspace / 'docs/readme.md'}.",
     }
 
     replies, touched = _served_turns(chat, recorder, list(planned))
@@ -966,8 +966,8 @@ def test_a_typed_folder_inside_the_workspace_is_that_workspace_folder(tmp_path: 
     windows_host.on()
     typed = workspace.as_posix()
     planned = {
-        f"in {typed}/notes create todo.txt with text: hi": f"Affected: {workspace}/notes/todo.txt.",
-        f"in {typed.upper()}/Docs create readme.md with text: hello": f"Affected: {workspace}/Docs/readme.md.",
+        f"in {typed}/notes create todo.txt with text: hi": f"Affected: {workspace / 'notes/todo.txt'}.",
+        f"in {typed.upper()}/Docs create readme.md with text: hello": f"Affected: {workspace / 'Docs/readme.md'}.",
     }
 
     replies, touched = _served_turns(chat, recorder, list(planned))
@@ -1127,12 +1127,12 @@ def test_a_typed_dot_or_dot_dot_workspace_folder_is_placed_where_windows_reads_i
     windows_host.on()
     typed = os.path.splitdrive(workspace.as_posix())[1]
     planned = {
-        f"in {typed}/.github/workflows create ci.yml with text: hi": f"Affected: {workspace}/.github/workflows/ci.yml.",
-        f"in {typed}/a/../b create todo.txt with text: hi": f"Affected: {workspace}/b/todo.txt.",
-        f"in {typed}/repo create notes.txt with text: hi": f"Affected: {workspace}/repo/notes.txt.",
-        f"in {typed}/../evil create one.txt with text: hi": f"Affected: {workspace}/one.txt.",
-        f"in {typed}/a/../../evil create two.txt with text: hi": f"Affected: {workspace}/two.txt.",
-        f"in {typed}/./../x create three.txt with text: hi": f"Affected: {workspace}/three.txt.",
+        f"in {typed}/.github/workflows create ci.yml with text: hi": f"Affected: {workspace / '.github/workflows/ci.yml'}.",
+        f"in {typed}/a/../b create todo.txt with text: hi": f"Affected: {workspace / 'b/todo.txt'}.",
+        f"in {typed}/repo create notes.txt with text: hi": f"Affected: {workspace / 'repo/notes.txt'}.",
+        f"in {typed}/../evil create one.txt with text: hi": f"Affected: {workspace / 'one.txt'}.",
+        f"in {typed}/a/../../evil create two.txt with text: hi": f"Affected: {workspace / 'two.txt'}.",
+        f"in {typed}/./../x create three.txt with text: hi": f"Affected: {workspace / 'three.txt'}.",
     }
     shares = ["in //attkr9/s/../x create four.txt with text: hi", "in \\\\attkr9\\s\\..\\x create five.txt with text: hi"]
 
