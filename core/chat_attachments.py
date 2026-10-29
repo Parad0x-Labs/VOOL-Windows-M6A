@@ -322,7 +322,10 @@ def _valid_session(value: Any) -> str:
 
 def _open_regular(path: Path) -> bytes:
     """Read a staged file without ever following a symbolic link."""
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    # O_BINARY stops Windows handing back a text-mode descriptor whose reads fold
+    # CR-LF into LF; POSIX has no O_BINARY, so the extra flag is 0 there and
+    # byte behaviour is unchanged.
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
     try:
         fd = os.open(path, flags)
     except OSError as exc:
