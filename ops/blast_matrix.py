@@ -207,7 +207,9 @@ class BlastMatrix:
             "max_hops": max_hops,
             "affected_module_count": len(closure),
             "full_closure_test_count": full_closure_hits,
-            "selected": {str(t.relative_to(REPO)): why for t, why in sorted(selected.items())},
+            # File ids are forward-slash on every platform, like the sentinels below and the
+            # run set main() prints; `str(relative_to(...))` answers OS separators on Windows.
+            "selected": {t.relative_to(REPO).as_posix(): why for t, why in sorted(selected.items())},
             "sentinels": sentinels,
             "missing_sentinels": missing,
             "hub_escalation": hub,
