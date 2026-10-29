@@ -201,6 +201,8 @@ def tier_summary(probe: MachineProbe | None = None) -> dict:
 
 # PowerShell opens no console window of its own; 0 (no flag) off Windows.
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+# A cold PowerShell start (Defender scanning it) can take several seconds; match machine_diagnostics.
+_CIM_TIMEOUT = 12
 
 
 def _cim_query(command: str) -> str:
@@ -209,7 +211,7 @@ def _cim_query(command: str) -> str:
 
     result = subprocess.run(
         [system_powershell(), "-NoProfile", "-NonInteractive", "-Command", command],
-        capture_output=True, text=True, timeout=5, creationflags=_NO_WINDOW,
+        capture_output=True, text=True, timeout=_CIM_TIMEOUT, creationflags=_NO_WINDOW,
     )
     if result.returncode != 0:
         raise OSError(f"Get-CimInstance failed with exit code {result.returncode}")
