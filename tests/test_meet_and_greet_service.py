@@ -2088,6 +2088,12 @@ def test_meet_main_runs_uvicorn_with_factory_app_and_tls_settings() -> None:
     fake_server = unittest.mock.Mock()
     fake_uvicorn.Config.return_value = unittest.mock.sentinel.config
     fake_uvicorn.Server.return_value = fake_server
+    exclusive: list[int] = []
+    if sys.platform == "win32":
+        # Read the option while uvicorn holds the sockets; the policy closes them after run().
+        fake_server.run.side_effect = lambda **kwargs: exclusive.extend(
+            sock.getsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE) for sock in kwargs["sockets"]
+        )
     args = unittest.mock.Mock(
         host="127.0.0.1",
         port=8766,
@@ -2124,13 +2130,11 @@ def test_meet_main_runs_uvicorn_with_factory_app_and_tls_settings() -> None:
     assert fake_uvicorn.Config.call_args.args[0] is unittest.mock.sentinel.app
     if sys.platform == "win32":
         # Windows runs uvicorn on the pre-bound SO_EXCLUSIVEADDRUSE sockets of
-        # network.listen_policy; the test closes the socket so it leaks none.
+        # network.listen_policy, which closes them once run() returns.
         assert fake_server.run.call_count == 1
         (sock,) = fake_server.run.call_args.kwargs["sockets"]
-        try:
-            assert sock.getsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE) != 0
-        finally:
-            sock.close()
+        assert exclusive and all(value != 0 for value in exclusive)
+        assert sock.fileno() == -1
     else:
         # POSIX keeps uvicorn's own bind path: run() with no sockets.
         fake_server.run.assert_called_once_with()

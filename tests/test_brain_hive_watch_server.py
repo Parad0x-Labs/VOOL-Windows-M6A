@@ -205,6 +205,12 @@ class BrainHiveWatchServerTests(unittest.TestCase):
             "uvicorn.Server"
         ) as server_cls:
             server = server_cls.return_value
+            exclusive: list[int] = []
+            if sys.platform == "win32":
+                # Read the option while uvicorn holds the sockets; the policy closes them after run().
+                server.run.side_effect = lambda **kwargs: exclusive.extend(
+                    sock.getsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE) for sock in kwargs["sockets"]
+                )
             from apps.brain_hive_watch_server import serve
 
             serve(cfg)
@@ -219,13 +225,12 @@ class BrainHiveWatchServerTests(unittest.TestCase):
         self.assertEqual(config.ssl_ca_certs, "/tmp/watch-ca.pem")
         if sys.platform == "win32":
             # Windows runs uvicorn on the pre-bound SO_EXCLUSIVEADDRUSE sockets of
-            # network.listen_policy; the test closes the socket so it leaks none.
+            # network.listen_policy, which closes them once run() returns.
             server.run.assert_called_once()
             (sock,) = server.run.call_args.kwargs["sockets"]
-            try:
-                self.assertNotEqual(sock.getsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE), 0)
-            finally:
-                sock.close()
+            self.assertTrue(exclusive)
+            self.assertTrue(all(value != 0 for value in exclusive))
+            self.assertEqual(sock.fileno(), -1)
         else:
             # POSIX keeps uvicorn's own bind path: run() with no sockets.
             server.run.assert_called_once_with()

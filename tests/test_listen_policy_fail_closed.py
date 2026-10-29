@@ -344,7 +344,7 @@ def test_run_server_on_listen_sockets_runs_bare_without_prebound_sockets(monkeyp
     server.run.assert_called_once_with()
 
 
-def test_run_server_on_listen_sockets_leaves_untaken_sockets_to_the_caller(monkeypatch):
+def test_run_server_on_listen_sockets_closes_prebound_sockets_after_a_returning_run(monkeypatch):
     fake_socket, created, _ = _resolving_socket_module(
         [(socket.AF_INET6, ("::1", 8123, 0, 0)), (socket.AF_INET, ("127.0.0.1", 8123))]
     )
@@ -354,12 +354,10 @@ def test_run_server_on_listen_sockets_leaves_untaken_sockets_to_the_caller(monke
 
     listen_policy.run_server_on_listen_sockets(server, listen_policy.pre_bind_listen_sockets("localhost", 8123))
 
-    # A run() that returns normally handed the sockets to uvicorn's own shutdown
-    # (uvicorn closes the sockets it took); sockets a run() leaves untouched stay
-    # open for their caller -- the uvicorn-contract tests close the socket they
-    # inspect, so the policy must not close it under them.
+    # uvicorn owns the sockets only while it serves: once run() returns, every
+    # pre-bound socket is closed so nothing keeps holding the port.
     server.run.assert_called_once_with(sockets=created)
-    assert all(("close",) not in sock.calls for sock in created)
+    assert all(("close",) in sock.calls for sock in created)
 
 
 def test_run_server_on_listen_sockets_closes_prebound_sockets_when_run_raises(monkeypatch):
@@ -444,3 +442,42 @@ def test_registry_serve_hands_every_resolved_address_to_run_sockets(monkeypatch,
     assert exit_code == 0
     assert len(created) == 2
     server_cls.return_value.run.assert_called_once_with(sockets=[created[0], created[1]])
+
+
+def _registry_config(tmp_path):
+    catalog = tmp_path / "catalog.json"
+    catalog.write_text('{"entries": []}', encoding="utf-8")
+    config_path = tmp_path / "service.json"
+    config_path.write_text(json.dumps({"catalog_file": str(catalog), "target": "test"}), encoding="utf-8")
+    return config_path
+
+
+def test_registry_names_a_refused_exclusive_bind_instead_of_blaming_the_configuration(monkeypatch, tmp_path, capsys):
+    config_path = _registry_config(tmp_path)
+    with (
+        unittest.mock.patch.object(registry_cli, "load_service", return_value=tuple(unittest.mock.Mock() for _ in range(3))),
+        unittest.mock.patch("uvicorn.Server"),
+        unittest.mock.patch("uvicorn.Config"),
+        unittest.mock.patch.object(registry_cli, "run_server_with_listen_policy", side_effect=OSError("taken")),
+    ):
+        exit_code = registry_cli.main(["serve", "--config", str(config_path), "--port", "8791"])
+
+    assert exit_code == 1
+    out = capsys.readouterr().out
+    assert "127.0.0.1:8791 could not be bound for exclusive use" in out
+    assert "incomplete configuration" not in out
+
+
+def test_registry_exits_with_uvicorns_startup_failure_when_the_server_never_started(monkeypatch, tmp_path):
+    config_path = _registry_config(tmp_path)
+    with (
+        unittest.mock.patch.object(registry_cli, "load_service", return_value=tuple(unittest.mock.Mock() for _ in range(3))),
+        unittest.mock.patch("uvicorn.Server") as server_cls,
+        unittest.mock.patch("uvicorn.Config"),
+        unittest.mock.patch.object(registry_cli, "run_server_with_listen_policy"),
+    ):
+        server_cls.return_value.started = False
+        with pytest.raises(SystemExit) as exited:
+            registry_cli.main(["serve", "--config", str(config_path), "--port", "8791"])
+
+    assert exited.value.code == 3
