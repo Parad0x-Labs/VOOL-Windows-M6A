@@ -17,7 +17,6 @@ import re
 import signal
 import socket
 import subprocess
-import sys
 import threading
 import time
 import urllib.error
@@ -25,6 +24,8 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+
+from network.listen_policy import ExclusiveListenMixin
 
 STUB_MODEL = "restart-repro-stub"
 CLOUD_STUB_MODEL = "restart-repro/cloud-stub"
@@ -159,18 +160,11 @@ class _StubHandler(BaseHTTPRequestHandler):
         self._record(path, 200, last_user)
 
 
-class _QuietServer(ThreadingHTTPServer):
-    """Scripted-provider listener. Windows SO_REUSEADDR (HTTPServer's default)
-    would let any second socket bind this server's live port and split its
-    connections; SO_EXCLUSIVEADDRUSE refuses that. POSIX reuse semantics are
-    unchanged."""
-
-    allow_reuse_address = sys.platform != "win32"
-
-    def server_bind(self) -> None:
-        if sys.platform == "win32":
-            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-        super().server_bind()
+class _QuietServer(ExclusiveListenMixin, ThreadingHTTPServer):
+    """Scripted-provider listener. The listen policy (network/listen_policy.py:
+    SO_EXCLUSIVEADDRUSE on Windows, SO_REUSEADDR on POSIX) lives on the mixin,
+    so this stub shares the one fail-closed path with every other VOOL listener
+    instead of duplicating the setsockopt."""
 
     def handle_error(self, request, client_address) -> None:
         return

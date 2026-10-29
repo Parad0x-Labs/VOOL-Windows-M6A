@@ -30,6 +30,41 @@ def apply_listen_socket_policy(sock: socket.socket) -> None:
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
 
+def apply_udp_listen_socket_policy(sock: socket.socket) -> None:
+    """UDP twin of apply_listen_socket_policy, before bind().
+
+    Windows: the same SO_EXCLUSIVEADDRUSE fail-closed path -- a same-user
+    SO_REUSEADDR bind of a held UDP port shares the socket's datagrams.
+    POSIX: nothing. The UDP binds set no socket option before this policy
+    existed and UDP has no TIME_WAIT to reuse through, so SO_REUSEADDR would
+    only add the BSD/macOS behaviour this module exists to refuse (a second
+    bind of a live port); POSIX behaviour stays byte-for-byte.
+    """
+    if _WINDOWS:
+        apply_listen_socket_policy(sock)
+
+
+def bind_listen_socket(host: str, port: int, family: int = socket.AF_INET) -> socket.socket:
+    """Create, apply the platform listen policy to, and bind a listen socket.
+
+    For servers whose own bind path (uvicorn's loop.create_server) sets no
+    port-reuse option on Windows: bind through THIS policy instead and hand
+    the socket to uvicorn via ``Server.run(sockets=[sock])``. The socket is
+    bound but NOT listening -- asyncio puts it on the accept loop itself --
+    and is not inheritable by child processes. A failed bind closes the
+    socket before re-raising, so nothing leaks a half-bound port.
+    """
+    sock = socket.socket(family, socket.SOCK_STREAM)
+    try:
+        apply_listen_socket_policy(sock)
+        sock.bind((host, int(port)))
+    except BaseException:
+        sock.close()
+        raise
+    sock.set_inheritable(False)
+    return sock
+
+
 class ExclusiveListenMixin:
     """socketserver mixin: exclusive listen ports on Windows, reuse on POSIX.
 

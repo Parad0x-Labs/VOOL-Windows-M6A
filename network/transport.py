@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from core import audit_logger, policy_engine
 from network.chunk_protocol import decode_frame
-from network.listen_policy import apply_listen_socket_policy
+from network.listen_policy import apply_listen_socket_policy, apply_udp_listen_socket_policy
 from network.stream_transport import (
     StreamClientTlsConfig,
     StreamEndpoint,
@@ -313,6 +313,7 @@ class UDPTransportServer:
         else:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             _configure_udp_socket_buffers(sock)
+            apply_udp_listen_socket_policy(sock)
             try:
                 sock.bind((self.host, requested_port))
             except OSError as bind_err:
@@ -433,6 +434,7 @@ class UDPTransportServer:
                     raise OverflowError("ephemeral stream port cannot have an adjacent UDP port")
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 _configure_udp_socket_buffers(sock)
+                apply_udp_listen_socket_policy(sock)
                 sock.bind((self.host, stream_port - 1))
                 stream_server = StreamTransportServer(
                     host=self.host,

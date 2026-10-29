@@ -8,6 +8,7 @@ from pathlib import Path
 
 from core.registry.codec import RegistryError, decode, require
 from core.registry.trust import TrustedCatalog
+from network.listen_policy import bind_listen_socket
 from registry_service.api import create_app
 from registry_service.auth import Auth, Provider
 from registry_service.store import Store
@@ -69,8 +70,21 @@ def main(argv=None) -> int:
             "loggers": {name: {"handlers": ["discard"], "propagate": False}
                         for name in ("uvicorn", "uvicorn.error", "uvicorn.access")}}
         discovery = decode(Path(config["catalog_file"]).read_bytes())["entries"]
-        uvicorn.run(create_app(store, auth, trust, config["target"], discovery=discovery), host="127.0.0.1", port=args.port,
-                    access_log=False, log_config=log_config, proxy_headers=False)
+        # uvicorn.run has no sockets= parameter, so bind through the ONE listen policy
+        # (SO_EXCLUSIVEADDRUSE on Windows) and hand the socket to Server.run directly;
+        # uvicorn's own loop.create_server sets no port-reuse option there.
+        listen_socket = bind_listen_socket("127.0.0.1", int(args.port))
+        server = uvicorn.Server(
+            uvicorn.Config(
+                create_app(store, auth, trust, config["target"], discovery=discovery),
+                host="127.0.0.1",
+                port=int(args.port),
+                access_log=False,
+                log_config=log_config,
+                proxy_headers=False,
+            )
+        )
+        server.run(sockets=[listen_socket])
         return 0
     except (RegistryError, OSError, ValueError, KeyError, TypeError):
         print("Registry startup refused: incomplete configuration, stale signatures or missing immutable artifacts.")

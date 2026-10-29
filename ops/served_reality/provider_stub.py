@@ -25,14 +25,14 @@ from __future__ import annotations
 
 import json
 import re
-import socket
-import sys
 import threading
 import time
 import urllib.parse
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+
+from network.listen_policy import ExclusiveListenMixin
 
 STUB_MODEL_ID = "served-reality-stub"
 CLOUD_STUB_MODEL_ID = "served-reality-cloud-stub"
@@ -335,23 +335,17 @@ class _Handler(BaseHTTPRequestHandler):
         stub.record(exchange)
 
 
-class _QuietHTTPServer(ThreadingHTTPServer):
+class _QuietHTTPServer(ExclusiveListenMixin, ThreadingHTTPServer):
     """ThreadingHTTPServer that swallows per-connection transport noise.
 
     A client that drops a connection mid-response (watchdog timeouts,
     cancelled turns) is expected bench traffic, not an error to print.
 
-    Windows SO_REUSEADDR (HTTPServer's default) would let any second socket
-    bind this server's live port and split its connections; SO_EXCLUSIVEADDRUSE
-    refuses that. POSIX reuse semantics are unchanged.
+    The listen policy (network/listen_policy.py: SO_EXCLUSIVEADDRUSE on
+    Windows, SO_REUSEADDR on POSIX) lives on the mixin, so this stub shares
+    the one fail-closed path with every other VOOL listener instead of
+    duplicating the setsockopt.
     """
-
-    allow_reuse_address = sys.platform != "win32"
-
-    def server_bind(self) -> None:
-        if sys.platform == "win32":
-            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-        super().server_bind()
 
     def handle_error(self, request, client_address) -> None:
         return

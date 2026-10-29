@@ -73,6 +73,13 @@ class StreamTransportServer:
             if prebound_socket is None:
                 apply_listen_socket_policy(sock)
                 sock.bind((self.host, self.port))
+            # A prebound socket deliberately skips the policy HERE because its
+            # producer already owns the bind decision: today the only producer
+            # is UDPTransportServer._bind_ephemeral_pair, which applies
+            # apply_listen_socket_policy before bind() and hands over the
+            # bound-but-not-yet-listening socket. A future producer must do the
+            # same (or set the option itself) -- never pass a socket that
+            # skipped the listen policy, or its port is stealable on Windows.
             backlog = max(16, int(policy_engine.get("network.stream.listen_backlog", 128)))
             sock.listen(backlog)
         except Exception:

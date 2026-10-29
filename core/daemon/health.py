@@ -13,6 +13,7 @@ from starlette.responses import Response
 from starlette.routing import Route
 
 from core.web.request_ids import log_http_request, resolve_request_id, response_headers_with_request_id
+from network.listen_policy import bind_listen_socket
 from network.signer import get_local_peer_id as local_peer_id
 
 from .models import is_loopback_host
@@ -95,9 +96,13 @@ def start_health_server(daemon: Any) -> None:
             log_level="warning",
         )
     )
+    # Bind through the ONE listen policy (SO_EXCLUSIVEADDRUSE on Windows) instead of
+    # uvicorn's loop.create_server, which sets no port-reuse option there: any same-user
+    # process could otherwise bind this live port and take a share of its connections.
+    listen_socket = bind_listen_socket(str(daemon.config.health_bind_host), int(daemon.config.health_bind_port))
     daemon._health_server = server
     daemon._health_thread = threading.Thread(
-        target=server.run,
+        target=lambda: server.run(sockets=[listen_socket]),
         name="vool-daemon-health",
         daemon=True,
     )

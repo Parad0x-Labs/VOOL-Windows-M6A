@@ -93,6 +93,7 @@ from core.web.api.service import (
     json_response,
     raw_upload_body_ceiling,
 )
+from network.listen_policy import bind_listen_socket
 
 logger = logging.getLogger("vool.api")
 
@@ -721,6 +722,10 @@ def main() -> int:
                 log_config=None,
             )
         )
+        # Bind through the ONE listen policy (SO_EXCLUSIVEADDRUSE on Windows) instead of
+        # uvicorn's loop.create_server, which sets no port-reuse option there: any same-user
+        # process could otherwise bind this live port and take a share of its connections.
+        listen_socket = bind_listen_socket(str(args.bind), int(args.port))
         _start_parent_death_watch(server)
         # Uvicorn restores and re-raises SIGTERM after its ASGI shutdown. Keep a
         # cooperative handler underneath it so that re-raise also returns through
@@ -732,7 +737,7 @@ def main() -> int:
         if owns_signals:
             previous_sigterm = signal.signal(signal.SIGTERM, request_shutdown)
         try:
-            server.run()
+            server.run(sockets=[listen_socket])
         finally:
             if owns_signals:
                 signal.signal(signal.SIGTERM, previous_sigterm)
