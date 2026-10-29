@@ -671,12 +671,15 @@ class BundleSupervisor:
 
         A stale API counts as this bundle's only when its command line runs this bundle's
         ``app\\apps\\vool_api_server.py`` -- in any spelling of the same folder (junction, 8.3
-        short name, case, trailing separator), canonicalized the same way on both sides: the
-        root through ``os.path.realpath`` (see _windows_root_forms), the process-reported
-        argument through the PowerShell ``Canon`` below (a junction to its target, an 8.3
-        short name to its long form, as given when it no longer exists). Anything else --
-        including another install's API in any spelling -- is left running, and a root that
-        cannot be canonicalized stops nothing at all.
+        short name, case, trailing separator), matched RAW or canonicalized (a strict superset
+        of the raw-root scan this grew from: the process keeps the spelling it was started
+        with, and even when ``Canon`` cannot resolve a spelling -- Windows PowerShell 5.1
+        lists a hard-linked file's names in ``.Target``, so such a file does not
+        canonicalize to a single path -- the raw spelling still stops what it always
+        stopped). ``Canon`` follows ``.Target`` only when it names exactly one non-empty link
+        that differs from the path already held; anything else -- including another install's
+        API in any spelling -- is left running, and a root that cannot be canonicalized stops
+        nothing at all.
         """
         if not _is_windows_platform():
             return
@@ -702,11 +705,13 @@ class BundleSupervisor:
             "for ($n = 0; $n -lt 16 -and $c; $n++) { "
             "try { $i = Get-Item -LiteralPath $c -Force -ErrorAction Stop } catch { break }; "
             "if (-not $i) { break }; "
-            "if ($i.Target) { $c = [string]$i.Target; continue }; "
+            "$t = @($i.Target); "
+            "if ($t.Count -eq 1 -and [string]$t[0] -and [string]$t[0] -ne $c) { $c = [string]$t[0]; continue }; "
             "if ([string]$i.FullName -ne $c) { $c = [string]$i.FullName; continue }; "
             "return $c }; "
             "return $c }; "
             "$scriptForms = '^(' + (($canonPrefixes | ForEach-Object { [regex]::Escape($_ + 'app\\apps\\vool_api_server.py') }) -join '|') + ')$'; "
+            "$rawScriptPattern = '^' + [regex]::Escape($rootPrefix + 'app\\apps\\vool_api_server.py') + '$'; "
             f"$scriptArgument = '{_WINDOWS_SCRIPT_ARGUMENT_PREFIX}' + '(?<voolscript>[^\\x22]*\\\\vool_api_server\\.py)' + '(?:\\x22|\\s|$)'; "
             f"$supervisorPid = {supervisor_pid}; "
             "$all = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue); "
@@ -720,7 +725,10 @@ class BundleSupervisor:
             "}; "
             "$all | Where-Object { ($_.Name -ieq 'python.exe' -or $_.Name -ieq 'pythonw.exe') "
             "-and (-not $protectedPids.Contains([int]$_.ProcessId)) "
-            "-and (([string]$_.CommandLine -match $scriptArgument) -and ((Canon ($Matches['voolscript'])) -match $scriptForms)) } | "
+            "-and (([string]$_.CommandLine -match $scriptArgument) "
+            "-and ((($scriptValue = [string]$Matches['voolscript'])) -ne '') "
+            "-and (($scriptValue -match $rawScriptPattern) -or ((Canon $scriptValue) -match $scriptForms)))"
+            " } | "
             "ForEach-Object { "
             "try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} "
             "}"

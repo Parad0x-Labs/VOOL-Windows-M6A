@@ -149,7 +149,12 @@ def _windows_canonical_root_setup(forms: tuple[str, ...]) -> str:
     resolved to the folder/file it really is (a junction to its target, an 8.3 short name to
     its long form) and left as given when it does not exist, mirroring non-strict
     ``os.path.realpath`` on the root side. ``$r``/``$rootPrefix`` keep the root exactly as
-    given and first, so a folder with any PowerShell quote in it stays one string.
+    given and first, so a folder with any PowerShell quote in it stays one string. Windows
+    PowerShell 5.1 lists a file's hard-link names in ``.Target`` (that is what resolves a
+    junction in the middle of a path; ``FullName`` does not), so ``Canon`` follows ``Target``
+    only when it names exactly one link, is non-empty and differs from the path already held
+    -- a file with several names is left as given rather than followed into a joined string,
+    and a ``Target`` that names the path itself ends the loop instead of re-reading it.
     """
     literals = ", ".join(_windows_install_root_literal(Path(form)) for form in forms)
     return (
@@ -164,12 +169,14 @@ def _windows_canonical_root_setup(forms: tuple[str, ...]) -> str:
         "for ($n = 0; $n -lt 16 -and $c; $n++) { "
         "try { $i = Get-Item -LiteralPath $c -Force -ErrorAction Stop } catch { break }; "
         "if (-not $i) { break }; "
-        "if ($i.Target) { $c = [string]$i.Target; continue }; "
+        "$t = @($i.Target); "
+        "if ($t.Count -eq 1 -and [string]$t[0] -and [string]$t[0] -ne $c) { $c = [string]$t[0]; continue }; "
         "if ([string]$i.FullName -ne $c) { $c = [string]$i.FullName; continue }; "
         "return $c }; "
         "return $c }; "
         "$exeUnderRoot = '^(' + (($canonPrefixes | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')'; "
         "$scriptForms = '^(' + (($canonPrefixes | ForEach-Object { [regex]::Escape($_ + 'apps\\vool_api_server.py') }) -join '|') + ')$'; "
+        "$rawScriptPattern = '^' + [regex]::Escape($rootPrefix + 'apps\\vool_api_server.py') + '$'; "
         f"$scriptArgument = '{_WINDOWS_SCRIPT_ARGUMENT_PREFIX}' + '(?<voolscript>[^\\x22]*\\\\vool_api_server\\.py)' + '(?:\\x22|\\s|$)'; "
         f"$moduleCommand = '{_WINDOWS_MODULE_ARGUMENT_PREFIX}'; "
     )
@@ -178,14 +185,23 @@ def _windows_canonical_root_setup(forms: tuple[str, ...]) -> str:
 # The ownership test itself: only this installation's Python is VOOL's -- a python/pythonw
 # whose exe lives under the install root, or that runs the root's API script, or that runs
 # ``-m apps.vool_api_server`` with a parent under the root (a source checkout's venv
-# launcher) -- in any spelling of the same folder, resolved the same way on both sides.
+# launcher). Every side is matched RAW or canonicalized, so the test is a strict superset of
+# the raw-only predicate: the process keeps the spelling it was started with, and even when
+# ``Canon`` cannot resolve a spelling (Windows PowerShell 5.1 lists a hard-linked file's
+# names in ``.Target``, so such a file does not canonicalize to a single path) the raw
+# spelling still owns what it always owned. The captured script argument is read into a
+# variable before any further -match: a raw -match would overwrite ``$Matches``.
 _WINDOWS_OWNERSHIP_PREDICATE = (
     "| Where-Object { ($_.Name -ieq 'python.exe' -or $_.Name -ieq 'pythonw.exe') "
-    "-and (((Canon ([string]$_.ExecutablePath)) -match $exeUnderRoot) "
-    "-or (([string]$_.CommandLine -match $scriptArgument) -and ((Canon ($Matches['voolscript'])) -match $scriptForms)) "
+    "-and ((([string]$_.ExecutablePath -match $exeUnderRoot) "
+    "-or ((Canon ([string]$_.ExecutablePath)) -match $exeUnderRoot)) "
+    "-or (([string]$_.CommandLine -match $scriptArgument) "
+    "-and ((($scriptValue = [string]$Matches['voolscript'])) -ne '') "
+    "-and (($scriptValue -match $rawScriptPattern) -or ((Canon $scriptValue) -match $scriptForms)))"
     "-or ((([string]$_.CommandLine -match $moduleCommand) "
-    "-and ((Canon ([string](Get-CimInstance Win32_Process -Filter \"ProcessId=$($_.ParentProcessId)\" "
-    "-ErrorAction SilentlyContinue).ExecutablePath)) -match $exeUnderRoot)))) } "
+    "-and ((($parentExe = [string](Get-CimInstance Win32_Process -Filter \"ProcessId=$($_.ParentProcessId)\" "
+    "-ErrorAction SilentlyContinue).ExecutablePath)) -match $exeUnderRoot) "
+    "-or ((Canon $parentExe) -match $exeUnderRoot)))) } "
 )
 
 
