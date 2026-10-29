@@ -22,7 +22,7 @@ def _load(name: str):
 
 
 def test_imports_without_sigkill(monkeypatch):
-    monkeypatch.delattr(signal, "SIGKILL")
+    monkeypatch.delattr(signal, "SIGKILL", raising=False)  # already absent on Windows
     module = _load("pact_journeys_no_sigkill")
     assert callable(module.main)
 
