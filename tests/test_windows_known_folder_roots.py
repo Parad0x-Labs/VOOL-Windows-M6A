@@ -84,6 +84,14 @@ def test_a_drive_whose_type_cannot_be_read_is_never_used(on_windows) -> None:
     assert kf.safe_folder("Desktop", Path(PROFILE)) == Path(PROFILE) / "Desktop"
 
 
+@pytest.mark.parametrize("reported", ["C:\\", "D:\\", "C:\\Users\\me", "c:\\users\\ME\\", "C:\\Users", "C:\\Users\\me\\."])
+def test_a_drive_root_or_a_folder_holding_the_profile_is_never_used(on_windows, reported) -> None:
+    """Documents redirected to the drive or to the profile itself would make the whole drive or
+    profile a write root."""
+    on_windows.setattr(kf, "_shell_known_folder", _shell({"Profile": PROFILE, "Documents": reported}))
+    assert kf.safe_folder("Documents", Path(PROFILE)) == Path(PROFILE) / "Documents"
+
+
 def test_no_profile_answer_keeps_the_home_spelling(on_windows) -> None:
     on_windows.setattr(kf, "_shell_known_folder", _shell(MOVED))
     assert kf.safe_folder("Desktop", Path(PROFILE)) == Path(PROFILE) / "Desktop"
