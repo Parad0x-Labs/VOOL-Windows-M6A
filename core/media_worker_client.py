@@ -124,13 +124,17 @@ class NebulaWorkerClient:
         if self._nebula_home:
             existing = env.get("PYTHONPATH", "")
             env["PYTHONPATH"] = (self._nebula_home + os.pathsep + existing).rstrip(os.pathsep)
+        # POSIX: own process group so a crash-kill also reaps any running ffmpeg
+        # child. Windows: Popen accepts and ignores start_new_session, so the real
+        # group isolation there is the child's own process group instead.
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
         try:
             return subprocess.Popen(
                 [self._python, "-m", "nebula.worker"],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL, text=True, env=env,
-                start_new_session=True,   # own process group so a crash-kill
-                                          # also reaps any running ffmpeg child
+                creationflags=creationflags,
+                start_new_session=True,
             )
         except OSError as exc:
             raise MediaWorkerUnavailable(f"could not spawn media worker: {exc}") from exc
@@ -151,7 +155,16 @@ class NebulaWorkerClient:
                     import signal
 
                     try:
-                        os.killpg(os.getpgid(self._proc.pid), signal.SIGKILL)
+                        if os.name == "nt":
+                            # Windows has no process groups of this shape: the whole
+                            # TREE of the recorded child is taken down instead, so an
+                            # in-flight ffmpeg child cannot keep writing either.
+                            subprocess.run(
+                                ["taskkill", "/PID", str(self._proc.pid), "/T", "/F"],
+                                capture_output=True, check=False, timeout=5,
+                            )
+                        else:
+                            os.killpg(os.getpgid(self._proc.pid), signal.SIGKILL)
                     except (ProcessLookupError, PermissionError, OSError):
                         self._proc.kill()
                 self._proc.wait(timeout=5)

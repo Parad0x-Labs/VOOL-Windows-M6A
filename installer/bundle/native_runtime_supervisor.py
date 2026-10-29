@@ -342,6 +342,18 @@ class NativeRuntimeSupervisor:
             with contextlib.suppress(Exception):
                 if os.name == "posix":
                     os.killpg(os.getpgid(child.pid), signal.SIGTERM)
+                elif os.name == "nt":
+                    # Windows has no group signalling: ask the child's own group to
+                    # stop first (the spawn side created one), then take its whole
+                    # tree down through the recorded PID. Nothing outside that tree
+                    # is ever touched.
+                    with contextlib.suppress(Exception):
+                        child.send_signal(signal.CTRL_BREAK_EVENT)
+                        child.wait(timeout=3)
+                    subprocess.run(
+                        ("taskkill", "/PID", str(child.pid), "/T", "/F"),
+                        capture_output=True, check=False, timeout=8,
+                    )
                 else:
                     child.terminate()
             try:
