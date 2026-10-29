@@ -60,26 +60,39 @@ RIG_MODULES = (
     "tests.test_vool_browser_chat_journey",
     "tests.test_vool_database_chat_journey",
     "tests.test_vool_database_served_proof",
+    "tests.test_memory_forget_served_p0",
+    "tests.wallet._rig_provider",
+    "tests.plugin_mcp_budgets.test_served_plugin_mcp_budgets",
+    "tests.test_pb01_served_sufficiency_served",
 )
 
 #: The module-level rig templates and harmless values for their non-path fields. `root`
-#: (and the other path-like field, the rollback `ws` workspace) get the Windows-shaped root.
+#: (and the other path-like field, the rollback `ws` workspace) get the Windows-shaped root:
+#: as a `Path` for the shared templates that other files format with one (their programs
+#: bind the Path names), and as the `str` every other template's callers pass.
 TEMPLATE_FIELDS = {
     ("tests._blackbox_served_rig", "SEED_MANIFEST"): {"base_url": "http://127.0.0.1:1", "registered": ["m1"]},
     ("tests._served_sufficiency_provider", "SEED"): {"base_url": "http://127.0.0.1:1", "models": [("m1", {})]},
     ("tests.test_a9_turn_routing_served", "_SEED"): {
+        "root": WINDOWS_SHAPED_ROOT,
         "local_base": "http://127.0.0.1:1", "paid_base": "http://127.0.0.1:2", "remote_base": "",
         "timeout": 4, "free_a": "m1", "free_b": "m2", "paid": "m3", "remote_mid": "m4"},
-    ("tests.test_a9_turn_routing_served", "_RULE_SEED"): {"chat_id": "c1", "remote_mid": "m4", "turns": 2},
+    ("tests.test_a9_turn_routing_served", "_RULE_SEED"): {
+        "root": WINDOWS_SHAPED_ROOT, "chat_id": "c1", "remote_mid": "m4", "turns": 2},
     ("tests.test_blackbox_run_once_served_proof", "_ROLLBACK_SCRIPT"): {"turn": "t1", "ws": ROOT_PATH},
     ("tests.test_c18_language_parity_served", "_SEED"): {
         "local_base": "http://127.0.0.1:1", "paid_base": "http://127.0.0.1:2", "local": "m1", "paid": "m3"},
     ("tests.test_c18_language_parity_served", "_PREFERENCE_SEED"): {"session_id": "s1"},
     ("tests.test_final_answer_authorship_served_p0", "_SEED"): {
-        "base_url": "http://127.0.0.1:1", "registered": ["m1"], "certified": ["m1"]},
+        "root": WINDOWS_SHAPED_ROOT, "base_url": "http://127.0.0.1:1", "registered": ["m1"], "certified": ["m1"]},
     ("tests.test_vool_database_chat_journey", "_CREATE_DB_IN_HOME"): {
+        "root": WINDOWS_SHAPED_ROOT,
         "plugin": "vool-database", "ddl": "CREATE TABLE t (x INTEGER)", "seed": "INSERT INTO t VALUES (1)"},
-    ("tests.test_vool_database_served_proof", "_STUB_SEED"): {"base_url": "http://127.0.0.1:1", "model": "m1"},
+    ("tests.test_vool_database_served_proof", "_STUB_SEED"): {
+        "root": WINDOWS_SHAPED_ROOT, "base_url": "http://127.0.0.1:1", "model": "m1"},
+    ("tests.test_memory_forget_served_p0", "SEED"): {
+        "root": WINDOWS_SHAPED_ROOT, "base_url": "http://127.0.0.1:1", "models": ["m1"]},
+    ("tests.wallet._rig_provider", "CERTIFY_SEED"): {"root": WINDOWS_SHAPED_ROOT, "registered": ["m1"]},
 }
 
 #: Attribute names that build a string at a rig call site. Calls to plain names
@@ -118,18 +131,34 @@ CALL_SITE_VALUES = {
     "self": _Stub(),
     "provider": _Stub(),
     "world": _Stub(),
+    "rules": (),
 }
 
 
-def _carries_root(node: ast.AST) -> bool:
+def _bound_names(tree: ast.AST) -> set[str]:
+    """The names a generated program binds itself: imports (under their alias) and plain
+    assignments. A call to any other non-builtin name in that program is a NameError."""
+    bound = set(dir(builtins))
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            bound.update((alias.asname or alias.name).split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.Assign):
+            bound.update(target.id for target in node.targets if isinstance(target, ast.Name))
+    return bound
+
+
+def _carries_root(node: ast.AST, bound: set[str]) -> bool:
     """The root must arrive as DATA, never spliced source text: one string literal of the
     given root, or (for the shared templates, whose out-of-file callers interpolate a Path)
-    a str()/Path() built from exactly that literal."""
+    a str()/Path() built from exactly that literal, where the generated program itself
+    binds the name it calls (a bare `{root!r}` of a Path emits `PosixPath(...)`, which only
+    runs where the program binds it)."""
     if isinstance(node, ast.Constant):
         return node.value in ROOT_LITERALS
     if (isinstance(node, ast.Call) and node.args and isinstance(node.func, ast.Name)
-            and node.func.id in {"str", "Path", "WindowsPath", "PosixPath"}):
-        return _carries_root(node.args[0])
+            and node.func.id in {"str", "Path", "WindowsPath", "PosixPath"}
+            and node.func.id in bound):
+        return _carries_root(node.args[0], bound)
     return False
 
 
@@ -138,16 +167,19 @@ def _assert_embeds_root(source: str, label: str) -> None:
         compile(source, "<rig>", "exec")
     except SyntaxError as exc:
         pytest.fail(f"{label}: the generated rig source does not compile ({exc.msg}, line {exc.lineno}):\n{source}")
-    inserted = [call.args[1] for call in ast.walk(ast.parse(source))
+    tree = ast.parse(source)
+    bound = _bound_names(tree)
+    inserted = [call.args[1] for call in ast.walk(tree)
                 if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
                 and call.func.attr == "insert" and isinstance(call.func.value, ast.Attribute)
                 and call.func.value.attr == "path" and isinstance(call.func.value.value, ast.Name)
                 and call.func.value.value.id == "sys" and len(call.args) > 1]
     assert inserted, f"{label}: the generated rig program never seeds sys.path"
     for argument in inserted:
-        assert _carries_root(argument), (
+        assert _carries_root(argument, bound), (
             f"{label}: sys.path.insert must take the root as one embedded literal (raw or POSIX "
-            f"spelling, or a str()/Path() of exactly that literal), got {ast.dump(argument)}")
+            f"spelling, or a str()/Path() of exactly that literal that the program binds), "
+            f"got {ast.dump(argument)}")
 
 
 def _loaded_modules() -> dict:
@@ -168,12 +200,25 @@ def test_module_template_embeds_the_root_as_one_literal(module, template, fields
     _assert_embeds_root(template.format(**fields), f"{module.__name__} template")
 
 
-def _static_text(node: ast.AST, module_globals: dict) -> str:
+def _assigned_strings(tree: ast.AST) -> dict:
+    """Plain string constants bound to a name exactly once anywhere in the module: the local
+    templates a call site formats (`script = '''...'''` then `script.replace(...)`)."""
+    seen: dict = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    seen.setdefault(target.id, []).append(node.value)
+    return {name: values[0].value for name, values in seen.items()
+            if len(values) == 1 and isinstance(values[0], ast.Constant) and isinstance(values[0].value, str)}
+
+
+def _static_text(node: ast.AST, names: dict) -> str:
     """Every string the expression builds from before any value is interpolated: its own
-    literals plus the module-level template constants it names."""
+    literals plus the template constants it names."""
     parts = [n.value for n in ast.walk(node) if isinstance(n, ast.Constant) and isinstance(n.value, str)]
-    parts += [module_globals[n.id] for n in ast.walk(node)
-              if isinstance(n, ast.Name) and isinstance(module_globals.get(n.id), str)]
+    parts += [names[n.id] for n in ast.walk(node)
+              if isinstance(n, ast.Name) and isinstance(names.get(n.id), str)]
     return "\n".join(parts)
 
 
@@ -185,6 +230,15 @@ def _interpolates(node: ast.AST) -> bool:
     return any(isinstance(n, ast.JoinedStr)
                or (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
                    and n.func.attr in {"format", "replace"})
+               for n in ast.walk(node))
+
+
+def _runs_something(node: ast.AST) -> bool:
+    """The expression calls a plain name that is neither a builtin nor a stubbed call-site
+    value (`run_in_home(...)`): evaluating it would run the generated program, so it is
+    never a builder to re-evaluate -- the template text inside it is."""
+    return any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+               and not hasattr(builtins, n.func.id) and n.func.id not in CALL_SITE_VALUES
                for n in ast.walk(node))
 
 
@@ -203,12 +257,13 @@ def _call_site_builders(module) -> list:
     `sys.path` — every place the file embeds a path into generated `python -c` source at a
     real call site."""
     tree = ast.parse(inspect.getsource(module))
-    module_globals = vars(module)
+    names = ChainMap(vars(module), _assigned_strings(tree))
     candidates = [node for node in ast.walk(tree)
                   if (isinstance(node, ast.JoinedStr)
                       or (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                          and node.func.attr in _STRING_BUILDERS)) and _interpolates(node)]
-    marked = [node for node in candidates if "sys.path.insert(" in _static_text(node, module_globals)]
+                          and node.func.attr in _STRING_BUILDERS))
+                  and _interpolates(node) and not _runs_something(node)]
+    marked = [node for node in candidates if "sys.path.insert(" in _static_text(node, names)]
     return [node for node in marked
             if not any(other is not node and _encloses(other, node) for other in marked)]
 
@@ -227,7 +282,8 @@ def test_call_site_script_embeds_the_root_as_one_literal(module, node):
     path-bearing name it interpolates, must compile and seed sys.path with exactly that
     root."""
     expression = compile(ast.fix_missing_locations(ast.Expression(node)), "<rig-builder>", "eval")
-    namespace = ChainMap(CALL_SITE_VALUES, vars(module), vars(builtins))
+    local_templates = _assigned_strings(ast.parse(inspect.getsource(module)))
+    namespace = ChainMap(CALL_SITE_VALUES, vars(module), local_templates, vars(builtins))
     try:
         source = eval(expression, {}, dict(namespace))
     except NameError as exc:
