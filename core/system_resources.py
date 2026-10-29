@@ -6,8 +6,9 @@ LIVE: free RAM, memory pressure, CPU load, swap — plus what VOOL's own subsyst
 gated on REAL headroom instead of firing blind and swapping the machine into a beachball freeze.
 
 Design:
-- **OS tools only, no psutil** — this runs on the key-holding machine where new package installs are
-  banned. macOS uses `sysctl`/`vm_stat`; Linux reads `/proc`; `os.getloadavg` is portable.
+- **OS tools only for RAM** — this runs on the key-holding machine where new package installs are
+  banned. macOS uses `sysctl`/`vm_stat`; Linux reads `/proc`; `os.getloadavg` is portable. The one
+  process scan Windows needs (ComfyUI, no `pgrep`) uses psutil, already a core dependency.
 - **Every probe is best-effort** — a missing tool degrades one field to a safe default, never raises.
 - **Cached ~3s** — a snapshot costs a couple of cheap subprocesses; callers can read it per-turn free.
 - **Reserve for the user** — `reserve_gb` (default 20% of total) is RAM the governor keeps free so the
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import ntpath
 import os
 import platform
 import re
@@ -50,6 +52,9 @@ from core.ollama_endpoint import ollama_api_url as _ollama_api_url
 _COMFYUI_PORT = os.environ.get("VOOL_COMFYUI_PORT", "8188")
 
 _lock = threading.Lock()
+# Per-thread note of whether the last ComfyUI probe on this thread produced an answer. The snapshot
+# reads it after calling _comfyui_running, so that seam stays the one place the probe is made.
+_probe = threading.local()
 _cache: tuple[float, ResourceSnapshot] | None = None
 
 
@@ -68,6 +73,7 @@ class ResourceSnapshot:
     comfyui_running: bool
     reserve_gb: float               # RAM to keep free for the user
     usable_gb: float                # max a heavy task may take now: max(0, available - reserve)
+    comfyui_known: bool = True      # False when the ComfyUI probe failed: comfyui_running is then unknown, not "off"
 
     def to_dict(self) -> dict[str, object]:
         d = asdict(self)
@@ -224,9 +230,48 @@ def _ollama_loaded_bytes(*, base_url: str | None = None) -> float:
     return total
 
 
+def _is_comfyui_cmdline(cmdline: object) -> bool:
+    """True for an argv shaped like ``... main.py --port <port>`` (or ``--port=<port>``)."""
+    if not isinstance(cmdline, (list, tuple)):
+        return False
+    argv = [str(a) for a in cmdline]
+    for i, arg in enumerate(argv):
+        if ntpath.basename(arg).lower() != "main.py":
+            continue
+        rest = argv[i + 1:i + 3]
+        if rest[:2] == ["--port", str(_COMFYUI_PORT)] or rest[:1] == [f"--port={_COMFYUI_PORT}"]:
+            return True
+    return False
+
+
+def _windows_comfyui_state() -> bool | None:
+    """Scan processes with psutil (a core dependency); None if the scan itself cannot be trusted."""
+    try:
+        import psutil
+
+        from core.process_liveness import pid_alive
+
+        for proc in psutil.process_iter(["pid", "cmdline"]):
+            info = getattr(proc, "info", None) or {}
+            if _is_comfyui_cmdline(info.get("cmdline")) and pid_alive(int(info.get("pid") or 0)):
+                return True
+        return False
+    except Exception:
+        return None
+
+
+def _comfyui_state() -> bool | None:
+    """True running, False not running, None unknown (the probe itself failed)."""
+    if platform.system() == "Windows":
+        state = _windows_comfyui_state()
+    else:
+        state = bool(_run(["pgrep", "-f", f"main.py --port {_COMFYUI_PORT}"]).strip())
+    _probe.comfyui_known = state is not None
+    return state
+
+
 def _comfyui_running() -> bool:
-    out = _run(["pgrep", "-f", f"main.py --port {_COMFYUI_PORT}"])
-    return bool(out.strip())
+    return _comfyui_state() is True
 
 
 # ------------------------------------------------------------------ snapshot
@@ -255,6 +300,9 @@ def _build_snapshot(*, base_url: str | None = None) -> ResourceSnapshot:
     reserve = total * _reserve_fraction()
     usable = max(0.0, available - reserve)
 
+    _probe.comfyui_known = True
+    comfyui_running = _comfyui_running()
+    comfyui_known = _probe.comfyui_known
     return ResourceSnapshot(
         total_ram_gb=total / _GIB,
         available_ram_gb=available / _GIB,
@@ -266,9 +314,10 @@ def _build_snapshot(*, base_url: str | None = None) -> ResourceSnapshot:
         load_per_core=(load_1m / cpu_count) if cpu_count else load_1m,
         swap_used_gb=_swap_used_bytes() / _GIB,
         ollama_loaded_gb=(_ollama_loaded_bytes() if base_url is None else _ollama_loaded_bytes(base_url=base_url)) / _GIB,
-        comfyui_running=_comfyui_running(),
+        comfyui_running=comfyui_running,
         reserve_gb=reserve / _GIB,
         usable_gb=usable / _GIB,
+        comfyui_known=comfyui_known,
     )
 
 
