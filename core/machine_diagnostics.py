@@ -18,7 +18,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from core.process_liveness import system_powershell
+from core.process_liveness import system_powershell, system_tool
 
 _GiB = 1024 ** 3
 _MiB = 1024 ** 2
@@ -33,6 +33,10 @@ Runner = Callable[..., Any]
 
 
 def _run(cmd: list[str], runner: Runner) -> Any:
+    # Windows' own wevtutil and tasklist from System32, never a copy on PATH; an untrusted
+    # folder raises OSError, which each caller reports as that probe's error.
+    if cmd[0] in ("wevtutil", "tasklist"):
+        cmd = [system_tool(cmd[0]), *cmd[1:]]
     return runner(
         cmd,
         capture_output=True,

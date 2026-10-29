@@ -76,3 +76,13 @@ def system_taskkill() -> str:
 def system_powershell() -> str:
     """Windows PowerShell 5.1's powershell.exe by absolute path, or OSError (see ``_system32``)."""
     return _system32("WindowsPowerShell", "v1.0", "powershell.exe")
+
+
+SYSTEM32_TOOLS = frozenset({"taskkill", "schtasks", "tasklist", "sc", "cmd", "wevtutil"})
+
+
+def system_tool(name: str) -> str:
+    """One of ``SYSTEM32_TOOLS`` (a bare name such as ``tasklist``) by absolute path, or OSError."""
+    if name not in SYSTEM32_TOOLS:
+        raise OSError(f"{name} is not a Windows tool VOOL runs")
+    return _system32(f"{name}.exe")

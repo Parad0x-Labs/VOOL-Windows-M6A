@@ -11,6 +11,9 @@ from typing import Any
 
 import psutil
 
+# taskkill opens no console window of its own; 0 (no flag) off Windows.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 
 def process_group_kwargs() -> dict[str, Any]:
     if os.name == "nt":
@@ -98,6 +101,7 @@ def stop_process_tree(process: Any, *, grace_seconds: float = 5.0) -> None:
                     capture_output=True,
                     check=False,
                     timeout=grace_seconds,
+                    creationflags=_NO_WINDOW,
                 )
         with contextlib.suppress(Exception):
             process.kill()
