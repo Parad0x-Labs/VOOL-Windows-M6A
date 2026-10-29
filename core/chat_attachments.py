@@ -321,7 +321,11 @@ def _valid_session(value: Any) -> str:
 
 
 def _open_regular(path: Path) -> bytes:
-    """Read a staged file without ever following a symbolic link."""
+    """Read a staged file without ever following a symbolic link.
+
+    Windows defines no ``O_NOFOLLOW``: there the link is refused before the open AND the open is
+    verified against the name afterwards, so a link swapped in between the two is still refused.
+    """
     # O_BINARY stops Windows handing back a text-mode descriptor whose reads fold
     # CR-LF into LF; POSIX has no O_BINARY, so the extra flag is 0 there and
     # byte behaviour is unchanged.
@@ -344,6 +348,30 @@ def _open_regular(path: Path) -> bytes:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode):
             raise AttachmentRefused("symlink_refused", "A staged attachment is not a regular file; refusing to read it.")
+        if os.name == "nt":
+            # The pre-check above and the open are two steps, and Windows offers no O_NOFOLLOW to
+            # pin the entry across them: a process can swap the staged file for a link after the
+            # check has passed and before os.open arrives, and the open would then follow that
+            # link without a word. So the open is verified against the name it was opened by:
+            # what the descriptor describes (os.fstat) must still be what the NAME describes
+            # (os.lstat -- the entry itself, never a link's target), and that entry must be a
+            # plain file, not a link and not any other reparse point. Anything else, including a
+            # name that can no longer be stat'ed at all, is an unknown state, and unknown is
+            # refused; the fd itself is closed by the finally below. POSIX never reaches here.
+            try:
+                named = os.lstat(path)
+            except OSError as exc:
+                raise AttachmentRefused(
+                    "symlink_refused", "A staged attachment could not be verified after it was opened; refusing to read it."
+                ) from exc
+            if stat.S_ISLNK(named.st_mode) or named.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+                raise AttachmentRefused(
+                    "symlink_refused", "A staged attachment was replaced by a symbolic link after it was opened; refusing to read it."
+                )
+            if (named.st_ino, named.st_dev) != (info.st_ino, info.st_dev):
+                raise AttachmentRefused(
+                    "symlink_refused", "A staged attachment was replaced by a different file while it was being read; refusing to read it."
+                )
         chunks: list[bytes] = []
         while True:
             chunk = os.read(fd, 1024 * 1024)
