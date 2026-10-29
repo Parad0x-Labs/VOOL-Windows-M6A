@@ -160,14 +160,17 @@ class NebulaWorkerClient:
                         if os.name == "nt":
                             # Windows has no process groups of this shape: the whole
                             # TREE of the recorded child is taken down instead, so an
-                            # in-flight ffmpeg child cannot keep writing either.
-                            subprocess.run(
+                            # in-flight ffmpeg child cannot keep writing either. A tree
+                            # kill that fails or hangs still kills the recorded child.
+                            completed = subprocess.run(
                                 [system_taskkill(), "/PID", str(self._proc.pid), "/T", "/F"],
                                 capture_output=True, check=False, timeout=5,
                             )
+                            if completed.returncode != 0:
+                                self._proc.kill()
                         else:
                             os.killpg(os.getpgid(self._proc.pid), signal.SIGKILL)
-                    except (ProcessLookupError, PermissionError, OSError):
+                    except (ProcessLookupError, PermissionError, OSError, subprocess.SubprocessError):
                         self._proc.kill()
                 self._proc.wait(timeout=5)
             except Exception:
