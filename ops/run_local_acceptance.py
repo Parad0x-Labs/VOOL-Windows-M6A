@@ -1012,7 +1012,9 @@ def _stop_runtime(base_url: str) -> None:
             return
         pid = int(dict(health.get("runtime") or {}).get("pid") or 0) if isinstance(health, dict) else 0
         if pid > 0 and pid != last_pid:
-            with suppress(ProcessLookupError):
+            # OSError, not only ProcessLookupError: on Windows a just-exited pid answers
+            # WinError 87 or PermissionError; either way the runtime is already gone.
+            with suppress(OSError):
                 os.kill(pid, signal.SIGTERM)
             last_pid = pid
         time.sleep(0.5)
@@ -1021,8 +1023,9 @@ def _stop_runtime(base_url: str) -> None:
     if pid <= 0:
         return
     try:
-        os.kill(pid, signal.SIGKILL)
-    except ProcessLookupError:
+        # Windows has no SIGKILL; os.kill with SIGTERM is already TerminateProcess there.
+        os.kill(pid, getattr(signal, "SIGKILL", signal.SIGTERM))
+    except OSError:
         return
     kill_deadline = time.time() + 5.0
     while time.time() < kill_deadline:

@@ -27,6 +27,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
+from ops.process_tree import process_group_kwargs, stop_process_tree
 from tests.usepod.strict_usepod_service import Listing, ScriptedReply, StrictUsePodService, default_reply
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -104,7 +105,7 @@ class UsePodServedDaemon:
             stdout=handle,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
-            start_new_session=True,
+            **process_group_kwargs(),
         )
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -126,6 +127,12 @@ class UsePodServedDaemon:
 
     def stop(self) -> None:
         if self.process is None:
+            return
+        if os.name == "nt":
+            # Windows has no signal.SIGKILL, os.killpg or os.getpgid: stop this rig's
+            # OWN daemon and the processes it started (taskkill /T /F of its pid).
+            stop_process_tree(self.process, grace_seconds=15.0)
+            self.process = None
             return
         for sig in (signal.SIGTERM, signal.SIGKILL):
             try:

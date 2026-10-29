@@ -354,7 +354,7 @@ def test_the_stop_module_leaves_the_vool_home_notes_alone(tmp_path: Path) -> Non
     notes.mkdir(parents=True)
     (notes / "keep.md").write_text("keep\n", encoding="utf-8")
 
-    def run(cmd, capture_output=False, text=False, check=False):
+    def run(cmd, capture_output=False, text=False, check=False, **_kwargs):
         return types.SimpleNamespace(stdout="", returncode=0)
 
     hard_stop(app, home, run=run)
