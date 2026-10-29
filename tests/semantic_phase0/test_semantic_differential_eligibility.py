@@ -384,7 +384,7 @@ def test_the_subprocess_seal_actually_refuses_every_surface_and_family() -> None
     import textwrap
 
     source = _SCRIPT.read_text(encoding="utf-8")
-    seal = source[source.index("def _blocked("): source.index('sys.path.insert(0, "__TREE__")')]
+    seal = source[source.index("def _blocked("): source.index('sys.path.insert(0, __TREE__)')]
     probe = textwrap.dedent('''
         import asyncio, multiprocessing, os, socket, subprocess, sys
         {seal}
@@ -423,7 +423,7 @@ def test_proof_interpreter_refuses_grandchild_creation() -> None:
     import textwrap
 
     source = _SCRIPT.read_text(encoding="utf-8")
-    seal = source[source.index("def _blocked("): source.index('sys.path.insert(0, "__TREE__")')]
+    seal = source[source.index("def _blocked("): source.index('sys.path.insert(0, __TREE__)')]
     probe = textwrap.dedent('''
         import asyncio, multiprocessing, os, socket, subprocess, sys
         {seal}
