@@ -205,9 +205,13 @@ def _run_bounded(command: list[str], *, cwd: Path, env: dict[str, str],
                 # root is gone they can no longer be found), then kill()
                 # (TerminateProcess) for the child itself. Nothing outside this
                 # child is ever addressed.
-                with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+                # System32's taskkill only, never one found on PATH; when it can't be
+                # trusted (or core isn't importable) no taskkill runs and kill() still does.
+                with contextlib.suppress(ImportError, OSError, subprocess.TimeoutExpired):
+                    from core.process_liveness import system_taskkill
+
                     subprocess.run(
-                        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                        [system_taskkill(), "/PID", str(process.pid), "/T", "/F"],
                         capture_output=True, check=False, timeout=10.0,
                     )
                 with contextlib.suppress(OSError):
@@ -1282,9 +1286,11 @@ def execute_run(repo: Path, run_dir: Path, profile_root: Path, python: str,
                 if os.name == "nt":
                     # Popen.send_signal accepts no SIGINT on Windows. Stop THIS tool's
                     # own child and its tree, by its recorded pid, while it is alive.
-                    with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+                    with contextlib.suppress(ImportError, OSError, subprocess.TimeoutExpired):
+                        from core.process_liveness import system_taskkill
+
                         subprocess.run(
-                            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                            [system_taskkill(), "/PID", str(process.pid), "/T", "/F"],
                             capture_output=True, check=False, timeout=10.0,
                         )
                     with contextlib.suppress(OSError):

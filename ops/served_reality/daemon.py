@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from core.process_liveness import pid_alive
+from core.process_liveness import pid_alive, system_taskkill
 from ops.served_reality.classify import BenchError
 from ops.served_reality.wire import WireClient, WireLog, free_port
 
@@ -112,7 +112,7 @@ def _terminate_tree_windows(pid: int, term_wait_s: float, process: subprocess.Po
         return
     with suppress(Exception):
         subprocess.run(
-            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            [system_taskkill(), "/PID", str(pid), "/T", "/F"],
             capture_output=True,
             check=False,
             timeout=15,

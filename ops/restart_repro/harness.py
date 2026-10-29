@@ -374,8 +374,10 @@ class Daemon:
     def _terminate_windows(process: subprocess.Popen) -> None:
         """Tree-kill while the root is alive (taskkill /T), bounded wait, then kill()."""
         with contextlib.suppress(Exception):
+            from core.process_liveness import system_taskkill
+
             subprocess.run(
-                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                [system_taskkill(), "/PID", str(process.pid), "/T", "/F"],
                 capture_output=True,
                 check=False,
                 timeout=8,
