@@ -151,6 +151,26 @@ def test_redactor_takes_a_spaced_account_at_end_of_text(name, text):
     assert "John" not in out and "Smith" not in out, f"{name}: {out!r}"
 
 
+# --- reviewer-requested leak checks: a bare spaced account with one trailing folder ----------------------
+BOB_SMITH_SINGLE = "C:\\Users\\Bob Smith\\x"
+BOB_SMITH_ESCAPED = "C:\\\\Users\\\\Bob Smith\\\\x"
+BOB_SMITH_CASES = [BOB_SMITH_SINGLE, BOB_SMITH_ESCAPED]
+BOB_SMITH_IDS = ["single_backslash", "escaped_double_backslash"]
+
+
+@pytest.mark.parametrize("text", BOB_SMITH_CASES, ids=BOB_SMITH_IDS)
+@pytest.mark.parametrize("name", list(REDACTORS))
+def test_redactor_leaks_no_part_of_bob_smith(name, text):
+    out = REDACTORS[name](text)
+    assert "Bob" not in out and "Smith" not in out, f"{name} kept part of {text!r}: {out!r}"
+
+
+@pytest.mark.parametrize("text", BOB_SMITH_CASES, ids=BOB_SMITH_IDS)
+def test_shared_scrubber_leaks_no_part_of_bob_smith(text):
+    out = scrub_windows_paths(text, path_basename)
+    assert "Bob" not in out and "Smith" not in out, f"kept part of {text!r}: {out!r}"
+
+
 def test_a_four_word_account_is_not_taken():
     out = scrub_windows_paths("C:\\Users\\a b c d\\x\\f.py", "X")
     assert out == "X b c d\\x\\f.py"
