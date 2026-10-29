@@ -74,10 +74,22 @@ def _basename(token: str) -> str:
     if not value:
         return ""
     if _WINDOWS:
-        # C:\...\curl.exe is curl: Windows paths split on either slash, and .exe names the same program
-        name = PureWindowsPath(value).name.lower()
-        return name[:-4] if name.endswith(".exe") else name
+        # C:\...\curl.exe. is curl: Windows paths split on either slash, a name loses its trailing
+        # dots and spaces, and a PATHEXT extension (.exe, .cmd, ...) names the same program.
+        name = PureWindowsPath(value).name.rstrip(". ").lower()
+        stem, dot, extension = name.rpartition(".")
+        if dot and stem and f".{extension}" in _windows_program_extensions():
+            return stem.rstrip(". ")
+        return name
     return PurePath(value).name.lower()
+
+
+_DEFAULT_PATHEXT = ".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC"
+
+
+def _windows_program_extensions() -> set[str]:
+    listed = f"{_DEFAULT_PATHEXT};{os.environ.get('PATHEXT') or ''}"
+    return {item.strip().lower() for item in listed.split(";") if item.strip()}
 
 
 def command_uses_network(argv: list[str]) -> bool:
@@ -103,15 +115,64 @@ def command_uses_network(argv: list[str]) -> bool:
 
 def parse_command(cmd: str) -> list[str]:
     if _WINDOWS:
-        # A backslash is a path separator on Windows, never an escape: the POSIX split turned
-        # C:\Users\me\python.exe into C:Usersmepython.exe. Quotes still group words, and '#' is
-        # an ordinary character, as in shlex.split.
-        lexer = shlex.shlex(cmd, posix=True)
-        lexer.whitespace_split = True
-        lexer.escape = ""
-        lexer.commenters = ""
-        return list(lexer)
+        return _split_windows(cmd)
     return shlex.split(cmd, posix=True)
+
+
+def _split_windows(cmd: str) -> list[str]:
+    """Split as Windows reads a command line: a backslash is a path separator, never an escape (the
+    POSIX split turned C:\\Users\\me\\python.exe into C:Usersmepython.exe), except in a run that ends
+    at a double quote, where 2n backslashes give n and the quote groups, and 2n+1 give n and a literal
+    quote. Single quotes group too, as shlex.join writes them, with nothing escaped inside. '#' is an
+    ordinary character, as in shlex.split, and an unclosed quote is refused as shlex.split refuses it."""
+    argv: list[str] = []
+    word: list[str] = []
+    in_word = False
+    quote = ""
+    index = 0
+    while index < len(cmd):
+        char = cmd[index]
+        if quote == "'":
+            if char == "'":
+                quote = ""
+            else:
+                word.append(char)
+            index += 1
+            continue
+        if char == "\\":
+            end = index
+            while end < len(cmd) and cmd[end] == "\\":
+                end += 1
+            count = end - index
+            if end < len(cmd) and cmd[end] == '"':
+                word.append("\\" * (count // 2))
+                if count % 2:
+                    word.append('"')
+                    end += 1
+            else:
+                word.append("\\" * count)
+            in_word = True
+            index = end
+            continue
+        if char == '"':
+            quote = "" if quote else '"'
+            in_word = True
+        elif char == "'" and not quote:
+            quote = "'"
+            in_word = True
+        elif char.isspace() and not quote:
+            if in_word:
+                argv.append("".join(word))
+                word, in_word = [], False
+        else:
+            word.append(char)
+            in_word = True
+        index += 1
+    if quote:
+        raise ValueError("No closing quotation")
+    if in_word:
+        argv.append("".join(word))
+    return argv
 
 
 # Global options that sit BEFORE the subcommand and take a value argument.
