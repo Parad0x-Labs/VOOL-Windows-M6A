@@ -22,6 +22,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from core import safe_git
 from core.platform.broker import EffectOutcome, EffectRequest, ExecutionBroker
 from core.remote_forge.identity import RepoIdentity, parse_remote_url
 from core.repoops.identity import RepositoryWorkspace, WorkspaceError
@@ -45,25 +46,44 @@ def init_local_repo(path: str, *, default_branch: str = "main") -> RepositoryWor
         raise BootstrapError(f"{root} is non-empty; use attach(), do not init over it")
     _check_not_inside_repo(root.parent)
     root.mkdir(parents=True, exist_ok=True)
-    _git(str(root), "init", "-q", "-b", default_branch)
+    _init(root, default_branch)
     return RepositoryWorkspace(root=str(root))
 
 
 def _check_not_inside_repo(directory: Path) -> None:
-    proc = subprocess.run(["git", "-C", str(directory), "rev-parse", "--show-toplevel"],
-                          capture_output=True, text=True)
+    # Hardened and env-scrubbed, but no config refusal: this folder usually is
+    # not a repository yet, so there is no repository config to inspect (the
+    # door's own folder probes work the same way).
+    proc = subprocess.run(["git", *safe_git.hardening_args(), "-C", str(directory),
+                           "rev-parse", "--show-toplevel"],
+                          capture_output=True, text=True, timeout=60, env=safe_git.safe_env())
     if proc.returncode == 0:
         raise BootstrapError(
             f"{directory} is inside existing repository {proc.stdout.strip()}"
         )
 
 
-def _git(target: str, *args: str) -> str:
-    proc = subprocess.run(["git", "-C", target, *args], capture_output=True,
-                          text=True, timeout=60)
+def _init(root: Path, branch: str) -> None:
+    """``git init`` on a folder that is not a repository yet: hardened and
+    env-scrubbed, with no config refusal (no repository config exists to
+    inspect until init makes one)."""
+    proc = subprocess.run(["git", *safe_git.hardening_args(), "-C", str(root), "init", "-q",
+                           "-b", branch],
+                          capture_output=True, text=True, timeout=60, env=safe_git.safe_env())
     if proc.returncode != 0:
-        raise WorkspaceError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
-    return proc.stdout.strip()
+        raise WorkspaceError(f"git init failed: {proc.stderr.strip()}")
+
+
+def _git(target: str, *args: str) -> str:
+    """Git in an existing repository through the door the rest of repoops uses
+    (core/repoops/gitops.py ``GitRunner.run`` -> core/safe_git.py): a repository
+    whose own config names programs git would run is refused before git starts."""
+    from core.repoops.gitops import GitRunner
+
+    code, out, err = GitRunner(root=Path(target), timeout=60).run(*args)
+    if code != 0:
+        raise WorkspaceError(f"git {' '.join(args)} failed: {err.strip()}")
+    return out.strip()
 
 
 # ---------------------------------------------------------------- attach
@@ -99,6 +119,34 @@ def attach(folder: str) -> tuple[RepositoryWorkspace, dict[str, str]]:
     return RepositoryWorkspace(root=root, repo=ident), remotes
 
 
+def _clone_refusal(source_url: str) -> str:
+    """Why git must not clone from ``source_url`` here ("" when it may).
+
+    A local source serves the clone with its own git on this machine
+    (upload-pack under the source's own config, which can name programs such
+    as ``uploadpack.packObjectsHook``), so the source gets the config check
+    the door gives any repository; a transport VOOL cannot classify is
+    refused, not guessed about."""
+    from core.repoops.gitops import _local_push_path, _push_transport
+
+    transport = _push_transport(source_url)
+    if transport == "network":
+        return ""
+    if transport != "local":
+        return f"{source_url!r} is not a source git can clone from safely"
+    path = _local_push_path(source_url)
+    if path is None:
+        return f"{source_url!r} is not a folder VOOL can read as a clone source"
+    try:
+        keys = safe_git.executable_local_config(Path(os.path.realpath(str(path))))
+    except (OSError, RuntimeError, subprocess.TimeoutExpired):
+        return f"{source_url!r} is not a repository VOOL can check"
+    if keys:
+        return ("the source repository's own git config names programs git "
+                "would run: " + ", ".join(keys))
+    return ""
+
+
 def clone(source_url: str, dest_path: str) -> RepositoryWorkspace:
     """Clone into a NON-EXISTENT destination. Existing/symlinked targets refused."""
     dest = Path(os.path.realpath(dest_path))
@@ -106,11 +154,15 @@ def clone(source_url: str, dest_path: str) -> RepositoryWorkspace:
         raise BootstrapError(f"{dest} is a symlink; refusing as clone target")
     if dest.exists():
         raise BootstrapError(f"{dest} already exists; use attach() instead")
+    refusal = _clone_refusal(source_url)
+    if refusal:
+        raise BootstrapError(refusal)
     # On Windows a clone from a folder on the same disk must copy git's objects: the Windows broker
     # refuses hard-linked files (Phase C pick 3, owner 2026-10-23).
     links = ["--no-hardlinks"] if _IS_WINDOWS else []
-    proc = subprocess.run(["git", "clone", "-q", *links, source_url, str(dest)],
-                          capture_output=True, text=True, timeout=300)
+    proc = subprocess.run(["git", *safe_git.hardening_args(), "clone", "-q", *links, source_url,
+                           str(dest)],
+                          capture_output=True, text=True, timeout=300, env=safe_git.safe_env())
     if proc.returncode != 0:
         raise BootstrapError(f"clone failed: {proc.stderr.strip()[:200]}")
 

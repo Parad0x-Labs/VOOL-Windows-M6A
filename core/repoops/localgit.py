@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
 from core.platform.broker import EffectOutcome, EffectRequest, ExecutionBroker
 from core.repoops.identity import LocalState, RepositoryWorkspace, WorkspaceError, _git
@@ -99,11 +99,14 @@ class LocalGit:
             return ""
 
     def is_ancestor(self, older: str, newer: str) -> bool:
-        proc = subprocess.run(
-            ["git", "-C", self._ws.root, "merge-base", "--is-ancestor", older, newer],
-            capture_output=True, text=True, timeout=30,
-        )
-        return proc.returncode == 0
+        from core.repoops.gitops import GitRunner
+
+        code, _, err = GitRunner(root=Path(self._ws.root)).run(
+            "merge-base", "--is-ancestor", older, newer)
+        if code == -1:
+            # A refused repository must not be read as "histories diverged".
+            raise WorkspaceError(str(err))
+        return code == 0
 
     def compare_after_fetch(self) -> FetchComparison:
         """FETCH then compare — still pure observation."""
@@ -145,18 +148,23 @@ class LocalGit:
         ).hexdigest()[:16]
 
         def dispatch() -> EffectOutcome:
+            from core.repoops.gitops import GitRunner
             from core.user_rules import git_outbound_refusal
 
             ruled = git_outbound_refusal(self._ws.root, "commit", message=message, staged=True)
             if ruled is not None:
                 return EffectOutcome(status="refused", reason=ruled.reason)
-            proc = subprocess.run(
-                ["git", "-C", self._ws.root, "commit", "-m", message],
-                capture_output=True, text=True, timeout=60,
-            )
-            if proc.returncode != 0:
+            code, _, err = GitRunner(root=Path(self._ws.root)).run("commit", "-m", message)
+            if code == -1 and str(err).startswith("git was not run:"):
+                # Refused before git started: nothing ran, nothing ambiguous.
+                return EffectOutcome(status="refused", reason=str(err).strip()[:200])
+            if code == -1:
+                # A timeout or a missing git: the commit may have landed, so
+                # only "unknown" is honest (a raised exception lands there too).
+                return EffectOutcome(status="unknown", reason=str(err).strip()[:200])
+            if code != 0:
                 return EffectOutcome(status="failed",
-                                     reason=proc.stderr.strip()[:200])
+                                     reason=str(err).strip()[:200])
             sha = _git(self._ws.root, "rev-parse", "HEAD")
             return EffectOutcome(status="applied", evidence={
                 "sha": sha, "message": message,
