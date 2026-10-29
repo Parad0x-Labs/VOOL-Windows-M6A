@@ -14,7 +14,13 @@ from datetime import datetime, timedelta
 
 import pytest
 
-pytestmark = [pytest.mark.pa_beta]
+pytestmark = [
+    pytest.mark.pa_beta,
+    pytest.mark.skipif(
+        not hasattr(time, "tzset"),
+        reason="EventKit is macOS-only; the rig moves the process zone with time.tzset, which Windows lacks",
+    ),
+]
 
 
 class _Date:
