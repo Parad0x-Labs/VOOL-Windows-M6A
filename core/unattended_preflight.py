@@ -91,7 +91,9 @@ def provenance_chain(*, max_depth: int = _PROVENANCE_DEPTH) -> list[ProvenanceEn
     """
     chain: list[ProvenanceEntry] = []
     pid = os.getpid()
-    ppid = os.getppid()
+    # Windows never reparents, so a raw parent pid may already belong to a newer, unrelated
+    # process; _ps_ppid there only returns a parent psutil has checked against reuse.
+    ppid = _ps_ppid(pid) if _IS_WINDOWS else os.getppid()
     for _ in range(max_depth):
         argv = _ps_command(pid) or ()
         chain.append(ProvenanceEntry(pid=pid, ppid=ppid, argv=argv))
@@ -148,7 +150,8 @@ def _ps_ppid(pid: int) -> int:
         if proc is None:
             return 1  # unknown parent ends the walk, as on POSIX
         try:
-            return int(proc.ppid())
+            parent = proc.parent()  # None when the pid was reused by a newer process
+            return int(parent.pid) if parent is not None else 1
         except Exception:
             return 1
     try:
