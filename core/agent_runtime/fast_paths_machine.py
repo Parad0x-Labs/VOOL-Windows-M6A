@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 from urllib import request as urllib_request
 
-from core import windows_path_policy
+from core import windows_known_folders, windows_path_policy
 from core.agent_runtime.write_root_honesty import typed_path_kind
 from core.authorized_tool_execution import (
     REFUSAL_STATUSES,
@@ -1253,9 +1253,9 @@ def _explicit_safe_machine_root_label(lowered: str) -> str:
 
 def _resolve_safe_machine_root_directory(*, folder: str, root_label: str) -> Path | None:
     home = Path.home()
-    root_options = [home / "Desktop", home / "Downloads", home / "Documents"]
+    root_options = [windows_known_folders.safe_folder(name, home) for name in ("Desktop", "Downloads", "Documents")]
     if root_label:
-        root = home / root_label
+        root = windows_known_folders.safe_folder(root_label, home)
         if not folder:
             return root
         if root.exists():
