@@ -190,7 +190,10 @@ def _windows_canonical_root_setup(forms: tuple[str, ...]) -> str:
 # ``Canon`` cannot resolve a spelling (Windows PowerShell 5.1 lists a hard-linked file's
 # names in ``.Target``, so such a file does not canonicalize to a single path) the raw
 # spelling still owns what it always owned. The captured script argument is read into a
-# variable before any further -match: a raw -match would overwrite ``$Matches``.
+# variable before any further -match: a raw -match would overwrite ``$Matches``. The two
+# parent checks of the ``-m`` rule sit inside ONE paren group with the gate itself: PowerShell
+# gives ``-and`` and ``-or`` equal precedence, so ungated the canonical parent check would run
+# for every python and read a ``$parentExe`` assigned while testing an earlier pipeline item.
 _WINDOWS_OWNERSHIP_PREDICATE = (
     "| Where-Object { ($_.Name -ieq 'python.exe' -or $_.Name -ieq 'pythonw.exe') "
     "-and ((([string]$_.ExecutablePath -match $exeUnderRoot) "
@@ -199,9 +202,9 @@ _WINDOWS_OWNERSHIP_PREDICATE = (
     "-and ((($scriptValue = [string]$Matches['voolscript'])) -ne '') "
     "-and (($scriptValue -match $rawScriptPattern) -or ((Canon $scriptValue) -match $scriptForms)))"
     "-or ((([string]$_.CommandLine -match $moduleCommand) "
-    "-and ((($parentExe = [string](Get-CimInstance Win32_Process -Filter \"ProcessId=$($_.ParentProcessId)\" "
+    "-and (((($parentExe = [string](Get-CimInstance Win32_Process -Filter \"ProcessId=$($_.ParentProcessId)\" "
     "-ErrorAction SilentlyContinue).ExecutablePath)) -match $exeUnderRoot) "
-    "-or ((Canon $parentExe) -match $exeUnderRoot)))) } "
+    "-or ((Canon $parentExe) -match $exeUnderRoot))))) } "
 )
 
 
