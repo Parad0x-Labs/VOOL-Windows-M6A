@@ -20,6 +20,7 @@ on:
       - Directory.Build.props
       - Directory.Build.targets
       - Directory.Packages.props
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
@@ -38,6 +39,8 @@ env:
 
 jobs:
   broker:
+    # Draft PRs skip this suite; it runs once the PR is ready for review.
+    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
     runs-on: windows-2025
     timeout-minutes: 30
     defaults:

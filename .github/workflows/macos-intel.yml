@@ -21,6 +21,12 @@ on:
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/macos-intel.yml'
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# A newer push or dispatch on the same ref cancels the older run still queued or in flight.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -44,6 +50,8 @@ env:
 
 jobs:
   build:
+    # Draft PRs skip this suite (smoke needs build); it runs once the PR is ready for review.
+    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
     runs-on: macos-15-intel
     timeout-minutes: 90
     outputs:

@@ -14,12 +14,20 @@ on:
       - 'tests/test_release_platform_launch.py'
       - 'pyproject.toml'
       - '.github/workflows/linux-desktop.yml'
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# A newer push or dispatch on the same ref cancels the older run still queued or in flight.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
   desktop:
+    # Draft PRs skip this suite; it runs once the PR is ready for review.
+    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     strategy:

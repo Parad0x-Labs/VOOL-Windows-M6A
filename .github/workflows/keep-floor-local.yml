@@ -5,6 +5,11 @@ on:
   push:
     branches: [main]
 
+# A newer push or dispatch on the same ref cancels the older run still queued or in flight.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # The job only reads the repository to inspect tracked paths; give it that and nothing else.
 permissions:
   contents: read

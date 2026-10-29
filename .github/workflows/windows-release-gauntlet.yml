@@ -34,6 +34,7 @@ on:
       - "tests/test_install_surface_contracts.py"
       - "tests/test_local_only_policy.py"
       - "tests/test_validate_install_profile.py"
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main, develop]
     paths:
@@ -70,7 +71,41 @@ permissions:
   contents: read
 
 jobs:
+  # The gauntlet runs only for a ref whose open PR is ready for review. A dispatch on a branch
+  # whose open PR is still a draft skips the Windows runner. A ref with no open PR (the port
+  # branch, an install check) runs as before. If the PR lookup fails, the gauntlet does not run.
+  ready:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "pull_request" ]; then
+            draft="$PR_DRAFT"
+          else
+            draft=$(gh pr list -R "$GITHUB_REPOSITORY" --state open --head "$REF_NAME" \
+              --json isDraft --jq 'map(.isDraft) | any')
+          fi
+          if [ "$draft" = "true" ]; then
+            echo "Open PR for $REF_NAME is a draft: skipping the gauntlet until it is ready for review."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
   gauntlet:
+    needs: ready
+    if: needs.ready.outputs.ready == 'true'
     runs-on: windows-latest
     timeout-minutes: 60
     steps:

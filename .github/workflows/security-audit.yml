@@ -5,6 +5,11 @@ on:
     - cron: '0 8 * * 1'   # every Monday 08:00 UTC
   workflow_dispatch:        # run manually anytime
 
+# A newer push or dispatch on the same ref cancels the older run still queued or in flight.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # Every auditor's exit code is the only status authority here. No continue-on-error, no `|| true`,
 # no `|| echo 0`: a crashed auditor must fail this job (UNKNOWN is a failure, never a fabricated
 # zero), and any found vulnerability fails it through the tool's own nonzero exit. Dependabot
