@@ -358,6 +358,150 @@ def test_a_junction_spelled_stop_really_stops_the_own_api(tmp_path: Path) -> Non
                 )
 
 
+def _hard_link(target: Path, second_name: Path) -> None:
+    """Give ``target`` a second name, so Windows lists it as a file with two links."""
+    os.link(target, second_name)
+
+
+def test_a_hard_linked_install_is_owned_by_every_rule_including_the_raw_spelling(
+    tmp_path: Path,
+) -> None:
+    """Windows PowerShell 5.1 lists a file's hard-link names in ``.Target``.
+
+    With two names that list is an array; an unguarded Canon joins it with spaces, so the
+    canonicalized script path no longer matches and only the RAW spelling of the root keeps
+    owning the process (the pre-canonicalization behaviour, which must survive as a floor).
+    """
+    root = tmp_path / "VOOL checkout"
+    script = root / "apps" / "vool_api_server.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("x = 1\n", encoding="utf-8")
+    _hard_link(script, root / "apps" / "vool_api_server_linked.py")
+    exe = root / "python" / "python.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"MZ")
+    _hard_link(exe, root / "python" / "pythonw.exe")
+    venv_pythonw = root / ".venv" / "Scripts" / "pythonw.exe"
+    venv_pythonw.parent.mkdir(parents=True)
+    venv_pythonw.write_bytes(b"MZ")
+    _hard_link(venv_pythonw, root / ".venv" / "Scripts" / "python_linked.exe")
+    sibling = tmp_path / "VOOL checkout-dev"
+    sibling_script = sibling / "apps" / "vool_api_server.py"
+    sibling_script.parent.mkdir(parents=True)
+    sibling_script.write_text("x = 1\n", encoding="utf-8")
+    _hard_link(sibling_script, sibling / "apps" / "vool_api_server_linked.py")
+    sibling_exe = sibling / "python" / "python.exe"
+    sibling_exe.parent.mkdir(parents=True)
+    sibling_exe.write_bytes(b"MZ")
+    _hard_link(sibling_exe, sibling / "python" / "pythonw.exe")
+    foreign_pythonw = tmp_path / "elsewhere" / "Scripts" / "pythonw.exe"
+    foreign_pythonw.parent.mkdir(parents=True)
+    foreign_pythonw.write_bytes(b"MZ")
+    _hard_link(foreign_pythonw, tmp_path / "elsewhere" / "Scripts" / "python_linked.exe")
+
+    command = _listener_command(root)
+    # The command keeps a raw-root script form and the hard-link guard on .Target.
+    assert "[regex]::Escape($rootPrefix + 'apps\\vool_api_server.py')" in command
+    assert "$t = @($i.Target)" in command
+    assert "$t.Count -eq 1" in command
+    assert "[string]$t[0] -ne $c" in command
+    # The script rule owns the raw spelling even though Canon's .Target handling cannot resolve
+    # a file with two names...
+    assert _owns(
+        command,
+        executable_path=r"C:\Python\python.exe",
+        command_line=_api_row(str(script)),
+    )
+    # ...a genuinely different folder in the same spellings is still not ours...
+    assert not _owns(
+        command,
+        executable_path=r"C:\Python\python.exe",
+        command_line=_api_row(str(sibling_script)),
+    )
+    # ...and the exe and parent-under-root rules keep owning their raw spellings too.
+    assert _owns(
+        command,
+        executable_path=str(exe),
+        command_line=f'"{exe}" --version',
+    )
+    assert not _owns(
+        command,
+        executable_path=str(sibling_exe),
+        command_line=f'"{sibling_exe}" --version',
+    )
+    module = '"C:\\Python312\\pythonw.exe" -m apps.vool_api_server --port 11435'
+    assert _owns(
+        command,
+        executable_path=r"C:\Python312\pythonw.exe",
+        command_line=module,
+        parent_path=str(venv_pythonw),
+    )
+    assert not _owns(
+        command,
+        executable_path=r"C:\Python312\pythonw.exe",
+        command_line=module,
+        parent_path=str(foreign_pythonw),
+    )
+
+
+def test_a_junction_spelled_stop_owns_its_junction_spelled_api_across_hard_links(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "VOOL checkout"
+    script = root / "apps" / "vool_api_server.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("x = 1\n", encoding="utf-8")
+    _hard_link(script, root / "apps" / "vool_api_server_linked.py")
+    junction = tmp_path / "junction to vool"
+    _junction(junction, root)
+    sibling = tmp_path / "VOOL checkout-dev"
+    sibling_script = sibling / "apps" / "vool_api_server.py"
+    sibling_script.parent.mkdir(parents=True)
+    sibling_script.write_text("x = 1\n", encoding="utf-8")
+    _hard_link(sibling_script, sibling / "apps" / "vool_api_server_linked.py")
+    link_to_sibling = tmp_path / "link to the sibling"
+    _junction(link_to_sibling, sibling)
+
+    # Stop is invoked through the junction AND the API was started through it, while the script
+    # file carries two names: the raw junction spelling must still own its own API...
+    command = _listener_command(junction)
+    assert _owns(
+        command,
+        executable_path=r"C:\Python\python.exe",
+        command_line=_api_row(str(junction / "apps" / "vool_api_server.py")),
+    )
+    # ...and a junction to a different install is still that install's spelling, not ours.
+    assert not _owns(
+        command,
+        executable_path=r"C:\Python\python.exe",
+        command_line=_api_row(str(link_to_sibling / "apps" / "vool_api_server.py")),
+    )
+
+
+def test_the_supervisor_scan_owns_a_raw_spelled_stale_api_across_hard_links(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "VOOL bundle"
+    script = root / "app" / "apps" / "vool_api_server.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("x = 1\n", encoding="utf-8")
+    _hard_link(script, root / "app" / "apps" / "vool_api_server_linked.py")
+    sibling = tmp_path / "VOOL bundle-dev"
+    sibling_script = sibling / "app" / "apps" / "vool_api_server.py"
+    sibling_script.parent.mkdir(parents=True)
+    sibling_script.write_text("x = 1\n", encoding="utf-8")
+    _hard_link(sibling_script, sibling / "app" / "apps" / "vool_api_server_linked.py")
+
+    command = _supervisor_command(monkeypatch, root)
+    # The scan keeps a raw-root script form and the hard-link guard on .Target.
+    assert "[regex]::Escape($rootPrefix + 'app\\apps\\vool_api_server.py')" in command
+    assert "$t = @($i.Target)" in command
+    assert "$t.Count -eq 1" in command
+    assert "[string]$t[0] -ne $c" in command
+    assert _supervisor_owns(command, command_line=_api_row(str(script)))
+    assert not _supervisor_owns(command, command_line=_api_row(str(sibling_script)))
+
+
 def test_a_root_that_cannot_be_canonicalized_fails_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
