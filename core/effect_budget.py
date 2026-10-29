@@ -575,12 +575,11 @@ def _instance_is_live(row: sqlite3.Row, now_epoch: float) -> bool:
 
 def _instance_process_gone(row: sqlite3.Row) -> bool:
     """P3: a killed process is dead NOW, not after the staleness TTL — when
-    that can be proven. Proof is narrow on purpose: POSIX only (on Windows
-    `os.kill(pid, 0)` would terminate the process), same host only, and only
-    a pid the kernel reports as absent. A reused pid makes a dead instance
-    look alive, never the reverse, so every doubt keeps the instance live."""
-    if os.name != "posix":
-        return False
+    that can be proven. Proof is narrow on purpose: same host only, and only
+    a pid the kernel reports as absent (`process_liveness.pid_gone`, which
+    asks Windows through OpenProcess, never `os.kill(pid, 0)`, which would
+    terminate the process there). A reused pid makes a dead instance look
+    alive, never the reverse, so every doubt keeps the instance live."""
     try:
         keys = set(row.keys())
     except Exception:
@@ -594,13 +593,9 @@ def _instance_process_gone(row: sqlite3.Row) -> bool:
     host = str(row["hostname"] or "")
     if pid <= 0 or pid == os.getpid() or not host or host != _hostname():
         return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return True
-    except OSError:
-        return False
-    return False
+    from core.process_liveness import pid_gone
+
+    return pid_gone(pid)
 
 
 def reconcile_stale_reservations(*, force: bool = False) -> list[dict[str, Any]]:
