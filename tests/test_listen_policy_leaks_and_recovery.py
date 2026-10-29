@@ -25,7 +25,6 @@ import base64
 import errno
 import json
 import socket
-import sys
 import threading
 import unittest.mock
 import urllib.request
@@ -232,66 +231,73 @@ def _devnet_transaction(pay_to: str, amount: int) -> dict:
     }
 
 
-def test_concurrent_paid_deliveries_are_counted_exactly(monkeypatch):
+def test_the_same_signature_presented_concurrently_is_accepted_once(monkeypatch):
     """The x402 origin is served by ExclusiveThreadingHTTPServer: one handler
     thread per request, all mutating outer.deliveries and
     outer.accepted_signatures. The production flow PRESENTS THE SAME SIGNATURE
     more than once (the repeat fetch and the replay retry both re-present it),
-    and the membership check and the append are separate bytecode boundaries a
-    thread switch can land between: two handler threads that both pass "not in"
-    both append, and the proof's exactly-once check then counts two acceptances
-    of one payment. The chain read is the one stand-in (the counter race is
-    under test, not devnet): it parks every handler thread on one barrier so
-    all ``threads`` handler threads reach the bookkeeping section TOGETHER and
-    the GIL is forced to switch at every chance it gets. Every delivery must
-    land, the signature must be accepted exactly once, nothing rejected."""
+    and the membership check and the append are separate lines a thread switch
+    can land between: two handler threads that both pass "not in" both append,
+    and the proof's exactly-once record then counts two acceptances of one
+    payment. The interleaving is forced at the real handler lines: a thread
+    parks the instant it is ABOUT to append -- it has already passed the
+    membership check -- until a second thread stands at the same line, or the
+    park times out (with the bookkeeping as one locked section the second
+    thread cannot reach that line at all: it finds the signature already
+    accepted). The chain read is the one stand-in; the counter race is under
+    test, not devnet."""
+    import linecache
+
     from ops import wallet_devnet_external_proof as proof
 
-    threads, per_thread = 10, 50
+    monkeypatch.setattr(proof, "get_transaction", lambda signature, url="": _devnet_transaction(_PAY_TO, _AMOUNT))
+
+    append_line = "outer.accepted_signatures.append(signature)"
+    second_thread_at_the_append = threading.Event()
+    guard = threading.Lock()
+    parked = {"threads": 0}
+
+    def tracer(frame, event, arg):
+        if event == "line" and frame.f_code.co_name == "do_GET":
+            if linecache.getline(frame.f_code.co_filename, frame.f_lineno).strip() == append_line:
+                with guard:
+                    parked["threads"] += 1
+                    if parked["threads"] >= 2:
+                        second_thread_at_the_append.set()
+                second_thread_at_the_append.wait(timeout=5.0)
+        return tracer
+
     replayed_signature = "5" * 88
-    released_together = threading.Barrier(threads, timeout=60)
-
-    def synchronized_get_transaction(signature, url=""):
-        released_together.wait()
-        return _devnet_transaction(_PAY_TO, _AMOUNT)
-
-    monkeypatch.setattr(proof, "get_transaction", synchronized_get_transaction)
-
     server = _X402Server(pay_to=_PAY_TO, amount=_AMOUNT)
     url = server.start()
     failures: list[Exception] = []
 
-    def buyer(which: int) -> None:
-        for i in range(per_thread):
-            try:
-                request = urllib.request.Request(url, headers={"X-PAYMENT": _paid_header(replayed_signature)})
-                with urllib.request.urlopen(request, timeout=60) as response:
-                    if response.status != 200:
-                        failures.append(RuntimeError(f"paid fetch came back {response.status}"))
-            except Exception as exc:  # noqa: BLE001 - recorded and asserted below
-                failures.append(exc)
+    def buyer() -> None:
+        try:
+            request = urllib.request.Request(url, headers={"X-PAYMENT": _paid_header(replayed_signature)})
+            with urllib.request.urlopen(request, timeout=60) as response:
+                if response.status != 200:
+                    failures.append(RuntimeError(f"paid fetch came back {response.status}"))
+        except Exception as exc:  # noqa: BLE001 - recorded and asserted below
+            failures.append(exc)
 
-    previous_interval = sys.getswitchinterval()
-    sys.setswitchinterval(1e-9)
+    threading.settrace(tracer)
     try:
-        buyers = [threading.Thread(target=buyer, args=(which,)) for which in range(threads)]
+        buyers = [threading.Thread(target=buyer) for _ in range(2)]
         for thread in buyers:
             thread.start()
         for thread in buyers:
-            thread.join(timeout=300)
+            thread.join(timeout=60)
     finally:
-        sys.setswitchinterval(previous_interval)
+        threading.settrace(None)
         server.stop()
 
-    assert not failures, f"paid fetches failed: {failures[:3]}"
-    total = threads * per_thread
-    assert server.deliveries == total, (
-        f"{total} payments were delivered but the counter recorded {server.deliveries}"
-    )
+    assert not failures, f"paid fetches failed: {failures}"
+    assert server.deliveries == 2, f"two verified payments were delivered, {server.deliveries} counted"
     assert server.accepted_signatures == [replayed_signature], (
         f"one replayed payment was accepted {len(server.accepted_signatures)} times"
     )
-    assert server.rejections == [], f"verified payments were rejected: {server.rejections[:3]}"
+    assert server.rejections == [], f"verified payments were rejected: {server.rejections}"
 
 
 # --- (d) Windows names an exclusive holder's refusal EACCES ---------------------------------------
