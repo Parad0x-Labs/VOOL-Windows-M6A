@@ -94,8 +94,10 @@ def stop_process_tree(process: Any, *, grace_seconds: float = 5.0) -> None:
                 process.wait(timeout=grace_seconds)
         if pid:
             with contextlib.suppress(Exception):
+                from core.process_liveness import system_taskkill
+
                 subprocess.run(
-                    ("taskkill", "/PID", str(pid), "/T", "/F"),
+                    (system_taskkill(), "/PID", str(pid), "/T", "/F"),
                     capture_output=True,
                     check=False,
                     timeout=grace_seconds,
