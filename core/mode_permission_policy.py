@@ -3089,7 +3089,14 @@ def _affected_resources_display(
         if value in path_like and value and machine:
             displayed.append(_machine_path_display(value))
         elif value in path_like and value and not value.startswith(("/", "~")):
-            displayed.append(f"{root}/{value}")
+            if windows_path_policy.active():
+                # Windows: name the destination in the host's native form -- the same identity
+                # the machine branch (`_machine_path_display`) and the write gate use. A literal
+                # "/" join printed "C:\ws\repo/calc.py" for a write that lands at
+                # "C:\ws\repo\calc.py" (tests/test_code_step_argument_boundary.py:49).
+                displayed.append(str(Path(root) / value))
+            else:
+                displayed.append(f"{root}/{value}")
         else:
             displayed.append(value)
     return displayed
