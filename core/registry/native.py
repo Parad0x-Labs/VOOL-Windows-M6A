@@ -10,6 +10,7 @@ import threading
 from contextlib import contextmanager
 from pathlib import Path
 
+from core import os_file_lock
 from core.plugin_package import capture_package, execution_directory
 from core.registry.artifact import inspect, materialize
 from core.registry.codec import RegistryError, canonical, decode, require
@@ -70,16 +71,15 @@ def runtime_allowed(record) -> bool:
 
 @contextmanager
 def _filesystem_lock(root: Path):
-    import fcntl
-
     scratch = root / ".registry-scratch"
     scratch.mkdir(parents=True, exist_ok=True)
     with (scratch / "install.lock").open("a+b") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        # fcntl.flock(LOCK_EX) on POSIX; msvcrt.locking on Windows (core.os_file_lock).
+        os_file_lock.lock_exclusive(handle.fileno())
         try:
             yield scratch
         finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            os_file_lock.unlock(handle.fileno())
 
 
 def _journal_path(plugin_id: str) -> Path:
