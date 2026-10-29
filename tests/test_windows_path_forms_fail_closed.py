@@ -30,7 +30,14 @@ def test_the_code_assistant_contract_still_takes_a_workspace_relative_path(path:
     _refuse_unconfined(path)
 
 
-@pytest.mark.parametrize("path", ("C:\\Users\\you\\evil", "C:/evil", "notes\\..\\..\\evil", "a/b\\..\\..\\..\\evil"))
+@pytest.mark.parametrize(
+    "path",
+    (
+        "C:\\Users\\you\\evil", "C:/evil", "notes\\..\\..\\evil", "a/b\\..\\..\\..\\evil",
+        # The leading `/` and `./` strip must not uncover a drive or eat a `..`.
+        "/C:\\x", "./C:/x", "//C:/x", "..\\evil", "../evil", "./../evil",
+    ),
+)
 def test_the_planner_never_cleans_a_windows_escape_into_a_workspace_path(path: str) -> None:
     assert _clean_workspace_path(path) == ""
 
