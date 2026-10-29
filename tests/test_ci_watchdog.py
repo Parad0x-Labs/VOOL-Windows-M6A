@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from core.process_liveness import pid_alive
+
 WATCHDOG = Path(__file__).resolve().parents[1] / "ops" / "pytest_watchdog.py"
 
 
@@ -164,8 +166,7 @@ def test_cancellation_reaps_the_owned_child_and_records_incomplete(tmp_path):
         assert process.returncode == 130, text
         evidence = json.loads((output / "result.json").read_text())
         assert evidence["interrupted"] and not evidence["complete"]
-        with pytest.raises(ProcessLookupError):
-            os.kill(progress["pid"], 0)
+        assert not pid_alive(progress["pid"])
     finally:
         if process.poll() is None:
             process.terminate()

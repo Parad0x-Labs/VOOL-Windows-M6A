@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from core.process_liveness import pid_alive
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -217,5 +219,4 @@ def test_linux_workflow_owns_its_window_manager(tmp_path: Path, smoke_exit: int)
     assert result.returncode == smoke_exit, result.stderr
     observed = json.loads((tmp_path / "observed.json").read_text())
     assert "ops/linux_desktop_smoke.py" in observed["argv"]
-    with pytest.raises(ProcessLookupError):
-        os.kill(observed["pid"], 0)
+    assert not pid_alive(observed["pid"])

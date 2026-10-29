@@ -37,6 +37,7 @@ from pathlib import Path
 import pytest
 
 from core.execution_gate import ExecutionGate
+from core.process_liveness import pid_alive
 from sandbox.job_runner import JobRunner
 from sandbox.resource_limits import ExecutionPolicy
 from sandbox.sandbox_runner import SandboxRunner
@@ -358,9 +359,7 @@ class JobRunnerBoundaryTests(unittest.TestCase):
         deadline = time.time() + 5
         alive = True
         while time.time() < deadline:
-            try:
-                os.kill(pid, 0)
-            except OSError:
+            if not pid_alive(pid):
                 alive = False
                 break
             time.sleep(0.1)
@@ -520,9 +519,7 @@ class TerminalOutcomeTests(unittest.TestCase):
         deadline = time.time() + 5
         alive = True
         while time.time() < deadline:
-            try:
-                os.kill(pid, 0)
-            except OSError:
+            if not pid_alive(pid):
                 alive = False
                 break
             time.sleep(0.1)

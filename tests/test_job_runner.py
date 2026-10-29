@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from core.process_liveness import pid_alive
 from sandbox.job_runner import JobRunner, KernelIsolationUnavailableError, _macos_confined_profile
 from sandbox.resource_limits import ExecutionPolicy
 
@@ -501,11 +502,7 @@ class DescendantCleanupTests(unittest.TestCase):
         if not pid_file.exists():
             return None
         gc_pid = int(pid_file.read_text().strip())
-        try:
-            os.kill(gc_pid, 0)
-            return True
-        except OSError:
-            return False
+        return pid_alive(gc_pid)
 
     def _cleanup(self, ws: str) -> None:
         import contextlib

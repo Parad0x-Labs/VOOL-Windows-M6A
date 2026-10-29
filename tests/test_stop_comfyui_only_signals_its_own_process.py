@@ -16,6 +16,7 @@ import pytest
 
 import core.local_service_autostart as autostart
 import core.resource_governor as gov
+from core.process_liveness import pid_alive
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
 
@@ -29,13 +30,7 @@ def _wait_dead(proc: subprocess.Popen, timeout: float = 5.0) -> bool:
 
 
 def _pid_alive(pid: int) -> bool:
-    import os
-
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    return True
+    return pid_alive(pid)
 
 
 @pytest.fixture
