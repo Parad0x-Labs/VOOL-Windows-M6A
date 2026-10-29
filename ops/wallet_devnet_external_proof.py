@@ -43,12 +43,12 @@ import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
-from http.server import BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from network.listen_policy import ExclusiveThreadingHTTPServer
+from network.listen_policy import ExclusiveListenMixin
 
 DEVNET_RPC = "https://api.devnet.solana.com"
 #: The endpoint every read and every broadcast in this run actually used. Only the public devnet
@@ -358,6 +358,11 @@ def cmd_prepare(args: argparse.Namespace) -> int:
 RESOURCE_BODY = b"vool-x402-paid-resource: the bytes a 402 was guarding.\n"
 
 
+class _ExclusiveHTTPServer(ExclusiveListenMixin, HTTPServer):
+    """The proof origin: single-threaded like the HTTPServer it always was, with the platform
+    listen policy (exclusive bind on Windows) every VOOL listener uses."""
+
+
 class _X402Server:
     """A local origin that answers 402 until it is shown a payment it verifies ON PUBLIC DEVNET.
 
@@ -374,12 +379,7 @@ class _X402Server:
         self.deliveries = 0
         self.accepted_signatures: list[str] = []
         self.rejections: list[str] = []
-        # The handler threads (one per request, ExclusiveThreadingHTTPServer)
-        # update the counters above while the proof reads them for its record:
-        # one lock makes the membership check + append and the counted reads one
-        # operation each, so a re-presented signature is accepted exactly once.
-        self._bookkeeping_lock = threading.Lock()
-        self._server: ExclusiveThreadingHTTPServer | None = None
+        self._server: _ExclusiveHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
     # -- verification ---------------------------------------------------------------------
@@ -410,8 +410,7 @@ class _X402Server:
 
     # -- wire -----------------------------------------------------------------------------
     def _offer(self) -> bytes:
-        with self._bookkeeping_lock:
-            self.offers_issued += 1
+        self.offers_issued += 1
         return json.dumps({
             "x402Version": 1,
             "error": "payment required",
@@ -441,8 +440,7 @@ class _X402Server:
                     return
                 ok, signature, reason = outer._verify(header)
                 if not ok:
-                    with outer._bookkeeping_lock:
-                        outer.rejections.append(reason)
+                    outer.rejections.append(reason)
                     body = outer._offer()
                     self.send_response(402)
                     self.send_header("Content-Type", "application/json")
@@ -450,10 +448,9 @@ class _X402Server:
                     self.end_headers()
                     self.wfile.write(body)
                     return
-                with outer._bookkeeping_lock:
-                    if signature not in outer.accepted_signatures:
-                        outer.accepted_signatures.append(signature)
-                    outer.deliveries += 1
+                if signature not in outer.accepted_signatures:
+                    outer.accepted_signatures.append(signature)
+                outer.deliveries += 1
                 self.send_response(200)
                 self.send_header("Content-Type", "text/plain")
                 self.send_header("Content-Length", str(len(RESOURCE_BODY)))
@@ -463,7 +460,7 @@ class _X402Server:
         # The one listener class with the platform listen policy (exclusive bind
         # on Windows) — same as every other VOOL listener, not a bare HTTPServer
         # whose default SO_REUSEADDR hands any same-user process a share of the port.
-        self._server = ExclusiveThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self._server = _ExclusiveHTTPServer(("127.0.0.1", 0), Handler)
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
         return f"http://127.0.0.1:{self._server.server_address[1]}/paid-resource"
@@ -779,27 +776,22 @@ def cmd_prove(args: argparse.Namespace) -> int:
             if r.get("state") == "delivered" and r.get("proposal_id") == offer_outcome.proposal_id
         ]
         expected_digest = hashlib.sha256(f"GET|{url}".encode()).hexdigest()
-        payer_signature_count_after_all_x402_calls = signature_count(payer_key)
-        # The origin is still serving (the repeat fetch above just hit it), so
-        # the counters are read under the same lock the handlers update them
-        # with, and the rejection list is read as a snapshot.
-        with server._bookkeeping_lock:
-            x402_record["single_payment"] = {
-                "repeat_fetch_status": repeat.status, "repeat_fetch_tx_signature": repeat.tx_signature,
-                "replay_retry_status": replay.status, "replay_retry_tx_signature": replay.tx_signature,
-                "payer_signature_count_before_x402": payer_signatures_before_x402,
-                "payer_signature_count_after_all_x402_calls": payer_signature_count_after_all_x402_calls,
-                "origin_offers_issued": server.offers_issued, "origin_deliveries": server.deliveries,
-                "origin_distinct_accepted_signatures": len(server.accepted_signatures),
-                "origin_rejections": list(server.rejections),
-                "delivered_receipts_recorded": len(delivered_receipts),
-                "request_digest_matches_sha256_of_method_and_url": binding.get("request_digest") == expected_digest,
-                "binding_binds": {
-                    "request_digest": binding.get("request_digest"),
-                    "tx_signature": binding.get("tx_signature"),
-                    "resource_digest": binding.get("resource_digest"),
-                },
-            }
+        x402_record["single_payment"] = {
+            "repeat_fetch_status": repeat.status, "repeat_fetch_tx_signature": repeat.tx_signature,
+            "replay_retry_status": replay.status, "replay_retry_tx_signature": replay.tx_signature,
+            "payer_signature_count_before_x402": payer_signatures_before_x402,
+            "payer_signature_count_after_all_x402_calls": signature_count(payer_key),
+            "origin_offers_issued": server.offers_issued, "origin_deliveries": server.deliveries,
+            "origin_distinct_accepted_signatures": len(server.accepted_signatures),
+            "origin_rejections": server.rejections,
+            "delivered_receipts_recorded": len(delivered_receipts),
+            "request_digest_matches_sha256_of_method_and_url": binding.get("request_digest") == expected_digest,
+            "binding_binds": {
+                "request_digest": binding.get("request_digest"),
+                "tx_signature": binding.get("tx_signature"),
+                "resource_digest": binding.get("resource_digest"),
+            },
+        }
         single = x402_record["single_payment"]
         broadcasts = single["payer_signature_count_after_all_x402_calls"] - single["payer_signature_count_before_x402"]
         single["x402_broadcasts"] = broadcasts

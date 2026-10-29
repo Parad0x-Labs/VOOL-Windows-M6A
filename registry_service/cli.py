@@ -9,7 +9,7 @@ from pathlib import Path
 
 from core.registry.codec import RegistryError, decode, require
 from core.registry.trust import TrustedCatalog
-from network.listen_policy import run_server_with_listen_policy
+from network.listen_policy import pre_bind_listen_sockets, run_server_on_listen_sockets
 from registry_service.api import create_app
 from registry_service.auth import Auth, Provider
 from registry_service.store import Store
@@ -86,10 +86,11 @@ def main(argv=None) -> int:
         # SO_EXCLUSIVEADDRUSE sockets because uvicorn's bind sets no port-reuse option
         # there, leaving the port stealable by any same-user process.
         try:
-            run_server_with_listen_policy(server, "127.0.0.1", int(args.port))
+            listen_sockets = pre_bind_listen_sockets("127.0.0.1", int(args.port))
         except OSError:
             print(f"Registry startup refused: 127.0.0.1:{int(args.port)} could not be bound for exclusive use.")
             return 1
+        run_server_on_listen_sockets(server, listen_sockets)
         if not server.started:
             # uvicorn.run's own startup-failure exit (uvicorn.config.STARTUP_FAILURE).
             sys.exit(3)
