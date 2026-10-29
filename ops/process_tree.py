@@ -87,11 +87,8 @@ def stop_process_tree(process: Any, *, grace_seconds: float = 5.0) -> None:
             process.wait(timeout=grace_seconds)
         return
     if os.name == "nt":
-        if process.poll() is None:
-            with contextlib.suppress(Exception):
-                process.send_signal(signal.CTRL_BREAK_EVENT)
-            with contextlib.suppress(Exception):
-                process.wait(timeout=grace_seconds)
+        # Take the whole tree down through the root's PID while the root still runs: once it
+        # has exited, taskkill /T can't walk to the helpers it started. Then make sure of the root.
         if pid:
             with contextlib.suppress(Exception):
                 from core.process_liveness import system_taskkill
