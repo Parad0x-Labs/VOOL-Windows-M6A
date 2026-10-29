@@ -18,6 +18,7 @@ approval, the step or the writer is replaced."""
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shlex
 import stat
@@ -156,25 +157,40 @@ def _decoy(root: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(os.name != "posix" or os.geteuid() == 0,
-                    reason="a directory without write permission refuses a write only to an unprivileged POSIX process")
+@contextlib.contextmanager
+def _write_refused(folder: Path):
+    """No new or replaced entries in the folder: mode 555 on POSIX, an ACL deny entry on Windows
+    (where a folder's read-only attribute stops nothing)."""
+    if os.name == "nt":
+        from tests._windows_acl import WRITE, refused
+
+        with refused(folder, WRITE):
+            yield
+        return
+    folder.chmod(0o555)
+    try:
+        yield
+    finally:
+        folder.chmod(0o755)
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
+                    reason="root writes into a directory without write permission")
 def test_a_patch_stopped_by_a_directory_it_may_not_write_removes_its_new_files_and_restores_the_rest(world) -> None:
     root, _bare, _forge = world
     _inventory_world(root)
     ctx = context(root, session="compensation-read-only-directory")
     task_id, args = _approved_restock_patch(ctx)
     turns_before = _turn_ids()
-    (root / "shipping").chmod(0o555)
-    try:
+    with _write_refused(root / "shipping"):
         stopped = door("code.task.step", _patch_step(task_id, args), ctx)
-    finally:
-        (root / "shipping").chmod(0o755)
     writer = _writer(stopped)
     assert stopped.ok is False and stopped.status == "write_failed", (stopped.status, stopped.response_text)
     assert not (root / "inventory" / "restock_policy.md").exists(), writer
     assert not (root / "inventory" / "thresholds.csv").exists(), writer
     assert (root / "inventory" / "stock.py").read_text(encoding="utf-8") == STOCK_BUGGY
-    assert stat.S_IMODE((root / "inventory" / "stock.py").stat().st_mode) == 0o640
+    if os.name == "posix":  # Windows files have no mode bits to restore
+        assert stat.S_IMODE((root / "inventory" / "stock.py").stat().st_mode) == 0o640
     assert (root / "shipping" / "zones.py").read_text(encoding="utf-8") == ZONES_BEFORE
     assert (root / "inventory" / "README.md").read_text(encoding="utf-8") == README_TEXT
     assert _no_leftover_entries(root / "inventory") == [] and _no_leftover_entries(root / "shipping") == []
@@ -303,7 +319,8 @@ def test_a_legitimate_creation_in_an_approved_patch_still_applies(world) -> None
     writer = _writer(applied)
     assert applied.ok, (applied.status, applied.response_text)
     assert (root / "inventory" / "stock.py").read_text(encoding="utf-8") == STOCK_FIXED
-    assert stat.S_IMODE((root / "inventory" / "stock.py").stat().st_mode) == 0o640
+    if os.name == "posix":  # Windows files have no mode bits to restore
+        assert stat.S_IMODE((root / "inventory" / "stock.py").stat().st_mode) == 0o640
     assert (root / "inventory" / "restock_policy.md").read_text(encoding="utf-8") == POLICY_TEXT
     assert (root / "inventory" / "thresholds.csv").read_text(encoding="utf-8") == THRESHOLDS_TEXT
     assert (root / "shipping" / "zones.py").read_text(encoding="utf-8") == ZONES_AFTER

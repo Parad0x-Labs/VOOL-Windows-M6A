@@ -14,6 +14,7 @@ an interpreter that sleeps -- the parent's timeout, kill and bookkeeping are the
 
 from __future__ import annotations
 
+import contextlib
 import os
 import stat
 import sys
@@ -140,6 +141,24 @@ def test_a_missing_folder_is_a_reported_state_not_an_error(home, monkeypatch) ->
 # --- denied ----------------------------------------------------------------------------------
 
 
+@contextlib.contextmanager
+def _denied(folder: Path):
+    """Refuse the folder to this process: mode 000 on POSIX, an ACL deny entry on Windows (which
+    has no folder mode bits). Access comes back when the block ends."""
+    if os.name == "nt":
+        from tests._windows_acl import LIST, refused
+
+        with refused(folder, LIST):
+            yield
+        return
+    mode = stat.S_IMODE(folder.stat().st_mode)
+    folder.chmod(0)
+    try:
+        yield
+    finally:
+        folder.chmod(mode)
+
+
 @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory modes")
 def test_a_denied_folder_serves_without_plugins_and_recovers_when_access_is_granted(
     home, monkeypatch
@@ -147,9 +166,7 @@ def test_a_denied_folder_serves_without_plugins_and_recovers_when_access_is_gran
     root = _root(home, monkeypatch)
     make_plugin(root, admit=False)
     plugins_dir = root / "plugins"
-    mode = stat.S_IMODE(plugins_dir.stat().st_mode)
-    plugins_dir.chmod(0)
-    try:
+    with _denied(plugins_dir):
         state = pc.discover_and_register(budget_s=pc.BOOT_PROBE_BUDGET_S, reason="boot")
         assert state["state"] == pc.STORAGE_DENIED, state
         assert state["loaded"] == [] and state["entries"] == []
@@ -164,8 +181,6 @@ def test_a_denied_folder_serves_without_plugins_and_recovers_when_access_is_gran
         assert pc.discovered_plugin_dirs() == ()
         # Nothing was disabled to get here: the enable store is untouched.
         assert not (home / "home" / "config" / "plugins_enabled.json").exists()
-    finally:
-        plugins_dir.chmod(mode)
 
     # Access granted: the rescan is the recovery, and it loads what the boot would have.
     recovered = pc.discover_and_register(budget_s=pc.RESCAN_PROBE_BUDGET_S, reason="rescan")
