@@ -1033,16 +1033,18 @@ def _clean_workspace_path(candidate: str) -> str:
         return ""
     if clean.lower() in _PATH_STOP_WORDS:
         return ""
-    if re.match(r"[A-Za-z]:[\\/]", clean):
-        # `C:\x` is a full path on a drive, never a workspace folder. A partial form (`\x`, `C:x`) is
-        # kept as typed, for the Windows door to refuse.
+    # Judged as typed, before the strip below: it would turn `/C:\x` into a drive path and eat the
+    # `..` of `../evil`.
+    if ".." in re.split(r"[\\/]", clean):
         return ""
     if clean.startswith("/"):
         clean = clean.lstrip("/")
     clean = clean.lstrip("./")
     if not clean or clean.lower() in _PATH_STOP_WORDS:
         return ""
-    if ".." in re.split(r"[\\/]", clean):
+    if re.match(r"[A-Za-z]:[\\/]", clean):
+        # `C:\x` is a full path on a drive, never a workspace folder. A partial form (`\x`, `C:x`) is
+        # kept as typed, for the Windows door to refuse.
         return ""
     return clean
 
