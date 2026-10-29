@@ -56,6 +56,7 @@ import pytest
 from installer.bundle import bundle_supervisor
 from installer.bundle import native_runtime_supervisor as nrs
 from installer.bundle.bundle_supervisor import BundleSupervisor
+from tests._windows_system32 import POWERSHELL, program, trust_system32
 
 # The repository, where a fresh interpreter imports the supervisor from.
 _ROOT = Path(__file__).resolve().parents[1]
@@ -244,6 +245,7 @@ def _stop_after(supervisor: BundleSupervisor, n: int, sleeps: int) -> None:
 def _windows_with(monkeypatch: pytest.MonkeyPatch, run: Callable[..., object], popen: Callable[..., object]) -> None:
     """Windows for the stale-API scan and taskkill, with this module's subprocess replaced (no global patch)."""
     monkeypatch.setattr(bundle_supervisor, "_is_windows_platform", lambda: True)
+    trust_system32(monkeypatch)
     monkeypatch.setattr(
         bundle_supervisor,
         "subprocess",
@@ -545,7 +547,7 @@ def test_two_unanswered_checks_are_never_a_restart_even_across_a_slow_pass(
     load = 4.0
 
     def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
-        if argv[0] == "taskkill.exe":
+        if program(argv[0]) == "taskkill.exe":
             machine.awake(8.0)
         return subprocess.CompletedProcess(argv, 0, b"", b"")  # taskkill, or the stale-API scan
 
@@ -1061,7 +1063,7 @@ def test_a_stop_that_takes_its_whole_18_s_is_awake_time(
     # A slow but real stop is no pause: here Windows stops a hung Ollama's tree, with taskkill's 8 s, 5 s
     # for Ollama to exit, a kill and 5 s more, while the API, which has answered, goes unanswered.
     def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
-        if argv[0] == "taskkill.exe":
+        if program(argv[0]) == "taskkill.exe":
             machine.awake(8.0)
         return subprocess.CompletedProcess(argv, 0, b"", b"")  # taskkill, or the stale-API scan
 
@@ -1450,7 +1452,7 @@ def test_the_stale_api_scan_runs_once_per_start_attempt_and_has_a_timeout(
         machine.awake(2.0)
         supervisor._ensure_api()
     assert len(scans) == 2
-    assert all(argv[0] == "powershell.exe" for argv, _ in scans)
+    assert all(program(argv[0]) == "powershell.exe" for argv, _ in scans)
     assert all(0 < float(kwargs.get("timeout") or 0) <= 60 for _, kwargs in scans)
 
 
@@ -1486,7 +1488,7 @@ def test_the_stale_api_scan_keeps_the_output_it_never_reads_as_bytes(
     with mock.patch.object(supervisor, "_healthy", return_value=False):
         supervisor._ensure_api()
     [(argv, kwargs)] = scans
-    assert argv[0] == "powershell.exe"
+    assert argv[0] == POWERSHELL
     decoding = {key: kwargs[key] for key in ("text", "encoding", "errors", "universal_newlines") if kwargs.get(key)}
     assert decoding == {}
     assert popen.count("api") == 1
@@ -1515,7 +1517,7 @@ def test_a_sleep_during_the_stale_api_scan_is_not_counted_as_ollamas_startup_age
     scans: list[list[str]] = []
 
     def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
-        if argv[0] == "powershell.exe":
+        if program(argv[0]) == "powershell.exe":
             scans.append(argv)
             if len(scans) == 1:
                 machine.asleep(3600)  # the lid closes while PowerShell asks WMI for stale APIs
@@ -1813,7 +1815,7 @@ def test_a_reopened_window_that_exits_1_at_once_is_opened_again_however_long_the
     late, scan = 3.0, 34.9
 
     def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
-        if argv[0] == "taskkill.exe":
+        if program(argv[0]) == "taskkill.exe":
             machine.awake(8.0)
         else:
             machine.awake(scan)  # WMI is slow to answer the stale-API scan
