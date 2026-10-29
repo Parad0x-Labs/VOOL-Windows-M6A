@@ -87,6 +87,75 @@ def test_a_space_still_ends_an_ordinary_path_segment():
     assert scrub_windows_paths("open C:\\Users\\alice\\x f.py", path_basename) == "open x f.py"
 
 
+# --- prose after a plain account name survives ------------------------------------------------------
+# A spaced account is accepted only as at most 3 single-spaced words that end right at a separator
+# or at the end of the text; otherwise the strict segment applies and the words stay.
+#
+# session_portability is the one redactor whose own older rules (``_WINDOWS_HOME_RE`` and
+# ``_ESCAPED_WINDOWS_HOME_RE``, class ``[A-Za-z0-9._ -]+``) already ate the words after a
+# backslash/doubled-backslash account at base 2572663, so for those spellings only the account's
+# absence is asserted; its forward-slash spelling is left to ``_POSIX_HOME_RE`` and keeps the words.
+PROSE_AFTER_ACCOUNT = [
+    ("failed", "C:\\Users\\bob failed to start the job", "failed to start the job"),
+    (
+        "opened",
+        "C:\\Users\\bob opened the report and then saved /tmp/x.txt",
+        "opened the report and then saved",
+    ),
+    ("then_run", "see C:\\Users\\bob then run python tools/check.py now", "then run python"),
+    (
+        "to_the_share",
+        "copied C:\\Users\\bob to the share and then D:\\out\\f.txt",
+        "to the share and then",
+    ),
+    ("failed_doubled", "C:\\\\Users\\\\bob failed to start the job", "failed to start the job"),
+    ("failed_forward", "C:/Users/bob failed to start the job", "failed to start the job"),
+]
+PROSE_AFTER_IDS = [case_id for case_id, _, _ in PROSE_AFTER_ACCOUNT]
+#: Spellings whose words session_portability's pre-existing space-tolerant rules already removed.
+SESSION_PORTABILITY_ATE_WORDS = {
+    "failed", "opened", "then_run", "to_the_share", "failed_doubled",
+}
+
+
+@pytest.mark.parametrize("case", PROSE_AFTER_ACCOUNT, ids=PROSE_AFTER_IDS)
+def test_shared_scrubber_keeps_the_words_after_a_plain_account(case):
+    _case_id, text, kept = case
+    out = scrub_windows_paths(text, path_basename)
+    assert kept in out, f"lost {kept!r} from {text!r}: {out!r}"
+    assert "bob" not in out, f"kept the account from {text!r}: {out!r}"
+
+
+@pytest.mark.parametrize("case", PROSE_AFTER_ACCOUNT, ids=PROSE_AFTER_IDS)
+@pytest.mark.parametrize("name", list(REDACTORS))
+def test_redactor_keeps_the_words_after_a_plain_account(name, case):
+    case_id, text, kept = case
+    out = REDACTORS[name](text)
+    assert "bob" not in out, f"{name} kept the account from {text!r}: {out!r}"
+    if name == "session_portability" and case_id in SESSION_PORTABILITY_ATE_WORDS:
+        return
+    assert kept in out, f"{name} lost {kept!r} from {text!r}: {out!r}"
+
+
+# --- an account that runs to the end of the text ------------------------------------------------------
+@pytest.mark.parametrize("text", ["open C:\\Users\\John Smith", "open C:/Users/John Smith"])
+def test_shared_scrubber_takes_a_spaced_account_at_end_of_text(text):
+    out = scrub_windows_paths(text, path_basename)
+    assert "John" not in out and "Smith" not in out, out
+
+
+@pytest.mark.parametrize("text", ["open C:\\Users\\John Smith", "open C:/Users/John Smith"])
+@pytest.mark.parametrize("name", list(REDACTORS))
+def test_redactor_takes_a_spaced_account_at_end_of_text(name, text):
+    out = REDACTORS[name](text)
+    assert "John" not in out and "Smith" not in out, f"{name}: {out!r}"
+
+
+def test_a_four_word_account_is_not_taken():
+    out = scrub_windows_paths("C:\\Users\\a b c d\\x\\f.py", "X")
+    assert out == "X b c d\\x\\f.py"
+
+
 # --- linear time ---------------------------------------------------------------------------------------
 HOSTILE = [
     "C:\\Users\\" + "a " * 50_000,
