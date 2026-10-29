@@ -38,6 +38,7 @@ scaffold.
 """
 from __future__ import annotations
 
+import ntpath
 import posixpath
 import re
 from bisect import bisect_left
@@ -818,11 +819,17 @@ def _clean_relative_path(candidate: str) -> str:
 
     if clean.lower() in _PATH_STOP_WORDS:
         return ""
+    # Judge the raw text before any strip: lstrip("./") removes a character set, so it would
+    # launder "./C:\x" into a drive path and "../..\evil" into "..\evil".
+    if ntpath.splitdrive(clean)[0] or clean.startswith("\\"):
+        return ""
+    if ".." in re.split(r"[\\/]", clean):
+        return ""
     clean = clean.lstrip("/")
     clean = clean.lstrip("./")
     if not clean or clean.lower() in _PATH_STOP_WORDS:
         return ""
-    if ".." in clean.split("/"):
+    if ntpath.splitdrive(clean)[0] or ".." in re.split(r"[\\/]", clean):
         return ""
     if "." not in posixpath.normpath(clean).rpartition("/")[2]:
         return ""
