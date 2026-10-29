@@ -328,7 +328,10 @@ def test_windows_recovery_names_an_exclusive_holders_eacces_as_the_conflict(monk
     report.assert_called_once_with(49152)
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="WSAEACCES is how Windows refuses a second bind of an exclusively held port")
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="WSAEACCES is how Windows refuses a second bind of an exclusively held port",
+)
 def test_a_live_exclusive_udp_holder_is_named_the_conflict_on_windows(monkeypatch):
     """The same contract on real sockets: a UDP port held SO_EXCLUSIVEADDRUSE
     by this process, then the transport asked for it. The holder hunt is the
