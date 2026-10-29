@@ -17,6 +17,9 @@ from installer.bundle.native_runtime_supervisor import NativeRuntimeSupervisor
 
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="pins the Windows teardown contract")
 
+# Windows' own taskkill by absolute path: a bare name is a PATH lookup a planted binary could win.
+_SYSTEM_TASKKILL = os.path.join(os.environ.get("SystemRoot", ""), "System32", "taskkill.exe")
+
 
 class _LiveChild:
     def __init__(self) -> None:
@@ -52,5 +55,5 @@ def test_shutdown_takes_down_the_recorded_child_tree(tmp_path, monkeypatch) -> N
         lambda argv, **k: ran.append(list(argv)) or subprocess.CompletedProcess(argv, 0),
     )
     supervisor.shutdown()
-    assert ran == [["taskkill", "/PID", "4242", "/T", "/F"]], ran
+    assert ran == [[_SYSTEM_TASKKILL, "/PID", "4242", "/T", "/F"]], ran
     assert supervisor.owns_runtime is False

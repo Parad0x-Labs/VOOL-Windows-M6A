@@ -17,6 +17,9 @@ from tools.browser import browser_render as br
 
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="pins the Windows timeout teardown contract")
 
+# Windows' own taskkill by absolute path: a bare name is a PATH lookup a planted binary could win.
+_SYSTEM_TASKKILL = os.path.join(os.environ.get("SystemRoot", ""), "System32", "taskkill.exe")
+
 
 class _HungChrome:
     def __init__(self) -> None:
@@ -42,5 +45,5 @@ def test_a_timeout_kills_the_recorded_child_tree_not_just_the_child(monkeypatch)
     )
     with pytest.raises(subprocess.TimeoutExpired):
         br._run_chrome(["C:\\fake\\chrome.exe"], timeout_s=1.0)
-    assert ran == [["taskkill", "/PID", "4242", "/T", "/F"]], ran
+    assert ran == [[_SYSTEM_TASKKILL, "/PID", "4242", "/T", "/F"]], ran
     assert chrome.killed is False  # the tree kill replaced the bare child kill
