@@ -200,14 +200,11 @@ def _run_bounded(command: list[str], *, cwd: Path, env: dict[str, str],
             if os.name == "nt":
                 # Windows has no signal.SIGKILL, os.killpg or process groups, and
                 # start_new_session=True above is a no-op there. Stop this step's
-                # OWN child and its tree: terminate()/kill() (TerminateProcess)
-                # plus taskkill /T /F for descendants, the same escalation
-                # ops/process_tree.stop_process_tree uses on Windows. Nothing
-                # outside this child is ever addressed.
-                with contextlib.suppress(OSError):
-                    process.terminate()
-                with contextlib.suppress(subprocess.TimeoutExpired):
-                    process.wait(timeout=5.0)
+                # OWN child and its tree: taskkill /T /F first, while the child is
+                # still alive (/T finds descendants from that living pid; once the
+                # root is gone they can no longer be found), then kill()
+                # (TerminateProcess) for the child itself. Nothing outside this
+                # child is ever addressed.
                 with contextlib.suppress(OSError, subprocess.TimeoutExpired):
                     subprocess.run(
                         ["taskkill", "/PID", str(process.pid), "/T", "/F"],
