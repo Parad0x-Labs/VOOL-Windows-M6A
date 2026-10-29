@@ -141,10 +141,14 @@ def recorded_target(workspace_root: str, raw: str) -> str | None:
     clean = str(raw or "").strip().replace("\\", "/")
     if not clean or clean.startswith("~"):
         return None
-    if clean.startswith("/"):
+    drive = re.match(r"^[A-Za-z]:", clean)
+    if drive and not clean.startswith(drive.group(0) + "/"):
+        return None  # drive-relative (C:x): depends on a per-drive cwd, never a workspace-relative path
+    if clean.startswith("/") or drive:
         root = posixpath.normpath(str(workspace_root or "").strip().replace("\\", "/")).rstrip("/")
         if not root or root == "." or not clean.startswith(root + "/"):
-            return None
+            if not (drive and root and clean.lower().startswith(root.lower() + "/")):
+                return None
         clean = clean[len(root) + 1:]
     normal = posixpath.normpath(clean)
     if normal in {".", ".."} or normal.startswith("../"):
