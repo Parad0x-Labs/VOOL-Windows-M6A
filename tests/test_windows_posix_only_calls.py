@@ -84,9 +84,13 @@ def test_a_bounded_ci_step_stops_its_own_child_without_posix_signals(tmp_path, m
     """`ops.local_ci_reproduction._run_bounded` crashed on Windows with
     `AttributeError: module 'signal' has no attribute 'SIGKILL'` the moment a bounded
     step exceeded its bound, so the runner died with a traceback and no receipt. On
-    Windows the step's OWN child and its tree are stopped with terminate/kill plus
-    taskkill /T /F; os.killpg (absent there) is never called."""
+    Windows the step's OWN child and its tree are stopped with taskkill /T /F while
+    the child is still alive (taskkill /T walks the tree from that living pid; once
+    the root is gone its descendants can no longer be found), then kill.
+    os.killpg (absent there) is never called."""
     import sys
+
+    import psutil
 
     from ops import local_ci_reproduction
 
@@ -94,11 +98,16 @@ def test_a_bounded_ci_step_stops_its_own_child_without_posix_signals(tmp_path, m
         raise AssertionError("os.killpg does not exist on Windows")
 
     taskkill_calls: list[list[str]] = []
+    alive_at_taskkill: list[bool] = []
+
+    def _record_taskkill(command, **_kwargs):
+        taskkill_calls.append(list(command))
+        alive_at_taskkill.append(psutil.pid_exists(int(command[2])))
+
     with monkeypatch.context() as windows:  # undone before pytest formats any failure
         windows.setattr(local_ci_reproduction.os, "name", "nt")
         windows.setattr(local_ci_reproduction.os, "killpg", _no_killpg, raising=False)
-        windows.setattr(local_ci_reproduction.subprocess, "run",
-                        lambda command, **_kwargs: taskkill_calls.append(list(command)))
+        windows.setattr(local_ci_reproduction.subprocess, "run", _record_taskkill)
         result = local_ci_reproduction._run_bounded(
             [sys.executable, "-c", "import time; time.sleep(10)"],
             cwd=tmp_path, env=dict(os.environ),
@@ -109,6 +118,7 @@ def test_a_bounded_ci_step_stops_its_own_child_without_posix_signals(tmp_path, m
     assert result["exit"] is None and result["timed_out"] is True
     assert result["stopped"] is True
     assert taskkill_calls == [["taskkill", "/PID", str(result["pid"]), "/T", "/F"]]
+    assert alive_at_taskkill == [True], "taskkill /T ran after the root was already gone"
 
 
 def _sleeping_own_child():
