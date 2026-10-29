@@ -19,6 +19,19 @@ def store(tmp_path, monkeypatch) -> Path:
     return path
 
 
+def _refused_in(folder: Path, real):
+    """`real`, except for a path inside ``folder``, which it refuses. The fakes replace calls for the
+    whole process, so anything outside the store's folder (the CI watchdog's progress file, another
+    thread's state) must pass straight through."""
+
+    def call(target, *args, **kwargs):
+        if Path(target).resolve().is_relative_to(folder.resolve()):
+            raise OSError("cannot move (fixture)")
+        return real(target, *args, **kwargs)
+
+    return call
+
+
 def _restore_corrupt(path: Path) -> int:
     path.write_text("{not json", encoding="utf-8")
     policy._BYPASS_GRANTS.clear()
@@ -43,26 +56,17 @@ def test_two_corrupt_stores_quarantined_in_one_second_get_distinct_names(store, 
 
 
 def test_unmovable_corrupt_store_is_unlinked_not_left_live(store, monkeypatch):
-    def _no_replace(src, dst, *args, **kwargs):
-        raise OSError("cannot move (fixture)")
-
-    def _no_rename(self, target):
-        raise OSError("cannot move (fixture)")
-
-    monkeypatch.setattr(policy.os, "replace", _no_replace)
-    monkeypatch.setattr(Path, "rename", _no_rename)
+    monkeypatch.setattr(policy.os, "replace", _refused_in(store.parent, policy.os.replace))
+    monkeypatch.setattr(Path, "rename", _refused_in(store.parent, Path.rename))
 
     assert _restore_corrupt(store) == 0
     assert not store.exists(), "corrupt file survived a failed quarantine"
 
 
 def test_corrupt_store_that_can_be_neither_moved_nor_removed_raises(store, monkeypatch):
-    def _fail(*args, **kwargs):
-        raise OSError("locked (fixture)")
-
-    monkeypatch.setattr(policy.os, "replace", _fail)
-    monkeypatch.setattr(Path, "rename", _fail)
-    monkeypatch.setattr(Path, "unlink", _fail)
+    monkeypatch.setattr(policy.os, "replace", _refused_in(store.parent, policy.os.replace))
+    monkeypatch.setattr(Path, "rename", _refused_in(store.parent, Path.rename))
+    monkeypatch.setattr(Path, "unlink", _refused_in(store.parent, Path.unlink))
 
     with pytest.raises(policy.BypassStoreError):
         _restore_corrupt(store)
