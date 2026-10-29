@@ -91,3 +91,23 @@ def test_a_linked_package_root_is_refused(tmp_path, monkeypatch):
     _windows_capture_rules.apply(monkeypatch)
     with pytest.raises(PackageError):
         capture_package(tmp_path / "alias")
+
+
+@pytest.mark.skipif(not _windows_capture_rules.WINDOWS, reason="a directory junction exists only on Windows")
+def test_removing_the_execution_copy_never_reaches_through_a_junction(tmp_path):
+    # Junctions need no privilege and are not symlinks to os.walk or Path.is_symlink: the cleanup
+    # must neither walk into one nor restore write bits on what it points at.
+    import _winapi
+    import stat
+
+    user = tmp_path / "user-folder"
+    user.mkdir()
+    kept = user / "kept.txt"
+    kept.write_text("mine\n")
+    kept.chmod(0o444)
+    with execution_directory(tmp_path / "scratch") as owned:
+        _winapi.CreateJunction(str(user), str(owned / "junction"))
+    assert not owned.exists()
+    assert kept.read_text() == "mine\n"
+    assert not os.stat(kept).st_mode & stat.S_IWRITE  # still read-only
+    kept.chmod(0o666)
