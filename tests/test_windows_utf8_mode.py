@@ -66,3 +66,11 @@ def test_the_background_vbs_starts_its_launcher_in_utf8_mode() -> None:
     enable = next(i for i, line in enumerate(lines) if line.strip() == 'env("PYTHONUTF8") = "1"')
     run = next(i for i, line in enumerate(lines) if line.strip().startswith("shell.Run"))
     assert enable < run
+
+
+def test_the_one_click_installer_probes_in_utf8_mode_and_restores_the_session() -> None:
+    lines = (REPO / "installer" / "windows_one_click.ps1").read_text(encoding="utf-8").splitlines()
+    enable = next(i for i, line in enumerate(lines) if line.strip() == '$env:PYTHONUTF8 = "1"')
+    runs = [i for i, line in enumerate(lines) if line.strip().startswith("& $python")]
+    restore = next(i for i, line in enumerate(lines) if line.strip() == "finally { $env:PYTHONUTF8 = $previousUtf8 }")
+    assert runs and enable < min(runs) and max(runs) < restore
