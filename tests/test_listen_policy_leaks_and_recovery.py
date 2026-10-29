@@ -25,6 +25,7 @@ import base64
 import errno
 import json
 import socket
+import sys
 import threading
 import unittest.mock
 import urllib.request
@@ -325,6 +326,35 @@ def test_windows_recovery_names_an_exclusive_holders_eacces_as_the_conflict(monk
 
     held_socket.close.assert_called_once()
     report.assert_called_once_with(49152)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="WSAEACCES is how Windows refuses a second bind of an exclusively held port")
+def test_a_live_exclusive_udp_holder_is_named_the_conflict_on_windows(monkeypatch):
+    """The same contract on real sockets: a UDP port held SO_EXCLUSIVEADDRUSE
+    by this process, then the transport asked for it. The holder hunt is the
+    one stand-in (it shells out to lsof); the sockets and the refusal are
+    real, whatever errno this Windows build hands the second bind. This is the
+    real-workflow twin of the refused-bind test above, which is the one shown
+    red first."""
+    holder = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        holder.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        holder.bind(("127.0.0.1", 0))
+    except OSError:
+        holder.close()
+        pytest.skip("this Windows build refuses the exclusive UDP hold the test needs")
+    port = int(holder.getsockname()[1])
+    report = unittest.mock.Mock()
+    monkeypatch.setattr(transport, "_report_udp_port_conflict", report)
+
+    try:
+        server = transport.UDPTransportServer(host="127.0.0.1", port=port)
+        with pytest.raises(OSError, match="already in use"):
+            server.start()
+    finally:
+        holder.close()
+
+    report.assert_called_once_with(port)
 
 
 def test_posix_recovery_leaves_eacces_as_the_bind_error_it_is(monkeypatch):
