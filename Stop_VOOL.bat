@@ -1,5 +1,8 @@
 @echo off
 setlocal
+rem UTF-8 mode for every Python this launcher starts (as installer\bundle\vool-launch.cmd does):
+rem without it Python on Windows reads and writes text as cp1252.
+set "PYTHONUTF8=1"
 REM Emergency stop: kills every VOOL process (API, OpenClaw gateway, agent workers) and disables
 REM the auto-restart task, so nothing comes back until you launch VOOL again. Works even if the
 REM chat/agent is hung -- you are not relying on the thing you are trying to stop. Ollama (the shared
