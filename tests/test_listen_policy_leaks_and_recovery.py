@@ -79,7 +79,7 @@ def _fake_socket_module() -> tuple[SimpleNamespace, list[_PreboundSocket], list[
         created.append(sock)
         return sock
 
-    module = unittest.mock.SimpleNamespace(
+    module = SimpleNamespace(
         AF_INET=socket.AF_INET,
         AF_INET6=socket.AF_INET6,
         AF_UNSPEC=socket.AF_UNSPEC,
@@ -235,12 +235,23 @@ def _devnet_transaction(pay_to: str, amount: int) -> dict:
 def test_concurrent_paid_deliveries_are_counted_exactly(monkeypatch):
     """The x402 origin is served by ExclusiveThreadingHTTPServer: one handler
     thread per request, all mutating outer.deliveries and
-    outer.accepted_signatures. With the GIL forced to switch constantly, the
-    count must still be EXACT: every delivered payment lands once, every
-    distinct signature once, nothing rejected."""
+    outer.accepted_signatures. The chain read is the one stand-in (the counter
+    race is under test, not devnet): it parks every handler thread on one
+    barrier, so all ``threads`` handler threads reach the bookkeeping section
+    TOGETHER -- the interleaving plain attribute updates cannot survive -- and
+    the GIL is forced to switch at every bytecode. The count must still be
+    EXACT: every delivered payment lands once, every distinct signature once,
+    nothing rejected."""
     from ops import wallet_devnet_external_proof as proof
 
-    monkeypatch.setattr(proof, "get_transaction", lambda signature, url="": _devnet_transaction(_PAY_TO, _AMOUNT))
+    threads, per_thread = 10, 50
+    released_together = threading.Barrier(threads, timeout=60)
+
+    def synchronized_get_transaction(signature, url=""):
+        released_together.wait()
+        return _devnet_transaction(_PAY_TO, _AMOUNT)
+
+    monkeypatch.setattr(proof, "get_transaction", synchronized_get_transaction)
 
     threads, per_thread = 10, 50
     expected = {f"sig-{t:02d}-{i:02d}" for t in range(threads) for i in range(per_thread)}
