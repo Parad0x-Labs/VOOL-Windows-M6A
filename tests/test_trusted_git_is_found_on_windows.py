@@ -104,3 +104,15 @@ def test_restore_on_signal_also_answers_ctrl_break(monkeypatch) -> None:
     monkeypatch.setattr(guard.signal, "signal", lambda signum, _handler: registered.append(signum))
     guard.install_restore_on_signal(lambda: None)
     assert registered == [signal.SIGTERM, signal.SIGINT, 21]
+
+
+def test_windows_refuses_a_program_files_that_is_relative_or_a_network_share(tmp_path, monkeypatch) -> None:
+    # %ProgramFiles% is an environment value. A relative one resolves against the working
+    # directory and a UNC one names another machine; neither is a system install location.
+    planted = tmp_path / "Program Files" / "Git" / "cmd" / "git.exe"
+    planted.parent.mkdir(parents=True)
+    planted.write_bytes(b"")
+    monkeypatch.chdir(tmp_path)
+    for program_files in ("Program Files", "\\\\server\\share", "//server/share"):
+        found = safe_git.trusted_git_executable(os_name="nt", environ={"ProgramFiles": program_files})
+        assert found is None, program_files
