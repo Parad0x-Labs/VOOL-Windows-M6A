@@ -12,7 +12,7 @@ import pytest
 
 from installer import vool_stop
 from installer.vool_stop import STOPPED_MARKER, hard_stop, kill_api_by_pidfile, kill_listener
-from tests._windows_system32 import POWERSHELL, TASKKILL, trust_system32
+from tests._windows_system32 import POWERSHELL, SCHTASKS, TASKKILL, trust_system32
 
 
 @pytest.fixture(autouse=True)
@@ -23,11 +23,13 @@ def _windows_tools(monkeypatch: pytest.MonkeyPatch) -> None:
 class _FakeRun:
     def __init__(self, port_pids=None, python_pids=None) -> None:
         self.calls: list[list[str]] = []
+        self.kwargs: list[dict] = []
         self.port_pids = port_pids or {}
         self.python_pids = python_pids or set()
 
-    def __call__(self, cmd, capture_output=False, text=False, check=False):
+    def __call__(self, cmd, capture_output=False, text=False, check=False, **kwargs):
         self.calls.append(list(cmd))
+        self.kwargs.append(kwargs)
         out = ""
         joined = " ".join(cmd)
         if "Get-NetTCPConnection" in joined:
@@ -50,8 +52,8 @@ def test_hard_stop_disables_watchdog_then_kills_gateway_and_api(tmp_path) -> Non
     result = hard_stop(tmp_path, None, run=run)
     cmds = run.joined()
 
-    assert any("schtasks /end /tn VOOL_Daemon" in c for c in cmds)
-    assert any("schtasks /change /tn VOOL_Daemon /disable" in c for c in cmds)
+    assert any("schtasks.exe /end /tn VOOL_Daemon" in c for c in cmds)
+    assert any("schtasks.exe /change /tn VOOL_Daemon /disable" in c for c in cmds)
     assert any("vool_background" in c for c in cmds)  # watchdog process kill
     assert any("taskkill.exe /PID 8765 /T /F" in c for c in cmds)  # gateway
     assert any("taskkill.exe /PID 4321 /T /F" in c for c in cmds)  # api
@@ -228,16 +230,23 @@ def test_disable_systemd_service_noop_without_systemctl(monkeypatch) -> None:
     assert run.calls == []
 
 
-def test_taskkill_and_powershell_run_from_system32_only(tmp_path) -> None:
+def test_taskkill_powershell_and_schtasks_run_from_system32_only(tmp_path) -> None:
     run = _FakeRun(port_pids={11435: 4321})
     hard_stop(tmp_path, None, run=run)
-    programs = {c[0] for c in run.calls if c[0].lower().endswith(("taskkill.exe", "powershell.exe"))}
-    assert programs == {TASKKILL, POWERSHELL}
-    assert not any(c[0] in ("taskkill", "powershell") for c in run.calls)
+    programs = {c[0] for c in run.calls if c[0].lower().endswith(("taskkill.exe", "powershell.exe", "schtasks.exe"))}
+    assert programs == {TASKKILL, POWERSHELL, SCHTASKS}
+    assert not any(c[0] in ("taskkill", "powershell", "schtasks") for c in run.calls)
 
 
-def test_without_a_trusted_windows_folder_no_taskkill_or_powershell_runs(tmp_path, monkeypatch) -> None:
+def test_without_a_trusted_windows_folder_no_windows_tool_runs(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("SystemRoot", raising=False)
     run = _FakeRun(port_pids={11435: 4321})
     hard_stop(tmp_path, None, run=run)
-    assert not any("taskkill" in c[0] or "powershell" in c[0] for c in run.calls)
+    assert not any(tool in c[0] for c in run.calls for tool in ("taskkill", "powershell", "schtasks"))
+
+
+def test_windows_tools_open_no_console_window(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(vool_stop, "_NO_WINDOW", 0x08000000, raising=False)
+    run = _FakeRun(port_pids={11435: 4321})
+    hard_stop(tmp_path, None, run=run)
+    assert run.calls and all(kw.get("creationflags") == 0x08000000 for kw in run.kwargs), run.kwargs
