@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from core.path_scrub import NETWORK_PATH_RE, SEP
 from core.privacy_guard import scrub_secret_material, secret_material_present
 from core.secret_redaction import contains_secret, redact_secrets
 
@@ -24,6 +25,11 @@ _VOOL_HOME_PLACEHOLDER = "[redacted-vool-home]"
 _POSIX_HOME_RE = re.compile(r"(?<![\w/])/Users/[A-Za-z0-9._-]+|(?<![\w/])/home/[A-Za-z0-9._-]+")
 _WINDOWS_HOME_RE = re.compile(r"[A-Za-z]:\\Users\\[A-Za-z0-9._ -]+")
 _TMP_VOLATILE_RE = re.compile(r"/private/var/folders/[\w/+_-]+|/var/folders/[\w/+_-]+")
+# Escaped spelling of the Windows home (doubled backslashes, as a repr or JSON shows it), then
+# UNC and \\?\ device paths whole. Both run after the patterns above, never instead of them.
+_ESCAPED_WINDOWS_HOME_RE = re.compile(
+    r"(?<![\w\\/])(?:[A-Za-z]:)?" + SEP + r"(?i:users)" + SEP + r"[A-Za-z0-9._ -]+"
+)
 
 _REDACTION_MARKER = "[export-redacted]"
 
@@ -48,7 +54,13 @@ def _scrub_text(value: str, report: RedactionReport, private_roots: list[Path]) 
             report.secrets += 1
             scrubbed = redact_secrets(scrubbed)
             scrubbed = scrub_secret_material(scrubbed)
-    for pattern in (_POSIX_HOME_RE, _WINDOWS_HOME_RE, _TMP_VOLATILE_RE):
+    for pattern in (
+        _POSIX_HOME_RE,
+        _WINDOWS_HOME_RE,
+        _TMP_VOLATILE_RE,
+        _ESCAPED_WINDOWS_HOME_RE,
+        NETWORK_PATH_RE,
+    ):
         if pattern.search(scrubbed):
             report.paths += 1
             scrubbed = pattern.sub(_HOME_PLACEHOLDER, scrubbed)

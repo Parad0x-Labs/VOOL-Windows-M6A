@@ -24,6 +24,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from core.path_scrub import path_basename, scrub_windows_paths
+
 # --- Section-2 execution stages -------------------------------------------------
 STAGE_UNDERSTANDING = "Understanding"
 STAGE_PLANNING = "Planning"
@@ -221,6 +223,9 @@ def _safe_diagnostic_text(value: Any, *, limit: int) -> str:
     # The lane already ships ``provider_id``, so the endpoint URL adds no diagnosis -- only the
     # chance of a credential riding in its query string.
     text = _URL_RE.sub("<url>", text)
+    # Shared Windows-aware pass first (escaped/doubled backslashes, UNC, device forms); the
+    # patterns below still run on everything it leaves.
+    text = scrub_windows_paths(text, path_basename)
     text = _POSIX_PATH_RE.sub(lambda match: _basename(match, "/"), text)
     text = _WINDOWS_PATH_RE.sub(lambda match: _basename(match, "\\"), text)
     return _clip(text, limit)

@@ -23,6 +23,7 @@ import re
 import unicodedata
 
 from core.bug_report.schema import RedactionSummary
+from core.path_scrub import NETWORK_PATH_RE, SEP
 from core.secret_redaction import redact_personal_secrets as _backstop_redact_personal
 from core.secret_redaction import redact_secrets as _backstop_redact
 
@@ -44,6 +45,11 @@ _AUTH_HEADER_RE = re.compile(
 # segment; the project-relative remainder is what reproduction needs.
 _HOME_SEGMENT_RE = re.compile(
     r"(?i)([a-z]:)?[\\/](users|home)[\\/][A-Za-z0-9._-]+"
+)
+# The same shape with every separator also accepted doubled (``C:\\Users\\alice``, as a Python repr
+# or JSON shows it). Runs in addition to the pattern above, which only knows one separator.
+_ESCAPED_HOME_SEGMENT_RE = re.compile(
+    r"(?i)([a-z]:)?" + SEP + r"(users|home)" + SEP + r"[A-Za-z0-9._-]+"
 )
 _TILDE_HOME_RE = re.compile(r"(?<![A-Za-z0-9])~(?=/|\\|\s|$)")
 _HOME_ENV_RE = re.compile(r"(?<![A-Za-z0-9])\$HOME\b", re.IGNORECASE)
@@ -250,6 +256,11 @@ def redact_text(text: str) -> tuple[str, RedactionSummary]:
     apply("home_path", _HOME_SEGMENT_RE, _home_sub)
     apply("home_path", _TILDE_HOME_RE, "[redacted-home]")
     apply("home_path", _HOME_ENV_RE, "[redacted-home]")
+
+    # Escaped (doubled-backslash) home paths, then UNC and \\?\ device paths whole: a share or
+    # host path has no username segment to keep, so it takes the same home marker.
+    apply("home_path", _ESCAPED_HOME_SEGMENT_RE, _home_sub)
+    apply("home_path", NETWORK_PATH_RE, "[redacted-home]")
 
     def _username_sub(m: re.Match) -> str:
         return f"{m.group(1)}: [redacted-user]"
