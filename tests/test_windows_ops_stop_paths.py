@@ -51,6 +51,25 @@ def test_stopping_a_runtime_that_outlives_sigterm_never_needs_sigkill(monkeypatc
     assert len(sent) == 2, sent
 
 
+def test_a_runtime_that_exits_mid_stop_is_already_gone_on_windows(monkeypatch) -> None:
+    """On Windows os.kill on a pid that has just exited raises a plain OSError (WinError 87)
+    or PermissionError, not ProcessLookupError; either means the runtime is gone."""
+    from ops import run_local_acceptance
+
+    clock = _Clock()
+    monkeypatch.setattr(run_local_acceptance.time, "time", clock.time)
+    monkeypatch.setattr(run_local_acceptance.time, "sleep", clock.sleep)
+    monkeypatch.setattr(run_local_acceptance, "_current_health",
+                        lambda _base_url: {"ok": True, "runtime": {"pid": 4242}})
+
+    def _exited(_pid, _sig):
+        raise OSError(22, "The parameter is incorrect")
+
+    monkeypatch.setattr(run_local_acceptance.os, "kill", _exited)
+
+    run_local_acceptance._stop_runtime("http://127.0.0.1:11435")
+
+
 def test_a_wall_budget_overrun_stops_its_own_child_tree_on_windows(tmp_path, monkeypatch) -> None:
     import subprocess
 
