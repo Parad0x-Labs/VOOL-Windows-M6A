@@ -221,10 +221,21 @@ def execution_directory(parent: Path) -> Iterator[Path]:
         # Captured directories are sealed. Restore only our directories' write
         # bits to remove them, without following links or touching source trees.
         # Windows also refuses to delete a read-only file, so captured files get theirs back.
+        # A junction is no symlink to os.walk or is_symlink(): never walk into or chmod one, or
+        # the write bits of whatever user folder it points at would be restored too.
         for current, directories, files in os.walk(owned, followlinks=False):
             Path(current).chmod(0o700)
+            directories[:] = [name for name in directories if not _is_reparse_point(Path(current) / name)]
             for name in directories + (files if _WINDOWS else []):
                 path = Path(current) / name
-                if not path.is_symlink():
+                if not path.is_symlink() and not _is_reparse_point(path):
                     path.chmod(0o700)
         shutil.rmtree(owned)
+
+
+def _is_reparse_point(path: Path) -> bool:
+    """A symlink, junction or mount point on Windows (always False elsewhere)."""
+    try:
+        return bool(getattr(os.lstat(path), "st_file_attributes", 0) & _REPARSE_POINT)
+    except OSError:
+        return False
