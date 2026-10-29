@@ -149,8 +149,33 @@ def atomic_publish(path: Path, data: bytes) -> None:
     tmp = path.parent / f".{path.name}.{uuid.uuid4().hex}.tmp"
     try:
         tmp.write_bytes(data)
-        os.replace(tmp, path)
-    except BaseException:
+        _replace_through_read(tmp, path, address)
+    finally:
         with contextlib.suppress(FileNotFoundError):
             tmp.unlink()
-        raise
+
+
+def _replace_through_read(tmp: Path, path: Path, address: str) -> None:
+    """``os.replace(tmp, path)``, waiting out a Windows reader that holds ``path`` open.
+
+    If the rename still cannot land, another publisher's object that verifies at the address is the
+    published result; anything else re-raises.
+    """
+    for _ in range(_SHARING_RETRIES - 1 if _WINDOWS else 0):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            time.sleep(_SHARING_PAUSE_SECONDS)
+    try:
+        os.replace(tmp, path)
+    except PermissionError:
+        if not _WINDOWS or not _holds(path, address):
+            raise
+
+
+def _holds(path: Path, address: str) -> bool:
+    try:
+        return canonical_digest(_read_through_publish(path)) == address
+    except OSError:
+        return False
