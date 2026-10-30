@@ -647,6 +647,16 @@ def _verify_turn_evidence(
     if witness.get("consistent") is not True:
         raise PactFault(FAULT_EVIDENCE_UNVERIFIABLE, "the turn's execution-truth witness is inconsistent")
     if proof_state not in {"VERIFIED", "RECORDED"}:
+        from core import windows_write_gate
+
+        # Same fault and same gate; only the reason is plain when the Windows write gate refused.
+        if any((row or {}).get("status") == windows_write_gate.STATUS for row in expanded.get("actions") or []):
+            raise PactFault(
+                FAULT_EVIDENCE_UNVERIFIABLE,
+                "VOOL didn't change the file: on Windows it changes files only inside folders marked as "
+                f"disposable workspaces ({windows_write_gate.ENV_VAR}), and this folder isn't marked. "
+                "Mark the folder and retry, or skip this step.",
+            )
         raise PactFault(FAULT_EVIDENCE_UNVERIFIABLE, f"proof state {proof_state or 'UNKNOWN'} — the step cannot complete")
 
     located = None
