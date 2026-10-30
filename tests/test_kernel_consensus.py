@@ -255,6 +255,29 @@ def test_resume_review_reenters_a_capped_dispute(tmp_path) -> None:
     assert (review / "no_consensus_superseded.md").exists()
 
 
+
+def test_a_second_resume_replaces_the_earlier_superseded_file(tmp_path, monkeypatch) -> None:
+    """A review parked and resumed twice already holds no_consensus_superseded.md. Path.rename
+    refuses an existing target on Windows, so the archive step must replace it instead."""
+    import pathlib
+
+    review = tmp_path / "review"
+    review.mkdir()
+    (review / "no_consensus_superseded.md").write_text("first park", encoding="utf-8")
+    (review / "no_consensus.md").write_text("second park", encoding="utf-8")
+    real_rename = pathlib.Path.rename
+
+    def windows_rename(self, target):
+        if pathlib.Path(target).exists():
+            raise FileExistsError(183, "Cannot create a file when that file already exists", str(target))
+        return real_rename(self, target)
+
+    monkeypatch.setattr(pathlib.Path, "rename", windows_rename)
+    monkeypatch.setattr(consensus, "_drive", lambda review, build, **kwargs: "driven")
+    assert consensus.resume_review(review, "abc1234") == "driven"
+    assert not (review / "no_consensus.md").exists()
+    assert (review / "no_consensus_superseded.md").read_text(encoding="utf-8") == "second park"
+
 # ---- COUNCIL 2.0 (operator directive 2026-08-20): quorum + round-close policy ----
 
 def test_majority_needed_is_over_half_of_designated_seats() -> None:

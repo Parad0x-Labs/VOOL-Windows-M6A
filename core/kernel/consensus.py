@@ -28,6 +28,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import os
 import pathlib
 import re
 import time
@@ -717,7 +718,7 @@ def resume_review(review: pathlib.Path | str, build: str, poll_s: float = 1.0,
     review = pathlib.Path(review)
     stale = review / "no_consensus.md"
     if stale.exists():
-        stale.rename(review / "no_consensus_superseded.md")
+        os.replace(stale, review / "no_consensus_superseded.md")  # rename refuses an existing target on Windows
     # A review resumes on the SEATS IT WAS OPENED WITH — its own state.json is the
     # authority; pre-topology reviews fall back to the legacy four with no
     # contributors. Never re-seat a review mid-flight.

@@ -44,10 +44,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-try:  # POSIX advisory locking; this lane ships on macOS/Linux.
-    import fcntl
-except ImportError:  # pragma: no cover - Windows lane is not this module's owner
-    fcntl = None  # type: ignore[assignment]
+from core import os_file_lock
 
 GENESIS_PREV = ""
 _UNSIGNED_KEYS = frozenset({"entry_hash", "mac"})
@@ -151,12 +148,11 @@ class Journal:
             state = _FLOCK_STATE.setdefault(key, {"depth": 0, "fd": -1})
             if state["depth"] == 0:
                 fd = os.open(str(self.lock_path), os.O_RDWR | os.O_CREAT, 0o600)
-                if fcntl is not None:
-                    try:
-                        fcntl.flock(fd, fcntl.LOCK_EX)
-                    except BaseException:
-                        os.close(fd)
-                        raise
+                try:
+                    os_file_lock.lock_exclusive(fd)  # flock on POSIX, msvcrt.locking on Windows
+                except BaseException:
+                    os.close(fd)
+                    raise
                 state["fd"] = fd
             state["depth"] += 1
             try:
@@ -167,9 +163,8 @@ class Journal:
                     fd = state.pop("fd", -1)
                     state["fd"] = -1
                     if fd >= 0:
-                        if fcntl is not None:
-                            with contextlib.suppress(OSError):
-                                fcntl.flock(fd, fcntl.LOCK_UN)
+                        with contextlib.suppress(OSError):
+                            os_file_lock.unlock(fd)
                         os.close(fd)
 
     # -- key ----------------------------------------------------------------------------------
