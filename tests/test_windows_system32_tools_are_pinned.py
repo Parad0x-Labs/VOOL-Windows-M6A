@@ -108,13 +108,14 @@ def test_default_start_server_runs_system32_cmd_on_windows(tmp_path, monkeypatch
     trust_system32(monkeypatch)
     (tmp_path / "Start_VOOL.bat").write_text("@echo off\n", encoding="utf-8")
     monkeypatch.setattr(sys, "platform", "win32")
-    launched: list[list[str]] = []
-    popen = lambda argv, **_kw: launched.append(list(argv))  # noqa: E731
+    launched: list[object] = []
+    popen = lambda command, **_kw: launched.append(command)  # noqa: E731
     monkeypatch.setattr(self_update, "subprocess", _module_with(subprocess, Popen=popen), raising=False)
 
     self_update._default_start_server(tmp_path)
 
-    assert launched == [[CMD, "/c", str(tmp_path / "Start_VOOL.bat")]]
+    # One string: /s with doubled quotes keeps the path quoted for cmd (#112).
+    assert launched == [f'"{CMD}" /s /c ""{tmp_path / "Start_VOOL.bat"}""']
 
 
 def test_default_start_server_launches_nothing_without_a_trusted_windows_folder(tmp_path, monkeypatch) -> None:
