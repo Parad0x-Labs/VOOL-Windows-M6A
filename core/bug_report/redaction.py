@@ -23,7 +23,7 @@ import re
 import unicodedata
 
 from core.bug_report.schema import RedactionSummary
-from core.path_scrub import NETWORK_PATH_RE, SEP, SPACED_HOME_RE
+from core.path_scrub import ACCOUNT_NAME, NETWORK_PATH_RE, SEP, SPACED_HOME_RE
 from core.secret_redaction import redact_personal_secrets as _backstop_redact_personal
 from core.secret_redaction import redact_secrets as _backstop_redact
 
@@ -43,14 +43,15 @@ _AUTH_HEADER_RE = re.compile(
 # --- home paths / usernames -------------------------------------------------------------
 # /Users/<name>, /home/<name>, C:\Users\<name>, C:/Users/<name>: mask just the username
 # segment; the project-relative remainder is what reproduction needs. The name class is \w (any
-# letter, so ``Łukasz`` and ``José`` are masked whole), not ASCII only.
+# letter, so ``Łukasz`` and ``José`` are masked whole), not ASCII only, plus the punctuation an
+# account may hold (``zq+alice``).
 _HOME_SEGMENT_RE = re.compile(
-    r"(?i)([a-z]:)?[\\/](users|home)[\\/][\w.-]+"
+    r"(?i)([a-z]:)?[\\/](users|home)[\\/]" + ACCOUNT_NAME
 )
 # The same shape with every separator also accepted doubled (``C:\\Users\\alice``, as a Python repr
 # or JSON shows it). Runs in addition to the pattern above, which only knows one separator.
 _ESCAPED_HOME_SEGMENT_RE = re.compile(
-    r"(?i)([a-z]:)?" + SEP + r"(users|home)" + SEP + r"[\w.-]+"
+    r"(?i)([a-z]:)?(?<![\\/])" + SEP + r"(users|home)" + SEP + ACCOUNT_NAME
 )
 _TILDE_HOME_RE = re.compile(r"(?<![A-Za-z0-9])~(?=/|\\|\s|$)")
 _HOME_ENV_RE = re.compile(r"(?<![A-Za-z0-9])\$HOME\b", re.IGNORECASE)

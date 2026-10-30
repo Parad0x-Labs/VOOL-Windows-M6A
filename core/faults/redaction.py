@@ -15,7 +15,6 @@ than "mask values":
 """
 from __future__ import annotations
 
-import contextlib
 from typing import Any
 
 from core.error_surface import _strip_paths
@@ -73,6 +72,8 @@ CONTEXT_KEY_ALLOWLIST: tuple[str, ...] = (
 _MAX_VALUE_CHARS = 200
 
 _TRUNCATION_MARK = "…[truncated]"
+#: What a value becomes when a masking pass raises: nothing of the original survives.
+_SCRUB_FAILED = "[redacted]"
 
 
 def redact_text(value: Any, *, max_chars: int = _MAX_VALUE_CHARS) -> str:
@@ -87,16 +88,16 @@ def redact_text(value: Any, *, max_chars: int = _MAX_VALUE_CHARS) -> str:
         return ""
     if not text:
         return ""
-    # Either masking pass failing must never fail the redaction: the unmasked text is
-    # the one thing this function may never return.
-    with contextlib.suppress(Exception):
+    # A masking pass failing must never fail the redaction, and the unmasked (or half-masked)
+    # text is the one thing this function may never return: a failure yields a fixed marker.
+    try:
         text = redact_secrets(text)
-    with contextlib.suppress(Exception):
         text = _strip_paths(text)
-    # The shared Windows-aware pass, again and on its own: it keeps escaped/doubled-backslash,
-    # UNC and device paths out of the record even if the pass above is ever narrowed.
-    with contextlib.suppress(Exception):
+        # The shared Windows-aware pass, again and on its own: it keeps escaped/doubled-backslash,
+        # UNC and device paths out of the record even if the pass above is ever narrowed.
         text = scrub_windows_paths(text, path_basename)
+    except Exception:
+        return _SCRUB_FAILED
     if len(text) > max_chars:
         text = text[: max(0, max_chars - len(_TRUNCATION_MARK))].rstrip() + _TRUNCATION_MARK
     return text

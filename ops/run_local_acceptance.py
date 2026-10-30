@@ -77,7 +77,7 @@ def _sanitize_text(value: str, *, repo_root: Path) -> str:
     # would stop inside the name and keep its tail.
     sanitized = NETWORK_PATH_RE.sub("<redacted>", sanitized)
     sanitized = SPACED_HOME_RE.sub(lambda m: f"{m.group(1) or ''}/{m.group(2)}/<redacted>", sanitized)
-    sanitized = re.sub(r"/Users/[^/\s]+", "/Users/<redacted>", sanitized)
+    sanitized = re.sub(r"/(Users|home)/[^/\s]+", r"/\1/<redacted>", sanitized)
     sanitized = _WINDOWS_HOME_RE.sub(lambda m: f"{m.group(1) or ''}/Users/<redacted>", sanitized)
     return sanitized
 

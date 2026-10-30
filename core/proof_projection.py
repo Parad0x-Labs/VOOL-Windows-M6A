@@ -74,7 +74,7 @@ _RECEIPT_FAILURE_STATUSES = frozenset(
 _EVENT_WINDOW = 400
 
 _HOME_PATH = os.path.expanduser("~").rstrip("/")
-_HOME_IN_OTHERS = re.compile(r"(?P<sep>^|[\s\"'=(:])(/(?P<who>Users|home)/(?P<name>[A-Za-z0-9._-]+))/")
+_HOME_IN_OTHERS = re.compile(r"(?P<sep>^|[\s\"'=(:])(/(?P<who>Users|home)/(?P<name>[^/\s\"'<>|*?:]+))/")
 #: A Windows home in the spellings the POSIX pattern above cannot see: drive or rooted, with one
 #: or two backslashes or a slash (``C:\\Users\\alice`` as a repr or JSON shows it).
 _WINDOWS_HOME = re.compile(r"(?<![\w\\/])(?:[A-Za-z]:)?" + SEP + r"(?i:users)" + SEP + r"[^\\/\s\"'<>|*?:]+")

@@ -135,9 +135,9 @@ _EXCEPTION_NAME_ONLY_RE = re.compile(r"^[A-Z][A-Za-z0-9_]*(?:Error|Exception|War
 _FILESYSTEM_PATH_MARKERS = ("/Users/", "/home/", "/private/", "/var/", "/tmp/", "site-packages")
 _ABSOLUTE_PATH_RE = re.compile(r"(?<![\w.])/[\w.-]+(?:/[\w.-]+)+")
 #: Windows shapes: drive-absolute (`C:\x`, `C:/x`), drive-relative with a separator (`C:x\y`), UNC and
-#: device paths (`\\server\share`, `\\?\C:\x`) and backslash parent traversal (`..\x`). The drive
-#: letter must not follow a word character, and `X://` is left alone, so a lone "C:" or a URL
-#: scheme is not a path. Each backslash may be doubled, as an OSError repr or a JSON string
+#: device paths (`\\server\share`, `\\?\C:\x`), a rooted home (`\Users\x`) and backslash parent
+#: traversal (`..\x`). The drive letter must not follow a word character, and `X://` is left
+#: alone, so a lone "C:" or a URL scheme is not a path. Each backslash may be doubled, as an OSError repr or a JSON string
 #: spells it (`'\\\\server\\share'`); a UNC path's separators are doubled only after a doubled
 #: prefix, so escaped prose such as `\\n\\n` is not a share.
 _WINDOWS_PATH_RE = re.compile(
@@ -145,6 +145,7 @@ _WINDOWS_PATH_RE = re.compile(
     r"|(?<!\\)\\\\[\w.$?-]+\\[\w.$-]+"
     r"|(?<!\\)\\\\\\\\[\w.$?-]+\\\\[\w.$-]+"
     r"|(?<![\w.])\.\.\\{1,2}[\w.-]+"
+    r"|(?<![\w\\])\\{1,2}(?i:users)\\{1,2}[^\\/\s]"
 )
 _INTERNAL_MODULE_PATH_RE = re.compile(r"\bcore\.[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+\b")
 
