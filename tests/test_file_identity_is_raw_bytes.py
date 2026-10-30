@@ -206,3 +206,66 @@ def test_workspace_fs_keeps_the_bytes_it_reads_and_writes(tmp_path: Path, monkey
     assert on_disk == content.encode("utf-8")
     assert outcome.evidence["bytes"] == len(on_disk)
     assert fs.read("f.txt") == content
+
+
+def test_machine_write_file_rewrites_the_existing_file_in_place(home: Path) -> None:
+    """A replace-by-rename gives the path a new file: on Windows it drops the file's own ACL, its
+    hidden/system attributes and streams; everywhere it splits a hard link. The inode shows it."""
+    target = home / "Documents" / "work" / "out.txt"
+    target.write_bytes(b"old\n")
+    before = target.stat().st_ino
+
+    result = execute_runtime_tool(
+        "machine.write_file", {"path": "~/Documents/work/out.txt", "content": "new\n"}, source_context={}
+    )
+
+    assert result is not None and result.ok, result and result.response_text
+    assert target.read_bytes() == b"new\n"
+    assert target.stat().st_ino == before
+
+
+def test_rolling_back_a_write_over_a_non_utf8_file_never_writes_replacement_characters(home: Path) -> None:
+    target = home / "Documents" / "work" / "f.txt"
+    target.write_bytes(BAD_BYTES)
+    assert _workspace("workspace.write_file", home, path="f.txt", content="fixed\n").ok
+
+    _workspace("workspace.rollback_last_change", home)
+
+    assert b"\xef\xbf\xbd" not in target.read_bytes()
+    assert target.read_bytes() in (BAD_BYTES, b"fixed\n")
+
+
+# Each case: bytes Python's str.splitlines splits where a unified diff does not, or a file whose last
+# line has no newline. The engine without git (a workspace that is not a work-tree top) must not
+# shift the hunk, rewrite those bytes or add a final newline.
+UNSPLIT = {
+    "form-feed": b"x\n\x0c\nx\nx\n",
+    "vertical-tab": b"a\x0bb\nc\n",
+    "line-separator": "a b\nc\n".encode("utf-8"),
+    "no-final-newline": b"a\nlast",
+}
+PATCHES = {
+    "form-feed": "@@ -4,1 +4,1 @@\n-x\n+y\n",
+    "vertical-tab": "@@ -2,1 +2,1 @@\n-c\n+C\n",
+    "line-separator": "@@ -2,1 +2,1 @@\n-c\n+C\n",
+    "no-final-newline": "@@ -1,1 +1,1 @@\n-a\n+A\n",
+}
+EXPECTED = {
+    "form-feed": b"x\n\x0c\nx\ny\n",
+    "vertical-tab": b"a\x0bb\nC\n",
+    "line-separator": "a b\nC\n".encode("utf-8"),
+    "no-final-newline": b"A\nlast",
+}
+
+
+@pytest.mark.parametrize("case", sorted(UNSPLIT))
+def test_a_patch_without_git_changes_only_the_lines_it_names(home: Path, case: str) -> None:
+    target = home / "Documents" / "work" / "f.txt"
+    target.write_bytes(UNSPLIT[case])
+
+    result = _workspace("workspace.apply_unified_diff", home, patch="--- a/f.txt\n+++ b/f.txt\n" + PATCHES[case])
+
+    if result.ok:
+        assert target.read_bytes() == EXPECTED[case]
+    else:
+        assert target.read_bytes() == UNSPLIT[case]
