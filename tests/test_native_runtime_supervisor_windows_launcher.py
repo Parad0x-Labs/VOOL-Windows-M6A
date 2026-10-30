@@ -299,6 +299,7 @@ def test_windows_owned_runtime_starts_suspended_and_resumes_only_inside_the_job(
 
 def test_windows_owned_runtime_without_a_job_host_is_not_started_suspended(tmp_path, monkeypatch) -> None:
     supervisor, child, runs, _bat = _windows_owned(tmp_path, monkeypatch)
+    monkeypatch.setattr(nrs, "_JOB_HOST", False)
     supervisor._health = mock.Mock(side_effect=[None, _health(9200, tmp_path / "home")])
 
     supervisor.ensure_ready()
