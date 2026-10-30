@@ -64,6 +64,15 @@ _ACCT = (
 #: The same segment, but only when the name actually holds a space or an apostrophe (what the
 #: strict ``_SEG`` cannot take), so names without either keep today's handling.
 _ACCT_SPACED = r"(?=[^\\/\r\n]{0,64}[ '])" + _ACCT
+#: The spaced rule after a lowercase ``/users/``, which is as often a URL path as a home: every word
+#: starts with a letter, so ``GET /users/42 -> 200 OK`` is not read as the account ``42 -``.
+_NAME_WORD = r"(?=[^\W\d_])" + _ACCT_WORD
+_ACCT_SPACED_NAME = (
+    r"(?=[^\\/\r\n]{0,64}[ '])"
+    + r"(?=[^\\/\r\n,;" + _CLOSERS + r"]{1,64}(?:[\\/,;\r\n" + _CLOSERS + r"]|\.(?:\s|$)|$))"
+    + _NAME_WORD + r"(?: " + _NAME_WORD + r"){0,2}?"
+    + r"(?:(?=[\\/])|" + _ACCT_STOP + r")"
+)
 #: The fallback for an account the rule above cannot take (four or more words, a doubled or
 #: no-break space, or prose right after the name): its first word, then every following word, up to
 #: six in all, that does not start with a lowercase ASCII letter (``Zq Al Bo Smith``, ``Zq Smith``
@@ -121,7 +130,7 @@ _POSIX_HOME_ACCT = (
 _POSIX_SPACED_HOME = (
     r"(?<![\w/\\.:\]])/"
     + r"(?:(?-i:(?i:home)|Users)/(?:" + _POSIX_HOME_ACCT + r"(?:" + _POSIX_REST + r")?)"
-    + r"|(?-i:users)/" + _ACCT_SPACED + r"(?:" + _POSIX_REST + r"|" + _ACCT_STOP + r"))"
+    + r"|(?-i:users)/" + _ACCT_SPACED_NAME + r"(?:" + _POSIX_REST + r"|" + _ACCT_STOP + r"))"
 )
 
 #: The `\\?\...`, `\\.\...` and `\\server\share` forms: network and device paths.
@@ -144,7 +153,7 @@ SPACED_HOME_RE = re.compile(
     r"(?:(?<![A-Za-z0-9\\])([A-Za-z]:))?(?<![\\/])" + SEP + r"(users|home)"
     + r"(?(1)" + _ACCT_SEP + _WIN_ACCT
     + r"|(?:(?:(?<=\\users)|(?<=\\home))" + _ACCT_SEP + _WIN_ACCT
-    + r"|/(?:(?-i:(?<=/home/)|(?<=/Users/))" + _POSIX_HOME_ACCT + r"|" + _ACCT_SPACED + r")))",
+    + r"|/(?:(?-i:(?<=/home/)|(?<=/Users/))" + _POSIX_HOME_ACCT + r"|" + _ACCT_SPACED_NAME + r")))",
     re.IGNORECASE,
 )
 
