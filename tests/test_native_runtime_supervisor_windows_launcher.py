@@ -160,6 +160,23 @@ def _fake_psutil(tree: dict[int, list[int]]):
     return mod
 
 
+class _Job:
+    """A stand-in for the kill-on-close Windows Job object; records what the supervisor asks of it."""
+
+    def __init__(self, child: _Child) -> None:
+        self.child = child
+        self.events: list[str] = []
+        self.child_events_at_close: list[str] | None = None
+        child.job = self
+
+    def assign(self, pid: int) -> None:
+        self.events.append(f"assign:{pid}")
+
+    def close(self) -> None:
+        self.events.append("close")
+        self.child_events_at_close = list(self.child.events)
+
+
 def _windows_owned(tmp_path, monkeypatch, *, root: Path | None = None, tree=None, child=None):
     root = root or tmp_path
     root.mkdir(parents=True, exist_ok=True)
@@ -186,6 +203,7 @@ def _windows_owned(tmp_path, monkeypatch, *, root: Path | None = None, tree=None
         poll_interval=0,
         popen=mock.Mock(return_value=child),
         sleep=lambda _: None,
+        job_factory=lambda: _Job(child),
     )
     return supervisor, child, runs, bat
 
@@ -249,3 +267,65 @@ def test_windows_wrapper_without_psutil_fails_closed(tmp_path, monkeypatch) -> N
 
     with pytest.raises(NativeRuntimeError, match="identity mismatch"):
         supervisor.ensure_ready()
+
+
+# --- The runtime tree dies with the supervisor, even when the supervisor is killed hard ---------
+# G4 orphan check on Steve (177621c): `taskkill /F` on the supervisor alone left the API and its
+# media worker running and holding port 11435. The owned tree now lives in a Job object with
+# KILL_ON_JOB_CLOSE whose only handle the supervisor holds, so Windows ends the tree when the
+# supervisor ends, however it ends.
+
+
+def test_windows_owned_runtime_is_assigned_to_the_supervisors_job_before_readiness(tmp_path, monkeypatch) -> None:
+    supervisor, child, runs, _bat = _windows_owned(tmp_path, monkeypatch, tree={9100: [9150], 9150: [9200]})
+    supervisor._health = mock.Mock(side_effect=[None, _health(9200, tmp_path / "home")])
+
+    supervisor.ensure_ready()
+
+    assert child.job.events[0] == "assign:9100"
+    # Anything cmd had already started before the assignment is put in the job too.
+    assert {"assign:9150", "assign:9200"} <= set(child.job.events)
+    assert "close" not in child.job.events
+
+
+def test_windows_shutdown_closes_the_job_after_the_tree_kill(tmp_path, monkeypatch) -> None:
+    supervisor, child, runs, _bat = _windows_owned(tmp_path, monkeypatch)
+    supervisor._health = mock.Mock(side_effect=[None, _health(9200, tmp_path / "home")])
+    supervisor.ensure_ready()
+
+    supervisor.shutdown()
+
+    assert child.job.events[-1] == "close"
+    assert "taskkill" in child.job.child_events_at_close
+    assert runs == [[TASKKILL, "/PID", "9100", "/T", "/F"]]
+
+
+def test_windows_owned_start_without_a_job_fails_closed_and_spawns_nothing(tmp_path, monkeypatch) -> None:
+    supervisor, child, runs, _bat = _windows_owned(tmp_path, monkeypatch)
+    supervisor._health = mock.Mock(return_value=None)
+
+    def no_job():
+        raise OSError(5, "Access is denied")
+
+    supervisor._job_factory = no_job
+
+    with pytest.raises(NativeRuntimeError, match="nothing was started"):
+        supervisor.ensure_ready()
+    supervisor._popen.assert_not_called()
+
+
+def test_windows_owned_child_that_cannot_join_the_job_is_stopped(tmp_path, monkeypatch) -> None:
+    supervisor, child, runs, _bat = _windows_owned(tmp_path, monkeypatch)
+    supervisor._health = mock.Mock(return_value=None)
+
+    class _RefusingJob(_Job):
+        def assign(self, pid: int) -> None:
+            raise OSError(5, "Access is denied")
+
+    supervisor._job_factory = lambda: _RefusingJob(child)
+
+    with pytest.raises(NativeRuntimeError, match="could not be tied to this window"):
+        supervisor.ensure_ready()
+    assert runs == [[TASKKILL, "/PID", "9100", "/T", "/F"]]
+    assert child.job.events == ["close"]
+    assert supervisor.owns_runtime is False
