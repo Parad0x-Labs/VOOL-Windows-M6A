@@ -617,7 +617,7 @@ def rollback_last_workspace_mutation(
         expected_after_hash = str(
             change.get("after_hash") or content_sha256(str(change.get("after_text") or ""))
         )
-        reason = _diagnose_rollback_conflict(
+        reason = "before_not_restorable" if change.get("before_restorable") is False else _diagnose_rollback_conflict(
             raw_target,
             workspace_root=workspace_root,
             existed_before=existed_before,

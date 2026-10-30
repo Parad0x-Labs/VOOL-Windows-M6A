@@ -399,14 +399,15 @@ def apply_unified_diff_workspace(
             unreviewed=True,
         )
     snapshots: list[dict[str, Any]] = []
-    before_bytes: list[tuple[str, bytes | None]] = []
+    before_bytes: list[tuple[str, bytes | None, bool]] = []
     for relative in touched_paths:
         target = resolve_workspace_path(relative, workspace_root=workspace_root, write=True)
-        before_bytes.append((relative, target.read_bytes() if target.exists() and target.is_file() else None))
-    obstacle = _line_ending_obstacle(patch_text, before_bytes)
+        existed = target.exists()
+        before_bytes.append((relative, target.read_bytes() if existed and target.is_file() else None, existed))
+    obstacle = _line_ending_obstacle(patch_text, [(relative, raw) for relative, raw, _existed in before_bytes])
     if obstacle:
-        # The engines below compare and add lines by "\n" and the rollback restores decoded text, so a
-        # carriage return or a byte that is not UTF-8 would come back changed: refused, as on Windows.
+        # The rollback restores decoded text and the engines compare lines by "\n", so a byte that is
+        # not UTF-8 or a carriage return would come back changed: refused, as on Windows.
         return {
             "ok": False,
             "status": "unsupported_patch",
@@ -416,9 +417,8 @@ def apply_unified_diff_workspace(
             ),
             "details": {"paths": touched_paths, "changed_paths": []},
         }
-    for relative, raw in before_bytes:
+    for relative, raw, existed_before in before_bytes:
         target = resolve_workspace_path(relative, workspace_root=workspace_root, write=True)
-        existed_before = target.exists()
         before_text = raw.decode("utf-8") if raw is not None else ""
         snapshots.append(
             {
@@ -463,7 +463,12 @@ def apply_unified_diff_workspace(
             applied_with = "git_apply"
         else:
             errors.append(_engine_output(git_result))
-    if not applied_with:
+    python_obstacle = _line_break_obstacle(patch_text, [(relative, raw) for relative, raw, _existed in before_bytes])
+    if not applied_with and python_obstacle:
+        # This engine splits lines with str.splitlines, so it would shift the hunk and rewrite those
+        # characters as "\n"; only an exact engine may apply it.
+        errors.append(f"VOOL's own engine cannot apply this patch byte for byte: {python_obstacle}.")
+    elif not applied_with:
         try:
             _apply_unified_diff_python(patch_text, workspace_root=workspace_root)
             applied_with = "python_fallback"
@@ -681,6 +686,17 @@ def _line_ending_obstacle(patch_text: str, files: list[tuple[str, bytes | None]]
             return f"`{relative}` is not UTF-8 text"
         if "\r" in decoded:
             return f"`{relative}` has carriage-return line endings"
+    return ""
+
+
+def _line_break_obstacle(patch_text: str, files: list[tuple[str, bytes | None]]) -> str:
+    """A character `str.splitlines` splits at and a unified diff does not, in the patch or in a UTF-8
+    file it touches, or "" when there is none."""
+    if any(mark in patch_text for mark in _NOT_DIFF_LINE_BREAKS):
+        return "the patch contains characters Python treats as line breaks"
+    for relative, raw in files:
+        if raw is not None and any(mark in raw.decode("utf-8", errors="replace") for mark in _NOT_DIFF_LINE_BREAKS):
+            return f"`{relative}` contains characters Python treats as line breaks"
     return ""
 
 
