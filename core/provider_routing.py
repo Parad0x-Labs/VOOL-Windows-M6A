@@ -179,6 +179,23 @@ def _rank_provider_candidates_internal(
             if not capability.hardware_fit_reason:
                 fitting.append(manifest)
                 continue
+            # A model the user pinned by name stays in the pool when the only thing against it is
+            # the 8B guess for a model whose size nothing records (an LM Studio or llama.cpp model
+            # served on loopback under its own name). Refusing it would end the turn on a number
+            # VOOL made up. Unpinned models of unknown size, and any model whose size is known to
+            # be too big, are still left out.
+            if (
+                capability.hardware_fit_reason == "model_exceeds_hardware_budget"
+                and _manifest_is_pinned(manifest, preferred_provider, preferred_model)
+                and _local_footprint_is_guessed(manifest)
+            ):
+                logger.info(
+                    "Hardware fit: %s kept for this turn although its guessed size does not fit "
+                    "(the user pinned it and nothing records its real size).",
+                    manifest.provider_id,
+                )
+                fitting.append(manifest)
+                continue
             # A dropped local model is otherwise invisible: the turn just ends with "no model".
             _, required, available = provider_hardware_fit_budget(
                 capability,
@@ -847,6 +864,37 @@ def _float_or_zero(value: Any) -> float:
         return max(0.0, float(value or 0.0))
     except (TypeError, ValueError):
         return 0.0
+
+
+def _manifest_is_pinned(
+    manifest: ModelProviderManifest,
+    preferred_provider: str | None,
+    preferred_model: str | None,
+) -> bool:
+    model = str(preferred_model or "").strip()
+    provider = str(preferred_provider or "").strip()
+    if not model or model != str(manifest.model_name or "").strip():
+        return False
+    return not provider or provider == str(manifest.provider_name or "").strip()
+
+
+def _local_footprint_is_guessed(manifest: ModelProviderManifest) -> bool:
+    """True when a local model's resident size is the 8B fallback guess and nothing measured it.
+
+    No size on the manifest, no parameter count in the model catalog, and no ``<n>b`` in the
+    model's name: `estimated_local_model_resident_gb` then falls through to
+    `model_parameter_billions`'s default.
+    """
+    metadata = dict(manifest.metadata or {})
+    if any(
+        _float_or_zero(metadata.get(key)) > 0.0
+        for key in ("artifact_size_gb", "ram_budget_gb", "ram_gb", "vram_budget_gb", "vram_gb")
+    ):
+        return False
+    model_name = str(manifest.model_name or "").strip().lower()
+    if str(model_metadata(model_name).get("parameter_count") or "").strip():
+        return False
+    return re.search(r"\d+(?:\.\d+)?b", model_name) is None
 
 
 def provider_capability_truth_for_manifest(manifest: ModelProviderManifest) -> ProviderCapabilityTruth:

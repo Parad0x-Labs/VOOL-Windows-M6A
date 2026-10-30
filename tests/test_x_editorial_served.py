@@ -234,7 +234,7 @@ def x_rig(tmp_path_factory):
 
 def _snapshot_files(home: Path) -> set[str]:
     return {
-        str(p.relative_to(home))
+        p.relative_to(home).as_posix()
         for p in home.rglob("*")
         if p.is_file() and "daemon.log" not in p.name
     }
