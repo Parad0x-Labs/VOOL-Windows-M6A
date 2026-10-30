@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import signal
+import site
 import socket
 import sqlite3
 import subprocess
@@ -189,6 +190,16 @@ with _fixture_sqlite.connect(_fixture_home/'data/seed.db') as _fixture_connectio
     venv = target / ".venv"
     (venv / "bin").mkdir(parents=True)
     (venv / "bin/python").symlink_to(sys.executable)
+    # A bare symlink is not a virtual environment: when the suite itself runs
+    # in a venv, Python finds no pyvenv.cfg beside the link, follows it to the
+    # base interpreter and drops the suite's installed packages. Make the
+    # installed .venv a real one that sees the same packages as this run.
+    base = Path(getattr(sys, "_base_executable", sys.executable)).resolve()
+    (venv / "pyvenv.cfg").write_text(f"home = {base.parent}\ninclude-system-site-packages = true\n"
+                                     f"version = {'.'.join(map(str, sys.version_info[:3]))}\n")
+    site_packages = venv / f"lib/python{sys.version_info[0]}.{sys.version_info[1]}/site-packages"
+    site_packages.mkdir(parents=True)
+    (site_packages / "suite-packages.pth").write_text("".join(f"{path}\n" for path in site.getsitepackages()))
     (venv / "retained").write_text("environment")
     (target / ".git").mkdir()
     (target / ".git/local-only").write_text("git state")
