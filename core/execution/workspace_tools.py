@@ -399,10 +399,27 @@ def apply_unified_diff_workspace(
             unreviewed=True,
         )
     snapshots: list[dict[str, Any]] = []
+    before_bytes: list[tuple[str, bytes | None]] = []
     for relative in touched_paths:
         target = resolve_workspace_path(relative, workspace_root=workspace_root, write=True)
+        before_bytes.append((relative, target.read_bytes() if target.exists() and target.is_file() else None))
+    obstacle = _line_ending_obstacle(patch_text, before_bytes)
+    if obstacle:
+        # The engines below compare and add lines by "\n" and the rollback restores decoded text, so a
+        # carriage return or a byte that is not UTF-8 would come back changed: refused, as on Windows.
+        return {
+            "ok": False,
+            "status": "unsupported_patch",
+            "response_text": (
+                f"VOOL applies a patch only when it can keep every byte it does not change: {obstacle}. "
+                "Nothing was written. Make the change with `workspace.replace_in_file` or `workspace.write_file`."
+            ),
+            "details": {"paths": touched_paths, "changed_paths": []},
+        }
+    for relative, raw in before_bytes:
+        target = resolve_workspace_path(relative, workspace_root=workspace_root, write=True)
         existed_before = target.exists()
-        before_text = target.read_text(encoding="utf-8", errors="replace") if existed_before and target.is_file() else ""
+        before_text = raw.decode("utf-8") if raw is not None else ""
         snapshots.append(
             {
                 "path": relative_path(target, workspace_root=workspace_root),
@@ -484,7 +501,7 @@ def apply_unified_diff_workspace(
     for snapshot in snapshots:
         target = resolve_workspace_path(snapshot["path"], workspace_root=workspace_root, write=True)
         exists_after = target.exists()
-        after_text = target.read_text(encoding="utf-8", errors="replace") if exists_after and target.is_file() else ""
+        after_text = target.read_bytes().decode("utf-8", errors="replace") if exists_after and target.is_file() else ""
         if exists_after and snapshot["before_text"].endswith("\n") and after_text and not after_text.endswith("\n"):
             after_text = after_text + "\n"
             atomic_write_text(target, after_text)
@@ -648,6 +665,23 @@ def _protected_patch_text(patch_text: str) -> tuple[str, str]:
 # Characters `str.splitlines` treats as line boundaries besides "\n". A unified diff counts lines by "\n"
 # alone, so any of these in a patched file or in the patch would move a hunk or rewrite line endings.
 _NOT_DIFF_LINE_BREAKS = ("\r", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029")
+
+
+def _line_ending_obstacle(patch_text: str, files: list[tuple[str, bytes | None]]) -> str:
+    """Why an unreviewed patch would change bytes it does not name, or "" if it would not: a carriage
+    return in the patch or in a file it touches, or a touched file that is not UTF-8."""
+    if "\r" in patch_text:
+        return "the patch contains carriage returns"
+    for relative, raw in files:
+        if raw is None:
+            continue
+        try:
+            decoded = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return f"`{relative}` is not UTF-8 text"
+        if "\r" in decoded:
+            return f"`{relative}` has carriage-return line endings"
+    return ""
 
 
 def _protected_render_obstacle(patch_text: str, files: list[tuple[str, bytes | None]]) -> str:

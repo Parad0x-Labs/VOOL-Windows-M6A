@@ -36,6 +36,15 @@ def content_sha256(text: str) -> str:
     return hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()
 
 
+def bytes_sha256(raw: bytes) -> str:
+    """A file's identity: sha256 of its bytes on disk.
+
+    Every hash a read reports and every precondition a write checks uses this, so a CRLF, lone-CR or
+    non-UTF-8 file has one identity on both sides. For UTF-8 text written as-is it equals
+    ``content_sha256`` of that text."""
+    return hashlib.sha256(bytes(raw)).hexdigest()
+
+
 def atomic_write_text(path: Path, content: str, *, encoding: str = "utf-8", mode: int | None = None) -> None:
     """Write `content` to `path` so a crash or exception never leaves a partially-written file.
 
@@ -559,7 +568,7 @@ def _diagnose_rollback_conflict(
             return "target_missing" if existed_before else None
         if raw_target.is_dir() or not raw_target.is_file():
             return "target_type_changed"
-        current_hash = content_sha256(raw_target.read_bytes().decode("utf-8", errors="replace"))
+        current_hash = bytes_sha256(raw_target.read_bytes())
         if current_hash != expected_after_hash:
             return "content_changed"
         return None
@@ -620,7 +629,7 @@ def rollback_last_workspace_mutation(
         current_hash = ""
         if raw_target.exists() and not fs_links.is_link(raw_target) and raw_target.is_file():
             with contextlib.suppress(OSError, UnicodeError):
-                current_hash = content_sha256(raw_target.read_bytes().decode("utf-8", errors="replace"))
+                current_hash = bytes_sha256(raw_target.read_bytes())
         conflicts.append(
             {
                 "path": relative_path,

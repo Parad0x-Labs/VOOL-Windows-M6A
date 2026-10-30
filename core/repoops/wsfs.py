@@ -63,7 +63,8 @@ class WorkspaceFS:
     def read(self, rel_path: str) -> str:
         path = self.resolve(rel_path)
         try:
-            return path.read_text(encoding="utf-8")
+            # Bytes, decoded as they are: text mode would fold CRLF and lone CR into "\n".
+            return path.read_bytes().decode("utf-8")
         except FileNotFoundError as exc:
             raise FileNotFoundError(f"{rel_path!r} not in workspace") from exc
 
@@ -111,10 +112,12 @@ class WorkspaceFS:
                     evidence={"expected": expected_prior_sha256, "actual": prior},
                 )
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
+            # newline="": text mode writes each "\n" as "\r\n" on Windows.
+            path.write_text(content, encoding="utf-8", newline="")
+            written = path.read_bytes()
             return EffectOutcome(status="applied", evidence={
-                "path": rel_path, "bytes": len(content.encode()),
-                "new_sha256": _sha256(path.read_bytes())[:16],
+                "path": rel_path, "bytes": len(written),
+                "new_sha256": _sha256(written)[:16],
             })
 
         return self._admit(fork, broker, "write", {"path": rel_path}, dispatch)
