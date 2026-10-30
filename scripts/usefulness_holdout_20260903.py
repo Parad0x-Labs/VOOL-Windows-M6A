@@ -48,7 +48,7 @@ RUN_ROOT = Path("/tmp/vool-usefulness-holdout")
 
 SEED = '''
 import sys
-sys.path.insert(0, "{root}")
+sys.path.insert(0, {root!r})
 from storage.db import get_connection
 from storage.migrations import run_migrations
 from storage.model_provider_manifest import ModelProviderManifest, list_provider_manifests, upsert_provider_manifest
@@ -81,7 +81,7 @@ print(sorted(m.provider_id for m in list_provider_manifests()))
 
 CREATE_LESSON = '''
 import sys
-sys.path.insert(0, "{root}")
+sys.path.insert(0, {root!r})
 from core.learning import promote_verified_procedure
 
 # Two REAL, independently executed deterministic transforms (run below by the harness); their
@@ -179,7 +179,7 @@ def _boot_arm(name: str, models: list[str]) -> tuple[ServedDaemon, Path]:
         },
     )
     daemon.start(timeout=240)
-    run_in_home(home, SEED.format(root=RIG_ROOT, base_url=OLLAMA_URL, models=models))
+    run_in_home(home, SEED.format(root=str(RIG_ROOT), base_url=OLLAMA_URL, models=models))
     return daemon, home
 
 
@@ -304,8 +304,8 @@ def main() -> None:
         # discover the served task class so the lesson can rank for these turns
         _chat(reuse_daemon, models[0], TRANSFORM_TASKS[0]["prompt"], "usefulness-class-probe")
         task_class = _served_task_class(reuse_home) or "data_transform"
-        run_in_home(reuse_home, CREATE_LESSON.format(root=RIG_ROOT, command=command, task_class=task_class))
-        statuses = run_in_home(reuse_home, "import sys;sys.path.insert(0,'" + str(RIG_ROOT) + "');from core.learning import list_procedure_records;print(str([r.get('status') for r in list_procedure_records()]))")
+        run_in_home(reuse_home, CREATE_LESSON.format(root=str(RIG_ROOT), command=command, task_class=task_class))
+        statuses = run_in_home(reuse_home, "import sys;sys.path.insert(0," + repr(str(RIG_ROOT)) + ");from core.learning import list_procedure_records;print(str([r.get('status') for r in list_procedure_records()]))")
         report["notes"].append(f"lesson task_class={task_class} statuses={statuses.strip()!r} (probe turn excluded from results)")
 
         baseline_daemon, baseline_home = _boot_arm("baseline", models)
