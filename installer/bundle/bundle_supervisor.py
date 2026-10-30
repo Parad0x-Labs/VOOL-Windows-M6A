@@ -18,6 +18,7 @@ from typing import Any
 
 from core.process_liveness import system_powershell, system_taskkill
 from core.runtime_paths import native_runtime_home
+from core.windows_job import CREATE_SUSPENDED, new_kill_on_close_job, resume_suspended
 
 # Every age, retry time and unanswered span below is measured on _tick(), never the wall clock: a
 # clock set forward or back is not child age. _tick() is time.monotonic moved on by a fixed origin, so
@@ -190,16 +191,9 @@ def _is_windows_platform() -> bool:
     return os.name == "nt"
 
 
-#: Job objects are a kernel32 feature: the job is created only on a real Windows host. Tests that
-#: stand in for Windows through ``_is_windows_platform`` set this and pass a fake job.
+#: Job objects are a kernel32 feature, so the job is used only when this interpreter really runs
+#: on Windows. Tests that stand in for Windows through ``_is_windows_platform`` set this and pass fakes.
 _JOB_HOST = os.name == "nt"
-
-
-def _windows_job() -> Any:
-    """A Job object with KILL_ON_JOB_CLOSE whose only handle this process holds (not inherited)."""
-    from core.windows_broker.process import _WindowsJob
-
-    return _WindowsJob()
 
 
 def _windows_root_forms(root: Path) -> tuple[str, ...]:
@@ -267,7 +261,8 @@ class BundleSupervisor:
         self.exit_seen_at: dict[str, float] = {}
         # Windows: the one Job object every child joins. When this process ends, however it ends,
         # Windows closes the handle and kills the children (G4 orphan check, Steve, 177621c).
-        self._job_factory: Callable[[], Any] = _windows_job
+        self._job_factory: Callable[[], Any] = new_kill_on_close_job
+        self._resume: Callable[[int], None] = resume_suspended
         self._job: Any | None = None
 
     def _manifest(self) -> dict[str, Any]:
@@ -534,6 +529,9 @@ class BundleSupervisor:
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(
                 subprocess, "CREATE_NEW_PROCESS_GROUP", 0
             )
+            if self._job is not None:
+                # Suspended until it is in the job, so it starts nothing outside it (core.windows_job).
+                creationflags |= CREATE_SUSPENDED
         try:
             child = subprocess.Popen(
                 argv,
@@ -551,11 +549,12 @@ class BundleSupervisor:
         if self._job is not None:
             try:
                 self._job.assign(child.pid)
+                self._resume(child.pid)
             except Exception as exc:
                 self.processes[name], self.handles[name] = child, handle
                 self._stop_child(name)
                 self._schedule_retry(
-                    name, f"stopped: it could not join the supervisor's Windows job: {type(exc).__name__}: {exc}"
+                    name, f"stopped: it could not be started inside the supervisor's Windows job: {type(exc).__name__}: {exc}"
                 )
                 return
         # Our own work, expected to be quick: awake time up to that, a pause beyond (see _PAUSE_SECONDS).

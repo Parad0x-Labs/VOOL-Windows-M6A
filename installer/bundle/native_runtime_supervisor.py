@@ -25,6 +25,7 @@ from typing import Any
 
 from core.process_liveness import pid_alive, system_taskkill, system_tool
 from core.runtime_paths import active_vool_home, runtime_home_identity
+from core.windows_job import CREATE_SUSPENDED, new_kill_on_close_job, resume_suspended
 
 
 def _windows_cmd_starter(command: list[str]) -> str | None:
@@ -34,16 +35,9 @@ def _windows_cmd_starter(command: list[str]) -> str | None:
     return None
 
 
-#: Job objects are a kernel32 feature: the job is created only on a real Windows host. Tests that
-#: stand in for Windows through a patched ``os`` set this and pass a fake job.
+#: Job objects are a kernel32 feature, so the job is used only when this interpreter really runs
+#: on Windows. Tests that stand in for Windows through a patched ``os`` set this and pass fakes.
 _JOB_HOST = os.name == "nt"
-
-
-def _windows_job() -> Any:
-    """A Job object with KILL_ON_JOB_CLOSE whose only handle this process holds (not inherited)."""
-    from core.windows_broker.process import _WindowsJob
-
-    return _WindowsJob()
 
 
 class NativeRuntimeError(RuntimeError):
@@ -85,6 +79,7 @@ class NativeRuntimeSupervisor:
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
         job_factory: Callable[[], Any] | None = None,
+        resume: Callable[[int], None] | None = None,
     ) -> None:
         self.project_root = Path(project_root).expanduser().resolve()
         self.command = [str(part) for part in command]
@@ -103,7 +98,8 @@ class NativeRuntimeSupervisor:
         self._popen = popen
         self._sleep = sleep
         self._monotonic = monotonic
-        self._job_factory = job_factory or _windows_job
+        self._job_factory = job_factory or new_kill_on_close_job
+        self._resume = resume or resume_suspended
         # Windows: the Job object the owned tree lives in. When this process ends, however it ends,
         # Windows closes the handle and kills the tree (G4 orphan check, Steve, 177621c).
         self._job: Any | None = None
@@ -340,6 +336,9 @@ class NativeRuntimeSupervisor:
                     f"the Windows job that ties the runtime to this window could not be created "
                     f"({type(exc).__name__}: {exc}); nothing was started"
                 ) from exc
+            if self._job is not None:
+                # Suspended until it is in the job, so it starts nothing outside it (core.windows_job).
+                kwargs["creationflags"] |= CREATE_SUSPENDED
         try:
             self.process = self._popen(self._spawn_command(), **kwargs)
         except Exception as exc:
@@ -349,10 +348,7 @@ class NativeRuntimeSupervisor:
         if self._job is not None:
             try:
                 self._job.assign(self.process.pid)
-                # Whatever cmd started before the assignment is not in the job yet; its later
-                # children are, because a job's processes start their children inside it.
-                for pid in sorted(self._descendant_pids()):
-                    self._job.assign(pid)
+                self._resume(self.process.pid)
             except Exception as exc:
                 self.shutdown()
                 raise NativeRuntimeError(
