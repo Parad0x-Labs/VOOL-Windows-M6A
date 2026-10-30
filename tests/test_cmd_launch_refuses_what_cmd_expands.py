@@ -44,25 +44,50 @@ def test_wrap_command_doubles_trailing_backslashes_before_the_closing_quote(on_w
 _CMD_UNSAFE = ["100%OS%", "a\rb", "a\nb", 'a"b']
 
 
+class _NamedPath:
+    """A path by name only. NTFS cannot hold a quote or a line break in a name, so these cases
+    cannot be made on disk on Windows; the launchers only join, test and print the path."""
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+
+    def __truediv__(self, name: str) -> _NamedPath:
+        return _NamedPath(f"{self._text}\\{name}")
+
+    def is_file(self) -> bool:
+        return True
+
+    def exists(self) -> bool:
+        return True
+
+    def __str__(self) -> str:
+        return self._text
+
+
 @pytest.mark.parametrize("bad", _CMD_UNSAFE)
-def test_protocol_handler_refuses_a_launcher_path_cmd_would_expand(tmp_path, monkeypatch, bad) -> None:
-    root = tmp_path / f"root{bad}"
-    root.mkdir()
-    (root / "VOOL.cmd").write_text("@echo off\n", encoding="utf-8")
+def test_protocol_handler_refuses_a_launcher_path_cmd_would_expand(monkeypatch, bad) -> None:
     launched: list[object] = []
     monkeypatch.setattr(vool_protocol_handler.subprocess, "Popen", lambda cmd, **kwargs: launched.append(cmd))
     with pytest.raises(ValueError):
-        vool_protocol_handler._start_bundle(root)
+        vool_protocol_handler._start_bundle(_NamedPath(f"C:\\root{bad}"))
     assert launched == []
 
 
 @pytest.mark.parametrize("bad", _CMD_UNSAFE)
-def test_self_update_refuses_a_launcher_path_cmd_would_expand(tmp_path, monkeypatch, bad) -> None:
-    root = tmp_path / f"root{bad}"
-    root.mkdir()
-    (root / "Start_VOOL.bat").write_text("@echo off\n", encoding="utf-8")
+def test_self_update_refuses_a_launcher_path_cmd_would_expand(monkeypatch, bad) -> None:
     launched: list[object] = []
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: launched.append(cmd))
-    self_update._default_start_server(root)
+    self_update._default_start_server(_NamedPath(f"C:\\root{bad}"))
     assert launched == []
+
+
+def test_a_plain_launcher_path_still_starts(monkeypatch) -> None:
+    # The refusal is not a blanket one: the same fake with an ordinary path is launched.
+    launched: list[object] = []
+    monkeypatch.setattr(vool_protocol_handler.subprocess, "Popen", lambda cmd, **kwargs: launched.append(cmd))
+    vool_protocol_handler._start_bundle(_NamedPath("C:\\Program Files (x86)\\A&B"))
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: launched.append(cmd))
+    self_update._default_start_server(_NamedPath("C:\\Program Files (x86)\\A&B"))
+    assert len(launched) == 2
