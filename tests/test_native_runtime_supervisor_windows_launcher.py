@@ -160,23 +160,6 @@ def _fake_psutil(tree: dict[int, list[int]]):
     return mod
 
 
-class _Job:
-    """A stand-in for the kill-on-close Windows Job object; records what the supervisor asks of it."""
-
-    def __init__(self, child: _Child) -> None:
-        self.child = child
-        self.events: list[str] = []
-        self.child_events_at_close: list[str] | None = None
-        child.job = self
-
-    def assign(self, pid: int) -> None:
-        self.events.append(f"assign:{pid}")
-
-    def close(self) -> None:
-        self.events.append("close")
-        self.child_events_at_close = list(self.child.events)
-
-
 def _windows_owned(tmp_path, monkeypatch, *, root: Path | None = None, tree=None, child=None):
     root = root or tmp_path
     root.mkdir(parents=True, exist_ok=True)
@@ -203,7 +186,6 @@ def _windows_owned(tmp_path, monkeypatch, *, root: Path | None = None, tree=None
         poll_interval=0,
         popen=mock.Mock(return_value=child),
         sleep=lambda _: None,
-        job_factory=lambda: _Job(child),
     )
     return supervisor, child, runs, bat
 
@@ -273,11 +255,36 @@ def test_windows_wrapper_without_psutil_fails_closed(tmp_path, monkeypatch) -> N
 # G4 orphan check on Steve (177621c): `taskkill /F` on the supervisor alone left the API and its
 # media worker running and holding port 11435. The owned tree now lives in a Job object with
 # KILL_ON_JOB_CLOSE whose only handle the supervisor holds, so Windows ends the tree when the
-# supervisor ends, however it ends.
+# supervisor ends, however it ends. The job needs kernel32, so it is created only on a real
+# Windows host (``_JOB_HOST``); these tests stand that host in with a recording fake.
+
+
+class _Job:
+    """A stand-in for the kill-on-close Windows Job object; records what the supervisor asks of it."""
+
+    def __init__(self, child: _Child) -> None:
+        self.child = child
+        self.events: list[str] = []
+        self.child_events_at_close: list[str] | None = None
+        child.job = self
+
+    def assign(self, pid: int) -> None:
+        self.events.append(f"assign:{pid}")
+
+    def close(self) -> None:
+        self.events.append("close")
+        self.child_events_at_close = list(self.child.events)
+
+
+def _windows_owned_with_job(tmp_path, monkeypatch, **kwargs):
+    supervisor, child, runs, bat = _windows_owned(tmp_path, monkeypatch, **kwargs)
+    monkeypatch.setattr(nrs, "_JOB_HOST", True)
+    supervisor._job_factory = lambda: _Job(child)
+    return supervisor, child, runs, bat
 
 
 def test_windows_owned_runtime_is_assigned_to_the_supervisors_job_before_readiness(tmp_path, monkeypatch) -> None:
-    supervisor, child, runs, _bat = _windows_owned(tmp_path, monkeypatch, tree={9100: [9150], 9150: [9200]})
+    supervisor, child, runs, _bat = _windows_owned_with_job(tmp_path, monkeypatch, tree={9100: [9150], 9150: [9200]})
     supervisor._health = mock.Mock(side_effect=[None, _health(9200, tmp_path / "home")])
 
     supervisor.ensure_ready()
@@ -289,7 +296,7 @@ def test_windows_owned_runtime_is_assigned_to_the_supervisors_job_before_readine
 
 
 def test_windows_shutdown_closes_the_job_after_the_tree_kill(tmp_path, monkeypatch) -> None:
-    supervisor, child, runs, _bat = _windows_owned(tmp_path, monkeypatch)
+    supervisor, child, runs, _bat = _windows_owned_with_job(tmp_path, monkeypatch)
     supervisor._health = mock.Mock(side_effect=[None, _health(9200, tmp_path / "home")])
     supervisor.ensure_ready()
 
@@ -301,7 +308,7 @@ def test_windows_shutdown_closes_the_job_after_the_tree_kill(tmp_path, monkeypat
 
 
 def test_windows_owned_start_without_a_job_fails_closed_and_spawns_nothing(tmp_path, monkeypatch) -> None:
-    supervisor, child, runs, _bat = _windows_owned(tmp_path, monkeypatch)
+    supervisor, child, runs, _bat = _windows_owned_with_job(tmp_path, monkeypatch)
     supervisor._health = mock.Mock(return_value=None)
 
     def no_job():
@@ -315,7 +322,7 @@ def test_windows_owned_start_without_a_job_fails_closed_and_spawns_nothing(tmp_p
 
 
 def test_windows_owned_child_that_cannot_join_the_job_is_stopped(tmp_path, monkeypatch) -> None:
-    supervisor, child, runs, _bat = _windows_owned(tmp_path, monkeypatch)
+    supervisor, child, runs, _bat = _windows_owned_with_job(tmp_path, monkeypatch)
     supervisor._health = mock.Mock(return_value=None)
 
     class _RefusingJob(_Job):
