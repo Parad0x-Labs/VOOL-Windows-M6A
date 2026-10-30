@@ -823,7 +823,9 @@ def _clean_relative_path(candidate: str) -> str:
     # launder "./C:\x" into a drive path and "../..\evil" into "..\evil".
     if ntpath.splitdrive(clean)[0] or clean.startswith("\\"):
         return ""
-    if ".." in re.split(r"[\\/]", clean):
+    from core.execution.planner import _has_dot_space_segment
+
+    if ".." in re.split(r"[\\/]", clean) or _has_dot_space_segment(clean):
         return ""
     # `.\` and `./` name the current folder: drop each one whole, so `.\x.txt` is `x.txt`. The
     # character-set strips below would leave its `\`, a path rooted on the current drive.

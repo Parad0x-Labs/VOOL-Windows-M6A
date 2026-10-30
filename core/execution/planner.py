@@ -1035,18 +1035,34 @@ def _clean_workspace_path(candidate: str) -> str:
         return ""
     # Judged as typed, before the strip below: it would turn `/C:\x` into a drive path and eat the
     # `..` of `../evil`.
-    if ".." in re.split(r"[\\/]", clean):
+    if ".." in re.split(r"[\\/]", clean) or _has_dot_space_segment(clean):
+        return ""
+    if _is_share_or_device_path(clean):
         return ""
     if clean.startswith("/"):
         clean = clean.lstrip("/")
     clean = clean.lstrip("./")
     if not clean or clean.lower() in _PATH_STOP_WORDS:
         return ""
-    if re.match(r"[A-Za-z]:[\\/]", clean):
-        # `C:\x` is a full path on a drive, never a workspace folder. A partial form (`\x`, `C:x`) is
-        # kept as typed, for the Windows door to refuse.
+    if re.match(r"[A-Za-z]:[\\/]", clean) or _is_share_or_device_path(clean):
+        # `C:\x` is a full path on a drive, and a share, device or NT object path is a full path too:
+        # never a workspace folder. A partial form (`\x`, `C:x`) is kept as typed, for the Windows
+        # door to refuse.
         return ""
     return clean
+
+
+def _is_share_or_device_path(path: str) -> bool:
+    """`\\\\srv\\share`, `\\\\?\\C:`, `\\\\.\\pipe` (two leading separators of either kind, as Windows
+    reads `/\\srv` and `//srv` too) or an NT object path (`\\??\\C:`)."""
+    return bool(re.match(r"[\\/]{2}", path)) or path.startswith("\\??\\")
+
+
+def _has_dot_space_segment(path: str) -> bool:
+    """A segment of dots and spaces other than `.` itself (`.. `, `. `, `...`): Windows trims trailing
+    dots and spaces from a segment, so `.. ` can read as `..`, and the strips that follow would
+    turn `.. \\x` into a path that starts with a space."""
+    return any(part != "." and part and not part.strip(". ") for part in re.split(r"[\\/]", path))
 
 
 def _workspace_folder_as_typed(typed: str, workspace_root: str) -> str | None:
