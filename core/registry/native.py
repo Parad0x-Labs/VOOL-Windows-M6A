@@ -136,12 +136,17 @@ def recover(plugin_id: str, root: Path) -> None:
     # Only the invocation named by our durable journal is removed.
     import shutil
 
-    for directory, folders, _ in os.walk(owned, followlinks=False):
+    for directory, folders, files in os.walk(owned, followlinks=False):
         Path(directory).chmod(0o700)
         for name in folders:
             child = Path(directory) / name
             if not child.is_symlink():
                 child.chmod(0o700)
+        # Package files are 0o444, and Windows refuses to delete a read-only file.
+        for name in files:
+            child = Path(directory) / name
+            if not child.is_symlink():
+                child.chmod(0o600)
     shutil.rmtree(owned)
     plugin_catalog.invalidate_storage_listing()
 
