@@ -8,7 +8,6 @@ import os as _bootstrap_os
 import ssl
 import sys as _bootstrap_sys
 from collections.abc import Callable
-from http.server import ThreadingHTTPServer
 
 _repo_root = _bootstrap_os.path.dirname(_bootstrap_os.path.dirname(_bootstrap_os.path.abspath(__file__)))
 if _repo_root not in _bootstrap_sys.path:
@@ -63,6 +62,13 @@ from core.web.watch.tls import (
 from core.web.watch.tls import (
     watch_tls_enabled as _core_watch_tls_enabled,
 )
+
+# The watch listener class with the platform listen policy (exclusive bind on
+# Windows), imported under the stdlib name so this module's factory seam —
+# patched as apps.brain_hive_watch_server.ThreadingHTTPServer — is exactly the
+# class build_server passes on to build_watch_server.
+from network.listen_policy import ExclusiveThreadingHTTPServer as ThreadingHTTPServer
+from network.listen_policy import run_server_with_listen_policy
 
 
 def _http_get_json(
@@ -256,7 +262,11 @@ def serve(config: BrainHiveWatchServerConfig | None = None) -> None:
             ssl_ca_certs=cfg.tls_ca_file,
         )
     )
-    server.run()
+    # The ONE listen policy: POSIX keeps uvicorn's own bind path (every address
+    # loop.create_server resolves, dual-stack included); Windows runs on pre-bound
+    # SO_EXCLUSIVEADDRUSE sockets because uvicorn's bind sets no port-reuse option
+    # there, leaving the port stealable by any same-user process.
+    run_server_with_listen_policy(server, str(cfg.host), int(cfg.port))
 
 
 def _normalize_base_url(url: str) -> str:

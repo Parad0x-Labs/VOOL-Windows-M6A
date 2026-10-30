@@ -214,7 +214,12 @@ def cleanup(daemon: Daemon, home: Path) -> dict:
     port_free = False
     try:
         s = socket.socket()
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if sys.platform != "win32":
+            # POSIX: reuse skips TIME_WAIT so the probe answers "free for a rebind".
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # Windows: SO_REUSEADDR would also bind over a LIVE holder, so the probe
+        # would report the port reusable while the daemon still owns it. A plain
+        # bind is the honest check: it fails while anything still holds the port.
         s.bind(("127.0.0.1", daemon.port))
         s.close()
         port_free = True

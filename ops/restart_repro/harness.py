@@ -25,6 +25,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from network.listen_policy import ExclusiveListenMixin
+
 STUB_MODEL = "restart-repro-stub"
 CLOUD_STUB_MODEL = "restart-repro/cloud-stub"
 
@@ -160,7 +162,12 @@ class _StubHandler(BaseHTTPRequestHandler):
         self._record(path, 200, last_user)
 
 
-class _QuietServer(ThreadingHTTPServer):
+class _QuietServer(ExclusiveListenMixin, ThreadingHTTPServer):
+    """Scripted-provider listener. The listen policy (network/listen_policy.py:
+    SO_EXCLUSIVEADDRUSE on Windows, SO_REUSEADDR on POSIX) lives on the mixin,
+    so this stub shares the one fail-closed path with every other VOOL listener
+    instead of duplicating the setsockopt."""
+
     def handle_error(self, request, client_address) -> None:
         return
 
