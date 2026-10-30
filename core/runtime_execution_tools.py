@@ -5814,9 +5814,10 @@ def _write_machine_file(
                 reason="changed while it was being written", detail=str(exc),
             )
     else:
-        # newline="": text mode would write each "\n" as "\r\n" on Windows, so the file would hold
-        # bytes nobody asked for and effect reconciliation could not match it to this write.
-        atomic_write_text(target, content)
+        # In place, so the file keeps its own ACL, attributes, streams and hard links; newline="" because
+        # text mode would write each "\n" as "\r\n" on Windows, bytes nobody asked for that effect
+        # reconciliation could not match to this write.
+        target.write_text(content, encoding="utf-8", newline="")
     action = "updated" if already_present else "created"
     status = "updated" if already_present else "executed"
     line_count = len(content.splitlines()) if content else 0
@@ -6375,6 +6376,14 @@ def _ensure_directory(
     )
 
 
+def _is_utf8(raw: bytes) -> bool:
+    try:
+        raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
 def _write_file(
     arguments: dict[str, Any],
     *,
@@ -6495,6 +6504,8 @@ def _write_file(
                 "before_text": previous,
                 "after_text": content,
                 "before_mode": previous_mode,
+                # Text cannot carry bytes that are not UTF-8; a rollback must not write U+FFFD instead.
+                "before_restorable": _is_utf8(previous_bytes),
             }
         ],
     )
