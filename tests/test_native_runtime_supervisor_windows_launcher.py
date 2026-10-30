@@ -11,6 +11,7 @@ from unittest import mock
 import pytest
 
 from core.runtime_paths import runtime_home_identity
+from core.windows_job import CREATE_SUSPENDED
 from installer.bundle import native_runtime_supervisor as nrs
 from installer.bundle.native_runtime_supervisor import NativeRuntimeError, NativeRuntimeSupervisor
 from tests._windows_system32 import CMD, TASKKILL, trust_system32
@@ -255,8 +256,9 @@ def test_windows_wrapper_without_psutil_fails_closed(tmp_path, monkeypatch) -> N
 # G4 orphan check on Steve (177621c): `taskkill /F` on the supervisor alone left the API and its
 # media worker running and holding port 11435. The owned tree now lives in a Job object with
 # KILL_ON_JOB_CLOSE whose only handle the supervisor holds, so Windows ends the tree when the
-# supervisor ends, however it ends. The job needs kernel32, so it is created only on a real
-# Windows host (``_JOB_HOST``); these tests stand that host in with a recording fake.
+# supervisor ends, however it ends. The child starts suspended and is resumed only once it is in
+# the job, so nothing it starts can escape. The job needs kernel32, so it is used only on a real
+# Windows host (``_JOB_HOST``); these tests stand that host in with recording fakes.
 
 
 class _Job:
@@ -280,19 +282,28 @@ def _windows_owned_with_job(tmp_path, monkeypatch, **kwargs):
     supervisor, child, runs, bat = _windows_owned(tmp_path, monkeypatch, **kwargs)
     monkeypatch.setattr(nrs, "_JOB_HOST", True)
     supervisor._job_factory = lambda: _Job(child)
+    supervisor._resume = lambda pid: child.job.events.append(f"resume:{pid}")
     return supervisor, child, runs, bat
 
 
-def test_windows_owned_runtime_is_assigned_to_the_supervisors_job_before_readiness(tmp_path, monkeypatch) -> None:
+def test_windows_owned_runtime_starts_suspended_and_resumes_only_inside_the_job(tmp_path, monkeypatch) -> None:
     supervisor, child, runs, _bat = _windows_owned_with_job(tmp_path, monkeypatch, tree={9100: [9150], 9150: [9200]})
     supervisor._health = mock.Mock(side_effect=[None, _health(9200, tmp_path / "home")])
 
     supervisor.ensure_ready()
 
-    assert child.job.events[0] == "assign:9100"
-    # Anything cmd had already started before the assignment is put in the job too.
-    assert {"assign:9150", "assign:9200"} <= set(child.job.events)
-    assert "close" not in child.job.events
+    assert supervisor._popen.call_args.kwargs["creationflags"] & CREATE_SUSPENDED
+    # Only the root is assigned: it ran nothing before the assignment, and its children are born in the job.
+    assert child.job.events == ["assign:9100", "resume:9100"]
+
+
+def test_windows_owned_runtime_without_a_job_host_is_not_started_suspended(tmp_path, monkeypatch) -> None:
+    supervisor, child, runs, _bat = _windows_owned(tmp_path, monkeypatch)
+    supervisor._health = mock.Mock(side_effect=[None, _health(9200, tmp_path / "home")])
+
+    supervisor.ensure_ready()
+
+    assert not supervisor._popen.call_args.kwargs["creationflags"] & CREATE_SUSPENDED
 
 
 def test_windows_shutdown_closes_the_job_after_the_tree_kill(tmp_path, monkeypatch) -> None:
@@ -334,5 +345,21 @@ def test_windows_owned_child_that_cannot_join_the_job_is_stopped(tmp_path, monke
     with pytest.raises(NativeRuntimeError, match="could not be tied to this window"):
         supervisor.ensure_ready()
     assert runs == [[TASKKILL, "/PID", "9100", "/T", "/F"]]
-    assert child.job.events == ["close"]
+    assert child.job.events == ["close"]  # never resumed
+    assert supervisor.owns_runtime is False
+
+
+def test_windows_owned_child_that_cannot_be_resumed_is_stopped(tmp_path, monkeypatch) -> None:
+    supervisor, child, runs, _bat = _windows_owned_with_job(tmp_path, monkeypatch)
+    supervisor._health = mock.Mock(return_value=None)
+
+    def no_resume(pid: int) -> None:
+        raise OSError(5, "Access is denied")
+
+    supervisor._resume = no_resume
+
+    with pytest.raises(NativeRuntimeError, match="could not be tied to this window"):
+        supervisor.ensure_ready()
+    assert runs == [[TASKKILL, "/PID", "9100", "/T", "/F"]]
+    assert child.job.events == ["assign:9100", "close"]
     assert supervisor.owns_runtime is False
