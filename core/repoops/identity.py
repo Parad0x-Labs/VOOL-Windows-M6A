@@ -11,8 +11,8 @@ refuses on mismatch.
 """
 from __future__ import annotations
 
-import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
 from core.remote_forge.identity import RepoIdentity
 
@@ -21,13 +21,22 @@ class WorkspaceError(RuntimeError):
     pass
 
 
+def _run(root: str, *args: str) -> tuple[int, str, str]:
+    """One git call in ``root`` through the door the rest of repoops uses
+    (core/repoops/gitops.py ``GitRunner.run`` -> core/safe_git.py): a repository
+    whose own config names programs git would run is refused before git starts,
+    and what does run is hardened with a scrubbed environment. A refusal reports
+    itself as ``(-1, "", "git was not run: <reason>")``."""
+    from core.repoops.gitops import GitRunner
+
+    return GitRunner(root=Path(root)).run(*args)
+
+
 def _git(root: str, *args: str) -> str:
-    proc = subprocess.run(
-        ["git", "-C", root, *args], capture_output=True, text=True, timeout=30,
-    )
-    if proc.returncode != 0:
-        raise WorkspaceError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
-    return proc.stdout.strip()
+    code, out, err = _run(root, *args)
+    if code != 0:
+        raise WorkspaceError(f"git {' '.join(args)} failed: {err.strip()}")
+    return out.strip()
 
 
 @dataclass(frozen=True)
@@ -59,16 +68,14 @@ class RepositoryWorkspace:
 
     def read_local_state(self) -> LocalState:
         sha = _git(self.root, "rev-parse", "HEAD")
-        proc = subprocess.run(
-            ["git", "-C", self.root, "symbolic-ref", "--quiet", "--short", "HEAD"],
-            capture_output=True, text=True, timeout=30,
-        )
-        if proc.returncode == 1:
+        # Exit 1 is detached HEAD's normal answer; a refusal (-1) is an error.
+        code, out, err = _run(self.root, "symbolic-ref", "--quiet", "--short", "HEAD")
+        if code == 1:
             symbolic = ""        # detached: exit 1, no output
-        elif proc.returncode != 0:
-            raise WorkspaceError(f"symbolic-ref failed: {proc.stderr.strip()}")
+        elif code != 0:
+            raise WorkspaceError(f"symbolic-ref failed: {err.strip()}")
         else:
-            symbolic = proc.stdout.strip()
+            symbolic = out.strip()
         status = _git(self.root, "status", "--porcelain")
         paths = tuple(sorted(
             line.split(None, 1)[1] for line in status.splitlines() if line.strip()

@@ -18,7 +18,7 @@ import subprocess
 from dataclasses import dataclass
 
 from core.repoops.ci_analysis import FailureReport
-from core.repoops.identity import RepositoryWorkspace, WorkspaceError
+from core.repoops.identity import RepositoryWorkspace, WorkspaceError, _git
 
 # ---------------------------------------------------------------- archaeology
 
@@ -39,14 +39,6 @@ class RepoArchaeology:
     build_configs_present: tuple[str, ...]
     runtime_declarations: tuple[str, ...]
     codeowners_file: str | None
-
-
-def _git(root: str, *args: str) -> str:
-    proc = subprocess.run(["git", "-C", root, *args], capture_output=True,
-                          text=True, timeout=30)
-    if proc.returncode != 0:
-        raise WorkspaceError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
-    return proc.stdout.strip()
 
 
 def collect_archaeology(ws: RepositoryWorkspace, failure: FailureReport | None,
