@@ -53,8 +53,22 @@ _WINDOWS_MODULE_ARGUMENT_PREFIX = _WINDOWS_PYTHON_ARGUMENT_PREFIX + r'\s+-m\s+ap
 Runner = Callable[..., Any]
 
 
+# Windows' console tools open no console window of their own; 0 (no flag) off Windows.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
 def _run(run: Runner, cmd: list[str]) -> Any:
     try:
+        # Windows' own taskkill, schtasks and PowerShell by absolute path, never a copy found on
+        # PATH; when one can't be trusted the step is skipped like any other command that could not run.
+        from core.process_liveness import SYSTEM32_TOOLS, system_powershell, system_tool
+
+        if cmd[0] == "powershell":
+            cmd = [system_powershell(), *cmd[1:]]
+        elif cmd[0] in SYSTEM32_TOOLS:
+            cmd = [system_tool(cmd[0]), *cmd[1:]]
+        if _NO_WINDOW:
+            return run(cmd, capture_output=True, text=True, check=False, creationflags=_NO_WINDOW)
         return run(cmd, capture_output=True, text=True, check=False)
     except Exception:
         return None
@@ -111,30 +125,125 @@ def _windows_install_root_literal(install_root: Path) -> str:
     return "'" + text + "'"
 
 
+def _windows_install_root_forms(install_root: Path) -> tuple[str, ...]:
+    """Return every spelling of the same install folder the stop predicates compare against.
+
+    A process keeps the spelling it was STARTED with in ExecutablePath and CommandLine, and the
+    Windows launchers hand this module whatever spelling the shortcut used, so one and the same
+    install folder legitimately reaches the ownership predicates as a junction, an 8.3 short
+    name, a different case or with a trailing separator. ``os.path.realpath`` collapses all of
+    those into one final spelling (junctions resolved, 8.3 expanded to long names, case as on
+    disk, trailing separator dropped), so the predicates match the final spelling alongside the
+    spelling the caller gave, compared case-insensitively on both sides (``os.path.normcase``
+    keys the dedup; PowerShell -match is case-insensitive). A root whose canonicalization
+    raises owns nothing: fail closed, never fall back to comparing raw strings.
+    """
+    given = str(Path(install_root))
+    if os.name != "nt":
+        return (given,)
+    try:
+        final = os.path.realpath(given)
+    except OSError:
+        return ()
+    forms: list[str] = []
+    seen: set[str] = set()
+    for form in (final, given):
+        key = os.path.normcase(form)
+        if key not in seen:
+            seen.add(key)
+            forms.append(form)
+    return tuple(forms)
+
+
+def _windows_canonical_root_setup(forms: tuple[str, ...]) -> str:
+    """The PowerShell setup every ownership predicate runs with.
+
+    Defines the root's spellings (canonical first, the caller's spelling last) and ``Canon``,
+    the same canonicalization on the process-reported side: a path Win32_Process carries is
+    resolved to the folder/file it really is (a junction to its target, an 8.3 short name to
+    its long form) and left as given when it does not exist, mirroring non-strict
+    ``os.path.realpath`` on the root side. ``$r``/``$rootPrefix`` keep the root exactly as
+    given and first, so a folder with any PowerShell quote in it stays one string. Windows
+    PowerShell 5.1 lists a file's hard-link names in ``.Target`` (that is what resolves a
+    junction in the middle of a path; ``FullName`` does not), so ``Canon`` follows ``Target``
+    only when it names exactly one link, is non-empty and differs from the path already held
+    -- a file with several names is left as given rather than followed into a joined string,
+    and a ``Target`` that names the path itself ends the loop instead of re-reading it.
+    """
+    literals = ", ".join(_windows_install_root_literal(Path(form)) for form in forms)
+    return (
+        f"$r = {_windows_install_root_literal(Path(forms[-1]))}; "
+        f"$canonForms = @({literals}); "
+        "$canonPrefixes = $canonForms | ForEach-Object { $_.TrimEnd([char[]]@(92,47)) + [char]92 }; "
+        "$rootPrefix = $r.TrimEnd([char[]]@(92,47)) + [char]92; "
+        "function Canon([string]$p) { "
+        "if (-not $p) { return $p }; "
+        "$c = $p.TrimEnd([char[]]@(92,47)); "
+        "if ($c.Length -eq 2 -and $c[1] -eq ':') { $c = $c + [char]92 }; "
+        "for ($n = 0; $n -lt 16 -and $c; $n++) { "
+        "try { $i = Get-Item -LiteralPath $c -Force -ErrorAction Stop } catch { break }; "
+        "if (-not $i) { break }; "
+        "$t = @($i.Target); "
+        "if ($t.Count -eq 1 -and [string]$t[0] -and [string]$t[0] -ne $c) { $c = [string]$t[0]; continue }; "
+        "if ([string]$i.FullName -ne $c) { $c = [string]$i.FullName; continue }; "
+        "return $c }; "
+        "return $c }; "
+        "$exeUnderRoot = '^(' + (($canonPrefixes | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')'; "
+        "$scriptForms = '^(' + (($canonPrefixes | ForEach-Object { [regex]::Escape($_ + 'apps\\vool_api_server.py') }) -join '|') + ')$'; "
+        "$rawScriptPattern = '^' + [regex]::Escape($rootPrefix + 'apps\\vool_api_server.py') + '$'; "
+        f"$scriptArgument = '{_WINDOWS_SCRIPT_ARGUMENT_PREFIX}' + '(?<voolscript>[^\\x22]*\\\\vool_api_server\\.py)' + '(?:\\x22|\\s|$)'; "
+        f"$moduleCommand = '{_WINDOWS_MODULE_ARGUMENT_PREFIX}'; "
+    )
+
+
+# The ownership test itself: only this installation's Python is VOOL's -- a python/pythonw
+# whose exe lives under the install root, or that runs the root's API script, or that runs
+# ``-m apps.vool_api_server`` with a parent under the root (a source checkout's venv
+# launcher). Every side is matched RAW or canonicalized, so the test is a strict superset of
+# the raw-only predicate: the process keeps the spelling it was started with, and even when
+# ``Canon`` cannot resolve a spelling (Windows PowerShell 5.1 lists a hard-linked file's
+# names in ``.Target``, so such a file does not canonicalize to a single path) the raw
+# spelling still owns what it always owned. The captured script argument is read into a
+# variable before any further -match: a raw -match would overwrite ``$Matches``. The two
+# parent checks of the ``-m`` rule sit inside ONE paren group with the gate itself: PowerShell
+# gives ``-and`` and ``-or`` equal precedence, so ungated the canonical parent check would run
+# for every python and read a ``$parentExe`` assigned while testing an earlier pipeline item.
+_WINDOWS_OWNERSHIP_PREDICATE = (
+    "| Where-Object { ($_.Name -ieq 'python.exe' -or $_.Name -ieq 'pythonw.exe') "
+    "-and ((([string]$_.ExecutablePath -match $exeUnderRoot) "
+    "-or ((Canon ([string]$_.ExecutablePath)) -match $exeUnderRoot)) "
+    "-or (([string]$_.CommandLine -match $scriptArgument) "
+    "-and ((($scriptValue = [string]$Matches['voolscript'])) -ne '') "
+    "-and (($scriptValue -match $rawScriptPattern) -or ((Canon $scriptValue) -match $scriptForms)))"
+    "-or ((([string]$_.CommandLine -match $moduleCommand) "
+    "-and (((($parentExe = [string](Get-CimInstance Win32_Process -Filter \"ProcessId=$($_.ParentProcessId)\" "
+    "-ErrorAction SilentlyContinue).ExecutablePath)) -match $exeUnderRoot) "
+    "-or ((Canon $parentExe) -match $exeUnderRoot))))) } "
+)
+
+
 def kill_listener(run: Runner, port: int, install_root: Path) -> int | None:
     """Tree-kill the VOOL API process listening on ``port``. Returns the killed pid, or None.
 
     Only this installation's Python is VOOL's: a python/pythonw whose exe lives under the install
     root, or that runs the root's API script, or that runs ``-m apps.vool_api_server`` with a
     parent under the root (a source checkout's venv launcher). Anything else holding the port -- a
-    user's own OpenClaw gateway on 18789 or an unrelated local server -- is left running.
+    user's own OpenClaw gateway on 18789 or an unrelated local server -- is left running. The
+    install root is matched in every spelling of the same folder (junction, 8.3 short name, case,
+    trailing separator), canonicalized the same way on both sides; a root that cannot be
+    canonicalized at all owns nothing and nothing is killed.
     """
+    forms = _windows_install_root_forms(Path(install_root))
+    if not forms:
+        return None
     res = _run(run, [
         "powershell", "-NoProfile", "-Command",
-        f"$r = {_windows_install_root_literal(Path(install_root))}; "
-        "$rootPrefix = $r.TrimEnd([char[]]@(92,47)) + [char]92; "
-        "$script = [regex]::Escape($rootPrefix + 'apps\\vool_api_server.py'); "
-        f"$scriptArgument = '{_WINDOWS_SCRIPT_ARGUMENT_PREFIX}' + $script + '(?:\\x22|\\s|$)'; "
-        f"$moduleCommand = '{_WINDOWS_MODULE_ARGUMENT_PREFIX}'; "
-        f"$p = Get-NetTCPConnection -LocalPort {int(port)} -State Listen -ErrorAction SilentlyContinue "
+        _windows_canonical_root_setup(forms)
+        + f"$p = Get-NetTCPConnection -LocalPort {int(port)} -State Listen -ErrorAction SilentlyContinue "
         "| Select-Object -First 1 -ExpandProperty OwningProcess; "
         "$v = if ($p) { Get-CimInstance Win32_Process -Filter \"ProcessId=$p\" -ErrorAction SilentlyContinue "
-        "| Where-Object { ($_.Name -ieq 'python.exe' -or $_.Name -ieq 'pythonw.exe') "
-        "-and (([string]$_.ExecutablePath).StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase) "
-        "-or ([string]$_.CommandLine -match $scriptArgument) "
-        "-or (([string]$_.CommandLine -match $moduleCommand) "
-        "-and ([string](Get-CimInstance Win32_Process -Filter \"ProcessId=$($_.ParentProcessId)\" "
-        "-ErrorAction SilentlyContinue).ExecutablePath).StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase))) } }; "
+        + _WINDOWS_OWNERSHIP_PREDICATE
+        + "}; "
         "if ($v) { $p } else { '' }",
     ])
     out = _stdout(res).strip()
@@ -154,19 +263,14 @@ def kill_api_by_pidfile(run: Runner, pidfile: Path, install_root: Path) -> int |
         return None
     if pid <= 0 or pid == os.getpid():
         return None
+    forms = _windows_install_root_forms(Path(install_root))
+    if not forms:
+        return None  # this install cannot be canonicalized: refuse rather than compare raw strings
     command = (
-        f"$r = {_windows_install_root_literal(Path(install_root))}; "
-        "$rootPrefix = $r.TrimEnd([char[]]@(92,47)) + [char]92; "
-        "$script = [regex]::Escape($rootPrefix + 'apps\\vool_api_server.py'); "
-        f"$scriptArgument = '{_WINDOWS_SCRIPT_ARGUMENT_PREFIX}' + $script + '(?:\\x22|\\s|$)'; "
-        f"$moduleCommand = '{_WINDOWS_MODULE_ARGUMENT_PREFIX}'; "
-        f"$v = Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\" -ErrorAction SilentlyContinue "
-        "| Where-Object { ($_.Name -ieq 'python.exe' -or $_.Name -ieq 'pythonw.exe') "
-        "-and (([string]$_.ExecutablePath).StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase) "
-        "-or ([string]$_.CommandLine -match $scriptArgument) "
-        "-or (([string]$_.CommandLine -match $moduleCommand) "
-        "-and ([string](Get-CimInstance Win32_Process -Filter \"ProcessId=$($_.ParentProcessId)\" "
-        "-ErrorAction SilentlyContinue).ExecutablePath).StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase))) }; "
+        _windows_canonical_root_setup(forms)
+        + f"$v = Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\" -ErrorAction SilentlyContinue "
+        + _WINDOWS_OWNERSHIP_PREDICATE
+        + "; "
         "if ($v) { 'owned' } else { '' }"
     )
     result = _run(run, ["powershell", "-NoProfile", "-Command", command])

@@ -6,11 +6,12 @@ name: Windows Install Smoke
 # (~1.5 GB) and binds 127.0.0.1:11435 on the runner, so it never runs on ordinary pushes.
 # A manual dispatch needs the file on the default branch, which this Windows line never
 # touches, so the owner-approved way to run it is pushing the commit under test to the one
-# dedicated branch below.
+# dedicated branch below. It also runs on every push to windows/v0.7.1-port, so each merged
+# batch gets an install check on the port head.
 
 on:
   push:
-    branches: [windows/install-smoke]
+    branches: [windows/install-smoke, windows/v0.7.1-port]
   workflow_dispatch:
 
 concurrency:

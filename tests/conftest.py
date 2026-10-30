@@ -271,6 +271,26 @@ def profile_home_env_stays_in_its_test():
 
 
 @pytest.fixture(autouse=True)
+def windows_own_tmp_path_is_disposable(request, monkeypatch):
+    """On Windows, list this test's own tmp_path as its disposable workspace (tests/_windows_disposable_tmp.py)."""
+    from tests._windows_disposable_tmp import (
+        mark_own_tmp_path_disposable,
+        running_on_windows,
+        session_pytest_workspace,
+    )
+
+    if running_on_windows():
+        mark_own_tmp_path_disposable(
+            monkeypatch,
+            request.getfixturevalue("tmp_path"),
+            windows=True,
+            tempfile_root=request.getfixturevalue("tmp_path_factory").mktemp("tempfile-"),
+            session_workspace=session_pytest_workspace(),
+        )
+    yield
+
+
+@pytest.fixture(autouse=True)
 def unpatched_subprocess_popen() -> None:
     """Restore the stock `subprocess.Popen.__init__` before every test.
 

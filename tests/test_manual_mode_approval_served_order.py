@@ -51,6 +51,7 @@ def test_manual_mode_folder_request_streams_an_actionable_approval_before_comple
         finally:
             daemon.stop()
     assert not (Path.home() / "Desktop" / TARGET).exists(), "nothing was approved, nothing may be created"
+    assert not (daemon.machine_home / "Desktop" / TARGET).exists(), "nothing was approved, nothing may be created"
     types = [ev.get("type") for ev in typed]
     assert "permission.required" in types, types
     assert "task.completed" not in types, "pending work must never claim successful completion"

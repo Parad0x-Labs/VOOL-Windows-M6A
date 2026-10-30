@@ -12,6 +12,7 @@ import sys
 
 from installer import self_update
 from installer.bundle import vool_protocol_handler
+from tests._windows_system32 import trust_system32
 
 
 def _cmd_line_after_s_c(command: str) -> str:
@@ -26,6 +27,7 @@ def test_self_update_restart_keeps_the_launcher_path_quoted(tmp_path, monkeypatc
     root.mkdir()
     (root / "Start_VOOL.bat").write_text("@echo off\n", encoding="utf-8")
     launched: list[object] = []
+    trust_system32(monkeypatch)
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: launched.append(cmd))
     self_update._default_start_server(root)

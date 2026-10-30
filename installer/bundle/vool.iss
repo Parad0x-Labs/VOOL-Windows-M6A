@@ -51,6 +51,8 @@ Source: "{#Stage}\app\*"; DestDir: "{app}\app"; Flags: recursesubdirs createalls
 ; Embedded models seed the persistent per-user store used by the launcher and are preserved on uninstall.
 Source: "{#Stage}\models\*"; DestDir: "{localappdata}\VOOL\models"; Flags: recursesubdirs createallsubdirs ignoreversion skipifsourcedoesntexist uninsneveruninstall
 Source: "{#Stage}\ollama\*"; DestDir: "{app}\ollama"; Flags: recursesubdirs createallsubdirs ignoreversion
+; The Windows broker, self-contained (windows\broker\publish.ps1). The API starts it with VOOL.
+Source: "{#Stage}\broker\*"; DestDir: "{app}\broker"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "{#Stage}\python\*"; DestDir: "{app}\python"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "{#Stage}\bundle_manifest.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Stage}\bundle_supervisor.py"; DestDir: "{app}"; Flags: ignoreversion

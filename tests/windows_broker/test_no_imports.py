@@ -1,4 +1,9 @@
-"""The phase-A broker package stays disconnected from runtime code."""
+"""The broker package stays disconnected from runtime code.
+
+Phase B starts and stops the broker with the VOOL API, so apps/vool_api_server.py may import
+core.windows_broker.process, and nothing else may. Nothing is routed through the broker yet: any
+other use, the client from any file included, still fails.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +13,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = "core.windows_broker"
+#: The one production use phase B allows: the API server starting and stopping the broker.
+ALLOWED = {"apps/vool_api_server.py": "core.windows_broker.process"}
 
 
 def _python_files() -> list[Path]:
@@ -77,9 +84,44 @@ def test_no_production_module_uses_windows_broker() -> None:
     assert any(path.relative_to(ROOT).parts[0] == "core" for path in files)
     assert any(path.relative_to(ROOT).parts[0] == "ops" for path in files)
     uses = {
-        str(path.relative_to(ROOT)): hits for path in files if (hits := _uses_of_the_broker(path))
+        path.relative_to(ROOT).as_posix(): hits for path in files if (hits := _uses_of_the_broker(path))
     }
+    allowed = {name: [hit for hit in uses.pop(name, []) if not _is_allowed(name, hit)] for name in ALLOWED}
     assert uses == {}
+    assert allowed == {name: [] for name in ALLOWED}
+
+
+def _is_allowed(name: str, hit: str) -> bool:
+    """A plain import of the allowed module, or of a name from it, in the file allowed to use it."""
+    module = ALLOWED[name]
+    if not hit.startswith("import "):
+        return False
+    imported = hit[len("import ") :].split(" at line ")[0]
+    return imported == module or imported.startswith(module + ".")
+
+
+def test_the_api_server_starts_the_broker_through_the_allowed_module() -> None:
+    # The exception is not stale: the API server does import the start module.
+    for name, module in ALLOWED.items():
+        hits = _uses_of_the_broker(ROOT / name)
+        assert any(_is_allowed(name, hit) for hit in hits), (name, module, hits)
+
+
+def test_only_the_allowed_module_is_allowed() -> None:
+    name = "apps/vool_api_server.py"
+    probe = ROOT / name
+    forms = {
+        "from core.windows_broker.process import start_for_api": True,
+        "import core.windows_broker.process": True,
+        "from core.windows_broker import process": False,
+        "from core.windows_broker.client import BrokerClient": False,
+        "import core.windows_broker": False,
+        "import importlib; importlib.import_module('core.windows_broker.process')": False,
+    }
+    for source, expected in forms.items():
+        hits = _uses_of_the_broker(probe, source.encode("utf-8") + b"\n")
+        assert hits, source
+        assert all(_is_allowed(name, hit) for hit in hits) == expected, (source, hits)
 
 
 def test_every_import_form_is_seen() -> None:

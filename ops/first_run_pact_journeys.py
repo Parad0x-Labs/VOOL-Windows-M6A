@@ -89,7 +89,9 @@ class Daemon:
             time.sleep(0.25)
         raise RuntimeError(f"daemon on :{self.port} never answered /healthz; see {self.log}")
 
-    def kill(self, sig=signal.SIGKILL) -> None:
+    def kill(self, sig: int | None = None) -> None:
+        if sig is None:
+            sig = signal.SIGKILL
         if self.proc is None:
             return
         with contextlib.suppress(ProcessLookupError):
@@ -212,7 +214,12 @@ def cleanup(daemon: Daemon, home: Path) -> dict:
     port_free = False
     try:
         s = socket.socket()
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if sys.platform != "win32":
+            # POSIX: reuse skips TIME_WAIT so the probe answers "free for a rebind".
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # Windows: SO_REUSEADDR would also bind over a LIVE holder, so the probe
+        # would report the port reusable while the daemon still owns it. A plain
+        # bind is the honest check: it fails while anything still holds the port.
         s.bind(("127.0.0.1", daemon.port))
         s.close()
         port_free = True
@@ -465,6 +472,10 @@ JOURNEYS = {"jp1": jp1, "jp2": jp2, "jp4": jp4, "jp5": jp5, "jp7": jp7}
 
 
 def main() -> int:
+    if os.name != "posix":
+        print("unsupported platform: ops/first_run_pact_journeys.py stops the daemon with "
+              "os.killpg and SIGKILL, which need POSIX (os.name != posix)", file=sys.stderr)
+        return 2
     OUT.mkdir(parents=True, exist_ok=True)
     wanted = sys.argv[1:] or list(JOURNEYS)
     failures = []

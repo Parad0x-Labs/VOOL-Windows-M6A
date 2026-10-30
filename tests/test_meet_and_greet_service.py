@@ -3,7 +3,9 @@ from __future__ import annotations
 import http.client
 import importlib
 import json
+import socket
 import ssl
+import sys
 import tempfile
 import unittest
 import uuid
@@ -49,10 +51,12 @@ from core.meet_and_greet_models import (
 )
 from core.meet_and_greet_service import MeetAndGreetConfig, MeetAndGreetService
 from core.web.meet.app import create_meet_app
+from network import listen_policy
 from network.knowledge_models import KnowledgeAdvert
 from storage.db import get_connection, reset_default_connection
 from storage.migrations import run_migrations
 from tests.asgi_harness import asgi_request
+from tests.test_listen_policy_fail_closed import _resolving_socket_module
 
 
 def _now() -> datetime:
@@ -2084,6 +2088,12 @@ def test_meet_main_runs_uvicorn_with_factory_app_and_tls_settings() -> None:
     fake_server = unittest.mock.Mock()
     fake_uvicorn.Config.return_value = unittest.mock.sentinel.config
     fake_uvicorn.Server.return_value = fake_server
+    exclusive: list[int] = []
+    if sys.platform == "win32":
+        # Read the option while uvicorn holds the sockets; the policy closes them after run().
+        fake_server.run.side_effect = lambda **kwargs: exclusive.extend(
+            sock.getsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE) for sock in kwargs["sockets"]
+        )
     args = unittest.mock.Mock(
         host="127.0.0.1",
         port=8766,
@@ -2118,4 +2128,54 @@ def test_meet_main_runs_uvicorn_with_factory_app_and_tls_settings() -> None:
     assert kwargs["ssl_ca_certs"] == "ca.pem"
     assert kwargs["ssl_cert_reqs"] == ssl.CERT_REQUIRED
     assert fake_uvicorn.Config.call_args.args[0] is unittest.mock.sentinel.app
-    fake_server.run.assert_called_once_with()
+    if sys.platform == "win32":
+        # Windows runs uvicorn on the pre-bound SO_EXCLUSIVEADDRUSE sockets of
+        # network.listen_policy, which closes them once run() returns.
+        assert fake_server.run.call_count == 1
+        (sock,) = fake_server.run.call_args.kwargs["sockets"]
+        assert exclusive and all(value != 0 for value in exclusive)
+        assert sock.fileno() == -1
+    else:
+        # POSIX keeps uvicorn's own bind path: run() with no sockets.
+        fake_server.run.assert_called_once_with()
+
+
+def test_meet_main_hands_every_resolved_address_to_uvicorn_sockets(monkeypatch):
+    """The meet site's uvicorn launch, pinned against the listen policy: on the
+    Windows path every address getaddrinfo resolves for (host, port) reaches
+    ``Server.run(sockets=...)`` -- a single-family bind would leave the other
+    loopback family unheld and stealable. POSIX (not mocked here) keeps
+    uvicorn's own bind path instead."""
+    fake_socket, created, _ = _resolving_socket_module(
+        [(socket.AF_INET6, ("::1", 8766, 0, 0)), (socket.AF_INET, ("127.0.0.1", 8766))]
+    )
+    monkeypatch.setattr(listen_policy, "socket", fake_socket)
+    monkeypatch.setattr(listen_policy, "_WINDOWS", True)
+    fake_uvicorn = unittest.mock.Mock()
+    fake_server = fake_uvicorn.Server.return_value
+    args = unittest.mock.Mock(
+        host="localhost",
+        port=8766,
+        auth_token="token",
+        no_signed_writes=False,
+        tls_certfile="cert.pem",
+        tls_keyfile="key.pem",
+        tls_ca_file="ca.pem",
+        tls_require_client_cert=True,
+    )
+
+    with patch(
+        "apps.meet_and_greet_server.argparse.ArgumentParser.parse_args",
+        return_value=args,
+    ), patch.dict(
+        "sys.modules",
+        {"uvicorn": fake_uvicorn},
+    ), patch(
+        "apps.meet_and_greet_server.create_meet_app",
+        return_value=unittest.mock.sentinel.app,
+    ):
+        exit_code = meet_main()
+
+    assert exit_code == 0
+    assert len(created) == 2
+    fake_server.run.assert_called_once_with(sockets=[created[0], created[1]])

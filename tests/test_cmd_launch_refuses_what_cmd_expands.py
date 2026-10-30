@@ -15,6 +15,7 @@ import pytest
 
 from installer import self_update, start_windows_detached
 from installer.bundle import vool_protocol_handler
+from tests._windows_system32 import trust_system32
 
 
 @pytest.fixture
@@ -87,6 +88,7 @@ def test_a_plain_launcher_path_still_starts(monkeypatch) -> None:
     launched: list[object] = []
     monkeypatch.setattr(vool_protocol_handler.subprocess, "Popen", lambda cmd, **kwargs: launched.append(cmd))
     vool_protocol_handler._start_bundle(_NamedPath("C:\\Program Files (x86)\\A&B"))
+    trust_system32(monkeypatch)
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kwargs: launched.append(cmd))
     self_update._default_start_server(_NamedPath("C:\\Program Files (x86)\\A&B"))

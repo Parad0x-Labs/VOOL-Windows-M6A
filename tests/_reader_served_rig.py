@@ -34,6 +34,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 #: The lane-local optional decoders (`pypdf`), installed with `pip install --target`. Absent, the
 #: PDF text layer comes from PDFKit; present, it is also portable off Apple hardware.
 READER_DEPS = REPO_ROOT / ".reader-deps"
+#: On Windows the daemon gets its own user profile (see ``ServedDaemon.machine_home``). Patched by
+#: tests to check the redirect on any platform.
+_REDIRECT_MACHINE_HOME = os.name == "nt"
 
 
 def canonical_session(seed: str) -> str:
@@ -386,6 +389,12 @@ class ServedDaemon:
         self.env_extra = dict(env_extra or {})
         self.process: subprocess.Popen | None = None
         self.log_path = self.home / "daemon.log"
+        #: The user profile the daemon sees on Windows: a sibling of its VOOL_HOME, never inside it,
+        #: since the runtime refuses writes into its own state. Without it a served "create a folder
+        #: on the desktop" turn points at the operator's real Desktop, which the Windows write gate
+        #: refuses before any approval is asked. Its Desktop, Downloads and Documents exist, as on a
+        #: real profile.
+        self.machine_home = self.home.with_name(self.home.name + "-machine-home")
 
     @property
     def base_url(self) -> str:
@@ -422,6 +431,11 @@ class ServedDaemon:
                 "VOOL_READER_TOOLS_DIR": str(self.home / "reader_tools"),
             }
         )
+        if _REDIRECT_MACHINE_HOME:
+            for name in ("Desktop", "Downloads", "Documents"):
+                (self.machine_home / name).mkdir(parents=True, exist_ok=True)
+            env["USERPROFILE"] = str(self.machine_home)
+            env["HOME"] = str(self.machine_home)
         env.update(self.env_extra)
         env.pop("PYTEST_CURRENT_TEST", None)
         return env

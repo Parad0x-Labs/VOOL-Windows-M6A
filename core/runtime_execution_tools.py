@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from core import policy_engine, windows_path_policy
+from core import policy_engine, windows_known_folders, windows_path_policy
 from core.effect_reconciliation import (
     EffectOutcomeUnknown,
     peek_in_flight_effect,
@@ -162,6 +162,7 @@ _WORKSPACE_CONTENT_QUESTION_RE = re.compile(
 )
 _FILE_LINE_RE = re.compile(r"(?P<path>[A-Za-z0-9_./-]+\.[A-Za-z0-9_+-]+):(?P<line>\d+)")
 _SAFE_MACHINE_DIRECTORY_NAMES = ("Desktop", "Downloads", "Documents")
+_SAFE_MACHINE_NAME_BY_LOWER = {name.lower(): name for name in _SAFE_MACHINE_DIRECTORY_NAMES}
 #: Words a machine path may use for one of those folders in the user's home.
 _MACHINE_DIRECTORY_ALIASES = {
     "desktop": "Desktop",
@@ -4596,8 +4597,10 @@ def _home_relative_label(path: Path) -> str:
 
 
 def _safe_machine_roots() -> tuple[Path, ...]:
-    home = _machine_home().resolve()
-    return tuple((home / name).resolve() for name in _SAFE_MACHINE_DIRECTORY_NAMES)
+    # On Windows each folder is the one the shell reports, so a Desktop OneDrive moved is the root
+    # (core/windows_known_folders.py); elsewhere, and whenever that answer is not used, home / name.
+    home = _machine_home()
+    return tuple(windows_known_folders.safe_folder(name, home).resolve() for name in _SAFE_MACHINE_DIRECTORY_NAMES)
 
 
 def _machine_home() -> Path:
@@ -4612,12 +4615,26 @@ def _machine_home() -> Path:
     return Path("~").expanduser()
 
 
+def _in_machine_home(relative: Path) -> Path:
+    """`relative` placed in the home folder. A path starting with Desktop, Downloads or Documents
+    lands in that folder where the shell really keeps it (`_safe_machine_roots`); while that is
+    the home spelling anyway, the path is joined exactly as typed."""
+    home = _machine_home()
+    if relative.parts and not relative.is_absolute():
+        name = _SAFE_MACHINE_NAME_BY_LOWER.get(relative.parts[0].lower())
+        if name:
+            folder = windows_known_folders.safe_folder(name, home)
+            if folder != home / name:
+                return folder.joinpath(*relative.parts[1:])
+    return home / relative
+
+
 def _expand_machine_user(raw: str) -> Path:
     value = str(raw or "").strip()
     if value in {"~", "~/", "~\\"}:
         return _machine_home()
     if value.startswith("~/") or value.startswith("~\\"):
-        return _machine_home() / value[2:]
+        return _in_machine_home(Path(value[2:]))
     return Path(value).expanduser()
 
 
@@ -4644,14 +4661,14 @@ def anchor_machine_path(raw_path: str | None) -> Path:
         return _safe_machine_roots()[0]
     alias = _MACHINE_DIRECTORY_ALIASES.get(raw.lower())
     if alias:
-        return (_machine_home() / alias).resolve()
+        return windows_known_folders.safe_folder(alias, _machine_home()).resolve()
     # On Windows a share or device path raises (a ValueError, which every caller already turns into
     # its own refusal) before the resolve below reaches for it. Only the network tier: a machine path
     # such as `C:Documents\x.txt` is placed in the home folder, as the Windows write gate expects.
     windows_path_policy.check(raw, network_only=True)
     candidate = _expand_machine_user(raw)
     if not candidate.is_absolute():
-        return (_machine_home() / candidate).resolve()
+        return _in_machine_home(candidate).resolve()
     return candidate.resolve()
 
 

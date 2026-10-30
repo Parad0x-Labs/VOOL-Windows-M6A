@@ -3,6 +3,8 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import socket
+import sys
 import threading
 import time
 import unittest
@@ -29,7 +31,9 @@ from core.brain_hive_dashboard import (
 )
 from core.vool_workstation_ui import VOOL_WORKSTATION_DEPLOYMENT_VERSION
 from core.web.watch.app import create_watch_app
+from network import listen_policy
 from tests.asgi_harness import asgi_request
+from tests.test_listen_policy_fail_closed import _resolving_socket_module
 
 # The voolbook.com public site pages were retired; these paths must not render.
 RETIRED_PUBLIC_SITE_PATHS = (
@@ -201,6 +205,12 @@ class BrainHiveWatchServerTests(unittest.TestCase):
             "uvicorn.Server"
         ) as server_cls:
             server = server_cls.return_value
+            exclusive: list[int] = []
+            if sys.platform == "win32":
+                # Read the option while uvicorn holds the sockets; the policy closes them after run().
+                server.run.side_effect = lambda **kwargs: exclusive.extend(
+                    sock.getsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE) for sock in kwargs["sockets"]
+                )
             from apps.brain_hive_watch_server import serve
 
             serve(cfg)
@@ -213,7 +223,17 @@ class BrainHiveWatchServerTests(unittest.TestCase):
         self.assertEqual(config.ssl_certfile, "/tmp/watch-cert.pem")
         self.assertEqual(config.ssl_keyfile, "/tmp/watch-key.pem")
         self.assertEqual(config.ssl_ca_certs, "/tmp/watch-ca.pem")
-        server.run.assert_called_once_with()
+        if sys.platform == "win32":
+            # Windows runs uvicorn on the pre-bound SO_EXCLUSIVEADDRUSE sockets of
+            # network.listen_policy, which closes them once run() returns.
+            server.run.assert_called_once()
+            (sock,) = server.run.call_args.kwargs["sockets"]
+            self.assertTrue(exclusive)
+            self.assertTrue(all(value != 0 for value in exclusive))
+            self.assertEqual(sock.fileno(), -1)
+        else:
+            # POSIX keeps uvicorn's own bind path: run() with no sockets.
+            server.run.assert_called_once_with()
 
     def test_fetch_dashboard_falls_back_to_second_upstream(self) -> None:
         calls: list[tuple[str, str | None]] = []
@@ -1386,3 +1406,31 @@ class BrainHiveWatchServerTests(unittest.TestCase):
         self.assertEqual(first_payload["cache_state"], "miss")
         self.assertEqual(stale_payload["cache_state"], "stale_fallback")
         self.assertEqual(stale_payload["result"]["topics"][0]["title"], "Cached topic")
+
+
+def test_serve_hands_every_resolved_address_to_uvicorn_sockets(monkeypatch):
+    """The watch site's uvicorn launch, pinned against the listen policy: on the
+    Windows path every address getaddrinfo resolves for (host, port) reaches
+    ``Server.run(sockets=...)`` -- a single-family bind would leave the other
+    loopback family unheld and stealable. POSIX (not mocked here) keeps
+    uvicorn's own bind path instead."""
+    cfg = BrainHiveWatchServerConfig(
+        host="localhost",
+        port=8788,
+        upstream_base_urls=("http://127.0.0.1:8766",),
+    )
+    fake_socket, created, _ = _resolving_socket_module(
+        [(socket.AF_INET6, ("::1", 8788, 0, 0)), (socket.AF_INET, ("127.0.0.1", 8788))]
+    )
+    monkeypatch.setattr(listen_policy, "socket", fake_socket)
+    monkeypatch.setattr(listen_policy, "_WINDOWS", True)
+
+    with patch("apps.brain_hive_watch_server.create_watch_app", return_value=object()), patch(
+        "uvicorn.Server"
+    ) as server_cls:
+        from apps.brain_hive_watch_server import serve
+
+        serve(cfg)
+
+    assert len(created) == 2
+    server_cls.return_value.run.assert_called_once_with(sockets=[created[0], created[1]])

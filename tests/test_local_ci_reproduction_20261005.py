@@ -61,6 +61,7 @@ import sys
 import time
 from pathlib import Path
 
+import psutil
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -900,8 +901,12 @@ def test_hung_canonical_collection_is_bounded(tmp_path, bound):
     assert result["executed"] is False
     assert result["collection"]["collection_timed_out"] is True
     assert result["collection"]["collection_command_exit"] is None
-    with pytest.raises(ProcessLookupError):
-        os.kill(result["collection"]["collection_pid"], 0)  # existence probe only
+    if os.name == "nt":
+        # Windows has no signal-0 existence probe: os.kill(pid, 0) terminates there.
+        assert not psutil.pid_exists(result["collection"]["collection_pid"])
+    else:
+        with pytest.raises(ProcessLookupError):
+            os.kill(result["collection"]["collection_pid"], 0)  # existence probe only
     assert not (run_dir / "run-stdout.txt").exists()
 
 

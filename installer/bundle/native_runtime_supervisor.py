@@ -23,8 +23,15 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from core.process_liveness import pid_alive
+from core.process_liveness import pid_alive, system_taskkill, system_tool
 from core.runtime_paths import active_vool_home, runtime_home_identity
+
+
+def _windows_cmd_starter(command: list[str]) -> str | None:
+    """The .bat a Windows wrapper command runs through ``cmd /d /s /c``, or None for any other command."""
+    if len(command) == 5 and [part.lower() for part in command[1:4]] == ["/d", "/s", "/c"]:
+        return command[4]
+    return None
 
 
 class NativeRuntimeError(RuntimeError):
@@ -96,6 +103,17 @@ class NativeRuntimeSupervisor:
         mode = str(os.environ.get("VOOL_RUNTIME_MODE") or "wrapper").strip().lower()
         if mode == "self-contained":
             command = [sys.executable, "-m", "apps.vool_api_server"]
+        elif sys.platform == "win32":
+            # The Windows bundle ships Start_VOOL.bat; there is no bash. A missing .bat is refused
+            # by ensure_ready before anything is spawned.
+            starter = root / "Start_VOOL.bat"
+            # System32's cmd.exe only, never ComSpec or a cmd found on PATH (#97). When it can't be
+            # trusted the command keeps an empty interpreter and ensure_ready refuses to spawn.
+            try:
+                cmd = system_tool("cmd")
+            except OSError:
+                cmd = ""
+            command = [cmd, "/d", "/s", "/c", str(starter)]
         else:
             starter = root / "Start_VOOL.sh"
             command = ["bash", str(starter)]
@@ -213,11 +231,30 @@ class NativeRuntimeSupervisor:
         )
 
     def _owned_identity_matches(self, payload: dict[str, Any] | None) -> bool:
-        return (
-            self.process is not None
-            and self._identity_matches(payload)
-            and self._identity(payload).get("pid") == self.process.pid
-        )
+        if self.process is None or not self._identity_matches(payload):
+            return False
+        pid = self._identity(payload).get("pid")
+        if pid == self.process.pid:
+            return True
+        # The Windows wrapper's own child is cmd.exe; the API it starts is that cmd's descendant.
+        return _windows_cmd_starter(self.command) is not None and pid in self._descendant_pids()
+
+    def _descendant_pids(self) -> set[int]:
+        """Pids under the owned child (psutil drops reused pids); empty, never a guess, on any failure."""
+        try:
+            import psutil
+
+            return {int(proc.pid) for proc in psutil.Process(self.process.pid).children(recursive=True)}
+        except Exception:
+            return set()
+
+    def _spawn_command(self) -> list[str] | str:
+        starter = _windows_cmd_starter(self.command)
+        if starter is None or os.name != "nt":
+            return self.command
+        # cmd /s strips only the outer pair of quotes, so the inner pair reaches the .bat path intact
+        # even with ( ) & ^ in it. list2cmdline would escape the inner quotes instead.
+        return f'"{self.command[0]}" /d /s /c ""{starter}""'
 
     def ensure_ready(self) -> dict[str, Any]:
         """Return the exact runtime stamp, or raise before any native window is created."""
@@ -247,6 +284,15 @@ class NativeRuntimeSupervisor:
             raise NativeRuntimeError("native runtime start command is empty")
         if self.command[0] == "bash" and len(self.command) > 1 and not Path(self.command[1]).is_file():
             raise NativeRuntimeError(f"runtime starter is missing: {self.command[1]}")
+        cmd_starter = _windows_cmd_starter(self.command)
+        if cmd_starter is not None:
+            if not self.command[0]:
+                raise NativeRuntimeError("Windows' own cmd.exe in System32 can't be trusted here; nothing was started")
+            if not Path(cmd_starter).is_file():
+                raise NativeRuntimeError(f"runtime starter is missing: {cmd_starter}")
+            if '"' in cmd_starter or "%" in cmd_starter:
+                # cmd expands %...% even inside quotes; refuse rather than run a different path.
+                raise NativeRuntimeError(f"runtime starter path cannot be passed to cmd safely: {cmd_starter}")
 
         log_dir = active_vool_home(self.env) / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -270,7 +316,7 @@ class NativeRuntimeSupervisor:
                 subprocess, "CREATE_NO_WINDOW", 0
             )
         try:
-            self.process = self._popen(self.command, **kwargs)
+            self.process = self._popen(self._spawn_command(), **kwargs)
         except Exception as exc:
             self._close_log()
             raise NativeRuntimeError(f"runtime spawn failed: {type(exc).__name__}: {exc}") from exc
@@ -342,6 +388,16 @@ class NativeRuntimeSupervisor:
             with contextlib.suppress(Exception):
                 if os.name == "posix":
                     os.killpg(os.getpgid(child.pid), signal.SIGTERM)
+                elif os.name == "nt":
+                    # Windows has no group signalling: take the child's whole tree
+                    # down through the recorded PID while the root still runs (once
+                    # it has exited, taskkill /T can't walk to the helpers it
+                    # started). Nothing outside that tree is ever touched; if the
+                    # tree kill fails, the wait below falls back to killing the child.
+                    subprocess.run(
+                        (system_taskkill(), "/PID", str(child.pid), "/T", "/F"),
+                        capture_output=True, check=False, timeout=8,
+                    )
                 else:
                     child.terminate()
             try:

@@ -19,7 +19,7 @@ def test_a_prior_question_cannot_supply_the_filename_or_content(monkeypatch, tmp
         source_context={},
     )
     assert target is not None
-    assert Path(target["path"]) == root / "fresh.txt"
+    assert Path(target["path"]).expanduser() == root / "fresh.txt"
     assert target["content"] == "new"
 
 def test_a_prior_question_cannot_supply_the_transcript_destination() -> None:
@@ -67,4 +67,4 @@ def test_a_preposed_destination_is_preserved_by_request_scoping(monkeypatch, tmp
         "On my Desktop write a file called fresh.txt with text: new",
         source_context={},
     )
-    assert target is not None and Path(target["path"]) == root / "fresh.txt"
+    assert target is not None and Path(target["path"]).expanduser() == root / "fresh.txt"

@@ -1780,7 +1780,9 @@ class CodeTaskRuntime:
             value = str(arguments.get(key) or "").strip()
             if not value:
                 continue
-            if value.startswith(("/", "~")) or value.startswith("\\\\"):
+            # POSIX-absolute, home, rooted/UNC (`\x`, `\\server\share`), and any drive form
+            # (`C:\x`, `C:/x`, drive-relative `C:x`), refused on every host.
+            if value.startswith(("/", "~", "\\")) or value[1:2] == ":":
                 return value
             if any(part == ".." for part in value.replace("\\", "/").split("/")):
                 return value

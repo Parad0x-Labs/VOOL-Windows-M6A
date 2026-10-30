@@ -197,10 +197,11 @@ def _fallback_to_edge() -> None:
         _log("fallback: vool-open.ps1 not found; no window opened")
         return
     try:
+        from core.process_liveness import system_powershell
         from core.runtime_paths import native_runtime_home
 
         subprocess.Popen(
-            ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", ps1],
+            [system_powershell(), "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", ps1],
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             env={**os.environ, "VOOL_HOME": str(native_runtime_home())},
         )
@@ -826,6 +827,8 @@ class _WindowApi:
                     os.fsync(handle.fileno())
                     os.link(temporary, destination)
                 finally:
+                    # Windows cannot unlink a file that still has an open handle.
+                    handle.close()
                     temporary.unlink(missing_ok=True)
             return {"ok": True}
         except urllib.error.HTTPError as exc:
@@ -884,6 +887,8 @@ class _WindowApi:
                     os.fsync(handle.fileno())
                     os.link(temporary, destination)
                 finally:
+                    # Windows cannot unlink a file that still has an open handle.
+                    handle.close()
                     temporary.unlink(missing_ok=True)
             return {"ok": True}
         except urllib.error.HTTPError as exc:

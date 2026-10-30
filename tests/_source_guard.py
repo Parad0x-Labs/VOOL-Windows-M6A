@@ -111,18 +111,28 @@ def _read_journal(journal: Path) -> dict:
     return {"path": relative_path, "original": original}
 
 
+#: Fixed install paths, never a PATH lookup. Windows has none of the POSIX ones, so without its own
+#: entries recovery refused every journal there and a killed child's mutation stayed in the tree.
+_TRUSTED_GIT = (
+    (Path(r"C:\Program Files\Git\cmd\git.exe"), Path(r"C:\Program Files\Git\bin\git.exe"))
+    if os.name == "nt"
+    else (Path("/usr/bin/git"), Path("/bin/git"), Path("/usr/local/bin/git"))
+)
+
+
 def _trusted_head_bytes(relative_path: str) -> bytes:
     """Bytes Git HEAD records for a tracked path, or fail closed."""
-    git = next(
-        (path for path in (Path("/usr/bin/git"), Path("/bin/git"), Path("/usr/local/bin/git")) if path.is_file()),
-        None,
-    )
+    git = next((path for path in _TRUSTED_GIT if path.is_file()), None)
     if git is None:
         raise JournalIntegrityError("trusted git executable is unavailable")
+    env = {"PATH": "/usr/bin:/bin:/usr/local/bin", "LC_ALL": "C"}
+    if os.name == "nt":
+        # Windows will not start a process without SYSTEMROOT.
+        env = {"PATH": str(git.parent), "LC_ALL": "C", "SYSTEMROOT": os.environ.get("SYSTEMROOT", r"C:\Windows")}
     completed = subprocess.run(
         [str(git), "-C", str(REPO_ROOT), "show", f"HEAD:{relative_path}"],
         cwd="/",
-        env={"PATH": "/usr/bin:/bin:/usr/local/bin", "LC_ALL": "C"},
+        env=env,
         capture_output=True,
         check=False,
     )

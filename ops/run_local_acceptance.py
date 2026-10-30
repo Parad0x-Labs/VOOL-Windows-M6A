@@ -1012,7 +1012,9 @@ def _stop_runtime(base_url: str) -> None:
             return
         pid = int(dict(health.get("runtime") or {}).get("pid") or 0) if isinstance(health, dict) else 0
         if pid > 0 and pid != last_pid:
-            with suppress(ProcessLookupError):
+            # OSError, not only ProcessLookupError: on Windows a just-exited pid answers
+            # WinError 87 or PermissionError; either way the runtime is already gone.
+            with suppress(OSError):
                 os.kill(pid, signal.SIGTERM)
             last_pid = pid
         time.sleep(0.5)
@@ -1020,15 +1022,23 @@ def _stop_runtime(base_url: str) -> None:
     pid = int(dict(health.get("runtime") or {}).get("pid") or 0) if isinstance(health, dict) else 0
     if pid <= 0:
         return
+    refused = False
     try:
-        os.kill(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        return
+        # Windows has no SIGKILL; os.kill with SIGTERM is already TerminateProcess there.
+        os.kill(pid, getattr(signal, "SIGKILL", signal.SIGTERM))
+    except PermissionError:
+        # Windows answers this both for a pid that just exited and for one this account may not
+        # stop, so only the runtime's own health decides below.
+        refused = True
+    except OSError:
+        return  # ProcessLookupError, or WinError 87 on Windows: the pid is gone
     kill_deadline = time.time() + 5.0
     while time.time() < kill_deadline:
         if _current_health(base_url) is None:
             return
         time.sleep(0.5)
+    if refused:
+        raise RuntimeError(f"the runtime at {base_url} (pid {pid}) refused to stop and is still serving")
 
 
 def _wait_for_runtime(base_url: str, *, expected_commit: str, expected_model: str, timeout: float = 120.0) -> dict[str, Any]:

@@ -262,6 +262,7 @@ public sealed class RootsTests : IDisposable
     {
         var flagged = NewFolder("held-flagged");
         var (broker, ready) = await TestSupport.StartReady(TestSupport.DefaultBootstrap([flagged], journal));
+        var (brokerId, brokerStart) = (broker.Id, broker.StartTime);
         bool renamed, deleted;
         try
         {
@@ -273,8 +274,8 @@ public sealed class RootsTests : IDisposable
         finally { ready.Dispose(); await TestSupport.Kill(broker); }
         Assert.False(renamed, "The empty flagged folder was renamed while the broker held it.");
         Assert.False(deleted, "The empty flagged folder was deleted while the broker held it.");
-        TestSupport.Rename(flagged, flagged + "-moved");
-        TestSupport.Rename(flagged + "-moved", flagged);
+        TestSupport.RenameAfterRelease(flagged, flagged + "-moved", brokerId, brokerStart);
+        TestSupport.RenameAfterRelease(flagged + "-moved", flagged, brokerId, brokerStart);
     }
 
     // P15: open_root holds every folder from the flagged folder down to the root it returns.

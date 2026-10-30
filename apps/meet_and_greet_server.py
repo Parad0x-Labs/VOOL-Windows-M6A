@@ -35,6 +35,7 @@ from core.web.meet.routes import resolve_static_route as _resolve_static_route_i
 from core.web.meet.server import MeetAndGreetServerConfig
 from core.web.meet.server import MeetMetricsCollector as _MeetMetricsCollector
 from core.web.meet.server import build_server as _build_server_impl
+from network.listen_policy import run_server_with_listen_policy
 
 BrainHiveService = _BrainHiveService
 MeetMetricsCollector = _MeetMetricsCollector
@@ -127,7 +128,11 @@ def main() -> int:
             ssl_cert_reqs=ssl_cert_reqs,
         )
     )
-    server.run()
+    # The ONE listen policy: POSIX keeps uvicorn's own bind path (every address
+    # loop.create_server resolves, dual-stack included); Windows runs on pre-bound
+    # SO_EXCLUSIVEADDRUSE sockets because uvicorn's bind sets no port-reuse option
+    # there, leaving the port stealable by any same-user process.
+    run_server_with_listen_policy(server, str(config.host), int(config.port))
     return 0
 
 

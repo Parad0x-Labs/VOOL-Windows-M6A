@@ -170,6 +170,7 @@ def test_machine_writes_keep_the_safe_directory_authority(world, tmp_path, monke
         (home / name).mkdir(parents=True)
     (home / home_directory / "budget.txt").write_text(ORIGINAL, encoding="utf-8")
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))  # Path.home() reads USERPROFILE on Windows
     decoy = tmp_path / "decoy-root"
     decoy.mkdir()
     ctx = context(root, session="root-authority", workspace=str(decoy), workspace_root=str(root))

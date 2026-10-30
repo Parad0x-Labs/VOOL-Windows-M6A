@@ -93,6 +93,11 @@ from core.web.api.service import (
     json_response,
     raw_upload_body_ceiling,
 )
+from network.listen_policy import (
+    close_listen_sockets,
+    pre_bind_listen_sockets,
+    run_server_on_listen_sockets,
+)
 
 logger = logging.getLogger("vool.api")
 
@@ -550,6 +555,19 @@ def _start_background_prewarm(runtime: RuntimeServices) -> None:
     threading.Thread(target=_worker, name="vool-provider-prewarm", daemon=True).start()
 
 
+_IS_WINDOWS = os.name == "nt"
+
+
+def _owner_create_time(pid: int) -> float | None:
+    """The owner's create time; None when it is gone. Any other failure raises (unknown, not gone)."""
+    import psutil
+
+    try:
+        return float(psutil.Process(pid).create_time())
+    except psutil.NoSuchProcess:
+        return None
+
+
 def _start_parent_death_watch(server: Any) -> None:
     """Orphan defense for app-owned runtimes: when the native window host that spawned us dies,
     this daemon must not outlive it as a headless listener on 11435. macOS has no PR_SET_PDEATHSIG,
@@ -566,9 +584,30 @@ def _start_parent_death_watch(server: Any) -> None:
     if parent <= 1:
         return
 
+    owner_created: float | None = None
+    if _IS_WINDOWS:
+        # Windows never reparents, and the wrapper's cmd.exe sits between the window host and this
+        # daemon, so getppid() proves nothing. Watch the owner itself, pinned by its create time so
+        # a recycled pid cannot keep a headless daemon alive.
+        try:
+            owner_created = _owner_create_time(parent)
+        except Exception as exc:
+            logger.warning("owning window host pid=%s cannot be watched (%s); parent watch not armed", parent, exc)
+            return
+
+    def _owner_gone() -> bool:
+        if not _IS_WINDOWS:
+            return os.getppid() != parent
+        if owner_created is None:
+            return True
+        try:
+            return _owner_create_time(parent) != owner_created
+        except Exception:
+            return False  # unreadable this tick is unknown, not gone
+
     def _watch() -> None:
         while not getattr(server, "should_exit", False):
-            if os.getppid() != parent:
+            if _owner_gone():
                 logger.warning(
                     "owning window host pid=%s is gone; stopping so no daemon outlives its window", parent
                 )
@@ -577,6 +616,38 @@ def _start_parent_death_watch(server: Any) -> None:
             time.sleep(1.0)
 
     threading.Thread(target=_watch, name="vool-parent-watch", daemon=True).start()
+
+
+def _serve_with_exclusive_listen_sockets(server: Any, *, host: str, port: int) -> None:
+    """Serve through the one listen policy, with the shutdown cooperators armed.
+
+    The pre-bound sockets are this process's from the pre-bind until
+    ``run_server_on_listen_sockets`` takes them: any failure in that span -- the
+    parent-death watch thread, the SIGTERM shim -- closes them before the error
+    surfaces, so a boot that never serves never holds the port either.
+    """
+    import signal
+
+    listen_sockets = pre_bind_listen_sockets(str(host), int(port))
+    try:
+        _start_parent_death_watch(server)
+        # Uvicorn restores and re-raises SIGTERM after its ASGI shutdown. Keep a
+        # cooperative handler underneath it so that re-raise also returns through
+        # our finally block, which owns the pidfile and background services.
+        def request_shutdown(_signum: int, _frame: object) -> None:
+            server.should_exit = True
+
+        owns_signals = threading.current_thread() is threading.main_thread()
+        if owns_signals:
+            previous_sigterm = signal.signal(signal.SIGTERM, request_shutdown)
+    except BaseException:
+        close_listen_sockets(listen_sockets)
+        raise
+    try:
+        run_server_on_listen_sockets(server, listen_sockets)
+    finally:
+        if owns_signals:
+            signal.signal(signal.SIGTERM, previous_sigterm)
 
 
 def main() -> int:
@@ -620,6 +691,7 @@ def main() -> int:
 
     logger.info("Bootstrapping VOOL runtime...")
     runtime: RuntimeServices | None = None
+    windows_broker = None
     try:
         # Defer provider prewarm so the port binds first: this is the fix for OpenClaw getting
         # ECONNREFUSED on 11435 while VOOL is still warming models after boot.
@@ -639,6 +711,17 @@ def main() -> int:
         import uvicorn
 
         _write_pidfile()
+        # Windows broker (phase B): started as this process's child inside a Job that ends it when
+        # this process exits. Nothing is routed through it yet. Fail-soft: boot never depends on it,
+        # and it starts in the background so the port binds without waiting on it.
+        if os.name == "nt":
+            try:
+                from core.runtime_paths import PROJECT_ROOT, active_vool_home
+                from core.windows_broker.process import start_for_api
+
+                windows_broker = start_for_api(PROJECT_ROOT, active_vool_home(), background=True)
+            except Exception:
+                logger.exception("Windows broker failed to start; server continues without it")
         # Signed-manifest update subsystem (2026-09-01 amendment): bounded, async, and
         # honestly UNAVAILABLE when no publisher key / feed is configured. Never blocks
         # boot, never raises into the server.
@@ -709,23 +792,16 @@ def main() -> int:
                 log_config=None,
             )
         )
-        _start_parent_death_watch(server)
-        # Uvicorn restores and re-raises SIGTERM after its ASGI shutdown. Keep a
-        # cooperative handler underneath it so that re-raise also returns through
-        # our finally block, which owns the pidfile and background services.
-        def request_shutdown(_signum: int, _frame: object) -> None:
-            server.should_exit = True
-
-        owns_signals = threading.current_thread() is threading.main_thread()
-        if owns_signals:
-            previous_sigterm = signal.signal(signal.SIGTERM, request_shutdown)
-        try:
-            server.run()
-        finally:
-            if owns_signals:
-                signal.signal(signal.SIGTERM, previous_sigterm)
+        # The ONE listen policy: POSIX keeps uvicorn's own bind path (every address
+        # loop.create_server resolves, dual-stack included); Windows pre-binds
+        # SO_EXCLUSIVEADDRUSE sockets here because uvicorn's bind sets no port-reuse
+        # option there, leaving the port stealable by any same-user process.
+        _serve_with_exclusive_listen_sockets(server, host=str(args.bind), port=int(args.port))
     finally:
         _remove_pidfile()
+        if windows_broker is not None:
+            with contextlib.suppress(Exception):
+                windows_broker.stop()
         try:
             from core.operator.reminder_dispatcher import stop_default_dispatcher
 

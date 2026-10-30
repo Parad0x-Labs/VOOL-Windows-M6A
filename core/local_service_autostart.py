@@ -127,10 +127,16 @@ def ensure_service(svc: LocalService, *, sleep: Callable[[float], None] = time.s
             with contextlib.suppress(Exception):
                 Path(svc.log_path).parent.mkdir(parents=True, exist_ok=True)
                 log_handle = open(svc.log_path, "a", encoding="utf-8")  # noqa: SIM115 (lives for the child)
+        # POSIX: start_new_session detaches the server into its own session so it
+        # outlives this request. Windows: Popen accepts and ignores start_new_session,
+        # so the real detachment there is the child's own process group (and no
+        # console window), mirroring adapters/local_subprocess_adapter.py.
+        creationflags = (subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW) if os.name == "nt" else 0
         try:
             child = launcher(
                 list(svc.argv), cwd=svc.cwd, env={**os.environ, **svc.env},
                 stdout=log_handle, stderr=log_handle, stdin=subprocess.DEVNULL,
+                creationflags=creationflags,
                 start_new_session=True,  # detach: the server outlives this request
             )
         except Exception as exc:  # never surface a raw failure to chat
@@ -169,7 +175,12 @@ def stop_started_service(name: str, *, sig: int = signal.SIGTERM) -> bool:
     except Exception:
         return False
     try:
-        if os.getpgid(pid) == pid:
+        if os.name == "nt":
+            # Windows has no process groups to address: only the recorded child PID
+            # itself is ever signalled (os.kill there is TerminateProcess for every
+            # signal), never a lookup by name, port or tree this run did not spawn.
+            os.kill(pid, sig)
+        elif os.getpgid(pid) == pid:
             os.killpg(pid, sig)
         else:
             os.kill(pid, sig)

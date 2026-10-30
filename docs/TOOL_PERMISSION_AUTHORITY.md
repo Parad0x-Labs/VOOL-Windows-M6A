@@ -158,9 +158,9 @@ Stated plainly; none of these are closed by this change.
 
    | Surface | Site | Effect today |
    |---|---|---|
-   | Channel chat (Telegram/Discord) | `apps/vool_chat.py:127` | reads fine; mutations raise an approval the channel has no UI to render |
-   | CLI web lane | `apps/vool_cli.py:263` | `web.search`/`web.fetch` allowed; **`browser.render` now prompts** and the CLI cannot answer |
-   | null:// protocol | `core/web/api/service.py:3892,3921` | read-only surface; unchanged in practice |
+   | Channel chat (Telegram/Discord) | `apps/vool_chat.py:138` | reads fine; mutations raise an approval the channel has no UI to render |
+   | CLI web lane | `apps/vool_cli.py:269` | `web.search`/`web.fetch` allowed; **`browser.render` now prompts** and the CLI cannot answer |
+   | null:// protocol | `core/web/api/service.py:7291,7325` | read-only surface; unchanged in practice |
 
    Each of these is a foreground, operator-initiated turn, so the right repair is for each ingress
    to stamp its own controller-owned mode the way `/api/chat` now does — or, for a lane like
