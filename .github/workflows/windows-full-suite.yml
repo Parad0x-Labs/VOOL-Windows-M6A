@@ -1,18 +1,19 @@
 name: Windows full suite
 
-# The whole collected test suite on hosted Windows runners, once per batch: it runs on every
-# push to windows/v0.7.1-port (a merged batch) and on manual dispatch, never on PRs. It is
-# evidence for the batch, not a PR gate; known Windows reds (broker-gated
-# KernelIsolationUnavailable / sandbox_unavailable until the broker ships) show up here as
-# reds. Files the ci.yml macos job runs are left out, as on the Linux shards. The Linux timing
-# snapshot balances the ten shards (durations are a guide; coverage is exact-once either way).
+# The whole collected test suite on hosted Windows runners, once a night: it runs only on
+# manual dispatch, never on pushes or PRs. A nightly dispatch on windows/v0.7.1-port gives the
+# day's counts (a scheduled trigger would only fire from the default branch). A full run is
+# about 60 runner-hours, shared with other repos' CI, so it no longer runs after every merged
+# batch, where the next batch's push cancelled it mid-run. It is evidence, not a PR gate; known
+# Windows reds (broker-gated KernelIsolationUnavailable / sandbox_unavailable until the broker
+# ships) show up here as reds. Files the ci.yml macos job runs are left out, as on the Linux
+# shards. The Linux timing snapshot balances the twenty shards (durations are a guide; coverage
+# is exact-once either way).
 
 on:
-  push:
-    branches: [windows/v0.7.1-port]
   workflow_dispatch:
 
-# A newer batch replaces the run still queued or in flight: only the latest port head matters.
+# A newer dispatch replaces the run still queued or in flight: only the latest port head matters.
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
@@ -24,11 +25,11 @@ jobs:
   tests:
     name: windows tests (${{ matrix.shard }})
     runs-on: windows-latest
-    timeout-minutes: 240
+    timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix:
-        shard: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
+        shard: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19"]
     env:
       PYTHONUTF8: "1"
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
@@ -54,7 +55,7 @@ jobs:
           New-Item -ItemType Directory -Force .verification-logs | Out-Null
           python -c "import subprocess, sys; from pathlib import Path; from ops.draft_affected_tests import collected_files, macos_job_files; mac = macos_job_files(Path('.github/workflows/ci.yml').read_text(encoding='utf-8')); files = [f for f in collected_files(Path('.')) if f not in mac]; Path('.verification-logs/windows-collected.txt').write_text(''.join(f + chr(10) for f in files), encoding='utf-8'); print(f'collected {len(files)} test files')"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python ops/shard_resolver.py --shard "${{ matrix.shard }}" --shards 10 --files .verification-logs/windows-collected.txt --weights ops/shard_weights.json --platform linux --output ".verification-logs/windows-shard-${{ matrix.shard }}-files.txt"
+          python ops/shard_resolver.py --shard "${{ matrix.shard }}" --shards 20 --files .verification-logs/windows-collected.txt --weights ops/shard_weights.json --platform linux --output ".verification-logs/windows-shard-${{ matrix.shard }}-files.txt"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run shard ${{ matrix.shard }}
         shell: pwsh
