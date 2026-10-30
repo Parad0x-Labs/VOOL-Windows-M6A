@@ -33,6 +33,7 @@ import ast
 import builtins
 import importlib
 import inspect
+import re
 from collections import ChainMap
 from pathlib import Path
 
@@ -290,3 +291,47 @@ def test_call_site_script_embeds_the_root_as_one_literal(module, node):
         pytest.fail(f"{module.__name__}:{node.lineno}: no harmless value for {exc.name}; extend CALL_SITE_VALUES")
     assert isinstance(source, str), f"{module.__name__}:{node.lineno}: builder is not a string"
     _assert_embeds_root(source, f"{module.__name__}:{node.lineno}")
+
+
+#: Where generated-program text lives: the suite and the tools and scripts that also build
+#: `python -c` programs. The app's own packages are swept too, so a new site there is caught.
+_SWEPT_TREES = ("tests", "tools", "scripts", "ops", "core", "apps", "storage", "installer")
+#: A path consumer inside generated source whose path argument is pasted into quotes instead
+#: of embedded as a literal: a quoted placeholder (`"{root}"`, `"__TREE__"`, `"@ROOT@"`), or a
+#: quote the host string closes to concatenate `str(...)` (`insert(0, '" + str(ROOT) + "')`).
+_PATH_CONSUMER = r"(?:sys\.path\.(?:insert\(0,|append\()|spec_from_file_location\([^,()]*,|open\(|os\.chdir\(|Path\()\s*"
+_QUOTED_PATH = re.compile(
+    _PATH_CONSUMER + r"""(?:(['"])(?:\{[^{}'"]*\}|__[A-Z0-9_]+__|@[A-Z0-9_]+@)\1|(['"])['"]\s*\+\s*str\()"""
+)
+#: Sites another open change already rewrites, each with the change that does. An entry that
+#: no longer matches is stale and fails below, so the list only shrinks.
+_FIXED_ELSEWHERE = {
+    # The differential re-exec change rewrites the driver's seal anchors with this template.
+    ("scripts/semantic_phase0_base_differential.py", 'sys.path.insert(0, "__TREE__")'),
+    ("tests/semantic_phase0/test_semantic_differential_eligibility.py", "sys.path.insert(0, \"__TREE__\")')]"),
+}
+
+
+def _quoted_path_sites() -> list[tuple[str, int, str]]:
+    root = Path(__file__).resolve().parents[1]
+    sites = []
+    for tree in _SWEPT_TREES:
+        for path in sorted((root / tree).rglob("*.py")):
+            relative = path.relative_to(root).as_posix()
+            if relative == Path(__file__).relative_to(root).as_posix():
+                continue
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if _QUOTED_PATH.search(line):
+                    sites.append((relative, number, line.strip()))
+    return sites
+
+
+def test_no_generated_program_anywhere_pastes_a_path_into_quotes():
+    """The template list above covers the served rigs it names; this sweep covers every
+    other file, so a template that pastes a path into quotes cannot hide outside that list."""
+    sites = _quoted_path_sites()
+    pending = [site for site in sites if any(site[0] == file and text in site[2] for file, text in _FIXED_ELSEWHERE)]
+    unlisted = [f"{file}:{number}: {line}" for file, number, line in sites if (file, number, line) not in pending]
+    assert not unlisted, "paths pasted into quotes in generated source:\n" + "\n".join(unlisted)
+    stale = [entry for entry in _FIXED_ELSEWHERE if not any(s[0] == entry[0] and entry[1] in s[2] for s in pending)]
+    assert not stale, f"these sites are fixed now; remove them from _FIXED_ELSEWHERE: {stale}"
