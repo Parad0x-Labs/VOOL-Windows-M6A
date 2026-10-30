@@ -44,6 +44,23 @@ from ops.wallet_devnet_external_proof import _X402Server
 #: socket module's own constant, whatever its value.
 _EXCLUSIVEADDRUSE_SENTINEL = 0x5EED1
 
+class _TransportSocketModule:
+    """The socket module as network.transport alone sees it: ``socket()`` is the test's factory,
+    every other name is the real module's."""
+
+    def __init__(self, factory: object) -> None:
+        self.socket = factory
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(socket, name)
+
+
+def _transport_socket_factory(monkeypatch: pytest.MonkeyPatch, factory: object) -> None:
+    """Swap the socket factory for network.transport only. Patching ``socket.socket`` itself would
+    hand the stand-in to every other module and thread in the process for the test's length."""
+    monkeypatch.setattr(transport, "socket", _TransportSocketModule(factory))
+
+
 _PAY_TO = "DevnetPayme1111111111111111111111111111111"
 _AMOUNT = 1_000_000
 
@@ -115,7 +132,7 @@ def test_fixed_port_udp_socket_closes_when_the_listen_policy_fails_closed(monkey
     socket), that socket must be closed again, never leaked bound-less and
     option-less."""
     leaked_socket = unittest.mock.Mock()
-    monkeypatch.setattr(socket, "socket", unittest.mock.Mock(return_value=leaked_socket))
+    _transport_socket_factory(monkeypatch, unittest.mock.Mock(return_value=leaked_socket))
 
     def refusing_policy(_sock):
         raise OSError("SO_EXCLUSIVEADDRUSE is unavailable on this Windows build")
@@ -137,7 +154,7 @@ def test_ephemeral_pair_closes_both_sockets_when_the_stream_half_fails_unexpecte
     stream_sock = unittest.mock.Mock()
     stream_sock.getsockname.return_value = ("127.0.0.1", 41251)
     udp_sock = unittest.mock.Mock()
-    monkeypatch.setattr(socket, "socket", unittest.mock.Mock(side_effect=[stream_sock, udp_sock]))
+    _transport_socket_factory(monkeypatch, unittest.mock.Mock(side_effect=[stream_sock, udp_sock]))
 
     class _RefusingStreamServer:
         def __init__(self, *, host, port, on_frame, tls_config):
@@ -242,7 +259,7 @@ def test_windows_recovery_names_an_exclusive_holders_eacces_as_the_conflict(monk
     monkeypatch.setattr(transport, "_IS_WINDOWS", True, raising=False)
     held_socket = unittest.mock.Mock()
     held_socket.bind.side_effect = _exclusive_holder_refusal()
-    monkeypatch.setattr(socket, "socket", unittest.mock.Mock(return_value=held_socket))
+    _transport_socket_factory(monkeypatch, unittest.mock.Mock(return_value=held_socket))
     report = unittest.mock.Mock()
     monkeypatch.setattr(transport, "_report_udp_port_conflict", report)
 
@@ -294,7 +311,7 @@ def test_posix_recovery_leaves_eacces_as_the_bind_error_it_is(monkeypatch):
     monkeypatch.setattr(transport, "_IS_WINDOWS", False, raising=False)
     held_socket = unittest.mock.Mock()
     held_socket.bind.side_effect = _exclusive_holder_refusal()
-    monkeypatch.setattr(socket, "socket", unittest.mock.Mock(return_value=held_socket))
+    _transport_socket_factory(monkeypatch, unittest.mock.Mock(return_value=held_socket))
     report = unittest.mock.Mock()
     monkeypatch.setattr(transport, "_report_udp_port_conflict", report)
 
