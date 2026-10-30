@@ -23,9 +23,11 @@ from collections.abc import Callable
 
 #: One separator: a run of backslashes (one on disk, two or four once escaped -- a JSON string
 #: inside a JSON string doubles them twice) or one or two forward slashes (``C://Users//x``).
-#: Possessive, so a long run of separators is never re-tried one length at a time.
-SEP = r"(?:\\++|//?+)"
-_BS = r"\\++"
+#: Plain quantifiers (possessive ones need Python 3.11; pyproject allows 3.10). A long run of
+#: separators stays linear because no pattern may START inside one: each has a lookbehind that
+#: refuses a separator before it, so a run is scanned from its first character only.
+SEP = r"(?:\\+|//?)"
+_BS = r"\\+"
 #: A path segment: anything that is not a separator, whitespace, a quote or a Windows-reserved char.
 _SEG = r"[^\\/\s\"'<>|*?:]+"
 _TAIL = _SEG + r"(?:" + SEP + _SEG + r")*" + SEP + r"?"
