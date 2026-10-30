@@ -38,11 +38,13 @@ def _wrap_command_for_windows(command: list[str]) -> list[str] | str:
         return command
     # One command line, not a list: list2cmdline leaves an argument holding & or ( ) unquoted, and
     # cmd /c strips quotes it did not expect. With /s and an outer pair, cmd removes only that pair
-    # and every argument keeps its own quotes. cmd has no escape for a quote inside a quoted
-    # argument, so one is refused.
-    if any('"' in part for part in command):
-        raise ValueError("a batch launcher argument holds a double quote cmd cannot keep")
-    quoted = " ".join(f'"{part}"' for part in command)
+    # and every argument keeps its own quotes. Inside quotes cmd still expands %NAME% and ends the
+    # line at a line break, and it has no escape for a quote, so those are refused. Trailing
+    # backslashes are doubled, as list2cmdline did: a program the .cmd hands %* to reads \" as an
+    # escaped quote.
+    if any(char in part for part in command for char in '"%\r\n'):
+        raise ValueError("a batch launcher argument holds a quote, % or line break cmd cannot keep")
+    quoted = " ".join(f'"{part}{part[len(part.rstrip(chr(92))):]}"' for part in command)
     return f'"{os.environ.get("COMSPEC") or "cmd.exe"}" /s /c "{quoted}"'
 
 

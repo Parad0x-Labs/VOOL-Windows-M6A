@@ -249,7 +249,7 @@ if "%LIQUEFY_DIR%"=="" (
   )
 )
 if not "%LIQUEFY_DIR%"=="" (
-  powershell -NoProfile -Command "(Get-Content '%LIQUEFY_DIR%\pyproject.toml') -replace 'setuptools\.backends\._legacy:_Backend','setuptools.build_meta' | Set-Content '%LIQUEFY_DIR%\pyproject.toml'"
+  powershell -NoProfile -Command "$p = Join-Path $env:LIQUEFY_DIR 'pyproject.toml'; (Get-Content -LiteralPath $p) -replace 'setuptools\.backends\._legacy:_Backend','setuptools.build_meta' | Set-Content -LiteralPath $p"
   "%VENV_DIR%\Scripts\python.exe" -m pip install "%LIQUEFY_DIR%" >nul 2>&1
   if !errorlevel! equ 0 (
     echo Liquefy installed into VOOL venv from OpenClaw folder.
@@ -457,7 +457,7 @@ if "%OLLAMA_EXE%"=="" if exist "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" set "
 if "%OLLAMA_EXE%"=="" (
   echo Ollama not found. Downloading installer...
   set "OLLAMA_SETUP=%TEMP%\OllamaSetup.exe"
-  powershell -NoProfile -Command "Invoke-WebRequest -Uri 'https://ollama.com/download/OllamaSetup.exe' -OutFile '%TEMP%\OllamaSetup.exe' -UseBasicParsing"
+  powershell -NoProfile -Command "Invoke-WebRequest -Uri 'https://ollama.com/download/OllamaSetup.exe' -OutFile (Join-Path $env:TEMP 'OllamaSetup.exe') -UseBasicParsing"
   if not exist "%TEMP%\OllamaSetup.exe" (
     echo ERROR: Failed to download Ollama. Check your internet connection.
     echo You can install Ollama manually from https://ollama.com/download
@@ -576,11 +576,11 @@ echo ===============================================
 echo.
 echo VOOL starts automatically at login. No manual steps.
 echo.
-echo Visible agent name: %AGENT_NAME%
+echo Visible agent name: !AGENT_NAME!
 echo Selected model: %MODEL_TAG%
-echo To chat now:   %PROJECT_ROOT%\Open_Chat.bat
-echo Web0 browser:  %PROJECT_ROOT%\Open_Web0.bat
-echo To start headless:  %PROJECT_ROOT%\Start_VOOL.bat
+echo To chat now:   !PROJECT_ROOT!\Open_Chat.bat
+echo Web0 browser:  !PROJECT_ROOT!\Open_Web0.bat
+echo To start headless:  !PROJECT_ROOT!\Start_VOOL.bat
 if defined DESKTOP_SHORTCUT echo Desktop:      %DESKTOP_SHORTCUT%
 echo.
 echo VOOL is the default agent, memory is automatic,

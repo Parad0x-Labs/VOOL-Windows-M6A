@@ -535,6 +535,10 @@ def _default_start_server(project_root: Path) -> None:
         if not bat.exists():
             logger.warning("start_server: %s not found; relying on the watchdog to restart", bat)
             return
+        if any(char in str(bat) for char in '"%\r\n'):
+            # Inside quotes cmd still expands %NAME% and ends the line at a line break.
+            logger.warning("start_server: %r holds a quote, %% or line break cmd cannot keep; not started", str(bat))
+            return
         try:
             flags = 0x00000008 | 0x00000200 | 0x08000000  # DETACHED | NEW_GROUP | NO_WINDOW
             # A string, not a list: /s with doubled quotes keeps the path quoted even when it holds & or ( ).

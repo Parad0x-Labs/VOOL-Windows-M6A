@@ -73,6 +73,9 @@ def _start_bundle(root: Path) -> None:
     launcher = root / "VOOL.cmd"
     if not launcher.is_file():
         raise FileNotFoundError("VOOL.cmd is missing")
+    if any(char in str(launcher) for char in '"%\r\n'):
+        # Inside quotes cmd still expands %NAME% and ends the line at a line break.
+        raise ValueError("the VOOL.cmd path holds a quote, % or line break cmd cannot keep")
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
     subprocess.Popen(
         # A string, not a list: /s with doubled quotes keeps the path quoted even when it holds & or ( ).
