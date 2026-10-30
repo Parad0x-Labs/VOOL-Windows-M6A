@@ -231,7 +231,7 @@ def test_served_negative_and_task_control_journeys(served: dict[str, Any]) -> No
 
 
 @pytest.mark.skipif(
-    os.getloadavg()[0] > 16,
+    hasattr(os, "getloadavg") and os.getloadavg()[0] > 16,
     reason="served concurrency runs four sandboxed pytest turns; under another lane's full suite (load 20-45 measured 2026-09-03) turns lost their model call three different ways -- an environmental precondition, not a hidden failure",
 )
 def test_served_concurrent_edits_to_the_same_file(served: dict[str, Any]) -> None:

@@ -8,6 +8,7 @@ Layout produced:
   <Stage>\python\        embedded Python + Lib\site-packages (lean deps)
   <Stage>\app\           VOOL source (apps, core, adapters, config)
   <Stage>\ollama\        ollama.exe + lib\ollama\ runner support files
+  <Stage>\broker\        the Windows broker, self-contained (windows\broker\publish.ps1)
   <Stage>\models\        Ollama model store (populated only with -IncludeModel)
   <Stage>\VOOL.cmd      launcher
 
@@ -22,7 +23,10 @@ param(
   # qwen3:8b is the certified local author. qwen2.5:7b fails the local-model certification
   # (result_continuation, missing_tool_calls), so VOOL refuses to let it write answers.
   [string]$Model = "qwen3:8b",
-  [switch]$IncludeModel
+  [switch]$IncludeModel,
+  # The dotnet that publishes the broker (SDK 10.0.402), and an optional local package folder.
+  [string]$Dotnet = "dotnet",
+  [string]$BrokerPackages = ""
 )
 $ErrorActionPreference = "Stop"
 # `Resolve-Path`.Path can be provider-qualified when the checkout is reached through a WSL UNC
@@ -62,14 +66,14 @@ if ($LASTEXITCODE -ne 0) { throw "Embedded Python pip bootstrap failed." }
 # (build_macos_app.sh; tests/test_windows_bundle_runtime_parity.py keeps the two in step):
 # zstandard is imported by the served command surface at startup, so without it the API refuses
 # to serve; reportlab + markdown-it-py render PDFs; the eth/x402/web3 packages are the wallet's
-# EVM signing and the x402 SDK.
+# EVM signing and the x402 SDK; tzdata is the zone database zoneinfo reads on Windows.
 & $py -m pip install --no-warn-script-location -q `
     "setuptools>=83.0.0" wheel
 if ($LASTEXITCODE -ne 0) { throw "Embedded Python setuptools/wheel bootstrap failed." }
 & $py -m pip install --no-build-isolation --no-warn-script-location -q `
     pydantic "cryptography>=50.0.0" "anyio>=4.14.2" requests pynacl keyring psutil pyyaml "starlette>=1.3.1,<2.0" "uvicorn>=0.30,<1.0" solders `
     pywebview pythonnet "pypdf==6.20.1" "xlrd==2.0.2" "reportlab==5.0.1" "markdown-it-py==4.2.0" `
-    zstandard `
+    zstandard tzdata `
     "eth-abi>=6.0" "eth-utils>=6.0" "eth-account>=0.13" `
     "x402[evm]==2.25.0" "web3==8.0.0"
 if ($LASTEXITCODE -ne 0) { throw "Embedded Python runtime dependency installation failed." }
@@ -146,6 +150,16 @@ if (-not (Test-Path -LiteralPath $ollamaRunner -PathType Leaf)) {
   throw "Ollama runner missing from the installation: $ollamaRunner. Install or repair Ollama before building the bundle."
 }
 Copy-Item $ollamaSupportSource (Join-Path $Stage "ollama\lib\ollama") -Recurse -Force
+
+# --- 4b. Windows broker ------------------------------------------------------------------
+# Self-contained, so the installed app needs no .NET. The API starts {app}\broker\VoolBroker.exe
+# with VOOL (core\windows_broker\process.py); nothing is routed through it yet.
+$brokerDir = Join-Path $Stage "broker"
+if (Test-Path $brokerDir) { Remove-Item $brokerDir -Recurse -Force }
+& (Join-Path $RepoRoot "windows\broker\publish.ps1") -Output $brokerDir -Dotnet $Dotnet -Source $BrokerPackages
+if (-not (Test-Path -LiteralPath (Join-Path $brokerDir "VoolBroker.exe") -PathType Leaf)) {
+  throw "Broker publish produced no VoolBroker.exe in $brokerDir"
+}
 New-Item -ItemType Directory -Force (Join-Path $Stage "models") | Out-Null
 Copy-Item (Join-Path $PSScriptRoot "vool-launch.cmd") (Join-Path $Stage "VOOL.cmd") -Force
 Copy-Item (Join-Path $PSScriptRoot "vool.vbs") (Join-Path $Stage "vool.vbs") -Force

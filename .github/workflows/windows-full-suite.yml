@@ -1,0 +1,72 @@
+name: Windows full suite
+
+# The whole collected test suite on hosted Windows runners, once per batch: it runs on every
+# push to windows/v0.7.1-port (a merged batch) and on manual dispatch, never on PRs. It is
+# evidence for the batch, not a PR gate; known Windows reds (broker-gated
+# KernelIsolationUnavailable / sandbox_unavailable until the broker ships) show up here as
+# reds. Files the ci.yml macos job runs are left out, as on the Linux shards. The Linux timing
+# snapshot balances the ten shards (durations are a guide; coverage is exact-once either way).
+
+on:
+  push:
+    branches: [windows/v0.7.1-port]
+  workflow_dispatch:
+
+# A newer batch replaces the run still queued or in flight: only the latest port head matters.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: windows tests (${{ matrix.shard }})
+    runs-on: windows-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]
+    env:
+      PYTHONUTF8: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install verification dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,browser,companion,evm]" -c .github/ci-constraints.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # The browser tests import playwright at collection, as on the Linux shards (ci.yml).
+          python -m playwright install chromium
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Resolve this shard's test files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .verification-logs | Out-Null
+          python -c "import subprocess, sys; from pathlib import Path; from ops.draft_affected_tests import collected_files, macos_job_files; mac = macos_job_files(Path('.github/workflows/ci.yml').read_text(encoding='utf-8')); files = [f for f in collected_files(Path('.')) if f not in mac]; Path('.verification-logs/windows-collected.txt').write_text(''.join(f + chr(10) for f in files), encoding='utf-8'); print(f'collected {len(files)} test files')"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python ops/shard_resolver.py --shard "${{ matrix.shard }}" --shards 10 --files .verification-logs/windows-collected.txt --weights ops/shard_weights.json --platform linux --output ".verification-logs/windows-shard-${{ matrix.shard }}-files.txt"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run shard ${{ matrix.shard }}
+        shell: pwsh
+        run: |
+          $files = Get-Content ".verification-logs/windows-shard-${{ matrix.shard }}-files.txt" | Where-Object { $_ }
+          $basetemp = Join-Path $env:RUNNER_TEMP "pytest-${{ matrix.shard }}"
+          python ops/pytest_timing.py --output ".verification-logs/windows-shard-${{ matrix.shard }}-timing.json" -- -q --tb=short -p no:cacheprovider -o faulthandler_timeout=0 "--basetemp=$basetemp" @files
+          exit $LASTEXITCODE
+      - name: Upload shard log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-full-suite-shard-${{ matrix.shard }}
+          path: .verification-logs/
+          include-hidden-files: true

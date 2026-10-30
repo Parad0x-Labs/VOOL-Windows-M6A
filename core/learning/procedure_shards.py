@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from core import os_file_lock
 from core.runtime_paths import data_path
 
 from .policy import LearningPolicy
@@ -267,18 +268,16 @@ class _StoreFileLock:
         self._handle: int | None = None
 
     def __enter__(self) -> _StoreFileLock:
-        import fcntl
-
         self._lock_path.parent.mkdir(parents=True, exist_ok=True)
         self._handle = os.open(str(self._lock_path), os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
-        fcntl.flock(self._handle, fcntl.LOCK_EX)
+        # fcntl.flock(LOCK_EX) on POSIX; msvcrt.locking one byte far past any content
+        # on Windows — the same helper the email-draft and credential-state locks use.
+        os_file_lock.lock_exclusive(self._handle)
         return self
 
     def __exit__(self, *exc: object) -> None:
-        import fcntl
-
         if self._handle is not None:
-            fcntl.flock(self._handle, fcntl.LOCK_UN)
+            os_file_lock.unlock(self._handle)
             os.close(self._handle)
             self._handle = None
 

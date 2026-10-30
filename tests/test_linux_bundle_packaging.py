@@ -45,6 +45,7 @@ def home(tmp_path):
     return home
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the Linux per-user installer runs only on Linux; hosted Linux CI and release-linux.yml prove it")
 def test_install_reinstall_upgrade_and_uninstall_preserve_profile(package, home):
     profile = home / ".vool_runtime"
     profile.mkdir()
@@ -98,6 +99,7 @@ def test_tampered_package_refuses_without_touching_existing_install(package, hom
     assert (root / "current/launch.py").read_text() != "tampered"
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the Linux per-user installer runs only on Linux; hosted Linux CI and release-linux.yml prove it")
 def test_failed_upgrade_retains_previous_version_and_entrypoints(package, home):
     installer.install(package, home)
     root, binary, desktop = installer.layout(home)
@@ -126,6 +128,7 @@ def test_install_rejects_new_files_and_escaping_symlinks(package, home):
     assert not (home / ".local").exists()
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="the Linux per-user installer runs only on Linux; hosted Linux CI and release-linux.yml prove it")
 def test_uninstall_refuses_unowned_root_and_unknown_version_content(package, home):
     root, _, _ = installer.layout(home)
     root.mkdir(parents=True)

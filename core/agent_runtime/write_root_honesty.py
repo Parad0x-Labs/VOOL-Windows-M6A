@@ -23,7 +23,7 @@ import re
 from collections.abc import Iterator
 from pathlib import Path
 
-from core import windows_path_policy
+from core import windows_known_folders, windows_path_policy
 from core.execution.constants import drive_left_behind
 
 # A path the USER rooted. The lookbehind is what keeps prose out: the slash in "and/or", "24/7",
@@ -167,7 +167,7 @@ def allowed_write_roots(source_context: dict[str, object] | None) -> list[Path]:
     home = Path.home()
     for name in _SAFE_MACHINE_ROOT_NAMES:
         try:
-            roots.append((home / name).resolve())
+            roots.append(windows_known_folders.safe_folder(name, home).resolve())
         except Exception:
             continue
     return roots

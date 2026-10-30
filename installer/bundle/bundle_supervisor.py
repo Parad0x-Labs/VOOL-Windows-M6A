@@ -188,6 +188,34 @@ def _is_windows_platform() -> bool:
     return os.name == "nt"
 
 
+def _windows_root_forms(root: Path) -> tuple[str, ...]:
+    """Every spelling of the same bundle root the stale-API scan compares against.
+
+    A leftover API keeps the spelling it was STARTED with in its command line, so the same
+    bundle folder legitimately reaches the scan as a junction, an 8.3 short name, a different
+    case or with a trailing separator. ``os.path.realpath`` collapses all of those into one
+    final spelling, matched alongside the spelling this supervisor holds (compared
+    case-insensitively on both sides; ``os.path.normcase`` keys the dedup). Standalone by
+    design: the bundle ships this file alone at the install root, so it cannot import
+    installer.vool_stop. A root whose canonicalization raises owns nothing (fail closed).
+    """
+    given = str(root)
+    if os.name != "nt":
+        return (given,)
+    try:
+        final = os.path.realpath(given)
+    except OSError:
+        return ()
+    forms: list[str] = []
+    seen: set[str] = set()
+    for form in (final, given):
+        key = os.path.normcase(form)
+        if key not in seen:
+            seen.add(key)
+            forms.append(form)
+    return tuple(forms)
+
+
 class BundleSupervisor:
     def __init__(self, root: Path, *, env: dict[str, str] | None = None) -> None:
         self.root = root.resolve()
@@ -639,16 +667,52 @@ class BundleSupervisor:
         )
 
     def _clear_stale_api_processes(self) -> None:
-        """Stop only stale VOOL API Python processes before a bundle API start on Windows."""
+        """Stop only stale VOOL API Python processes before a bundle API start on Windows.
+
+        A stale API counts as this bundle's only when its command line runs this bundle's
+        ``app\\apps\\vool_api_server.py`` -- in any spelling of the same folder (junction, 8.3
+        short name, case, trailing separator), matched RAW or canonicalized (a strict superset
+        of the raw-root scan this grew from: the process keeps the spelling it was started
+        with, and even when ``Canon`` cannot resolve a spelling -- Windows PowerShell 5.1
+        lists a hard-linked file's names in ``.Target``, so such a file does not
+        canonicalize to a single path -- the raw spelling still stops what it always
+        stopped). ``Canon`` follows ``.Target`` only when it names exactly one non-empty link
+        that differs from the path already held; anything else -- including another install's
+        API in any spelling -- is left running, and a root that cannot be canonicalized stops
+        nothing at all.
+        """
         if not _is_windows_platform():
             return
+        forms = _windows_root_forms(self.root)
+        if not forms:
+            self._log("stale api cleanup skipped: this install root cannot be canonicalized")
+            return
         root = "".join(c + c if c in _POWERSHELL_SINGLE_QUOTES else c for c in str(self.root))
+        canon_forms = ", ".join(
+            "'" + "".join(c + c if c in _POWERSHELL_SINGLE_QUOTES else c for c in form) + "'"
+            for form in forms
+        )
         supervisor_pid = os.getpid()
         command = (
             f"$r = '{root}'; "
+            f"$canonForms = @({canon_forms}); "
+            "$canonPrefixes = $canonForms | ForEach-Object { $_.TrimEnd([char[]]@(92,47)) + [char]92 }; "
             "$rootPrefix = $r.TrimEnd([char[]]@(92,47)) + [char]92; "
-            "$script = [regex]::Escape($rootPrefix + 'app\\apps\\vool_api_server.py'); "
-            f"$scriptArgument = '{_WINDOWS_SCRIPT_ARGUMENT_PREFIX}' + $script + '(?:\\x22|\\s|$)'; "
+            "function Canon([string]$p) { "
+            "if (-not $p) { return $p }; "
+            "$c = $p.TrimEnd([char[]]@(92,47)); "
+            "if ($c.Length -eq 2 -and $c[1] -eq ':') { $c = $c + [char]92 }; "
+            "for ($n = 0; $n -lt 16 -and $c; $n++) { "
+            "try { $i = Get-Item -LiteralPath $c -Force -ErrorAction Stop } catch { break }; "
+            "if (-not $i) { break }; "
+            "$t = @($i.Target); "
+            "if ($t.Count -eq 1 -and [string]$t[0] -and [string]$t[0] -ne $c) { $c = [string]$t[0]; continue }; "
+            "if ([string]$i.FullName -ne $c) { $c = [string]$i.FullName; continue }; "
+            "return $c }; "
+            "return $c }; "
+            "$scriptForms = '^(' + (($canonPrefixes | ForEach-Object { [regex]::Escape($_ + 'app\\apps\\vool_api_server.py') }) -join '|') + ')$'; "
+            "$rawScriptPattern = '^' + [regex]::Escape($rootPrefix + 'app\\apps\\vool_api_server.py') + '$'; "
+            f"$scriptArgument = '{_WINDOWS_SCRIPT_ARGUMENT_PREFIX}' + '(?<voolscript>[^\\x22]*\\\\vool_api_server\\.py)' + '(?:\\x22|\\s|$)'; "
             f"$supervisorPid = {supervisor_pid}; "
             "$all = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue); "
             "$protectedPids = New-Object 'System.Collections.Generic.HashSet[int]'; "
@@ -661,7 +725,10 @@ class BundleSupervisor:
             "}; "
             "$all | Where-Object { ($_.Name -ieq 'python.exe' -or $_.Name -ieq 'pythonw.exe') "
             "-and (-not $protectedPids.Contains([int]$_.ProcessId)) "
-            "-and ([string]$_.CommandLine -match $scriptArgument) } | "
+            "-and (([string]$_.CommandLine -match $scriptArgument) "
+            "-and ((($scriptValue = [string]$Matches['voolscript'])) -ne '') "
+            "-and (($scriptValue -match $rawScriptPattern) -or ((Canon $scriptValue) -match $scriptForms)))"
+            " } | "
             "ForEach-Object { "
             "try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} "
             "}"

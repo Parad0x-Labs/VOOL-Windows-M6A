@@ -46,6 +46,9 @@ playwright>=1.52,<2.0
 zstandard>=0.22.0
 xxhash>=3.4.0
 
+# Windows has no system tz database; zoneinfo and the clock lane read the tzdata package there.
+tzdata>=2024.1; sys_platform == 'win32'
+
 # Development
 pytest>=7.0
 ruff>=0.3

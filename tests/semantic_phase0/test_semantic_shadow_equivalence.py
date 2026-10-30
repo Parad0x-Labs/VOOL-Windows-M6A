@@ -6,8 +6,9 @@ fresh working directory, and compared field by field -- response bytes, public r
 turn's own model-call count, the execution ledger, the permission/approval stores, the effect
 ledger, and the runtime ledger events with only the shadow's own `semantic_shadow_observation`
 events and the receipt's `semantic.shadow` ticket set aside. A turn whose OFF and ON runs differ is
-re-run twice more under OFF: if those also differ the text is nondeterministic and reported as
-such; if they agree, the difference IS the shadow and the proof fails. One control proves the
+re-run twice more under OFF: if those differ from each other OR from the original OFF run, the
+text is nondeterministic and reported as such; if all three OFF runs agree, the difference IS the
+shadow and the proof fails, naming the OFF, ON and control replies. One control proves the
 comparison bites: a shadow that writes into the turn context is caught.
 """
 from __future__ import annotations
@@ -174,6 +175,14 @@ def _same(off: dict, on: dict) -> bool:
     return _comparable(off) == _comparable(on)
 
 
+# text -> (control a reply, control b reply), for turns whose OFF and ON runs differed.
+_CONTROL_REPLIES: dict[str, tuple[str, str]] = {}
+
+
+def _reply(result: dict) -> str:
+    return str(result.get("__raised__") or result.get("response") or "")
+
+
 @pytest.fixture(scope="module")
 def replayed(make_agent_module):
     rows = []
@@ -184,7 +193,10 @@ def replayed(make_agent_module):
         if not _same(off, on):
             a = _drive(make_agent_module, text, f"shadow-{index}-ctrl-a", mode="off")
             b = _drive(make_agent_module, text, f"shadow-{index}-ctrl-b", mode="off")
-            if not _same(a, b):
+            _CONTROL_REPLIES[text] = (_reply(a), _reply(b))
+            # Each control is also held against the ORIGINAL OFF run: an OFF run that disagrees
+            # with two agreeing controls was itself the odd one out, not a proof of the shadow.
+            if not (_same(a, b) and _same(a, off) and _same(b, off)):
                 exclusion = "nondeterministic"
         rows.append((text, off, on, exclusion))
     os.environ.pop("VOOL_SEMANTIC_REACH", None)
@@ -192,7 +204,10 @@ def replayed(make_agent_module):
 
 
 def test_shadow_on_changes_nothing_the_user_or_the_ledger_sees(replayed) -> None:
-    differences = [(text, sorted(k for k in _comparable(off) if _comparable(off).get(k) != _comparable(on).get(k)))
+    differences = [{"text": text,
+                    "fields": sorted(k for k in _comparable(off) if _comparable(off).get(k) != _comparable(on).get(k)),
+                    "off_reply": _reply(off), "on_reply": _reply(on),
+                    "control_replies": _CONTROL_REPLIES.get(text)}
                    for text, off, on, exclusion in replayed if not exclusion and not _same(off, on)]
     assert not differences, differences
     excluded = [text for text, _o, _n, exclusion in replayed if exclusion]

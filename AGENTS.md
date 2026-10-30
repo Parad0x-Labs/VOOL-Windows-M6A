@@ -123,3 +123,44 @@ Every pull request names the exact tested commit, the commands run, pass/fail de
 what user workflow was proven and the remaining limits. Keep raw logs, failed attempts and
 baselines in the maintainer's workspace; do not commit machine-local paths, private notes or
 generated runtime data.
+
+## Windows port rules (windows/v0.7.1-port only)
+
+These rules apply on windows/v0.7.1-port and its job branches, and replace the earlier per-PR
+habits there. Where they conflict with the project owner's instructions, the owner's
+instructions win until the owner changes them.
+
+1. **Ten open PRs at most.** One PR per cause group, not per test. New work goes onto the open
+   PR for its theme, or waits.
+2. **No catch-up merges.** Do not merge the port head into a job branch unless GitHub shows a
+   conflict or the merge owner asks for it for a train.
+3. **Push rarely.** Each push costs about 11 runner-hours. Commit locally and push when the
+   failing-first test and the fix are both ready. At most 2 pushes per PR per day.
+4. **Heavy CI only when ready.** Drafts get lint and the affected tests. Full shards, macOS,
+   Linux desktop and the Gauntlet run on ready-for-review PRs and train PRs. Never dispatch the
+   Gauntlet by hand on a draft.
+5. **Land by train.** The merge owner cuts a train from the port head, merges the reviewed
+   heads, runs one round and fast-forwards. A red train drops the guilty PR. Nobody pushes
+   fixes onto the train.
+6. **Triage a red before pushing.** Check whether the same test is red on the port head or on
+   other branches. A base red is fixed once on the port by one owner while everyone else waits.
+   A known flaky test gets its failed jobs re-run once, with the reason recorded.
+7. **Keep one flaky list.** Every known flaky test has an owner and a fix PR, and the top entry
+   is fixed in each batch. Never skip, weaken or xfail a test.
+8. **Sweep before you fix.** Before fixing a pattern (POSIX call, path form, share path),
+   `git grep` every call site and fix them in one PR. No one-call-site-at-a-time chains.
+9. **One owner per red.** Before starting, search the open PRs, branches and the build queue.
+   Exactly one builder works a cause, never two.
+10. **Visible Windows evidence.** A Windows claim needs the SHA, the command, the counts, the log
+    path and the same command run on the port head. Runs use a clean environment (`NULLA_*`,
+    `VOOL_*` and cloud keys stripped). Logs from a dirty environment do not count.
+11. **Reviews go on GitHub.** The owner review and the merge owner's review are submitted as
+    GitHub reviews on the PR, with run ids. An extra second opinion is only for security, money
+    or memory code, or for diffs over 200 lines.
+12. **Briefs say when they are done.** Every task gives the base SHA, the claimed files, the
+    exact test ids or Windows command that proves it, and a time box. No work on scope the owner
+    has not confirmed.
+13. **Batch owner asks.** One list per day. Test-contract OKs and by-design decisions are asked
+    once per cause group, with the exact ids. Other work continues meanwhile.
+14. **Check after every train.** Run the install smoke on the port head and the Windows suite,
+    and post the counts against the previous train.
