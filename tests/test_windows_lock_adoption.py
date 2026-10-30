@@ -121,3 +121,30 @@ class RegistryInstallWindowsLockTests(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class BlackboxJournalWindowsLockTests(unittest.TestCase):
+    """``Journal.exclusive`` took its process lock only when ``fcntl`` imported, so on Windows
+    two processes could append to one store at once and fork its hash chain. It locks through
+    ``core.os_file_lock`` now. ``fcntl`` is hidden from the module here, as on Windows."""
+
+    def test_a_held_journal_lock_excludes_a_second_descriptor_without_fcntl(self) -> None:
+        import storage.blackbox.journal as journal_module
+
+        root = Path(tempfile.mkdtemp(prefix="journal-lock-adoption-"))
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        journal = journal_module.Journal(root / "store")
+        with mock.patch.object(journal_module, "fcntl", None, create=True):
+            with journal.exclusive():
+                second = os.open(str(journal.lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+                try:
+                    with self.assertRaises(OSError):
+                        os_file_lock.try_lock_exclusive(second)
+                finally:
+                    os.close(second)
+        second = os.open(str(journal.lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            os_file_lock.try_lock_exclusive(second)  # released on exit: acquires
+            os_file_lock.unlock(second)
+        finally:
+            os.close(second)
