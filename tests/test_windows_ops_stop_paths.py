@@ -54,8 +54,9 @@ def test_stopping_a_runtime_that_outlives_sigterm_never_needs_sigkill(monkeypatc
 
 
 def test_a_runtime_that_exits_mid_stop_is_already_gone_on_windows(monkeypatch) -> None:
-    """On Windows os.kill on a pid that has just exited raises a plain OSError (WinError 87)
-    or PermissionError, not ProcessLookupError; either means the runtime is gone."""
+    """On Windows os.kill on a pid that has just exited raises a plain OSError (WinError 87),
+    not ProcessLookupError, which means the runtime is gone. A PermissionError is decided by the
+    runtime's health instead (the two tests below)."""
     from ops import run_local_acceptance
 
     clock = _Clock()
