@@ -609,7 +609,7 @@ def test_shell_launcher_has_no_detached_api_or_readiness_poll(built_wrapper_laun
 _WINDOW_DRIVER = textwrap.dedent(
     """
     import importlib.util, sys, os
-    spec = importlib.util.spec_from_file_location("nw", "__WINDOW_SCRIPT__")
+    spec = importlib.util.spec_from_file_location("nw", __WINDOW_SCRIPT__)
     nw = importlib.util.module_from_spec(spec); spec.loader.exec_module(nw)
     import installer.bundle.native_runtime_supervisor as nrs
     class FakeSupervisor:
@@ -635,7 +635,7 @@ def _drive_window(tmp_path: Path, mode: str, extra_env: dict[str, str]) -> tuple
     home = tmp_path / ("home-" + mode.replace("/", "_"))
     home.mkdir(exist_ok=True)
     driver = (tmp_path / ("driver_" + mode.replace("/", "_") + ".py"))
-    driver.write_text(_WINDOW_DRIVER.replace("__WINDOW_SCRIPT__", str(WINDOW_SCRIPT)))
+    driver.write_text(_WINDOW_DRIVER.replace("__WINDOW_SCRIPT__", repr(str(WINDOW_SCRIPT))))
     env = {"PATH": BASE_PATH, "HOME": str(home), **extra_env}
     done = subprocess.run([sys.executable, str(driver), mode], capture_output=True,
                           text=True, env=env, timeout=120)

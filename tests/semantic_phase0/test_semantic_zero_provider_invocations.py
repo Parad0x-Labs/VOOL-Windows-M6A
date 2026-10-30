@@ -146,7 +146,7 @@ asyncio.create_subprocess_shell = _blocked_async_process
 asyncio.BaseEventLoop.subprocess_exec = _blocked_async_process
 asyncio.BaseEventLoop.subprocess_shell = _blocked_async_process
 
-sys.path.insert(0, "__TREE__")
+sys.path.insert(0, __TREE__)
 os.chdir(tempfile.mkdtemp(prefix="vool_tripwire_cwd_"))
 
 from unittest.mock import Mock
@@ -291,7 +291,7 @@ def _run_phase(flag: str) -> _ModelLayerLog:
             "VOOL_SEMANTIC_REACH": flag,
         }
         script = (
-            _PHASE_DRIVER.replace("__TREE__", str(tree))
+            _PHASE_DRIVER.replace("__TREE__", repr(str(tree)))
             .replace("__ENTRIES__", repr(list(_MODEL_LAYER_ENTRY_POINTS)))
             .replace("__TURNS__", repr(list(PROBE_TURNS)))
         )

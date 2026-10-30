@@ -448,7 +448,7 @@ def test_sabotage_s5_the_merchant_confirmation_guard_is_load_bearing() -> None:
         assert "PRESENT" in sabotaged, "sabotage broke the module outright; anchor deeper"
         # semantic probe: the sabotaged guard calls a pending order confirmed
         semantic = (
-            "import sys; sys.path.insert(0, '" + str(Path(__file__).resolve().parents[1]) + "');\n"
+            "import sys; sys.path.insert(0, " + repr(str(Path(__file__).resolve().parents[1])) + ");\n"
             "import core.vool_browser.shopping as s\n"
             "src_ok = 'merchant_status in {\"paid\", \"pending\"}' in open(s.__file__).read()\n"
             "print('SABOTAGE_LIVE', src_ok)\n"
@@ -472,7 +472,7 @@ def test_sabotage_s6_the_idempotent_replay_guard_is_load_bearing() -> None:
 
     with _sabotage(LANE, "if receipt_path.is_file():", "if False and receipt_path.is_file():"):
         semantic = (
-            "import sys; sys.path.insert(0, '" + str(Path(__file__).resolve().parents[1]) + "');\n"
+            "import sys; sys.path.insert(0, " + repr(str(Path(__file__).resolve().parents[1])) + ");\n"
             "import core.vool_browser.shopping as s\n"
             "src_ok = 'if False and receipt_path.is_file():' in open(s.__file__).read()\n"
             "print('REPLAY_DISABLED', src_ok)\n"
@@ -496,7 +496,7 @@ def test_sabotage_s7_the_no_card_data_law_is_load_bearing() -> None:
     with _sabotage(LANE, "    card_keys = card_like_keys(arguments)",
                    "    card_keys = [] if True else card_like_keys(arguments)"):
         semantic = (
-            "import sys; sys.path.insert(0, '" + str(Path(__file__).resolve().parents[1]) + "');\n"
+            "import sys; sys.path.insert(0, " + repr(str(Path(__file__).resolve().parents[1])) + ");\n"
             "import core.vool_browser.shopping as s\n"
             "src_ok = '[] if True else card_like_keys' in open(s.__file__).read()\n"
             "print('CARD_GUARD_OFF', src_ok)\n"

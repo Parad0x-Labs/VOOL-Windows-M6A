@@ -52,7 +52,7 @@ def _writelines(path, lines):
     with open(path, "w") as f: f.writelines(lines)
     _invalidate_bytecode(path)
 def synth(path):
-    r = subprocess.run([PYTHON, "-c", f"import ast;ast.parse(open('{path}').read())"],
+    r = subprocess.run([PYTHON, "-c", f"import ast;ast.parse(open({str(path)!r}).read())"],
                        capture_output=True, text=True)
     return r.returncode == 0
 def run(test):

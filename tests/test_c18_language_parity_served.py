@@ -240,7 +240,8 @@ class CountingProvider:
 _SEED = textwrap.dedent(
     """
     import sys
-    sys.path.insert(0, "{root}")
+    from pathlib import Path as WindowsPath, Path as PosixPath
+    sys.path.insert(0, str({root!r}))
     from storage.db import get_connection
     from storage.migrations import run_migrations
     from storage.model_provider_manifest import (
@@ -298,7 +299,8 @@ _SEED = textwrap.dedent(
 _PREFERENCE_SEED = textwrap.dedent(
     """
     import sys
-    sys.path.insert(0, "{root}")
+    from pathlib import Path as WindowsPath, Path as PosixPath
+    sys.path.insert(0, str({root!r}))
     from storage.db import get_connection
     from storage.migrations import run_migrations
 

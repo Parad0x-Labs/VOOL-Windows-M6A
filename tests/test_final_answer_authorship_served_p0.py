@@ -42,7 +42,7 @@ CERTIFIED_ANSWER = (
 _SEED = textwrap.dedent(
     '''
     import sys
-    sys.path.insert(0, "{root}")
+    sys.path.insert(0, {root!r})
     from storage.db import get_connection
     from storage.migrations import run_migrations
     from storage.model_provider_manifest import (
@@ -127,7 +127,7 @@ class _Served:
             seed_in_home(
                 self.home,
                 _SEED.format(
-                    root=REPO_ROOT,
+                    root=str(REPO_ROOT),
                     base_url=self.provider.base_url,
                     registered=list(self.registered),
                     certified=list(self.certified),

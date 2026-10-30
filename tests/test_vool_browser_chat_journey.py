@@ -140,7 +140,7 @@ def _seed_stub_model(home: Path, provider: SequencedToolProvider) -> None:
     seed = textwrap.dedent(
         f"""
         import sys
-        sys.path.insert(0, "{REPO_ROOT}")
+        sys.path.insert(0, {REPO_ROOT.as_posix()!r})
         from storage.db import get_connection
         from storage.migrations import run_migrations
         from storage.model_provider_manifest import ModelProviderManifest, list_provider_manifests, upsert_provider_manifest
@@ -457,7 +457,7 @@ def test_served_auto_mode_runs_a_full_journey_and_a_restart_keeps_the_lane(journ
             textwrap.dedent(
                 f"""
                 import sys
-                sys.path.insert(0, "{REPO_ROOT}")
+                sys.path.insert(0, {REPO_ROOT.as_posix()!r})
                 from tests._toolchain_fixtures import executor_kwargs, internal_scope
                 from core.tool_intent_executor import execute_tool_intent
 
