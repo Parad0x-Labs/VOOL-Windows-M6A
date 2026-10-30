@@ -30,6 +30,12 @@ SEP = r"(?:\\+|//?)"
 _BS = r"\\+"
 #: A path segment: anything that is not a separator, whitespace, a quote or a Windows-reserved char.
 _SEG = r"[^\\/\s\"'<>|*?:]+"
+#: A ``\\xHH`` or ``\\uHHHH`` escape: how a bytes repr (``b'C:\\\\Users\\\\\\xc5\\x81ukasz'``) or JSON's
+#: ASCII mode (``\\u0141ukasz``) spells a non-ASCII letter. Part of a name, never a separator.
+_ESC = r"\\(?:x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4})"
+#: The separator before an account: a run of backslashes that stops short of an escape's own
+#: backslash, or one or two forward slashes.
+_ACCT_SEP = r"(?:(?:\\(?!x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}))+|//?)"
 _TAIL = _SEG + r"(?:" + SEP + _SEG + r")*" + SEP + r"?"
 #: The ACCOUNT segment of a home directory (``Users\John Smith``, ``Users\al-ice.o'neil``): the one
 #: place a space or an apostrophe is part of the name. It is at most three words joined by single
@@ -65,16 +71,22 @@ _ACCT_SPACED = r"(?=[^\\/\r\n]{0,64}[ '])" + _ACCT
 #: ``Users\\bob failed to start`` still keeps its prose; a capitalised word after a name is masked
 #: with it, which costs readability, never privacy.
 _ACCT_LOOSE = _ACCT_WORD + r"(?:[^\S\r\n]+(?-i:(?![a-z]))" + _ACCT_WORD + r"){1,5}"
-#: Either spaced form, for redactors that mask just the home prefix and account.
+#: Either spaced form, for POSIX homes.
 _ACCT_ANY_SPACED = r"(?:" + _ACCT_SPACED + r"|" + _ACCT_LOOSE + r")"
-#: What follows ``Users`` + separator: the account up to the next separator (then the rest of the
-#: path), the account ending at a line end, ``,`` ``;`` or the end of the text, the loose fallback
-#: (then the rest of the path, if any), or -- when none holds -- the strict tail.
+#: A WINDOWS account (after a drive, a share or a backslash): everything up to the next separator,
+#: line end, ``,`` ``;`` ``:``, closing quote or bracket, a full stop that ends a sentence, or a drive
+#: path after one space (``... and then D:\\out``). Fails closed: a word rule cannot tell
+#: ``ana de la cruz`` or ``john smith and it failed`` from a name followed by prose, so the prose is
+#: masked with the name rather than the name's tail kept. An apostrophe between two name characters
+#: (``o'neil``) and ``\\xHH`` / ``\\uHHHH`` escapes are part of it; a ``[`` cannot start it, so a
+#: redaction marker (``Users/[redacted-user]``) is never masked again. Each step takes one character or one escape and looks one fixed width ahead: linear.
+_WIN_ACCT = (
+    r"(?![\s\[])(?:(?![ \t][A-Za-z]:[\\/])(?:[^\\/\r\n,;:" + _CLOSERS + r".]|\.(?!\s|$)"
+    + r"|'(?=[^\s\\/,;:" + _CLOSERS + r".])|" + _ESC + r"))+"
+)
+#: What follows ``Users``: the account, then the rest of the path if a separator follows.
 _USERS_REST = (
-    r"(?i:users)" + SEP
-    + r"(?:" + _ACCT + r"(?:" + SEP + r"(?:" + _TAIL + r")?|" + _ACCT_STOP + r")"
-    + r"|" + _ACCT_LOOSE + r"(?:" + SEP + r"(?:" + _TAIL + r")?)?"
-    + r"|" + _TAIL + r")"
+    r"(?i:users)" + _ACCT_SEP + _WIN_ACCT + r"(?:" + SEP + r"(?:" + _TAIL + r")?)?"
 )
 #: What may follow a prefix (drive, UNC server/share, device): a home directory, or any path.
 _AFTER_PREFIX = r"(?:" + _USERS_REST + r"|" + _TAIL + r")"
@@ -98,11 +110,18 @@ _DRIVE = r"(?<![A-Za-z0-9\\])[A-Za-z]:" + SEP + _AFTER_PREFIX
 #: The server may carry a ``$`` (``\\\\wsl$\\Ubuntu``, ``\\\\fs01$``).
 _UNC = r"(?<![\w\\/.\]])" + _NOT_AFTER_DRIVE + r"\\{2,}[A-Za-z0-9._$-]{2,}" + SEP + _AFTER_PREFIX
 _ROOTED_USERS = r"(?<![\w\\/.\]])" + _NOT_AFTER_DRIVE + _BS + _USERS_REST
-#: POSIX ``/home/<name>`` and ``/Users/<name>`` whose name holds a space or an apostrophe.
+_POSIX_REST = r"/(?:" + _SEG + r"(?:/" + _SEG + r")*/?)?"
+#: A POSIX ``/home`` or ``/Users`` account: everything up to the next ``/`` within 64 characters on
+#: the line, else a spaced or loose name. A lowercase ``/users/`` is as often a URL path
+#: (``GET /users/42 404 Not Found``) as a home, so it takes the strict spaced rule only.
+_POSIX_HOME_ACCT = (
+    r"(?:[^\\/\r\n,;:" + _CLOSERS + r"]{1,64}(?=/)|" + _ACCT_ANY_SPACED + r")"
+)
+#: POSIX ``/home/<name>`` and ``/Users/<name>`` whose name the strict patterns cannot take.
 _POSIX_SPACED_HOME = (
-    r"(?<![\w/\\.:\]])/(?i:home|users)/"
-    + r"(?:" + _ACCT_SPACED + r"(?:/(?:" + _SEG + r"(?:/" + _SEG + r")*/?)?|" + _ACCT_STOP + r")"
-    + r"|" + _ACCT_LOOSE + r"(?:/(?:" + _SEG + r"(?:/" + _SEG + r")*/?)?)?)"
+    r"(?<![\w/\\.:\]])/"
+    + r"(?:(?-i:(?i:home)|Users)/(?:" + _POSIX_HOME_ACCT + r"(?:" + _POSIX_REST + r")?)"
+    + r"|(?-i:users)/" + _ACCT_SPACED + r"(?:" + _POSIX_REST + r"|" + _ACCT_STOP + r"))"
 )
 
 #: The `\\?\...`, `\\.\...` and `\\server\share` forms: network and device paths.
@@ -115,23 +134,28 @@ WINDOWS_PATH_RE = re.compile(
     + _ROOTED_USERS + r")|(?:"
     + _POSIX_SPACED_HOME + r")"
 )
-#: ``[drive:]<sep>users|home<sep><account>`` (groups: drive, users|home) for an account name that
-#: holds a space or an apostrophe, up to its closing separator, or that the loose fallback takes; for redactors that mask just the
-#: home prefix. Runs BEFORE their strict-account patterns, which would stop inside the name.
+#: ``[drive:]<sep>users|home<sep><account>`` (groups: drive, users|home), for redactors
+#: that mask just the home prefix and account. A Windows form (a drive, or a backslash) takes the
+#: whole Windows account (``_WIN_ACCT``); a POSIX ``/home`` or ``/Users`` takes ``_POSIX_HOME_ACCT``;
+#: a lowercase ``/users/`` only a spaced name. Runs BEFORE the redactors' strict-account patterns,
+#: which would stop inside a spaced name.
 SPACED_HOME_RE = re.compile(
     # Never starts inside a run of separators: each start there would re-scan the whole run.
-    r"(?:(?<![A-Za-z0-9\\])([A-Za-z]:))?(?<![\\/])" + SEP + r"(users|home)" + SEP + _ACCT_ANY_SPACED,
+    r"(?:(?<![A-Za-z0-9\\])([A-Za-z]:))?(?<![\\/])" + SEP + r"(users|home)"
+    + r"(?(1)" + _ACCT_SEP + _WIN_ACCT
+    + r"|(?:(?:(?<=\\users)|(?<=\\home))" + _ACCT_SEP + _WIN_ACCT
+    + r"|/(?:(?-i:(?<=/home/)|(?<=/Users/))" + _POSIX_HOME_ACCT + r"|" + _ACCT_SPACED + r")))",
     re.IGNORECASE,
 )
 
 #: An account name for the redactors' own strict home patterns: any letter or digit (``\w``), and the
 #: punctuation Windows and POSIX allow in one (``zq+alice``, ``Zq&Smith``, ``al.ice-o``), but no
 #: separator, space, quote or bracket.
-ACCOUNT_NAME = r"[\w.+&$~!#%-]+"
+ACCOUNT_NAME = r"(?:[\w.+&$~!#%-]|" + _ESC + r")+"
 
-_SPLIT_RE = re.compile(r"[\\/]+")
-#: A file name: something, a dot, then a one-to-four character alphanumeric extension.
-_FILE_NAME_RE = re.compile(r"[^.]\.[A-Za-z0-9]{1,4}$")
+#: Splits on separators but never inside a ``\\xHH`` / ``\\uHHHH`` escape, so an escaped name stays
+#: one segment.
+_SPLIT_RE = re.compile(_ACCT_SEP.replace("//?", "/+"))
 #: Folders whose children are accounts: local homes, and the profile shares a server publishes
 #: (``\\\\fs01\\users$``, ``\\\\fs01\\profiles``), with or without the hidden-share ``$``.
 _HOME_DIRS = frozenset({"users", "home", "homes", "profiles"})
@@ -161,16 +185,11 @@ def path_basename(match: re.Match[str]) -> str:
     if ends_at_home_account(parts):
         return "<path>"
     if text[:1] == "\\" and text[1:2] == "\\":
-        # A share path: its first segments are the server, the share and the folder in it, which
-        # name a person as often as a file does (``\\\\fs01\\jsmith$``, ``\\\\fs01\\share\\jsmith``).
-        named = parts[2:] if parts[0] in ("?", ".") else parts
-        if named and named[0].lower() == "unc":
-            named = named[1:]
-        if len(named) <= 3:
-            return "<path>"
-        # Deeper, the last segment is still as likely a person's folder (``\\\\fs01\\dept\\team\\
-        # jsmith``) as a file; only a name with a short extension is given back.
-        if not _FILE_NAME_RE.search(parts[-1]):
+        # A share path (``\\\\fs01\\...``, ``\\\\?\\UNC\\...``): any segment of it, the last included,
+        # may be a person's folder (``\\\\fs01\\dept\\team\\li.wang``), and a dotted name looks like a
+        # file, so nothing of it is given back. A device path on a drive (``\\\\?\\C:\\...``) is a drive path.
+        named = parts[1:] if parts[0] in ("?", ".") else []
+        if not (named and re.fullmatch(r"[A-Za-z]:", named[0])):
             return "<path>"
     return parts[-1]
 
