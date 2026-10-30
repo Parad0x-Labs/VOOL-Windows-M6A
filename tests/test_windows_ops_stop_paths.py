@@ -72,6 +72,56 @@ def test_a_runtime_that_exits_mid_stop_is_already_gone_on_windows(monkeypatch) -
     run_local_acceptance._stop_runtime("http://127.0.0.1:11435")
 
 
+def test_a_runtime_that_refuses_the_stop_and_keeps_serving_is_never_reported_stopped(monkeypatch) -> None:
+    """PermissionError from the final kill is not proof the runtime is gone: Windows answers it
+    for a pid that just exited and for one this account may not stop. When the runtime is still
+    serving after the kill wait, the stop fails loudly instead of returning as if it had worked."""
+    import pytest
+
+    from ops import run_local_acceptance
+
+    clock = _Clock()
+    monkeypatch.setattr(run_local_acceptance.time, "time", clock.time)
+    monkeypatch.setattr(run_local_acceptance.time, "sleep", clock.sleep)
+    monkeypatch.setattr(run_local_acceptance, "_current_health",
+                        lambda _base_url: {"ok": True, "runtime": {"pid": 4242}})
+
+    def _denied(_pid, _sig):
+        raise PermissionError(13, "Access is denied")
+
+    monkeypatch.setattr(run_local_acceptance.os, "kill", _denied)
+
+    with pytest.raises(RuntimeError, match="4242"):
+        run_local_acceptance._stop_runtime("http://127.0.0.1:11435")
+
+
+def test_a_runtime_that_answers_permission_error_but_is_gone_counts_as_stopped(monkeypatch) -> None:
+    from ops import run_local_acceptance
+
+    clock = _Clock()
+    monkeypatch.setattr(run_local_acceptance.time, "time", clock.time)
+    monkeypatch.setattr(run_local_acceptance.time, "sleep", clock.sleep)
+    stopped = {"after": None, "kills": 0}
+
+    def _health(_base_url):
+        if stopped["after"] is not None and clock.now >= stopped["after"]:
+            return None
+        return {"ok": True, "runtime": {"pid": 4242}}
+
+    def _denied_then_gone(_pid, _sig):
+        stopped["kills"] += 1
+        if stopped["kills"] == 2:  # the final kill: the pid had already exited; health catches up
+            stopped["after"] = clock.now + 1.0
+        raise PermissionError(13, "Access is denied")
+
+    monkeypatch.setattr(run_local_acceptance, "_current_health", _health)
+    monkeypatch.setattr(run_local_acceptance.os, "kill", _denied_then_gone)
+    monkeypatch.delattr(signal, "SIGKILL", raising=False)
+
+    run_local_acceptance._stop_runtime("http://127.0.0.1:11435")
+    assert stopped["kills"] == 2
+
+
 def test_a_wall_budget_overrun_stops_its_own_child_tree_on_windows(tmp_path, monkeypatch) -> None:
     import subprocess
 
