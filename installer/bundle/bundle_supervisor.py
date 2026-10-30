@@ -15,6 +15,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from core.process_liveness import system_powershell, system_taskkill
 from core.runtime_paths import native_runtime_home
 
 # Every age, retry time and unanswered span below is measured on _tick(), never the wall clock: a
@@ -557,7 +558,7 @@ class BundleSupervisor:
             try:
                 if _is_windows_platform():
                     completed = subprocess.run(
-                        ["taskkill.exe", "/PID", str(child.pid), "/T", "/F"],
+                        [system_taskkill(), "/PID", str(child.pid), "/T", "/F"],
                         stdin=subprocess.DEVNULL,
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
@@ -736,7 +737,7 @@ class BundleSupervisor:
         try:
             subprocess.run(
                 [
-                    "powershell.exe",
+                    system_powershell(),
                     "-NoProfile",
                     "-NonInteractive",
                     "-WindowStyle",

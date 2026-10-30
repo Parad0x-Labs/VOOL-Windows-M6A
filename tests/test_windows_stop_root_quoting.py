@@ -19,6 +19,7 @@ import pytest
 
 from installer import vool_stop
 from installer.bundle import bundle_supervisor
+from tests._windows_system32 import trust_system32
 from tests.test_windows_installer_setup_initializes import scan_code
 
 ISS = Path(__file__).resolve().parent.parent / "installer" / "bundle" / "vool.iss"
@@ -106,7 +107,8 @@ def test_installer_stop_keeps_an_install_folder_with_any_quote_whole() -> None:
     assert _root_value(command) == TRICKY_ROOT
 
 
-def test_stop_button_keeps_a_root_with_any_quote_whole(tmp_path: Path) -> None:
+def test_stop_button_keeps_a_root_with_any_quote_whole(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    trust_system32(monkeypatch)
     captured: list[list[str]] = []
     run = _captured_runner(captured)
     vool_stop.kill_listener(run, vool_stop.API_PORT, Path(TRICKY_ROOT))
@@ -119,6 +121,7 @@ def test_stop_button_keeps_a_root_with_any_quote_whole(tmp_path: Path) -> None:
 
 
 def test_supervisor_cleanup_keeps_a_root_with_any_quote_whole(monkeypatch: pytest.MonkeyPatch) -> None:
+    trust_system32(monkeypatch)
     captured: list[list[str]] = []
     monkeypatch.setattr(bundle_supervisor, "_is_windows_platform", lambda: True)
     monkeypatch.setattr(bundle_supervisor, "subprocess", SimpleNamespace(run=_captured_runner(captured)))

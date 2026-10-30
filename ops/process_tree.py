@@ -11,6 +11,9 @@ from typing import Any
 
 import psutil
 
+# taskkill opens no console window of its own; 0 (no flag) off Windows.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 
 def process_group_kwargs() -> dict[str, Any]:
     if os.name == "nt":
@@ -87,18 +90,18 @@ def stop_process_tree(process: Any, *, grace_seconds: float = 5.0) -> None:
             process.wait(timeout=grace_seconds)
         return
     if os.name == "nt":
-        if process.poll() is None:
-            with contextlib.suppress(Exception):
-                process.send_signal(signal.CTRL_BREAK_EVENT)
-            with contextlib.suppress(Exception):
-                process.wait(timeout=grace_seconds)
+        # Take the whole tree down through the root's PID while the root still runs: once it
+        # has exited, taskkill /T can't walk to the helpers it started. Then make sure of the root.
         if pid:
             with contextlib.suppress(Exception):
+                from core.process_liveness import system_taskkill
+
                 subprocess.run(
-                    ("taskkill", "/PID", str(pid), "/T", "/F"),
+                    (system_taskkill(), "/PID", str(pid), "/T", "/F"),
                     capture_output=True,
                     check=False,
                     timeout=grace_seconds,
+                    creationflags=_NO_WINDOW,
                 )
         with contextlib.suppress(Exception):
             process.kill()

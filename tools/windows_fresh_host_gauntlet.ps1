@@ -221,6 +221,11 @@ function Invoke-WindowsRuntimeRegression {
         "tests\test_windows_nonlocal_path_message_lanes.py",
         "tests\test_windows_nonlocal_path_chat_page.py",
         "tests\test_windows_readonly_fsync.py",
+        "tests\test_local_service_autostart_windows_stop.py",
+        "tests\test_media_worker_client_windows_tree_kill.py",
+        "tests\test_browser_render_windows_tree_kill.py",
+        "tests\test_native_runtime_supervisor_windows_teardown.py",
+        "tests\test_system_taskkill_is_pinned_to_system32.py",
         "tests\test_honesty_receipt.py"
     )
     $previousUtf8 = $env:PYTHONUTF8

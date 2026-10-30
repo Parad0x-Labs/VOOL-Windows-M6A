@@ -86,3 +86,44 @@ def pid_gone(pid: int) -> bool:
         return kernel32.WaitForSingleObject(handle, 0) == _WAIT_OBJECT_0
     finally:
         kernel32.CloseHandle(handle)
+
+
+def _system32(*parts: str) -> str:
+    """A Windows tool under ``%SystemRoot%\\System32`` by absolute path, or OSError.
+
+    A bare tool name is looked up through the app's folder, the current folder and PATH, so a
+    planted copy there would run instead. Only ``%SystemRoot%\\System32`` is trusted; a missing,
+    relative, drive-less or network-share SystemRoot, or no such file there, fails closed and the
+    caller falls back to what it does when the tool cannot run.
+    """
+    import ntpath
+
+    root = os.environ.get("SystemRoot") or ""
+    drive, rest = ntpath.splitdrive(root)
+    # A drive letter only: a \\server\share root would run a network copy of the tool.
+    if len(drive) != 2 or drive[1] != ":" or not rest.startswith(("\\", "/")):
+        raise OSError("SystemRoot is not an absolute Windows folder; Windows tools are not trusted")
+    exe = ntpath.join(root, "System32", *parts)
+    if not os.path.isfile(exe):
+        raise OSError(f"{exe} is missing")
+    return exe
+
+
+def system_taskkill() -> str:
+    """Windows' own taskkill.exe by absolute path, or OSError (see ``_system32``)."""
+    return _system32("taskkill.exe")
+
+
+def system_powershell() -> str:
+    """Windows PowerShell 5.1's powershell.exe by absolute path, or OSError (see ``_system32``)."""
+    return _system32("WindowsPowerShell", "v1.0", "powershell.exe")
+
+
+SYSTEM32_TOOLS = frozenset({"taskkill", "schtasks", "tasklist", "sc", "cmd", "wevtutil"})
+
+
+def system_tool(name: str) -> str:
+    """One of ``SYSTEM32_TOOLS`` (a bare name such as ``tasklist``) by absolute path, or OSError."""
+    if name not in SYSTEM32_TOOLS:
+        raise OSError(f"{name} is not a Windows tool VOOL runs")
+    return _system32(f"{name}.exe")

@@ -23,7 +23,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from core.process_liveness import pid_alive
+from core.process_liveness import pid_alive, system_taskkill
 from core.runtime_paths import active_vool_home, runtime_home_identity
 
 
@@ -342,6 +342,16 @@ class NativeRuntimeSupervisor:
             with contextlib.suppress(Exception):
                 if os.name == "posix":
                     os.killpg(os.getpgid(child.pid), signal.SIGTERM)
+                elif os.name == "nt":
+                    # Windows has no group signalling: take the child's whole tree
+                    # down through the recorded PID while the root still runs (once
+                    # it has exited, taskkill /T can't walk to the helpers it
+                    # started). Nothing outside that tree is ever touched; if the
+                    # tree kill fails, the wait below falls back to killing the child.
+                    subprocess.run(
+                        (system_taskkill(), "/PID", str(child.pid), "/T", "/F"),
+                        capture_output=True, check=False, timeout=8,
+                    )
                 else:
                     child.terminate()
             try:

@@ -3,6 +3,16 @@ from __future__ import annotations
 from typing import Any
 
 
+def _windows_tool(name: str) -> str | None:
+    """Windows' own ``name``.exe from System32, or None when that folder can't be trusted."""
+    from core.process_liveness import system_tool
+
+    try:
+        return system_tool(name)
+    except OSError:
+        return None
+
+
 def inspect_processes(
     *,
     os_name: str,
@@ -10,8 +20,11 @@ def inspect_processes(
     csv_module: Any,
 ) -> list[dict[str, Any]]:
     if os_name == "nt":
+        tasklist = _windows_tool("tasklist")
+        if tasklist is None:
+            return []
         completed = subprocess_run(
-            ["tasklist", "/fo", "csv", "/nh"],
+            [tasklist, "/fo", "csv", "/nh"],
             capture_output=True,
             text=True,
             timeout=4,
@@ -62,8 +75,11 @@ def inspect_services(
     which_fn: Any,
 ) -> list[dict[str, Any]]:
     if os_name == "nt":
+        sc = _windows_tool("sc")
+        if sc is None:
+            return []
         completed = subprocess_run(
-            ["sc", "query", "type=", "service", "state=", "all"],
+            [sc, "query", "type=", "service", "state=", "all"],
             capture_output=True,
             text=True,
             timeout=6,
