@@ -68,8 +68,12 @@ def resume_suspended(pid: int) -> None:
                 if not thread:
                     raise ctypes.WinError(ctypes.get_last_error())
                 try:
-                    if kernel32.ResumeThread(thread) == 0xFFFFFFFF:
+                    previous = kernel32.ResumeThread(thread)
+                    if previous == 0xFFFFFFFF:
                         raise ctypes.WinError(ctypes.get_last_error())
+                    if previous != 1:
+                        # 0: it was not suspended; 2 or more: it is still suspended after this.
+                        raise OSError(f"thread {entry.th32ThreadID} of process {pid} had suspend count {previous}, not 1")
                     resumed += 1
                 finally:
                     kernel32.CloseHandle(thread)
