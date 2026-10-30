@@ -34,6 +34,13 @@ def _windows_cmd_starter(command: list[str]) -> str | None:
     return None
 
 
+def _windows_job() -> Any:
+    """A Job object with KILL_ON_JOB_CLOSE whose only handle this process holds (not inherited)."""
+    from core.windows_broker.process import _WindowsJob
+
+    return _WindowsJob()
+
+
 class NativeRuntimeError(RuntimeError):
     """The exact native runtime could not be established safely."""
 
@@ -72,6 +79,7 @@ class NativeRuntimeSupervisor:
         popen: Callable[..., Any] = subprocess.Popen,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
+        job_factory: Callable[[], Any] | None = None,
     ) -> None:
         self.project_root = Path(project_root).expanduser().resolve()
         self.command = [str(part) for part in command]
@@ -90,6 +98,10 @@ class NativeRuntimeSupervisor:
         self._popen = popen
         self._sleep = sleep
         self._monotonic = monotonic
+        self._job_factory = job_factory or _windows_job
+        # Windows: the Job object the owned tree lives in. When this process ends, however it ends,
+        # Windows closes the handle and kills the tree (G4 orphan check, Steve, 177621c).
+        self._job: Any | None = None
         self._unhealthy_since: float | None = None
         self.process: Any | None = None
         self.log_handle: Any | None = None
@@ -315,11 +327,32 @@ class NativeRuntimeSupervisor:
             kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
                 subprocess, "CREATE_NO_WINDOW", 0
             )
+            try:
+                self._job = self._job_factory()
+            except Exception as exc:
+                self._close_log()
+                raise NativeRuntimeError(
+                    f"the Windows job that ties the runtime to this window could not be created "
+                    f"({type(exc).__name__}: {exc}); nothing was started"
+                ) from exc
         try:
             self.process = self._popen(self._spawn_command(), **kwargs)
         except Exception as exc:
+            self._close_job()
             self._close_log()
             raise NativeRuntimeError(f"runtime spawn failed: {type(exc).__name__}: {exc}") from exc
+        if self._job is not None:
+            try:
+                self._job.assign(self.process.pid)
+                # Whatever cmd started before the assignment is not in the job yet; its later
+                # children are, because a job's processes start their children inside it.
+                for pid in sorted(self._descendant_pids()):
+                    self._job.assign(pid)
+            except Exception as exc:
+                self.shutdown()
+                raise NativeRuntimeError(
+                    f"the runtime could not be tied to this window ({type(exc).__name__}: {exc}); it was stopped"
+                ) from exc
 
         while time.monotonic() < deadline:
             returncode = self.process.poll()
@@ -410,6 +443,14 @@ class NativeRuntimeSupervisor:
                         child.kill()
                 with contextlib.suppress(Exception):
                     child.wait(timeout=3)
+        # Closing the job ends anything of the tree the kill above missed.
+        self._close_job()
         self._close_log()
+
+    def _close_job(self) -> None:
+        job, self._job = self._job, None
+        if job is not None:
+            with contextlib.suppress(Exception):
+                job.close()
 
     close = shutdown
