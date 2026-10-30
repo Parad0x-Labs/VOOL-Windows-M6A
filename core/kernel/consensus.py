@@ -436,7 +436,7 @@ def _default_journal_path() -> pathlib.Path:
 def _verdict(path: pathlib.Path) -> str | None:
     """AGREE/DISAGREE when the file is complete per the trailing-line convention."""
     try:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
     except OSError:
         return None
     lines = [ln.strip() for ln in text.strip().splitlines() if ln.strip()]
@@ -561,7 +561,7 @@ def open_review(turns: list[tuple], build: str, bus: pathlib.Path | None = None,
     if run_id and journal_path:
         try:
             import json as _json
-            with open(journal_path) as _jf:
+            with open(journal_path, encoding="utf-8") as _jf:
                 rid_rows = sum(1 for ln in _jf
                                if ln.strip() and _json.loads(ln).get("run_id") == run_id)
             if rid_rows and expected_turns is None:
@@ -633,9 +633,9 @@ def open_review(turns: list[tuple], build: str, bus: pathlib.Path | None = None,
         if "\x01" in transcript and "ANSWER:\n(nothing shipped)" in digest:
             raise ValueError(f"digest parity violation on turn {n}: answer present but digested empty")
         context.append(digest)
-    (review / "transcript.md").write_text("\n".join(body))
-    (review / "FULL_REVIEW_CONTEXT.md").write_text("\n".join(context))
-    (review / "PROTOCOL.md").write_text(PROTOCOL)
+    (review / "transcript.md").write_text("\n".join(body), encoding="utf-8")
+    (review / "FULL_REVIEW_CONTEXT.md").write_text("\n".join(context), encoding="utf-8")
+    (review / "PROTOCOL.md").write_text(PROTOCOL, encoding="utf-8")
     # Initial state carries the ACTUAL topology so watchers fire correctly before
     # the first landing (bug: the old hardcoded seat list left terra/deepseek
     # watchers blind until something landed).
@@ -653,7 +653,8 @@ def open_review(turns: list[tuple], build: str, bus: pathlib.Path | None = None,
 def _print_round(path: pathlib.Path, agent: str, round_no: int) -> None:
     color = _AGENT_COLORS[agent]
     print(f"\n{_BOLD}{color}=== {_AGENT_NAMES[agent]} REVIEW — ROUND {round_no} ==={_RESET}")
-    print(f"{color}{path.read_text().strip()}{_RESET}\n", flush=True)
+    text = path.read_text(encoding="utf-8", errors="replace").strip()
+    print(f"{color}{text}{_RESET}\n", flush=True)
 
 
 def _steps(voting: tuple[str, ...], contributors: tuple[str, ...],
@@ -760,7 +761,7 @@ def _drive(review: pathlib.Path, build: str, poll_s: float,
         # SOL fix point 5: persist EXACTLY the captured, validated holder bytes —
         # never re-read the mutable path. Audit metadata goes to a SEPARATE file
         # (SOL test 11: the annotation must live outside the digest domain).
-        (review / "consensus.md").write_text(holder_snap.text or "")
+        (review / "consensus.md").write_text(holder_snap.text or "", encoding="utf-8")
         (review / "consensus_audit.json").write_text(json.dumps({
             "round": round_no, "basis": basis, "holder": holder_snap.name,
             "block_sha256": holder_snap.block_digest,
@@ -887,7 +888,8 @@ def _drive(review: pathlib.Path, build: str, poll_s: float,
                             f"=== NO CONSENSUS ===\noperator backstop: {max_rounds} rounds on build {build}"
                             " without a close.\n\n"
                             f"{summary}\n\nThe dispute is parked for the operator. Nothing is implemented.\n"
-                            "Deliberation may continue: resume_review(<this dir>, <build>) after operator direction.\n")
+                            "Deliberation may continue: resume_review(<this dir>, <build>) after operator direction.\n",
+                            encoding="utf-8")
                         _write_state(review, build=build, round=max_rounds, awaiting=None,
                                      verdicts=verdicts, status="no_consensus", **policy)
                         print(f"{_BOLD}=== NO CONSENSUS === operator backstop at {max_rounds} rounds — parked at "
