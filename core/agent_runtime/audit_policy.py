@@ -38,6 +38,7 @@ later request, and only along the axes that request actually names.
 """
 from __future__ import annotations
 
+import ntpath
 import os
 import posixpath
 import re
@@ -669,7 +670,16 @@ def audit_tool_permission_denial(
             return _external_temp_root_denial(source_context, arguments)
         if scope != "repository_generated":
             return "the audit execution policy denies workspace writes"
-        raw_path = str((arguments or {}).get("path") or "").replace("\\", "/").strip()
+        raw_text = str((arguments or {}).get("path") or "").strip()
+        # Judge the raw text before any normalization or strip, so a drive, a rooted path (either
+        # separator) or a `..` segment in either separator cannot be laundered into `generated/`.
+        if (
+            ntpath.splitdrive(raw_text)[0]
+            or raw_text.startswith(("/", "\\"))
+            or ".." in re.split(r"[\\/]", raw_text)
+        ):
+            return "the audit execution policy permits writes only under `generated/` proof artifacts"
+        raw_path = raw_text.replace("\\", "/")
         normalized = posixpath.normpath(raw_path).lstrip("/")
         if normalized == "generated" or normalized.startswith("generated/"):
             return ""
