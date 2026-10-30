@@ -695,7 +695,7 @@ class JournalConflictError(RuntimeError):
 
 def _disk_state(target: Path | None) -> dict[str, str]:
     """What is at a resolved target right now, in the identity the writer's precondition compares
-    (``content_sha256`` of the decoded text, exactly as ``read_file`` reports ``hash``)."""
+    (``bytes_sha256`` of the file's bytes, exactly as ``read_file`` reports ``hash``)."""
     if target is None:
         return {"kind": "unresolvable", "sha256": ""}
     try:
@@ -705,9 +705,9 @@ def _disk_state(target: Path | None) -> dict[str, str]:
             return {"kind": "directory", "sha256": ""}
         if not target.is_file():
             return {"kind": "other", "sha256": ""}
-        from core.execution.artifacts import content_sha256
+        from core.execution.artifacts import bytes_sha256
 
-        return {"kind": "file", "sha256": content_sha256(target.read_bytes().decode("utf-8", errors="replace"))}
+        return {"kind": "file", "sha256": bytes_sha256(target.read_bytes())}
     except OSError:
         return {"kind": "unreadable", "sha256": ""}
 

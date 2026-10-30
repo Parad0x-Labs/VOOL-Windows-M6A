@@ -28,6 +28,7 @@ from core.execution.artifacts import (
     build_command_artifact,
     build_failure_artifact,
     build_file_diff_artifact,
+    bytes_sha256,
     content_sha256,
     latest_workspace_mutation,
     mark_workspace_mutation_promoted,
@@ -5359,8 +5360,16 @@ def _read_machine_file(arguments: dict[str, Any]) -> RuntimeExecutionResult:
     start_line = max(1, int(arguments.get("start_line") or 1))
     max_lines = max(1, min(int(arguments.get("max_lines") or _READ_FILE_DEFAULT_LINES), _READ_FILE_CEILING))
     verbatim = bool(arguments.get("verbatim", False))
-    full_text = target.read_text(encoding="utf-8", errors="replace")
-    content_hash = content_sha256(full_text)
+    raw_bytes = target.read_bytes()
+    try:
+        full_text = raw_bytes.decode("utf-8")
+        decode_lossy = False
+    except UnicodeDecodeError:
+        full_text = raw_bytes.decode("utf-8", errors="replace")
+        decode_lossy = True
+    # The bytes, not the text: universal newlines folded CRLF and lone CR into LF, so this hash never
+    # matched the precondition workspace.write_file and replace_in_file check (`bytes_sha256`).
+    content_hash = bytes_sha256(raw_bytes)
     content = full_text.splitlines()
     chunk = content[start_line - 1 : start_line - 1 + max_lines]
     # Same contract as workspace.read_file: the read has already happened, so the slice hides size
@@ -5380,6 +5389,7 @@ def _read_machine_file(arguments: dict[str, Any]) -> RuntimeExecutionResult:
                 "line_count": 0,
                 "lines": [],
                 "hash": content_hash,
+                "decode_lossy": decode_lossy,
                 "observation": _tool_observation(
                     intent="machine.read_file",
                     tool_surface="machine",
@@ -5425,6 +5435,7 @@ def _read_machine_file(arguments: dict[str, Any]) -> RuntimeExecutionResult:
             "lines": line_rows,
             "verbatim": verbatim,
             "hash": content_hash,
+            "decode_lossy": decode_lossy,
             "observation": _tool_observation(
                 intent="machine.read_file",
                 tool_surface="machine",
@@ -5803,7 +5814,9 @@ def _write_machine_file(
                 reason="changed while it was being written", detail=str(exc),
             )
     else:
-        target.write_text(content, encoding="utf-8")
+        # newline="": text mode would write each "\n" as "\r\n" on Windows, so the file would hold
+        # bytes nobody asked for and effect reconciliation could not match it to this write.
+        atomic_write_text(target, content)
     action = "updated" if already_present else "created"
     status = "updated" if already_present else "executed"
     line_count = len(content.splitlines()) if content else 0
@@ -6210,7 +6223,7 @@ def _read_file(arguments: dict[str, Any], *, workspace_root: Path) -> RuntimeExe
     # against, and what write_file/replace_in_file's `expected_hash` precondition compares to. A
     # slice-scoped hash would change every time the caller paged to a different `start_line` for the
     # exact same on-disk file, which is not "current content identity", it's "current view identity".
-    content_hash = content_sha256(full_text)
+    content_hash = bytes_sha256(raw_bytes)
     content = full_text.splitlines()
     chunk = content[start_line - 1 : start_line - 1 + max_lines]
     # The whole file is already in `content`; the slice only decides what to SHOW, so a low ceiling
@@ -6388,8 +6401,9 @@ def _write_file(
     content = str(arguments.get("content") or "")
     existed = target.exists()
     previous_mtime_ns = int(target.stat().st_mtime_ns) if existed and target.is_file() else 0
-    previous = target.read_bytes().decode("utf-8", errors="replace") if existed else ""
-    previous_hash = content_sha256(previous) if existed else ""
+    previous_bytes = target.read_bytes() if existed else b""
+    previous = previous_bytes.decode("utf-8", errors="replace")
+    previous_hash = bytes_sha256(previous_bytes) if existed else ""
     # Captured BEFORE the write specifically so a rollback can restore the exact pre-mutation mode
     # later, even if something else re-chmods the file (without touching its content) in between
     # the mutation and the rollback -- see rollback_last_workspace_mutation's explicit re-apply.
@@ -6583,11 +6597,35 @@ def _replace_in_file(
                 ),
             },
         )
-    content = target.read_bytes().decode("utf-8", errors="replace")
+    previous_bytes = target.read_bytes()
+    relative_path = _relative_path(target, workspace_root=workspace_root)
+    try:
+        content = previous_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        # Editing the decoded text would write U+FFFD over every byte that is not UTF-8, changing
+        # parts of the file the edit never named.
+        return RuntimeExecutionResult(
+            handled=True,
+            ok=False,
+            status="not_utf8",
+            response_text=(
+                f"`{relative_path}` is not UTF-8 text, so an edit here would rewrite bytes outside "
+                "`old_text`. Nothing was changed."
+            ),
+            details={
+                "path": relative_path,
+                "observation": _tool_observation(
+                    intent="workspace.replace_in_file",
+                    tool_surface="workspace",
+                    ok=False,
+                    status="not_utf8",
+                    path=relative_path,
+                ),
+            },
+        )
     previous_mtime_ns = int(target.stat().st_mtime_ns)
     previous_mode = target.stat().st_mode & 0o7777
-    relative_path = _relative_path(target, workspace_root=workspace_root)
-    previous_hash = content_sha256(content)
+    previous_hash = bytes_sha256(previous_bytes)
     expected_hash = str(arguments.get("expected_hash") or "").strip()
     if expected_hash and expected_hash != previous_hash:
         return RuntimeExecutionResult(
