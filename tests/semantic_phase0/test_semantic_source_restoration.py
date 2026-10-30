@@ -306,47 +306,44 @@ def test_two_journals_for_one_path_fail_before_either_is_applied(tmp_path, monke
     assert any("disagrees with git HEAD" in item for item in problems)
 
 
-@pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGINT])
+#: The stops a supervisor can send that the worker can catch. Windows has no catchable SIGTERM
+#: (`terminate()` is TerminateProcess) and cannot send ctrl-C into a child's own process group, so
+#: there the stop is CTRL_BREAK_EVENT, delivered to the child as SIGBREAK (ops/process_tree.py).
+_CATCHABLE_STOPS = (
+    [signal.CTRL_BREAK_EVENT] if sys.platform == "win32" else [signal.SIGTERM, signal.SIGINT]
+)
+
+
+@pytest.mark.parametrize("signum", _CATCHABLE_STOPS)
 def test_signal_handler_restores_before_reraising_the_signal(signum) -> None:
     """Exercise the handler caller itself, not just mutation-matrix source wiring."""
     original = _subject_bytes()
     marker = f"signal-{int(signum)}-marker"
-    # Windows delivers no signal from one process to another: Popen.send_signal(SIGTERM) is
-    # TerminateProcess, which runs no handler (the kill test covers that case), and SIGINT is
-    # refused outright. There the child raises the signal on itself when told to.
     script = """
-import signal, sys, time
+import sys, time
 from tests import _source_guard as guard
-relative, marker, signum = sys.argv[1], sys.argv[2], int(sys.argv[3])
+relative, marker = sys.argv[1], sys.argv[2]
 path = guard.REPO_ROOT / relative
 original = path.read_bytes()
 guard._write_journal(relative, original)
 path.write_bytes(original + ('\\n# ' + marker + '\\n').encode())
 guard.install_restore_on_signal(lambda: path.write_bytes(original))
 print('READY', flush=True)
-if sys.platform == 'win32':
-    sys.stdin.readline()
-    signal.raise_signal(signum)
 while True:
     time.sleep(0.05)
 """
     child = subprocess.Popen(
-        [sys.executable, "-c", script, _SUBJECT, marker, str(int(signum))],
+        [sys.executable, "-c", script, _SUBJECT, marker],
         cwd=str(guard.REPO_ROOT),
-        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
     )
     try:
         assert child.stdout and child.stdout.readline().strip() == "READY"
         assert marker.encode() in _subject_bytes()
-        if sys.platform == "win32":
-            assert child.stdin
-            child.stdin.write("raise\n")
-            child.stdin.flush()
-        else:
-            child.send_signal(signum)
+        child.send_signal(signum)
         child.wait(timeout=30)
         assert child.returncode != 0
         assert _subject_bytes() == original
@@ -355,8 +352,6 @@ while True:
         if child.poll() is None:
             child.kill()
             child.wait(timeout=30)
-        if child.stdin:
-            child.stdin.close()
         if child.stdout:
             child.stdout.close()
         if child.stderr:

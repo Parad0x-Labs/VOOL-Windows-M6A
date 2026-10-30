@@ -34,6 +34,8 @@ import sys
 from collections.abc import Iterator
 from pathlib import Path
 
+from core import safe_git
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 #: Journals live inside the repo on purpose: a run killed on a machine whose temp directory is
@@ -111,28 +113,15 @@ def _read_journal(journal: Path) -> dict:
     return {"path": relative_path, "original": original}
 
 
-#: Fixed install paths, never a PATH lookup. Windows has none of the POSIX ones, so without its own
-#: entries recovery refused every journal there and a killed child's mutation stayed in the tree.
-_TRUSTED_GIT = (
-    (Path(r"C:\Program Files\Git\cmd\git.exe"), Path(r"C:\Program Files\Git\bin\git.exe"))
-    if os.name == "nt"
-    else (Path("/usr/bin/git"), Path("/bin/git"), Path("/usr/local/bin/git"))
-)
-
-
 def _trusted_head_bytes(relative_path: str) -> bytes:
     """Bytes Git HEAD records for a tracked path, or fail closed."""
-    git = next((path for path in _TRUSTED_GIT if path.is_file()), None)
+    git = safe_git.trusted_git_executable()
     if git is None:
         raise JournalIntegrityError("trusted git executable is unavailable")
-    env = {"PATH": "/usr/bin:/bin:/usr/local/bin", "LC_ALL": "C"}
-    if os.name == "nt":
-        # Windows will not start a process without SYSTEMROOT.
-        env = {"PATH": str(git.parent), "LC_ALL": "C", "SYSTEMROOT": os.environ.get("SYSTEMROOT", r"C:\Windows")}
     completed = subprocess.run(
-        [str(git), "-C", str(REPO_ROOT), "show", f"HEAD:{relative_path}"],
-        cwd="/",
-        env=env,
+        [str(git), *safe_git.hardening_args(), "-C", str(REPO_ROOT), "show", f"HEAD:{relative_path}"],
+        cwd=REPO_ROOT.anchor,
+        env=safe_git.trusted_git_env(git),
         capture_output=True,
         check=False,
     )
@@ -295,7 +284,7 @@ def assert_tree_is_clean(context: str, *, executable_only: bool = False) -> list
 
 
 def install_restore_on_signal(restore: "callable[[], None]") -> None:  # noqa: UP037
-    """Restore on SIGTERM/SIGINT, then die of the original signal.
+    """Restore on SIGTERM/SIGINT (and SIGBREAK on Windows), then die of the original signal.
 
     `finally` does not run when a supervisor sends SIGTERM, which is exactly how a proof worker is
     reaped on a timeout. Re-raising with the default handler afterwards keeps the exit status
@@ -310,7 +299,11 @@ def install_restore_on_signal(restore: "callable[[], None]") -> None:  # noqa: U
         signal.signal(signum, signal.SIG_DFL)
         os.kill(os.getpid(), signum)
 
-    for signum in (signal.SIGTERM, signal.SIGINT):
+    # SIGBREAK is Windows' catchable stop (CTRL_BREAK_EVENT); there terminate() is TerminateProcess.
+    for name in ("SIGTERM", "SIGINT", "SIGBREAK"):
+        signum = getattr(signal, name, None)
+        if signum is None:
+            continue
         with contextlib.suppress(Exception):
             signal.signal(signum, _handler)
 

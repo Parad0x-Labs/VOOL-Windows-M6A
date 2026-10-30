@@ -38,8 +38,8 @@ from __future__ import annotations
 import fnmatch
 import os
 import subprocess
-from collections.abc import Sequence
-from pathlib import Path
+from collections.abc import Mapping, Sequence
+from pathlib import Path, PureWindowsPath
 from urllib.parse import urlsplit
 
 #: Final key segments (lowercase) whose value git runs as a program or shell command.
@@ -124,6 +124,47 @@ def hardening_args() -> list[str]:
         "-c", "maintenance.auto=false",
         "-c", "gc.auto=0",
     ]
+
+
+_POSIX_TRUSTED_GITS = (Path("/usr/bin/git"), Path("/bin/git"), Path("/usr/local/bin/git"))
+
+
+def trusted_git_executable(*, os_name: str | None = None,
+                           environ: Mapping[str, str] | None = None) -> Path | None:
+    """The git a proof harness may trust: a system install location, never whatever PATH finds.
+
+    On Windows that is Git for Windows under %ProgramFiles%. The POSIX spellings are not tried
+    there: ``/usr/bin/git`` would mean ``\\usr\\bin\\git`` on the current drive, a folder any user
+    may create. %ProgramW6432% comes first, because under a 32-bit Python %ProgramFiles% is the
+    x86 folder and a 64-bit Git is not there. Each must be an absolute path on a drive letter: a
+    relative one resolves against the working directory and a UNC one names another machine. A
+    drive letter mapped to a share is not told apart. None when no trusted git is installed;
+    callers fail closed."""
+    if (os.name if os_name is None else os_name) == "nt":
+        source = os.environ if environ is None else environ
+        candidates = []
+        for name in ("ProgramW6432", "ProgramFiles"):
+            program_files = source.get(name, "")
+            drive_path = PureWindowsPath(program_files)
+            if drive_path.is_absolute() and len(drive_path.drive) == 2 and drive_path.drive.endswith(":"):
+                candidates.append(Path(program_files) / "Git" / "cmd" / "git.exe")
+    else:
+        candidates = _POSIX_TRUSTED_GITS
+    return next((path for path in candidates if path.is_file()), None)
+
+
+def trusted_git_env(git: Path, *, os_name: str | None = None,
+                    environ: Mapping[str, str] | None = None) -> dict[str, str]:
+    """A minimal environment for trusted_git_executable(): nothing inherited but what Windows
+    needs to start a program, then scrubbed by safe_env()."""
+    if (os.name if os_name is None else os_name) == "nt":
+        source = os.environ if environ is None else environ
+        base = {"PATH": str(git.parent), "LC_ALL": "C"}
+        if source.get("SystemRoot"):
+            base["SystemRoot"] = source["SystemRoot"]
+    else:
+        base = {"PATH": "/usr/bin:/bin:/usr/local/bin", "LC_ALL": "C"}
+    return safe_env(base)
 
 
 def executable_local_config(cwd: Path, *, timeout: float = 20) -> list[str]:
