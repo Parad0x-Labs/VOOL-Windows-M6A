@@ -33,9 +33,9 @@ def test_a_profile_share_path_never_names_its_account(name, path):
     assert "alice" not in out, f"{name}: {out!r}"
 
 
-def test_a_file_on_a_share_still_keeps_its_name():
+def test_a_file_on_a_share_gives_back_nothing():
     assert scrub_windows_paths("open \\\\fs01\\users$\\alice\\docs\\plan.txt now", path_basename) == (
-        "open plan.txt now"
+        "open <path> now"
     )
 
 

@@ -87,54 +87,55 @@ def test_a_space_still_ends_an_ordinary_path_segment():
     assert scrub_windows_paths("open C:\\Users\\alice\\x f.py", path_basename) == "open x f.py"
 
 
-# --- prose after a plain account name survives ------------------------------------------------------
-# A spaced account is accepted only as at most 3 single-spaced words that end right at a separator
-# or at the end of the text; otherwise the strict segment applies and the words stay.
-#
-# session_portability is the one redactor whose own older rules (``_WINDOWS_HOME_RE`` and
-# ``_ESCAPED_WINDOWS_HOME_RE``, class ``[A-Za-z0-9._ -]+``) already ate the words after a
-# backslash/doubled-backslash account at base 2572663, so for those spellings only the account's
-# absence is asserted; its forward-slash spelling is left to ``_POSIX_HOME_RE`` and keeps the words.
-PROSE_AFTER_ACCOUNT = [
-    ("failed", "C:\\Users\\bob failed to start the job", "failed to start the job"),
-    (
-        "opened",
-        "C:\\Users\\bob opened the report and then saved /tmp/x.txt",
-        "opened the report and then saved",
-    ),
-    ("then_run", "see C:\\Users\\bob then run python tools/check.py now", "then run python"),
-    (
-        "to_the_share",
-        "copied C:\\Users\\bob to the share and then D:\\out\\f.txt",
-        "to the share and then",
-    ),
-    ("failed_doubled", "C:\\\\Users\\\\bob failed to start the job", "failed to start the job"),
-    ("failed_forward", "C:/Users/bob failed to start the job", "failed to start the job"),
+# --- prose after a path survives; prose right after a bare account goes with it ------------------------
+# Once a separator follows the account, the path ends at its last segment and the words after it stay.
+# With no separator after the account, nothing tells ``bob failed to start`` from ``ana de la cruz``,
+# so the scrubber fails closed and masks the words with the account (second review of #121).
+PROSE_AFTER_PATH = [
+    ("failed", "C:\\Users\\bob\\job.txt failed to start the job", "failed to start the job"),
+    ("failed_doubled", "C:\\\\Users\\\\bob\\\\job.txt failed to start the job", "failed to start the job"),
+    ("failed_forward", "C:/Users/bob/job.txt failed to start the job", "failed to start the job"),
+    ("then_run", "see C:\\Users\\bob\\notes.txt then run python tools/check.py now", "then run python"),
 ]
-PROSE_AFTER_IDS = [case_id for case_id, _, _ in PROSE_AFTER_ACCOUNT]
-#: Spellings whose words session_portability's pre-existing space-tolerant rules already removed.
-SESSION_PORTABILITY_ATE_WORDS = {
-    "failed", "opened", "then_run", "to_the_share", "failed_doubled",
-}
+PROSE_AFTER_IDS = [case_id for case_id, _, _ in PROSE_AFTER_PATH]
 
 
-@pytest.mark.parametrize("case", PROSE_AFTER_ACCOUNT, ids=PROSE_AFTER_IDS)
-def test_shared_scrubber_keeps_the_words_after_a_plain_account(case):
+@pytest.mark.parametrize("case", PROSE_AFTER_PATH, ids=PROSE_AFTER_IDS)
+def test_shared_scrubber_keeps_the_words_after_a_path(case):
     _case_id, text, kept = case
     out = scrub_windows_paths(text, path_basename)
     assert kept in out, f"lost {kept!r} from {text!r}: {out!r}"
     assert "bob" not in out, f"kept the account from {text!r}: {out!r}"
 
 
-@pytest.mark.parametrize("case", PROSE_AFTER_ACCOUNT, ids=PROSE_AFTER_IDS)
+@pytest.mark.parametrize("case", PROSE_AFTER_PATH, ids=PROSE_AFTER_IDS)
 @pytest.mark.parametrize("name", list(REDACTORS))
-def test_redactor_keeps_the_words_after_a_plain_account(name, case):
-    case_id, text, kept = case
+def test_redactor_keeps_the_words_after_a_path(name, case):
+    _case_id, text, kept = case
     out = REDACTORS[name](text)
     assert "bob" not in out, f"{name} kept the account from {text!r}: {out!r}"
-    if name == "session_portability" and case_id in SESSION_PORTABILITY_ATE_WORDS:
-        return
     assert kept in out, f"{name} lost {kept!r} from {text!r}: {out!r}"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "C:\\Users\\bob failed to start the job",
+        "C:\\\\Users\\\\bob failed to start the job",
+        "C:/Users/bob failed to start the job",
+        "copied C:\\Users\\bob to the share and then D:\\out\\f.txt",
+    ],
+)
+@pytest.mark.parametrize("name", list(REDACTORS))
+def test_redactor_masks_the_words_right_after_a_bare_account(name, text):
+    out = REDACTORS[name](text)
+    assert "bob" not in out, f"{name} kept the account from {text!r}: {out!r}"
+    assert "failed to start" not in out and "to the share" not in out, f"{name}: {out!r}"
+
+
+def test_a_drive_path_after_a_bare_account_is_still_its_own_path():
+    out = scrub_windows_paths("copied C:\\Users\\bob to the share and then D:\\out\\f.txt", path_basename)
+    assert out == "copied <path> f.txt", out
 
 
 # --- an account that runs to the end of the text ------------------------------------------------------
@@ -181,9 +182,9 @@ def test_shared_scrubber_leaks_no_part_of_bob_smith(text):
     assert "Bob" not in out and "Smith" not in out, f"kept part of {text!r}: {out!r}"
 
 
-def test_a_four_word_account_is_not_taken():
+def test_a_four_word_account_is_taken_whole():
     out = scrub_windows_paths("C:\\Users\\a b c d\\x\\f.py", "X")
-    assert out == "X b c d\\x\\f.py"
+    assert out == "X"
 
 
 # --- linear time ---------------------------------------------------------------------------------------

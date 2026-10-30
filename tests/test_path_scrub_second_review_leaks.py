@@ -26,7 +26,11 @@ LEAKS = [
     ("lowercase_particles", "open C:\\Users\\anaq de la cruzq\\f.py failed", ("anaq", "cruzq", " de la ")),
     ("all_lowercase_prose_after", "cwd is C:\\Users\\johnq smithq and it failed", ("johnq", "smithq")),
     ("particle_prose_after", "cwd is C:\\Users\\Zqa van Smithq and it failed", ("Zqa", "Smithq", " van ")),
-    ("over_64_chars", "open C:\\Users\\Zqa " + "q" * 70 + " smithq\\f.py failed", ("Zqa", "qqqq", "smithq")),
+    (
+        "over_64_chars",
+        "open C:\\Users\\Zqa Mariaq Fernandaq de los Angelesq Gutierrezq y Montoyaq smithq\\f.py failed",
+        ("Zqa", "Mariaq", "Montoyaq", "smithq"),
+    ),
     ("lowercase_doubled", "open C:\\\\Users\\\\anaq de la cruzq\\\\f.py failed", ("anaq", "cruzq", " de la ")),
     ("posix_home_lowercase", "open /home/anaq de la cruzq/f.py failed", ("anaq", "cruzq", " de la ")),
     ("bytes_repr", "No such file: " + repr(b"C:\\Users\\\xc5\x81ukaszq"), ("ukaszq", "x81")),

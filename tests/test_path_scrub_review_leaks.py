@@ -78,9 +78,10 @@ def test_no_redactor_keeps_any_word_of_an_unusual_account_name(name, text):
         assert needle not in out, f"{name} kept {needle!r} from {text!r}: {out!r}"
 
 
-def test_prose_after_an_unusual_name_survives_where_it_can():
+def test_prose_right_after_an_unusual_name_is_masked_with_it():
+    # Fails closed (second review): the words after a bare account cannot be told from the name.
     out = scrub_windows_paths("cwd is C:\\Users\\Zqa Smithq and it failed", "X")
-    assert out == "cwd is X and it failed"
+    assert out == "cwd is X"
 
 
 @pytest.mark.parametrize("text", ["access denied: retry later", "Error: \\n was unexpected"])
@@ -98,8 +99,9 @@ def test_a_deep_share_folder_is_not_given_as_a_basename(name, path):
     assert "zqalice" not in out, f"{name}: {out!r}"
 
 
-def test_a_file_deep_on_a_share_keeps_its_name():
-    assert scrub_windows_paths("open \\\\fs01\\dept\\team\\x\\plan.txt now", path_basename) == "open plan.txt now"
+def test_a_file_deep_on_a_share_is_masked_too():
+    # A dotted folder (``li.wang``) looks like a file, so a share path gives back nothing.
+    assert scrub_windows_paths("open \\\\fs01\\dept\\team\\x\\plan.txt now", path_basename) == "open <path> now"
 
 
 def test_a_shallow_share_path_is_masked_even_when_it_ends_in_a_file_name():
