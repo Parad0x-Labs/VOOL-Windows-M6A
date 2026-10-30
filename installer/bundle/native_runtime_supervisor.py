@@ -34,6 +34,11 @@ def _windows_cmd_starter(command: list[str]) -> str | None:
     return None
 
 
+#: Job objects are a kernel32 feature: the job is created only on a real Windows host. Tests that
+#: stand in for Windows through a patched ``os`` set this and pass a fake job.
+_JOB_HOST = os.name == "nt"
+
+
 def _windows_job() -> Any:
     """A Job object with KILL_ON_JOB_CLOSE whose only handle this process holds (not inherited)."""
     from core.windows_broker.process import _WindowsJob
@@ -328,7 +333,7 @@ class NativeRuntimeSupervisor:
                 subprocess, "CREATE_NO_WINDOW", 0
             )
             try:
-                self._job = self._job_factory()
+                self._job = self._job_factory() if _JOB_HOST else None
             except Exception as exc:
                 self._close_log()
                 raise NativeRuntimeError(
