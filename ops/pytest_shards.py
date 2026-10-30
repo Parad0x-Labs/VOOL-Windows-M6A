@@ -275,7 +275,8 @@ def tracked_test_targets(repo_root: Path) -> tuple[str, ...]:
         ("git", "-C", str(repo_root), "ls-files", "-z"),
         capture_output=True,
         check=False,
-        text=True,
+        encoding="utf-8",
+        errors="surrogateescape",
         timeout=30,
     )
     if completed.returncode != 0:

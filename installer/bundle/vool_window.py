@@ -826,6 +826,8 @@ class _WindowApi:
                     os.fsync(handle.fileno())
                     os.link(temporary, destination)
                 finally:
+                    # Windows cannot unlink a file that still has an open handle.
+                    handle.close()
                     temporary.unlink(missing_ok=True)
             return {"ok": True}
         except urllib.error.HTTPError as exc:
@@ -884,6 +886,8 @@ class _WindowApi:
                     os.fsync(handle.fileno())
                     os.link(temporary, destination)
                 finally:
+                    # Windows cannot unlink a file that still has an open handle.
+                    handle.close()
                     temporary.unlink(missing_ok=True)
             return {"ok": True}
         except urllib.error.HTTPError as exc:
