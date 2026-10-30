@@ -13,7 +13,6 @@ Assets, accounts and providers are SYNTHETIC identities.
 from __future__ import annotations
 
 import json
-import signal
 
 import pytest
 
@@ -21,8 +20,6 @@ from core import effect_budget as eb
 from core import effect_budget_money as ebm
 from tests.effect_budget import money_race_probe as probe
 from tests.effect_budget.conftest import *  # noqa: F403 — fixtures
-
-pytestmark = [pytest.mark.skipif(not hasattr(signal, "SIGKILL"), reason="needs POSIX process signals")]
 
 NETWORK = probe.MONEY_NETWORK
 USDC = probe.MONEY_USDC
@@ -189,7 +186,7 @@ def test_process_death_at_each_boundary_then_restart_never_reopens_unknown_money
     ]
     results = {item["operation_id"]: item for item in probe.race(shared_home, "money_sequence", arguments)}
     for boundary in boundaries[:-1]:
-        assert results[f"kill-{boundary}"]["returncode"] == -signal.SIGKILL, results[f"kill-{boundary}"]
+        assert results[f"kill-{boundary}"]["returncode"] == probe.KILLED_RETURNCODE, results[f"kill-{boundary}"]
     assert results["kill-never"]["returncode"] == 0 and results["kill-never"]["state"] == ebm.LIABILITY_SETTLED
     # restart: a fresh process state reconciles against the store the dead left
     eb.reset_effect_budget_process_state()

@@ -12,6 +12,8 @@ import os
 _SYNCHRONIZE = 0x00100000
 _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 _ERROR_ACCESS_DENIED = 5
+_ERROR_INVALID_PARAMETER = 87
+_WAIT_OBJECT_0 = 0
 _WAIT_TIMEOUT = 0x102
 
 
@@ -43,5 +45,44 @@ def pid_alive(pid: int) -> bool:
         return ctypes.get_last_error() == _ERROR_ACCESS_DENIED  # exists, another account's
     try:
         return kernel32.WaitForSingleObject(handle, 0) == _WAIT_TIMEOUT
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def pid_gone(pid: int) -> bool:
+    """True only when the kernel proves ``pid`` names no running process; every doubt answers False.
+
+    The strict twin of `pid_alive`, for callers that free something a live owner still holds:
+    POSIX needs ProcessLookupError; Windows needs OpenProcess to refuse the pid as nonexistent
+    (ERROR_INVALID_PARAMETER) or the process object to be signaled (exited, still held open by
+    a handle such as its parent's Popen). Access denied, a failed wait, or any other error keeps
+    the process alive.
+    """
+    if pid <= 0:
+        return False
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        except OSError:
+            return False
+        return False
+    if pid > 0xFFFFFFFF:
+        return False
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    handle = kernel32.OpenProcess(_SYNCHRONIZE | _PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return ctypes.get_last_error() == _ERROR_INVALID_PARAMETER
+    try:
+        return kernel32.WaitForSingleObject(handle, 0) == _WAIT_OBJECT_0
     finally:
         kernel32.CloseHandle(handle)
