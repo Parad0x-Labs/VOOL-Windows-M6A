@@ -485,10 +485,11 @@ def _default_stop_server(vool_home: Path | None, project_root: Path) -> None:
         return
     try:
         if sys.platform == "win32":
-            from core.process_liveness import system_taskkill
+            # A recycled pid can be any python.exe. Tree-kill (/T /F) only after vool_stop proves the
+            # pid is this installation's own API server.
+            from installer.vool_stop import kill_api_by_pidfile
 
-            # /T kills the process tree, /F forces it.
-            subprocess.run([system_taskkill(), "/PID", str(pid), "/T", "/F"], capture_output=True, check=False)
+            kill_api_by_pidfile(subprocess.run, pf, project_root)
         else:
             os.kill(pid, signal.SIGTERM)
     except Exception as exc:

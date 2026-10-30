@@ -31,6 +31,8 @@ CLOUD_STUB_MODEL = "restart-repro/cloud-stub"
 TURN_TIMEOUT_S = 60.0
 BOOT_TIMEOUT_S = 60.0
 
+_IS_WINDOWS = os.name == "nt"
+
 
 def free_port() -> int:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -354,7 +356,9 @@ class Daemon:
     def terminate(self) -> None:
         if self.process is None:
             return
-        if self.process.poll() is None:
+        if self.process.poll() is None and _IS_WINDOWS:
+            self._terminate_windows(self.process)
+        elif self.process.poll() is None:
             with contextlib.suppress(ProcessLookupError):
                 os.kill(self.process.pid, signal.SIGTERM)
             try:
@@ -365,6 +369,26 @@ class Daemon:
                 with contextlib.suppress(subprocess.TimeoutExpired):
                     self.process.wait(timeout=5)
         self.process = None
+
+    @staticmethod
+    def _terminate_windows(process: subprocess.Popen) -> None:
+        """Tree-kill while the root is alive (taskkill /T), bounded wait, then kill()."""
+        with contextlib.suppress(Exception):
+            from core.process_liveness import system_taskkill
+
+            subprocess.run(
+                [system_taskkill(), "/PID", str(process.pid), "/T", "/F"],
+                capture_output=True,
+                check=False,
+                timeout=8,
+            )
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(Exception):
+                process.kill()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                process.wait(timeout=5)
 
     def chat(
         self, text: str, *, chat_id: str, turn_id: str, timeout_s: float = TURN_TIMEOUT_S
