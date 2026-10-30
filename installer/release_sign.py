@@ -193,10 +193,12 @@ def _write_sums(release_dir: Path, files: list[Path]) -> list[Path]:
         line = f"{sha256_of(f)}  {f.name}\n"
         lines.append(line)
         sidecar = f.with_name(f.name + SIDECAR_SUFFIX)
-        sidecar.write_text(line, encoding="utf-8")
+        # `sha256sum -c` reads a trailing CR as part of the file name, so these published
+        # files must be LF bytes on every platform; a Windows text-mode write emits CRLF.
+        sidecar.write_bytes(line.encode("utf-8"))
         written.append(sidecar)
     sums = release_dir / SUMS
-    sums.write_text("".join(lines), encoding="utf-8")
+    sums.write_bytes("".join(lines).encode("utf-8"))
     written.append(sums)
     return written
 
