@@ -19,6 +19,8 @@ import json
 
 import pytest
 
+from tests._windows_run_refusal import stop_if_windows_refused, stops_at_windows_run_refusal
+
 # ---------------------------------------------------------------------------
 # Local wire builders (kept here so the shared fixture stays untouched)
 # ---------------------------------------------------------------------------
@@ -165,10 +167,10 @@ def _repair_through_code_task(world, ctx: dict, *, module: str, fixed: str, defe
         {"task_id": task_id, "step_id": "read", "intent": "workspace.read_file", "arguments": {"path": f"{module}.py"}},
     )
     assert read.ok, read.response_text
-    repro = door(
+    repro = stop_if_windows_refused(door(
         "code.task.step",
         {"task_id": task_id, "step_id": "repro", "intent": "workspace.run_tests", "arguments": {"command": f"python -m pytest -q test_{module}.py"}},
-    )
+    ), "workspace.run_tests")
     assert repro.details["tool_result"]["success"] is False
     identified = door(
         "code.task.identify",
@@ -195,15 +197,15 @@ def _repair_through_code_task(world, ctx: dict, *, module: str, fixed: str, defe
         {"task_id": task_id, "step_id": "fix", "intent": "workspace.write_file", "arguments": {"path": f"{module}.py", "content": fixed}},
     )
     assert mutated.ok, mutated.response_text
-    narrow = door(
+    narrow = stop_if_windows_refused(door(
         "code.task.step",
         {"task_id": task_id, "step_id": "narrow", "intent": "workspace.run_tests", "arguments": {"command": f"python -m pytest -q test_{module}.py"}},
-    )
+    ), "workspace.run_tests")
     assert narrow.details["tool_result"]["success"] is True, narrow.details
-    cumulative = door(
+    cumulative = stop_if_windows_refused(door(
         "code.task.step",
         {"task_id": task_id, "step_id": "cumulative", "intent": "workspace.run_tests", "arguments": {"command": "python -m pytest -q"}},
-    )
+    ), "workspace.run_tests")
     assert cumulative.details["tool_result"]["success"] is True, cumulative.details
     diffed = door("code.task.step", {"task_id": task_id, "step_id": "diff", "intent": "workspace.git_diff", "arguments": {}})
     assert diffed.ok, diffed.response_text
@@ -216,6 +218,7 @@ def _repair_through_code_task(world, ctx: dict, *, module: str, fixed: str, defe
 # ===========================================================================
 
 
+@stops_at_windows_run_refusal
 def test_original_journey_from_inspection_to_authorized_draft_pr(world) -> None:
     from tests.repoops._forge_fixture import UNIFIED_DIFF
     from tests.repoops._harness import FIXED, context, door, git, head, remote_ref
@@ -400,6 +403,7 @@ def _build_report_repo(tmp_path, *, branch="fix/report-rounding"):
     return root, bare, fixed
 
 
+@stops_at_windows_run_refusal
 def test_novel_journey_pending_ci_update_and_comment(world, tmp_path) -> None:
     from tests.repoops._forge_fixture import UNIFIED_DIFF
     from tests.repoops._harness import context, door, head, remote_ref

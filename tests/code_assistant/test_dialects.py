@@ -16,6 +16,7 @@ from core.code_assistant.dialects import (
     proposal_from_cloud_call,
     proposal_from_local_text,
 )
+from tests._windows_run_refusal import stop_if_windows_refused, stops_at_windows_run_refusal
 
 
 def test_cloud_and_local_mint_identical_proposals():
@@ -126,6 +127,7 @@ def test_string_arguments_in_cloud_envelope_are_parsed():
 # ---------------------------------------------------------------- twin engagements
 
 
+@stops_at_windows_run_refusal
 def test_twin_engagements_produce_identical_journals_and_bytes(tmp_path, monkeypatch):
     """The dialect a model speaks may not change what executes: two disposable workspaces, the
     SAME root-cause journey proposed once per dialect through the production door, and the two
@@ -234,11 +236,11 @@ def test_twin_engagements_produce_identical_journals_and_bytes(tmp_path, monkeyp
             ),
             stage="reproduce",
         )
-        result = execute_runtime_tool(
+        result = stop_if_windows_refused(execute_runtime_tool(
             "code.task.step",
             {"task_id": task_id, "step_id": "r", "intent": repro["intent"], "arguments": repro["arguments"]},
             source_context=ctx,
-        )
+        ), repro["intent"])
         assert result.details["tool_result"]["success"] is False
         execute_runtime_tool(
             "code.task.identify",

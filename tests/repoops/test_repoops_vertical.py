@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._windows_run_refusal import stop_if_windows_refused, stops_at_windows_run_refusal
 from tests.repoops._forge_fixture import UNIFIED_DIFF, RecordedForge, github_pull_request
 from tests.repoops._harness import FIXED, build_repo, context, door, git, head, remote_ref
 
@@ -131,6 +132,7 @@ def test_every_repo_tool_classifies_into_a_real_permission_action() -> None:
 # ---------------------------------------------------------------------------
 
 
+@stops_at_windows_run_refusal
 def test_the_vertical_from_inspect_to_a_sealed_receipt(world) -> None:
     root, bare, forge = world
     ctx = context(root)
@@ -173,11 +175,11 @@ def test_the_vertical_from_inspect_to_a_sealed_receipt(world) -> None:
 
     # Reproduce locally before diagnosing: a red test EXECUTED is the evidence, and the step is
     # `ok` because the command ran -- its failure is carried as data, never folded into the step.
-    red = door(
+    red = stop_if_windows_refused(door(
         "repo.step",
         {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}},
         ctx,
-    )
+    ), "workspace.run_tests")
     assert red.details["executed"] is True
     assert red.details["tool_result"]["returncode"] != 0
 
@@ -208,11 +210,11 @@ def test_the_vertical_from_inspect_to_a_sealed_receipt(world) -> None:
     assert repaired.ok, repaired.response_text
     assert (root / "calc.py").read_text(encoding="utf-8") == FIXED
 
-    green = door(
+    green = stop_if_windows_refused(door(
         "repo.step",
         {"repo_session_id": sid, "step_id": "green", "intent": "workspace.run_tests", "arguments": {}},
         ctx,
-    )
+    ), "workspace.run_tests")
     assert green.details["executed"] is True
     assert green.details["tool_result"]["returncode"] == 0
 
@@ -262,6 +264,7 @@ def test_the_vertical_from_inspect_to_a_sealed_receipt(world) -> None:
     assert {c["step_id"] for c in receipt.details["commands_run"]} == {"red", "green"}
 
 
+@stops_at_windows_run_refusal
 def test_a_simulated_push_never_moves_the_remote_and_claims_nothing(world) -> None:
     root, bare, forge = world
     ctx = context(root)
@@ -271,11 +274,11 @@ def test_a_simulated_push_never_moves_the_remote_and_claims_nothing(world) -> No
     sid = door("repo.session.open", {"objective": "plan only", "pull_request": "7", "provider": "github", "namespace": "o/r", "reviewer_model": "anthropic/claude-sonnet-4"}, ctx).details["repo_session_id"]
     door("repo.inspect", {"repo_session_id": sid}, ctx)
     door("repo.bind", {"repo_session_id": sid}, ctx)
-    door(
+    stop_if_windows_refused(door(
         "repo.step",
         {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}},
         ctx,
-    )
+    ), "workspace.run_tests")
     door(
         "repo.diagnose",
         {"repo_session_id": sid, "path": "calc.py", "reason": "add subtracts", "evidence_step_id": "red"},
@@ -291,11 +294,11 @@ def test_a_simulated_push_never_moves_the_remote_and_claims_nothing(world) -> No
         },
         ctx,
     )
-    door(
+    stop_if_windows_refused(door(
         "repo.step",
         {"repo_session_id": sid, "step_id": "green", "intent": "workspace.run_tests", "arguments": {}},
         ctx,
-    )
+    ), "workspace.run_tests")
     door("repo.review", {"repo_session_id": sid, "verdict": "approve"}, ctx)
     plan_hash = door("repo.push.request", {"repo_session_id": sid, "ref": "feature"}, ctx).details["plan_hash"]
     operator_ctx = context(root, repo_push_authorization={"plan_hash": plan_hash})

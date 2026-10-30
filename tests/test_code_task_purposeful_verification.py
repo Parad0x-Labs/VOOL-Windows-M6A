@@ -31,6 +31,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._windows_run_refusal import stop_if_windows_refused, stops_at_windows_run_refusal
+
 CALC = "def total(subtotal, tax):\n    return subtotal - tax\n"
 CALC_FIXED = "def total(subtotal, tax):\n    return subtotal + tax\n"
 CHECK = "from calc import total\nassert total(40, 8) == 48, total(40, 8)\nprint('calc ok')\n"
@@ -111,7 +113,7 @@ def _door(intent: str, arguments: dict, ctx: dict):
 
     result = execute_runtime_tool(intent, arguments, source_context=ctx)
     assert result is not None, intent
-    return result
+    return stop_if_windows_refused(result, intent, arguments)
 
 
 def _journal(task_id: str) -> dict:
@@ -148,6 +150,7 @@ class Task:
 # ---------------------------------------------------------------------------
 
 
+@stops_at_windows_run_refusal
 def test_refused_out_of_workspace_cwd_is_not_a_failed_verification(project):
     task = Task(project, "refused-cwd")
     refused = task.step("workspace.run_tests", {"command": "python3 check.py", "cwd": str(project.parent)})
@@ -189,6 +192,7 @@ def _wrong_fix_task(root: Path, session: str) -> Task:
     return Task(root, session, content="def total(subtotal, tax):\n    return subtotal * tax - subtotal + 2 * tax\n")
 
 
+@stops_at_windows_run_refusal
 def test_repeated_equivalent_failed_check_returns_a_structured_correction(project):
     task = _wrong_fix_task(project, "repeat-failed")
     first = task.step("workspace.run_tests", {"command": "python3 check.py"})
@@ -208,6 +212,7 @@ def test_repeated_equivalent_failed_check_returns_a_structured_correction(projec
     assert other.details["executed"] is True
 
 
+@stops_at_windows_run_refusal
 def test_declared_purpose_rerun_is_permitted(project):
     task = _wrong_fix_task(project, "declared-rerun")
     first = task.step("workspace.run_tests", {"command": "python3 check.py"})
@@ -221,6 +226,7 @@ def test_declared_purpose_rerun_is_permitted(project):
     assert journal["verifications"][1]["rerun_reason"].startswith("suspected order dependence")
 
 
+@stops_at_windows_run_refusal
 def test_changed_source_breaks_equivalence_and_the_rerun_runs(project):
     task = _wrong_fix_task(project, "changed-bytes")
     assert task.step("workspace.run_tests", {"command": "python3 check.py"}).details["tool_result"]["success"] is False
@@ -236,6 +242,7 @@ def test_changed_source_breaks_equivalence_and_the_rerun_runs(project):
 # ---------------------------------------------------------------------------
 
 
+@stops_at_windows_run_refusal
 def test_irrelevant_successful_command_cannot_complete_the_task(project):
     task = Task(project, "irrelevant")
     noise = task.step("sandbox.run_command", {"command": "echo ok"})
@@ -272,6 +279,7 @@ def test_a_test_only_request_without_an_open_task_runs_top_level(project):
     assert active_task_control_intents(ctx) == ()
 
 
+@stops_at_windows_run_refusal
 def test_changed_fixture_invalidates_the_verified_evidence(project):
     """A different fixture -- the check's own input file -- invalidates prior evidence: the
     green outcome's bytes binding covers the inputs its command named, so once they change the
@@ -302,6 +310,7 @@ def test_changed_fixture_invalidates_the_verified_evidence(project):
     assert rerun.details["executed"] is True
 
 
+@stops_at_windows_run_refusal
 def test_a_quoted_example_fix_does_not_authorize_mutation(project):
     """A quoted/example repair -- "for example, calc.py could be `return subtotal + tax`" --
     carries no proposal and no approval, so no door turns it into bytes. At every stage the

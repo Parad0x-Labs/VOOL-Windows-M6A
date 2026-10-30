@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._windows_run_refusal import stop_if_windows_refused, stops_at_windows_run_refusal
+
 BUGGY = "def add(a, b):\n    return a - b\n"
 FIXED = "def add(a, b):\n    return a + b\n"
 TEST = "from calc import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n"
@@ -74,7 +76,7 @@ def _door(intent: str, arguments: dict, ctx: dict):
 
     result = execute_runtime_tool(intent, arguments, source_context=ctx)
     assert result is not None, f"{intent} is not contracted at the production door"
-    return result
+    return stop_if_windows_refused(result, intent, arguments)
 
 
 def _sha(text: str) -> str:
@@ -609,6 +611,7 @@ def test_failed_test_after_mutation_holds_the_stage_and_reports_unresolved(fixtu
     assert report.details["unresolved"][0] == "narrow_test"
 
 
+@stops_at_windows_run_refusal
 def test_task_resumes_from_the_journal_after_a_cold_restart(fixture_repo: Path) -> None:
     from core.code_assistant.task_runtime import code_task_runtime
 

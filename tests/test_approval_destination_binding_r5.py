@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from core.mode_permission_policy import PermissionEffect, decide_tool_call
+from tests._windows_run_refusal import stop_if_windows_refused, stops_at_windows_run_refusal
 from tests.repoops._harness import context, door
 from tests.repoops.test_forge_actions import world
 
@@ -47,12 +48,12 @@ def _approved(ctx: dict, path: str = MONEY) -> tuple[str, dict]:
     )
     assert read.ok, read.response_text
     check = f"import runpy; assert runpy.run_path({path!r})['cents'](1.25) == 125"
-    reproduced = door(
+    reproduced = stop_if_windows_refused(door(
         "code.task.step",
         {"task_id": task_id, "step_id": "repro", "intent": "workspace.run_tests",
          "arguments": {"command": "python -c " + shlex.quote(check)}},
         ctx,
-    )
+    ), "workspace.run_tests")
     assert reproduced.details["tool_result"]["success"] is False, reproduced.details
     identified = door(
         "code.task.identify", {"task_id": task_id, "path": path, "line": 2, "reason": "cents multiplies by ten"}, ctx
@@ -136,6 +137,7 @@ def test_a_workspace_approval_never_authorizes_the_machine_writer(world, tmp_pat
     assert _decide("workspace.write_file", args, ctx) is ALLOW
 
 
+@stops_at_windows_run_refusal
 def test_the_approval_belongs_to_its_session_and_to_the_task_that_owns_it(world) -> None:
     root, _bare, _forge = world
     ctx = context(root, session="money-repair")
@@ -180,6 +182,7 @@ def test_changed_content_changed_bytes_and_consumption_each_unbind_the_approval(
     assert _decide("workspace.write_file", args, ctx) is PROMPT
 
 
+@stops_at_windows_run_refusal
 def test_a_cancelled_task_approval_binds_nothing(world) -> None:
     root, _bare, _forge = world
     ctx = context(root, session="money-repair")

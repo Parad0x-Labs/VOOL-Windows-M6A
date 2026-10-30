@@ -6,6 +6,7 @@ from pathlib import Path
 
 from core.code_assistant.fixture import DEFECT_OLD_TEXT, FIX_NEW_TEXT, OWNER_PATH
 from core.code_assistant.review import STATE_DRIFTED, STATE_VERIFIED, summarize_effects
+from tests._windows_run_refusal import stops_at_windows_run_refusal
 
 from .conftest import door
 
@@ -32,6 +33,7 @@ def test_review_intent_is_dispatched_by_the_runtime(auto_context):
     assert receipt.details["executed"] is False
 
 
+@stops_at_windows_run_refusal
 def test_review_summarizes_the_journaled_fix_with_verified_bytes(auto_context):
     _task_id, turn_id = _land_fix(auto_context)
     receipt = door("code.review_evidence", {"turn_id": turn_id}, auto_context)
@@ -45,6 +47,7 @@ def test_review_summarizes_the_journaled_fix_with_verified_bytes(auto_context):
     assert receipt.details["verified_count"] >= 1
 
 
+@stops_at_windows_run_refusal
 def test_review_flags_drifted_bytes(auto_context):
     _task_id, turn_id = _land_fix(auto_context)
     Path(auto_context["workspace"], OWNER_PATH).write_text("tampered\n", encoding="utf-8")
@@ -54,6 +57,7 @@ def test_review_flags_drifted_bytes(auto_context):
     assert summary["drifted_count"] >= 1
 
 
+@stops_at_windows_run_refusal
 def test_review_missing_file_is_reported_missing(auto_context):
     _task_id, turn_id = _land_fix(auto_context)
     Path(auto_context["workspace"], OWNER_PATH).unlink()

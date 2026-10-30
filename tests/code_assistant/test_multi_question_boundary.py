@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from core.code_assistant.fixture import DEFECT_STATS_PY, FIXED_STATS_PY, build_fixture_repo
+from tests._windows_run_refusal import stop_if_windows_refused, stops_at_windows_run_refusal
 
 
 @pytest.fixture
@@ -50,9 +51,10 @@ def _door(intent: str, arguments: dict, ctx: dict):
 
     result = execute_runtime_tool(intent, arguments, source_context=ctx)
     assert result is not None, intent
-    return result
+    return stop_if_windows_refused(result, intent, arguments)
 
 
+@stops_at_windows_run_refusal
 def test_two_problems_only_the_authorized_one_is_fixed(two_bugs_repo: Path) -> None:
     """The task is authorized for the median defect only. The shout defect is inspected and
     EXPLAINED, but no byte of it changes -- scope is the task's objective, not a suggestion."""
@@ -135,6 +137,7 @@ def test_two_problems_only_the_authorized_one_is_fixed(two_bugs_repo: Path) -> N
     assert refused.ok is False and refused.status == "insufficient_evidence"
 
 
+@stops_at_windows_run_refusal
 def test_two_authorized_dependent_edits_accumulate_checks(two_bugs_repo: Path) -> None:
     """Both defects authorized, as two dependent TASKS: the stage machine admits one approved
     repair per task, so the second edit is its own task, and its cumulative check covers both

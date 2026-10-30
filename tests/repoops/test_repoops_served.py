@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._windows_run_refusal import stop_if_windows_refused, stops_at_windows_run_refusal
 from tests.repoops._forge_fixture import RecordedForge, github_pull_request
 from tests.repoops._harness import FIXED, build_repo, context, door, git, head, remote_ref
 
@@ -88,7 +89,7 @@ def _drive_to_plan(root: Path, forge: RecordedForge, ctx: dict) -> tuple[str, st
     sid = door("repo.session.open", {"objective": "served", "pull_request": "7", **OPEN}, ctx).details["repo_session_id"]
     door("repo.inspect", {"repo_session_id": sid}, ctx)
     door("repo.bind", {"repo_session_id": sid}, ctx)
-    door("repo.step", {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}}, ctx)
+    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}}, ctx), "workspace.run_tests")
     door(
         "repo.diagnose",
         {"repo_session_id": sid, "path": "calc.py", "reason": "add subtracts", "evidence_step_id": "red"},
@@ -104,13 +105,14 @@ def _drive_to_plan(root: Path, forge: RecordedForge, ctx: dict) -> tuple[str, st
         },
         ctx,
     )
-    door("repo.step", {"repo_session_id": sid, "step_id": "green", "intent": "workspace.run_tests", "arguments": {}}, ctx)
+    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "green", "intent": "workspace.run_tests", "arguments": {}}, ctx), "workspace.run_tests")
     door("repo.review", {"repo_session_id": sid, "verdict": "approve"}, ctx)
     door("repo.git", {"repo_session_id": sid, "operation": "commit", "message": "repair"}, ctx)
     plan_hash = door("repo.push.request", {"repo_session_id": sid, "ref": "feature"}, ctx).details["plan_hash"]
     return sid, plan_hash
 
 
+@stops_at_windows_run_refusal
 def test_the_console_lists_sessions_and_says_which_await_authorization(world) -> None:
     root, _bare, forge = world
     ctx = context(root)
@@ -131,6 +133,7 @@ def test_the_console_lists_sessions_and_says_which_await_authorization(world) ->
     assert missing["found"] is False
 
 
+@stops_at_windows_run_refusal
 def test_authorize_push_is_owner_local_only(world) -> None:
     root, _bare, forge = world
     ctx = context(root)
@@ -146,6 +149,7 @@ def test_authorize_push_is_owner_local_only(world) -> None:
     assert _payload(remote_attempt)["error"] == "owner_local_required"
 
 
+@stops_at_windows_run_refusal
 def test_the_operator_gesture_authorizes_and_then_the_push_runs(world, monkeypatch) -> None:
     from core import policy_engine
 
@@ -183,6 +187,7 @@ def test_the_operator_gesture_authorizes_and_then_the_push_runs(world, monkeypat
     assert row["push_outcome"] == "applied"
 
 
+@stops_at_windows_run_refusal
 def test_an_authorization_for_a_different_plan_is_refused_at_the_door(world) -> None:
     root, _bare, forge = world
     ctx = context(root)

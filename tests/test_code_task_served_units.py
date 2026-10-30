@@ -40,6 +40,7 @@ from urllib.request import Request, urlopen
 import pytest
 
 from tests._blackbox_served_rig import pending_session_approvals
+from tests._windows_run_refusal import stop_if_journal_shows_windows_refusal, stops_at_windows_run_refusal
 from tests.test_code_task_served_boundary import (
     _boot,
     _journal,
@@ -544,6 +545,7 @@ def _assert_completed(outcome: dict[str, Any], rig: dict[str, Any], model: Obser
     tasks = sorted((Path(store_dir) / "code_tasks").glob("ct-*.json"))
     assert len(tasks) == 1, (tasks, model.log, outcome["transcript"])
     journal = _journal(store_dir)
+    stop_if_journal_shows_windows_refusal(journal)
     assert "completed." in outcome["text"], (outcome["text"][:600], journal["stage"], model.log)
     assert "incomplete" not in outcome["text"].lower(), outcome["text"][:600]
     assert journal["stage"] == "report" and _task_verdict(store_dir) == "completed", (journal["stage"], model.log)
@@ -711,6 +713,7 @@ TEMPERATURE_WRONG = "exports.toFahrenheit = (c) => c * 5 / 9 + 32;\n"
 TEMPERATURE_FIXED = "exports.toFahrenheit = (c) => c * 9 / 5 + 32;\n"
 
 
+@stops_at_windows_run_refusal
 def test_served_wrong_first_repair_is_revised_and_verified_narrow_and_full(served_factory) -> None:
     model = ObservedRepairModel(
         repro="node check_all.js", owner="temperature.js", reads=["temperature.js"],

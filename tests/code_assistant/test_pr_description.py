@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._windows_run_refusal import stop_if_windows_refused, stops_at_windows_run_refusal
+
 
 @pytest.fixture
 def fixture_repo(tmp_path, monkeypatch) -> Path:
@@ -50,7 +52,7 @@ def _door(intent: str, arguments: dict, ctx: dict):
 
     result = execute_runtime_tool(intent, arguments, source_context=ctx)
     assert result is not None, f"{intent} is not contracted at the production door"
-    return result
+    return stop_if_windows_refused(result, intent, arguments)
 
 
 @pytest.fixture
@@ -178,6 +180,7 @@ def test_pr_description_seated_at_the_report_stage() -> None:
 # ---------------------------------------------------------------------------
 
 
+@stops_at_windows_run_refusal
 def test_pr_description_assembles_only_journaled_facts(fixture_repo: Path) -> None:
     ctx = _ctx(fixture_repo)
     from core.code_assistant.fixture import FIXED_STATS_PY
@@ -207,6 +210,7 @@ def test_pr_description_assembles_only_journaled_facts(fixture_repo: Path) -> No
     assert again.details["title"] == title and again.details["body"] == body
 
 
+@stops_at_windows_run_refusal
 def test_pr_description_on_a_differently_shaped_fixture(novel_repo: Path) -> None:
     """Novel input: another module, another command set, another defect wording. The
     projection must follow the journal, not the first fixture's strings."""
@@ -255,6 +259,7 @@ def test_pr_description_refuses_when_tests_are_not_green(fixture_repo: Path) -> 
     assert refused.status == "insufficient_evidence"
 
 
+@stops_at_windows_run_refusal
 def test_pr_description_reports_open_risks_from_the_journal(fixture_repo: Path) -> None:
     """When the journal records failures, the description carries them instead of hiding
     them behind the green runs that followed."""

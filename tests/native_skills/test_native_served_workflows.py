@@ -21,6 +21,7 @@ from core.native_skill_library import (
 )
 from core.runtime_execution_tools import execute_runtime_tool
 from core.task_router import classify
+from tests._windows_run_refusal import stop_if_windows_refused, stops_at_windows_run_refusal
 
 
 def _git(*args: str, cwd) -> None:
@@ -123,6 +124,7 @@ def test_served_workflow_cumulative_testing_runs_the_real_test_pack(tmp_path, mo
     )
 
 
+@stops_at_windows_run_refusal
 def test_served_workflow_git_worktrees_lists_real_worktrees(tmp_path, monkeypatch) -> None:
     """Ask for a worktree → vool-git-worktrees selected → the real git state is read through the
     sandboxed command door of a real repository."""
@@ -146,6 +148,7 @@ def test_served_workflow_git_worktrees_lists_real_worktrees(tmp_path, monkeypatc
         "sandbox.run_command", {"command": "git status --porcelain", "cwd": str(repo)}
     )
     assert read_only is not None, "sandbox.run_command did not dispatch"
+    stop_if_windows_refused(read_only, "sandbox.run_command")
     assert read_only.ok is True, read_only.response_text
 
     # And the mutation the gate cannot prove read-only is refused verbatim — the door fails

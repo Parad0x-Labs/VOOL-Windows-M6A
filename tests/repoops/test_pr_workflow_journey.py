@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests._windows_run_refusal import stop_if_windows_refused, stops_at_windows_run_refusal
+
 
 @pytest.fixture
 def world(tmp_path, monkeypatch):
@@ -108,10 +110,10 @@ def _repair_through_code_task(world, ctx: dict, *, module: str = "calc") -> str:
         {"task_id": task_id, "step_id": "read", "intent": "workspace.read_file", "arguments": {"path": f"{module}.py"}},
     )
     assert read.ok, read.response_text
-    repro = door(
+    repro = stop_if_windows_refused(door(
         "code.task.step",
         {"task_id": task_id, "step_id": "repro", "intent": "workspace.run_tests", "arguments": {"command": f"python -m pytest -q test_{module}.py"}},
-    )
+    ), "workspace.run_tests")
     assert repro.details["tool_result"]["success"] is False
     identified = door(
         "code.task.identify",
@@ -138,15 +140,15 @@ def _repair_through_code_task(world, ctx: dict, *, module: str = "calc") -> str:
         {"task_id": task_id, "step_id": "fix", "intent": "workspace.write_file", "arguments": {"path": f"{module}.py", "content": FIXED}},
     )
     assert mutated.ok, mutated.response_text
-    narrow = door(
+    narrow = stop_if_windows_refused(door(
         "code.task.step",
         {"task_id": task_id, "step_id": "narrow", "intent": "workspace.run_tests", "arguments": {"command": f"python -m pytest -q test_{module}.py"}},
-    )
+    ), "workspace.run_tests")
     assert narrow.details["tool_result"]["success"] is True, narrow.details
-    cumulative = door(
+    cumulative = stop_if_windows_refused(door(
         "code.task.step",
         {"task_id": task_id, "step_id": "cumulative", "intent": "workspace.run_tests", "arguments": {"command": "python -m pytest -q"}},
-    )
+    ), "workspace.run_tests")
     assert cumulative.details["tool_result"]["success"] is True, cumulative.details
     diffed = door("code.task.step", {"task_id": task_id, "step_id": "diff", "intent": "workspace.git_diff", "arguments": {}})
     assert diffed.ok, diffed.response_text
@@ -158,14 +160,14 @@ def _land(world, ctx: dict, sid: str, *, ref: str = "feature", message: str = "r
     from tests.repoops._harness import FIXED, door, git, head, remote_ref
 
     root, bare, forge = world
-    door("repo.step", {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}}, ctx)
+    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "red", "intent": "workspace.run_tests", "arguments": {}}, ctx), "workspace.run_tests")
     door("repo.diagnose", {"repo_session_id": sid, "path": "calc.py", "reason": "add subtracts", "evidence_step_id": "red"}, ctx)
     door(
         "repo.step",
         {"repo_session_id": sid, "step_id": "fix", "intent": "workspace.write_file", "arguments": {"path": "calc.py", "content": FIXED}},
         ctx,
     )
-    door("repo.step", {"repo_session_id": sid, "step_id": "green", "intent": "workspace.run_tests", "arguments": {}}, ctx)
+    stop_if_windows_refused(door("repo.step", {"repo_session_id": sid, "step_id": "green", "intent": "workspace.run_tests", "arguments": {}}, ctx), "workspace.run_tests")
     door("repo.review", {"repo_session_id": sid, "verdict": "approve"}, ctx)
     committed = door("repo.git", {"repo_session_id": sid, "operation": "commit", "message": message}, ctx)
     assert committed.ok, committed.response_text
@@ -194,6 +196,7 @@ def _land(world, ctx: dict, sid: str, *, ref: str = "feature", message: str = "r
 # ---------------------------------------------------------------------------
 
 
+@stops_at_windows_run_refusal
 def test_pr_workflow_from_remote_diagnosis_to_a_landed_fix(world) -> None:
     from tests.repoops._forge_fixture import UNIFIED_DIFF
     from tests.repoops._harness import context, door, git, head, remote_ref
@@ -246,6 +249,7 @@ def test_pr_workflow_from_remote_diagnosis_to_a_landed_fix(world) -> None:
 # ---------------------------------------------------------------------------
 
 
+@stops_at_windows_run_refusal
 def test_pr_workflow_repeated_with_a_new_shape_and_reordered_steps(world) -> None:
     """Same capability, different branch name and a different step order: CI read before the
     diff, the PR description prepared before the session-side landing. Order is not authority."""
@@ -292,6 +296,7 @@ def test_pr_workflow_repeated_with_a_new_shape_and_reordered_steps(world) -> Non
 # ---------------------------------------------------------------------------
 
 
+@stops_at_windows_run_refusal
 def test_a_required_check_from_an_old_sha_cannot_serve_a_new_sha(world) -> None:
     """CI truth is requested FOR THE BOUND HEAD SHA. After the repair moves HEAD, the forge is
     asked for the NEW sha; a green run recorded at the old one never enters the picture."""

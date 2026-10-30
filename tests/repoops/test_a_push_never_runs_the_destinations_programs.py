@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from core.repoops.gitops import GitRunner, _push_transport
+from tests._windows_run_refusal import stops_at_windows_run_refusal
 from tests.repoops._harness import build_repo, context, door, git, head, remote_ref
 from tests.repoops.test_push_dispatch_authority_r5 import REF, _disk, _drive
 from tests.repoops.test_repoops_unknown_effect import world
@@ -373,6 +374,7 @@ def test_the_refusal_never_shows_a_password_in_a_url(tmp_path) -> None:
     assert code != 0 and "hunter2" not in err and "alice" not in err, err
 
 
+@stops_at_windows_run_refusal
 def test_a_refusal_the_runner_makes_at_dispatch_is_recorded_as_not_sent(world, tmp_path, monkeypatch) -> None:
     # The plan and the push re-check the destination first; if only the runner's own check catches it
     # (the destination changed in between), the push is recorded as failed and safe to retry, never as
