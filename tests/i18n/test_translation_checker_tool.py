@@ -53,7 +53,7 @@ def _write_fixture(root: Path, *, stale_hash: bool, drop_fences: bool = False) -
     sources = root / "docs" / "i18n" / "sources"
     sources.mkdir(parents=True)
     source = "# Title\n\nIntro text.\n\n```bash\nvool serve\n```\n"
-    (sources / "quickstart.md").write_text(source, encoding="utf-8")
+    (sources / "quickstart.md").write_text(source, encoding="utf-8", newline="\n")
     import hashlib
 
     digest = hashlib.sha256(source.encode()).hexdigest()
