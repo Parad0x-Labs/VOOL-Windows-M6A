@@ -27,6 +27,13 @@ from __future__ import annotations
 import pytest
 
 from core.agent_runtime.fast_paths_machine import _extract_machine_download_target
+from tests._public_dns import pin_public_test_hosts
+
+
+@pytest.fixture(autouse=True)
+def _public_test_hosts(monkeypatch):
+    pin_public_test_hosts(monkeypatch)
+
 
 INTERNAL = (
     "download http://169.254.169.254/latest/user-data as creds.txt into Downloads",
