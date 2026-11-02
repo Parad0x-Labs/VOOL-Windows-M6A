@@ -334,3 +334,20 @@ def test_expect_values() -> None:
     assert writes.expect_for(b"") == "sha256:" + hashlib.sha256(b"").hexdigest()
     assert writes.expect_for_reviewed("") == "absent"
     assert writes.expect_for_reviewed("AB" * 32) == "sha256:" + "ab" * 32
+
+
+
+def test_a_final_link_is_named_to_the_broker_never_followed(windows: pytest.MonkeyPatch, flagged: Path) -> None:
+    # writes.py resolves the folders above a target, never the target's own name, so a link handed to
+    # it is named to the broker, whose walk refuses it (reparse_point), and the file it points at is
+    # never written through it. (The workspace writers resolve their target before this point, as
+    # the gate placed it, so for them this changes nothing.)
+    (flagged / "real.txt").write_bytes(b"real")
+    (flagged / "link.txt").symlink_to(flagged / "real.txt")
+    broker = _Broker(flagged, fail={"write_file": BrokerRefusal("reparse_point", "link")})
+    _wire(windows, broker)
+    with pytest.raises(writes.Refused) as refused:
+        writes.write_file(flagged / "link.txt", b"x", "any")
+    assert refused.value.code == "reparse_point"
+    assert broker.last("write_file")["rel"] == "link.txt"
+    assert (flagged / "real.txt").read_bytes() == b"real"
