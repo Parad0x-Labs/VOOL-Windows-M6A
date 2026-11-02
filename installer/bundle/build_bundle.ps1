@@ -57,8 +57,22 @@ Set-Content -Path $pth -Value $lines -Encoding ascii
 $env:PIP_CACHE_DIR = Join-Path $Stage "..\pip-cache"
 $py = Join-Path $pyDir "python.exe"
 Write-Host "Bootstrapping pip + lean deps ..."
-Invoke-WebRequest -Uri "https://bootstrap.pypa.io/get-pip.py" -OutFile (Join-Path $Stage "get-pip.py") -UseBasicParsing
-& $py (Join-Path $Stage "get-pip.py") --no-warn-script-location -q
+# One pinned pip wheel, checked by sha256, installed from itself with no index. The pip
+# bootstrap script this fetched before was unpinned and served the newest pip: pip 26.3 (2 Nov 2026) refuses to
+# run that way on the embeddable Python, and every fresh build failed. Change all three together.
+$PipVersion = "26.2"
+$PipWheelUrl = "https://files.pythonhosted.org/packages/62/36/a3aed958d60531cb442b7ab4596cda7b3621cfb916f8ae1d6769795c7dc1/pip-26.2-py3-none-any.whl"
+$PipWheelSha256 = "931c303696af6fa3417112103b1cad26890e5a07eccb5b99783700e33f2b8aad"
+$pipWheel = Join-Path $Stage "pip-$PipVersion-py3-none-any.whl"
+Invoke-WebRequest -Uri $PipWheelUrl -OutFile $pipWheel -UseBasicParsing
+$pipWheelActual = (Get-FileHash -Algorithm SHA256 -LiteralPath $pipWheel).Hash.ToLowerInvariant()
+if ($pipWheelActual -ne $PipWheelSha256) {
+    Remove-Item -LiteralPath $pipWheel -Force -ErrorAction SilentlyContinue
+    throw "Embedded Python pip wheel sha256 mismatch: expected $PipWheelSha256, got $pipWheelActual."
+}
+# pip runs from inside the wheel (a zip on sys.path) to install that same wheel. The code has no
+# double quotes, so Windows PowerShell 5.1 passes it to python.exe unchanged.
+& $py -c "import sys; sys.path.insert(0, sys.argv[1]); from pip._internal.cli.main import main; sys.exit(main(['install', '--no-index', '--no-warn-script-location', '-q', sys.argv[1]]))" $pipWheel
 if ($LASTEXITCODE -ne 0) { throw "Embedded Python pip bootstrap failed." }
 # setuptools+wheel must be present before dependency installation so pywebview's build backend
 # is available in the embedded Python. pywebview+pythonnet drive the native WebView2 app window
@@ -79,7 +93,7 @@ if ($LASTEXITCODE -ne 0) { throw "Embedded Python setuptools/wheel bootstrap fai
 if ($LASTEXITCODE -ne 0) { throw "Embedded Python runtime dependency installation failed." }
 & $py -m pip check
 if ($LASTEXITCODE -ne 0) { throw "Embedded Python dependency check failed." }
-Remove-Item (Join-Path $Stage "get-pip.py") -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $pipWheel -Force -ErrorAction SilentlyContinue
 
 # --- 3. VOOL source ----------------------------------------------------------------------
 $appDir = Join-Path $Stage "app"
