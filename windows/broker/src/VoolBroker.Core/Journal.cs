@@ -258,8 +258,9 @@ public sealed class Journal : IDisposable
     }
 
     /// <summary>
-    /// A stream on an existing batch file in the held folder. A file that is a reparse point is
-    /// never read or written through: it is damage, refused journal_unreadable.
+    /// A stream on an existing batch file in the held folder. A file that is a reparse point, or
+    /// that has a second name (a hard link to a file elsewhere), is never read or written through:
+    /// it is damage, refused journal_unreadable.
     /// </summary>
     private FileStream OpenExisting(string name, FileAccess access)
     {
@@ -271,6 +272,8 @@ public sealed class Journal : IDisposable
             var tag = Native.GetAttributeTag(file);
             if ((tag.FileAttributes & Native.FileAttributeReparsePoint) != 0 || tag.ReparseTag != 0)
                 throw new BrokerRefusal("journal_unreadable", $"Journal file '{name}' is a reparse point.");
+            if (Native.GetStandardInfo(file).NumberOfLinks != 1)
+                throw new BrokerRefusal("journal_unreadable", $"Journal file '{name}' has more than one name.");
         }
         catch (BrokerRefusal refusal)
         {
