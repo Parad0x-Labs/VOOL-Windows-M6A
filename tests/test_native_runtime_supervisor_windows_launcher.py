@@ -176,6 +176,9 @@ def _windows_owned(tmp_path, monkeypatch, *, root: Path | None = None, tree=None
 
     trust_system32(monkeypatch)
     monkeypatch.setattr(nrs, "os", _NtOs())
+    # The stand-in host has no kernel32 job and its child pid is fake: never hand that pid to a real
+    # Windows Job object (WinError 87 on Steve). The job path has its own tests with recording fakes.
+    monkeypatch.setattr(nrs, "_JOB_HOST", False)
     monkeypatch.setattr(nrs.subprocess, "run", fake_run)
     monkeypatch.setitem(sys.modules, "psutil", _fake_psutil(tree if tree is not None else {child.pid: [9200]}))
     supervisor = NativeRuntimeSupervisor(
