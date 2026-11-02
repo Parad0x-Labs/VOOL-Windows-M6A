@@ -28,7 +28,7 @@ class _Api:
         routes_ = routes
 
         class Handler(BaseHTTPRequestHandler):
-            def do_GET(self) -> None:  # noqa: N802
+            def do_GET(self) -> None:
                 status, body = routes_.get(self.path, (404, {"error": "not found"}))
                 raw = json.dumps(body).encode() if not isinstance(body, bytes) else body
                 self.send_response(status)
