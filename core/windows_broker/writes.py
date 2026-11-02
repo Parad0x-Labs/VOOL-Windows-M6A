@@ -199,6 +199,18 @@ def write_files(changes: list[tuple[Path, bytes, str]]) -> list[Written]:
 
     All files must lie in one flagged folder. Missing parent folders of new files are made first, one
     `ensure_directory` each, as the by-path writer made them."""
+    results = apply_batch([(target, data, expect) for target, data, expect in changes])
+    return [result for result in results if isinstance(result, Written)]
+
+
+def apply_batch(changes: list[tuple[Path, bytes | None, str]]) -> list[Written | str]:
+    """Apply writes and deletes as one `apply_batch`: `(target, data, expect)` writes `data`, and
+    `(target, None, "")` deletes the file (set aside in the broker's journal; the broker's delete
+    carries no `expect`, so the caller checks the file just before, as the by-path writers did).
+
+    Every write's `expect` is checked before any file changes, and a batch that stops part way is put
+    back by the broker's journal. All targets must lie in one flagged folder. Returns a `Written` per
+    write and the deleted path per delete, in order."""
     if not changes:
         return []
     _host, status = _status()
@@ -210,18 +222,26 @@ def write_files(changes: list[tuple[Path, bytes, str]]) -> list[Written]:
         raise Refused("invalid_path", "a target is the flagged folder itself, not a file in it")
     with _Call(placed=(folder, "")) as call:
         parents: list[str] = []
-        for (_folder, rel), _data, expect in placed:
+        for (_folder, rel), data, expect in placed:
             parent = _parent(rel)
-            if expect == "absent" and parent and parent not in parents:
+            if data is not None and expect == "absent" and parent and parent not in parents:
                 parents.append(parent)
         for parent in parents:
             call.ensure_directory(parent)
-        ops = [{"op": "write_file", "rel": rel, "data": base64.b64encode(data).decode("ascii"), "expect": expect}
+        ops = [{"op": "delete", "rel": rel} if data is None else
+               {"op": "write_file", "rel": rel, "data": base64.b64encode(data).decode("ascii"), "expect": expect}
                for (_folder, rel), data, expect in placed]
         results = call.change("apply_batch", count=len(ops), ops=ops)
-        return [_written(result, rel, data, tuple(call.created))
-                for result, ((_folder, rel), data, _expect) in zip(results, placed, strict=True)]
+        done: list[Written | str] = []
+        for result, ((_folder, rel), data, _expect) in zip(results, placed, strict=True):
+            if data is not None:
+                done.append(_written(result, rel, data, tuple(call.created)))
+            elif result.get("op") != "delete":
+                raise EffectOutcomeUnknown("broker reply for delete has the wrong shape")
+            else:
+                done.append(rel)
+        return done
 
 
-__all__ = ["Refused", "Written", "ensure_directory", "expect_for", "expect_for_reviewed", "routed", "write_file",
+__all__ = ["Refused", "Written", "apply_batch", "ensure_directory", "expect_for", "expect_for_reviewed", "routed", "write_file",
            "write_files"]

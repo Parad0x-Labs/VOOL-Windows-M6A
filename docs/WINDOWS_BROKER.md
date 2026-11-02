@@ -447,6 +447,13 @@ Job 6.
   (`spans_flagged` otherwise). A refused or restored batch writes nothing and is reported under the
   gate's status with the broker's code; a batch not put back raises `BatchNotRestored`, so no
   by-path compensation runs.
+  `workspace.rollback_last_change` (the tracked-change ledger, core/execution/artifacts.py) is one
+  `apply_batch` too: an edited file gets its earlier text back with `expect` = the hash of the bytes
+  on disk, re-checked just before against what the change left; a created file is deleted. The
+  broker's `delete` carries no `expect`, so a file rewritten between that check and the batch is
+  still set aside (in the journal, so it can be restored), as the by-path rollback would have
+  removed it. A refused batch leaves the change tracked. Not yet built: the Blackbox turn rollback
+  and `code.task.rollback`, which restore from Blackbox snapshots.
 - Whether git runs at all inside an AppContainer is unknown (Git for Windows reads
   `%USERPROFILE%\.gitconfig`, which an AppContainer cannot read, and needs its own folders under
   Program Files); a test must show it before Step 3 relies on it.

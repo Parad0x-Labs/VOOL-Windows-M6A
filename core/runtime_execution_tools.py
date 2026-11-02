@@ -7032,6 +7032,41 @@ def _rollback_last_change(
                 ),
             },
         )
+    if rollback.get("status") == "broker_refused":
+        # Windows, through the broker (Phase C C3): refused or put back in full, so the change is still
+        # tracked and nothing it touched was changed (docs/WINDOWS_BROKER.md section 8).
+        from core import windows_write_gate
+
+        code = str(rollback.get("broker_code") or "")
+        message = str(rollback.get("message") or "")
+        made = [str(item) for item in list(rollback.get("created_folders") or [])]
+        return RuntimeExecutionResult(
+            handled=True,
+            ok=False,
+            status=windows_write_gate.STATUS,
+            response_text=(f"The Windows broker did not roll back this change ({code}{': ' + message if message else ''}); "
+                           + ("no file was changed, but the broker had already created "
+                              + ", ".join(f"`{item}`" for item in made) + "; " if made else "nothing was changed, and ")
+                           + "the change is still tracked."),
+            details={
+                "executed": False,
+                "broker_code": code,
+                "created_folders": made,
+                "mutation_id": str(rollback.get("mutation_id") or "").strip(),
+                "restored_paths": [],
+                "removed_paths": [],
+                "observation": _tool_observation(
+                    intent="workspace.rollback_last_change",
+                    tool_surface="workspace",
+                    ok=False,
+                    status=windows_write_gate.STATUS,
+                    reason=code,
+                    restored_paths=[],
+                    removed_paths=[],
+                ),
+            },
+        )
+
     restored_paths = [str(item).strip() for item in list(rollback.get("restored_paths") or []) if str(item).strip()]
     removed_paths = [str(item).strip() for item in list(rollback.get("removed_paths") or []) if str(item).strip()]
     lines = ["Rolled back the last VOOL-tracked workspace change."]
