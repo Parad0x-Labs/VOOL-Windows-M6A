@@ -51,7 +51,7 @@ def _run(js: str, expr: str, events, now_ms: int = 1_000_000):
         + f"process.stdout.write(JSON.stringify({expr}));\n"
     )
     proc = subprocess.run(
-        [NODE, "--input-type=module", "-e", script], capture_output=True, text=True, timeout=30
+        [NODE, "--input-type=module", "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=30
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
@@ -342,7 +342,7 @@ def _render_html(page_source: str, events) -> str:
         + "const body = new El();\nrenderAgents(body);\nprocess.stdout.write(body.innerHTML);\n"
     )
     proc = subprocess.run(
-        [NODE, "--input-type=module", "-e", script], capture_output=True, text=True, timeout=30
+        [NODE, "--input-type=module", "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=30
     )
     assert proc.returncode == 0, proc.stderr
     return proc.stdout

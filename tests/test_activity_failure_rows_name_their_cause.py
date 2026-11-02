@@ -139,7 +139,7 @@ def _run_node(harness: str, *, js: str | None = None) -> Any:
         handle.write(_DOM_STUB + (js if js is not None else _ledger_js()) + "\n" + harness)
         path = handle.name
     try:
-        result = subprocess.run([node, path], capture_output=True, text=True, timeout=120)
+        result = subprocess.run([node, path], capture_output=True, text=True, encoding="utf-8", timeout=120)
     finally:
         Path(path).unlink(missing_ok=True)
     assert result.returncode == 0, f"chat-page ledger JS failed under node:\n{result.stderr}"
@@ -527,7 +527,7 @@ def test_the_page_still_parses_and_still_serves() -> None:
         handle.write(_script())
         path = handle.name
     try:
-        result = subprocess.run([node, "--check", path], capture_output=True, text=True, timeout=120)
+        result = subprocess.run([node, "--check", path], capture_output=True, text=True, encoding="utf-8", timeout=120)
     finally:
         Path(path).unlink(missing_ok=True)
     assert result.returncode == 0, f"chat-page JS syntax error:\n{result.stderr}"

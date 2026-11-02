@@ -172,7 +172,7 @@ def _run(harness: str, *, mutate: str = "") -> dict:
         handle.write(STUBS + source + "\n" + harness)
         path = handle.name
     try:
-        result = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
+        result = subprocess.run([node, path], capture_output=True, text=True, encoding="utf-8", timeout=60)
     finally:
         Path(path).unlink(missing_ok=True)
     assert result.returncode == 0, f"chat page JS failed under node:\n{result.stderr}"

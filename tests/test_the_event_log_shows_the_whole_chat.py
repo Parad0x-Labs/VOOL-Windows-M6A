@@ -24,7 +24,7 @@ def _run(view, scope="chat"):
         + body
         + "\nprocess.stdout.write(JSON.stringify(eventLogSections()));\n"
     )
-    p = subprocess.run([NODE, "--input-type=module", "-e", script], capture_output=True, text=True, timeout=30)
+    p = subprocess.run([NODE, "--input-type=module", "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=30)
     assert p.returncode == 0, p.stderr
     return json.loads(p.stdout)
 

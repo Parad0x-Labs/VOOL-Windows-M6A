@@ -648,7 +648,7 @@ def test_served_coupled_fixture_breaks_when_either_half_lands_alone(tmp_path) ->
             (folder / name).write_text(text)
         (folder / "units.js").write_text(units)
         (folder / "shipping.js").write_text(shipping)
-        run = subprocess.run([node, "check.js"], cwd=folder, capture_output=True, text=True, timeout=60)
+        run = subprocess.run([node, "check.js"], cwd=folder, capture_output=True, text=True, encoding="utf-8", timeout=60)
         results[label] = run.returncode
     assert results == {"rename-only": 1, "caller-only": 1, "both": 0}, results
 

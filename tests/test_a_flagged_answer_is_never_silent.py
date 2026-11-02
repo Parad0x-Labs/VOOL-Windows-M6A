@@ -153,7 +153,7 @@ def _render(display_metadata: dict) -> dict:
         + "}));"
     )
     proc = subprocess.run(
-        [NODE, "--input-type=module", "-e", script], capture_output=True, text=True, timeout=30
+        [NODE, "--input-type=module", "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=30
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
