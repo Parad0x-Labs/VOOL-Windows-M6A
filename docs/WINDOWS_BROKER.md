@@ -678,6 +678,12 @@ As built (Phase C C5, core/windows_broker/writes.py and core/effect_reconciliati
   claim as `unknown`, not safe to retry.
 - On Windows, while the broker is routed, machine.ensure_directory, machine.move_path and
   code.task.rollback are A6-reserved as well. Mac and Linux keep today's list.
+- The host keeps the start line's `journal` and `skipped` entries, and `session.report()` gives
+  them as one plain dict: `wired`, `running`, `reason`, `flagged`, `skipped`, `undo_records`
+  (`available` only when `journal.available` is literally true, else `unavailable`), `pending`
+  (`batch_id`, `left`), `torn` (`batch_id`, `bytes`, `kept_in`) and `needs_check` (pending or torn
+  is non-empty). A malformed row is kept as an `unknown` row, so it still needs a check. The API
+  endpoint and the banner are later slices.
 
 Client follow-up for Phase C:
 - Map `EffectOutcomeUnknown` and `BatchNotRestored` to VOOL's "outcome unknown, not safe to
