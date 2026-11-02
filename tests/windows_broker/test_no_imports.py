@@ -20,6 +20,9 @@ ALLOWED = {
     "core/windows_write_gate.py": "core.windows_broker.session",
     # Phase C C2: single writes go through the broker (sections 6 and 8).
     "core/runtime_execution_tools.py": "core.windows_broker.writes",
+    # Phase C C3: patches and the tracked-change rollback go through the broker as one batch.
+    "core/execution/workspace_tools.py": "core.windows_broker.writes",
+    "core/execution/artifacts.py": "core.windows_broker.writes",
 }
 
 
