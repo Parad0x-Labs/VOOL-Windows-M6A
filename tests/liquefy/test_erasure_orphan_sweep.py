@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from core import windows_sharing_retry
-from core.liquefy.store import LiquefyStoreError
+from core.liquefy.store import EntryNotFound, LiquefyStoreError
 
 
 @pytest.fixture()
@@ -155,3 +155,32 @@ def test_nothing_is_swept_while_the_cursor_on_disk_cannot_be_read(
     store.delete_cold_before(41)
 
     assert first.exists()
+
+
+@pytest.mark.parametrize("named", ["../victim", "000000000001-000000000020-90f3db55334f/../../victim", "VICTIM"])
+def test_a_receipt_name_that_is_not_a_segment_id_is_never_a_path_to_remove(make_store, sample_events, named):
+    store, _, _, _ = _three_sealed(make_store, sample_events)
+    victim = store.root / "victim"
+    victim.write_bytes(b"keep me")
+    (store.segments_dir / "VICTIM.lsegh").write_bytes(b"keep me too")
+    (store.receipts_dir / "erasure.jsonl").write_text(
+        json.dumps({"action": "erase_cold_before", "segment_ids": [named]}) + "\n", encoding="utf-8"
+    )
+
+    make_store(root=store.root).delete_cold_before(1)
+
+    assert victim.read_bytes() == b"keep me"
+    assert (store.segments_dir / "VICTIM.lsegh").read_bytes() == b"keep me too"
+
+
+def test_seq_never_goes_backwards_after_every_segment_is_erased(make_store, sample_events):
+    store, _, _, _ = _three_sealed(make_store, sample_events)
+
+    store.delete_cold_before(10_000)
+    first_new = store.append(sample_events(1, start=900))
+    reopened = make_store(root=store.root)
+    after_reopen = reopened.append(sample_events(1, start=901))
+
+    assert first_new == [61] and after_reopen == [62]
+    with pytest.raises(EntryNotFound):
+        reopened.read(5)
