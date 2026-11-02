@@ -12,10 +12,19 @@ name: Windows full suite
 
 on:
   workflow_dispatch:
+    inputs:
+      utf8_mode:
+        # "0" is the U0 lane: the suite under the Windows locale encoding (cp1252), where a
+        # read or write that leaves out encoding= fails. A red here that is green in a "1" run
+        # at the same SHA is an encoding bug, never by-design. Dispatch-only, ~60 runner-hours.
+        description: "PYTHONUTF8 for the run (1 = UTF-8 mode, 0 = locale encoding)"
+        type: choice
+        options: ["1", "0"]
+        default: "1"
 
 # A newer dispatch replaces the run still queued or in flight: only the latest port head matters.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}-utf8-${{ inputs.utf8_mode || '1' }}
   cancel-in-progress: true
 
 permissions:
@@ -23,7 +32,7 @@ permissions:
 
 jobs:
   tests:
-    name: windows tests (${{ matrix.shard }})
+    name: windows tests (${{ matrix.shard }}, utf8=${{ inputs.utf8_mode || '1' }})
     runs-on: windows-latest
     timeout-minutes: 300
     strategy:
@@ -31,7 +40,7 @@ jobs:
       matrix:
         shard: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19"]
     env:
-      PYTHONUTF8: "1"
+      PYTHONUTF8: ${{ inputs.utf8_mode || '1' }}
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
     steps:
       - uses: actions/checkout@v7
@@ -60,14 +69,16 @@ jobs:
       - name: Run shard ${{ matrix.shard }}
         shell: pwsh
         run: |
-          $files = Get-Content ".verification-logs/windows-shard-${{ matrix.shard }}-files.txt" | Where-Object { $_ }
+          # @(...) keeps a one-file shard an array: a bare string would splat as single characters
+          # (shard 0 holds one heavy file, and pytest got "t" in run 41030733681).
+          $files = @(Get-Content ".verification-logs/windows-shard-${{ matrix.shard }}-files.txt" | Where-Object { $_ })
           $basetemp = Join-Path $env:RUNNER_TEMP "pytest-${{ matrix.shard }}"
-          python ops/pytest_timing.py --output ".verification-logs/windows-shard-${{ matrix.shard }}-timing.json" -- -q --tb=short -p no:cacheprovider -o faulthandler_timeout=0 "--basetemp=$basetemp" @files
+          python ops/pytest_timing.py --output ".verification-logs/windows-shard-${{ matrix.shard }}-timing.json" -- -q --tb=short -p no:cacheprovider -o faulthandler_timeout=0 "--basetemp=$basetemp" "--junitxml=.verification-logs/windows-shard-${{ matrix.shard }}.xml" @files
           exit $LASTEXITCODE
       - name: Upload shard log
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: windows-full-suite-shard-${{ matrix.shard }}
+          name: windows-full-suite-utf8-${{ inputs.utf8_mode || '1' }}-shard-${{ matrix.shard }}
           path: .verification-logs/
           include-hidden-files: true
