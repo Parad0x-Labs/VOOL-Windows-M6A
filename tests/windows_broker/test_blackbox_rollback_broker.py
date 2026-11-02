@@ -19,7 +19,12 @@ from typing import Any
 import pytest
 
 from core import windows_write_gate
-from core.mode_permission_policy import PermissionAction, grant_internal_authority, reset_mode_permission_state, set_active_mode
+from core.mode_permission_policy import (
+    PermissionAction,
+    grant_internal_authority,
+    reset_mode_permission_state,
+    set_active_mode,
+)
 from core.runtime_execution_tools import execute_runtime_tool
 from core.windows_broker import session
 from core.windows_broker.protocol import BrokerRefusal
