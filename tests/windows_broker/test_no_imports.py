@@ -14,7 +14,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = "core.windows_broker"
 #: The one production use phase B allows: the API server starting and stopping the broker.
-ALLOWED = {"apps/vool_api_server.py": "core.windows_broker.process"}
+ALLOWED = {
+    "apps/vool_api_server.py": "core.windows_broker.process",
+    # Phase C C1: the gate takes its flagged folders from the broker (section 4, one list).
+    "core/windows_write_gate.py": "core.windows_broker.session",
+}
 
 
 def _python_files() -> list[Path]:
