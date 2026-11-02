@@ -124,8 +124,8 @@ def _operator_move(flagged: Path, destination_dir: Path) -> Any:
     intent = type("Intent", (), {"action_id": "act-1", "approval_requested": True})()
     return operator_handlers.handle_move_path(
         intent, task_id="t", session_id="s",
-        load_pending_action_fn=lambda **kw: pending, parse_move_request_fn=None, validate_move_scope_fn=lambda s, d: "",
-        resolved_move_target_fn=None, create_pending_action_fn=None, mark_action_executed_fn=lambda **kw: None,
+        load_pending_action_fn=lambda *a, **kw: pending, parse_move_request_fn=None, validate_move_scope_fn=lambda s, d: "",
+        resolved_move_target_fn=None, create_pending_action_fn=None, mark_action_executed_fn=lambda *a, **kw: None,
         evaluate_local_action_fn=lambda *a, **kw: _Gate(), move_fn=move_fn, audit_log_fn=lambda *a, **kw: None,
         ensure_directory_fn=ensure_directory_fn, reraise=reraise,
     )
