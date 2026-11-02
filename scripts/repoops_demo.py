@@ -47,7 +47,7 @@ def build_sandbox(base: str):
     subprocess.run(["git", "init", "-q", "-b", "main", root], check=True)
     run(root, "config", "user.email", "ninja@test")
     run(root, "config", "user.name", "Git Ninja")
-    with open(os.path.join(root, "app.py"), "w") as f:
+    with open(os.path.join(root, "app.py"), "w", encoding="utf-8") as f:
         f.write("def divide(a, b):\n    return a / b\n")   # the bug
     run(root, "add", "-A")
     run(root, "commit", "-q", "-m", "feat: divide")

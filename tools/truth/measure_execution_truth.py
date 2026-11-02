@@ -62,7 +62,7 @@ def measure(home: str) -> dict:
     for path in glob.glob(os.path.join(home, "data", "honesty_receipts", "**", "*"), recursive=True):
         if not os.path.isfile(path):
             continue
-        with open(path, errors="replace") as handle:
+        with open(path, encoding="utf-8", errors="replace") as handle:
             for line in handle:
                 receipt = _loads(line.strip())
                 if not isinstance(receipt, dict) or "executed_tools" not in receipt:

@@ -29,25 +29,25 @@ def layout(home: Path) -> tuple[Path, Path, Path]:
 
 def owned_root(root: Path) -> bool:
     marker = root / ".vool-linux-bundle"
-    return not root.is_symlink() and not marker.is_symlink() and marker.is_file() and marker.read_text() == MARKER
+    return not root.is_symlink() and not marker.is_symlink() and marker.is_file() and marker.read_text(encoding="utf-8", errors="replace") == MARKER
 
 
 def check_entrypoints(root: Path, binary: Path, desktop: Path) -> None:
     if os.path.lexists(binary) and (not binary.is_symlink() or os.readlink(binary) != str(root / "current/vool")):
         raise ValueError("Refusing to replace an unrelated vool launcher")
     if os.path.lexists(desktop) and (
-        desktop.is_symlink() or not desktop.is_file() or DESKTOP_MARKER not in desktop.read_text().splitlines()
+        desktop.is_symlink() or not desktop.is_file() or DESKTOP_MARKER not in desktop.read_text(encoding="utf-8", errors="replace").splitlines()
     ):
         raise ValueError("Refusing to replace an unrelated desktop entry")
 
 
 def verify_package(package: Path) -> str:
-    sha = (package / "SOURCE_COMMIT").read_text().strip()
+    sha = (package / "SOURCE_COMMIT").read_text(encoding="utf-8").strip()
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise ValueError("Invalid package source identity")
     required = {"vool", "launch.py", "install_bundle.py", "install.sh", "uninstall.sh", "python/bin/python3", "app/apps/vool_api_server.py"}
     seen = set()
-    for line in (package / "SHA256SUMS").read_text().splitlines():
+    for line in (package / "SHA256SUMS").read_text(encoding="utf-8").splitlines():
         digest, name = line.split("  ", 1)
         path = package / name
         if not re.fullmatch(r"[0-9a-f]{64}", digest) or not path.resolve().is_relative_to(package.resolve()):
@@ -128,7 +128,7 @@ def install(package: Path, home: Path) -> None:
             temporary.write(desktop_text(root).encode())
             desktop_stage = Path(temporary.name)
         os.replace(desktop_stage, desktop)
-        (root / ".vool-linux-bundle").write_text(MARKER)
+        (root / ".vool-linux-bundle").write_text(MARKER, encoding="utf-8")
     except Exception:
         if switched:
             current.unlink()
