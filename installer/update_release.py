@@ -16,7 +16,11 @@ Usage:
         --key-file ~/.vool-release-secrets/release-2026-09.private.hex \
         --key-id release-2026-09 \
         --sequence 48 \
+        --sums dist/0.6.0/SHA256SUMS \
         --out dist/0.6.0/manifest.json
+
+With --sums (the release's SHA256SUMS, tools/write_sha256sums.py), every artifact must be named
+there with the same sha256, or nothing is signed.
 """
 from __future__ import annotations
 
@@ -24,6 +28,7 @@ import argparse
 import base64
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -63,6 +68,30 @@ def sha256_of(path: Path) -> str:
     return digest.hexdigest()
 
 
+_SUMS_LINE = re.compile(r"([0-9a-f]{64})  ([^/\\\r\n]+)")
+
+
+def read_sha256sums(path: Path) -> dict[str, str]:
+    """Name -> sha256 from a SHA256SUMS file: LF ASCII lines of lowercase hex, two spaces, a plain
+    file name, each name once. Anything else is refused, never guessed at."""
+    try:
+        text = Path(path).read_bytes().decode("ascii")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise SystemExit(f"ERROR: unreadable SHA256SUMS {path}: {exc}") from exc
+    if not text.endswith("\n"):
+        raise SystemExit(f"ERROR: {path} is not LF-terminated SHA256SUMS lines.")
+    sums: dict[str, str] = {}
+    for line in text[:-1].split("\n"):
+        match = _SUMS_LINE.fullmatch(line)
+        if not match:
+            raise SystemExit(f"ERROR: {path} has a line that is not '<sha256>  <name>': {line!r}")
+        digest, name = match.groups()
+        if name in sums:
+            raise SystemExit(f"ERROR: {path} names {name!r} twice.")
+        sums[name] = digest
+    return sums
+
+
 def build_signed_manifest(
     *,
     template_path: Path,
@@ -76,21 +105,28 @@ def build_signed_manifest(
     minimum_compatible: str,
     notes: str,
     build_commit: str = "",
+    sums_path: Path | None = None,
 ) -> dict:
     template: dict = {}
     if template_path and Path(template_path).exists():
         template = json.loads(Path(template_path).read_text(encoding="utf-8"))
     artifacts = template.get("artifacts") or {}
+    sums = read_sha256sums(sums_path) if sums_path else None
     resolved: dict[str, dict] = {}
     for platform, entry in artifacts.items():
         local = Path(entry.get("path") or "")
         if not local.is_absolute():
             local = (artifacts_dir / local.name) if artifacts_dir else local
         blob = local.read_bytes()
+        digest = hashlib.sha256(blob).hexdigest()
+        if sums is not None and sums.get(local.name) != digest:
+            raise SystemExit(
+                f"ERROR: {local.name} ({platform}) is not in SHA256SUMS with sha256 {digest}; nothing was signed."
+            )
         resolved[str(platform)] = {
             "url": str(entry.get("url") or ""),
             "size": len(blob),
-            "sha256": sha256_of(local),
+            "sha256": digest,
             "signature": sign(private_hex, blob),
         }
     if not resolved:
@@ -136,6 +172,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--minimum-compatible", default="")
     parser.add_argument("--notes", default="")
+    parser.add_argument("--sums", default="", help="the release's SHA256SUMS; every artifact must match it")
     parser.add_argument("--out", required=True, help="output path for the signed manifest")
     args = parser.parse_args(argv)
 
@@ -154,6 +191,7 @@ def main(argv: list[str] | None = None) -> int:
         minimum_compatible=args.minimum_compatible,
         notes=args.notes,
         build_commit=args.build_commit,
+        sums_path=Path(args.sums) if args.sums else None,
     )
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
