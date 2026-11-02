@@ -211,3 +211,13 @@ def test_start_for_api_registers_its_host_for_the_gate(monkeypatch: pytest.Monke
     monkeypatch.setattr(process, "broker_executable", lambda root: None)
     host = process.start_for_api(tmp_path, tmp_path)
     assert session.wired() and session._host is host and host.status.reason == "not_found"
+
+
+def test_start_for_api_with_another_environment_leaves_the_gate_alone(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from core.windows_broker import process
+
+    monkeypatch.setattr(session, "_host", None)
+    monkeypatch.setattr(process, "_is_windows", lambda: True)
+    monkeypatch.setattr(process, "broker_executable", lambda root: None)
+    process.start_for_api(tmp_path, tmp_path, environ={})
+    assert not session.wired()
