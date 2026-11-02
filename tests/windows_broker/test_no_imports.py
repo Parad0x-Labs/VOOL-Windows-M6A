@@ -18,6 +18,8 @@ ALLOWED = {
     "apps/vool_api_server.py": "core.windows_broker.process",
     # Phase C C1: the gate takes its flagged folders from the broker (section 4, one list).
     "core/windows_write_gate.py": "core.windows_broker.session",
+    # Phase C C2: single writes go through the broker (sections 6 and 8).
+    "core/runtime_execution_tools.py": "core.windows_broker.writes",
 }
 
 
