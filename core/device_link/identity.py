@@ -30,13 +30,13 @@ def save(signing_key: SigningKey, path: Path) -> None:
         "public_hex": signing_key.verify_key.encode().hex(),
     }
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(payload, indent=2))
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     os.chmod(tmp, 0o600)
     os.replace(tmp, path)
 
 
 def load(path: Path) -> SigningKey:
-    raw = json.loads(Path(path).read_text())
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
     if str(raw.get("kind") or "") != KEY_KIND:
         raise ValueError(f"not a {KEY_KIND} key file: {path}")
     return SigningKey(bytes.fromhex(raw["seed_b64"]))

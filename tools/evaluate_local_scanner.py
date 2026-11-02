@@ -141,7 +141,7 @@ def main() -> int:
         }
         output["samples"].update({f"bundled/{r['name']}": r for r in rows})
 
-    pathlib.Path(args.out).write_text(json.dumps(output, indent=2) + "\n")
+    pathlib.Path(args.out).write_text(json.dumps(output, indent=2) + "\n", encoding="utf-8")
     for group, metrics in output["groups"].items():
         print(group, json.dumps({k: v for k, v in metrics.items() if not isinstance(v, list)}))
         for key in ("misses", "false_alarms", "local_alerts"):

@@ -56,7 +56,7 @@ class PublicationLock:
             parent = os.path.dirname(self._path)
             if parent:
                 os.makedirs(parent, exist_ok=True)
-            fh = open(self._path, "w")
+            fh = open(self._path, "w", encoding="utf-8")
             if IS_WINDOWS:
                 import msvcrt
 

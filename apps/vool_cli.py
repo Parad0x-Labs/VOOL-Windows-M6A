@@ -707,7 +707,7 @@ def cmd_nullpass(
             print("usage: vool nullpass verify <file.nullpass> [--confirm-onchain]")
             return 2
         try:
-            with open(target) as f:
+            with open(target, encoding="utf-8") as f:
                 bundle = json.load(f)
         except Exception as exc:
             print(f"cannot read {target}: {exc}")
@@ -737,7 +737,7 @@ def cmd_nullpass(
         return 2
         bundle = None  # unreachable: kept so the rest of the handler reads unchanged
         if out:
-            with open(out, "w") as f:
+            with open(out, "w", encoding="utf-8") as f:
                 json.dump(bundle, f, indent=2)
             print(f"wrote {out}")
         if json_mode:

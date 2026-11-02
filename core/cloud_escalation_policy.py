@@ -59,7 +59,7 @@ def _counter_file_lock():
     handle = None
     try:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
-        handle = open(lock_path, "a+")  # noqa: SIM115 - released in finally
+        handle = open(lock_path, "a+", encoding="utf-8")  # noqa: SIM115 - released in finally
         handle.seek(0)
         try:
             if os.name == "nt":
