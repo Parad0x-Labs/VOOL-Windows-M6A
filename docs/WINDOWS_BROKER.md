@@ -388,6 +388,14 @@ machine.ensure_directory on Windows are sent to the broker and never written by 
 - No time stamp or mode is set by path afterwards; the broker's file is new.
 - A process that never started a broker (tests, tools run outside the API) writes by path as before.
 
+Moves, as built (Phase C C4): once the API has started the broker, machine.move_path
+(core/machine_file_ops.py) and an approved operator.move_path (core/local_operator_actions.py) are
+the broker's `rename` with `replace` false, after each folder's `flagged_path` check; a move into
+another flagged folder opens it as `to_root_id`. The operator move makes its destination folder with
+`ensure_directory`. A refusal moves nothing; a lost reply raises the client's outcome-unknown error,
+which neither writer reports as a failed move. writes.py resolves the folders above a path, never
+its own name, so a link given as the source or target is named to the broker and refused.
+
 Moves across volumes are refused (`cross_volume`). Today `machine.move_path` copies across volumes
 (core/machine_file_ops.py:209 `shutil.move`), so this is a behaviour change (section 10, item 5);
 a copy-then-delete by handle, with its own partial-failure receipt, is later work.

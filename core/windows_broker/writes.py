@@ -123,26 +123,34 @@ class _Call:
 
     def __enter__(self) -> _Call:
         try:
-            self.client.connect()
-            answer = self.client.request("flagged_path", flagged_id=self.folder.id)
-            path = answer.get("path")
-            if not isinstance(path, str) or os.path.normcase(path) != os.path.normcase(self.folder.path):
-                raise Refused("flagged_moved", f"the flagged folder {self.folder.path} is now at {path!r}")
-            root_id = self.client.request("open_root", flagged_id=self.folder.id, rel="").get("root_id")
-            if not isinstance(root_id, str) or not root_id:
-                raise Refused("broker_unavailable", "the broker opened no root")
-            self.root_id = root_id
-        except BrokerRefusal as refusal:
-            self.client.close()
-            raise Refused(refusal.code, refusal.message) from refusal
-        except (ConnectionError, EffectOutcomeUnknown, OSError, ValueError) as exc:
-            # Nothing so far changes a file: a lost reply here changed nothing either.
-            self.client.close()
-            raise Refused("broker_unavailable", f"the broker could not be asked ({type(exc).__name__})") from exc
+            try:
+                self.client.connect()
+            except BrokerRefusal as refusal:
+                raise Refused(refusal.code, refusal.message) from refusal
+            except (ConnectionError, EffectOutcomeUnknown, OSError, ValueError) as exc:
+                raise Refused("broker_unavailable", f"the broker could not be reached ({type(exc).__name__})") from exc
+            self.root_id = self.root_for(self.folder)
         except BaseException:
             self.client.close()
             raise
         return self
+
+    def root_for(self, folder: Any) -> str:
+        """`folder`'s root on this connection, after its final path is checked (section 4)."""
+        try:
+            answer = self.client.request("flagged_path", flagged_id=folder.id)
+            path = answer.get("path")
+            if not isinstance(path, str) or os.path.normcase(path) != os.path.normcase(folder.path):
+                raise Refused("flagged_moved", f"the flagged folder {folder.path} is now at {path!r}")
+            root_id = self.client.request("open_root", flagged_id=folder.id, rel="").get("root_id")
+            if not isinstance(root_id, str) or not root_id:
+                raise Refused("broker_unavailable", "the broker opened no root")
+            return root_id
+        except BrokerRefusal as refusal:
+            raise Refused(refusal.code, refusal.message) from refusal
+        except (ConnectionError, EffectOutcomeUnknown, OSError, ValueError) as exc:
+            # Nothing so far changes a file: a lost reply here changed nothing either.
+            raise Refused("broker_unavailable", f"the broker could not be asked ({type(exc).__name__})") from exc
 
     def __exit__(self, *exc_info: object) -> None:
         self.client.close()
@@ -200,6 +208,29 @@ def delete(target: Path) -> None:
         result = call.change("delete", rel=call.rel)[0]
         if result.get("op") not in (None, "delete"):
             raise EffectOutcomeUnknown("broker reply for delete has the wrong shape")
+
+
+def rename(source: Path, destination: Path) -> None:
+    """Move `source` to `destination` through the broker's `rename` (section 6): the source is held
+    and renamed onto the held destination folder, never replacing an existing destination. Across two
+    flagged folders the second is checked and opened as `to_root_id`; across volumes the broker refuses
+    `cross_volume`. The destination folder must already exist."""
+    _host, status = _status()
+    folder, rel = _place(source, status)
+    to_folder, to_rel = _place(destination, status)
+    if not rel or not to_rel:
+        raise Refused("invalid_path", "a flagged folder itself cannot be moved, or moved onto")
+    with _Call(placed=(folder, "")) as call:
+        extra: dict[str, Any] = {}
+        if to_folder.id != folder.id:
+            extra["to_root_id"] = call.root_for(to_folder)
+        result = call.change("rename", rel=rel, to=to_rel, replace=False, **extra)[0]
+        if result.get("op") not in (None, "rename"):
+            raise EffectOutcomeUnknown("broker reply for rename has the wrong shape")
+
+
+#: The client's "may have had an effect" outcome, for callers that must not turn it into a failure.
+OutcomeUnknown = EffectOutcomeUnknown
 
 
 def _written(result: dict[str, Any], rel: str, data: bytes, created: tuple[str, ...]) -> Written:
@@ -260,5 +291,17 @@ def apply_batch(changes: list[tuple[Path, bytes | None, str]]) -> list[Written |
         return done
 
 
-__all__ = ["Refused", "Written", "apply_batch", "delete", "ensure_directory", "expect_for", "expect_for_reviewed", "routed", "write_file",
-           "write_files"]
+__all__ = [
+    "OutcomeUnknown",
+    "Refused",
+    "Written",
+    "apply_batch",
+    "delete",
+    "ensure_directory",
+    "expect_for",
+    "expect_for_reviewed",
+    "rename",
+    "routed",
+    "write_file",
+    "write_files",
+]

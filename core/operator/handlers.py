@@ -457,7 +457,12 @@ def handle_move_path(
     evaluate_local_action_fn: Any,
     move_fn: Any,
     audit_log_fn: Any,
+    ensure_directory_fn: Any = None,
+    reraise: tuple[type[BaseException], ...] = (),
 ) -> OperatorActionResult:
+    """`ensure_directory_fn` makes the destination folder (by path when None); an exception of a
+    type in `reraise` from `move_fn` is raised, never reported as a failed move (the Windows
+    broker's outcome-unknown error: the move may have happened)."""
     pending = load_pending_action_fn(session_id=session_id, action_kind="move_path", action_id=intent.action_id)
     if pending is None:
         parsed = parse_move_request_fn(
@@ -578,7 +583,20 @@ def handle_move_path(
             response_text=f"I can't move this path because it no longer exists: {source}",
             details={"action_id": pending["action_id"], "source_path": str(source)},
         )
-    destination_dir.mkdir(parents=True, exist_ok=True)
+    if ensure_directory_fn is None:
+        destination_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        try:
+            ensure_directory_fn(destination_dir)
+        except reraise:
+            raise
+        except Exception as exc:
+            return OperatorActionResult(
+                ok=False,
+                status="execution_failed",
+                response_text=f"I couldn't make the folder {destination_dir}: {exc}",
+                details={"action_id": pending["action_id"], "destination_dir": str(destination_dir), "error": str(exc)},
+            )
     if final_path.exists():
         return OperatorActionResult(
             ok=False,
@@ -588,6 +606,8 @@ def handle_move_path(
         )
     try:
         move_fn(str(source), str(final_path))
+    except reraise:
+        raise
     except Exception as exc:
         return OperatorActionResult(
             ok=False,
