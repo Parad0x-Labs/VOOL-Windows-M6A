@@ -69,7 +69,9 @@ jobs:
       - name: Run shard ${{ matrix.shard }}
         shell: pwsh
         run: |
-          $files = Get-Content ".verification-logs/windows-shard-${{ matrix.shard }}-files.txt" | Where-Object { $_ }
+          # @(...) keeps a one-file shard an array: a bare string would splat as single characters
+          # (shard 0 holds one heavy file, and pytest got "t" in run 41030733681).
+          $files = @(Get-Content ".verification-logs/windows-shard-${{ matrix.shard }}-files.txt" | Where-Object { $_ })
           $basetemp = Join-Path $env:RUNNER_TEMP "pytest-${{ matrix.shard }}"
           python ops/pytest_timing.py --output ".verification-logs/windows-shard-${{ matrix.shard }}-timing.json" -- -q --tb=short -p no:cacheprovider -o faulthandler_timeout=0 "--basetemp=$basetemp" "--junitxml=.verification-logs/windows-shard-${{ matrix.shard }}.xml" @files
           exit $LASTEXITCODE
