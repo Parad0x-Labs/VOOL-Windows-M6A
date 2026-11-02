@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from core import windows_sharing_retry
 from core.zcash import config
 from core.zcash.keys import ViewingKey
 
@@ -173,10 +174,17 @@ class Devtool:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.chmod(tmp, 0o500)
-            os.replace(tmp, target)
+            windows_sharing_retry.replace(tmp, target)
         except OSError:
             with contextlib.suppress(OSError):
+                os.chmod(tmp, 0o600)  # Windows refuses to delete a read-only file
+            with contextlib.suppress(OSError):
                 tmp.unlink()
+            # Windows never replaces a read-only file, so a thread that lost the race to pin the same bytes is
+            # refused for good. The winner's copy is used only if it hashes to the pin; anything else fails closed.
+            with contextlib.suppress(OSError):
+                if hashlib.sha256(target.read_bytes()).hexdigest() == self.sha256:
+                    return target
             raise ZcashWatchError("devtool_failed", "The Zcash watch tool could not be prepared.") from None
         try:
             prepared = hashlib.sha256(target.read_bytes()).hexdigest()
@@ -397,7 +405,7 @@ def write_private(path: Path, text: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
-        os.replace(tmp_name, path)
+        windows_sharing_retry.replace(tmp_name, path)
     except BaseException:
         with contextlib.suppress(OSError):
             os.unlink(tmp_name)
