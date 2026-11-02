@@ -124,6 +124,15 @@ def flagged_roots(environ: dict[str, str] | None = None) -> list[str]:
     return roots
 
 
+def broker_report() -> dict[str, Any]:
+    """The Windows broker's report for GET /api/windows/broker/status (docs/WINDOWS_BROKER.md
+    section 8): ``{"wired": False}`` in a process that never started a broker. Kept here so the
+    API reads the broker through the gate, the one place that already asks it."""
+    from core.windows_broker.session import report
+
+    return report()
+
+
 def _inside(path: str, roots: list[str]) -> bool:
     # No file can have a path holding a NUL. POSIX realpath raises on one, but Windows realpath
     # returns it unresolved, so the text around the NUL would decide where it lies.
@@ -423,4 +432,4 @@ def refusal(
     )
 
 
-__all__ = ["ENV_VAR", "STATUS", "active", "flagged_roots", "may_refuse", "refusal"]
+__all__ = ["ENV_VAR", "STATUS", "active", "broker_report", "flagged_roots", "may_refuse", "refusal"]
