@@ -201,7 +201,7 @@ def test_event_listings_open_one_governance_connection_per_call(monkeypatch):
 
 
 def test_browser_preflight_times_out_cancels_and_coalesces_history():
-    source = (Path(__file__).parents[1] / "core/vool_chat_page.py").read_text()
+    source = (Path(__file__).parents[1] / "core/vool_chat_page.py").read_text(encoding="utf-8")
     helper = source[source.index("async function fetchJsonWithin("):source.index("async function runTurn(")]
     activity = source[source.index("let sidebarLifecycleRequest = null;"):source.index("async function loadActivityHistory()")]
     program = helper + activity + r'''
@@ -241,7 +241,7 @@ const assert = require('node:assert/strict');
 
 
 def test_late_boot_history_cannot_replace_the_new_user_question():
-    source = (Path(__file__).parents[1] / "core/vool_chat_page.py").read_text()
+    source = (Path(__file__).parents[1] / "core/vool_chat_page.py").read_text(encoding="utf-8")
     restore = source[source.index("async function restoreCurrent()"):source.index("// =========================== Live execution UX")]
     program = r'''
 const assert = require('node:assert/strict');

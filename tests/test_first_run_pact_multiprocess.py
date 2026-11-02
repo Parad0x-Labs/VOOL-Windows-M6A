@@ -284,7 +284,7 @@ DRIVER = textwrap.dedent(
 
 def _spawn_driver(python, repo, home, tag, barrier, target, mode, forced_revision=None):
     script = barrier / f"driver_{tag}_{mode}.py"
-    script.write_text(DRIVER.format(repo=str(repo)))
+    script.write_text(DRIVER.format(repo=str(repo)), encoding="utf-8")
     env = dict(os.environ)
     env.update({
         "VOOL_HOME": str(home),
@@ -316,7 +316,7 @@ def _seed_target(home: Path, target: str) -> dict:
             "provider_step": "delegated",
         }
         marker = home / "data" / "first_run_state.json"
-    marker.write_text(json.dumps(start, indent=2, sort_keys=True) + "\n")
+    marker.write_text(json.dumps(start, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return start
 
 
@@ -341,7 +341,7 @@ def _run_race(target: str, rounds: int = ROUNDS):
             outs.append(json.loads(out.strip().splitlines()[-1]))
 
         marker = home / "data" / ("first_run_pact_state.json" if target == "pact" else "first_run_state.json")
-        after = json.loads(marker.read_text())
+        after = json.loads(marker.read_text(encoding="utf-8"))
         outcomes.append({
             "round": round_index,
             "outs": outs,
@@ -377,7 +377,7 @@ def _run_stale(target: str):
     assert winner_out["result"] == "committed" and winner_out["revision"] == 2, winner_out
     assert loser_out == {"result": "refused", "code": "stale_revision"}, loser_out
     marker = home / "data" / ("first_run_pact_state.json" if target == "pact" else "first_run_state.json")
-    after = json.loads(marker.read_text())
+    after = json.loads(marker.read_text(encoding="utf-8"))
     assert after["revision"] == 2
 
 
@@ -436,7 +436,7 @@ def test_the_mutation_lock_fails_closed_with_a_typed_fault(pact_rig, tmp_path):
                               ("provider", "first_run_state.json.lock")):
         lock_path = pact_rig.home / "data" / lock_name
         script = tmp_path / f"lock_driver_{target}.py"
-        script.write_text(LOCK_DRIVER.format(repo=str(REPO)))
+        script.write_text(LOCK_DRIVER.format(repo=str(REPO)), encoding="utf-8")
         env = dict(os.environ)
         env["VOOL_HOME"] = str(pact_rig.home)
         env["VOOL_KEY_STORAGE_MODE"] = "file"
@@ -513,7 +513,7 @@ def test_policy_setter_two_processes_lose_no_update(pact_rig, tmp_path):
         procs = []
         for tag in ("a", "b"):
             script = barrier / f"driver_{tag}.py"
-            script.write_text(POLICY_DRIVER.format(repo=str(REPO)))
+            script.write_text(POLICY_DRIVER.format(repo=str(REPO)), encoding="utf-8")
             env = dict(os.environ)
             env["VOOL_HOME"] = str(home)
             procs.append(subprocess.Popen(

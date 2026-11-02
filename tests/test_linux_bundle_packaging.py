@@ -21,7 +21,7 @@ spec.loader.exec_module(installer)
 
 def seal(package: Path) -> None:
     files = sorted(p for p in package.rglob("*") if p.is_file() and p.name != "SHA256SUMS")
-    (package / "SHA256SUMS").write_text("".join(f"{hashlib.sha256(p.read_bytes()).hexdigest()}  ./{p.relative_to(package).as_posix()}\n" for p in files))
+    (package / "SHA256SUMS").write_text("".join(f"{hashlib.sha256(p.read_bytes()).hexdigest()}  ./{p.relative_to(package).as_posix()}\n" for p in files), encoding="utf-8")
 
 
 @pytest.fixture
@@ -32,7 +32,7 @@ def package(tmp_path):
     shutil.copy2(Path(sys.executable).resolve(), package / "python/bin/python3")
     (package / "app/apps").mkdir(parents=True)
     shutil.copy2(ROOT / "apps/vool_api_server.py", package / "app/apps/vool_api_server.py")
-    (package / "SOURCE_COMMIT").write_text("a" * 40 + "\n")
+    (package / "SOURCE_COMMIT").write_text("a" * 40 + "\n", encoding="utf-8")
     (package / "vool.png").write_bytes((ROOT / "installer/assets/vool.png").read_bytes())
     seal(package)
     return package
@@ -49,24 +49,24 @@ def home(tmp_path):
 def test_install_reinstall_upgrade_and_uninstall_preserve_profile(package, home):
     profile = home / ".vool_runtime"
     profile.mkdir()
-    (profile / "saved-chat.txt").write_text("keep this")
+    (profile / "saved-chat.txt").write_text("keep this", encoding="utf-8")
     installer.install(package, home)
     root, binary, desktop = installer.layout(home)
     assert binary.resolve() == root / "versions" / ("a" * 40) / "vool"
-    assert installer.DESKTOP_MARKER in desktop.read_text()
-    assert 'Exec="' in desktop.read_text() and r'\\$dollar' in desktop.read_text()
+    assert installer.DESKTOP_MARKER in desktop.read_text(encoding="utf-8")
+    assert 'Exec="' in desktop.read_text(encoding="utf-8") and r'\\$dollar' in desktop.read_text(encoding="utf-8")
     installer.install(package, home)
-    (package / "SOURCE_COMMIT").write_text("b" * 40 + "\n")
+    (package / "SOURCE_COMMIT").write_text("b" * 40 + "\n", encoding="utf-8")
     seal(package)
     installer.install(package, home)
-    assert (root / "current/SOURCE_COMMIT").read_text().strip() == "b" * 40
-    (root / "user-note.txt").write_text("preserve unrelated content")
+    assert (root / "current/SOURCE_COMMIT").read_text(encoding="utf-8").strip() == "b" * 40
+    (root / "user-note.txt").write_text("preserve unrelated content", encoding="utf-8")
     installer.uninstall(home)
     installer.uninstall(home)
     assert not os.path.lexists(binary)
     assert not desktop.exists()
-    assert (profile / "saved-chat.txt").read_text() == "keep this"
-    assert (root / "user-note.txt").read_text() == "preserve unrelated content"
+    assert (profile / "saved-chat.txt").read_text(encoding="utf-8") == "keep this"
+    assert (root / "user-note.txt").read_text(encoding="utf-8") == "preserve unrelated content"
 
 
 @pytest.mark.parametrize("collision", ["root", "binary", "desktop", "parent-symlink"])
@@ -79,11 +79,11 @@ def test_install_refuses_foreign_content(package, home, collision):
         target.symlink_to(foreign)
     else:
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text("foreign content")
+        target.write_text("foreign content", encoding="utf-8")
     with pytest.raises(ValueError):
         installer.install(package, home)
     if collision != "parent-symlink":
-        assert target.read_text() == "foreign content"
+        assert target.read_text(encoding="utf-8") == "foreign content"
     else:
         assert not any(foreign.iterdir())
 
@@ -92,11 +92,11 @@ def test_tampered_package_refuses_without_touching_existing_install(package, hom
     installer.install(package, home)
     root, binary, _ = installer.layout(home)
     previous = binary.resolve()
-    (package / "launch.py").write_text("tampered")
+    (package / "launch.py").write_text("tampered", encoding="utf-8")
     with pytest.raises(ValueError, match="checksum mismatch"):
         installer.install(package, home)
     assert binary.resolve() == previous
-    assert (root / "current/launch.py").read_text() != "tampered"
+    assert (root / "current/launch.py").read_text(encoding="utf-8") != "tampered"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the Linux per-user installer runs only on Linux; hosted Linux CI and release-linux.yml prove it")
@@ -104,21 +104,21 @@ def test_failed_upgrade_retains_previous_version_and_entrypoints(package, home):
     installer.install(package, home)
     root, binary, desktop = installer.layout(home)
     previous, entry = binary.resolve(), desktop.read_bytes()
-    (package / "SOURCE_COMMIT").write_text("c" * 40 + "\n")
+    (package / "SOURCE_COMMIT").write_text("c" * 40 + "\n", encoding="utf-8")
     seal(package)
     # An unexplained staging link is a real filesystem refusal, not an injected mock.
-    (root / ".next-current").write_text("foreign content")
+    (root / ".next-current").write_text("foreign content", encoding="utf-8")
     with pytest.raises(FileExistsError):
         installer.install(package, home)
     assert binary.resolve() == previous and desktop.read_bytes() == entry
     assert not (root / "versions" / ("c" * 40)).exists()
     assert not (root / ".install-lock").exists()
-    assert (root / ".next-current").read_text() == "foreign content"
+    assert (root / ".next-current").read_text(encoding="utf-8") == "foreign content"
 
 
 def test_install_rejects_new_files_and_escaping_symlinks(package, home):
     extra = package / "not-in-checksums.txt"
-    extra.write_text("unexpected payload")
+    extra.write_text("unexpected payload", encoding="utf-8")
     with pytest.raises(ValueError, match="unverified"):
         installer.install(package, home)
     extra.unlink()
@@ -132,7 +132,7 @@ def test_install_rejects_new_files_and_escaping_symlinks(package, home):
 def test_uninstall_refuses_unowned_root_and_unknown_version_content(package, home):
     root, _, _ = installer.layout(home)
     root.mkdir(parents=True)
-    (root / "user-data").write_text("keep")
+    (root / "user-data").write_text("keep", encoding="utf-8")
     with pytest.raises(ValueError, match="unowned"):
         installer.uninstall(home)
     (root / "user-data").unlink()
@@ -156,14 +156,14 @@ def test_bundle_scripts_parse_and_wrong_host_build_refuses_without_staging(tmp_p
 
 
 def test_builder_uses_standalone_locked_wheels_and_exact_source():
-    script = (ROOT / "installer/bundle/build_linux_bundle.sh").read_text()
+    script = (ROOT / "installer/bundle/build_linux_bundle.sh").read_text(encoding="utf-8")
     for contract in ("cpython-3.12.13-linux-x86_64-gnu", "--require-hashes", "--no-build", "--locked", 'git archive "${SHA}"', "pyvenv.cfg", "preflight_served_imports_or_exit", "refusing to overwrite"):
         assert contract in script
-    assert "vool_install_linux_bundle" in (LINUX / "install.sh").read_text()
+    assert "vool_install_linux_bundle" in (LINUX / "install.sh").read_text(encoding="utf-8")
 
 
 def test_workflow_builds_once_smokes_both_targets_and_gates_release():
-    workflow = yaml.load((ROOT / ".github/workflows/release-linux.yml").read_text(), Loader=yaml.BaseLoader)
+    workflow = yaml.load((ROOT / ".github/workflows/release-linux.yml").read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
     assert set(workflow["on"]) == {"workflow_dispatch", "pull_request", "push"}
     assert workflow["on"]["push"]["tags"] == ["v*"]
     jobs = workflow["jobs"]
@@ -184,7 +184,7 @@ def test_bootstrap_explicit_beta_pin_and_trunk_override_resolve_correct_archives
     environment = {"HOME": str(home), "PATH": "/usr/bin:/bin"}
     result = subprocess.run(["bash", str(bootstrap), "--ref", "v0.7.0-beta", "--help"], env=environment, capture_output=True, text=True, check=True)
     assert "default: v0.7.0-beta" in result.stdout
-    definitions = bootstrap.read_text().rsplit('main "$@"', 1)[0]
+    definitions = bootstrap.read_text(encoding="utf-8").rsplit('main "$@"', 1)[0]
     result = subprocess.run(["bash"], input=definitions + '\nparse_args --ref v0.7.0-beta\nprintf "%s\\n" "$ARCHIVE_URL"\n', env=environment, capture_output=True, text=True, check=True)
     assert result.stdout.strip().endswith("/archive/refs/tags/v0.7.0-beta.tar.gz")
     environment["VOOL_GITHUB_REF"] = "main"
@@ -195,7 +195,7 @@ def test_bootstrap_explicit_beta_pin_and_trunk_override_resolve_correct_archives
 
 def test_user_install_docs_pin_shell_script_and_source_to_the_beta_tag():
     for name in ("README.md", "docs/INSTALL.md", "docs/getting-started/install.md"):
-        content = (ROOT / name).read_text()
+        content = (ROOT / name).read_text(encoding="utf-8")
         assert "/vool/main/installer/bootstrap_vool.sh" not in content
         assert "/vool/main/installer/bootstrap_vool.ps1" in content
         for line in content.splitlines():
