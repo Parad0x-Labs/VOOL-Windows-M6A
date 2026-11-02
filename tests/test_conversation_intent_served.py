@@ -53,10 +53,10 @@ from tests.usepod.test_usepod_served_flow import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = REPO_ROOT / "tests" / "fixtures"
-BRIEF = (FIXTURES / "community_bot_design_brief.txt").read_text()
-EVALUATION = (FIXTURES / "pasted_reasoning_evaluation.txt").read_text()
+BRIEF = (FIXTURES / "community_bot_design_brief.txt").read_text(encoding="utf-8")
+EVALUATION = (FIXTURES / "pasted_reasoning_evaluation.txt").read_text(encoding="utf-8")
 EVALUATION_WITHOUT_TOOL_RULES = EVALUATION.replace("Do NOT browse.\nDo NOT use tools.\nDo NOT create files.\n", "")
-DESIGN_REVIEW = (FIXTURES / "contact_wallet_design_review.txt").read_text()
+DESIGN_REVIEW = (FIXTURES / "contact_wallet_design_review.txt").read_text(encoding="utf-8")
 NOVEL = (
     "We are planning a small incident bot for our ops team.\n\n"
     "Members can post reports, check status, transfer credits, and view rankings.\n\n"

@@ -9,7 +9,7 @@ from core.agent_runtime.response import _validate_final_chat_output
 from core.unsourced_current_claim import inspect_unsourced_current_claim
 from tests.test_final_repair_fresh_acceptance import context_for, isolate_telemetry, pottery_home
 
-CASES=json.loads(Path(__file__).with_name('final_repair_fresh2_cases.json').read_text())
+CASES=json.loads(Path(__file__).with_name('final_repair_fresh2_cases.json').read_text(encoding='utf-8'))
 
 @pytest.mark.parametrize('case',CASES,ids=[c['id'] for c in CASES])
 def test_fresh2_final_delivery(case):

@@ -151,7 +151,7 @@ def main():
     try:
         finalized=importlib.import_module("_memory_finalized_workflow_driver")
         code=finalized.main()
-        data=json.loads(output.read_text())
+        data=json.loads(output.read_text(encoding="utf-8"))
         question_ids={digest(t["question"]):t["id"] for t in data.get("turns",[])}
         for row in receipts:row["question_id"]=question_ids.get(row["query_sha256"],"not_captured")
         wire_joins=[]
@@ -177,7 +177,7 @@ def main():
                     "product_source_modified":False,"prior_attempt_scores_modified":False,
                     "uncaptured_internal_rejections":"unknown outside captured existing debug drops and actual facet/distiller observations"}
         data["capsule_producer_diagnostic"]=diagnostic
-        output.write_text(json.dumps(data,ensure_ascii=False,indent=2)+"\n")
+        output.write_text(json.dumps(data,ensure_ascii=False,indent=2)+"\n", encoding="utf-8")
         return code
     except BaseException as exc:error=type(exc).__name__;raise
     finally:

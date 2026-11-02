@@ -70,7 +70,7 @@ def _render(tmp_path, states=None, activity=None, elapsed=1400, chars=None):
          str(elapsed), ",".join(chars), activity or ""],
         capture_output=True, text=True, check=True,
     )
-    return json.loads(pathlib.Path(out).read_text()), result.stdout
+    return json.loads(pathlib.Path(out).read_text(encoding="utf-8")), result.stdout
 
 
 # --------------------------------------------------------------------------- roster
@@ -146,7 +146,7 @@ def test_original_creature_pixels_match_the_approved_prototype(tmp_path):
                 [NATIVE, str(TOOLS / "render_pets.js"), js, state, out, str(times[state]), pet, ""],
                 capture_output=True, text=True, check=True,
             )
-            got = json.loads(pathlib.Path(out).read_text())[f"{pet}/{state}"]
+            got = json.loads(pathlib.Path(out).read_text(encoding="utf-8"))[f"{pet}/{state}"]
             want = [row.copy() for row in ref[f"{pet}/{rstate}@{times[state]}"]]
             for y in (44, 45):
                 for x in range(48):
@@ -265,7 +265,7 @@ def test_every_activity_substate_has_its_own_pose(tmp_path):
                 capture_output=True, text=True, check=True,
             )
             env = {"__ACT__": act}
-            grid = json.loads(pathlib.Path(out).read_text())[f"{pet}/tool"]
+            grid = json.loads(pathlib.Path(out).read_text(encoding="utf-8"))[f"{pet}/tool"]
             sigs.setdefault(tuple(tuple(r) for r in grid), act)
         assert len(sigs) == len(ACTIVITIES), (
             f"{pet} drew {len(sigs)} distinct pictures for {len(ACTIVITIES)} activities"

@@ -84,7 +84,7 @@ def _snapshot() -> dict:
         approvals = json.dumps(mpp._APPROVALS, sort_keys=True, default=str)
         task_approvals = json.dumps(mpp._TASK_APPROVALS, sort_keys=True, default=str)
     path = mpp._pending_approvals_path()
-    mirror = pathlib.Path(path).read_text() if path is not None and pathlib.Path(path).exists() else ""
+    mirror = pathlib.Path(path).read_text(encoding="utf-8") if path is not None and pathlib.Path(path).exists() else ""
     return {"approvals": approvals, "task_approvals": task_approvals, "mirror": mirror,
             "grants": tuple(_GRANT_MINTS)}
 

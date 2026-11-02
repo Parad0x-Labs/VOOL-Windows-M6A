@@ -94,7 +94,7 @@ def test_3_cli_and_http_cannot_create_a_second_hidden_wallet(wallet_env, tmp_pat
             assert "pubkey" in body and "custody_mode" in body and body["network"] == DEVNET
         from core.web.meet import routes as meet_routes
 
-        assert "get_or_create_wallet" not in Path(meet_routes.__file__).read_text()
+        assert "get_or_create_wallet" not in Path(meet_routes.__file__).read_text(encoding="utf-8")
     finally:
         runtime_paths.configure_runtime_home(None)
     _no_hidden_wallet(home)

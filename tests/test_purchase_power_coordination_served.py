@@ -25,7 +25,7 @@ pytestmark = pytest.mark.timeout(900)
 
 
 def _fixture_prices() -> dict[str, float]:
-    manifest = json.loads(Path(MANIFEST).read_text())
+    manifest = json.loads(Path(MANIFEST).read_text(encoding="utf-8"))
     prices: dict[str, float] = {}
     for rule in manifest.get("rules") or manifest:
         body = rule.get("json")

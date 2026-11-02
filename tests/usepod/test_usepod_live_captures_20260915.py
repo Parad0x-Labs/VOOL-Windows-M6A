@@ -20,7 +20,7 @@ from tests.usepod.test_usepod_transport_x402 import OPENAI_PATH, _BufferedBody, 
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 CAPTURED_BLOCK_PAGE = (FIXTURES / "cloudflare_block_nousresearch_20260915.html").read_bytes()
-CAPTURED_QUOTE_HEADER = (FIXTURES / "live_quote_payment_required_20260915.b64.txt").read_text().strip()
+CAPTURED_QUOTE_HEADER = (FIXTURES / "live_quote_payment_required_20260915.b64.txt").read_text(encoding="utf-8").strip()
 #: The captured quote said ``"expires_at": "2026-09-15T15:56:19.341232610Z"`` on every option.
 CAPTURED_QUOTE_EXPIRY = datetime.datetime(2026, 9, 15, 15, 56, 19, 341232, tzinfo=datetime.timezone.utc).timestamp()
 MAINNET = "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"

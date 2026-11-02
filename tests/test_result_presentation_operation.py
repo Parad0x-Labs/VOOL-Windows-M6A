@@ -10,7 +10,7 @@ from core.conductor.scheduler import run_conductor_plan
 from core.turn_ir import parse_turn_ir
 
 ROOT = Path(__file__).resolve().parents[1]
-OWNER = (ROOT / "tests/fixtures/portfolio_last_run.txt").read_text()
+OWNER = (ROOT / "tests/fixtures/portfolio_last_run.txt").read_text(encoding="utf-8")
 NOVEL = (
     "A warehouse holds 360 cartons. Send 40% to the west depot and keep the rest. Calculate:\n"
     "1. The cartons sent west.\n2. The cartons retained.\n"

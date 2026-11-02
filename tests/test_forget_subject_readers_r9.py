@@ -131,7 +131,7 @@ def test_new_public_serving_api_requires_reader_classification(module_name, read
     from pathlib import Path
 
     module = importlib.import_module(module_name)
-    tree = ast.parse(Path(module.__file__).read_text())
+    tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
     public = {node.name for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
               and not node.name.startswith("_")}
     assert public == readers | other_apis
@@ -236,7 +236,7 @@ def test_new_public_memory_owner_api_requires_reader_classification():
         "verify_forget_blocks", "record_revocation", "revoked_tokens", "occurrence_delete_by_lineage",
         "occurrence_ids_for_batch", "node_invalidate_by_occurrence", "occurrence_count", "close",
     }
-    tree = ast.parse(Path(vool_memory.__file__).read_text())
+    tree = ast.parse(Path(vool_memory.__file__).read_text(encoding="utf-8"))
     owner = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "VoolMemory")
     public = {node.name for node in owner.body if isinstance(node, ast.FunctionDef) and not node.name.startswith("_")}
     assert public == readers | other_apis

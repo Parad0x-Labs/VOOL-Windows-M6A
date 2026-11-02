@@ -53,7 +53,7 @@ def test_finalization_retries_and_rebuilds_one_issued_receipt_without_claiming_f
 
     def refused(source, target):
         if Path(target) == path:
-            rows = [json.loads(line) for line in Path(source).read_text().splitlines()]
+            rows = [json.loads(line) for line in Path(source).read_text(encoding="utf-8").splitlines()]
             attempted.append(rows[-1]["receipt_id"])
             if failures is None or len(attempted) <= failures:
                 raise OSError("receipt publication unavailable")

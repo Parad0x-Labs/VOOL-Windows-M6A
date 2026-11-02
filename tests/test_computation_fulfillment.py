@@ -14,7 +14,7 @@ from core.conductor.registry import NodeContext
 from core.conductor.scheduler import run_conductor_plan
 
 ROOT = Path(__file__).resolve().parents[1]
-ORIGINAL = (ROOT / "tests/fixtures/portfolio_last_run.txt").read_text()
+ORIGINAL = (ROOT / "tests/fixtures/portfolio_last_run.txt").read_text(encoding="utf-8")
 NOVEL = "There are 180 litres of solution. Remove 20%. Calculate the retained volume and its shipping cost."
 
 

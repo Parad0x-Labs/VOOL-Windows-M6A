@@ -187,7 +187,7 @@ def test_dependent_composed_chain_with_per_part_receipts(home, monkeypatch):
 
         [reminder] = list_reminders(session_id=session, get_connection_fn=get_connection)
         assert "proposed event" in reminder["note"] or "Retro" in reminder["note"], reminder
-        note_text = Path(note_path).read_text()
+        note_text = Path(note_path).read_text(encoding="utf-8")
         assert "what to improve" in note_text and uid[:8] in note_text, note_text  # receipt linked into the note
         assert True
     finally:

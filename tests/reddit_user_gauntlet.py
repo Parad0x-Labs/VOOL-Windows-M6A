@@ -352,7 +352,7 @@ def main() -> int:
         failures += failed
         summary_lines.append(f"{family:<16} {passed} pass / {noted} noted / {failed} FAIL of {len(verdicts)}")
         print(summary_lines[-1])
-    Path("/tmp/reddit_gauntlet_report.txt").write_text("\n".join([*report, "", *summary_lines]) + "\n")
+    Path("/tmp/reddit_gauntlet_report.txt").write_text("\n".join([*report, "", *summary_lines]) + "\n", encoding="utf-8")
     print(f"\nfull report: /tmp/reddit_gauntlet_report.txt; total FAILs: {failures}")
     return 1 if failures else 0
 

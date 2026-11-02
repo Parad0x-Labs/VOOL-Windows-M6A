@@ -242,7 +242,7 @@ def test_the_client_opens_no_socket_of_its_own():
     Same property `test_every_outbound_fetch_reports_and_obeys_the_veto` pins for web_research,
     asserted here because this module is a NEW outbound path and that test does not scan it.
     """
-    tree = ast.parse(pathlib.Path(sac.__file__).read_text())
+    tree = ast.parse(pathlib.Path(sac.__file__).read_text(encoding="utf-8"))
     called = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
