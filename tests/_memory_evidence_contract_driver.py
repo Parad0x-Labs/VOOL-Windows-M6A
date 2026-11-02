@@ -313,7 +313,7 @@ def main() -> int:
         from core.context_retrieval import store_turn
         from core.memory.entries import resolve_memory_access_policy
 
-        turns = json.loads(Path(args.seed_json).read_text()) if args.seed_json else []
+        turns = json.loads(Path(args.seed_json).read_text(encoding="utf-8")) if args.seed_json else []
         for chat in sorted({MAIN_CHAT, FOREIGN_CHAT, *(entry["chat"] for entry in turns)}):
             ensure_chat_namespace(chat, grant_current_receipts=False)
         for entry in turns:
@@ -400,7 +400,7 @@ def main() -> int:
             mem.close()
         deletion = {"token": args.delete_token, "nodes": node_hits, "occurrences": occ_hits}
 
-    turns_doc = json.loads(Path(args.turns_json).read_text())
+    turns_doc = json.loads(Path(args.turns_json).read_text(encoding="utf-8"))
     turns = turns_doc["turns"] if isinstance(turns_doc, dict) else turns_doc
     from core.context_retrieval import get_last_retrieval_telemetry
 
@@ -634,7 +634,7 @@ def main() -> int:
          "raw_reply": turn.get("scripted", "")}
         for turn in turns if turn.get("reader_require")
     ]
-    with open(args.out, "w") as handle:
+    with open(args.out, "w", encoding="utf-8") as handle:
         json.dump(document, handle, indent=2)
     return 0
 

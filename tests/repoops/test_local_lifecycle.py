@@ -75,8 +75,8 @@ def _freeze(lc):
 def test_status_truth_distinguishes_staged_unstaged_untracked(repo):
     ws = repo
     (ws.root + "/a.txt").replace  # noqa: B018 - touch attr to appease linters
-    open(os.path.join(ws.root, "a.txt"), "w").write("changed\n")   # unstaged
-    open(os.path.join(ws.root, "b.txt"), "w").write("new\n")       # untracked
+    open(os.path.join(ws.root, "a.txt"), "w", encoding="utf-8").write("changed\n")   # unstaged
+    open(os.path.join(ws.root, "b.txt"), "w", encoding="utf-8").write("new\n")       # untracked
     _git(ws.root, "add", "a.txt")                                  # now staged too
     snap = capture_snapshot(ws)
     assert snap.staged_paths == ("a.txt",)
@@ -111,7 +111,7 @@ def test_s1_stale_snapshot_after_head_move_invalidates_commit_proposal(repo):
     _git(ws.root, "add", "-A")
     snap, shash = _freeze(lc)
     # HEAD moves after the proposal was frozen:
-    open(os.path.join(ws.root, "drift.txt"), "w").write("x\n")
+    open(os.path.join(ws.root, "drift.txt"), "w", encoding="utf-8").write("x\n")
     _commit_all(ws.root, "interloper")
     receipt = lc.commit_with_proposal(
         _fork(), _broker(), "repair",
@@ -124,7 +124,7 @@ def test_s1_stale_snapshot_after_head_move_invalidates_commit_proposal(repo):
 def test_s2_stale_diff_after_file_mutation_is_refused(repo):
     ws = repo
     d = bound_diff(ws, "head_to_worktree")
-    open(os.path.join(ws.root, "a.txt"), "a").write("more\n")
+    open(os.path.join(ws.root, "a.txt"), "a", encoding="utf-8").write("more\n")
     fresh = capture_snapshot(ws)
     with pytest.raises(StaleSnapshotError):
         d.require_current(ws)               # review would be stale
@@ -132,7 +132,7 @@ def test_s2_stale_diff_after_file_mutation_is_refused(repo):
 
 def test_diff_kinds_are_distinct_facts(repo):
     ws = repo
-    open(os.path.join(ws.root, "a.txt"), "w").write("edit\n")
+    open(os.path.join(ws.root, "a.txt"), "w", encoding="utf-8").write("edit\n")
     _git(ws.root, "add", "a.txt")
     head_to_index = bound_diff(ws, "head_to_index")
     index_to_wt = bound_diff(ws, "index_to_worktree")
@@ -143,8 +143,8 @@ def test_diff_kinds_are_distinct_facts(repo):
 
 def test_s3_exact_file_commit_does_not_absorb_unrelated_dirty_file(repo):
     ws, lc = repo, LocalLifecycle(repo)
-    open(os.path.join(ws.root, "target.txt"), "w").write("fix\n")
-    open(os.path.join(ws.root, "unrelated.txt"), "w").write("noise\n")
+    open(os.path.join(ws.root, "target.txt"), "w", encoding="utf-8").write("fix\n")
+    open(os.path.join(ws.root, "unrelated.txt"), "w", encoding="utf-8").write("noise\n")
     staged = lc.stage_exact_files(("target.txt",))
     assert staged == ("target.txt",)        # nothing leaked in
     snap, shash = _freeze(lc)
@@ -178,7 +178,7 @@ def test_s9_symlink_escape_in_staging_is_refused(repo, tmp_path):
 
 def test_s4_commit_evidence_carries_reread_head_and_parent(repo):
     ws, lc = repo, LocalLifecycle(repo)
-    open(os.path.join(ws.root, "f.txt"), "w").write("data\n")
+    open(os.path.join(ws.root, "f.txt"), "w", encoding="utf-8").write("data\n")
     lc.stage_exact_files(("f.txt",))
     parent = capture_snapshot(ws).head_sha
     _, shash = _freeze(lc)
@@ -201,7 +201,7 @@ def test_empty_stage_commit_is_refused(repo):
 
 def test_duplicate_commit_request_replays_not_double_commits(repo):
     ws, lc, broker = repo, LocalLifecycle(repo), _broker()
-    open(os.path.join(ws.root, "f.txt"), "w").write("data\n")
+    open(os.path.join(ws.root, "f.txt"), "w", encoding="utf-8").write("data\n")
     lc.stage_exact_files(("f.txt",))
     snap, shash = _freeze(lc)
     fork = _fork()
@@ -222,7 +222,7 @@ def test_s5_lost_response_becomes_unknown_then_reconciles(repo):
     import core.repoops.local_lifecycle as mod
 
     ws, lc, broker = repo, LocalLifecycle(repo), _broker()
-    open(os.path.join(ws.root, "f.txt"), "w").write("data\n")
+    open(os.path.join(ws.root, "f.txt"), "w", encoding="utf-8").write("data\n")
     lc.stage_exact_files(("f.txt",))
     snap = capture_snapshot(ws)
     intent = lc.freeze_commit_intent(
@@ -263,7 +263,7 @@ def test_s5_lost_response_becomes_unknown_then_reconciles(repo):
 def test_s13_configured_signing_never_claimed_verified(repo):
     ws, lc = repo, LocalLifecycle(repo)
     _git(ws.root, "config", "commit.gpgsign", "false")  # configured-but-off
-    open(os.path.join(ws.root, "s.txt"), "w").write("x\n")
+    open(os.path.join(ws.root, "s.txt"), "w", encoding="utf-8").write("x\n")
     lc.stage_exact_files(("s.txt",))
     snap, shash = _freeze(lc)
     r = lc.commit_with_proposal(_fork(), _broker(), "signed?",
@@ -279,7 +279,7 @@ def test_s13_configured_signing_never_claimed_verified(repo):
 
 def test_restore_and_unstage_are_typed_narrow_mutations(repo):
     ws, lc, broker, fork = repo, LocalLifecycle(repo), _broker(), _fork()
-    open(os.path.join(ws.root, "a.txt"), "w").write("dirty\n")
+    open(os.path.join(ws.root, "a.txt"), "w", encoding="utf-8").write("dirty\n")
     _git(ws.root, "add", "a.txt")
     r1 = lc.unstage_file(fork, broker, "a.txt")
     assert r1.status == "applied" and r1.evidence["still_staged"] is False
@@ -316,7 +316,7 @@ def test_delete_current_branch_refused(repo):
 def test_delete_unmerged_branch_requires_explicit_force(repo):
     ws = repo
     _git(ws.root, "switch", "-c", "orphan")
-    open(os.path.join(ws.root, "o.txt"), "w").write("o\n")
+    open(os.path.join(ws.root, "o.txt"), "w", encoding="utf-8").write("o\n")
     _commit_all(ws.root, "orphan commit")
     _git(ws.root, "switch", "main")
     lc = LocalLifecycle(repo)
@@ -348,7 +348,7 @@ def test_worktree_create_verify_remove_clean_only(repo, tmp_path):
     assert (os.path.realpath(str(wt)), ) [0] == os.path.realpath(str(wt))
     assert any(p == os.path.realpath(str(wt)) for _b, p in list_worktrees(ws))
     # dirty it — removal must refuse:
-    open(os.path.join(str(wt), "wip.txt"), "w").write("half-done\n")
+    open(os.path.join(str(wt), "wip.txt"), "w", encoding="utf-8").write("half-done\n")
     r2 = lc.remove_worktree(_fork(), _broker(), str(wt))
     assert r2.status == "refused" and "dirty_worktree_refused" in r2.reason
     assert os.path.exists(str(wt))
@@ -391,7 +391,7 @@ def test_conflict_state_is_recognized_and_blocks_mutations(conflicted_repo):
 
 def test_s14_no_implicit_stash_escape_hatch_exists(repo):
     """Dirty tree + no stash op anywhere: restore is typed or refused."""
-    open(os.path.join(repo.root, "a.txt"), "w").write("dirty\n")
+    open(os.path.join(repo.root, "a.txt"), "w", encoding="utf-8").write("dirty\n")
     lc = LocalLifecycle(repo)
     assert not hasattr(lc, "stash")         # S14: no implicit stash tool
     r = lc.restore_worktree_file(_fork(), _broker(), "a.txt")
@@ -409,11 +409,11 @@ def test_s10_cherry_pick_conflict_is_applied_with_truth_not_failed(repo):
     ws, lc = repo, LocalLifecycle(repo)
     _git(ws.root, "switch", "-c", "topic")
     (ws.root + "/../x") if False else None
-    open(os.path.join(ws.root, "cf.txt"), "w").write("topic version\n")
+    open(os.path.join(ws.root, "cf.txt"), "w", encoding="utf-8").write("topic version\n")
     _commit_all(ws.root, "topic cf")
     src_sha = capture_snapshot(ws).head_sha
     _git(ws.root, "switch", "main")
-    open(os.path.join(ws.root, "cf.txt"), "w").write("rival version\n")
+    open(os.path.join(ws.root, "cf.txt"), "w", encoding="utf-8").write("rival version\n")
     _commit_all(ws.root, "rival cf")
     head = capture_snapshot(ws).head_sha
     r = LocalLifecycle(ws).cherry_pick(
@@ -429,7 +429,7 @@ def test_s10_cherry_pick_conflict_is_applied_with_truth_not_failed(repo):
 def test_cherry_pick_clean_case_verifies_new_head(repo):
     ws, lc = repo, LocalLifecycle(repo)
     _git(ws.root, "switch", "-c", "feature")
-    open(os.path.join(ws.root, "feat.txt"), "w").write("f\n")
+    open(os.path.join(ws.root, "feat.txt"), "w", encoding="utf-8").write("f\n")
     _commit_all(ws.root, "feat commit")
     src_sha = capture_snapshot(ws).head_sha
     _git(ws.root, "switch", "main")
@@ -452,12 +452,12 @@ def test_s11_cherry_pick_unknown_source_sha_refused(repo):
 def test_cherry_pick_head_drift_refused_before_dispatch(repo):
     ws, lc = repo, LocalLifecycle(repo)
     _git(ws.root, "switch", "-c", "feature")
-    open(os.path.join(ws.root, "g.txt"), "w").write("g\n")
+    open(os.path.join(ws.root, "g.txt"), "w", encoding="utf-8").write("g\n")
     _commit_all(ws.root, "g")
     src_sha = capture_snapshot(ws).head_sha
     _git(ws.root, "switch", "main")
     stale_head = capture_snapshot(ws).head_sha
-    open(os.path.join(ws.root, "late.txt"), "w").write("late\n")
+    open(os.path.join(ws.root, "late.txt"), "w", encoding="utf-8").write("late\n")
     _commit_all(ws.root, "drift")           # HEAD moves after freeze
     r = lc.cherry_pick(_fork(["git.cherry_pick"]), _broker(), src_sha,
                        expected_head=stale_head, expected_branch="main")
@@ -511,7 +511,7 @@ def _commit_object(root, parent, tree, message, when=None):
 
 def test_r1_same_parent_same_message_different_tree_never_reconciles(repo):
     ws, lc = repo, LocalLifecycle(repo)
-    open(os.path.join(ws.root, "f.txt"), "w").write("B\n")
+    open(os.path.join(ws.root, "f.txt"), "w", encoding="utf-8").write("B\n")
     lc.stage_exact_files(("f.txt",))
     snap = capture_snapshot(ws)
     intent = lc.freeze_commit_intent("fix parser",
@@ -531,7 +531,7 @@ def test_r1_same_parent_same_message_different_tree_never_reconciles(repo):
 
 def test_r2_unique_parent_plus_tree_match_reconciles(repo):
     ws, lc, broker = repo, LocalLifecycle(repo), _broker()
-    open(os.path.join(ws.root, "f.txt"), "w").write("v2\n")
+    open(os.path.join(ws.root, "f.txt"), "w", encoding="utf-8").write("v2\n")
     lc.stage_exact_files(("f.txt",))
     snap = capture_snapshot(ws)
     intent = lc.freeze_commit_intent("intended",
@@ -562,7 +562,7 @@ def test_r2_unique_parent_plus_tree_match_reconciles(repo):
 
 def test_r3_multiple_candidates_leave_unknown(repo):
     ws, lc = repo, LocalLifecycle(repo)
-    open(os.path.join(ws.root, "f.txt"), "w").write("same\n")
+    open(os.path.join(ws.root, "f.txt"), "w", encoding="utf-8").write("same\n")
     lc.stage_exact_files(("f.txt",))
     snap = capture_snapshot(ws)
     intent = lc.freeze_commit_intent("dup",
@@ -582,7 +582,7 @@ def test_r3_multiple_candidates_leave_unknown(repo):
 
 def test_r4_no_candidate_leaves_unknown(repo):
     ws, lc = repo, LocalLifecycle(repo)
-    open(os.path.join(ws.root, "f.txt"), "w").write("never\n")
+    open(os.path.join(ws.root, "f.txt"), "w", encoding="utf-8").write("never\n")
     lc.stage_exact_files(("f.txt",))
     snap = capture_snapshot(ws)
     intent = lc.freeze_commit_intent("ghost",
@@ -597,7 +597,7 @@ def test_r5_blind_retry_before_reconciliation_blocked(repo):
     import core.repoops.local_lifecycle as mod
 
     ws, lc, broker = repo, LocalLifecycle(repo), _broker()
-    open(os.path.join(ws.root, "f.txt"), "w").write("x\n")
+    open(os.path.join(ws.root, "f.txt"), "w", encoding="utf-8").write("x\n")
     lc.stage_exact_files(("f.txt",))
     snap = capture_snapshot(ws)
     intent = lc.freeze_commit_intent("lost",
@@ -628,11 +628,11 @@ def test_r5_blind_retry_before_reconciliation_blocked(repo):
 def _conflict_pick(repo):
     ws, lc = repo, LocalLifecycle(repo)
     _git(ws.root, "switch", "-c", "topic")
-    open(os.path.join(ws.root, "cf.txt"), "w").write("topic\n")
+    open(os.path.join(ws.root, "cf.txt"), "w", encoding="utf-8").write("topic\n")
     _commit_all(ws.root, "topic cf")
     src = capture_snapshot(ws).head_sha
     _git(ws.root, "switch", "main")
-    open(os.path.join(ws.root, "cf.txt"), "w").write("main\n")
+    open(os.path.join(ws.root, "cf.txt"), "w", encoding="utf-8").write("main\n")
     _commit_all(ws.root, "main cf")
     head = capture_snapshot(ws).head_sha
     r = lc.cherry_pick(_fork(["git.cherry_pick"]), _broker(), src,
@@ -657,7 +657,7 @@ def test_consumer_checking_only_status_cannot_claim_success(repo):
     assert local_operation_completed(ws, receipt) is False  # ...is NOT completion
     # even after resolving the conflict file content, state persists until
     # the cherry-pick operation itself concludes:
-    open(os.path.join(ws.root, "cf.txt"), "w").write("resolved\n")
+    open(os.path.join(ws.root, "cf.txt"), "w", encoding="utf-8").write("resolved\n")
     _git(ws.root, "add", "cf.txt")
     assert local_operation_completed(ws, receipt) is False
     _git(ws.root, "cherry-pick", "--continue",
@@ -673,7 +673,7 @@ def test_clean_cherry_pick_reports_completed_true(repo):
     ws, lc = repo, LocalLifecycle(repo)
     from core.repoops.local_lifecycle import local_operation_completed
     _git(ws.root, "switch", "-c", "feature")
-    open(os.path.join(ws.root, "g.txt"), "w").write("g\n")
+    open(os.path.join(ws.root, "g.txt"), "w", encoding="utf-8").write("g\n")
     _commit_all(ws.root, "g commit")
     src = capture_snapshot(ws).head_sha
     _git(ws.root, "switch", "main")

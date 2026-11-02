@@ -151,7 +151,7 @@ def main() -> int:
 
     prompts = PROMPTS
     if args.prompts:
-        prompts = tuple((str(k), str(p)) for k, p in json.load(open(args.prompts)))
+        prompts = tuple((str(k), str(p)) for k, p in json.load(open(args.prompts, encoding="utf-8")))
 
     captures: list[dict] = []
     if args.live:
@@ -159,7 +159,7 @@ def main() -> int:
             captures.append(drive(args.base_url, key, prompt, args.timeout))
             print(f"  drove {key} ({captures[-1].get('latency_s')}s)", flush=True)
     if args.served_json:
-        blob = json.load(open(args.served_json))
+        blob = json.load(open(args.served_json, encoding="utf-8"))
         for row in blob.get("rows", []):
             served = ((row.get("served") or {}).get("text")) or ""
             captures.append({"key": row.get("key"), "prompt": row.get("text") or "",
@@ -216,7 +216,7 @@ def main() -> int:
     print(f"  turns where every unit satisfied  : {n_turn_all_sat} / {len(scored)}")
 
     if args.out:
-        with open(args.out, "w") as fh:
+        with open(args.out, "w", encoding="utf-8") as fh:
             json.dump({"tree": tree, "tally": tally, "turns": captures}, fh, indent=1)
         print(f"\nwrote {args.out}")
     return 0

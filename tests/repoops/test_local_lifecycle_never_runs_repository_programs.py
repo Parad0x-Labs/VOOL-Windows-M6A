@@ -51,7 +51,7 @@ def repo(tmp_path, monkeypatch) -> Path:
 
 def _program(path: Path, marker: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"#!/bin/sh\necho ran > '{marker}'\nexit 0\n")
+    path.write_text(f"#!/bin/sh\necho ran > '{marker}'\nexit 0\n", encoding="utf-8")
     path.chmod(0o755)
 
 

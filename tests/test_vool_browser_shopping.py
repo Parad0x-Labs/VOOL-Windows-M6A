@@ -198,7 +198,7 @@ def test_checkout_uses_only_a_confirmed_profile(browser_world) -> None:
         assert confirmed.ok, (confirmed.status, confirmed.response_text[:300])
         profile_path = Path(confirmed.details["observation"]["profile_path"])
         assert profile_path.is_file()
-        stored = json.loads(profile_path.read_text())
+        stored = json.loads(profile_path.read_text(encoding="utf-8"))
         assert stored["operator_confirmed_at"] > 0
 
         begun = _money_run(f"{PLUGIN}.checkout.begin", {

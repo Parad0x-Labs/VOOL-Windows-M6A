@@ -537,7 +537,7 @@ def test_the_frozen_inventory_still_matches_the_system_dictionary() -> None:
     """
     dictionary = {
         line.strip().lower()
-        for line in _SYSTEM_DICTIONARY.read_text(errors="ignore").splitlines()
+        for line in _SYSTEM_DICTIONARY.read_text(encoding="utf-8", errors="ignore").splitlines()
         if line.strip().isalpha()
     }
     assert len(dictionary) > 50_000, f"dictionary looks truncated: {len(dictionary)} words"

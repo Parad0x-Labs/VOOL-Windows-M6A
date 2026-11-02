@@ -143,7 +143,7 @@ def test_findings_are_capped_and_counted():
 
 
 def test_scanner_has_no_network_or_execution_surface():
-    source = open(local_scan.__file__).read()
+    source = open(local_scan.__file__, encoding="utf-8").read()
     for banned in ("import socket", "import subprocess", "urllib", "os.system", "shutil", "pathlib"):
         assert banned not in source, banned
     import socket

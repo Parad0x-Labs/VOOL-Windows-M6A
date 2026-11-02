@@ -218,7 +218,7 @@ def main() -> int:
         print(f"    -> unit {unit[:70]!r}  [{kind}]")
 
     if args.out:
-        with open(args.out, "w") as fh:
+        with open(args.out, "w", encoding="utf-8") as fh:
             json.dump(
                 {
                     "tree": tree,

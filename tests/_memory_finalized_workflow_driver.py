@@ -133,7 +133,7 @@ def main() -> int:
         code = native_driver.main()
         outcome = "completed" if code == 0 else "driver_failed"
         output = Path(args.out)
-        data = json.loads(output.read_text())
+        data = json.loads(output.read_text(encoding="utf-8"))
         data["finalized_workflow"] = {
             "schema": "vool.finalized_conversation_workflow.v1",
             "pid": os.getpid(),
@@ -145,7 +145,7 @@ def main() -> int:
             "provider_spending_usd": 0,
             "live_model_quality": "not_measured",
         }
-        output.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+        output.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return code
     except BaseException as exc:
         outcome = "failed"

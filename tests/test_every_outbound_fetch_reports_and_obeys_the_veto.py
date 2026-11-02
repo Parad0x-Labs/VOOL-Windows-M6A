@@ -184,7 +184,7 @@ def test_the_door_is_the_only_place_this_module_opens_a_socket() -> None:
     were left, with a docstring still claiming all of them reported.
     """
 
-    tree = ast.parse(_MODULE.read_text())
+    tree = ast.parse(_MODULE.read_text(encoding="utf-8"))
     offenders: list[str] = []
 
     for node in ast.walk(tree):

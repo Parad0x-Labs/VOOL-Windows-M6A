@@ -816,7 +816,7 @@ def main() -> None:
 
     out_path = Path("/tmp/vool_agent_capability_results.json")
     out_path.write_text(
-        json.dumps({"vool": vool_results, "ollama": ollama_results}, indent=2)
+        json.dumps({"vool": vool_results, "ollama": ollama_results}, indent=2), encoding="utf-8"
     )
     print(f"\nResults saved to {out_path}")
 
