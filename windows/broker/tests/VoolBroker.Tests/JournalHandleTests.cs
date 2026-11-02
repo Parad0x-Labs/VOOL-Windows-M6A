@@ -279,4 +279,67 @@ public sealed class JournalHandleTests : IDisposable
         registry.ValidateJournalOutsideFlagged(JournalFolder);
         Assert.Equal("journal_inside_flagged", Assert.Throws<BrokerRefusal>(() => registry.ValidateJournalOutsideFlagged(journal)).Code);
     }
+
+    /// <summary>A pending batch file outside the journal folder (a begin and a torn tail, so recovery would cut and then delete it); returns its bytes.</summary>
+    private byte[] OutsideBatchFile(string batchId, out string target)
+    {
+        var outside = Path.Combine(home, "outside");
+        Directory.CreateDirectory(outside);
+        target = Path.Combine(outside, "target.jsonl");
+        byte[] bytes = [.. BeginOnly(batchId), .. Encoding.UTF8.GetBytes("{\"t\":\"comm")];
+        File.WriteAllBytes(target, bytes);
+        return bytes;
+    }
+
+    /// <summary>Recovery and restore_batch both refuse the batch journal_unreadable and leave it pending.</summary>
+    private static void AssertRefusedAndLeft(Journal journal, string batchId)
+    {
+        Assert.True(journal.Holds(batchId));
+        Assert.Equal(batchId, Assert.Single(journal.Pending()));
+        using var registry = new RootRegistry();
+        var outcome = Assert.Single(journal.RecoverAll(registry));
+        Assert.False(outcome.Complete);
+        Assert.StartsWith("journal: journal_unreadable", Assert.Single(outcome.Left), StringComparison.Ordinal);
+        Assert.Equal("journal_unreadable", Assert.Throws<BrokerRefusal>(() => new BatchRunner(registry, journal).Restore(batchId)).Code);
+        Assert.Equal(batchId, Assert.Single(journal.Pending()));
+    }
+
+    // (C0f, #170 security review minor 3) A batch file with a second name (a hard link to a file
+    // outside the journal) is never read, cut or appended to through the journal: recovery and
+    // restore_batch refuse it journal_unreadable, the batch stays pending, and the outside file
+    // keeps every byte.
+    [Fact]
+    public void A_batch_file_with_a_second_name_is_never_read_or_written_through()
+    {
+        var journal = Open(JournalFolder);
+        var batchId = Journal.NewId();
+        var bytes = OutsideBatchFile(batchId, out var target);
+        var link = Path.Combine(JournalFolder, $"batch-{batchId}.jsonl");
+        TestSupport.HardLink(link, target);
+
+        AssertRefusedAndLeft(journal, batchId);
+        Assert.Equal(bytes, File.ReadAllBytes(target));
+        Assert.Equal(link, Assert.Single(Directory.GetFileSystemEntries(JournalFolder)));
+    }
+
+    // (C0f, #170 security review minor 2) A batch file that is itself a file symlink in the held
+    // folder is listed and held, but never read through: recovery and restore_batch refuse it
+    // journal_unreadable, the batch stays pending, and the file it points at keeps every byte.
+    [Fact]
+    public void A_batch_file_that_is_a_symlink_stays_pending_and_is_never_read_through()
+    {
+        var journal = Open(JournalFolder);
+        var batchId = Journal.NewId();
+        var bytes = OutsideBatchFile(batchId, out var target);
+        var link = Path.Combine(JournalFolder, $"batch-{batchId}.jsonl");
+        try { File.CreateSymbolicLink(link, target); }
+        catch (Exception error) when (error is UnauthorizedAccessException or IOException)
+        {
+            Assert.Skip($"Creating a file symlink was refused on this host ({error.Message}).");
+        }
+
+        AssertRefusedAndLeft(journal, batchId);
+        Assert.Equal(bytes, File.ReadAllBytes(target));
+        Assert.Equal(link, Assert.Single(Directory.GetFileSystemEntries(JournalFolder)));
+    }
 }
