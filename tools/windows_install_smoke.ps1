@@ -44,6 +44,8 @@ $RepoRoot = Convert-Path (Join-Path $PSScriptRoot "..")
 $Work = Join-Path ([System.IO.Path]::GetTempPath()) ("vool-install-smoke-" + [guid]::NewGuid().ToString("N"))
 $ReportDir = Join-Path $RepoRoot "dist\install-smoke"
 New-Item -ItemType Directory -Force $Work, $ReportDir | Out-Null
+# A slices.json left by an earlier run on this checkout must not read as this run's result.
+Remove-Item -LiteralPath (Join-Path $ReportDir "slices.json") -Force -ErrorAction SilentlyContinue
 $Checks = [System.Collections.Generic.List[object]]::new()
 $InstallRoot = Join-Path $env:LOCALAPPDATA "Programs\VOOL"
 $DataRoot = Join-Path $env:LOCALAPPDATA "VOOL"
@@ -202,9 +204,14 @@ try {
         # a negative control, into slices.json. Without -ExpectedCommit the checkout's own commit is
         # expected, which is what a build-and-install run built.
         $sliceCommit = $(if ($ExpectedCommit) { $ExpectedCommit } else { (& git -C $RepoRoot rev-parse HEAD).Trim() })
+        # Windows PowerShell 5.1 turns a native command's stderr into a terminating error under "Stop";
+        # the exit code is the verdict here, so stderr only goes to the log.
+        $ErrorActionPreference = "Continue"
         & (Get-Command python).Source (Join-Path $RepoRoot "tools\installed_slices.py") --base-url "http://127.0.0.1:$ApiPort" --expected-commit $sliceCommit --out (Join-Path $ReportDir "slices.json") 2>&1 |
             Out-File (Join-Path $ReportDir "slices.log")
-        Require "slices" "installed_slices_pass" ($LASTEXITCODE -eq 0) "expected commit $sliceCommit; see slices.json"
+        $slicesExit = $LASTEXITCODE
+        $ErrorActionPreference = "Stop"
+        Require "slices" "installed_slices_pass" ($slicesExit -eq 0) "expected commit $sliceCommit; see slices.json"
         Start-Sleep -Seconds $WindowSettleSeconds
         $window = @(Get-VoolProcesses | Where-Object { $_.CommandLine -like "*vool_window.py*" })
         Require "launch" "window_host_alive_after_settle" ($window.Count -ge 1) "window processes=$($window.Count) after ${WindowSettleSeconds}s"
@@ -249,6 +256,13 @@ try {
     # API routes its runtime log to data\logs\vool_api.log: neither lives in logs\.
     if (Test-Path "$DataRoot\open.log") { Copy-Item -Force "$DataRoot\open.log" (Join-Path $ReportDir "window-open.log") -ErrorAction SilentlyContinue }
     if (Test-Path "$DataRoot\data\logs") { Copy-Item -Recurse -Force "$DataRoot\data\logs" (Join-Path $ReportDir "vool-runtime-logs") -ErrorAction SilentlyContinue }
+    # A slices.json that does not parse must not cost the report itself: it is kept as its own file.
+    $slicesReport = $null
+    try {
+        if (Test-Path (Join-Path $ReportDir "slices.json")) { $slicesReport = Get-Content -Raw (Join-Path $ReportDir "slices.json") | ConvertFrom-Json }
+    } catch {
+        $slicesReport = "unreadable: $($_.Exception.Message)"
+    }
     $report = [ordered]@{
         schema = "vool.windows_install_smoke.v1"
         status = $status
@@ -259,7 +273,7 @@ try {
         runner_account = $env:USERNAME
         limits = @("runner account, not a separate standard user", "process/HTTP lifecycle only; no visible-desktop or local-model proof")
         checks = $Checks
-        slices = $(if (Test-Path (Join-Path $ReportDir "slices.json")) { Get-Content -Raw (Join-Path $ReportDir "slices.json") | ConvertFrom-Json } else { $null })
+        slices = $slicesReport
     }
     $report | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8 (Join-Path $ReportDir "report.json")
     Remove-Item -Recurse -Force $Work -ErrorAction SilentlyContinue
