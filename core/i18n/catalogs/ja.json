@@ -395,6 +395,14 @@
     "attach.upload_failed": "アップロードに失敗しました。",
     "attach.upload_failed_http": "アップロードに失敗しました（HTTP {status}）。",
     "attach.uploading": "アップロード中…",
+    "broker.line.stopped": "ファイルの変更が途中で止まりました。確認されるまで、VOOL はファイルを変更しません。",
+    "broker.line.no_undo": "VOOL は現在元に戻すための記録を保存できないため、ファイルを変更しません。",
+    "broker.line.not_running": "VOOL の Windows ファイル保護が動作していないため、フォルダー内のファイルを変更しません。",
+    "broker.line.show_details": "詳細を表示",
+    "broker.line.recheck": "もう一度確認",
+    "broker.line.pending_item": "バッチ {id}: まだ元の場所に戻っていません: {items}",
+    "broker.line.torn_item": "バッチ {id}: 未完了の記録を {file} に保存しました",
+    "broker.line.clear_note": "VOOL からの解消機能はまだありません。ほかの変更が入る前に、一覧のファイルを確認してください。",
     "bypass.banner_active": "権限バイパスが有効です。",
     "bypass.cancel": "キャンセル",
     "bypass.chat_only_until_off": "権限を一時免除 · このチャットのみ · オフにするまで有効（取り消しは常時可能）",
@@ -1889,13 +1897,14 @@
     "fault.wallet_payment_channel_off.action": "支払いチャネルは、そのチャネルで支払いたい場合にだけ暗号設定でオンにしてください。上限とあなたの承認はどのチャネルでも適用されます。",
     "fault.wallet_x402_sdk_unavailable.message": "このビルドはx402 Foundation SDKを通じてBase上のx402オファーを支払えません：オプションのx402拡張がこのマシンにインストールされていません。署名も送信もされていません。他のウォレット機能はそれなしで動作します。導入後にもう一度お試しください。"
   },
-  "source_catalog_sha256": "d8a67e14feb003241cd996a68463f6eda16a86addc0e96ebfd548712768af8e8",
+  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
     "cross_check": "language-family agent self-check + deterministic validator",
     "generated_at": "2026-09-04T14:20:28Z",
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
-    "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)"
+    "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
+    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)"
   }
 }

@@ -395,6 +395,14 @@
     "attach.upload_failed": "Falha no envio.",
     "attach.upload_failed_http": "Falha no envio (HTTP {status}).",
     "attach.uploading": "enviando…",
+    "broker.line.stopped": "Uma alteração de arquivos parou no meio. O VOOL não vai alterar arquivos até que ela seja verificada.",
+    "broker.line.no_undo": "O VOOL não consegue guardar registros para desfazer agora, então não vai alterar arquivos.",
+    "broker.line.not_running": "A proteção de arquivos do Windows do VOOL não está em execução, então ele não vai alterar arquivos nas suas pastas.",
+    "broker.line.show_details": "Mostrar detalhes",
+    "broker.line.recheck": "Verificar de novo",
+    "broker.line.pending_item": "Lote {id}: ainda fora do lugar: {items}",
+    "broker.line.torn_item": "Lote {id}: um registro incompleto foi guardado em {file}",
+    "broker.line.clear_note": "Ainda não é possível limpar isto pelo VOOL. Verifique os arquivos listados antes que algo os altere.",
     "bypass.banner_active": "O bypass de permissões está ativo.",
     "bypass.cancel": "Cancelar",
     "bypass.chat_only_until_off": "Ignorar permissões · só esta conversa · ativo até você desligar (Revogar continua disponível)",
@@ -1889,13 +1897,14 @@
     "fault.wallet_payment_channel_off.action": "Ligue um canal de pagamento nos ajustes de Cripto só se quiser que pagamentos passem por ele; o teto e a sua aprovação valem em todos os canais.",
     "fault.wallet_x402_sdk_unavailable.message": "Esta versão não consegue pagar ofertas x402 na Base pelo x402 Foundation SDK: o extra opcional x402 não está instalado nesta máquina. Nada foi assinado ou enviado. Toda outra função da carteira funciona sem ele; com ele instalado, tente de novo."
   },
-  "source_catalog_sha256": "d8a67e14feb003241cd996a68463f6eda16a86addc0e96ebfd548712768af8e8",
+  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
     "cross_check": "language-family agent self-check + deterministic validator",
     "generated_at": "2026-09-04T14:20:28Z",
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
-    "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)"
+    "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
+    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)"
   }
 }

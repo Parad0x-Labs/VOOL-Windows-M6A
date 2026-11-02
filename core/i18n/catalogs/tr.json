@@ -395,6 +395,14 @@
     "attach.upload_failed": "Yükleme başarısız oldu.",
     "attach.upload_failed_http": "Yükleme başarısız (HTTP {status}).",
     "attach.uploading": "yükleniyor…",
+    "broker.line.stopped": "Bir dosya değişikliği yarıda kaldı. VOOL, kontrol edilene kadar dosyaları değiştirmeyecek.",
+    "broker.line.no_undo": "VOOL şu anda geri alma kayıtlarını tutamıyor, bu yüzden dosyaları değiştirmeyecek.",
+    "broker.line.not_running": "VOOL’un Windows dosya koruması çalışmıyor, bu yüzden klasörlerinizdeki dosyaları değiştirmeyecek.",
+    "broker.line.show_details": "Ayrıntıları göster",
+    "broker.line.recheck": "Yeniden kontrol et",
+    "broker.line.pending_item": "Toplu işlem {id}: hâlâ yerinde değil: {items}",
+    "broker.line.torn_item": "Toplu işlem {id}: yarım kalan bir kayıt {file} içinde saklandı",
+    "broker.line.clear_note": "Bunu VOOL içinden temizleme özelliği henüz yok. Başka bir şey değiştirmeden önce listelenen dosyaları kontrol edin.",
     "bypass.banner_active": "İzin atlama etkin.",
     "bypass.cancel": "İptal",
     "bypass.chat_only_until_off": "İzinleri atla · yalnızca bu sohbet · siz kapatana dek etkin (Geri al kullanılabilir)",
@@ -1889,13 +1897,14 @@
     "fault.wallet_payment_channel_off.action": "Bir ödeme kanalını Kripto ayarlarında yalnızca ödemelerin onun üzerinden yapılmasını istiyorsanız açın; tavan ve sizin onayınız her kanalda geçerlidir.",
     "fault.wallet_x402_sdk_unavailable.message": "Bu yapı x402 Foundation SDK üzerinden Base'deki x402 tekliflerini ödeyemez: isteğe bağlı x402 eki bu makinede kurulu değil. Hiçbir şey imzalanmadı veya gönderilmedi. Cüzdanın diğer her işlevi onsuz çalışır; kurulunca tekrar deneyin."
   },
-  "source_catalog_sha256": "d8a67e14feb003241cd996a68463f6eda16a86addc0e96ebfd548712768af8e8",
+  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
     "cross_check": "language-family agent self-check + deterministic validator",
     "generated_at": "2026-09-04T14:20:28Z",
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
-    "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)"
+    "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
+    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)"
   }
 }

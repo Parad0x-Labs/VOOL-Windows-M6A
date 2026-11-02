@@ -395,6 +395,14 @@
     "attach.upload_failed": "Wysyłanie nie powiodło się.",
     "attach.upload_failed_http": "Wysłanie nieudane (HTTP {status}).",
     "attach.uploading": "wysyłanie…",
+    "broker.line.stopped": "Zmiana plików zatrzymała się w połowie. VOOL nie będzie zmieniać plików, dopóki nie zostanie sprawdzona.",
+    "broker.line.no_undo": "VOOL nie może teraz zapisywać danych do cofania, więc nie będzie zmieniać plików.",
+    "broker.line.not_running": "Ochrona plików Windows w VOOL nie działa, więc VOOL nie będzie zmieniać plików w Twoich folderach.",
+    "broker.line.show_details": "Pokaż szczegóły",
+    "broker.line.recheck": "Sprawdź ponownie",
+    "broker.line.pending_item": "Partia {id}: nadal nie na swoim miejscu: {items}",
+    "broker.line.torn_item": "Partia {id}: niedokończony wpis zachowano w {file}",
+    "broker.line.clear_note": "Czyszczenia z poziomu VOOL jeszcze nie ma. Sprawdź wymienione pliki, zanim coś je zmieni.",
     "bypass.banner_active": "Ominięcie uprawnień jest aktywne.",
     "bypass.cancel": "Anuluj",
     "bypass.chat_only_until_off": "Omijanie uprawnień · tylko ten czat · aktywne, aż sam wyłączysz (Cofnij pozostaje dostępne)",
@@ -1889,13 +1897,14 @@
     "fault.wallet_payment_channel_off.action": "Włącz kanał płatności w ustawieniach Krypto tylko wtedy, gdy chcesz, by płatności przez niego szły; limit i twoja zgoda obowiązują na każdym kanale.",
     "fault.wallet_x402_sdk_unavailable.message": "Ta wersja nie potrafi opłacać ofert x402 w sieci Base przez x402 Foundation SDK: na tym komputerze nie ma opcjonalnego dodatku x402. Nic nie podpisano ani nie wysłano. Każda inna funkcja portfela działa bez niego; po zainstalowaniu spróbuj ponownie."
   },
-  "source_catalog_sha256": "d8a67e14feb003241cd996a68463f6eda16a86addc0e96ebfd548712768af8e8",
+  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
     "cross_check": "language-family agent self-check + deterministic validator",
     "generated_at": "2026-09-04T14:20:28Z",
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
-    "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)"
+    "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
+    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)"
   }
 }

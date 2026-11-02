@@ -1087,6 +1087,19 @@ body:not(.panel-open) #xpanel { display:none; }
   .setup-line-open { background:var(--accent,#4c7df0); border:1px solid var(--accent,#4c7df0); color:var(--accent-ink); border-radius:6px; padding:4px 11px; cursor:pointer; font-size:12.5px; font-weight:600; }
   .setup-line-x { background:none; border:none; color:var(--muted,#9a9aa2); cursor:pointer; font-size:16px; line-height:1; padding:2px 6px; }
   .setup-line-x:hover { color:var(--text,#eee); }
+
+  /* --- Broker line (Windows): shown only when VOOL will not change files; state only, no clearing --- */
+  .broker-line { margin:0 0 8px; padding:7px 12px; border:1px solid var(--danger,#d9534f); border-radius:10px;
+                 background:var(--bg-elev,#1a1a1e); font-size:13px; color:var(--text,#eee); }
+  .broker-line[hidden] { display:none; }
+  .broker-line-head { display:flex; align-items:center; gap:10px; }
+  .broker-line-text { flex:1 1 auto; min-width:0; }
+  .broker-line button { background:none; border:1px solid var(--border,#333); color:var(--muted,#9a9aa2); border-radius:6px;
+                        padding:3px 9px; cursor:pointer; font-size:12px; }
+  .broker-line button:hover { color:var(--text,#eee); border-color:var(--accent,#4c7df0); }
+  .broker-line-details { margin:6px 0 0; color:var(--muted,#9a9aa2); }
+  .broker-line-details[hidden] { display:none; }
+  .broker-line-details ul { margin:0 0 4px; padding-left:18px; overflow-wrap:anywhere; }
 </style>
 </head>
 <body>
@@ -1171,6 +1184,17 @@ body:not(.panel-open) #xpanel { display:none; }
 </div>
 <div id="log" role="log" aria-live="polite" aria-label="Conversation" data-i18n-aria-label="chat.log_aria"></div>
 <footer>
+  <div id="brokerLine" class="broker-line" role="alert" hidden>
+    <div class="broker-line-head">
+      <span class="broker-line-text" id="brokerLineText"></span>
+      <button type="button" id="brokerLineMore" aria-expanded="false" data-i18n="broker.line.show_details">Show details</button>
+      <button type="button" id="brokerLineRecheck" data-i18n="broker.line.recheck">Check again</button>
+    </div>
+    <div class="broker-line-details" id="brokerLineDetails" hidden>
+      <ul id="brokerLineItems"></ul>
+      <span data-i18n="broker.line.clear_note">Clearing this from VOOL isn&rsquo;t built yet. Check the files listed before anything else changes them.</span>
+    </div>
+  </div>
   <div id="setupLine" class="setup-line" role="status" hidden>
     <span class="setup-line-text" id="setupLineText" data-i18n="chat.setup_line_text">Finish setting up VOOL &mdash; four quick steps.</span>
     <button type="button" class="setup-line-open" id="setupLineOpen" data-i18n="chat.setup_line_open">Finish setup</button>
@@ -12359,6 +12383,86 @@ async function setupLineLoad() {
   } catch (e) { line.hidden = true; }
   finally { line.dataset.loaded = '1'; }   // the markup starts hidden; this says the decision was made
 }
+// ---- Windows broker line
+// On Windows the broker keeps an undo journal; while a change it stopped part-way is still pending,
+// or it cannot keep undo records, or it is not running, VOOL changes no files in flagged folders.
+// One line says so (docs/WINDOWS_BROKER.md section 8). It shows state only: clearing from VOOL is
+// not built. What the broker reported is set as text, never as markup. Nothing shows without a
+// broker (Mac, Linux) or while it is still starting; an answer of any other shape fails closed.
+function brokerT(key, fallback, params) {
+  let text = fallback;
+  try {
+    if (typeof VOOLT === 'function') { const t = VOOLT(key, params); if (t && t !== key) return t; }
+  } catch (e) {}
+  if (params) Object.keys(params).forEach((k) => { text = text.split('{' + k + '}').join(String(params[k])); });
+  return text;
+}
+function brokerLineView(d) {
+  if (!d || typeof d !== 'object' || d.wired !== true) return null;
+  if (d.running !== true) {
+    if (d.reason === 'not_started') return null;
+    return { kind: 'not_running', text: brokerT('broker.line.not_running', 'VOOL\u2019s Windows file guard isn\u2019t running, so it won\u2019t change files in your folders.'), items: [] };
+  }
+  const pending = Array.isArray(d.pending) ? d.pending : [];
+  const torn = Array.isArray(d.torn) ? d.torn : [];
+  if (d.needs_check === true || pending.length || torn.length) {
+    const items = [];
+    pending.forEach((row) => {
+      const left = row && Array.isArray(row.left) ? row.left.map(String).join(', ') : '';
+      items.push(brokerT('broker.line.pending_item', 'Batch {id}: still out of place: {items}', { id: String((row && row.batch_id) || 'unknown'), items: left }));
+    });
+    torn.forEach((row) => {
+      items.push(brokerT('broker.line.torn_item', 'Batch {id}: an unfinished record was kept in {file}', { id: String((row && row.batch_id) || 'unknown'), file: String((row && row.kept_in) || '') }));
+    });
+    return { kind: 'stopped', text: brokerT('broker.line.stopped', 'A file change stopped part-way. VOOL won\u2019t change files until it is checked.'), items: items };
+  }
+  if (d.undo_records !== 'available') {
+    return { kind: 'no_undo', text: brokerT('broker.line.no_undo', 'VOOL can\u2019t keep undo records right now, so it won\u2019t change files.'), items: [] };
+  }
+  return null;
+}
+async function brokerLineLoad() {
+  const line = document.getElementById('brokerLine');
+  if (!line) return;
+  let view = null;
+  try {
+    const r = await fetch('/api/windows/broker/status');
+    if (r.ok) view = brokerLineView(await r.json());
+  } catch (e) { view = null; }
+  if (!view) { line.hidden = true; return; }
+  const text = document.getElementById('brokerLineText');
+  if (text) text.textContent = view.text;
+  const list = document.getElementById('brokerLineItems');
+  if (list) {
+    list.textContent = '';
+    view.items.forEach((item) => { const li = document.createElement('li'); li.textContent = item; list.appendChild(li); });
+  }
+  const more = document.getElementById('brokerLineMore');
+  if (more) more.hidden = view.kind !== 'stopped';
+  if (view.kind !== 'stopped') {
+    const details = document.getElementById('brokerLineDetails');
+    if (details) details.hidden = true;
+    if (more) more.setAttribute('aria-expanded', 'false');
+  }
+  line.dataset.kind = view.kind;
+  line.hidden = false;
+}
+(function brokerLineBoot() {
+  const line = document.getElementById('brokerLine');
+  if (!line) return;
+  const more = document.getElementById('brokerLineMore');
+  const details = document.getElementById('brokerLineDetails');
+  if (more && details) more.addEventListener('click', () => {
+    details.hidden = !details.hidden;
+    more.setAttribute('aria-expanded', details.hidden ? 'false' : 'true');
+  });
+  const recheck = document.getElementById('brokerLineRecheck');
+  if (recheck) recheck.addEventListener('click', () => brokerLineLoad());
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) brokerLineLoad(); });
+  window.addEventListener('focus', () => brokerLineLoad());
+  brokerLineLoad();
+})();
+// ---- end Windows broker line
 (function setupLineBoot() {
   const line = document.getElementById('setupLine');
   if (!line) return;

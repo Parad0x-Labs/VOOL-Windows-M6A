@@ -395,6 +395,14 @@
     "attach.upload_failed": "Hochladen fehlgeschlagen.",
     "attach.upload_failed_http": "Hochladen fehlgeschlagen (HTTP {status}).",
     "attach.uploading": "wird hochgeladen…",
+    "broker.line.stopped": "Eine Dateiänderung wurde mittendrin abgebrochen. VOOL ändert keine Dateien, bis sie geprüft ist.",
+    "broker.line.no_undo": "VOOL kann gerade keine Rückgängig-Einträge speichern und ändert deshalb keine Dateien.",
+    "broker.line.not_running": "Der Windows-Dateischutz von VOOL läuft nicht, deshalb ändert VOOL keine Dateien in deinen Ordnern.",
+    "broker.line.show_details": "Details anzeigen",
+    "broker.line.recheck": "Erneut prüfen",
+    "broker.line.pending_item": "Vorgang {id}: noch nicht an seinem Platz: {items}",
+    "broker.line.torn_item": "Vorgang {id}: ein unvollständiger Eintrag wurde in {file} aufbewahrt",
+    "broker.line.clear_note": "Das Bereinigen direkt in VOOL gibt es noch nicht. Prüfe die aufgeführten Dateien, bevor sie anderweitig geändert werden.",
     "bypass.banner_active": "Die Umgehung der Berechtigungen ist aktiv.",
     "bypass.cancel": "Abbrechen",
     "bypass.chat_only_until_off": "Umgehung der Freigaben · nur dieser Chat · aktiv, bis du sie selbst abschaltest (Widerrufen bleibt möglich)",
@@ -1889,13 +1897,14 @@
     "fault.wallet_payment_channel_off.action": "Schalte einen Zahlungskanal in den Krypto-Einstellungen nur ein, wenn Zahlungen darüber laufen sollen; die Obergrenze und deine Freigabe gelten auf jedem Kanal.",
     "fault.wallet_x402_sdk_unavailable.message": "Dieser Build kann keine x402-Angebote auf Base über das x402 Foundation SDK bezahlen: Die optionale Erweiterung x402 ist auf diesem Rechner nicht installiert. Es wurde nichts signiert oder gesendet. Jede andere Wallet-Funktion läuft ohne sie; nach der Installation versuche es erneut."
   },
-  "source_catalog_sha256": "d8a67e14feb003241cd996a68463f6eda16a86addc0e96ebfd548712768af8e8",
+  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
     "cross_check": "language-family agent self-check + deterministic validator",
     "generated_at": "2026-09-04T14:20:28Z",
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
-    "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)"
+    "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
+    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)"
   }
 }
