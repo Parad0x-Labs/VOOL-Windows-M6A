@@ -105,10 +105,10 @@ def flagged_roots(environ: dict[str, str] | None = None) -> list[str]:
     section 4, one list), each still at the path the broker reported, and none while it does not
     run; otherwise the variable is read."""
     if environ is None and _IS_WINDOWS:
-        from core.windows_broker import session
+        from core.windows_broker.session import checked_folders, wired
 
-        if session.wired():
-            return [os.path.normcase(path) for path in session.checked_folders()]
+        if wired():
+            return [os.path.normcase(path) for path in checked_folders()]
     raw = (os.environ if environ is None else environ).get(ENV_VAR, "")
     roots = []
     for part in raw.split(os.pathsep):
