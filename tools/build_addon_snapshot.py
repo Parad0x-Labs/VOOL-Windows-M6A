@@ -118,11 +118,11 @@ def build(directory: dict, originals: list[dict], fetch=fetch_bytes) -> tuple[di
 def main():
     from core.addon_catalog import CATALOG
     root = Path(__file__).resolve().parents[1] / 'core'
-    directory = json.loads((root/'addon_directory.json').read_text())
+    directory = json.loads((root/'addon_directory.json').read_text(encoding='utf-8'))
     result, assets = build(directory, [e for e in CATALOG if e['id'].startswith('anthropic-')])
     # Build everything before replacing either output. No partial successful catalogue.
     for filename, value in [('addon_directory.json',result),('addon_packages.json',assets)]:
-        (root/filename).write_text(json.dumps(value, ensure_ascii=False, indent=2)+'\n')
+        (root/filename).write_text(json.dumps(value, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
     print('Ready:', sum(e['import_ready'] for e in result['entries'])+2,
           'total:',len(result['entries'])+2,'unique bundled files:',len(assets['files']))
 
