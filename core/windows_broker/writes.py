@@ -79,12 +79,18 @@ def _status() -> tuple[Any, Any]:
 
 
 def _place(target: Path, status: Any) -> tuple[Any, str]:
-    """The flagged folder holding `target`'s final path, and the path inside it ("" for the folder)."""
+    """The flagged folder holding `target`, its parent folders resolved, and the path inside it ("" for
+    the folder)."""
     text = str(target)
     if "\x00" in text:
         raise Refused("invalid_path", "the path holds a NUL character")
     try:
-        real = os.path.realpath(text)
+        # The folders above the target are resolved; the target's own name never is. A by-path
+        # writer replaced or moved a link at the target, never what it points at, so the broker is
+        # given the link's name and its walk refuses it (reparse_point).
+        absolute = os.path.abspath(text)
+        parent, name = os.path.split(absolute)
+        real = os.path.join(os.path.realpath(parent), name) if name else os.path.realpath(absolute)
     except (OSError, ValueError) as exc:
         raise Refused("invalid_path", f"the path cannot be resolved ({type(exc).__name__})") from exc
     best = None
