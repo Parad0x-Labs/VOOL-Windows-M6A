@@ -75,4 +75,48 @@ def checked_folders() -> list[str]:
     return folders
 
 
-__all__ = ["checked_folders", "register", "wired"]
+def _pending_row(row: Any) -> dict[str, Any]:
+    if isinstance(row, dict) and isinstance(row.get("batch_id"), str) and row["batch_id"]:
+        left = row.get("left")
+        return {"batch_id": row["batch_id"], "left": [str(item) for item in left] if isinstance(left, list) else []}
+    return {"batch_id": "unknown", "left": []}
+
+
+def _torn_row(row: Any) -> dict[str, Any]:
+    if isinstance(row, dict) and isinstance(row.get("batch_id"), str) and row["batch_id"]:
+        size, kept_in = row.get("bytes"), row.get("kept_in")
+        return {"batch_id": row["batch_id"],
+                "bytes": size if isinstance(size, int) and not isinstance(size, bool) and size >= 0 else 0,
+                "kept_in": kept_in if isinstance(kept_in, str) else ""}
+    return {"batch_id": "unknown", "bytes": 0, "kept_in": ""}
+
+
+def report() -> dict[str, Any]:
+    """What VOOL can show about the broker (docs/WINDOWS_BROKER.md section 8), as one plain dict.
+
+    ``{"wired": False}`` in a process that never started a broker. Otherwise whether it runs (and
+    why not), the flagged and skipped entries, whether undo records can be written, the batches
+    still pending and the torn last records. A journal state that is missing or malformed reads as
+    unavailable; a row that is malformed is kept as an ``unknown`` row so it still needs a check."""
+    host = _host
+    if host is None:
+        return {"wired": False}
+    status = host.status
+    journal = status.journal if status.running and isinstance(status.journal, dict) else {}
+    pending, torn = journal.get("pending"), journal.get("torn")
+    pending_rows = [_pending_row(row) for row in pending] if isinstance(pending, list) else []
+    torn_rows = [_torn_row(row) for row in torn] if isinstance(torn, list) else []
+    return {
+        "wired": True,
+        "running": bool(status.running),
+        "reason": status.reason,
+        "flagged": [{"id": folder.id, "path": folder.path} for folder in status.flagged],
+        "skipped": [dict(item) for item in status.skipped],
+        "undo_records": "available" if journal.get("available") is True else "unavailable",
+        "pending": pending_rows,
+        "torn": torn_rows,
+        "needs_check": bool(pending_rows or torn_rows),
+    }
+
+
+__all__ = ["checked_folders", "register", "report", "wired"]

@@ -48,6 +48,11 @@ class BrokerStatus:
     pid: int = 0
     #: The flagged folders the broker holds, in bootstrap order (section 4, one list).
     flagged: tuple[FlaggedFolder, ...] = ()
+    #: The start line's journal state as sent (section 8); None when it sent none. Read through
+    #: session.report(), which treats anything but a well-formed object as unavailable.
+    journal: Any = None
+    #: The bootstrap entries the broker refused, each {entry, code, message} as plain strings.
+    skipped: tuple[dict[str, str], ...] = ()
 
 
 def _flagged_of(ready: dict[str, Any]) -> tuple[FlaggedFolder, ...] | None:
@@ -195,13 +200,15 @@ class BrokerHost:
             return BrokerStatus(False, "bad_start_line")
         # Entries the broker refused are skipped, not fatal (Phase C pick 1): the others stay flagged.
         skipped = ready.get("skipped")
+        kept: list[dict[str, str]] = []
         for item in skipped if isinstance(skipped, list) else []:
             if isinstance(item, dict):
                 logger.warning("%s entry %r is not flagged: the Windows broker refused it (%s: %s)", _FLAGGED_ENV,
                                item.get("entry"), item.get("code"), item.get("message"))
+                kept.append({key: str(item.get(key, "")) for key in ("entry", "code", "message")})
         # The broker writes nothing after its start line; drain anyway so a full pipe never blocks it.
         threading.Thread(target=self._drain, args=(self._process.stdout,), daemon=True).start()
-        return BrokerStatus(True, "", ready["pipe"], int(self._process.pid), flagged)
+        return BrokerStatus(True, "", ready["pipe"], int(self._process.pid), flagged, ready.get("journal"), tuple(kept))
 
     def _exchange(self, frame: bytes) -> bytes | None:
         """Send the bootstrap and read the start line: b"" when the broker closed stdout first, None
