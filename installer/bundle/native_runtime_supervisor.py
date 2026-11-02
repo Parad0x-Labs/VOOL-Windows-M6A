@@ -25,6 +25,7 @@ from typing import Any
 
 from core.process_liveness import pid_alive, system_taskkill, system_tool
 from core.runtime_paths import active_vool_home, runtime_home_identity
+from core.windows_job import CREATE_SUSPENDED, new_kill_on_close_job, resume_suspended
 
 
 def _windows_cmd_starter(command: list[str]) -> str | None:
@@ -32,6 +33,11 @@ def _windows_cmd_starter(command: list[str]) -> str | None:
     if len(command) == 5 and [part.lower() for part in command[1:4]] == ["/d", "/s", "/c"]:
         return command[4]
     return None
+
+
+#: Job objects are a kernel32 feature, so the job is used only when this interpreter really runs
+#: on Windows. Tests that stand in for Windows through a patched ``os`` set this and pass fakes.
+_JOB_HOST = os.name == "nt"
 
 
 class NativeRuntimeError(RuntimeError):
@@ -72,6 +78,8 @@ class NativeRuntimeSupervisor:
         popen: Callable[..., Any] = subprocess.Popen,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
+        job_factory: Callable[[], Any] | None = None,
+        resume: Callable[[int], None] | None = None,
     ) -> None:
         self.project_root = Path(project_root).expanduser().resolve()
         self.command = [str(part) for part in command]
@@ -90,6 +98,11 @@ class NativeRuntimeSupervisor:
         self._popen = popen
         self._sleep = sleep
         self._monotonic = monotonic
+        self._job_factory = job_factory or new_kill_on_close_job
+        self._resume = resume or resume_suspended
+        # Windows: the Job object the owned tree lives in. When this process ends, however it ends,
+        # Windows closes the handle and kills the tree (G4 orphan check, Steve, 177621c).
+        self._job: Any | None = None
         self._unhealthy_since: float | None = None
         self.process: Any | None = None
         self.log_handle: Any | None = None
@@ -315,11 +328,32 @@ class NativeRuntimeSupervisor:
             kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
                 subprocess, "CREATE_NO_WINDOW", 0
             )
+            try:
+                self._job = self._job_factory() if _JOB_HOST else None
+            except Exception as exc:
+                self._close_log()
+                raise NativeRuntimeError(
+                    f"the Windows job that ties the runtime to this window could not be created "
+                    f"({type(exc).__name__}: {exc}); nothing was started"
+                ) from exc
+            if self._job is not None:
+                # Suspended until it is in the job, so it starts nothing outside it (core.windows_job).
+                kwargs["creationflags"] |= CREATE_SUSPENDED
         try:
             self.process = self._popen(self._spawn_command(), **kwargs)
         except Exception as exc:
+            self._close_job()
             self._close_log()
             raise NativeRuntimeError(f"runtime spawn failed: {type(exc).__name__}: {exc}") from exc
+        if self._job is not None:
+            try:
+                self._job.assign(self.process.pid)
+                self._resume(self.process.pid)
+            except Exception as exc:
+                self.shutdown()
+                raise NativeRuntimeError(
+                    f"the runtime could not be tied to this window ({type(exc).__name__}: {exc}); it was stopped"
+                ) from exc
 
         while time.monotonic() < deadline:
             returncode = self.process.poll()
@@ -410,6 +444,14 @@ class NativeRuntimeSupervisor:
                         child.kill()
                 with contextlib.suppress(Exception):
                     child.wait(timeout=3)
+        # Closing the job ends anything of the tree the kill above missed.
+        self._close_job()
         self._close_log()
+
+    def _close_job(self) -> None:
+        job, self._job = self._job, None
+        if job is not None:
+            with contextlib.suppress(Exception):
+                job.close()
 
     close = shutdown
