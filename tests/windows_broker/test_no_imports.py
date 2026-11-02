@@ -23,6 +23,7 @@ ALLOWED = {
     # Phase C C3: patches and the tracked-change rollback go through the broker as one batch.
     "core/execution/workspace_tools.py": "core.windows_broker.writes",
     "core/execution/artifacts.py": "core.windows_broker.writes",
+    "core/blackbox/rollback.py": "core.windows_broker.writes",
 }
 
 
