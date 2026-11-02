@@ -19,6 +19,7 @@ from core.cloud_tool_call_contract import (
     UnknownToolNameError,
     parse_native_tool_calls,
 )
+from core.path_scrub import NETWORK_PATH_RE, SEP, SPACED_HOME_RE
 from storage.model_provider_manifest import ModelProviderManifest
 from storage.model_tool_certification_store import (
     CERTIFICATION_ROUTING_EFFECT,
@@ -44,6 +45,9 @@ _SECRET_RE = re.compile(
     r"(?i)(bearer\s+)[a-z0-9._~+/=-]+|((?:api[_-]?key|token|secret|password)\s*[:=]\s*)\S+"
 )
 _HOME_PATH_RE = re.compile(r"(?:(?:/Users|/home)/[^/\s]+|[A-Za-z]:\\Users\\[^\\\s]+)")
+# The Windows home in the spellings the pattern above misses: doubled backslashes (as a repr or
+# JSON shows it), a slash after the drive, or a rooted \Users.
+_WINDOWS_HOME_RE = re.compile(r"(?<![\w\\/])(?:[A-Za-z]:)?" + SEP + r"(?i:users)" + SEP + r"[^\\/\s\"'<>|*?:]+")
 
 
 class CertificationBoundaryError(ValueError):
@@ -686,7 +690,12 @@ def _bounded_exchange_evidence(label: str, response: dict[str, Any]) -> dict[str
 
 def _redact_text(value: str) -> str:
     text = _SECRET_RE.sub(lambda match: f"{match.group(1) or match.group(2) or ''}[redacted]", str(value or ""))
+    # Network and device paths whole first; a spaced account before the strict pattern, which
+    # would stop inside the name and keep its tail.
+    text = NETWORK_PATH_RE.sub("[home]", text)
+    text = SPACED_HOME_RE.sub("[home]", text)
     text = _HOME_PATH_RE.sub("[home]", text)
+    text = _WINDOWS_HOME_RE.sub("[home]", text)
     return " ".join(text.split())[:240]
 
 

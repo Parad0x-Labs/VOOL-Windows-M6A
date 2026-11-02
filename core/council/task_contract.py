@@ -195,7 +195,14 @@ class TaskContract:
         object.__setattr__(self, "dependencies", _clean_deps(self.dependencies))
 
         evidence = str(self.evidence_path or "").strip()
-        if evidence.startswith("/") or ".." in evidence.split("/"):
+        # Windows shapes (C:\x, C:x, \\server\share, ..\x) are refused too: a
+        # backslash is a separator and any ":" is a drive or stream marker.
+        portable = evidence.replace("\\", "/")
+        if (
+            portable.startswith("/")
+            or ":" in portable
+            or ".." in portable.split("/")
+        ):
             raise TaskContractError(
                 "evidence_path is relative to the evidence root and cannot escape it"
             )

@@ -81,7 +81,8 @@ class BindingResult:
 
 
 def _normalise_path(value: str) -> str:
-    text = str(value or "").strip().strip("`'\"").rstrip("/")
+    # Windows paths arrive with either separator; fold to "/" so both spellings compare equal.
+    text = str(value or "").strip().strip("`'\"").replace("\\", "/").rstrip("/")
     # Tools label targets home-relative ("~/Desktop/x") while an answer may spell the same place
     # absolutely. Compare on the tail so the two forms agree without resolving anything on disk.
     if text.startswith("~"):
