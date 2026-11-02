@@ -27,6 +27,8 @@ ALLOWED = {
     # Phase C C4: moves are the broker's rename.
     "core/machine_file_ops.py": "core.windows_broker.writes",
     "core/local_operator_actions.py": "core.windows_broker.writes",
+    # Phase C C5: broker-backed intents are A6-reserved on Windows while the broker is routed.
+    "core/effect_reconciliation.py": "core.windows_broker.session",
 }
 
 
