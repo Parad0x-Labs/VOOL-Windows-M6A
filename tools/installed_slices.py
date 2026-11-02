@@ -16,8 +16,9 @@ import socket
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 SCHEMA = "vool.installed_slices.v1"
 _TIMEOUT = 10.0
@@ -25,7 +26,7 @@ _TIMEOUT = 10.0
 
 def _get_json(url: str) -> tuple[int, Any]:
     try:
-        with urllib.request.urlopen(url, timeout=_TIMEOUT) as response:  # noqa: S310 - loopback only
+        with urllib.request.urlopen(url, timeout=_TIMEOUT) as response:
             status, raw = response.status, response.read()
     except urllib.error.HTTPError as exc:
         status, raw = exc.code, exc.read()
