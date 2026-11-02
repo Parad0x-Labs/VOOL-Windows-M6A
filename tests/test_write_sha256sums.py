@@ -1,5 +1,6 @@
 """SHA256SUMS for a release is the same bytes on every OS, so the owner can sign it offline with the
-Ed25519 release key (docs/RELEASE_KEY_CEREMONY.md) and anyone can check it with `sha256sum -c`.
+Ed25519 release key (docs/RELEASE_KEY_CEREMONY.md) and anyone can check it with `sha256sum -c`
+(the exact bytes are pinned below, so the test needs no sha256sum binary, which Windows lacks).
 
 One line per file, "<lowercase sha256>  <name>\\n", sorted by name, ASCII with LF line endings and
 no BOM: PowerShell's own writers would add a BOM or CRLF on Windows and change the signed bytes.
@@ -34,7 +35,6 @@ def test_sums_are_sorted_lf_lines_that_sha256sum_reads(tmp_path: Path) -> None:
         f"{hashlib.sha256(b'MZ installer bytes').hexdigest()}  VOOL-Setup.exe\n"
         f"{hashlib.sha256(b'{\"commit\": \"abc\"}' + b'\r\n').hexdigest()}  provenance.json\n"
     ).encode("ascii")
-    assert subprocess.run(["sha256sum", "-c", "SHA256SUMS"], cwd=release, capture_output=True).returncode == 0
 
 
 def test_check_passes_for_the_files_as_written(tmp_path: Path) -> None:
