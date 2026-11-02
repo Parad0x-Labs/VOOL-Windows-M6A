@@ -16,7 +16,7 @@ from core.updater.state import UpdaterPaths, _atomic_write_json, _read_json
 
 
 def _cgroup_units(path: Path = Path("/proc/self/cgroup")) -> set[str]:
-    return {part for line in path.read_text().splitlines()
+    return {part for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
             for part in line.split(":", 2)[-1].split("/") if part}
 
 

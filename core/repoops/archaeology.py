@@ -124,7 +124,7 @@ def plan_reproduction(ws: RepositoryWorkspace, report: FailureReport,
     constraints: dict[str, str] = {}
     version_file = os.path.join(ws.root, ".python-version")
     if os.path.exists(version_file):
-        with open(version_file) as f:
+        with open(version_file, encoding="utf-8", errors="replace") as f:
             constraints["python"] = f.read().strip()
     return ReproductionNeed(capability="python.test.pytest", cwd=ws.root,
                             target=match.group(1),
