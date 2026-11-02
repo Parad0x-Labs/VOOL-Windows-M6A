@@ -452,8 +452,12 @@ Job 6.
   on disk, re-checked just before against what the change left; a created file is deleted. The
   broker's `delete` carries no `expect`, so a file rewritten between that check and the batch is
   still set aside (in the journal, so it can be restored), as the by-path rollback would have
-  removed it. A refused batch leaves the change tracked. Not yet built: the Blackbox turn rollback
-  and `code.task.rollback`, which restore from Blackbox snapshots.
+  removed it. A refused batch leaves the change tracked.
+  The Blackbox turn rollback (and so `code.task.rollback`, core/blackbox/rollback.py) journals each
+  step, so each step is one broker request: a restore is `write_file` with `expect` from the bytes
+  the step has just checked, a remove is `delete` (a folder the turn made must be empty, else it is
+  left and named, as before). A refused step is journaled as failed and the next attempt resumes;
+  a lost reply leaves the step open for the store's recovery. No mode is restored on Windows.
 - Whether git runs at all inside an AppContainer is unknown (Git for Windows reads
   `%USERPROFILE%\.gitconfig`, which an AppContainer cannot read, and needs its own folders under
   Program Files); a test must show it before Step 3 relies on it.

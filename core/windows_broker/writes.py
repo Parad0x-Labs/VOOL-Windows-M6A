@@ -185,6 +185,17 @@ def write_file(target: Path, data: bytes, expect: str) -> Written:
         return _written(result, call.rel, data, tuple(call.created))
 
 
+def delete(target: Path) -> None:
+    """Delete `target` through the broker: a file, or a folder that is empty (`not_empty` otherwise).
+    The broker sets it aside in its journal, so a stopped delete is put back."""
+    with _Call(target) as call:
+        if not call.rel:
+            raise Refused("invalid_path", "the target is the flagged folder itself")
+        result = call.change("delete", rel=call.rel)[0]
+        if result.get("op") not in (None, "delete"):
+            raise EffectOutcomeUnknown("broker reply for delete has the wrong shape")
+
+
 def _written(result: dict[str, Any], rel: str, data: bytes, created: tuple[str, ...]) -> Written:
     sha = result.get("sha256")
     file_id = result.get("file_id")
@@ -243,5 +254,5 @@ def apply_batch(changes: list[tuple[Path, bytes | None, str]]) -> list[Written |
         return done
 
 
-__all__ = ["Refused", "Written", "apply_batch", "ensure_directory", "expect_for", "expect_for_reviewed", "routed", "write_file",
+__all__ = ["Refused", "Written", "apply_batch", "delete", "ensure_directory", "expect_for", "expect_for_reviewed", "routed", "write_file",
            "write_files"]
