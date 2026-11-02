@@ -193,6 +193,12 @@ class BrokerHost:
         if not isinstance(ready, dict) or not isinstance(ready.get("pipe"), str) or flagged is None:
             self._release()
             return BrokerStatus(False, "bad_start_line")
+        # Entries the broker refused are skipped, not fatal (Phase C pick 1): the others stay flagged.
+        skipped = ready.get("skipped")
+        for item in skipped if isinstance(skipped, list) else []:
+            if isinstance(item, dict):
+                logger.warning("%s entry %r is not flagged: the Windows broker refused it (%s: %s)", _FLAGGED_ENV,
+                               item.get("entry"), item.get("code"), item.get("message"))
         # The broker writes nothing after its start line; drain anyway so a full pipe never blocks it.
         threading.Thread(target=self._drain, args=(self._process.stdout,), daemon=True).start()
         return BrokerStatus(True, "", ready["pipe"], int(self._process.pid), flagged)
