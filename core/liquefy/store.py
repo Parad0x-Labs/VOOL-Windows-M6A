@@ -776,7 +776,7 @@ class LiquefyLogStore:
             self._chain_tip = ""
             for row in sorted(self._index.values(), key=lambda r: r["first_seq"]):
                 self._chain_tip = _sha256_hex((self._chain_tip + row["segment_hash"]).encode("utf-8"))
-            self._last_sealed_seq = max((row["last_seq"] for row in self._index.values()), default=0)
+            # The sealed horizon never moves down: erased seqs stay unreachable and are never reissued.
             self._write_cursor_locked()
             pending = self._unlink_segments_locked(removed)
             receipt = {
