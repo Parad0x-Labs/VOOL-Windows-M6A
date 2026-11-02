@@ -109,7 +109,7 @@ class CensusItem:
 def _pyproject_scripts() -> dict[str, str]:
     import tomllib
 
-    data = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
+    data = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     return dict(data.get("project", {}).get("scripts", {}))
 
 
@@ -123,7 +123,7 @@ def discover_cli() -> list[CensusItem]:
     # vool argparse leaves (AST over apps/vool_cli.py); nested subparser
     # leaves are qualified by their parent (e.g. bug-report.receipts) so ids stay unique
     cli_path = PROJECT_ROOT / "apps" / "vool_cli.py"
-    tree = ast.parse(cli_path.read_text())
+    tree = ast.parse(cli_path.read_text(encoding="utf-8"))
 
     def _receiver_name(call: ast.Call) -> str:
         func = call.func
@@ -277,7 +277,7 @@ def _module_route_literals(module: str, function: str = "") -> list[str]:
     if not path.exists():
         return []
     try:
-        tree = ast.parse(path.read_text())
+        tree = ast.parse(path.read_text(encoding="utf-8"))
     except SyntaxError:
         return []
     scope: ast.AST = tree
@@ -352,7 +352,7 @@ def _discover_delegated_families(tree: ast.AST, dispatchers: dict[str, str]) -> 
 def discover_http() -> list[CensusItem]:
     items: list[CensusItem] = []
     service_path = PROJECT_ROOT / "core" / "web" / "api" / "service.py"
-    src = service_path.read_text()
+    src = service_path.read_text(encoding="utf-8")
     tree = ast.parse(src)
 
     dispatchers = {}
@@ -464,7 +464,7 @@ def discover_chat() -> list[CensusItem]:
     # REPL slash literals in apps/vool_chat.py (mechanical: string constants in
     # comparisons/startswith calls that begin with "/")
     chat_path = PROJECT_ROOT / "apps" / "vool_chat.py"
-    src = chat_path.read_text()
+    src = chat_path.read_text(encoding="utf-8")
     repl_literals: set[str] = set()
     for match in re.finditer(r"""["'](/[\w-]+)["']""", src):
         repl_literals.add(match.group(1))
@@ -583,7 +583,8 @@ def _proof_index() -> dict[str, tuple[str, ...]]:
     try:
         out = subprocess.run(
             ["git", "grep", "-l", "-E", r"\"/(api|media-editor|v1)/", "--", "tests/"],
-            cwd=str(PROJECT_ROOT), capture_output=True, text=True, timeout=120,
+            cwd=str(PROJECT_ROOT), capture_output=True, text=True, encoding="utf-8", errors="surrogateescape",
+            timeout=120,
         ).stdout
     except Exception:
         return {}
@@ -659,7 +660,7 @@ def run_census(registry_surfaces: set[str] | None = None) -> CensusReport:
 def load_pin() -> dict[str, Any]:
     if not SNAPSHOT_PATH.exists():
         return {}
-    return json.loads(SNAPSHOT_PATH.read_text())
+    return json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
 
 
 def census_check(registry_command_ids: set[str]) -> CensusReport:
@@ -748,7 +749,7 @@ def write_snapshot() -> CensusReport:
             for item in sorted(report.items, key=lambda i: i.census_id)
         },
     }
-    SNAPSHOT_PATH.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    SNAPSHOT_PATH.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return report
 
 
