@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import shutil
 import subprocess
 from pathlib import Path
@@ -173,7 +174,7 @@ def test_a_directory_cannot_be_sealed_twice(release_key, release_dir) -> None:
 
 
 def test_macos_release_signing_refuses_off_macos() -> None:
-    if os.uname().sysname == "Darwin":
+    if platform.system() == "Darwin":
         pytest.skip("this pins the non-macOS refusal")
     done = subprocess.run(["bash", str(SIGN_MACOS), "--preflight"], capture_output=True, text=True, timeout=60)
     assert done.returncode != 0
@@ -181,7 +182,7 @@ def test_macos_release_signing_refuses_off_macos() -> None:
 
 
 def test_macos_release_signing_refuses_without_credentials_on_macos() -> None:
-    if os.uname().sysname != "Darwin":
+    if platform.system() != "Darwin":
         pytest.skip("needs macOS")
     env = {k: v for k, v in os.environ.items() if not k.startswith(("VOOL_MACOS_", "VOOL_NOTARY_", "VOOL_SIGN_"))}
     done = subprocess.run(["bash", str(SIGN_MACOS), "--preflight"], capture_output=True, text=True, env=env, timeout=60)

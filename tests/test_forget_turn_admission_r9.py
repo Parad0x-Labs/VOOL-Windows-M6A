@@ -77,15 +77,17 @@ def test_run_once_unstarted_forget_preserves_all_memory_carriers(tmp_path, monke
         if failure_point == "write":
             patch.setattr(revocation, "_durable_write", no_barrier)
         elif failure_point == "lock":
-            original_flock = revocation.fcntl.flock
+            # Deny through revocation's own lock seam, which takes flock on POSIX and
+            # msvcrt.locking on Windows (revocation.fcntl is None there).
+            original_flock = revocation._flock
 
-            def deny_first_lock(fd, operation):
-                if operation == revocation.fcntl.LOCK_EX and not denied:
+            def deny_first_lock(handle, *, blocking=True):
+                if blocking and not denied:
                     denied.append("lock")
                     raise OSError("admission lock unavailable")
-                return original_flock(fd, operation)
+                return original_flock(handle, blocking=blocking)
 
-            patch.setattr(revocation.fcntl, "flock", deny_first_lock)
+            patch.setattr(revocation, "_flock", deny_first_lock)
         else:
             from pathlib import Path
 

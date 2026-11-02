@@ -35,7 +35,8 @@ def test_altered_distribution_is_refused(tmp_path, mutation):
     if mutation == "bytes":
         item["content"] = "Zm9yZ2Vk"
     elif mutation == "mode":
-        item["executable"] = 0
+        # Flip the recorded bit: Windows captures no executable bit (0), so setting 0 there alters nothing.
+        item["executable"] = 0 if item["executable"] else 0o111
     elif mutation == "path":
         item["path"] = "../escape"
     elif mutation == "duplicate":

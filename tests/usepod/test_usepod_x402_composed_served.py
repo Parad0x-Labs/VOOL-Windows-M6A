@@ -26,6 +26,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
+from ops.process_tree import stop_process_tree
 from tests.usepod.strict_usepod_service import Listing, StrictUsePodService
 from tests.usepod.test_usepod_served_flow import (
     MARKET,
@@ -559,6 +560,10 @@ def test_an_anthropic_protocol_turn_pays_through_the_x402_messages_path(composed
 
 def _kill_hard(daemon: WalletServedDaemon) -> None:
     """The daemon's process group ends at once: no shutdown path, no cleanup, exactly like a crash or power loss."""
+    if os.name == "nt":
+        # Windows has no os.killpg, os.getpgid or SIGKILL: taskkill /T /F ends the daemon's own tree at once.
+        stop_process_tree(daemon.process, grace_seconds=30.0)
+        return
     os.killpg(os.getpgid(daemon.process.pid), signal.SIGKILL)
     daemon.process.wait(timeout=30)
 
