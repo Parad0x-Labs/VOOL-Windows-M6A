@@ -314,7 +314,9 @@ Operations (Step 2 set):
 | `apply_batch(root, ops[])` | see below | workspace.apply_unified_diff (section 6.1), workspace.rollback_last_change, code.task.rollback (in its task's folder, section 6.1) |
 | `restore_batch(batch_id)` | see below | undoing a part-done batch |
 
-The protocol also has `ping` (no fields) and `close_root(root_id)`, which releases a root and the
+The protocol also has `ping` (no fields), `flagged_path(flagged_id)`, which answers a flagged
+folder's current final path from its held handle in the start line's form (section 4, one list),
+and `close_root(root_id)`, which releases a root and the
 folders it holds; a connection's roots are also released when it closes. A root is known only on
 the connection that opened it (`unknown_root` elsewhere), and an unknown operation is refused
 `unknown_op` (Channel.cs:227-246, 286, 326). For `rename`, `to_root_id` is optional; a rename

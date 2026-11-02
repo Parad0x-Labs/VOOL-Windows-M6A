@@ -150,6 +150,10 @@ public sealed class RootRegistry : IDisposable
     public RootEntry GetEntry(string id) => flagged.TryGetValue(id, out var entry)
         ? entry : throw new BrokerRefusal("unknown_root", "Flagged root id is not registered.");
 
+    /// <summary>The flagged folder's final path now, from the handle held since start, in the start line's form.</summary>
+    public string FinalPath(string flaggedId) =>
+        DisplayPath(Native.GetFinalPath(GetEntry(flaggedId).Handle, Native.VolumeNameDos)).TrimEnd('\\');
+
     /// <summary>
     /// Walks relativePath (empty for the flagged folder itself) and holds every
     /// folder on the way until CloseRoot. Returns an opaque random token.
