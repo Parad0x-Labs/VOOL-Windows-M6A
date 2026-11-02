@@ -51,6 +51,14 @@ jobs:
           python -m pip install -e ".[dev,browser,companion,evm]" -c .github/ci-constraints.txt
       - name: Lint (pinned ruff)
         run: python -m ruff check .
+      - name: Lint explicit text encodings (PLW1514, preview rule)
+        # PLW1514 is still a ruff preview rule. Turning preview on in pyproject would also change
+        # stable rules (F401/F811/F822 report 30 more sites), so only this rule runs in preview.
+        # A text open/read_text/write_text without encoding= uses the locale encoding (cp1252 on
+        # Windows). The vendored and recovered snapshots keep their upstream code, as in pyproject.
+        run: >-
+          python -m ruff check --preview --select PLW1514
+          --extend-exclude core/liquefy/vendor,recovery/historical-gold .
       - name: Canonical pytest collection
         run: >-
           python ops/pytest_manifest.py --repo-root . --output
