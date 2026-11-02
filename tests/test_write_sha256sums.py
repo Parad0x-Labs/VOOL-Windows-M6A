@@ -30,11 +30,10 @@ def test_sums_are_sorted_lf_lines_that_sha256sum_reads(tmp_path: Path) -> None:
 
     assert write_sha256sums.main(["--dir", str(release), "provenance.json", "VOOL-Setup.exe"]) == 0
 
+    installer = hashlib.sha256(b"MZ installer bytes").hexdigest()
+    provenance = hashlib.sha256(b'{"commit": "abc"}\r\n').hexdigest()
     raw = (release / "SHA256SUMS").read_bytes()
-    assert raw == (
-        f"{hashlib.sha256(b'MZ installer bytes').hexdigest()}  VOOL-Setup.exe\n"
-        f"{hashlib.sha256(b'{\"commit\": \"abc\"}' + b'\r\n').hexdigest()}  provenance.json\n"
-    ).encode("ascii")
+    assert raw == f"{installer}  VOOL-Setup.exe\n{provenance}  provenance.json\n".encode("ascii")
 
 
 def test_check_passes_for_the_files_as_written(tmp_path: Path) -> None:
