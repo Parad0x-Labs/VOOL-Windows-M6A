@@ -119,6 +119,11 @@ def system_powershell() -> str:
     return _system32("WindowsPowerShell", "v1.0", "powershell.exe")
 
 
+# The code page Windows' console tools (PowerShell, tasklist, sc, schtasks, taskkill, wevtutil) write
+# to a pipe. text=True alone decodes with the ANSI code page, strictly, so a localized line raises
+# inside subprocess.run; callers pass this with errors="replace". "oem" exists only on Windows.
+CONSOLE_ENCODING = "oem" if os.name == "nt" else "utf-8"
+
 SYSTEM32_TOOLS = frozenset({"taskkill", "schtasks", "tasklist", "sc", "cmd", "wevtutil"})
 
 

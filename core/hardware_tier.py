@@ -205,13 +205,20 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _CIM_TIMEOUT = 12
 
 
+def _console_encoding() -> str:
+    from core import process_liveness
+
+    return process_liveness.CONSOLE_ENCODING
+
+
 def _cim_query(command: str) -> str:
     """Run a read-only WMI query through System32's PowerShell; OSError when it can't be trusted."""
     from core.process_liveness import system_powershell
 
     result = subprocess.run(
         [system_powershell(), "-NoProfile", "-NonInteractive", "-Command", command],
-        capture_output=True, text=True, timeout=_CIM_TIMEOUT, creationflags=_NO_WINDOW,
+        capture_output=True, text=True, encoding=_console_encoding(), errors="replace",
+        timeout=_CIM_TIMEOUT, creationflags=_NO_WINDOW,
     )
     if result.returncode != 0:
         raise OSError(f"Get-CimInstance failed with exit code {result.returncode}")
@@ -340,7 +347,7 @@ def _try_nvidia_smi_devices() -> tuple[GPUDevice, ...]:
                 "--query-gpu=index,name,memory.total,memory.free,driver_version,compute_cap",
                 "--format=csv,noheader,nounits",
             ],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True, text=True, encoding=_console_encoding(), errors="replace", timeout=5,
         )
         if result.returncode != 0:
             return ()

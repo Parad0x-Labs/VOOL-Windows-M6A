@@ -18,6 +18,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from core import process_liveness
 from core.process_liveness import system_powershell, system_tool
 
 _GiB = 1024 ** 3
@@ -41,6 +42,8 @@ def _run(cmd: list[str], runner: Runner) -> Any:
         cmd,
         capture_output=True,
         text=True,
+        encoding=process_liveness.CONSOLE_ENCODING,
+        errors="replace",
         timeout=_SUBPROCESS_TIMEOUT,
         creationflags=_NO_WINDOW,
     )
