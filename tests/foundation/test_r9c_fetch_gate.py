@@ -8,6 +8,15 @@ from __future__ import annotations
 
 import inspect
 
+import pytest
+
+from tests._public_dns import pin_public_test_hosts
+
+
+@pytest.fixture(autouse=True)
+def _public_test_hosts(monkeypatch):
+    pin_public_test_hosts(monkeypatch)
+
 
 def test_machine_download_refused_under_remote_fetch_veto(monkeypatch):
     import urllib.request as _ur
