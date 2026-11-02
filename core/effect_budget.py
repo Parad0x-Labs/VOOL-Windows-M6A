@@ -88,6 +88,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import functools
 import json
 import os
 import secrets
@@ -364,15 +365,51 @@ def pinned_budget_store(connect: Callable[[], sqlite3.Connection]) -> Iterator[N
         _PINNED_STORE.reset(token)
 
 
+#: The connections the running budget operation opened; it closes them when it returns.
+_OPENED: contextvars.ContextVar[list[sqlite3.Connection] | None] = contextvars.ContextVar(
+    "effect_budget_opened_connections", default=None
+)
+
+
+def _closes_its_connections(operation: Callable[..., Any]) -> Callable[..., Any]:
+    """Close every store connection `operation` opened, however it ends.
+
+    Each operation opens a fresh connection and the caller owns it (storage.db's contract). Left to
+    the garbage collector, a connection stays open until a cyclic collection, because CPython's
+    sqlite3 connections sit in reference cycles. On Windows that holds the database file open
+    without delete sharing, so the store's folder cannot be removed. Closing also rolls back a
+    transaction an operation left open when it raised, which is what the collector did later.
+    """
+
+    @functools.wraps(operation)
+    def run(*args: Any, **kwargs: Any) -> Any:
+        opened: list[sqlite3.Connection] = []
+        token = _OPENED.set(opened)
+        try:
+            return operation(*args, **kwargs)
+        finally:
+            _OPENED.reset(token)
+            for conn in opened:
+                with contextlib.suppress(Exception):
+                    conn.close()
+
+    return run
+
+
 def _budget_connection() -> sqlite3.Connection:
     """The one connection seam — tests inject an unavailable store from here
     (the same law as the background journal's `_journal_connection`)."""
     pinned = _PINNED_STORE.get()
     if pinned is not None:
-        return pinned()
-    from storage.db import get_connection
+        conn = pinned()
+    else:
+        from storage.db import get_connection
 
-    return get_connection()
+        conn = get_connection()
+    opened = _OPENED.get()
+    if opened is not None:
+        opened.append(conn)
+    return conn
 
 
 def _ensure_tables(conn: sqlite3.Connection) -> None:
@@ -527,6 +564,7 @@ def current_budget_instance_id() -> str:
     return _INSTANCE.get("id") or ""
 
 
+@_closes_its_connections
 def shutdown_effect_budget_instance() -> None:
     """Clean shutdown: mark this instance closed so a later restart's
     reconciliation releases its outstanding reservations immediately."""
@@ -598,6 +636,7 @@ def _instance_process_gone(row: sqlite3.Row) -> bool:
     return pid_gone(pid)
 
 
+@_closes_its_connections
 def reconcile_stale_reservations(*, force: bool = False) -> list[dict[str, Any]]:
     """The rollback for authorized-but-never-executed effects after a death.
 
@@ -694,6 +733,7 @@ def reconcile_stale_reservations(*, force: bool = False) -> list[dict[str, Any]]
 # ---------------------------------------------------------------------------
 
 
+@_closes_its_connections
 def grant_operator_budget_authority(note: str = "") -> OperatorBudgetToken:
     """Mint the one credential that can change a budget.
 
@@ -746,6 +786,7 @@ def grant_operator_budget_authority(note: str = "") -> OperatorBudgetToken:
     return token
 
 
+@_closes_its_connections
 def _journal_authority_refusal(action: str, why: str) -> None:
     """A refused adjustment/grant attempt is itself a durable fact (law 6)."""
     try:
@@ -789,6 +830,7 @@ class BudgetAdjustment:
     note: str = ""
 
 
+@_closes_its_connections
 def _token_was_granted(token: OperatorBudgetToken) -> bool:
     """A token is real only if its grant is a durable fact in the store — the
     dataclass alone proves nothing (it is constructible by anyone), so a
@@ -813,6 +855,7 @@ def _token_was_granted(token: OperatorBudgetToken) -> bool:
         return False
 
 
+@_closes_its_connections
 def apply_operator_adjustment(
     token: OperatorBudgetToken, adjustments: list[BudgetAdjustment]
 ) -> list[BudgetRule]:
@@ -930,6 +973,7 @@ def apply_operator_adjustment(
     return applied
 
 
+@_closes_its_connections
 def active_budgets(budget_class: str = "") -> list[BudgetRule]:
     """The configured rules (all classes, or one), read-only."""
     conn = _budget_connection()
@@ -1121,6 +1165,7 @@ def _extended_identity(identity: dict[str, str]) -> dict[str, str]:
     }
 
 
+@_closes_its_connections
 def reserve_effect_units(
     budget_class: str,
     *,
@@ -1336,6 +1381,7 @@ def reserve_effect_units(
     )
 
 
+@_closes_its_connections
 def bind_reservation_effect(reservation_id: str, effect_id: str) -> None:
     """Bind a reservation to the gateway-minted effect id (the id does not
     exist when the reservation is made — the ledger mints it at append).
@@ -1356,6 +1402,7 @@ def bind_reservation_effect(reservation_id: str, effect_id: str) -> None:
         raise
 
 
+@_closes_its_connections
 def consume_reservation(reservation_id: str) -> bool:
     """reserved → consumed. Returns True when this call consumed it, False
     when it was already consumed (idempotent per reservation).
@@ -1432,6 +1479,7 @@ def consume_reservation(reservation_id: str) -> bool:
         ) from exc
 
 
+@_closes_its_connections
 def release_reservation(reservation_id: str, *, reason: str = "released") -> bool:
     """reserved → released (the unit returns). Idempotent; False when nothing
     was released (already settled)."""
@@ -1522,6 +1570,7 @@ def release_unconsumed_for_owner(owner_ref: str, *, reason: str, quiet: bool = F
     return released
 
 
+@_closes_its_connections
 def effect_reservation_states(effect_id: str) -> list[str]:
     """The states of every reservation bound to one gateway effect id."""
     if not effect_id:
@@ -1537,6 +1586,7 @@ def effect_reservation_states(effect_id: str) -> list[str]:
     ]
 
 
+@_closes_its_connections
 def release_effect_reservations(effect_id: str, *, reason: str = "reserved-then-never-run") -> int:
     """Release every still-RESERVED reservation bound to one gateway effect id.
 
@@ -1561,6 +1611,7 @@ def release_effect_reservations(effect_id: str, *, reason: str = "reserved-then-
     return released
 
 
+@_closes_its_connections
 def consume_effect_reservations(effect_id: str, *, budget_class: str = "") -> int:
     """Consume every OPEN reservation bound to one gateway effect id.
 
@@ -1637,6 +1688,7 @@ def consume_effect_reservations(effect_id: str, *, budget_class: str = "") -> in
 # ---------------------------------------------------------------------------
 
 
+@_closes_its_connections
 def budget_status(
     budget_class: str,
     *,
@@ -1812,6 +1864,7 @@ def wallet_effect_budget_contract() -> EffectBudgetContract:
 # ---------------------------------------------------------------------------
 
 
+@_closes_its_connections
 def reconcile_effect_cost(
     effect_id: str,
     *,
@@ -1953,6 +2006,7 @@ def reconcile_effect_cost(
 
 
 
+@_closes_its_connections
 def reservation_rows(state: str = "", owner_ref: str = "") -> list[dict[str, Any]]:
     """Durable reservation rows (copies), optionally filtered."""
     conn = _budget_connection()
@@ -1971,6 +2025,7 @@ def reservation_rows(state: str = "", owner_ref: str = "") -> list[dict[str, Any
     return [dict(row) for row in conn.execute(query, params).fetchall()]
 
 
+@_closes_its_connections
 def budget_events(event_kind: str = "", limit: int = 0) -> list[dict[str, Any]]:
     """The durable budget event journal (reservation/consumption/release/
     reconciliation/adjustment/grant/refusal), newest last."""
