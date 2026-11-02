@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Win32.SafeHandles;
 using VoolBroker.Core;
@@ -515,6 +516,115 @@ public sealed class BatchTests : IDisposable
             await TestSupport.Kill(broker);
             TestSupport.DeleteTree(flagged);
             TestSupport.DeleteTree(journalParent);
+        }
+    }
+
+    // Phase C pick 18 (approved 23 Oct): a read or stat asked for while a change runs waits for it,
+    // so it never lands in the moment a replace has set the old file aside and not yet placed the
+    // new one. The real broker is stopped right before the place step; a read on a second
+    // connection must not be answered (today it was answered not_found).
+    [Fact]
+    public async Task A_read_waits_for_a_running_change()
+    {
+        File.WriteAllText(work.In("f.txt"), "original");
+        var place = -1;
+        BatchRunner.BeforeStepForTests = (index, kind) => { if (kind == "place" && place < 0) place = index; };
+        work.Runner.Apply([work.Write("f.txt", "probe", Workspace.Sha256("original"))]);
+        BatchRunner.BeforeStepForTests = null;
+        Assert.True(place > 0, "A replace made no place step.");
+        File.WriteAllText(work.In("f.txt"), "original");
+        // The broker opens the flagged folder itself; this process lets go of it first.
+        work.Registry.Dispose();
+        var bootstrap = TestSupport.DefaultBootstrap([work.Root], work.JournalFolder);
+        var boundary = $"before_step:{place}";
+        var environment = new Dictionary<string, string> { ["VOOL_BROKER_TEST_PAUSE_AT"] = boundary };
+        var (broker, ready) = await TestSupport.StartReady(bootstrap, environment);
+        try
+        {
+            var flaggedId = ready.RootElement.GetProperty("flagged")[0].GetProperty("id").GetString()!;
+            await using var writer = await TestSupport.ConnectAuthenticated(ready, TestSupport.SecretOf(bootstrap));
+            using var writerRoot = await TestSupport.Request(writer, new { id = "open", op = "open_root", flagged_id = flaggedId, rel = "" });
+            await TestSupport.WriteFrame(writer, new
+            {
+                id = "w", op = "write_file", root_id = writerRoot.RootElement.GetProperty("root_id").GetString()!, rel = "f.txt",
+                data = Convert.ToBase64String(Encoding.UTF8.GetBytes("new")), expect = Workspace.Sha256("original"),
+            }, TestContext.Current.CancellationToken);
+            var line = await broker.StandardOutput.ReadLineAsync(TestContext.Current.CancellationToken).AsTask()
+                .WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+            Assert.Equal(JsonSerializer.Serialize(new { paused = boundary }), line);
+
+            // Each ask on its own connection, since an unanswered one holds its connection.
+            foreach (var op in new[] { "read", "stat" })
+            {
+                await using var connection = await TestSupport.ConnectAuthenticated(ready, TestSupport.SecretOf(bootstrap));
+                using var opened = await TestSupport.Request(connection, new { id = "open", op = "open_root", flagged_id = flaggedId, rel = "" });
+                var rootId = opened.RootElement.GetProperty("root_id").GetString()!;
+                var asked = op == "read"
+                    ? TestSupport.Request(connection, new { id = op, op, root_id = rootId, rel = "f.txt", max_bytes = 1024 })
+                    : TestSupport.Request(connection, new { id = op, op, root_id = rootId, rel = "f.txt" });
+                // The broker is killed with the ask still waiting; its broken pipe is expected.
+                _ = asked.ContinueWith(task => task.Exception, TaskContinuationOptions.OnlyOnFaulted);
+                var waited = Task.Delay(TimeSpan.FromSeconds(2), TestContext.Current.CancellationToken);
+                if (await Task.WhenAny(asked, waited) == asked)
+                {
+                    using var reply = await asked;
+                    Assert.Fail($"A {op} during a change was answered: {reply.RootElement.GetRawText()}");
+                }
+            }
+        }
+        finally
+        {
+            ready.Dispose();
+            await TestSupport.Kill(broker);
+        }
+    }
+
+    // The same for open_root: a delete sets the folder aside before its commit, and a batch that
+    // stops puts it back, so a root opened in between would be refused not_found for a folder that
+    // exists before and after (c0a security review, minor 1).
+    [Fact]
+    public async Task Opening_a_root_waits_for_a_running_change()
+    {
+        Directory.CreateDirectory(work.In("d"));
+        var aside = -1;
+        BatchRunner.BeforeStepForTests = (index, kind) => { if (kind == "aside" && aside < 0) aside = index; };
+        work.Runner.Apply([work.Delete("d")]);
+        BatchRunner.BeforeStepForTests = null;
+        Assert.True(aside >= 0, "A folder delete made no aside step.");
+        Directory.CreateDirectory(work.In("d"));
+        work.Registry.Dispose();
+        var bootstrap = TestSupport.DefaultBootstrap([work.Root], work.JournalFolder);
+        var boundary = $"after_step:{aside}";
+        var environment = new Dictionary<string, string> { ["VOOL_BROKER_TEST_PAUSE_AT"] = boundary };
+        var (broker, ready) = await TestSupport.StartReady(bootstrap, environment);
+        try
+        {
+            var flaggedId = ready.RootElement.GetProperty("flagged")[0].GetProperty("id").GetString()!;
+            await using var writer = await TestSupport.ConnectAuthenticated(ready, TestSupport.SecretOf(bootstrap));
+            using var writerRoot = await TestSupport.Request(writer, new { id = "open", op = "open_root", flagged_id = flaggedId, rel = "" });
+            await TestSupport.WriteFrame(writer, new
+            {
+                id = "del", op = "delete", root_id = writerRoot.RootElement.GetProperty("root_id").GetString()!, rel = "d",
+            }, TestContext.Current.CancellationToken);
+            var line = await broker.StandardOutput.ReadLineAsync(TestContext.Current.CancellationToken).AsTask()
+                .WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+            Assert.Equal(JsonSerializer.Serialize(new { paused = boundary }), line);
+
+            await using var connection = await TestSupport.ConnectAuthenticated(ready, TestSupport.SecretOf(bootstrap));
+            var asked = TestSupport.Request(connection, new { id = "o", op = "open_root", flagged_id = flaggedId, rel = "d" });
+            // The broker is killed with the ask still waiting; its broken pipe is expected.
+            _ = asked.ContinueWith(task => task.Exception, TaskContinuationOptions.OnlyOnFaulted);
+            var waited = Task.Delay(TimeSpan.FromSeconds(2), TestContext.Current.CancellationToken);
+            if (await Task.WhenAny(asked, waited) == asked)
+            {
+                using var reply = await asked;
+                Assert.Fail($"An open_root during a change was answered: {reply.RootElement.GetRawText()}");
+            }
+        }
+        finally
+        {
+            ready.Dispose();
+            await TestSupport.Kill(broker);
         }
     }
 }

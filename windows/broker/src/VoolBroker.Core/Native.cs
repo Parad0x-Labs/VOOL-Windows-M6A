@@ -42,6 +42,7 @@ internal static class Native
     internal const uint FileAttributeReadOnly = 0x1;
     internal const uint FileAttributeNormal = 0x80;
     internal const uint FileDirectoryFile = 0x1;
+    internal const uint FileWriteThrough = 0x2;
     internal const uint FileSynchronousIoNonAlert = 0x20;
     internal const uint FileNonDirectoryFile = 0x40;
     internal const uint ObjectCaseInsensitive = 0x40;
@@ -62,9 +63,15 @@ internal static class Native
     private const int FileDispositionInformationExClass = 64;
     private const int FileFullDirectoryInfoClass = 14;
     private const int FileFullDirectoryRestartInfoClass = 15;
+    private const int FileIdBothDirectoryInfoClass = 10;
+    private const int FileIdBothDirectoryRestartInfoClass = 11;
     // FILE_DISPOSITION_DELETE | FILE_DISPOSITION_POSIX_SEMANTICS | FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE
     private const uint DispositionDeleteNow = 0x1 | 0x2 | 0x10;
     private const int ErrorNoMoreFiles = 18;
+    private const int ErrorFileNotFound = 2;
+
+    /// <summary>One entry of a folder: its name, attributes and creation time (FILETIME, UTC).</summary>
+    internal readonly record struct DirectoryEntry(string Name, uint Attributes, long CreationTime);
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct FileAttributeTagInfo { public uint FileAttributes; public uint ReparseTag; }
@@ -363,6 +370,43 @@ internal static class Native
                     var nameLength = Marshal.ReadInt32(entry, 60);
                     var name = Marshal.PtrToStringUni(entry + 68, nameLength / 2);
                     if (name is not ("." or "..")) return false;
+                    var next = Marshal.ReadInt32(entry);
+                    if (next == 0) break;
+                    offset += next;
+                }
+            }
+        }
+        finally { Marshal.FreeHGlobal(memory); }
+    }
+
+    /// <summary>
+    /// Every entry but "." and ".." of the folder handle holds, read from the handle itself
+    /// (FileIdBothDirectoryInfo), never by a path. The scan is kept on the handle, so one handle
+    /// is listed by one caller at a time.
+    /// </summary>
+    internal static List<DirectoryEntry> ListDirectory(SafeFileHandle handle)
+    {
+        const int size = 65536;
+        var entries = new List<DirectoryEntry>();
+        var memory = Marshal.AllocHGlobal(size);
+        try
+        {
+            for (var infoClass = FileIdBothDirectoryRestartInfoClass; ; infoClass = FileIdBothDirectoryInfoClass)
+            {
+                if (!GetFileInformationByHandleEx(handle, infoClass, memory, size))
+                {
+                    var error = Marshal.GetLastWin32Error();
+                    if (error is ErrorNoMoreFiles or ErrorFileNotFound) return entries;
+                    throw new BrokerRefusal("authority_check_failed", new Win32Exception(error).Message);
+                }
+                // FILE_ID_BOTH_DIR_INFO: CreationTime at 8, FileAttributes at 56, FileNameLength
+                // (bytes) at 60, FileName at 104.
+                for (var offset = 0; ;)
+                {
+                    var entry = memory + offset;
+                    var name = Marshal.PtrToStringUni(entry + 104, Marshal.ReadInt32(entry, 60) / 2) ?? "";
+                    if (name is not ("." or ".."))
+                        entries.Add(new DirectoryEntry(name, unchecked((uint)Marshal.ReadInt32(entry, 56)), Marshal.ReadInt64(entry, 8)));
                     var next = Marshal.ReadInt32(entry);
                     if (next == 0) break;
                     offset += next;
