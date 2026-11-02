@@ -372,6 +372,22 @@ inside `apply_batch` stays in the batch's root.
     can't be written names that step, then `N later step(s) not attempted`; the batch stays in
     the journal and the next restore finishes it (undo is idempotent).
 
+Single writes, as built (Phase C C2, core/windows_broker/writes.py): once the API has started the
+broker, workspace.write_file, machine.write_file, workspace.ensure_directory and
+machine.ensure_directory on Windows are sent to the broker and never written by path.
+- The target is placed in the flagged folder that holds its final path (the deepest one when
+  entries nest); a target in none is refused `outside_flagged`. The root is always
+  `open_root(flagged_id, "")`, and the path inside it is the target's final path below the folder.
+- Before the change Python asks `flagged_path` and refuses `flagged_moved` on a mismatch.
+- `expect` is `sha256:` of the bytes VOOL read before the write (or, for a reviewed destination,
+  the reviewed hash), or `absent` when it found no file.
+- Missing parent folders are made by one `ensure_directory` first, as the by-path writers did. If
+  the write is then refused, the refusal names the folders already made.
+- The bytes are the ones each by-path writer puts on disk: UTF-8 with no newline translation,
+  except an unreviewed machine.write_file, which wrote in text mode, so `\n` is sent as `\r\n`.
+- No time stamp or mode is set by path afterwards; the broker's file is new.
+- A process that never started a broker (tests, tools run outside the API) writes by path as before.
+
 Moves across volumes are refused (`cross_volume`). Today `machine.move_path` copies across volumes
 (core/machine_file_ops.py:209 `shutil.move`), so this is a behaviour change (section 10, item 5);
 a copy-then-delete by handle, with its own partial-failure receipt, is later work.

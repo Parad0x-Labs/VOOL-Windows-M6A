@@ -4572,6 +4572,47 @@ def _reviewed_destination_refusal(
     return None
 
 
+def _broker_routed() -> bool:
+    """Whether this call's single write goes through the Windows broker (Phase C C2): on Windows, once
+    the API has started the broker. Everywhere else the writers below keep writing by path."""
+    from core.windows_broker.writes import routed
+
+    return routed()
+
+
+def _broker_refusal(intent: str, *, surface: str, label: str, refused: Any) -> RuntimeExecutionResult:
+    """The broker did not make the change (docs/WINDOWS_BROKER.md section 8): a refusal under the
+    Windows gate's status, with the broker's code. Folders an earlier request of the same call made
+    are named, since then not quite nothing changed."""
+    from core import windows_write_gate
+
+    created = list(refused.created)
+    response = f"The Windows broker did not change `{label}` ({refused.code}"
+    response += f": {refused.message})" if refused.message else ")"
+    if created:
+        response += "; the file was not written, but the broker had already created " + ", ".join(f"`{item}`" for item in created) + "."
+    else:
+        response += "; nothing was changed."
+    return RuntimeExecutionResult(
+        handled=True,
+        ok=False,
+        status=windows_write_gate.STATUS,
+        response_text=response,
+        details={
+            "executed": False,
+            "broker_code": refused.code,
+            "created_folders": created,
+            "observation": _tool_observation(
+                intent=intent,
+                tool_surface=surface,
+                ok=False,
+                status=windows_write_gate.STATUS,
+                reason=refused.code,
+            ),
+        },
+    )
+
+
 def _relative_path(path: Path, *, workspace_root: Path) -> str:
     return workspace_relative_path(path, workspace_root=workspace_root)
 
@@ -5637,8 +5678,18 @@ def _ensure_machine_directory(arguments: dict[str, Any]) -> RuntimeExecutionResu
                 ),
             },
         )
-    already_present = target.exists()
-    target.mkdir(parents=True, exist_ok=True)
+    if _broker_routed():
+        from core.windows_broker.writes import Refused
+        from core.windows_broker.writes import ensure_directory as brokered_ensure_directory
+
+        try:
+            already_present = not brokered_ensure_directory(target)
+        except Refused as refused:
+            return _broker_refusal("machine.ensure_directory", surface="machine", label=_home_relative_label(target),
+                                   refused=refused)
+    else:
+        already_present = target.exists()
+        target.mkdir(parents=True, exist_ok=True)
     status = "already_exists" if already_present else "executed"
     action = "already_present" if already_present else "created"
     return RuntimeExecutionResult(
@@ -5740,7 +5791,9 @@ def _write_machine_file(
     if refusal is not None:
         return refusal
     content = str(arguments.get("content") or "")
-    target.parent.mkdir(parents=True, exist_ok=True)
+    brokered = _broker_routed()
+    if not brokered:
+        target.parent.mkdir(parents=True, exist_ok=True)
     already_present = target.exists()
     expected_hash = str(arguments.get("expected_hash") or "").strip().lower()
     if already_present and expected_hash:
@@ -5768,7 +5821,26 @@ def _write_machine_file(
                     ),
                 },
             )
-    if reviewed_destination is not None:
+    if brokered:
+        # By the broker, with the bytes each by-path writer puts on disk: a reviewed write as
+        # `pinned_atomic_write_text` (no newline translation), any other as `Path.write_text` in text
+        # mode on Windows ("\n" written as "\r\n"). Refused unless the file is still what VOOL read.
+        from core.windows_broker.writes import Refused, expect_for, expect_for_reviewed
+        from core.windows_broker.writes import write_file as brokered_write_file
+
+        if reviewed_destination is not None:
+            data = content.encode("utf-8")
+            expect = expect_for_reviewed(str(reviewed_destination.get("prior_sha256") or ""))
+        else:
+            data = content.replace("\n", "\r\n").encode("utf-8")
+            # A folder in the file's place is left to the broker, which refuses it (`is_a_directory`).
+            expect = expect_for(target.read_bytes() if already_present and target.is_file() else None)
+        try:
+            brokered_write_file(target, data, expect)
+        except Refused as refused:
+            return _broker_refusal("machine.write_file", surface="machine", label=_home_relative_label(target),
+                                   refused=refused)
+    elif reviewed_destination is not None:
         # A reviewed destination is written inside its pinned parent directory, with its reviewed bytes
         # re-read there just before the rename (`pinned_atomic_write_text`).
         from core.execution.artifacts import DestinationChangedError, ReviewedBaseChangedError, pinned_atomic_write_text
@@ -6315,8 +6387,17 @@ def _ensure_directory(
     )
     if refusal is not None:
         return refusal
-    already_present = target.exists()
-    target.mkdir(parents=True, exist_ok=True)
+    if _broker_routed():
+        from core.windows_broker.writes import Refused
+        from core.windows_broker.writes import ensure_directory as brokered_ensure_directory
+
+        try:
+            already_present = not brokered_ensure_directory(target)
+        except Refused as refused:
+            return _broker_refusal("workspace.ensure_directory", surface="workspace", label=relative_path, refused=refused)
+    else:
+        already_present = target.exists()
+        target.mkdir(parents=True, exist_ok=True)
     status = "already_exists" if already_present else "executed"
     action = "confirmed" if already_present else "created"
     return RuntimeExecutionResult(
@@ -6371,7 +6452,8 @@ def _write_file(
     content = str(arguments.get("content") or "")
     existed = target.exists()
     previous_mtime_ns = int(target.stat().st_mtime_ns) if existed and target.is_file() else 0
-    previous = target.read_bytes().decode("utf-8", errors="replace") if existed else ""
+    previous_bytes = target.read_bytes() if existed else None
+    previous = previous_bytes.decode("utf-8", errors="replace") if previous_bytes is not None else ""
     previous_hash = content_sha256(previous) if existed else ""
     # Captured BEFORE the write specifically so a rollback can restore the exact pre-mutation mode
     # later, even if something else re-chmods the file (without touching its content) in between
@@ -6415,7 +6497,20 @@ def _write_file(
     )
     if refusal is not None:
         return refusal
-    if reviewed_destination is not None:
+    if _broker_routed():
+        # By the broker, relative to the flagged folder it holds, refused unless the file is still the
+        # one VOOL read (or reviewed). The broker makes a new file, so its time is already fresh and
+        # nothing is touched by path afterwards.
+        from core.windows_broker.writes import Refused, expect_for, expect_for_reviewed
+        from core.windows_broker.writes import write_file as brokered_write_file
+
+        expect = (expect_for_reviewed(str(reviewed_destination.get("prior_sha256") or ""))
+                  if reviewed_destination is not None else expect_for(previous_bytes))
+        try:
+            brokered_write_file(target, content.encode("utf-8"), expect)
+        except Refused as refused:
+            return _broker_refusal("workspace.write_file", surface="workspace", label=relative_path, refused=refused)
+    elif reviewed_destination is not None:
         # A reviewed destination is written inside its pinned parent directory, with its reviewed bytes
         # re-read there just before the rename (`pinned_atomic_write_text`).
         from core.execution.artifacts import DestinationChangedError, ReviewedBaseChangedError, pinned_atomic_write_text
@@ -6432,9 +6527,10 @@ def _write_file(
                 "workspace.write_file", surface="workspace", status="destination_changed", label=relative_path,
                 reason="changed while it was being written", detail=str(exc),
             )
+        force_fresh_source_timestamp(target, minimum_mtime_ns=previous_mtime_ns)
     else:
         atomic_write_text(target, content)
-    force_fresh_source_timestamp(target, minimum_mtime_ns=previous_mtime_ns)
+        force_fresh_source_timestamp(target, minimum_mtime_ns=previous_mtime_ns)
     after_hash = content_sha256(content)
     # `atomic_write_text` guarantees the target exists with the right mode once it returns without
     # raising -- this stat is defensive against nothing more than a test double that mocks the
