@@ -11,6 +11,7 @@ from typing import Literal
 
 import requests
 
+from core.path_scrub import scrub_windows_paths
 from core.provider_invocation_gateway import (
     seal_direct_provider_invocation,
 )
@@ -66,7 +67,7 @@ _SECRET_PATTERNS = [
     re.compile(r"\b(?:api[_-]?key|token|secret|password|passwd|pwd)\b\s*[:=]\s*\S+", re.IGNORECASE),
     re.compile(r"\b(?:seed phrase|mnemonic|private key)\b", re.IGNORECASE),
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
-    re.compile(r"/Users/[^\\s]+"),
+    re.compile(r"/Users/\S+"),
     re.compile(r"/home/\S+"),   # Linux user home — was unscrubbed while macOS /Users was
     re.compile(r"/root/\S+"),   # Linux root home
 ]
@@ -725,6 +726,9 @@ def _redact_sensitive_text(text: str) -> str:
     from core.secret_redaction import redact_secrets
 
     clean = redact_secrets(str(text or ""))
+    # Windows paths in every spelling (escaped, slashed, UNC/device) and spaced home accounts,
+    # before the POSIX patterns below, which would stop inside a spaced name.
+    clean = scrub_windows_paths(clean, "[REDACTED]")
     for pattern in _SECRET_PATTERNS:
         clean = pattern.sub("[REDACTED]", clean)
     return clean

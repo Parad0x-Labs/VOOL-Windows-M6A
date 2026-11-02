@@ -141,6 +141,11 @@ def classify_path(path: Path | str) -> str | None:
     text = str(path or "")
     if not text:
         return None
+    # Windows paths: backslash is a separator, and a drive prefix ("C:\x", "C:/x", "C:x") is not
+    # a path component. UNC prefixes (\\server\share) simply become leading components.
+    text = text.replace("\\", "/")
+    if len(text) >= 2 and text[1] == ":" and text[0].isalpha():
+        text = text[2:]
     parts = [piece for piece in text.split("/") if piece]
     if not parts:
         return None

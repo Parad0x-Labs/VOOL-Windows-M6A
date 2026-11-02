@@ -24,6 +24,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from core.path_scrub import ends_at_home_account, path_basename, scrub_windows_paths
+
 # --- Section-2 execution stages -------------------------------------------------
 STAGE_UNDERSTANDING = "Understanding"
 STAGE_PLANNING = "Planning"
@@ -209,6 +211,9 @@ def _cost_info(event: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _basename(match: re.Match[str], separator: str) -> str:
+    # a path that ends at the account folder (/Users/alice) would publish the account as its name
+    if ends_at_home_account([part for part in match.group(0).split(separator) if part]):
+        return "<path>"
     tail = match.group(0).rstrip(separator).rsplit(separator, 1)[-1]
     return tail or "<path>"
 
@@ -221,6 +226,9 @@ def _safe_diagnostic_text(value: Any, *, limit: int) -> str:
     # The lane already ships ``provider_id``, so the endpoint URL adds no diagnosis -- only the
     # chance of a credential riding in its query string.
     text = _URL_RE.sub("<url>", text)
+    # Shared Windows-aware pass first (escaped/doubled backslashes, UNC, device forms); the
+    # patterns below still run on everything it leaves.
+    text = scrub_windows_paths(text, path_basename)
     text = _POSIX_PATH_RE.sub(lambda match: _basename(match, "/"), text)
     text = _WINDOWS_PATH_RE.sub(lambda match: _basename(match, "\\"), text)
     return _clip(text, limit)

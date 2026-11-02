@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from core.path_scrub import WINDOWS_PATH_RE
 from core.runtime_paths import active_vool_home
 
 STORE_FILENAME = "config/x_voice_profiles.json"
@@ -45,6 +46,12 @@ MAX_EXCERPTS = 3
 _ABSOLUTE_PATH_PATTERN = re.compile(
     r"(?:/Users?/[\w.\-]+/|/home/[\w.\-]+/|[A-Za-z]:\\Users\\[\w.\-]+\\)"
 )
+
+
+def _has_local_path(text: str) -> bool:
+    """The pattern above, or the shared recogniser (escaped, slashed, UNC/device, spaced account)."""
+    return bool(_ABSOLUTE_PATH_PATTERN.search(text) or WINDOWS_PATH_RE.search(text))
+
 
 # The demand-signal intent (core.tool_demand_signals) that marks a turn as asking for voice.
 VOICE_INTENT = "editorial.voice"
@@ -105,7 +112,7 @@ def _privacy_refusal(text: str) -> str:
 
     if contains_secret(text):
         return "secret_material"
-    if _ABSOLUTE_PATH_PATTERN.search(text):
+    if _has_local_path(text):
         return "local_path"
     try:
         if text_privacy_risks(text):
@@ -318,7 +325,7 @@ def voice_segment_for_turn(
     from core.privacy_guard import text_privacy_risks
     from core.secret_redaction import contains_secret
 
-    if contains_secret(segment) or _ABSOLUTE_PATH_PATTERN.search(segment):
+    if contains_secret(segment) or _has_local_path(segment):
         return ""  # a scanned store should never trip here; refuse honestly if it does
     try:
         if text_privacy_risks(segment):
