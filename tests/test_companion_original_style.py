@@ -168,7 +168,8 @@ def test_the_art_grid_is_still_48_and_the_palette_is_preserved(tmp_path):
         "const out={};['beetle','raven','golem','tide'].forEach(function(id){"
         "out[id]=A_PAL[id];});console.log(JSON.stringify(out));"
     )
-    res = subprocess.run([NATIVE, "-e", COMPANION_ART_JS + probe],
+    # on stdin, not -e: the program outgrows the 32,767-character Windows command line (WinError 206)
+    res = subprocess.run([NATIVE], input=COMPANION_ART_JS + probe,
                          capture_output=True, text=True, check=True)
     pal = json.loads(res.stdout)
     # Values copied from references/collection.html's four primary palettes.
