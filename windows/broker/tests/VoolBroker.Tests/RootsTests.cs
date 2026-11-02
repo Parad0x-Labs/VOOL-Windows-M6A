@@ -76,10 +76,13 @@ public sealed class RootsTests : IDisposable
         if (kind == "junction") TestSupport.CreateJunction(entry, target);
         if (kind == "symlink") TestSupport.CreateDirectorySymlinkOrSkip(entry, target);
         if (kind == "case_sensitive") TestSupport.SetCaseSensitiveOrSkip(entry, enable: true);
+        // A broker that starts opens its journal and writes there, so the journal lives outside the
+        // tree whose hash shows that the skipped entry was left alone.
+        var ownJournal = TestSupport.NewTempDirectory();
         try
         {
             var before = TestSupport.TreeHash(temp);
-            var (broker, ready) = await TestSupport.StartReady(TestSupport.DefaultBootstrap([entry], journal));
+            var (broker, ready) = await TestSupport.StartReady(TestSupport.DefaultBootstrap([entry], ownJournal));
             try
             {
                 Assert.Empty(ready.RootElement.GetProperty("flagged").EnumerateArray());
@@ -97,6 +100,7 @@ public sealed class RootsTests : IDisposable
         finally
         {
             if (kind == "case_sensitive") TestSupport.SetCaseSensitiveOrSkip(entry, enable: false);
+            TestSupport.DeleteTree(ownJournal);
         }
     }
 
