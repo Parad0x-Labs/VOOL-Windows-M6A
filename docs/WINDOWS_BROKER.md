@@ -185,7 +185,7 @@ with approval ingress; it starts only after **both Job 6 and Job 7 have merged**
 | F7 | Volume not NTFS (FAT, exFAT, ReFS) | G accepts | Refuse start, `unsupported_filesystem`. Checked first, from the opened folder's handle (`GetVolumeInformationByHandleW`), before any other check on it; the refusal carries a message naming the file system. | stricter |
 | F8 | Two entries naming the same folder, or one inside another | G keeps both | Accepted. One id per distinct file id; a nested entry keeps its own id. | same |
 | F9 | Journal folder inside a flagged folder | n/a | Refuse start, `journal_inside_flagged` (B §2). The check resolves the deepest existing ancestor's final path, so junction, subst and 8.3 spellings are caught. | new |
-| F10 | Any refused entry | n/a | The whole start is refused, naming the entry and its reason | stricter |
+| F10 | Any refused entry | G skips it and warns | Skipped (Phase C pick 1, owner 23 Oct): the broker starts without it and names it, with its code and message, under `skipped` on the start line; the API logs a warning. The F rows above give the code. | same entries skipped |
 
 - A flagged path holding NUL is refused `invalid_flagged`, and a `journal_dir` holding NUL is
   refused `invalid_bootstrap`. Windows reads a path only up to a NUL, so `C:\a\0\b` would
@@ -779,7 +779,8 @@ for when it is built; item 15 (the stop button must reach the broker) applies to
 from Phase B.
 
 1. A bad entry in VOOL_WINDOWS_DISPOSABLE_WORKSPACES stops the whole broker. The alternative is to
-   drop that entry and show a visible warning.
+   drop that entry and show a visible warning. **Decided 23 Oct (owner): skip and warn; built in
+   Phase C C1 (the start line's `skipped` list).**
 2. OneDrive placeholders are refused. This matters a lot when a flagged folder sits in
    OneDrive-synced Documents.
 3. Hard-linked files are refused, including git objects from a local clone. That collides with the

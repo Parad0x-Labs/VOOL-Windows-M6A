@@ -35,7 +35,10 @@ internal static class Program
             RootRegistry.ValidatePlatform();
             // One start-line entry per bootstrap entry, in bootstrap order (two spellings of one
             // folder share an id), so the API can map each of its entries to the broker's id.
+            // An entry the broker refuses is skipped and named, with its reason, under "skipped": the
+            // other entries stay flagged (Phase C pick 1, owner 23 Oct), and the API logs a warning.
             var reported = new List<Dictionary<string, string>>();
+            var skipped = new List<Dictionary<string, string?>>();
             foreach (var flagged in root.GetProperty("flagged").EnumerateArray())
             {
                 if (flagged.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(flagged.GetString())) return RefuseEntry("", "invalid_flagged");
@@ -45,7 +48,7 @@ internal static class Program
                     var id = roots.AddFlaggedRoot(entry);
                     reported.Add(new Dictionary<string, string> { ["id"] = id, ["path"] = roots.GetEntry(id).Path });
                 }
-                catch (BrokerRefusal refusal) { return RefuseEntry(entry, refusal.Code, refusal.Message); }
+                catch (BrokerRefusal refusal) { skipped.Add(new Dictionary<string, string?> { ["entry"] = entry, ["code"] = refusal.Code, ["message"] = refusal.Message }); }
             }
             var journalDirectory = root.GetProperty("journal_dir").GetString()!;
             try { roots.ValidateJournalOutsideFlagged(journalDirectory); }
@@ -77,7 +80,7 @@ internal static class Program
             using var lifetime = new CancellationTokenSource();
             var brokerPid = Environment.ProcessId;
             var brokerCreationTime = Channel.ReadCreationTime((uint)brokerPid);
-            Console.Out.WriteLine(JsonSerializer.Serialize(new { pipe = channel.PipeName, broker_pid = brokerPid, broker_creation_time = brokerCreationTime, flagged = reported, journal = journalReport }));
+            Console.Out.WriteLine(JsonSerializer.Serialize(new { pipe = channel.PipeName, broker_pid = brokerPid, broker_creation_time = brokerCreationTime, flagged = reported, skipped, journal = journalReport }));
             Console.Out.Flush();
             var stdinClosed = WaitForStdinCloseAsync(lifetime.Token);
             var apiExited = WaitForApiExitAsync(pid, creationTime, lifetime.Token);
