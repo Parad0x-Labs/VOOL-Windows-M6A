@@ -2,8 +2,9 @@
 
 The API starts ``VoolBroker.exe`` as its own child inside a Job object it holds with
 KILL_ON_JOB_CLOSE, so the broker cannot outlive the API (docs/WINDOWS_BROKER.md section 2).
-Nothing is routed through the broker yet: a broker that is missing, refused or slow is reported
-in the log and VOOL runs exactly as it did without it.
+No file change is routed through the broker yet, but from Phase C slice C1 the Windows gate takes
+its flagged folders from the broker's start line (session.py): a broker that is missing, refused
+or slow is reported in the log, and the gate then marks no folder, so gated writes are refused.
 """
 
 from __future__ import annotations
@@ -30,6 +31,14 @@ _FLAGGED_ENV = "VOOL_WINDOWS_DISPOSABLE_WORKSPACES"
 
 
 @dataclass(frozen=True)
+class FlaggedFolder:
+    """One flagged folder as the broker's start line reports it: its id and its final path then."""
+
+    id: str
+    path: str
+
+
+@dataclass(frozen=True)
 class BrokerStatus:
     running: bool
     #: Empty while running; otherwise why not: not_windows, not_found, start_failed,
@@ -37,6 +46,24 @@ class BrokerStatus:
     reason: str
     pipe: str = ""
     pid: int = 0
+    #: The flagged folders the broker holds, in bootstrap order (section 4, one list).
+    flagged: tuple[FlaggedFolder, ...] = ()
+
+
+def _flagged_of(ready: dict[str, Any]) -> tuple[FlaggedFolder, ...] | None:
+    """The start line's flagged list, or None when it is not a list of {id, path} strings."""
+    entries = ready.get("flagged")
+    if not isinstance(entries, list):
+        return None
+    folders = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            return None
+        folder_id, path = entry.get("id"), entry.get("path")
+        if not isinstance(folder_id, str) or not folder_id or not isinstance(path, str) or not path:
+            return None
+        folders.append(FlaggedFolder(folder_id, path))
+    return tuple(folders)
 
 
 class _Job(Protocol):
@@ -162,12 +189,13 @@ class BrokerHost:
             code = str(ready["error"].get("code", "unknown"))
             self._release()
             return BrokerStatus(False, f"refused:{code}")
-        if not isinstance(ready, dict) or not isinstance(ready.get("pipe"), str):
+        flagged = _flagged_of(ready) if isinstance(ready, dict) else None
+        if not isinstance(ready, dict) or not isinstance(ready.get("pipe"), str) or flagged is None:
             self._release()
             return BrokerStatus(False, "bad_start_line")
         # The broker writes nothing after its start line; drain anyway so a full pipe never blocks it.
         threading.Thread(target=self._drain, args=(self._process.stdout,), daemon=True).start()
-        return BrokerStatus(True, "", ready["pipe"], int(self._process.pid))
+        return BrokerStatus(True, "", ready["pipe"], int(self._process.pid), flagged)
 
     def _exchange(self, frame: bytes) -> bytes | None:
         """Send the bootstrap and read the start line: b"" when the broker closed stdout first, None
@@ -233,6 +261,8 @@ def start_for_api(
 
     With ``background`` the start runs on a daemon thread and this returns at once, so the API
     binds its port without waiting on the broker; stop() is still safe at any moment."""
+    from . import session
+
     env = os.environ if environ is None else environ
     journal_dir = vool_home / "broker" / "journal"
     executable = broker_executable(project_root) if _is_windows() else None
@@ -240,12 +270,19 @@ def start_for_api(
         host = BrokerHost(Path("VoolBroker.exe"), [], journal_dir)
         host.status = BrokerStatus(False, "not_windows" if not _is_windows() else "not_found")
         logger.info("Windows broker not started (%s)", host.status.reason)
+        if _is_windows() and environ is None:
+            session.register(host)
         return host
     # Every listed folder goes to the broker as written, so the broker applies its own checks
     # and a refusal shows in the log, rather than being filtered out here first. The list uses
     # the Windows path separator (os.pathsep there), as core/windows_write_gate.py reads it.
     flagged = [part.strip() for part in env.get(_FLAGGED_ENV, "").split(";") if part.strip()]
     host = BrokerHost(executable, flagged, journal_dir)
+    # From here the gate takes its flagged folders from this broker only (section 4, one list):
+    # none while it starts, and none if it never runs. Only for the process's own environment, the
+    # one the gate reads; a caller passing another environment gets a host the gate never uses.
+    if environ is None:
+        session.register(host)
     if background:
         threading.Thread(target=host.start, name="windows-broker-start", daemon=True).start()
     else:

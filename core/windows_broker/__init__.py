@@ -1,2 +1,2 @@
-"""Windows broker client support. Not imported by VOOL before broker wiring."""
+"""Windows broker support: start and stop with the API, the client, and the one flagged list the gate reads."""
 

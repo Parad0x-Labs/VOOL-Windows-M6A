@@ -99,6 +99,16 @@ def _windows_root(part: str) -> str | None:
 
 
 def flagged_roots(environ: dict[str, str] | None = None) -> list[str]:
+    """The flagged folders, each as a normalised final path.
+
+    Once this process has started the Windows broker, they are the broker's (docs/WINDOWS_BROKER.md
+    section 4, one list), each still at the path the broker reported, and none while it does not
+    run; otherwise the variable is read."""
+    if environ is None and _IS_WINDOWS:
+        from core.windows_broker import session
+
+        if session.wired():
+            return [os.path.normcase(path) for path in session.checked_folders()]
     raw = (os.environ if environ is None else environ).get(ENV_VAR, "")
     roots = []
     for part in raw.split(os.pathsep):
