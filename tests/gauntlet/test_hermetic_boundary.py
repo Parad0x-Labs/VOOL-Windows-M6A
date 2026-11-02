@@ -273,7 +273,7 @@ def test_an_on_disk_production_mutation_does_reach_the_child() -> None:
 def test_child_env_strips_the_developers_shell_state() -> None:
     """Determinism: whatever the invoking shell exported must not decide what the child sees."""
     env = child_env(Path("/tmp/gauntlet-fake-home"), port=49999)
-    assert env["VOOL_HOME"] == "/tmp/gauntlet-fake-home"
+    assert env["VOOL_HOME"] == str(Path("/tmp/gauntlet-fake-home"))
     assert env["VOOL_DISABLE_MESH_DAEMON"] == "1"
     assert env["VOOL_DAEMON_BIND_PORT"] == "49999"
 
