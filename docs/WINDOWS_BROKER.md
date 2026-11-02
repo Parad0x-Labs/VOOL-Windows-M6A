@@ -682,8 +682,11 @@ As built (Phase C C5, core/windows_broker/writes.py and core/effect_reconciliati
   them as one plain dict: `wired`, `running`, `reason`, `flagged`, `skipped`, `undo_records`
   (`available` only when `journal.available` is literally true, else `unavailable`), `pending`
   (`batch_id`, `left`), `torn` (`batch_id`, `bytes`, `kept_in`) and `needs_check` (pending or torn
-  is non-empty). A malformed row is kept as an `unknown` row, so it still needs a check. The API
-  endpoint and the banner are later slices.
+  is non-empty). A malformed row is kept as an `unknown` row, so it still needs a check.
+- `GET /api/windows/broker/status` returns that dict as it is. It names flagged folders, so it is an
+  owner-local read: a peer that is not loopback gets 403 `owner_local_required`, a rebound Host
+  header is refused before any route, and the answer carries `Cache-Control: no-store`. The
+  "Check and clear" banner is a later slice.
 
 Client follow-up for Phase C:
 - Map `EffectOutcomeUnknown` and `BatchNotRestored` to VOOL's "outcome unknown, not safe to
