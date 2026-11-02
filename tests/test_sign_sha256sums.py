@@ -33,7 +33,7 @@ def _throwaway_key(tmp_path: Path, key_id: str = "throwaway-test") -> tuple[Path
     private_hex = key.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption()).hex()
     public_hex = key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw).hex()
     key_file = tmp_path / "secrets" / f"{key_id}.private.hex"
-    key_file.parent.mkdir()
+    key_file.parent.mkdir(parents=True)
     key_file.write_text(private_hex + "\n", encoding="utf-8")
     pins = tmp_path / "pins.json"
     pins.write_text(json.dumps({"_schema": "vool.update.trusted_publisher_keys.v1", key_id: public_hex}), encoding="utf-8")
