@@ -139,7 +139,7 @@ def main() -> int:
             print(f"   MISSING FRAGMENTS: {r['must_mint_fragments']}")
 
     if args.out:
-        with open(args.out, "w") as fh:
+        with open(args.out, "w", encoding="utf-8") as fh:
             json.dump({"tree": tree, "mint": list(REAL_MINT), "tally": tally, "rows": rows},
                       fh, indent=1, default=str)
         print(f"\nwrote {args.out}")

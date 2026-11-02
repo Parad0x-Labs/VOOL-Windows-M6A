@@ -1453,7 +1453,7 @@ def main() -> None:
             "debug": [dataclasses.asdict(r) for r in debug],
             "web": [dataclasses.asdict(r) for r in web],
         }
-        with open(args.output, "w") as f:
+        with open(args.output, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         print(f"\nResults saved to {args.output}")
 

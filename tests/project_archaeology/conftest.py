@@ -462,7 +462,7 @@ def journal_count(root: Path) -> int:
 
 
 def read_jsonl(path: Path) -> list[dict]:
-    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 assert sqlite3.threadsafety  # concurrency tests rely on a threadsafe sqlite3 build

@@ -74,7 +74,7 @@ def main():
                 api_clock_contract={"store_turn_statement_at_supported":True,"store_turn_recorded_at_supported":False,
                 "occurrence_store_import_recorded_at_supported":True,"live_capture_tie":"not_executed_not_supported_by_store_turn"})
         else:
-            manifest=json.loads(Path(args.manifest).read_text());ids=manifest["ids"]
+            manifest=json.loads(Path(args.manifest).read_text(encoding="utf-8"));ids=manifest["ids"]
             if args.phase=="mutator":
                 result["deleted_count"]=mem.occurrence_delete(occurrence_id=ids["old"])
                 result["archived_namespace"]=dataclasses.asdict(set_chat_namespace_state(LIVE,"archived"))
@@ -132,7 +132,7 @@ def main():
                     result["foreign_lexical"]=[brief(o) for o,_ in mem.occurrence_search("amber cabinet",chat_scope=FOREIGN,limit=10)]
                     result["missing_after_deletion_ids"]=[oid for oid,_ in mem.occurrence_embeddings_missing(chat_scope=SCOPE,backend=backend,limit=32)]
     finally:mem.close()
-    out=Path(args.out);assert not out.exists();out.write_text(json.dumps(result,ensure_ascii=False,indent=2)+"\n")
+    out=Path(args.out);assert not out.exists();out.write_text(json.dumps(result,ensure_ascii=False,indent=2)+"\n", encoding="utf-8")
     print(json.dumps({"phase":args.phase,"pid":os.getpid(),"output":str(out)}));return 0
 
 

@@ -230,7 +230,7 @@ import ast as _ast
 
 
 def _tree(path: Path) -> _ast.AST:
-    return _ast.parse(path.read_text())
+    return _ast.parse(path.read_text(encoding="utf-8"))
 
 
 def _docstring_nodes(tree: _ast.AST) -> set[int]:

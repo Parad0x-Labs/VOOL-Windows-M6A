@@ -406,7 +406,7 @@ def test_receipts_persist_as_readable_files(browser_world) -> None:
         _run(f"{PLUGIN}.navigate", {"session": "s1", "url": world.a.base + "/product/1"})
         receipts_path = Path(session["receipts_path"])
         assert receipts_path.is_file()
-        rows = [json.loads(line) for line in receipts_path.read_text().splitlines() if line.strip()]
+        rows = [json.loads(line) for line in receipts_path.read_text(encoding="utf-8").splitlines() if line.strip()]
         ops = [row["op"] for row in rows]
         assert "session.open" in ops and "navigate" in ops, ops
         for row in rows:

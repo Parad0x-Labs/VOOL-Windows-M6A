@@ -69,7 +69,7 @@ def corrected_c6(solo: dict[str, str], combined: dict[str, str]) -> tuple[str, l
 
 
 def _run(path: str) -> int:
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         blob: dict[str, Any] = json.load(fh)
     bad = 0
     for run in blob.get("runs", []):

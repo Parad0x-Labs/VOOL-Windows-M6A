@@ -177,7 +177,7 @@ def test_calendar_move_preserves_uid_and_original_duration_on_repeated_edits(sto
     made = _create_calendar_draft("review-calendar")
     assert made.ok
     path = Path(made.details["ics_path"])
-    before = path.read_text()
+    before = path.read_text(encoding="utf-8")
     uid = re.search(r"(?m)^UID:(.*)$", before).group(1)
     def duration(text):
         start = re.search(r"(?m)^DTSTART:(.*)$", text).group(1)
@@ -186,7 +186,7 @@ def test_calendar_move_preserves_uid_and_original_duration_on_repeated_edits(sto
     for date in ("2026-09-16 10:15 Europe/Athens", "2026-09-17 12:40 Europe/Athens"):
         result = dispatch_operator_action(parse_operator_action_intent("move the meeting to " + date), task_id="move", session_id="review-calendar")
         assert result.ok, result.response_text
-        after = path.read_text()
+        after = path.read_text(encoding="utf-8")
         assert re.search(r"(?m)^UID:(.*)$", after).group(1) == uid
         assert duration(after) == duration(before)
 

@@ -367,7 +367,7 @@ def test_a_fetch_blocked_by_policy_is_not_counted_as_an_attempt() -> None:
 def test_the_web_lane_is_wired_into_the_front_door_above_the_machine_lane() -> None:
     from pathlib import Path
 
-    source = Path("core/agent_runtime/turn_frontdoor.py").read_text()
+    source = Path("core/agent_runtime/turn_frontdoor.py").read_text(encoding="utf-8")
     web_at = source.index("url_read = maybe_handle_url_read(")
     machine_at = source.index("_maybe_handle_direct_machine_read_request(")
     live_at = source.index("_maybe_handle_live_info_fast_path(")

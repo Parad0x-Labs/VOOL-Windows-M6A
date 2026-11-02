@@ -101,7 +101,7 @@ def _hold_policy_lock(pact_rig):
 
     lock_path = active_config_home_dir() / ".default_policy.yaml.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    holder = open(lock_path, "w")
+    holder = open(lock_path, "w", encoding="utf-8")
     fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
     return holder
 
@@ -441,7 +441,7 @@ def test_a_racing_publisher_between_lock_release_and_read_cannot_change_the_retu
         if not state["interleaved"] and lock_path.exists():
             import fcntl
 
-            probe = open(lock_path, "w")
+            probe = open(lock_path, "w", encoding="utf-8")
             try:
                 fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                 # A has released the lock: writer B publishes NOW, before A reads.
