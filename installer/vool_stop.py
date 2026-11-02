@@ -61,15 +61,17 @@ def _run(run: Runner, cmd: list[str]) -> Any:
     try:
         # Windows' own taskkill, schtasks and PowerShell by absolute path, never a copy found on
         # PATH; when one can't be trusted the step is skipped like any other command that could not run.
+        from core import process_liveness
         from core.process_liveness import SYSTEM32_TOOLS, system_powershell, system_tool
 
         if cmd[0] == "powershell":
             cmd = [system_powershell(), *cmd[1:]]
         elif cmd[0] in SYSTEM32_TOOLS:
             cmd = [system_tool(cmd[0]), *cmd[1:]]
+        decode = {"encoding": process_liveness.CONSOLE_ENCODING, "errors": "replace"}
         if _NO_WINDOW:
-            return run(cmd, capture_output=True, text=True, check=False, creationflags=_NO_WINDOW)
-        return run(cmd, capture_output=True, text=True, check=False)
+            return run(cmd, capture_output=True, text=True, check=False, creationflags=_NO_WINDOW, **decode)
+        return run(cmd, capture_output=True, text=True, check=False, **decode)
     except Exception:
         return None
 

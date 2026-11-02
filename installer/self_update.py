@@ -502,13 +502,15 @@ def _pid_is_python(pid: int) -> bool:
 
     try:
         if sys.platform == "win32":
-            from core.process_liveness import system_tool
+            from core.process_liveness import CONSOLE_ENCODING, system_tool
 
             # System32's tasklist, never a copy on PATH; an untrusted folder raises, so not python.
             out = subprocess.run(
                 [system_tool("tasklist"), "/FI", f"PID eq {int(pid)}", "/FO", "CSV", "/NH"],
                 capture_output=True,
                 text=True,
+                encoding=CONSOLE_ENCODING,
+                errors="replace",
                 check=False,
                 creationflags=_NO_WINDOW,
             ).stdout.lower()
