@@ -125,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
         record["ephemeral_home_destroyed"] = not home.exists()
         out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+        out.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         print(json.dumps(record, indent=2, sort_keys=True))
 
 

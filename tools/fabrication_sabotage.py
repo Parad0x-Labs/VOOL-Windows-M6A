@@ -557,7 +557,7 @@ def main() -> int:
     }
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.out).write_text(json.dumps(blob, indent=2) + "\n")
+        Path(args.out).write_text(json.dumps(blob, indent=2) + "\n", encoding="utf-8")
         print(f"wrote {args.out}")
 
     bad = [r for r in results if r["verdict"] != "BIT"]

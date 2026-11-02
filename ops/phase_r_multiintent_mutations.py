@@ -156,14 +156,14 @@ def run_pytest(args: list[str]) -> int:
 
 
 def apply_edits(path: Path, edits: list[tuple[str, str]]) -> None:
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     for old, new in edits:
         if old not in text:
             raise SystemExit(f"ANCHOR MISSING in {path.name}: {old[:80]!r}")
         if text.count(old) != 1:
             raise SystemExit(f"ANCHOR NOT UNIQUE in {path.name}: {old[:80]!r}")
         text = text.replace(old, new, 1)
-    path.write_text(text)
+    path.write_text(text, encoding="utf-8")
 
 
 def main() -> int:

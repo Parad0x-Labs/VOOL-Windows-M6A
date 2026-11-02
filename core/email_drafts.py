@@ -385,7 +385,7 @@ def _store_lock() -> Iterator[None]:
     lock_path = path.with_suffix(".lock")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        handle = open(lock_path, "a+")  # noqa: SIM115 - closed by the with-block below
+        handle = open(lock_path, "a+", encoding="utf-8")  # noqa: SIM115 - closed by the with-block below
     except OSError as exc:
         raise DraftStoreRecoveryRequiredError(
             f"The email draft store's lock cannot be opened ({type(exc).__name__}); no draft operation "

@@ -162,7 +162,7 @@ def main() -> int:
     mapping = build_map()
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(mapping, indent=2) + "\n")
+    out.write_text(json.dumps(mapping, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({
         "head": mapping["head"],
         "core_imports_apps_count": mapping["import_direction"]["core_imports_apps_count"],
