@@ -109,9 +109,9 @@ def _parent(rel: str) -> str:
 class _Call:
     """One connection for one call: the folder checked, then its root opened, then the changes."""
 
-    def __init__(self, target: Path) -> None:
+    def __init__(self, target: Path | None = None, *, placed: tuple[Any, str] | None = None) -> None:
         host, status = _status()
-        self.folder, self.rel = _place(target, status)
+        self.folder, self.rel = placed if placed is not None else _place(target, status)  # type: ignore[arg-type]
         self.client = session._client_for(status, host.secret)
         self.created: list[str] = []
 
@@ -141,8 +141,9 @@ class _Call:
     def __exit__(self, *exc_info: object) -> None:
         self.client.close()
 
-    def change(self, operation: str, **arguments: Any) -> dict[str, Any]:
-        """One change request. A lost reply (EffectOutcomeUnknown) propagates: it may have run."""
+    def change(self, operation: str, *, count: int = 1, **arguments: Any) -> list[dict[str, Any]]:
+        """One change request and its `count` results. A lost reply (EffectOutcomeUnknown, and
+        BatchNotRestored for a batch not all put back) propagates: it may have run."""
         try:
             reply = self.client.request(operation, root_id=self.root_id, **arguments)
         except BrokerRefusal as refusal:  # BatchRestored too: put back in full
@@ -150,12 +151,12 @@ class _Call:
         except ConnectionError as exc:  # nothing was written
             raise Refused("broker_unavailable", "the broker could not be reached", created=tuple(self.created)) from exc
         results = reply.get("results")
-        if not isinstance(results, list) or len(results) != 1 or not isinstance(results[0], dict):
-            raise EffectOutcomeUnknown("broker reply for a change has no result")
-        return results[0]
+        if not isinstance(results, list) or len(results) != count or not all(isinstance(row, dict) for row in results):
+            raise EffectOutcomeUnknown("broker reply for a change has no result for each operation")
+        return results
 
     def ensure_directory(self, rel: str) -> None:
-        result = self.change("ensure_directory", rel=rel)
+        result = self.change("ensure_directory", rel=rel)[0]
         created = result.get("created")
         if not isinstance(created, list) or not all(isinstance(item, str) for item in created):
             raise EffectOutcomeUnknown("broker reply for ensure_directory has no created list")
@@ -180,12 +181,47 @@ def write_file(target: Path, data: bytes, expect: str) -> Written:
         parent = _parent(call.rel)
         if parent:
             call.ensure_directory(parent)
-        result = call.change("write_file", rel=call.rel, data=base64.b64encode(data).decode("ascii"), expect=expect)
-        sha = result.get("sha256")
-        file_id = result.get("file_id")
-        if sha != hashlib.sha256(data).hexdigest() or not isinstance(file_id, str):
-            raise EffectOutcomeUnknown("broker reply for write_file does not match the bytes sent")
-        return Written(call.rel, file_id, sha, tuple(call.created))
+        result = call.change("write_file", rel=call.rel, data=base64.b64encode(data).decode("ascii"), expect=expect)[0]
+        return _written(result, call.rel, data, tuple(call.created))
 
 
-__all__ = ["Refused", "Written", "ensure_directory", "expect_for", "expect_for_reviewed", "routed", "write_file"]
+def _written(result: dict[str, Any], rel: str, data: bytes, created: tuple[str, ...]) -> Written:
+    sha = result.get("sha256")
+    file_id = result.get("file_id")
+    if result.get("op") not in (None, "write_file") or sha != hashlib.sha256(data).hexdigest() or not isinstance(file_id, str):
+        raise EffectOutcomeUnknown("broker reply for write_file does not match the bytes sent")
+    return Written(rel, file_id, sha, created)
+
+
+def write_files(changes: list[tuple[Path, bytes, str]]) -> list[Written]:
+    """Write several files as one `apply_batch` (section 6): every `expect` is checked before any
+    file changes, and a batch that stops part way is put back by the broker's journal.
+
+    All files must lie in one flagged folder. Missing parent folders of new files are made first, one
+    `ensure_directory` each, as the by-path writer made them."""
+    if not changes:
+        return []
+    _host, status = _status()
+    placed = [(_place(target, status), data, expect) for target, data, expect in changes]
+    folder = placed[0][0][0]
+    if any(place[0].id != folder.id for place, _data, _expect in placed):
+        raise Refused("spans_flagged", "the files are not all inside one folder the broker holds")
+    if any(not place[1] for place, _data, _expect in placed):
+        raise Refused("invalid_path", "a target is the flagged folder itself, not a file in it")
+    with _Call(placed=(folder, "")) as call:
+        parents: list[str] = []
+        for (_folder, rel), _data, expect in placed:
+            parent = _parent(rel)
+            if expect == "absent" and parent and parent not in parents:
+                parents.append(parent)
+        for parent in parents:
+            call.ensure_directory(parent)
+        ops = [{"op": "write_file", "rel": rel, "data": base64.b64encode(data).decode("ascii"), "expect": expect}
+               for (_folder, rel), data, expect in placed]
+        results = call.change("apply_batch", count=len(ops), ops=ops)
+        return [_written(result, rel, data, tuple(call.created))
+                for result, ((_folder, rel), data, _expect) in zip(results, placed, strict=True)]
+
+
+__all__ = ["Refused", "Written", "ensure_directory", "expect_for", "expect_for_reviewed", "routed", "write_file",
+           "write_files"]

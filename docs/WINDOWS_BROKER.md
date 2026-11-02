@@ -440,6 +440,13 @@ Job 6.
   `rev-parse` either): a patch goes through VOOL's own engine only, rename, copy, mode and binary
   sections are refused, and paths are placed inside the workspace. In Step 3 that engine applies
   the patch through `apply_batch`, so every path is walked by handle by the broker itself.
+  As built (Phase C C3, core/execution/workspace_tools.py): once the API has started the broker,
+  the rendered files go to `writes.write_files` as one `apply_batch` of `write_file` operations,
+  each with `expect` from the bytes the patch was rendered from (`absent` for a new file), after
+  one `ensure_directory` per missing folder of a new file. All files must lie in one flagged folder
+  (`spans_flagged` otherwise). A refused or restored batch writes nothing and is reported under the
+  gate's status with the broker's code; a batch not put back raises `BatchNotRestored`, so no
+  by-path compensation runs.
 - Whether git runs at all inside an AppContainer is unknown (Git for Windows reads
   `%USERPROFILE%\.gitconfig`, which an AppContainer cannot read, and needs its own folders under
   Program Files); a test must show it before Step 3 relies on it.
