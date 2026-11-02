@@ -35,6 +35,7 @@ import contextlib
 import hashlib
 import json
 import os
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -47,6 +48,8 @@ from core.liquefy import api
 from core.liquefy.redaction import redact_payload
 
 SCHEMA = "vool.liquefy.segment.v1"
+#: The names seal() gives segments: first seq, last seq, original sha prefix.
+_SEGMENT_ID = re.compile(r"[0-9]{12}-[0-9]{12}-[0-9a-f]{12}")
 CANON_FORM = "vool.liquefy.canon.v1"
 MAGIC = b"VLS1"
 
@@ -79,6 +82,15 @@ class SegmentMissingError(LiquefyStoreError):
 
 class SegmentKeyError(LiquefyStoreError):
     """Wrong sealing key / tampered ciphertext; fail closed, serve nothing."""
+
+
+class ErasureIncompleteError(LiquefyStoreError):
+    """An erasure left segment files on disk that an unlink refused; they are receipted as
+    ``unlink_pending`` and removed by the next erasure or the next open of the store."""
+
+    def __init__(self, pending: list[str]):
+        super().__init__(f"erased segments still on disk: {', '.join(pending)}")
+        self.pending = list(pending)
 
 
 class SealVerifyError(LiquefyStoreError):
@@ -167,6 +179,9 @@ class LiquefyLogStore:
             directory.mkdir(parents=True, exist_ok=True)
         self._load_cursor()
         self._repair_hot_tail()
+        # Opening never fails on a sweep; the next erasure or open tries again.
+        with self._lock, contextlib.suppress(OSError):
+            self._sweep_erased_locked()
 
     # ------------------------------------------------------------------ state
     def _load_cursor(self) -> None:
@@ -737,14 +752,22 @@ class LiquefyLogStore:
 
         Cursor first (the events become unreachable), files second; a crash in
         between leaves an inert orphan that gc misses but no read can reach. An
-        erasure receipt (hashes only) is appended."""
+        erasure receipt (hashes only) is appended. Every file in the batch is
+        tried; one an unlink still refuses is named ``unlink_pending`` in the
+        receipt and the call raises ErasureIncompleteError. A file an earlier
+        erasure left behind is removed here first (an ``erase_swept`` receipt),
+        and its id is returned with the ones this call erased."""
         removed: list[str] = []
         with self._lock:
+            try:
+                swept = self._sweep_erased_locked()
+            except OSError:
+                swept = []  # a sweep never blocks a new erasure; the next call tries again
             for row in sorted(self._index.values(), key=lambda r: r["first_seq"]):
                 if row["last_seq"] < seq:
                     removed.append(row["segment_id"])
             if not removed:
-                return []
+                return swept
             tip_before = self._chain_tip
             for segment_id in removed:
                 self._index.pop(segment_id, None)
@@ -755,23 +778,76 @@ class LiquefyLogStore:
                 self._chain_tip = _sha256_hex((self._chain_tip + row["segment_hash"]).encode("utf-8"))
             self._last_sealed_seq = max((row["last_seq"] for row in self._index.values()), default=0)
             self._write_cursor_locked()
-            for segment_id in removed:
-                path = self._segment_path(segment_id)
-                windows_sharing_retry.unlink(path, missing_ok=True)
-            _fsync_directory(self.segments_dir)
+            pending = self._unlink_segments_locked(removed)
+            receipt = {
+                "action": "erase_cold_before",
+                "boundary_seq": int(seq),
+                "segment_ids": removed,
+                "chain_tip_before": tip_before,
+                "chain_tip_after": self._chain_tip,
+                "requester": requester or "retention",
+                "at": _utcnow(),
+            }
+            if pending:
+                receipt["unlink_pending"] = pending
+            _append_receipt_line(self.receipts_dir / "erasure.jsonl", receipt)
+            if pending:
+                raise ErasureIncompleteError(pending)
+        return swept + removed
+
+    def _unlink_segments_locked(self, segment_ids: list[str]) -> list[str]:
+        """Unlink every named segment file; return the ids whose file an unlink still refused."""
+        pending: list[str] = []
+        for segment_id in segment_ids:
+            try:
+                windows_sharing_retry.unlink(self._segment_path(segment_id), missing_ok=True)
+            except OSError:
+                pending.append(segment_id)
+        _fsync_directory(self.segments_dir)
+        return pending
+
+    def _sweep_erased_locked(self) -> list[str]:
+        """Remove segment files an erasure receipt names that are still on disk.
+
+        Only a segment that some erasure receipt names, that this store's index
+        and the cursor on disk both no longer list, is touched. A cursor that
+        cannot be read sweeps nothing. A file still refused stays for a later
+        sweep; the ones removed get an ``erase_swept`` receipt."""
+        erasures = self.receipts_dir / "erasure.jsonl"
+        if not erasures.exists():
+            return []
+        try:
+            on_disk = json.loads(self.cursor_path.read_text(encoding="utf-8")) if self.cursor_path.exists() else {}
+            listed = {str(row.get("segment_id")) for row in on_disk.get("segments") or []}
+        except (OSError, ValueError, AttributeError, TypeError):
+            return []
+        named: list[str] = []
+        for line in erasures.read_text(encoding="utf-8", errors="replace").splitlines():
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue  # a torn last line names nothing
+            if not isinstance(row, dict):
+                continue
+            for segment_id in row.get("segment_ids") or []:
+                if isinstance(segment_id, str) and segment_id not in named:
+                    named.append(segment_id)
+        left: list[str] = []
+        for segment_id in named:
+            if segment_id in listed or segment_id in self._index or not _SEGMENT_ID.fullmatch(segment_id):
+                continue  # live, or not a name seal() makes: never a path to remove
+            if self._segment_path(segment_id).exists():
+                left.append(segment_id)
+        if not left:
+            return []
+        pending = set(self._unlink_segments_locked(left))
+        swept = [segment_id for segment_id in left if segment_id not in pending]
+        if swept:
             _append_receipt_line(
-                self.receipts_dir / "erasure.jsonl",
-                {
-                    "action": "erase_cold_before",
-                    "boundary_seq": int(seq),
-                    "segment_ids": removed,
-                    "chain_tip_before": tip_before,
-                    "chain_tip_after": self._chain_tip,
-                    "requester": requester or "retention",
-                    "at": _utcnow(),
-                },
+                erasures,
+                {"action": "erase_swept", "segment_ids": swept, "requester": "sweep", "at": _utcnow()},
             )
-        return removed
+        return swept
 
     def _relink_genesis_locked(self) -> None:
         """After a prefix erasure the first surviving segment becomes the chain
