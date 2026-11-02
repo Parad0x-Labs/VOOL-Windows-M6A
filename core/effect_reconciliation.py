@@ -55,7 +55,28 @@ def a6_reserved_intent(intent: str) -> bool:
     from core.runtime_continuity import is_mutating_tool_intent
 
     clean = str(intent or "").strip()
-    return bool(clean) and (is_mutating_tool_intent(clean) or clean in _A6_EXTRA_MUTATING_INTENTS)
+    if not clean:
+        return False
+    if is_mutating_tool_intent(clean) or clean in _A6_EXTRA_MUTATING_INTENTS:
+        return True
+    return clean in _A6_BROKER_INTENTS and _broker_routed()
+
+
+# Broker-backed intents that are not A6-reserved elsewhere (docs/WINDOWS_BROKER.md section 8, Phase C
+# C5). On Windows, once the API has started the broker, a lost broker reply on one of them may have
+# moved or made something, so it is reserved and recorded `unknown`, not safe to retry. Mac and Linux
+# keep today's list.
+_A6_BROKER_INTENTS = frozenset({"machine.ensure_directory", "machine.move_path", "code.task.rollback"})
+
+
+def _broker_routed() -> bool:
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return False
+    from core.windows_broker.session import wired
+
+    return wired()
 
 
 class EffectOutcomeUnknown(RuntimeError):

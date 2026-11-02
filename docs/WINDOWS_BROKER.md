@@ -670,6 +670,15 @@ Client outcomes as built (`core/windows_broker/client.py`):
   `error.code` and `error.cause`, for `restore_incomplete` and `restored:false`. The connection
   is closed after either, so a caller reconnects to call `restore_batch`.
 
+As built (Phase C C5, core/windows_broker/writes.py and core/effect_reconciliation.py):
+- A change request whose reply was lost, whose reply makes no sense, or a batch the broker could not
+  put back, raises `writes.OutcomeUnknown`, which is VOOL's own `EffectOutcomeUnknown` (reasons
+  `broker_reply_lost`, `broker_reply_unclear`, `broker_batch_not_restored`, the last with the
+  broker's `batch`) and the client's too. The executor then records an A6-reserved intent with a
+  claim as `unknown`, not safe to retry.
+- On Windows, while the broker is routed, machine.ensure_directory, machine.move_path and
+  code.task.rollback are A6-reserved as well. Mac and Linux keep today's list.
+
 Client follow-up for Phase C:
 - Map `EffectOutcomeUnknown` and `BatchNotRestored` to VOOL's "outcome unknown, not safe to
   retry" state, never to a plain refusal.

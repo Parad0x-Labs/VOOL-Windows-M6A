@@ -28,8 +28,25 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.effect_reconciliation import EffectOutcomeUnknown as _VoolOutcomeUnknown
+
 from . import session
-from .protocol import BrokerRefusal, EffectOutcomeUnknown
+from .protocol import BatchNotRestored, BrokerRefusal, EffectOutcomeUnknown
+
+
+class OutcomeUnknown(_VoolOutcomeUnknown, EffectOutcomeUnknown):
+    """A change request was written and its outcome is unknown (section 8): VOOL's own
+    EffectOutcomeUnknown, so an A6-reserved intent holding a claim is recorded `unknown`, not safe to
+    retry, and never a plain failure; and the client's, for callers that catch that. `batch` is the
+    broker's report when a batch could not all be put back."""
+
+    def __init__(self, *, reason: str, detail: str = "", batch: dict[str, Any] | None = None) -> None:
+        super().__init__(reason=reason, detail=detail)
+        self.batch = batch or {}
+
+
+def _unclear(detail: str) -> OutcomeUnknown:
+    return OutcomeUnknown(reason="broker_reply_unclear", detail=detail)
 
 
 class Refused(Exception):
@@ -160,20 +177,27 @@ class _Call:
         BatchNotRestored for a batch not all put back) propagates: it may have run."""
         try:
             reply = self.client.request(operation, root_id=self.root_id, **arguments)
+        except BatchNotRestored as stopped:
+            left = ", ".join(str(item) for item in stopped.batch.get("left") or []) or "unknown"
+            raise OutcomeUnknown(reason="broker_batch_not_restored",
+                                 detail=f"{stopped.code} ({stopped.cause or ''}); still out of place: {left}",
+                                 batch=dict(stopped.batch)) from stopped
+        except EffectOutcomeUnknown as lost:
+            raise OutcomeUnknown(reason="broker_reply_lost", detail=str(lost)) from lost
         except BrokerRefusal as refusal:  # BatchRestored too: put back in full
             raise Refused(refusal.code, refusal.message, created=tuple(self.created)) from refusal
         except ConnectionError as exc:  # nothing was written
             raise Refused("broker_unavailable", "the broker could not be reached", created=tuple(self.created)) from exc
         results = reply.get("results")
         if not isinstance(results, list) or len(results) != count or not all(isinstance(row, dict) for row in results):
-            raise EffectOutcomeUnknown("broker reply for a change has no result for each operation")
+            raise _unclear("broker reply for a change has no result for each operation")
         return results
 
     def ensure_directory(self, rel: str) -> None:
         result = self.change("ensure_directory", rel=rel)[0]
         created = result.get("created")
         if not isinstance(created, list) or not all(isinstance(item, str) for item in created):
-            raise EffectOutcomeUnknown("broker reply for ensure_directory has no created list")
+            raise _unclear("broker reply for ensure_directory has no created list")
         self.created.extend(created)
 
 
@@ -207,7 +231,7 @@ def delete(target: Path) -> None:
             raise Refused("invalid_path", "the target is the flagged folder itself")
         result = call.change("delete", rel=call.rel)[0]
         if result.get("op") not in (None, "delete"):
-            raise EffectOutcomeUnknown("broker reply for delete has the wrong shape")
+            raise _unclear("broker reply for delete has the wrong shape")
 
 
 def rename(source: Path, destination: Path) -> None:
@@ -226,18 +250,16 @@ def rename(source: Path, destination: Path) -> None:
             extra["to_root_id"] = call.root_for(to_folder)
         result = call.change("rename", rel=rel, to=to_rel, replace=False, **extra)[0]
         if result.get("op") not in (None, "rename"):
-            raise EffectOutcomeUnknown("broker reply for rename has the wrong shape")
+            raise _unclear("broker reply for rename has the wrong shape")
 
 
-#: The client's "may have had an effect" outcome, for callers that must not turn it into a failure.
-OutcomeUnknown = EffectOutcomeUnknown
 
 
 def _written(result: dict[str, Any], rel: str, data: bytes, created: tuple[str, ...]) -> Written:
     sha = result.get("sha256")
     file_id = result.get("file_id")
     if result.get("op") not in (None, "write_file") or sha != hashlib.sha256(data).hexdigest() or not isinstance(file_id, str):
-        raise EffectOutcomeUnknown("broker reply for write_file does not match the bytes sent")
+        raise _unclear("broker reply for write_file does not match the bytes sent")
     return Written(rel, file_id, sha, created)
 
 
@@ -285,7 +307,7 @@ def apply_batch(changes: list[tuple[Path, bytes | None, str]]) -> list[Written |
             if data is not None:
                 done.append(_written(result, rel, data, tuple(call.created)))
             elif result.get("op") != "delete":
-                raise EffectOutcomeUnknown("broker reply for delete has the wrong shape")
+                raise _unclear("broker reply for delete has the wrong shape")
             else:
                 done.append(rel)
         return done
