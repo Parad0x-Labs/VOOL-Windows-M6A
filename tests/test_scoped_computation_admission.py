@@ -9,7 +9,7 @@ from core.conductor.registry import NodeContext
 from core.conductor.shared_context import extract_shared_context
 from core.turn_ir import parse_turn_ir
 
-ORIGINAL = (Path(__file__).parent / "fixtures/portfolio_last_run.txt").read_text()
+ORIGINAL = (Path(__file__).parent / "fixtures/portfolio_last_run.txt").read_text(encoding="utf-8")
 NOVEL = (
     "A tank holds 960 litres. Split it 35% to line A and 65% to line B.\n"
     "Line A loses 8% during filtering. Calculate:\n"

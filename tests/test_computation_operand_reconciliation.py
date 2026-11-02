@@ -11,7 +11,7 @@ from core.conductor.scheduler import _context_for
 from core.conductor.shared_context import extract_shared_context
 
 ROOT = Path(__file__).resolve().parents[1]
-LIVE = json.loads((ROOT / "tests/fixtures/model_orchestration_boundary/portfolio-ling-3.0-flash-scheduled-74a272a1.json").read_text())
+LIVE = json.loads((ROOT / "tests/fixtures/model_orchestration_boundary/portfolio-ling-3.0-flash-scheduled-74a272a1.json").read_text(encoding="utf-8"))
 NOVEL = ("A depot receives 840 cartons. Allocate 40% to restoration and the rest to storage. "
          "Restoration rejects 10% of its allocation. Calculate the usable restoration cartons.")
 

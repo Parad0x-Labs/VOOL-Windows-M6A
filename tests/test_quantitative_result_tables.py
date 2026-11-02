@@ -9,7 +9,7 @@ from core.conductor.operations import _quantitative_expand, _quantitative_render
 from core.conductor.registry import NodeContext
 from core.conductor.shared_context import extract_shared_context
 
-ORIGINAL = (Path(__file__).parent / "fixtures/portfolio_last_run.txt").read_text()
+ORIGINAL = (Path(__file__).parent / "fixtures/portfolio_last_run.txt").read_text(encoding="utf-8")
 NOVEL = (
     "A workshop has 840 metres of fabric. Reserve 15% for samples. "
     "Calculate the reserved and remaining lengths and present them in a table."

@@ -10,7 +10,7 @@ import pytest
 from core.agent_runtime.response import _validate_final_chat_output
 from core.unsourced_current_claim import inspect_unsourced_current_claim
 
-CASES = json.loads(Path(__file__).with_name('owner_fresh_round2_cases.json').read_text())
+CASES = json.loads(Path(__file__).with_name('owner_fresh_round2_cases.json').read_text(encoding='utf-8'))
 
 @pytest.fixture(autouse=True)
 def isolate_telemetry():

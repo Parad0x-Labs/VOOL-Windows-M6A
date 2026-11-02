@@ -11,8 +11,8 @@ from core.ordinary_chat_response_guard import (
 )
 from core.response_constraints import parse_clause_response_constraint
 
-OWNER_BUILD = (Path(__file__).parent / "fixtures/pingkeeper_owner_build.txt").read_text()
-OWNER_FORMAT = (Path(__file__).parent / "fixtures/portfolio_owner_format.txt").read_text()
+OWNER_BUILD = (Path(__file__).parent / "fixtures/pingkeeper_owner_build.txt").read_text(encoding="utf-8")
+OWNER_FORMAT = (Path(__file__).parent / "fixtures/portfolio_owner_format.txt").read_text(encoding="utf-8")
 NEW_BUILD = (
     "Create a compact but reliable inventory service called StockLedger.\n\n"
     "Acceptance conditions:\n\n"

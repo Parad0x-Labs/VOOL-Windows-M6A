@@ -16,7 +16,7 @@ from core.conductor.shared_context import (
 
 
 @pytest.mark.parametrize("text,total,percent,expected", [
-    ((Path(__file__).parent / "fixtures/portfolio_last_run.txt").read_text(), 12500, 25, 3125),
+    ((Path(__file__).parent / "fixtures/portfolio_last_run.txt").read_text(encoding="utf-8"), 12500, 25, 3125),
     ("A kiln receives 840 kg of clay. Calculate the 12.5% discarded and the remainder.", 840, 12.5, 105),
 ])
 def test_share_binding_is_consistent_from_briefing_through_render(text, total, percent, expected):
