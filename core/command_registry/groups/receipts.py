@@ -132,7 +132,7 @@ def _handle_receipts_verify(inp, ctx):
                 summary=(f"No honesty ledger exists yet; memory kernel chain: {kernel['ledgers']} ledgers, "
                          f"{kernel['envelopes']} envelopes consistent"),
             )
-        receipts = json.loads(latest.read_text() or "[]")
+        receipts = json.loads(latest.read_text(encoding="utf-8") or "[]")
         source = str(latest)
     ok, reason = verify_honesty_chain(receipts)
     if not ok:

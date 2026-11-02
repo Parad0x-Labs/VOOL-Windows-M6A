@@ -54,8 +54,8 @@ def _probe_lifeform_store(context: dict) -> tuple[bool, str]:
         data_dir = active_data_dir()
         data_dir.mkdir(parents=True, exist_ok=True)
         probe = data_dir / ".lifeform_availability_probe"
-        probe.write_text("ok")
-        ok = probe.read_text() == "ok"
+        probe.write_text("ok", encoding="utf-8")
+        ok = probe.read_text(encoding="utf-8") == "ok"
         probe.unlink(missing_ok=True)
         return ok, "lifeform store writable" if ok else "data dir rejected the probe write"
     except Exception as exc:

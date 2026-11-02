@@ -573,7 +573,7 @@ class UpdateFlow:
             return self._abort(f"no installer for platform {self.platform}", fault=UpdateFault.NOT_APPLICABLE)
         if self.allow_publisher_verified_adhoc and self.platform.startswith("macos-"):
             try:
-                metadata = json.loads((bundle_dir / "Contents/Resources/BUILD_MANIFEST.json").read_text())
+                metadata = json.loads((bundle_dir / "Contents/Resources/BUILD_MANIFEST.json").read_text(encoding="utf-8"))
                 expected_arch = "arm64" if self.platform == "macos-arm64" else "x86_64"
                 if metadata.get("arch") != expected_arch or metadata.get("version") != manifest.version + "-beta":
                     raise ValueError("the Mac payload's architecture/version does not match this signed offer")
@@ -751,7 +751,7 @@ class UpdateFlow:
             logger.warning("could not capture the running app's health identity")
         root = self.app_path / "Contents/Resources/app" if self.platform.startswith("macos-") else self.app_path
         try:
-            source = json.loads((root / "config/build-source.json").read_text())
+            source = json.loads((root / "config/build-source.json").read_text(encoding="utf-8"))
             return str(source.get("commit_full") or self.installed_version)
         except (OSError, ValueError):
             return self.installed_version

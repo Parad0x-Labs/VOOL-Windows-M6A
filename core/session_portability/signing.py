@@ -45,7 +45,7 @@ def trusted_fingerprints() -> list[str]:
     if not path.is_file():
         return []
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
     entries = data.get("fingerprints") if isinstance(data, dict) else data
@@ -59,13 +59,13 @@ def add_trusted_fingerprint(fingerprint: str) -> None:
     current: list[str] = []
     if path.is_file():
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
             current = [str(item) for item in (data.get("fingerprints") or []) if isinstance(item, str)]
         except (OSError, ValueError):
             current = []
     if fingerprint not in current:
         current.append(fingerprint)
-    path.write_text(json.dumps({"fingerprints": current}, indent=1) + "\n")
+    path.write_text(json.dumps({"fingerprints": current}, indent=1) + "\n", encoding="utf-8")
     with contextlib.suppress(OSError):
         path.chmod(0o600)
 

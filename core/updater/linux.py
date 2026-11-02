@@ -90,7 +90,7 @@ class LinuxProcessHelper(MacProcessHelper):
         if os.environ.get("VOOL_LAUNCHD_SUPERVISOR") == "1" or os.environ.get("VOOL_UPDATE_LAUNCHER_WAITING") == "1":
             return True  # the existing installer-owned supervisor resumes
         try:
-            receipt = json.loads((self.app_path / "install_receipt.json").read_text())
+            receipt = json.loads((self.app_path / "install_receipt.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             receipt = {}
         service = str(receipt.get("launch_agent_path") or (receipt.get("launch_agent") or {}).get("macos") or "")

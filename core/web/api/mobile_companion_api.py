@@ -194,7 +194,7 @@ class CompanionStore:
     def _load(self) -> None:
         if self._state_path.exists():
             try:
-                raw = json.loads(self._state_path.read_text())
+                raw = json.loads(self._state_path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 raw = None
             if isinstance(raw, dict) and raw.get("version") == 1:
@@ -204,7 +204,7 @@ class CompanionStore:
 
     def _save(self) -> None:
         tmp = self._state_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self._data, indent=2))
+        tmp.write_text(json.dumps(self._data, indent=2), encoding="utf-8")
         os.chmod(tmp, 0o600)
         os.replace(tmp, self._state_path)
 
@@ -303,7 +303,7 @@ class CompanionStore:
         rows: list[dict[str, Any]] = []
         if self._receipts_path.exists():
             try:
-                for line in self._receipts_path.read_text().splitlines():
+                for line in self._receipts_path.read_text(encoding="utf-8").splitlines():
                     line = line.strip()
                     if not line:
                         continue
@@ -321,7 +321,7 @@ class CompanionStore:
             return None
         prev = ""
         try:
-            for line in self._receipts_path.read_text().splitlines():
+            for line in self._receipts_path.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
                 if not line:
                     continue

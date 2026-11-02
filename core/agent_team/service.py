@@ -98,7 +98,7 @@ def start(session_id: str, plan: Sequence[Mapping[str, Any]], *, team_limits: Ma
             team = TeamCoordinator(_team_dir(session_id), workspace=workspace, team_limits=limits,
                                    tick_seconds=tick_seconds, chat_text=chat_text, model_runner=runner,
                                    on_alert=_notifier(session_id))
-            (_team_dir(session_id) / "session.txt").write_text(str(session_id))
+            (_team_dir(session_id) / "session.txt").write_text(str(session_id), encoding="utf-8")
             team.start_loop()
             _TEAMS[_team_dir(session_id).name] = team
         try:
@@ -161,7 +161,7 @@ def recover_all() -> list[dict[str, Any]]:
                 if path.parent.name in _TEAMS:
                     continue
                 try:
-                    session_id = (path.parent / "session.txt").read_text().strip()
+                    session_id = (path.parent / "session.txt").read_text(encoding="utf-8").strip()
                 except OSError:
                     session_id = ""
                 team = TeamCoordinator(path.parent, on_alert=_notifier(session_id))

@@ -704,7 +704,7 @@ def _stage_attachments(
             with contextlib.suppress(OSError):
                 bytes_tmp.chmod(0o600)
         if not manifest_tmp.exists():
-            manifest_tmp.write_text(json.dumps(manifest, sort_keys=True))
+            manifest_tmp.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
         staged.append(
             (bytes_tmp, manifest_tmp, manifest, data)
         )

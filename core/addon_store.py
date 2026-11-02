@@ -494,7 +494,7 @@ def install_review(review_id: str, *, accepted: bool, risk_override: bool = Fals
             manifest = {"name": plugin_id, "version": entry["ref"][:12], "skills": "./skills/", "tools": [], "permissions": [],
                         "author": {"name": entry["publisher"]}, "interface": {"displayName": entry["name"], "shortDescription": entry["description"], "category": entry["category"]}}
             (target / ".codex-plugin").mkdir()
-            (target / ".codex-plugin" / "plugin.json").write_text(json.dumps(manifest, sort_keys=True))
+            (target / ".codex-plugin" / "plugin.json").write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
             receipt.update(plugin_id=plugin_id, pack_digest=lifecycle.manifest_digest(target))
             _write(_installed_receipt(plugin_id, create=True), receipt)
             lifecycle.install(plugin_id, root=target, source="eyebrow-catalog:" + safe_entry_id)

@@ -205,7 +205,7 @@ def run_ab(universal_child: Path | None, host_arch: str) -> dict:
             log = root / f"{name}.log"
             if not log.exists():
                 return False
-            return "probe_complete=1" in log.read_text(errors="replace")
+            return "probe_complete=1" in log.read_text(errors="replace", encoding="utf-8")
 
         deadline = time.time() + 60
         while time.time() < deadline:
@@ -217,7 +217,7 @@ def run_ab(universal_child: Path | None, host_arch: str) -> dict:
             log = root / f"{name}.log"
             parsed: dict = {}
             if log.exists():
-                for line in log.read_text(errors="replace").splitlines():
+                for line in log.read_text(errors="replace", encoding="utf-8").splitlines():
                     if "=" in line:
                         k, _, v = line.partition("=")
                         parsed[k.strip()] = v.strip()
@@ -247,7 +247,7 @@ def main(argv: list[str]) -> int:
         report["verdict"] = "DETECTOR NOT VALIDATED -- results below would not be evidence"
         print(json.dumps(report, indent=2))
         if opts.json:
-            opts.json.write_text(json.dumps(report, indent=2))
+            opts.json.write_text(json.dumps(report, indent=2), encoding="utf-8")
         return 1
 
     report["ab"] = run_ab(opts.universal_child, host_arch)
@@ -281,7 +281,7 @@ def main(argv: list[str]) -> int:
     print(f"defect reproduced        {report['defect_reproduced']}")
     print(f"fix effective            {report['fix_effective']}")
     if opts.json:
-        opts.json.write_text(json.dumps(report, indent=2))
+        opts.json.write_text(json.dumps(report, indent=2), encoding="utf-8")
         print(f"json                     {opts.json}")
     return 0 if report["defect_reproduced"] and report["fix_effective"] else 1
 

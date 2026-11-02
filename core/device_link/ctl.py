@@ -47,7 +47,7 @@ def load_book(path: Path) -> dict:
     path = Path(path)
     if not path.exists():
         return {"grants": {}, "revoked": {}}
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict) or "grants" not in data:
         raise ValueError(f"not a device-link grant book: {path}")
     return data
@@ -57,7 +57,7 @@ def save_book(path: Path, book: dict) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(book, indent=2, sort_keys=True))
+    tmp.write_text(json.dumps(book, indent=2, sort_keys=True), encoding="utf-8")
     tmp.replace(path)
 
 

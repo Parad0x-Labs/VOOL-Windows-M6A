@@ -438,7 +438,7 @@ def main(argv: list[str]) -> int:
     if data["symlinks_escaping_bundle"]:
         print(f"symlinks escaping       {len(data['symlinks_escaping_bundle'])}")
     if out_path:
-        out_path.write_text(json.dumps(data, indent=2))
+        out_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
         print(f"json                    {out_path}")
     return 0
 

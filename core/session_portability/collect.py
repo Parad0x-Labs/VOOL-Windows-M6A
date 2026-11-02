@@ -354,7 +354,7 @@ def _collect_attachments(
         return metadata, embedded, attachment_bytes, evidence_refs
     for manifest_path in sorted(stage_dir.glob("*.json")):
         try:
-            record = json.loads(manifest_path.read_text())
+            record = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
         if str(record.get("session_id") or "") != session_id:

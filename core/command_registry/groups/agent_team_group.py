@@ -79,7 +79,7 @@ def _probe_teams_root(context: dict) -> tuple[bool, str]:
 
         root = teams_root()
         probe = root / ".probe"
-        probe.write_text("ok")
+        probe.write_text("ok", encoding="utf-8")
         probe.unlink()
         return True, f"team store writable at {root}"
     except Exception as exc:

@@ -41,7 +41,7 @@ def main() -> int:
         probe.bind(("127.0.0.1", args.port))
     process = subprocess.Popen(command)
     origin = f"http://127.0.0.1:{args.port}"
-    expected = (root / "SOURCE_COMMIT").read_text().strip()
+    expected = (root / "SOURCE_COMMIT").read_text(encoding="utf-8").strip()
 
     def stop(_signum: int, _frame: object) -> None:
         process.terminate()

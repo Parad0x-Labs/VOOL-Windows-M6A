@@ -585,7 +585,7 @@ def rebuild_projection(
     resume_from = -1
     if resume and state_path.exists():
         try:
-            resume_from = int(json.loads(state_path.read_text()).get("last_blackbox_seq") or -1)
+            resume_from = int(json.loads(state_path.read_text(encoding="utf-8")).get("last_blackbox_seq") or -1)
         except (ValueError, OSError):
             resume_from = -1
 
@@ -686,7 +686,7 @@ def _write_rebuild_state(path: Path, last_blackbox_seq: int) -> None:
                 "updated_at": _utcnow_iso(),
             },
             sort_keys=True,
-        )
+        ), encoding="utf-8"
     )
     tmp.replace(path)
 

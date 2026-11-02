@@ -234,7 +234,7 @@ class TeamCoordinator:
         self.registry.update_agent(agent_id, state="launching")
         snapshot = self.scanner.capture(contract.claims) if contract.claims else {}
         self._launch_snapshots[agent_id] = snapshot
-        (adir / "launch_snapshot.json").write_text(json.dumps({k: list(v) for k, v in snapshot.items()}))
+        (adir / "launch_snapshot.json").write_text(json.dumps({k: list(v) for k, v in snapshot.items()}), encoding="utf-8")
         for name in ("result.json", "status.jsonl", "PAUSE"):
             (adir / name).unlink(missing_ok=True)
         if contract.kind == "process":
@@ -337,7 +337,7 @@ class TeamCoordinator:
                 else:
                     self.budget.settle(reservation, tokens=tokens, usd=usd)
                 parsed = model_agent.parse_result_line(turn.text)
-                (adir / "result_full.txt").write_text(turn.text)
+                (adir / "result_full.txt").write_text(turn.text, encoding="utf-8")
                 outcome = {"text": turn.text, "parsed": parsed, "receipts": turn.receipts,
                            "model_actual": turn.model_actual, "usage_complete": turn.usage_complete}
             except BudgetRefused as exc:
@@ -349,7 +349,7 @@ class TeamCoordinator:
                 outcome = {"error": f"{type(exc).__name__}: {exc}"}
             finally:
                 gate.unbind_session(session_id)
-                (adir / "model_outcome.json").write_text(json.dumps(outcome, default=str))
+                (adir / "model_outcome.json").write_text(json.dumps(outcome, default=str), encoding="utf-8")
 
         thread = threading.Thread(target=_run, name=f"agent-{agent_id}", daemon=True)
         self._model_threads[agent_id] = thread
@@ -443,7 +443,7 @@ class TeamCoordinator:
     def _read_progress(self, agent_id: str) -> None:
         path = self._agent_dir(agent_id) / "status.jsonl"
         try:
-            lines = path.read_text().splitlines()
+            lines = path.read_text(encoding="utf-8").splitlines()
         except OSError:
             return
         for line in reversed(lines):
@@ -536,7 +536,7 @@ class TeamCoordinator:
         ids = list(dict.fromkeys(agent_ids))
         frozen: dict[str, set[int]] = {a: set() for a in ids}
         for agent_id in ids:
-            (self._agent_dir(agent_id) / "PAUSE").write_text("paused by the team coordinator\n")
+            (self._agent_dir(agent_id) / "PAUSE").write_text("paused by the team coordinator\n", encoding="utf-8")
         for _ in range(8):
             lineages, _strays = self.tracker.scan(self._roots())
             new = 0
@@ -670,19 +670,19 @@ class TeamCoordinator:
         receipts = 0
         if contract.kind == "process":
             try:
-                result_payload = json.loads((adir / "result.json").read_text())
+                result_payload = json.loads((adir / "result.json").read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 result_payload = {}
             text = str(result_payload.get("summary") or "")
             if not text:
                 try:
-                    tail = (adir / "stdout.log").read_text(errors="replace")[-4000:]
+                    tail = (adir / "stdout.log").read_text(errors="replace", encoding="utf-8")[-4000:]
                 except OSError:
                     tail = ""
                 text = tail.strip()
         else:
             try:
-                outcome = json.loads((adir / "model_outcome.json").read_text())
+                outcome = json.loads((adir / "model_outcome.json").read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 outcome = {}
             if outcome.get("refused"):
@@ -715,7 +715,7 @@ class TeamCoordinator:
         snapshot = self._launch_snapshots.get(agent_id)
         if snapshot is None:
             try:
-                raw = json.loads((adir / "launch_snapshot.json").read_text())
+                raw = json.loads((adir / "launch_snapshot.json").read_text(encoding="utf-8"))
                 snapshot = {k: tuple(v) for k, v in raw.items()}
             except (OSError, ValueError):
                 snapshot = {}
@@ -737,7 +737,7 @@ class TeamCoordinator:
             verdict.notes.append(note)
         full = adir / "result_full.txt"
         if not full.exists():
-            full.write_text(text)
+            full.write_text(text, encoding="utf-8")
         pointer = os.path.relpath(full, self.team_dir)
         relayed, truncated = relay_line(display_name=row["display_name"], verdict=verdict, summary=text,
                                         pointer=pointer, cap=RESULT_TOKEN_CAP)

@@ -18,7 +18,7 @@ _EXTRA_MODULES = (
     'core/bootstrap_context.py', 'core/context_retrieval.py',
     'core/evidence_compiler.py', 'core/agent_runtime/same_chat_recall.py',
 )
-_CLASSIFICATIONS = json.loads(Path(__file__).with_suffix('.json').read_text())
+_CLASSIFICATIONS = json.loads(Path(__file__).with_suffix('.json').read_text(encoding="utf-8"))
 
 
 def _module_paths(root):
@@ -67,7 +67,7 @@ def _audit(root, *, source_overrides=None):
     sources = {}
     for path in _module_paths(root):
         relative = path.relative_to(root).as_posix()
-        source = (source_overrides or {}).get(relative, path.read_text())
+        source = (source_overrides or {}).get(relative, path.read_text(encoding="utf-8"))
         sources[relative] = _definitions(ast.parse(source))
     errors = []
     if sources.keys() != _CLASSIFICATIONS.keys():

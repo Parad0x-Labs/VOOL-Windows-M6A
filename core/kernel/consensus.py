@@ -447,7 +447,7 @@ def _verdict(path: pathlib.Path) -> str | None:
 
 
 def _write_state(review: pathlib.Path, **kw: object) -> None:
-    (review / "state.json").write_text(json.dumps(kw, indent=2) + "\n")
+    (review / "state.json").write_text(json.dumps(kw, indent=2) + "\n", encoding="utf-8")
 
 
 def _strip(text: str) -> str:
@@ -726,7 +726,7 @@ def resume_review(review: pathlib.Path | str, build: str, poll_s: float = 1.0,
     voting: tuple[str, ...] = tuple(LEGACY_VOTING_SEATS)
     contributors: tuple[str, ...] = ()
     try:
-        st = json.loads((review / "state.json").read_text())
+        st = json.loads((review / "state.json").read_text(encoding="utf-8"))
         if st.get("voting_seats"):
             voting = tuple(st["voting_seats"])
         contributors = tuple(st.get("contributors") or ())
@@ -768,7 +768,7 @@ def _drive(review: pathlib.Path, build: str, poll_s: float,
             "block_sha256": holder_snap.block_digest,
             "vote_file_sha256": {a: sn.file_sha256 for a, sn in snaps.items()},
             "verdicts": {a: sn.verdict for a, sn in snaps.items()},
-        }, indent=2) + "\n")
+        }, indent=2) + "\n", encoding="utf-8")
         _write_state(review, build=build, round=round_no, awaiting=None,
                      verdicts=verdicts, status="consensus", basis=basis,
                      block_sha256=holder_snap.block_digest, holder=holder_snap.name, **policy)
@@ -902,6 +902,6 @@ def _drive(review: pathlib.Path, build: str, poll_s: float,
     except KeyboardInterrupt:
         _write_state(review, build=build, round=0, awaiting=None, verdicts=verdicts,
                      status="aborted", **policy)
-        (review / "aborted.md").write_text("review aborted by the operator; nothing implemented\n")
+        (review / "aborted.md").write_text("review aborted by the operator; nothing implemented\n", encoding="utf-8")
         print("\nreview aborted — state saved, nothing implemented\n")
         return "aborted"

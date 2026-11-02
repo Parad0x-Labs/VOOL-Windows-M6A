@@ -143,7 +143,7 @@ def head_path(kind: str, session_id: str) -> Path:
 def latest_digest(kind: str, session_id: str) -> str:
     p = head_path(kind, session_id)
     try:
-        return str(json.loads(p.read_text()).get("content_digest") or "")
+        return str(json.loads(p.read_text(encoding="utf-8")).get("content_digest") or "")
     except Exception:
         return ""
 
@@ -204,7 +204,7 @@ def issue(*, kind: str, session_id: str, subject_type: str, subject: Any, eviden
                 os.fsync(f.fileno())
             hp = head_path(kind, session_id)
             tmp = hp.with_suffix(".tmp")
-            tmp.write_text(json.dumps({"content_digest": digest, "receipt_id": env.receipt_id, "count": _count(p), "issued_at": env.issued_at}))
+            tmp.write_text(json.dumps({"content_digest": digest, "receipt_id": env.receipt_id, "count": _count(p), "issued_at": env.issued_at}), encoding="utf-8")
             os.replace(tmp, hp)
         except Exception:
             if commit:
@@ -316,7 +316,7 @@ def verify_ledger_file(p: Path) -> tuple[bool, str]:
             return False, f"envelope[{i}] broken_chain"
         prev = str(r.get("content_digest") or "")
     try:
-        head = str(json.loads(p.with_suffix(".head.json").read_text()).get("content_digest") or "")
+        head = str(json.loads(p.with_suffix(".head.json").read_text(encoding="utf-8")).get("content_digest") or "")
     except Exception:
         head = ""
     if rows and head != prev:
