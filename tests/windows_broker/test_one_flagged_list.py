@@ -221,3 +221,21 @@ def test_start_for_api_with_another_environment_leaves_the_gate_alone(monkeypatc
     monkeypatch.setattr(process, "broker_executable", lambda root: None)
     process.start_for_api(tmp_path, tmp_path, environ={})
     assert not session.wired()
+
+
+def test_entries_the_broker_skipped_are_logged_and_the_others_stay_flagged(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    import logging
+
+    line = json.dumps({"pipe": r"\\.\pipe\vool-broker-test", "broker_pid": 4242,
+                       "flagged": [{"id": "a" * 48, "path": r"C:\work\a"}],
+                       "skipped": [{"entry": r"C:\work\typo", "code": "invalid_flagged", "message": "missing"}],
+                       "journal": {"available": True}}).encode() + b"\n"
+    exe = tmp_path / "VoolBroker.exe"
+    exe.write_bytes(b"")
+    host = BrokerHost(exe, [], tmp_path / "journal", popen=lambda argv, **options: _Process(line),
+                      job_factory=_Job, api_identity=lambda: (1, 2), timeout=5.0)
+    with caplog.at_level(logging.WARNING, logger="core.windows_broker.process"):
+        host.start()
+    assert host.status.running and host.status.flagged == (FlaggedFolder("a" * 48, r"C:\work\a"),)
+    assert any(r"C:\\work\\typo" in record.getMessage() and "invalid_flagged" in record.getMessage()
+               for record in caplog.records)
