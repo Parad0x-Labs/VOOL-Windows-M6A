@@ -18,7 +18,7 @@ LEGACY = dict(voting_seats=AGENTS, contributors=())
 
 
 def _file(review, name, body, verdict):
-    (review / name).write_text(body + f"\nVERDICT: {verdict}\n")
+    (review / name).write_text(body + f"\nVERDICT: {verdict}\n", encoding="utf-8")
 
 
 BLOCK = """=== CONSENSUS ===
