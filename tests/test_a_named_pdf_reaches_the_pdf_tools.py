@@ -435,7 +435,7 @@ def test_the_pdf_lane_is_wired_above_the_arbiter_and_the_live_info_lane() -> Non
     which answers a PDF with `binary_file`), above the machine-read lane (which stands down on an
     explicit path), and above the live-info lane (which is what turned a local path into a query).
     """
-    source = Path("core/agent_runtime/turn_frontdoor.py").read_text()
+    source = Path("core/agent_runtime/turn_frontdoor.py").read_text(encoding="utf-8")
     pdf_at = source.index("pdf_read = maybe_handle_pdf_read(")
     arbiter_at = source.index("_maybe_arbitrate_intent(\n        agent,")
     machine_at = source.index("_maybe_handle_direct_machine_read_request(")
@@ -466,7 +466,7 @@ def test_the_pdf_lane_respects_a_forbidden_turn() -> None:
     """Measured by the 2026-08-19 authority census: this lane was the one tool-executing claimant
     with no `action_forbidden` gate -- a turn stamped FORBIDDEN ("do not use tools") still executed
     `pdf.extract_text`. The gate must sit between the import and the call."""
-    source = Path("core/agent_runtime/turn_frontdoor.py").read_text()
+    source = Path("core/agent_runtime/turn_frontdoor.py").read_text(encoding="utf-8")
     import_at = source.index("from core.agent_runtime.fast_paths_pdf import maybe_handle_pdf_read")
     call_at = source.index("pdf_read = maybe_handle_pdf_read(")
     between = source[import_at:call_at]

@@ -189,7 +189,7 @@ def main() -> int:
         for chat in (MAIN_CHAT, FOREIGN_CHAT):
             ensure_chat_namespace(chat, grant_current_receipts=False)
         policy = resolve_memory_access_policy(chat_id=MAIN_CHAT)
-        turns = json.loads(open(args.seed_json).read()) if args.seed_json else []
+        turns = json.loads(open(args.seed_json, encoding="utf-8").read()) if args.seed_json else []
         for entry in turns:
             result = store_turn(
                 entry["chat"],
@@ -274,7 +274,7 @@ def main() -> int:
             mem.close()
         deletion = {"token": args.delete_token, "nodes": node_hits, "occurrences": occ_hits}
 
-    turns_doc = json.loads(open(args.turns_json).read())
+    turns_doc = json.loads(open(args.turns_json, encoding="utf-8").read())
     turns = turns_doc["turns"] if isinstance(turns_doc, dict) else turns_doc
     from core.bootstrap_context import admitted_capsule_evidence_text
     from core.context_retrieval import get_last_retrieval_telemetry
@@ -405,7 +405,7 @@ def main() -> int:
         "seed_receipts": seed_receipts,
         "turns": turn_records,
     }
-    with open(args.out, "w") as handle:
+    with open(args.out, "w", encoding="utf-8") as handle:
         json.dump(document, handle, indent=2)
     return 0
 

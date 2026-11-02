@@ -146,7 +146,7 @@ def test_security_category_cannot_make_runtime_keys_removable():
     from pathlib import Path
 
     from tests.chat_page_js_harness import run_node
-    source=Path('core/vool_settings_page.py').read_text()
+    source=Path('core/vool_settings_page.py').read_text(encoding='utf-8')
     start=source.index('const KEY_FAMILIES')
     helpers=source[start:source.index('function widgetKeys',start)]
     result=run_node(helpers + "\nconsole.log(JSON.stringify({eyebrow:isOperatorKey('security.eyebrow'),runtime:isOperatorKey('security.internal'),cas:isOperatorKey('blackbox.cas.keys')}));")

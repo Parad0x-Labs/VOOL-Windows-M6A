@@ -234,7 +234,7 @@ def test_sabotage_in_memory_config_store_loses_state_across_restarts(native_worl
     healthy = nsl.set_skill_enabled("repo-onboarding", False)
     assert healthy["status"] == "ok"
     store = Path(nsl._enabled_store_path())
-    assert "repo-onboarding" in (json.loads(store.read_text()).get("disabled") or [])
+    assert "repo-onboarding" in (json.loads(store.read_text(encoding="utf-8")).get("disabled") or [])
     nsl.set_skill_enabled("repo-onboarding", True)  # reset the disk for the sabotage run
 
     memory_store: set[str] = set()
@@ -249,7 +249,7 @@ def test_sabotage_in_memory_config_store_loses_state_across_restarts(native_worl
     monkeypatch.setattr(nsl, "set_skill_enabled", memory_write)
     assert memory_write("repo-onboarding", False)["status"] == "ok"
     # The "restart": whatever a fresh process sees is what the DISK holds.
-    on_disk_after = (json.loads(store.read_text()).get("disabled") or []) if store.is_file() else []
+    on_disk_after = (json.loads(store.read_text(encoding="utf-8")).get("disabled") or []) if store.is_file() else []
     assert "repo-onboarding" not in on_disk_after, (
         "sabotage no-op: an in-memory store still reaches the disk, so the persistence "
         "guard is decoration"

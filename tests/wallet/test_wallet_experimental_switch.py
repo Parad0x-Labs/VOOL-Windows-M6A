@@ -62,7 +62,7 @@ def test_the_write_door_accepts_the_switch_and_the_list_reads_it_back():
 
     door = inspect.getsource(registry_authorities.set_prefs_authority)
     assert '"wallet_enabled"' in door, "the prefs write door must accept the switch as a bool preference"
-    src = Path(convergence.__file__).read_text()
+    src = Path(convergence.__file__).read_text(encoding="utf-8")
     assert '"wallet_enabled": p.wallet_enabled' in src, "a value that can be written must be read back by settings.prefs.list"
 
 

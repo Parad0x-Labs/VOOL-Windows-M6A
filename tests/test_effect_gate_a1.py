@@ -375,12 +375,12 @@ class SabotageBase(unittest.TestCase):
 
     @classmethod
     def _read_source(cls):
-        with open(cls.SABOTAGE_PATH) as f:
+        with open(cls.SABOTAGE_PATH, encoding="utf-8") as f:
             return f.read()
 
     @classmethod
     def _write_source(cls, content):
-        with open(cls.SABOTAGE_PATH, "w") as f:
+        with open(cls.SABOTAGE_PATH, "w", encoding="utf-8") as f:
             f.write(content)
 
     @classmethod

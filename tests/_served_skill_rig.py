@@ -327,7 +327,7 @@ class ServedDaemon:
         # Zero-leak sweep: the boot pidfile and any stragglers on OUR port are this rig's mess.
         pidfile = self.home / ".vool_api_server.pid"
         for candidate in (self.home / ".vool_api_server.pid", self.home / "daemon.pid"):
-            with open(os.devnull) as _:
+            with open(os.devnull, encoding="utf-8") as _:
                 pass
             if candidate.is_file():
                 candidate.unlink()

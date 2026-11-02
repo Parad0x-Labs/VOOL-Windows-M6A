@@ -373,7 +373,7 @@ def main() -> int:
     print("=" * 88)
 
     if args.out:
-        with open(args.out, "w") as fh:
+        with open(args.out, "w", encoding="utf-8") as fh:
             json.dump(record, fh, indent=1, default=str)
         print(f"wrote {args.out}")
     return 0

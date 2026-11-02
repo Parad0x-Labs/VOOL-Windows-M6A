@@ -86,7 +86,7 @@ def test_eagle3_draft_model_file_exists_and_is_valid_size() -> None:
     reason="requires llama.cpp start script at /tmp/start-vool-llamacpp.sh",
 )
 def test_llamacpp_start_script_references_8b_model() -> None:
-    with open("/tmp/start-vool-llamacpp.sh") as f:
+    with open("/tmp/start-vool-llamacpp.sh", encoding="utf-8") as f:
         content = f.read()
     assert "qwen3:8b-gguf" in content or "8b" in content.lower(), "start script must reference qwen3:8b model"
     assert "--parallel 4" in content, "start script must use --parallel 4"

@@ -187,7 +187,7 @@ def main():
             report["catalogue"][name] = scan_catalogue(module)
         if args.corpus:
             report["corpus"][name] = scan_original_corpus(module, Path(args.corpus))
-    Path(args.out).write_text(json.dumps(report, indent=1, sort_keys=True))
+    Path(args.out).write_text(json.dumps(report, indent=1, sort_keys=True), encoding="utf-8")
     print("wrote %s" % args.out)
     for name in builds:
         if challenge_dir is not None:

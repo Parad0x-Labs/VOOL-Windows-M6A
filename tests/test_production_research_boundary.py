@@ -207,7 +207,7 @@ def test_agent_background_threads_do_not_start_in_production(monkeypatch):
 def _udp_ports_open_in_proc_net() -> set[int]:
     ports: set[int] = set()
     try:
-        for line in open("/proc/net/udp").read().splitlines()[1:]:
+        for line in open("/proc/net/udp", encoding="utf-8").read().splitlines()[1:]:
             parts = line.split()
             local = parts[1]
             port_hex = local.split(":")[1]
@@ -298,7 +298,7 @@ def test_live_default_boot_binds_no_mesh_ports_and_runs_no_presence_threads(tmp_
         if not threads:
             try:
                 threads = "\n".join(
-                    open(f"/proc/{proc.pid}/task/{tid}/comm").read()
+                    open(f"/proc/{proc.pid}/task/{tid}/comm", encoding="utf-8").read()
                     for tid in os.listdir(f"/proc/{proc.pid}/task")
                 )
             except OSError:

@@ -198,7 +198,7 @@ def test_restart_finds_the_registry_keeps_receipts_and_marks_the_session(browser
         # world the engine thread is still alive, so `ready` is the honest answer
         assert state in {"live", "ready", "stale", "recoverable"}, state
         assert receipts_path.is_file(), "receipts must survive the restart"
-        rows = [json.loads(line) for line in receipts_path.read_text().splitlines() if line.strip()]
+        rows = [json.loads(line) for line in receipts_path.read_text(encoding="utf-8").splitlines() if line.strip()]
         assert any(row["op"] == "navigate" for row in rows)
 
         closed = _run(f"{PLUGIN}.session.close", {"session": "s1"})

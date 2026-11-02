@@ -592,7 +592,7 @@ def test_turn_result_publishes_the_terminal_lifecycle_honestly(monkeypatch):
     assert list(rebuilt.effect_outcomes) == list(outcomes)
 
     # The finalizer reads the SAME account it already reads receipts from.
-    finalization_source = pathlib.Path("core/finalization.py").read_text()
+    finalization_source = pathlib.Path("core/finalization.py").read_text(encoding="utf-8")
     tree = ast.parse(finalization_source)
     wired = any(
         isinstance(node.func, ast.Name)
@@ -648,7 +648,7 @@ def test_page_transport_module_opens_no_raw_socket_of_its_own():
     """Req 8, structural. The bypass the R2b2 audit named (`http_fetch.py`,
     the biggest raw-urlopen bypass) stays dead: no urlopen call site may exist
     in the module outside the one door."""
-    source = pathlib.Path("tools/web/http_fetch.py").read_text()
+    source = pathlib.Path("tools/web/http_fetch.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     raw = [
         f"{node.lineno}"

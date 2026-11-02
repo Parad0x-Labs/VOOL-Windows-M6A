@@ -72,7 +72,7 @@ def _turn(daemon, question: str) -> tuple[str, dict, str]:
 
 
 def _transport(log: Path) -> list[dict]:
-    return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+    return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] if log.exists() else []
 
 
 def _faulted_manifest(tmp_path: Path, rule_name: str, status: int) -> Path:
