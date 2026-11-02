@@ -12,11 +12,13 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from core.process_liveness import system_powershell, system_taskkill
 from core.runtime_paths import native_runtime_home
+from core.windows_job import CREATE_SUSPENDED, new_kill_on_close_job, resume_suspended
 
 # Every age, retry time and unanswered span below is measured on _tick(), never the wall clock: a
 # clock set forward or back is not child age. _tick() is time.monotonic moved on by a fixed origin, so
@@ -189,6 +191,11 @@ def _is_windows_platform() -> bool:
     return os.name == "nt"
 
 
+#: Job objects are a kernel32 feature, so the job is used only when this interpreter really runs
+#: on Windows. Tests that stand in for Windows through ``_is_windows_platform`` set this and pass fakes.
+_JOB_HOST = os.name == "nt"
+
+
 def _windows_root_forms(root: Path) -> tuple[str, ...]:
     """Every spelling of the same bundle root the stale-API scan compares against.
 
@@ -252,6 +259,11 @@ class BundleSupervisor:
         self._window_lost_runtime = False
         # The first measured instant at which such a window was seen exited (_absorb_pause).
         self.exit_seen_at: dict[str, float] = {}
+        # Windows: the one Job object every child joins. When this process ends, however it ends,
+        # Windows closes the handle and kills the children (G4 orphan check, Steve, 177621c).
+        self._job_factory: Callable[[], Any] = new_kill_on_close_job
+        self._resume: Callable[[int], None] = resume_suspended
+        self._job: Any | None = None
 
     def _manifest(self) -> dict[str, Any]:
         path = self.root / "bundle_manifest.json"
@@ -501,6 +513,15 @@ class BundleSupervisor:
         now = _tick()
         if now < self.next_attempt[name]:
             return
+        if _JOB_HOST and _is_windows_platform() and self._job is None:
+            try:
+                self._job = self._job_factory()
+            except Exception as exc:
+                self._schedule_retry(
+                    name, f"not started: the Windows job that ties it to the supervisor could not be created: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                return
         log_path = self.log_dir / f"{name}.log"
         handle = log_path.open("ab")
         creationflags = 0
@@ -508,6 +529,9 @@ class BundleSupervisor:
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(
                 subprocess, "CREATE_NEW_PROCESS_GROUP", 0
             )
+            if self._job is not None:
+                # Suspended until it is in the job, so it starts nothing outside it (core.windows_job).
+                creationflags |= CREATE_SUSPENDED
         try:
             child = subprocess.Popen(
                 argv,
@@ -522,6 +546,17 @@ class BundleSupervisor:
             handle.close()
             self._schedule_retry(name, f"failed to start: {type(exc).__name__}: {exc}")
             return
+        if self._job is not None:
+            try:
+                self._job.assign(child.pid)
+                self._resume(child.pid)
+            except Exception as exc:
+                self.processes[name], self.handles[name] = child, handle
+                self._stop_child(name)
+                self._schedule_retry(
+                    name, f"stopped: it could not be started inside the supervisor's Windows job: {type(exc).__name__}: {exc}"
+                )
+                return
         # Our own work, expected to be quick: awake time up to that, a pause beyond (see _PAUSE_SECONDS).
         # The child's age starts once it exists.
         self._absorb_pause(0.0, f"while starting {name}")
@@ -904,6 +939,11 @@ class BundleSupervisor:
             self._stop_child("window")
             self._stop_child("api")
             self._stop_child("ollama")
+            # Closing the job ends anything of the children's trees the stops above missed.
+            job, self._job = self._job, None
+            if job is not None:
+                with contextlib.suppress(Exception):
+                    job.close()
             self._write_model_status("stopped", "Bundle supervisor stopped.")
             self.state_path.unlink(missing_ok=True)
             self._log("supervisor stopped")
