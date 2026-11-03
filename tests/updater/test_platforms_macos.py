@@ -218,6 +218,10 @@ class TestAtomicSwap:
         for path, marker in ((old1, "one"), (old2, "two"), (old3, "three")):
             (path / "Contents").mkdir(parents=True)
             (path / "Contents" / "marker.txt").write_text(marker, encoding="utf-8")
+        # Distinct ages, oldest first: back-to-back creation can share one clock tick on Windows,
+        # and prune_priors orders by mtime alone.
+        for age, path in enumerate((old1, old2, old3)):
+            os.utime(path, (1_700_000_000 + age, 1_700_000_000 + age))
         outcome = installer.restore_prior(target, old2, txid="txr")
         assert outcome.ok
         assert (target / "Contents" / "marker.txt").read_text() == "two"
