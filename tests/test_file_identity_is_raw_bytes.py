@@ -235,6 +235,17 @@ def test_rolling_back_a_write_over_a_non_utf8_file_never_writes_replacement_char
     assert target.read_bytes() in (BAD_BYTES, b"fixed\n")
 
 
+
+def test_write_file_creates_a_new_file_and_rolling_it_back_removes_it(home: Path) -> None:
+    # An absent file has no bytes to restore: creating one must not trip the restorable check.
+    target = home / "Documents" / "work" / "new.txt"
+    result = _workspace("workspace.write_file", home, path="new.txt", content="hello\n")
+    assert result.ok, result.response_text
+    assert target.read_bytes() == b"hello\n"
+
+    assert _workspace("workspace.rollback_last_change", home).ok
+    assert not target.exists()
+
 # Each case: bytes Python's str.splitlines splits where a unified diff does not, or a file whose last
 # line has no newline. The engine without git (a workspace that is not a work-tree top) must not
 # shift the hunk, rewrite those bytes or add a final newline.
