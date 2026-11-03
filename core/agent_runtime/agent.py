@@ -4892,7 +4892,7 @@ class VoolAgent(
                 root = str(active_workspace_dir())
             except Exception:
                 root = ""
-        from pathlib import PurePosixPath
+        from pathlib import Path, PurePosixPath
 
         top_folders: list[str] = []
         for path in paths:
@@ -4903,8 +4903,9 @@ class VoolAgent(
                 top_folders.append(first)
         if not top_folders:
             return None
-        root_clean = root.strip("/")
-        absolute = f"/{root_clean}/{top_folders[0].strip('/')}" if root_clean else top_folders[0]
+        # The folder in this platform's spelling: on Windows a forced leading "/" and "/" joins
+        # gave "/D:\\...\\ws/finalbot", a path the user cannot paste anywhere.
+        absolute = str(Path(root) / top_folders[0].strip("/")) if root.strip("/") else top_folders[0]
         listed = ", ".join(f"`{path}`" for path in paths[:8])
         response = (
             f"It's in this chat's workspace: `{absolute or top_folders[0]}`.\n"
