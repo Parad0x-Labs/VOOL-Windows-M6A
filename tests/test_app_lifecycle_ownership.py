@@ -206,7 +206,10 @@ _SIGTERM_DRIVER = """
     fake.start = start
     sys.modules["webview"] = fake
 
-    threading.Timer(0.5, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()
+    # Windows "SIGTERM" is TerminateProcess: nothing can catch it (the job object is what ends the
+    # runtime then). Its catchable stop is CTRL_BREAK, which reaches Python as SIGBREAK.
+    _stop = signal.SIGBREAK if os.name == "nt" else signal.SIGTERM
+    threading.Timer(0.5, lambda: signal.raise_signal(_stop) if os.name == "nt" else os.kill(os.getpid(), _stop)).start()
     rc = nw.main()
     print("RC=%d" % rc)
 """
@@ -218,7 +221,7 @@ def test_external_sigterm_tears_down_the_owned_runtime_before_exit(tmp_path: Pat
     assert "START-TIMEOUT" not in done.stdout, "SIGTERM left the window host running"
     assert done.returncode == 0, f"expected a clean exit after teardown, got {done.returncode}"
     assert "FAKE-SUPERVISOR-SHUTDOWN-CALLED" in log, "SIGTERM must release the owned child"
-    assert "SIGTERM" in log
+    assert ("SIGBREAK" if os.name == "nt" else "SIGTERM") in log
     assert "WINDOW-CREATED" in done.stdout
 
 
@@ -349,7 +352,12 @@ def test_sigterm_before_ownership_capture_still_sweeps_the_dead_childs_pidfile(
 
         sup = FakeSupervisor()
         nw._install_termination_handlers(sup, {{"pid": None}})
-        os.kill(os.getpid(), 15)
+        # Windows: SIGBREAK (CTRL_BREAK), the catchable stop; signal 15 there is TerminateProcess.
+        if os.name == "nt":
+            import signal
+            signal.raise_signal(signal.SIGBREAK)
+        else:
+            os.kill(os.getpid(), 15)
         # The real host stays alive until the teardown ends it (the native run loop owns the
         # main thread); a driver that just falls off the end exits before the signal-watcher
         # thread is ever scheduled and proves nothing. Stay alive like the host does; the
