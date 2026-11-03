@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import functools
 import hashlib
 import json
 import logging
@@ -167,6 +168,27 @@ def reset_runtime_continuity_state() -> None:
             conn.close()
 
 
+def _within_one_availability_connection(func):
+    """Run a runtime writer's A8 availability checks on one connection for the whole write.
+
+    Each check outside a read scope opened its own SQLite connection: the gauntlet harness_control
+    profile counted 111,652 of them in one child, 174 s mostly spent opening WAL, almost all from
+    the per-string gates in append_runtime_event and update_runtime_checkpoint. The scope is the
+    one _serve_event_rows uses: verdicts stay per-check and uncached, no read transaction is held
+    between checks, and the connection closes when the write returns. The durable-boundary
+    re-checks still run after the early gate and before the runtime write, as before.
+    """
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        from core.finalization import availability_read_scope
+
+        with availability_read_scope():
+            return func(*args, **kwargs)
+
+    return wrapper
+
+
 def _gate_payload_tree(value: Any, depth: int = 0) -> Any:
     """A8 PASS003 (CE09) write-side gate for details-style trees: every
     embedded string whose governed payload is WITHHELD/ERASED is suppressed
@@ -257,6 +279,7 @@ def _next_session_seq(conn: Any, session_id: str, recorded_event_count: int) -> 
     return max(int(recorded_event_count or 0), max_persisted_seq) + 1
 
 
+@_within_one_availability_connection
 def append_runtime_event(
     *,
     session_id: str,
@@ -874,6 +897,7 @@ def _servable_event_message(message: str) -> str:
     return ""
 
 
+@_within_one_availability_connection
 def update_runtime_checkpoint(
     checkpoint_id: str,
     *,
