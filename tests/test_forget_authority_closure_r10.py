@@ -120,15 +120,19 @@ def test_no_published_barrier_leaves_both_stores_readable_and_reports_nothing_fo
                     authority='observed-user-statement', body='Locker value MINT84.')) for memory in (first, second)]
         before = [[tuple(row) for row in memory._conn.execute('SELECT * FROM source_occurrences')] for memory in (first, second)]
         ledgers = [(home / '.forget-authority/ledger.json').read_bytes() for home in (active, selected)]
-        original = os.replace
+        from core.memory import revocation
 
-        def denied(src, dst, *args, **kwargs):
+        # Ledger publication goes through revocation._replace_file: os.replace on POSIX,
+        # MoveFileExW with write-through on Windows, so the seam is that function, not os.replace.
+        original = revocation._replace_file
+
+        def denied(src, dst):
             if Path(dst).name == 'ledger.json':
                 raise OSError('both publications unavailable')
-            return original(src, dst, *args, **kwargs)
+            return original(src, dst)
 
         with monkeypatch.context() as patch:
-            patch.setattr(os, 'replace', denied)
+            patch.setattr(revocation, '_replace_file', denied)
             reply = forget(selected, chat, 'forget MINT84')
         assert reply.startswith('Nothing was forgotten.'), reply
         assert [[tuple(row) for row in memory._conn.execute('SELECT * FROM source_occurrences')]

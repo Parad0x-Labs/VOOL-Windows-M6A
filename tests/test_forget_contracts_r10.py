@@ -135,12 +135,14 @@ def test_partial_barrier_publication_withholds_the_other_selected_owner(tmp_path
         occ=mem.occurrence_store(chat_scope=chat,role='user',authority='observed-user-statement',
             body='My locker code is MINT84.',statement_at=1760000000)
         assert mem.occurrence_get(occ.occurrence_id).body=='My locker code is MINT84.'
-        original=os.replace
-        def deny_one_authority(src,dst,*args,**kwargs):
+        from core.memory import revocation
+        # The seam is revocation._replace_file (os.replace on POSIX, MoveFileExW on Windows).
+        original=revocation._replace_file
+        def deny_one_authority(src,dst):
             if Path(dst)==selected/'.forget-authority/ledger.json':raise OSError('selected authority publication denied')
-            return original(src,dst,*args,**kwargs)
+            return original(src,dst)
         with monkeypatch.context() as patch:
-            patch.setattr(os,'replace',deny_one_authority)
+            patch.setattr(revocation,'_replace_file',deny_one_authority)
             reply=forget(selected,chat,'forget MINT84')
         import json
         ledger=json.loads((active/'.forget-authority/ledger.json').read_text())
