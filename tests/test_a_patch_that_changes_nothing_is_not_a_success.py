@@ -31,7 +31,7 @@ REAL_EDIT = (
 @pytest.fixture()
 def workspace(tmp_path_factory) -> pathlib.Path:
     root = tmp_path_factory.mktemp("patchws").resolve()
-    (root / "a.txt").write_text("one\ntwo\nthree\n", encoding="utf-8")
+    (root / "a.txt").write_bytes(b"one\ntwo\nthree\n")  # LF bytes on every OS
     return root
 
 

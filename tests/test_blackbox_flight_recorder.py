@@ -264,7 +264,7 @@ class TestCoverage:
 
     def test_replace_patch_and_mkdir_are_journaled_with_their_operations(self, store_dir: Path, workspace: Path) -> None:
         (workspace / "r.txt").write_text("alpha beta\n", encoding="utf-8")
-        (workspace / "p.txt").write_text("line1\nline2\n", encoding="utf-8")
+        (workspace / "p.txt").write_bytes(b"line1\nline2\n")  # LF bytes on every OS
         ctx = _ctx(workspace)
         replaced = execute_runtime_tool(
             "workspace.replace_in_file", {"path": "r.txt", "old_text": "beta", "new_text": "gamma"}, source_context=ctx

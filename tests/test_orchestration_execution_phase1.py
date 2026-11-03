@@ -143,7 +143,7 @@ class OrchestrationExecutionPhase1Tests(unittest.TestCase):
     def test_coder_envelope_fails_closed_when_required_validation_receipt_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             workspace = Path(tmpdir)
-            (workspace / "app.py").write_text("print('hello')\n", encoding="utf-8")
+            (workspace / "app.py").write_bytes(b"print('hello')\n")  # LF bytes on every OS
             patch_text = "\n".join(
                 [
                     "--- a/app.py",

@@ -51,7 +51,7 @@ class RuntimeExecutionOperatorPhase1Tests(unittest.TestCase):
     def test_workspace_apply_unified_diff_and_rollback_use_tracked_mutation_history(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             workspace = Path(tmpdir)
-            (workspace / "app.py").write_text("print('hello')\n", encoding="utf-8")
+            (workspace / "app.py").write_bytes(b"print('hello')\n")  # LF bytes on every OS
             patch_text = "\n".join(
                 [
                     "--- a/app.py",
@@ -86,7 +86,7 @@ class RuntimeExecutionOperatorPhase1Tests(unittest.TestCase):
     def test_workspace_apply_unified_diff_has_python_fallback_when_shell_patchers_are_unavailable(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             workspace = Path(tmpdir)
-            (workspace / "app.py").write_text("print('hello')\n", encoding="utf-8")
+            (workspace / "app.py").write_bytes(b"print('hello')\n")  # LF bytes on every OS
             patch_text = "\n".join(
                 [
                     "--- a/app.py",
