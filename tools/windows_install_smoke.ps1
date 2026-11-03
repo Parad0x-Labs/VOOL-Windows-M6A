@@ -16,6 +16,10 @@ the run, and logs are always kept):
              directory persisted
   uninstall  a foreign listener survives uninstall; program files removed; no VOOL process left;
              user data preserved
+Release use (release-windows.yml): -BuildOnlyTo <dir> builds the installer, checks its stamped
+commit against -ExpectedCommit, copies VOOL-Setup.exe and provenance.json into <dir> and stops
+before installing. A later run with -SetupPath <dir>\VOOL-Setup.exe skips the build and puts that
+exact file through every other phase, checking the installed commit against -ExpectedCommit.
 Limits, stated rather than implied: this runs as the runner account, not a separate standard
 user (that machinery arrives with the broker work), and it proves process/HTTP lifecycle, not a
 visible usable desktop or a local-model answer (those are the VM gate).
@@ -25,7 +29,10 @@ param(
     [string]$OllamaVersion = "v0.35.1",
     [string]$OllamaZipSha256 = "dc50b9ca7f9023c86525012632cd1615b093d0407987444a7f62ecab617e8e93",
     [int]$HealthTimeoutSeconds = 240,
-    [int]$WindowSettleSeconds = 30
+    [int]$WindowSettleSeconds = 30,
+    [string]$SetupPath = "",
+    [string]$BuildOnlyTo = "",
+    [string]$ExpectedCommit = ""
 )
 
 Set-StrictMode -Version Latest
@@ -40,6 +47,8 @@ $InstallRoot = Join-Path $env:LOCALAPPDATA "Programs\VOOL"
 $DataRoot = Join-Path $env:LOCALAPPDATA "VOOL"
 $ApiPort = 11435
 $Foreign = $null
+if ($SetupPath -and $BuildOnlyTo) { throw "-SetupPath and -BuildOnlyTo are separate runs" }
+if ($ExpectedCommit -and $ExpectedCommit -notmatch '^[0-9a-f]{40}$') { throw "-ExpectedCommit must be a full 40-character commit" }
 
 function Add-Check([string]$Phase, [string]$Name, [bool]$Passed, [string]$Detail = "") {
     $Checks.Add([pscustomobject]@{ phase = $Phase; name = $Name; status = $(if ($Passed) { "PASS" } else { "FAIL" }); detail = $Detail })
@@ -109,81 +118,117 @@ $status = "passed"
 $failure = ""
 try {
     # --- build -----------------------------------------------------------------------------
-    $zip = Join-Path $Work "ollama-windows-amd64.zip"
-    Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/ollama/ollama/releases/download/$OllamaVersion/ollama-windows-amd64.zip" -OutFile $zip
-    $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-    Require "build" "ollama_release_hash" ($actual -eq $OllamaZipSha256) "$OllamaVersion sha256=$actual"
-    $ollamaDir = Join-Path $Work "ollama"
-    Expand-Archive -LiteralPath $zip -DestinationPath $ollamaDir
-    Remove-Item -LiteralPath $zip
-    $stage = Join-Path $Work "stage"
-    & (Join-Path $RepoRoot "installer\bundle\build_bundle.ps1") -Stage $stage -OllamaExe (Join-Path $ollamaDir "ollama.exe") *>&1 |
-        Out-File (Join-Path $ReportDir "build_bundle.log")
-    Require "build" "bundle_staged" (Test-Path (Join-Path $stage "bundle_manifest.json")) $stage
-    $appVersion = (& (Join-Path $stage "python\python.exe") -c "import sys; sys.path.insert(0, r'$stage\app'); from core.app_version import VOOL_VERSION; print(VOOL_VERSION)").Trim()
-    $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
-    Require "build" "inno_setup_present" (Test-Path $iscc) $iscc
-    $outDir = Join-Path $Work "dist"
-    & $iscc "/DStage=$stage" "/DOutDir=$outDir" "/DAppVersion=$appVersion" (Join-Path $RepoRoot "installer\bundle\vool.iss") *>&1 |
-        Out-File (Join-Path $ReportDir "iscc.log")
-    $setup = Join-Path $outDir "VOOL-Setup.exe"
-    Require "build" "installer_compiled" (Test-Path $setup) ("VOOL-Setup.exe sha256=" + (Get-FileHash $setup -Algorithm SHA256).Hash + " version=$appVersion")
+    $stamped = $null
+    $appVersion = ""
+    if ($SetupPath) {
+        $setup = Convert-Path -LiteralPath $SetupPath
+        Require "build" "installer_given" (Test-Path -LiteralPath $setup -PathType Leaf) ("VOOL-Setup.exe sha256=" + (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash)
+    } else {
+        $zip = Join-Path $Work "ollama-windows-amd64.zip"
+        Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/ollama/ollama/releases/download/$OllamaVersion/ollama-windows-amd64.zip" -OutFile $zip
+        $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+        Require "build" "ollama_release_hash" ($actual -eq $OllamaZipSha256) "$OllamaVersion sha256=$actual"
+        $ollamaDir = Join-Path $Work "ollama"
+        Expand-Archive -LiteralPath $zip -DestinationPath $ollamaDir
+        Remove-Item -LiteralPath $zip
+        $stage = Join-Path $Work "stage"
+        & (Join-Path $RepoRoot "installer\bundle\build_bundle.ps1") -Stage $stage -OllamaExe (Join-Path $ollamaDir "ollama.exe") *>&1 |
+            Out-File (Join-Path $ReportDir "build_bundle.log")
+        Require "build" "bundle_staged" (Test-Path (Join-Path $stage "bundle_manifest.json")) $stage
+        $appVersion = (& (Join-Path $stage "python\python.exe") -c "import sys; sys.path.insert(0, r'$stage\app'); from core.app_version import VOOL_VERSION; print(VOOL_VERSION)").Trim()
+        $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+        Require "build" "inno_setup_present" (Test-Path $iscc) $iscc
+        $outDir = Join-Path $Work "dist"
+        & $iscc "/DStage=$stage" "/DOutDir=$outDir" "/DAppVersion=$appVersion" (Join-Path $RepoRoot "installer\bundle\vool.iss") *>&1 |
+            Out-File (Join-Path $ReportDir "iscc.log")
+        $setup = Join-Path $outDir "VOOL-Setup.exe"
+        Require "build" "installer_compiled" (Test-Path $setup) ("VOOL-Setup.exe sha256=" + (Get-FileHash $setup -Algorithm SHA256).Hash + " version=$appVersion")
+        $stamped = Get-Content -Raw (Join-Path $stage "app\config\build-source.json") | ConvertFrom-Json
+        if ($ExpectedCommit) {
+            Require "build" "stamped_commit_is_expected" ([string]$stamped.commit_full -eq $ExpectedCommit) "stamped=$($stamped.commit_full) expected=$ExpectedCommit"
+        }
+    }
 
-    # --- install with a foreign listener on the API port ------------------------------------
-    $Foreign = Start-ForeignListener
-    $installLog = Join-Path $ReportDir "install.log"
-    $installStart = Get-Date
-    $p = Start-Process -FilePath $setup -ArgumentList @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=`"$installLog`"") -PassThru -Wait
-    Require "install" "setup_exit_code" ($p.ExitCode -eq 0) "exit=$($p.ExitCode)"
-    $stillThere = Get-Process -Id $Foreign.Id -ErrorAction SilentlyContinue
-    $owner = Get-Listener $ApiPort
-    Require "install" "foreign_listener_survived" ([bool]$stillThere -and $owner -and $owner.ProcessId -eq $Foreign.Id) "pid=$($Foreign.Id)"
-    Require "install" "per_user_install_dir" (Test-Path (Join-Path $InstallRoot "vool.vbs")) $InstallRoot
-    $logText = Get-Content -Raw -LiteralPath $installLog
-    Require "install" "not_elevated_by_setup" ($logText -match "(?im)Administrative install mode:\s*No") "Inno log: non-administrative install mode"
-    Stop-Process -Id $Foreign.Id -Force
-    Start-Sleep -Seconds 2
-    $Foreign = $null
+    if ($BuildOnlyTo) {
+        # Release build: keep the exact installer and what it was built from, and install nothing.
+        New-Item -ItemType Directory -Force $BuildOnlyTo | Out-Null
+        $kept = Join-Path $BuildOnlyTo "VOOL-Setup.exe"
+        Copy-Item -LiteralPath $setup -Destination $kept -Force
+        $keptSha = (Get-FileHash -LiteralPath $kept -Algorithm SHA256).Hash.ToLowerInvariant()
+        [ordered]@{
+            schema = "vool.windows_release_provenance.v1"
+            commit = [string]$stamped.commit_full
+            dirty_state = [bool]$stamped.dirty_state
+            version = $appVersion
+            installer = "VOOL-Setup.exe"
+            installer_sha256 = $keptSha
+            installer_bytes = (Get-Item -LiteralPath $kept).Length
+            ollama = $OllamaVersion
+            ollama_zip_sha256 = $OllamaZipSha256
+            authenticode = "unsigned"
+        } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $BuildOnlyTo "provenance.json")
+        Add-Check "build" "installer_kept" $true "$kept sha256=$keptSha"
+    } else {
+        # --- install with a foreign listener on the API port ------------------------------------
+        $Foreign = Start-ForeignListener
+        $installLog = Join-Path $ReportDir "install.log"
+        $installStart = Get-Date
+        $p = Start-Process -FilePath $setup -ArgumentList @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=`"$installLog`"") -PassThru -Wait
+        Require "install" "setup_exit_code" ($p.ExitCode -eq 0) "exit=$($p.ExitCode)"
+        $stillThere = Get-Process -Id $Foreign.Id -ErrorAction SilentlyContinue
+        $owner = Get-Listener $ApiPort
+        Require "install" "foreign_listener_survived" ([bool]$stillThere -and $owner -and $owner.ProcessId -eq $Foreign.Id) "pid=$($Foreign.Id)"
+        Require "install" "per_user_install_dir" (Test-Path (Join-Path $InstallRoot "vool.vbs")) $InstallRoot
+        if ($ExpectedCommit) {
+            $installed = Get-Content -Raw (Join-Path $InstallRoot "app\config\build-source.json") | ConvertFrom-Json
+            Require "install" "installed_commit_is_expected" ([string]$installed.commit_full -eq $ExpectedCommit) "installed=$($installed.commit_full) expected=$ExpectedCommit"
+        }
+        $logText = Get-Content -Raw -LiteralPath $installLog
+        Require "install" "not_elevated_by_setup" ($logText -match "(?im)Administrative install mode:\s*No") "Inno log: non-administrative install mode"
+        Stop-Process -Id $Foreign.Id -Force
+        Start-Sleep -Seconds 2
+        $Foreign = $null
 
-    # --- launch --------------------------------------------------------------------------
-    Start-Vool
-    Require "launch" "healthz_200" (Wait-Health $HealthTimeoutSeconds) "http://127.0.0.1:$ApiPort/healthz"
-    $listener = Get-Listener $ApiPort
-    $ownerUser = (Invoke-CimMethod -InputObject $listener -MethodName GetOwner).User
-    Require "launch" "listener_is_vools_python" ($listener.ExecutablePath.StartsWith($InstallRoot + "\", [StringComparison]::OrdinalIgnoreCase) -and $listener.CommandLine -like "*vool_api_server.py*") $listener.ExecutablePath
-    Require "launch" "listener_owned_by_installing_user" ($ownerUser -eq $env:USERNAME) "owner=$ownerUser"
-    Start-Sleep -Seconds $WindowSettleSeconds
-    $window = @(Get-VoolProcesses | Where-Object { $_.CommandLine -like "*vool_window.py*" })
-    Require "launch" "window_host_alive_after_settle" ($window.Count -ge 1) "window processes=$($window.Count) after ${WindowSettleSeconds}s"
+        # --- launch --------------------------------------------------------------------------
+        Start-Vool
+        Require "launch" "healthz_200" (Wait-Health $HealthTimeoutSeconds) "http://127.0.0.1:$ApiPort/healthz"
+        $listener = Get-Listener $ApiPort
+        $ownerUser = (Invoke-CimMethod -InputObject $listener -MethodName GetOwner).User
+        Require "launch" "listener_is_vools_python" ($listener.ExecutablePath.StartsWith($InstallRoot + "\", [StringComparison]::OrdinalIgnoreCase) -and $listener.CommandLine -like "*vool_api_server.py*") $listener.ExecutablePath
+        Require "launch" "listener_owned_by_installing_user" ($ownerUser -eq $env:USERNAME) "owner=$ownerUser"
+        Start-Sleep -Seconds $WindowSettleSeconds
+        $window = @(Get-VoolProcesses | Where-Object { $_.CommandLine -like "*vool_window.py*" })
+        Require "launch" "window_host_alive_after_settle" ($window.Count -ge 1) "window processes=$($window.Count) after ${WindowSettleSeconds}s"
 
-    # --- restart -------------------------------------------------------------------------
-    Stop-Vool
-    $left = @(Get-VoolProcesses)
-    Require "restart" "no_owned_process_after_stop" ($left.Count -eq 0) (($left | ForEach-Object { "$($_.ProcessId):$($_.Name)" }) -join ",")
-    Require "restart" "api_port_free_after_stop" (-not (Get-Listener $ApiPort)) "$ApiPort"
-    Start-Vool
-    Require "restart" "healthz_200_after_relaunch" (Wait-Health $HealthTimeoutSeconds) "relaunch"
-    Require "restart" "data_dir_persisted" (Test-Path $DataRoot) $DataRoot
-    Stop-Vool
+        # --- restart -------------------------------------------------------------------------
+        Stop-Vool
+        $left = @(Get-VoolProcesses)
+        Require "restart" "no_owned_process_after_stop" ($left.Count -eq 0) (($left | ForEach-Object { "$($_.ProcessId):$($_.Name)" }) -join ",")
+        Require "restart" "api_port_free_after_stop" (-not (Get-Listener $ApiPort)) "$ApiPort"
+        Start-Vool
+        Require "restart" "healthz_200_after_relaunch" (Wait-Health $HealthTimeoutSeconds) "relaunch"
+        Require "restart" "data_dir_persisted" (Test-Path $DataRoot) $DataRoot
+        Stop-Vool
 
-    # --- uninstall with a foreign listener ----------------------------------------------------
-    # The uninstaller deletes {app}\app outright (vool.iss [UninstallDelete]) to take the runtime's
-    # bytecode with it, so the runtime must keep its state out of the program folder: anything it
-    # wrote there besides .pyc would be destroyed. Installed files keep their source timestamps.
-    $runtimeWritten = @(Get-ChildItem -LiteralPath (Join-Path $InstallRoot "app") -Recurse -File -Force -ErrorAction SilentlyContinue |
-        Where-Object { $_.Extension -ne ".pyc" -and $_.LastWriteTime -gt $installStart })
-    Require "uninstall" "program_dir_holds_no_runtime_state" ($runtimeWritten.Count -eq 0) (($runtimeWritten | Select-Object -First 10 | ForEach-Object { $_.FullName.Substring($InstallRoot.Length) }) -join ",")
-    $Foreign = Start-ForeignListener
-    $uninstaller = Join-Path $InstallRoot "unins000.exe"
-    $u = Start-Process -FilePath $uninstaller -ArgumentList @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=`"$(Join-Path $ReportDir 'uninstall.log')`"") -PassThru -Wait
-    Require "uninstall" "uninstaller_exit_code" ($u.ExitCode -eq 0) "exit=$($u.ExitCode)"
-    $deadline = (Get-Date).AddSeconds(60)
-    while ((Get-Date) -lt $deadline -and (Test-Path (Join-Path $InstallRoot "app"))) { Start-Sleep -Seconds 2 }
-    Require "uninstall" "foreign_listener_survived" ([bool](Get-Process -Id $Foreign.Id -ErrorAction SilentlyContinue)) "pid=$($Foreign.Id)"
-    Require "uninstall" "program_files_removed" (-not (Test-Path (Join-Path $InstallRoot "app"))) $InstallRoot
-    $left = @(Get-VoolProcesses)
-    Require "uninstall" "no_vool_process_left" ($left.Count -eq 0) (($left | ForEach-Object { "$($_.ProcessId):$($_.Name)" }) -join ",")
-    Add-Check "uninstall" "user_data_preserved" (Test-Path $DataRoot) $DataRoot
+        # --- uninstall with a foreign listener ----------------------------------------------------
+        # The uninstaller deletes {app}\app outright (vool.iss [UninstallDelete]) to take the runtime's
+        # bytecode with it, so the runtime must keep its state out of the program folder: anything it
+        # wrote there besides .pyc would be destroyed. Installed files keep their source timestamps.
+        $runtimeWritten = @(Get-ChildItem -LiteralPath (Join-Path $InstallRoot "app") -Recurse -File -Force -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -ne ".pyc" -and $_.LastWriteTime -gt $installStart })
+        Require "uninstall" "program_dir_holds_no_runtime_state" ($runtimeWritten.Count -eq 0) (($runtimeWritten | Select-Object -First 10 | ForEach-Object { $_.FullName.Substring($InstallRoot.Length) }) -join ",")
+        $Foreign = Start-ForeignListener
+        $uninstaller = Join-Path $InstallRoot "unins000.exe"
+        $u = Start-Process -FilePath $uninstaller -ArgumentList @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=`"$(Join-Path $ReportDir 'uninstall.log')`"") -PassThru -Wait
+        Require "uninstall" "uninstaller_exit_code" ($u.ExitCode -eq 0) "exit=$($u.ExitCode)"
+        $deadline = (Get-Date).AddSeconds(60)
+        while ((Get-Date) -lt $deadline -and (Test-Path (Join-Path $InstallRoot "app"))) { Start-Sleep -Seconds 2 }
+        Require "uninstall" "foreign_listener_survived" ([bool](Get-Process -Id $Foreign.Id -ErrorAction SilentlyContinue)) "pid=$($Foreign.Id)"
+        Require "uninstall" "program_files_removed" (-not (Test-Path (Join-Path $InstallRoot "app"))) $InstallRoot
+        $left = @(Get-VoolProcesses)
+        Require "uninstall" "no_vool_process_left" ($left.Count -eq 0) (($left | ForEach-Object { "$($_.ProcessId):$($_.Name)" }) -join ",")
+        Add-Check "uninstall" "user_data_preserved" (Test-Path $DataRoot) $DataRoot
+    }
 } catch {
     $status = "failed"
     $failure = $_.Exception.Message
@@ -200,6 +245,8 @@ try {
         status = $status
         failure = $failure
         ollama = $OllamaVersion
+        mode = $(if ($BuildOnlyTo) { "build_only" } elseif ($SetupPath) { "given_installer" } else { "build_and_install" })
+        expected_commit = $ExpectedCommit
         runner_account = $env:USERNAME
         limits = @("runner account, not a separate standard user", "process/HTTP lifecycle only; no visible-desktop or local-model proof")
         checks = $Checks
