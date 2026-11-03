@@ -3,7 +3,8 @@
 Without it, Python on Windows decodes text as cp1252. About 80 runtime reads and writes name no
 encoding, so a memory, note or file containing non-ASCII text fails or comes back corrupted. The
 launcher sets PYTHONUTF8=1 before the first Python it starts, so the supervisor, API server and
-window inherit it. The separately registered vool:// handler passes -X utf8 itself.
+window inherit it. The separately registered vool:// handler passes -X utf8 itself, and the
+source-install launchers (Start_VOOL.bat and the rest) set the same flag.
 """
 from __future__ import annotations
 
@@ -11,6 +12,8 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 BUNDLE = REPO / "installer" / "bundle"
@@ -41,3 +44,33 @@ def test_utf8_mode_round_trips_non_ascii_text_through_default_encoding(tmp_path:
     done = subprocess.run([sys.executable, "-c", probe, str(sample)], env=env, capture_output=True, text=True, check=True)
     assert done.stdout.strip() == "1"
     assert sample.with_suffix(".out").read_bytes() == sample.read_bytes()
+
+
+SOURCE_LAUNCHERS = (
+    "Start_VOOL.bat", "Talk_To_VOOL.bat", "Stop_VOOL.bat", "Verify_VOOL.bat", "Probe_VOOL_Stack.bat",
+    "Stage_Trainable_Base.bat", "vool_background.cmd", "installer/install_vool.bat",
+)
+
+
+@pytest.mark.parametrize("launcher", SOURCE_LAUNCHERS)
+def test_source_install_launchers_enable_utf8_mode_before_any_python(launcher: str) -> None:
+    lines = (REPO / launcher).read_text(encoding="utf-8").splitlines()
+    enable = next(i for i, line in enumerate(lines) if line.strip().lower() == 'set "pythonutf8=1"')
+    first_python = next(i for i, line in enumerate(lines)
+                        if "python" in line.lower() and i != enable and not line.strip().lower().startswith("rem"))
+    assert enable < first_python
+
+
+def test_the_background_vbs_starts_its_launcher_in_utf8_mode() -> None:
+    lines = (REPO / "vool_background.vbs").read_text(encoding="utf-8").splitlines()
+    enable = next(i for i, line in enumerate(lines) if line.strip() == 'env("PYTHONUTF8") = "1"')
+    run = next(i for i, line in enumerate(lines) if line.strip().startswith("shell.Run"))
+    assert enable < run
+
+
+def test_the_one_click_installer_probes_in_utf8_mode_and_restores_the_session() -> None:
+    lines = (REPO / "installer" / "windows_one_click.ps1").read_text(encoding="utf-8").splitlines()
+    enable = next(i for i, line in enumerate(lines) if line.strip() == '$env:PYTHONUTF8 = "1"')
+    runs = [i for i, line in enumerate(lines) if line.strip().startswith("& $python")]
+    restore = next(i for i, line in enumerate(lines) if line.strip() == "finally { $env:PYTHONUTF8 = $previousUtf8 }")
+    assert runs and enable < min(runs) and max(runs) < restore

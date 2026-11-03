@@ -153,7 +153,7 @@ def test_hive_lanes_carry_no_raw_urlopen_default():
         ("core/hive_activity_tracker.py", "open_remote"),
         ("core/meet_and_greet_replication.py", "open_remote"),
     ):
-        source = pathlib.Path(rel).read_text()
+        source = pathlib.Path(rel).read_text(encoding="utf-8")
         assert marker in source, f"{rel} lost its door binding"
-    bridge_source = pathlib.Path("core/public_hive/bridge.py").read_text()
+    bridge_source = pathlib.Path("core/public_hive/bridge.py").read_text(encoding="utf-8")
     assert "urllib.request.urlopen" not in bridge_source

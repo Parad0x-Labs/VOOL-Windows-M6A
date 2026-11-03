@@ -8,6 +8,7 @@ from __future__ import annotations
 import types
 
 import core.machine_diagnostics as md
+from tests._windows_system32 import TASKLIST, WEVTUTIL, trust_system32
 
 
 def _usage(total_gb: float, free_gb: float):
@@ -42,6 +43,7 @@ def test_event_log_errors_unsupported_off_windows(monkeypatch) -> None:
 
 def test_event_log_errors_parses_windows_output(monkeypatch) -> None:
     monkeypatch.setattr(md.sys, "platform", "win32")
+    trust_system32(monkeypatch)
     calls: list[list[str]] = []
 
     def fake_runner(cmd, **kw):
@@ -53,15 +55,34 @@ def test_event_log_errors_parses_windows_output(monkeypatch) -> None:
     assert report["logs"][0]["log"] == "System" and "Disk" in report["logs"][0]["text"]
     # read-only query command, bounded, newest-first, level filter for Critical/Error
     cmd = calls[0]
-    assert cmd[:2] == ["wevtutil", "qe"] and "/c:5" in cmd and "/rd:true" in cmd
+    assert cmd[:2] == [WEVTUTIL, "qe"] and "/c:5" in cmd and "/rd:true" in cmd
     assert any("Level=1 or Level=2" in part for part in cmd)
 
 
 def test_event_log_errors_caps_limit(monkeypatch) -> None:
     monkeypatch.setattr(md.sys, "platform", "win32")
+    trust_system32(monkeypatch)
     seen: list[list[str]] = []
     md.event_log_errors(limit=9999, logs=("System",), runner=lambda cmd, **kw: seen.append(cmd) or types.SimpleNamespace(stdout=""))
     assert "/c:100" in seen[0]  # hard cap at 100, never unbounded
+
+
+def test_event_log_errors_runs_no_wevtutil_without_a_trusted_windows_folder(monkeypatch) -> None:
+    monkeypatch.setattr(md.sys, "platform", "win32")
+    monkeypatch.delenv("SystemRoot", raising=False)
+    seen: list[list[str]] = []
+    report = md.event_log_errors(logs=("System",), runner=lambda cmd, **kw: seen.append(cmd))
+    assert seen == [] and "error" in report["logs"][0]
+
+
+def test_top_processes_falls_back_to_system32_tasklist(monkeypatch) -> None:
+    monkeypatch.setitem(md.sys.modules, "psutil", None)  # the import fails, as on a bare install
+    monkeypatch.setattr(md.sys, "platform", "win32")
+    trust_system32(monkeypatch)
+    seen: list[list[str]] = []
+    report = md.top_processes(runner=lambda cmd, **kw: seen.append(cmd) or types.SimpleNamespace(stdout=""))
+    assert report["source"] == "tasklist"
+    assert seen and seen[0][0] == TASKLIST
 
 
 def test_parse_tasklist_csv_sorts_and_limits() -> None:

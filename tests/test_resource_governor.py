@@ -42,7 +42,7 @@ def test_stop_comfyui_never_looks_processes_up_by_name(monkeypatch) -> None:
     killed = []
     monkeypatch.setattr(gov.os, "kill", lambda pid, sig: killed.append((pid, sig)))
     monkeypatch.setattr(autostart.os, "kill", lambda pid, sig: killed.append((pid, sig)))
-    monkeypatch.setattr(autostart.os, "killpg", lambda pid, sig: killed.append((pid, sig)))
+    monkeypatch.setattr(autostart.os, "killpg", lambda pid, sig: killed.append((pid, sig)), raising=False)  # absent on Windows
     assert gov.stop_comfyui() is False
     assert killed == []
 

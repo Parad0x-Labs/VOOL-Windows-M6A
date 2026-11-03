@@ -271,6 +271,43 @@ def profile_home_env_stays_in_its_test():
 
 
 @pytest.fixture(autouse=True)
+def supervisor_job_stays_with_its_own_tests(monkeypatch):
+    """Keep the supervisors' kill-on-close Windows Job object out of tests that fake their children.
+
+    On a real Windows host ``_JOB_HOST`` is true at import, so every bundle or window supervisor
+    test that hands the supervisor a fake ``Popen`` child sent its fake pid to a real Job object:
+    the assignment failed, the child was stopped and retried, and twelve tests went red on the
+    gauntlet (run 41452281277, train t10). The job is off here; the tests of the job path itself
+    turn it back on with recording fakes, and tests/test_windows_job_resume.py drives real processes.
+    """
+    from installer.bundle import bundle_supervisor, native_runtime_supervisor
+
+    monkeypatch.setattr(bundle_supervisor, "_JOB_HOST", False)
+    monkeypatch.setattr(native_runtime_supervisor, "_JOB_HOST", False)
+    yield
+
+
+@pytest.fixture(autouse=True)
+def windows_own_tmp_path_is_disposable(request, monkeypatch):
+    """On Windows, list this test's own tmp_path as its disposable workspace (tests/_windows_disposable_tmp.py)."""
+    from tests._windows_disposable_tmp import (
+        mark_own_tmp_path_disposable,
+        running_on_windows,
+        session_pytest_workspace,
+    )
+
+    if running_on_windows():
+        mark_own_tmp_path_disposable(
+            monkeypatch,
+            request.getfixturevalue("tmp_path"),
+            windows=True,
+            tempfile_root=request.getfixturevalue("tmp_path_factory").mktemp("tempfile-"),
+            session_workspace=session_pytest_workspace(),
+        )
+    yield
+
+
+@pytest.fixture(autouse=True)
 def unpatched_subprocess_popen() -> None:
     """Restore the stock `subprocess.Popen.__init__` before every test.
 

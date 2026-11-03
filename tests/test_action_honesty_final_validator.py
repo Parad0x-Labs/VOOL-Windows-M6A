@@ -406,10 +406,10 @@ def _run_bounded_claim_worker(script, tmp_path):
     worker = "\n".join([
         "import json, os, threading, time",
         "from pathlib import Path",
-        f"record = Path({str(record)!r})",
+        f"record = Path({str(record)!a})",
         "record.write_text(json.dumps({'pid': os.getpid(), 'phase': 'startup'}))",
         "startup = time.process_time()",
-        f"exec({setup!r})",
+        f"exec({setup!a})",
         "import_seconds = time.process_time() - startup",
         "assert import_seconds < 30, import_seconds",
         "record.write_text(json.dumps({'pid': os.getpid(), 'phase': 'execution', 'imports': import_seconds}))",
@@ -429,7 +429,7 @@ def _run_bounded_claim_worker(script, tmp_path):
         "    os._exit(124)",
         "deadline = threading.Thread(target=_deadline, daemon=True)",
         "deadline.start()",
-        f"exec({call.strip()!r})",
+        f"exec({call.strip()!a})",
         "seconds = time.process_time() - started",
         "finished.set()",
         "deadline.join()",
@@ -438,8 +438,12 @@ def _run_bounded_claim_worker(script, tmp_path):
         "record.write_text(json.dumps(result))",
         "print(json.dumps(result))",
     ])
+    # The script goes in on stdin: inlined 50k-60k character claims would overflow Windows' 32,767
+    # character command line (WinError 206). "-" keeps the working directory first on sys.path as -c did.
+    # The !a literals above keep the script ASCII: text=True writes stdin in the locale code page, and
+    # the worker reads its script as UTF-8.
     result = subprocess.run(
-        [sys.executable, "-c", worker], check=False, timeout=95,
+        [sys.executable, "-"], input=worker, check=False, timeout=95,
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}, capture_output=True, text=True,
     )
     if result.returncode:
@@ -547,3 +551,31 @@ def test_path_token_boundary_still_detects_real_build_claims(text):
     from core.agent_runtime.action_honesty_validator import completion_claim_kind
 
     assert completion_claim_kind(text) == "build"
+
+
+def test_claim_worker_command_line_fits_windows(monkeypatch, tmp_path):
+    """CreateProcess refuses command lines over 32,767 characters, so the worker's claim cannot ride in argv."""
+    launched = []
+
+    def fake_run(argv, **kwargs):
+        launched.append(argv)
+        return subprocess.CompletedProcess(argv, 0, '{"execution": 0, "imports": 0}', "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    test_new_file_claim_shapes_remain_bounded("a/" * 30000 + "z", tmp_path)
+    assert len(subprocess.list2cmdline(launched[0])) < 32767
+
+
+def test_claim_worker_script_survives_any_stdin_code_page(monkeypatch, tmp_path):
+    """text=True writes stdin in the locale code page and the worker reads it as UTF-8, so the script must be ASCII."""
+    launched = []
+
+    def fake_run(argv, **kwargs):
+        launched.append(kwargs["input"])
+        return subprocess.CompletedProcess(argv, 0, '{"execution": 0, "imports": 0}', "")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    home = tmp_path / "Jörg"
+    home.mkdir()
+    _run_bounded_claim_worker("pass; 'é'", home)
+    assert launched[0].isascii()

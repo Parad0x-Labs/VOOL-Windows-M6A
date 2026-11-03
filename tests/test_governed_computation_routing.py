@@ -12,7 +12,7 @@ from core.conductor.shared_context import extract_shared_context
 from core.turn_ir import parse_turn_ir
 
 ROOT = Path(__file__).resolve().parents[1]
-ORIGINAL = (ROOT / "tests/fixtures/portfolio_last_run.txt").read_text()
+ORIGINAL = (ROOT / "tests/fixtures/portfolio_last_run.txt").read_text(encoding="utf-8")
 NOVEL = (
     "A kiln starts with 250 kg of clay. Processing removes 12%. Compute:\n"
     "1. How much clay remains after processing?\n"

@@ -63,7 +63,7 @@ FAILING_MIGRATION = [
 _STUB_SEED = textwrap.dedent(
     """
     import sys
-    sys.path.insert(0, "{root}")
+    sys.path.insert(0, {root!r})
     from storage.db import get_connection
     from storage.migrations import run_migrations
     from storage.model_provider_manifest import ModelProviderManifest, list_provider_manifests, upsert_provider_manifest
@@ -173,15 +173,15 @@ def served(tmp_path: Path):
             """
             import sys
             from pathlib import Path
-            sys.path.insert(0, "{root}")
+            sys.path.insert(0, {root!r})
             from core.plugin_lifecycle import enable, install, verify
-            pack = Path("{plugins_root}") / "plugins" / "vool-database"
+            pack = Path({plugins_root!r}) / "plugins" / "vool-database"
             install("vool-database", root=pack, source="test-isolated")
             verify("vool-database", root=pack)
             enable("vool-database")
             print("lifecycle: installed+verified+enabled")
             """
-        ).format(root=REPO_ROOT, plugins_root=plugins_root),
+        ).format(root=str(REPO_ROOT), plugins_root=str(plugins_root)),
         env_extra={"VOOL_PLUGINS_DIR": str(plugins_root), "VOOL_PLUGIN_SCRATCH_ROOT": str(scratch)},
     )
     daemon = ServedDaemon(
@@ -273,7 +273,7 @@ def test_served_chat_door_reaches_the_tool_loop_and_the_expanded_plugin_family_s
         # Point the daemon's local lane at the stub AFTER boot, through the manifest store.
         run_in_home(
             served["home"],
-            _STUB_SEED.format(root=REPO_ROOT, base_url=provider.base_url, model=MODEL),
+            _STUB_SEED.format(root=str(REPO_ROOT), base_url=provider.base_url, model=MODEL),
             env_extra={
                 "OLLAMA_HOST": provider.base_url,
                 "VOOL_OLLAMA_URL": provider.base_url,
@@ -285,7 +285,7 @@ def test_served_chat_door_reaches_the_tool_loop_and_the_expanded_plugin_family_s
             textwrap.dedent(
                 f'''
                 import sys
-                sys.path.insert(0, "{REPO_ROOT}")
+                sys.path.insert(0, {REPO_ROOT.as_posix()!r})
                 from storage.model_provider_manifest import list_provider_manifests
                 from tests._authorship_certification import certify_for_authorship
                 for m in list_provider_manifests():
@@ -326,7 +326,7 @@ _SCENARIOS = (
 import json
 import sys
 
-sys.path.insert(0, "@ROOT@")
+sys.path.insert(0, @ROOT@)
 
 from tests._toolchain_fixtures import executor_kwargs, internal_scope
 from tests._vool_database_pack import DB_PLUGIN_ID
@@ -409,7 +409,7 @@ print("ALL SEVEN SCENARIOS OK")
 def _scenario_script() -> str:
     return (
         _SCENARIOS
-        .replace("@ROOT@", str(REPO_ROOT))
+        .replace("@ROOT@", repr(str(REPO_ROOT)))
         .replace("@DDL@", repr(ORDERS_DDL))
         .replace("@SEED@", repr(ORDERS_SEED))
         .replace("@GOOD@", repr(GOOD_MIGRATION))

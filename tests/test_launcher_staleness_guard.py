@@ -76,7 +76,7 @@ def test_self_contained_launcher_uses_its_baked_build_identity() -> None:
 
 def test_every_emitted_launcher_is_valid_shell() -> None:
     for name, body in _launcher_bodies().items():
-        with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as handle:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".sh", delete=False) as handle:
             handle.write(body)
             path = handle.name
         completed = subprocess.run(["bash", "-n", path], capture_output=True, text=True)

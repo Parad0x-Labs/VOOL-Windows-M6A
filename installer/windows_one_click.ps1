@@ -95,20 +95,27 @@ function Invoke-ProviderProbe {
     param([bool]$Benchmark)
     $python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
     $probe = Join-Path $ProjectRoot "installer\provider_probe.py"
-    if ($Benchmark -and (Test-Path -LiteralPath $python) -and (Test-Path -LiteralPath $probe)) {
-        Write-InstallLog "Running live local model check: $probe --benchmark --benchmark-timeout 240"
-        & $python $probe --benchmark --benchmark-timeout 240 | Tee-Object -FilePath $LogPath -Append
-        return
+    # UTF-8 mode for the Python this starts, as the .bat launchers do; restored afterwards so the
+    # PowerShell session that ran this script keeps its own setting.
+    $previousUtf8 = $env:PYTHONUTF8
+    $env:PYTHONUTF8 = "1"
+    try {
+        if ($Benchmark -and (Test-Path -LiteralPath $python) -and (Test-Path -LiteralPath $probe)) {
+            Write-InstallLog "Running live local model check: $probe --benchmark --benchmark-timeout 240"
+            & $python $probe --benchmark --benchmark-timeout 240 | Tee-Object -FilePath $LogPath -Append
+            return
+        }
+        if (Test-Path -LiteralPath $ProbeBat) {
+            Write-InstallLog "Running provider probe: $ProbeBat"
+            & $ProbeBat | Tee-Object -FilePath $LogPath -Append
+            return
+        }
+        if ((Test-Path -LiteralPath $python) -and (Test-Path -LiteralPath $probe)) {
+            Write-InstallLog "Running provider probe: $probe"
+            & $python $probe | Tee-Object -FilePath $LogPath -Append
+        }
     }
-    if (Test-Path -LiteralPath $ProbeBat) {
-        Write-InstallLog "Running provider probe: $ProbeBat"
-        & $ProbeBat | Tee-Object -FilePath $LogPath -Append
-        return
-    }
-    if ((Test-Path -LiteralPath $python) -and (Test-Path -LiteralPath $probe)) {
-        Write-InstallLog "Running provider probe: $probe"
-        & $python $probe | Tee-Object -FilePath $LogPath -Append
-    }
+    finally { $env:PYTHONUTF8 = $previousUtf8 }
 }
 
 if ($AutoYes -or $env:VOOL_HEADLESS -eq "1") {

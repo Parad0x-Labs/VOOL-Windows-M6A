@@ -13,6 +13,7 @@ import tempfile
 from typing import Any
 
 from core import policy_engine, windows_path_policy
+from core.process_liveness import system_taskkill
 from core.remote_fetch_policy import note_remote_fetch_attempt, remote_fetch_forbidden
 from core.vool_browser.engine import CREDENTIAL_ISOLATION_FLAGS
 from tools.web.browser_identity import DESKTOP_ACCEPT_LANGUAGE, DESKTOP_USER_AGENT
@@ -309,10 +310,15 @@ def _run_chrome(argv: list[str], *, timeout_s: float) -> tuple[int, bytes, bytes
     `browser_empty_dom:rc5` -- is undiagnosable without the one line it printed about why.
     """
 
+    # POSIX: own process group so the timeout kill reaches Chrome's helpers too.
+    # Windows: Popen accepts and ignores start_new_session, so the real isolation
+    # there is the child's own process group instead.
+    creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
     process = subprocess.Popen(
         argv,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        creationflags=creationflags,
         start_new_session=True,
     )
     try:
@@ -320,8 +326,20 @@ def _run_chrome(argv: list[str], *, timeout_s: float) -> tuple[int, bytes, bytes
         return process.returncode, stdout or b"", stderr or b""
     except subprocess.TimeoutExpired:
         try:
-            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError, OSError):
+            if os.name == "nt":
+                # Chrome forks helpers (GPU, network, renderer): Windows has no group
+                # signalling, so the whole tree of the recorded child is taken down
+                # instead, or the helpers would hold the port and the profile lock.
+                # A tree kill that fails or hangs still kills the recorded child.
+                completed = subprocess.run(
+                    [system_taskkill(), "/PID", str(process.pid), "/T", "/F"],
+                    capture_output=True, check=False, timeout=5,
+                )
+                if completed.returncode != 0:
+                    process.kill()
+            else:
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError, subprocess.SubprocessError):
             process.kill()
         with contextlib.suppress(Exception):
             process.communicate(timeout=5)

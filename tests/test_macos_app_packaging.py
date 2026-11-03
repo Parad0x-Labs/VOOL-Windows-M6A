@@ -609,7 +609,7 @@ def test_shell_launcher_has_no_detached_api_or_readiness_poll(built_wrapper_laun
 _WINDOW_DRIVER = textwrap.dedent(
     """
     import importlib.util, sys, os
-    spec = importlib.util.spec_from_file_location("nw", "__WINDOW_SCRIPT__")
+    spec = importlib.util.spec_from_file_location("nw", __WINDOW_SCRIPT__)
     nw = importlib.util.module_from_spec(spec); spec.loader.exec_module(nw)
     import installer.bundle.native_runtime_supervisor as nrs
     class FakeSupervisor:
@@ -635,7 +635,7 @@ def _drive_window(tmp_path: Path, mode: str, extra_env: dict[str, str]) -> tuple
     home = tmp_path / ("home-" + mode.replace("/", "_"))
     home.mkdir(exist_ok=True)
     driver = (tmp_path / ("driver_" + mode.replace("/", "_") + ".py"))
-    driver.write_text(_WINDOW_DRIVER.replace("__WINDOW_SCRIPT__", str(WINDOW_SCRIPT)))
+    driver.write_text(_WINDOW_DRIVER.replace("__WINDOW_SCRIPT__", repr(str(WINDOW_SCRIPT))))
     env = {"PATH": BASE_PATH, "HOME": str(home), **extra_env}
     done = subprocess.run([sys.executable, str(driver), mode], capture_output=True,
                           text=True, env=env, timeout=120)
@@ -720,6 +720,13 @@ def test_windows_edge_lane_is_untouched_by_the_posix_fail_closed_gate(tmp_path: 
             def shutdown(self): pass
         nrs.NativeRuntimeSupervisor.from_environment = classmethod(lambda cls, **kwargs: FakeSupervisor())
         nw.sys.platform = "win32"
+        # Windows runs PowerShell from System32 only (core/process_liveness.py); give this host
+        # a System32 whose powershell.exe exists, as tests/_windows_system32.trust_system32 does.
+        from core import process_liveness
+        from tests._windows_system32 import POWERSHELL
+        os.environ["SystemRoot"] = "C:\\\\Windows"
+        _isfile = process_liveness.os.path.isfile
+        process_liveness.os.path.isfile = lambda path: path == POWERSHELL or _isfile(path)
         nw._has_webview2 = lambda: False
         nw._wait_for_server = lambda timeout_s=None: False
         launched = []
@@ -735,6 +742,7 @@ def test_windows_edge_lane_is_untouched_by_the_posix_fail_closed_gate(tmp_path: 
                           env={"PATH": BASE_PATH, "HOME": str(home)}, timeout=120)
     assert "RC=0" in done.stdout
     assert "powershell" in done.stdout and "vool-open.ps1" in done.stdout
+    assert "System32" in done.stdout  # Windows' own PowerShell, never one found on PATH
 
 
 # ------------------------------------------------------------------------------------------

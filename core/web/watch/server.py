@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from core.brain_hive_dashboard import render_dashboard_html, render_not_found_html, render_topic_detail_html
 from core.remote_fetch_policy import RemoteFetchRefusedError, open_remote
+from network.listen_policy import ExclusiveThreadingHTTPServer
 
 from .config import BrainHiveWatchServerConfig
 
@@ -19,7 +20,7 @@ def build_watch_server(
     config: BrainHiveWatchServerConfig,
     *,
     workstation_version: str,
-    server_factory: Callable[[tuple[str, int], type[BaseHTTPRequestHandler]], ThreadingHTTPServer] = ThreadingHTTPServer,
+    server_factory: Callable[[tuple[str, int], type[BaseHTTPRequestHandler]], ThreadingHTTPServer] = ExclusiveThreadingHTTPServer,
     validate_tls_config: Callable[[BrainHiveWatchServerConfig], None],
     requires_public_tls: Callable[[str], bool],
     watch_tls_enabled: Callable[[BrainHiveWatchServerConfig], bool],

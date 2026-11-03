@@ -34,7 +34,8 @@ PROVIDER_NAME = "ollama-local"
 
 SEED = '''
 import sys
-sys.path.insert(0, "{root}")
+from pathlib import Path as WindowsPath, Path as PosixPath
+sys.path.insert(0, str({root!r}))
 from storage.db import get_connection
 from storage.migrations import run_migrations
 from storage.model_provider_manifest import ModelProviderManifest, list_provider_manifests, upsert_provider_manifest

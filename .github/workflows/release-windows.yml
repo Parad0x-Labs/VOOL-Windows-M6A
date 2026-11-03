@@ -1,0 +1,83 @@
+name: Windows release package
+
+# Builds VOOL-Setup.exe on windows-latest from the exact commit the run was started for (the tag's
+# commit on a tag push), proves that same file with the install smoke, and uploads it as a workflow
+# artifact. It never publishes: creating or editing a GitHub release stays a human step, and so does
+# signing SHA256SUMS with the Ed25519 release key (docs/RELEASE_KEY_CEREMONY.md), whose private half
+# never reaches CI. Authenticode signing is one step, off until a signing route is chosen.
+# tests/test_release_windows_workflow.py pins all of this.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Ensure Inno Setup 6
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          if (-not (Test-Path $iscc)) { throw "Inno Setup 6 is not available at $iscc" }
+      - name: Build the installer and check its stamped commit
+        shell: pwsh
+        run: |
+          ./tools/windows_install_smoke.ps1 -BuildOnlyTo "$env:RUNNER_TEMP\release" -ExpectedCommit "${{ github.sha }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Move-Item -LiteralPath dist\install-smoke -Destination "$env:RUNNER_TEMP\build-report"
+      - name: Sign these files (Authenticode; off until a signing route is chosen)
+        if: ${{ vars.WINDOWS_SIGNING_ROUTE != '' }}
+        shell: pwsh
+        env:
+          SIGNING_ROUTE: ${{ vars.WINDOWS_SIGNING_ROUTE }}
+        run: ./tools/sign_windows_files.ps1 -Route $env:SIGNING_ROUTE -Files "$env:RUNNER_TEMP\release\VOOL-Setup.exe"
+      - name: Check the size and write SHA256SUMS
+        shell: pwsh
+        run: |
+          # GitHub caps a release asset at 2 GiB; stay well under it.
+          $bytes = (Get-Item -LiteralPath "$env:RUNNER_TEMP\release\VOOL-Setup.exe").Length
+          Write-Host "VOOL-Setup.exe is $bytes bytes"
+          if ($bytes -gt 1900MB) { throw "VOOL-Setup.exe is $bytes bytes, too close to the 2 GiB asset cap" }
+          python tools/write_sha256sums.py --dir "$env:RUNNER_TEMP\release" VOOL-Setup.exe provenance.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Install, launch, restart and uninstall that installer
+        shell: pwsh
+        run: ./tools/windows_install_smoke.ps1 -SetupPath "$env:RUNNER_TEMP\release\VOOL-Setup.exe" -ExpectedCommit "${{ github.sha }}"
+      - name: Confirm the sums still match the smoked files
+        shell: pwsh
+        run: python tools/write_sha256sums.py --check --dir "$env:RUNNER_TEMP\release"
+      - name: Upload the installer, its provenance and SHA256SUMS
+        uses: actions/upload-artifact@v7
+        with:
+          name: vool-windows-installer
+          path: |
+            ${{ runner.temp }}/release/VOOL-Setup.exe
+            ${{ runner.temp }}/release/provenance.json
+            ${{ runner.temp }}/release/SHA256SUMS
+          if-no-files-found: error
+      - name: Upload the build and install smoke reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vool-windows-release-smoke
+          path: |
+            ${{ runner.temp }}/build-report/
+            dist/install-smoke/
+          if-no-files-found: warn

@@ -65,7 +65,7 @@ def _gpg() -> str:
 
 
 def _run(cmd: list[str], *, env: dict[str, str] | None = None, cwd: Path | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=cwd, check=False, timeout=600)
+    return subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=env, cwd=cwd, check=False, timeout=600)
 
 
 def sha256_of(path: Path) -> str:

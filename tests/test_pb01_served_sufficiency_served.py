@@ -361,7 +361,7 @@ def test_served_sufficiency_writer_eight_scenarios_restart_and_eligibility(serve
     # ---- 10. SELECTION ELIGIBILITY: only fresh, same-kind, same-model rows count ----
     script = '''
 import json, sys
-sys.path.insert(0, "@ROOT@")
+sys.path.insert(0, @ROOT@)
 from core.learning.model_sufficiency import list_sufficiency_observations, sufficiency_adjustment
 
 rows = list_sufficiency_observations()
@@ -385,6 +385,6 @@ for other in other_models:
 assert sufficiency_adjustment(task_kind="unknown", provider_id=provider_id, model_id=model_id) == 0.0
 print(json.dumps({"identity": [kind, provider_id, model_id], "bonus": bonus, "rows": len(rows)}))
 '''
-    out = run_in_home(home, script.replace("@ROOT@", str(REPO_ROOT)))
+    out = run_in_home(home, script.replace("@ROOT@", repr(str(REPO_ROOT))))
     summary = json.loads(out.strip().splitlines()[-1])
     assert summary["bonus"] == 0.35 and summary["rows"] >= 6, summary

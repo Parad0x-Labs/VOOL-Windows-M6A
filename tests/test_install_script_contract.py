@@ -195,7 +195,7 @@ def test_windows_launchers_use_module_entrypoint_for_api_server() -> None:
     assert "vool_api_child.log" in background_cmd
     assert "vool_api_child.err.log" in background_cmd
     assert "call \"%SCRIPT_DIR%Start_VOOL.bat\"" not in background_cmd
-    assert 'schtasks /create /tn "VOOL_Daemon" /tr "\\"%SystemRoot%\\System32\\wscript.exe\\" \\"%VBS_PATH%\\""' in install_bat_script
+    assert 'schtasks /create /tn "VOOL_Daemon" /tr "\\"%SystemRoot%\\System32\\wscript.exe\\" \\"!VBS_PATH!\\""' in install_bat_script
     assert "BeginConnect('127.0.0.1', 11435" in background_cmd
     assert "for /L %%i in (1,1,120)" not in openclaw_launcher
     assert "Test-NetConnection" not in openclaw_launcher

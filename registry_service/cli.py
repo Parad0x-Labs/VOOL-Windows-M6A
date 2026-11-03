@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 import time
 from pathlib import Path
 
 from core.registry.codec import RegistryError, decode, require
 from core.registry.trust import TrustedCatalog
+from network.listen_policy import pre_bind_listen_sockets, run_server_on_listen_sockets
 from registry_service.api import create_app
 from registry_service.auth import Auth, Provider
 from registry_service.store import Store
@@ -69,8 +71,29 @@ def main(argv=None) -> int:
             "loggers": {name: {"handlers": ["discard"], "propagate": False}
                         for name in ("uvicorn", "uvicorn.error", "uvicorn.access")}}
         discovery = decode(Path(config["catalog_file"]).read_bytes())["entries"]
-        uvicorn.run(create_app(store, auth, trust, config["target"], discovery=discovery), host="127.0.0.1", port=args.port,
-                    access_log=False, log_config=log_config, proxy_headers=False)
+        server = uvicorn.Server(
+            uvicorn.Config(
+                create_app(store, auth, trust, config["target"], discovery=discovery),
+                host="127.0.0.1",
+                port=int(args.port),
+                access_log=False,
+                log_config=log_config,
+                proxy_headers=False,
+            )
+        )
+        # The ONE listen policy: POSIX keeps uvicorn's own bind path (every address
+        # loop.create_server resolves, dual-stack included); Windows runs on pre-bound
+        # SO_EXCLUSIVEADDRUSE sockets because uvicorn's bind sets no port-reuse option
+        # there, leaving the port stealable by any same-user process.
+        try:
+            listen_sockets = pre_bind_listen_sockets("127.0.0.1", int(args.port))
+        except OSError:
+            print(f"Registry startup refused: 127.0.0.1:{int(args.port)} could not be bound for exclusive use.")
+            return 1
+        run_server_on_listen_sockets(server, listen_sockets)
+        if not server.started:
+            # uvicorn.run's own startup-failure exit (uvicorn.config.STARTUP_FAILURE).
+            sys.exit(3)
         return 0
     except (RegistryError, OSError, ValueError, KeyError, TypeError):
         print("Registry startup refused: incomplete configuration, stale signatures or missing immutable artifacts.")

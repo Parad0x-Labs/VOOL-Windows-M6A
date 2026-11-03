@@ -9,6 +9,7 @@ RESTORED, never what can be VERIFIED -- and the record says which of the two it 
 from __future__ import annotations
 
 import hashlib
+import ntpath
 import os
 import stat as stat_module
 from dataclasses import asdict, dataclass
@@ -123,10 +124,13 @@ def canonical_relative(root: Path, target: Path) -> str:
 
 
 def relative_path_escapes(relative: str) -> bool:
-    """Lexical containment for a path READ BACK from the journal: absolute, empty, or any ``..``
-    segment is refused before the filesystem is consulted at all."""
+    """Lexical containment for a path READ BACK from the journal: absolute, empty, any ``..``
+    segment, or a Windows drive (``C:/x``, ``C:x``) is refused before the filesystem is
+    consulted at all. UNC paths start with a separator and are refused with the absolute ones."""
     clean = str(relative or "")
     if not clean or clean.startswith("/") or clean.startswith("\\"):
+        return True
+    if ntpath.splitdrive(clean)[0]:
         return True
     parts = [part for part in clean.replace("\\", "/").split("/") if part not in ("", ".")]
     if not parts:

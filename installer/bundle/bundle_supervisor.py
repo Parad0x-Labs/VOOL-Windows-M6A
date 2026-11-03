@@ -12,10 +12,13 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from core.process_liveness import system_powershell, system_taskkill
 from core.runtime_paths import native_runtime_home
+from core.windows_job import CREATE_SUSPENDED, new_kill_on_close_job, resume_suspended
 
 # Every age, retry time and unanswered span below is measured on _tick(), never the wall clock: a
 # clock set forward or back is not child age. _tick() is time.monotonic moved on by a fixed origin, so
@@ -188,6 +191,39 @@ def _is_windows_platform() -> bool:
     return os.name == "nt"
 
 
+#: Job objects are a kernel32 feature, so the job is used only when this interpreter really runs
+#: on Windows. Tests that stand in for Windows through ``_is_windows_platform`` set this and pass fakes.
+_JOB_HOST = os.name == "nt"
+
+
+def _windows_root_forms(root: Path) -> tuple[str, ...]:
+    """Every spelling of the same bundle root the stale-API scan compares against.
+
+    A leftover API keeps the spelling it was STARTED with in its command line, so the same
+    bundle folder legitimately reaches the scan as a junction, an 8.3 short name, a different
+    case or with a trailing separator. ``os.path.realpath`` collapses all of those into one
+    final spelling, matched alongside the spelling this supervisor holds (compared
+    case-insensitively on both sides; ``os.path.normcase`` keys the dedup). Standalone by
+    design: the bundle ships this file alone at the install root, so it cannot import
+    installer.vool_stop. A root whose canonicalization raises owns nothing (fail closed).
+    """
+    given = str(root)
+    if os.name != "nt":
+        return (given,)
+    try:
+        final = os.path.realpath(given)
+    except OSError:
+        return ()
+    forms: list[str] = []
+    seen: set[str] = set()
+    for form in (final, given):
+        key = os.path.normcase(form)
+        if key not in seen:
+            seen.add(key)
+            forms.append(form)
+    return tuple(forms)
+
+
 class BundleSupervisor:
     def __init__(self, root: Path, *, env: dict[str, str] | None = None) -> None:
         self.root = root.resolve()
@@ -223,6 +259,11 @@ class BundleSupervisor:
         self._window_lost_runtime = False
         # The first measured instant at which such a window was seen exited (_absorb_pause).
         self.exit_seen_at: dict[str, float] = {}
+        # Windows: the one Job object every child joins. When this process ends, however it ends,
+        # Windows closes the handle and kills the children (G4 orphan check, Steve, 177621c).
+        self._job_factory: Callable[[], Any] = new_kill_on_close_job
+        self._resume: Callable[[int], None] = resume_suspended
+        self._job: Any | None = None
 
     def _manifest(self) -> dict[str, Any]:
         path = self.root / "bundle_manifest.json"
@@ -472,6 +513,15 @@ class BundleSupervisor:
         now = _tick()
         if now < self.next_attempt[name]:
             return
+        if _JOB_HOST and _is_windows_platform() and self._job is None:
+            try:
+                self._job = self._job_factory()
+            except Exception as exc:
+                self._schedule_retry(
+                    name, f"not started: the Windows job that ties it to the supervisor could not be created: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                return
         log_path = self.log_dir / f"{name}.log"
         handle = log_path.open("ab")
         creationflags = 0
@@ -479,6 +529,9 @@ class BundleSupervisor:
             creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(
                 subprocess, "CREATE_NEW_PROCESS_GROUP", 0
             )
+            if self._job is not None:
+                # Suspended until it is in the job, so it starts nothing outside it (core.windows_job).
+                creationflags |= CREATE_SUSPENDED
         try:
             child = subprocess.Popen(
                 argv,
@@ -493,6 +546,17 @@ class BundleSupervisor:
             handle.close()
             self._schedule_retry(name, f"failed to start: {type(exc).__name__}: {exc}")
             return
+        if self._job is not None:
+            try:
+                self._job.assign(child.pid)
+                self._resume(child.pid)
+            except Exception as exc:
+                self.processes[name], self.handles[name] = child, handle
+                self._stop_child(name)
+                self._schedule_retry(
+                    name, f"stopped: it could not be started inside the supervisor's Windows job: {type(exc).__name__}: {exc}"
+                )
+                return
         # Our own work, expected to be quick: awake time up to that, a pause beyond (see _PAUSE_SECONDS).
         # The child's age starts once it exists.
         self._absorb_pause(0.0, f"while starting {name}")
@@ -529,7 +593,7 @@ class BundleSupervisor:
             try:
                 if _is_windows_platform():
                     completed = subprocess.run(
-                        ["taskkill.exe", "/PID", str(child.pid), "/T", "/F"],
+                        [system_taskkill(), "/PID", str(child.pid), "/T", "/F"],
                         stdin=subprocess.DEVNULL,
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
@@ -639,16 +703,52 @@ class BundleSupervisor:
         )
 
     def _clear_stale_api_processes(self) -> None:
-        """Stop only stale VOOL API Python processes before a bundle API start on Windows."""
+        """Stop only stale VOOL API Python processes before a bundle API start on Windows.
+
+        A stale API counts as this bundle's only when its command line runs this bundle's
+        ``app\\apps\\vool_api_server.py`` -- in any spelling of the same folder (junction, 8.3
+        short name, case, trailing separator), matched RAW or canonicalized (a strict superset
+        of the raw-root scan this grew from: the process keeps the spelling it was started
+        with, and even when ``Canon`` cannot resolve a spelling -- Windows PowerShell 5.1
+        lists a hard-linked file's names in ``.Target``, so such a file does not
+        canonicalize to a single path -- the raw spelling still stops what it always
+        stopped). ``Canon`` follows ``.Target`` only when it names exactly one non-empty link
+        that differs from the path already held; anything else -- including another install's
+        API in any spelling -- is left running, and a root that cannot be canonicalized stops
+        nothing at all.
+        """
         if not _is_windows_platform():
             return
+        forms = _windows_root_forms(self.root)
+        if not forms:
+            self._log("stale api cleanup skipped: this install root cannot be canonicalized")
+            return
         root = "".join(c + c if c in _POWERSHELL_SINGLE_QUOTES else c for c in str(self.root))
+        canon_forms = ", ".join(
+            "'" + "".join(c + c if c in _POWERSHELL_SINGLE_QUOTES else c for c in form) + "'"
+            for form in forms
+        )
         supervisor_pid = os.getpid()
         command = (
             f"$r = '{root}'; "
+            f"$canonForms = @({canon_forms}); "
+            "$canonPrefixes = $canonForms | ForEach-Object { $_.TrimEnd([char[]]@(92,47)) + [char]92 }; "
             "$rootPrefix = $r.TrimEnd([char[]]@(92,47)) + [char]92; "
-            "$script = [regex]::Escape($rootPrefix + 'app\\apps\\vool_api_server.py'); "
-            f"$scriptArgument = '{_WINDOWS_SCRIPT_ARGUMENT_PREFIX}' + $script + '(?:\\x22|\\s|$)'; "
+            "function Canon([string]$p) { "
+            "if (-not $p) { return $p }; "
+            "$c = $p.TrimEnd([char[]]@(92,47)); "
+            "if ($c.Length -eq 2 -and $c[1] -eq ':') { $c = $c + [char]92 }; "
+            "for ($n = 0; $n -lt 16 -and $c; $n++) { "
+            "try { $i = Get-Item -LiteralPath $c -Force -ErrorAction Stop } catch { break }; "
+            "if (-not $i) { break }; "
+            "$t = @($i.Target); "
+            "if ($t.Count -eq 1 -and [string]$t[0] -and [string]$t[0] -ne $c) { $c = [string]$t[0]; continue }; "
+            "if ([string]$i.FullName -ne $c) { $c = [string]$i.FullName; continue }; "
+            "return $c }; "
+            "return $c }; "
+            "$scriptForms = '^(' + (($canonPrefixes | ForEach-Object { [regex]::Escape($_ + 'app\\apps\\vool_api_server.py') }) -join '|') + ')$'; "
+            "$rawScriptPattern = '^' + [regex]::Escape($rootPrefix + 'app\\apps\\vool_api_server.py') + '$'; "
+            f"$scriptArgument = '{_WINDOWS_SCRIPT_ARGUMENT_PREFIX}' + '(?<voolscript>[^\\x22]*\\\\vool_api_server\\.py)' + '(?:\\x22|\\s|$)'; "
             f"$supervisorPid = {supervisor_pid}; "
             "$all = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue); "
             "$protectedPids = New-Object 'System.Collections.Generic.HashSet[int]'; "
@@ -661,7 +761,10 @@ class BundleSupervisor:
             "}; "
             "$all | Where-Object { ($_.Name -ieq 'python.exe' -or $_.Name -ieq 'pythonw.exe') "
             "-and (-not $protectedPids.Contains([int]$_.ProcessId)) "
-            "-and ([string]$_.CommandLine -match $scriptArgument) } | "
+            "-and (([string]$_.CommandLine -match $scriptArgument) "
+            "-and ((($scriptValue = [string]$Matches['voolscript'])) -ne '') "
+            "-and (($scriptValue -match $rawScriptPattern) -or ((Canon $scriptValue) -match $scriptForms)))"
+            " } | "
             "ForEach-Object { "
             "try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {} "
             "}"
@@ -669,7 +772,7 @@ class BundleSupervisor:
         try:
             subprocess.run(
                 [
-                    "powershell.exe",
+                    system_powershell(),
                     "-NoProfile",
                     "-NonInteractive",
                     "-WindowStyle",
@@ -836,6 +939,11 @@ class BundleSupervisor:
             self._stop_child("window")
             self._stop_child("api")
             self._stop_child("ollama")
+            # Closing the job ends anything of the children's trees the stops above missed.
+            job, self._job = self._job, None
+            if job is not None:
+                with contextlib.suppress(Exception):
+                    job.close()
             self._write_model_status("stopped", "Bundle supervisor stopped.")
             self.state_path.unlink(missing_ok=True)
             self._log("supervisor stopped")

@@ -41,16 +41,24 @@ _stack_stream = None
 #: The captured reference keeps the watchdog's own timestamps real even while
 #: a test's business clock is simulated.
 _MONOTONIC = time.monotonic
+#: The progress file is written through calls bound at import for the same reason: a test
+#: that stands in for the filesystem by patching ``os.replace``, ``os.getpid`` or
+#: ``pathlib.Path`` (a sharing-violation retry test does) must not break or silence the
+#: watchdog's own write inside that test's hooks.
+_OPEN = open
+_REPLACE = os.replace
+_GETPID = os.getpid
 
 
 def _progress(phase: str, node: str = "") -> None:
-    if os.environ.get(_OWNER) != str(os.getpid()):
+    if os.environ.get(_OWNER) != str(_GETPID()):
         return
     path = Path(os.environ[_PROGRESS])
     temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps({"pid": os.getpid(), "phase": phase,
-                                     "node": node, "at": _MONOTONIC()}))
-    temporary.replace(path)
+    with _OPEN(temporary, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps({"pid": _GETPID(), "phase": phase,
+                                 "node": node, "at": _MONOTONIC()}))
+    _REPLACE(temporary, path)
 
 
 def pytest_configure(config):

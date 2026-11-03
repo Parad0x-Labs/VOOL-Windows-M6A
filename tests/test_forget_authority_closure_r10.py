@@ -86,7 +86,7 @@ def test_every_partial_home_withholds_existing_process_new_process_and_restart(t
             reply = forget(selected, chat, 'forget MINT84')
         assert 'could not be verified' in reply
         assert any(row['status'] == 'pending' for home in homes.values()
-                   for row in json.loads((home / '.forget-authority/ledger.json').read_text())['operations'].values())
+                   for row in json.loads((home / '.forget-authority/ledger.json').read_text(encoding="utf-8"))['operations'].values())
         for name, home in homes.items():
             assert memories[name].occurrence_get(occurrences[name].occurrence_id) is None
             watchers[name].stdin.write('read\n')
@@ -233,7 +233,7 @@ def test_registry_rejects_unclassified_and_ungated_public_reader(module, owner, 
     from core.memory.reader_registry import _audit
 
     root = Path(__file__).resolve().parents[1]
-    original = (root / module).read_text()
+    original = (root / module).read_text(encoding="utf-8")
     tree = ast.parse(original)
     container = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == owner) if owner else tree
     container.body.append(ast.parse('def new_public_reader():\n    return "MINT84"\n').body[0])
@@ -259,7 +259,7 @@ def test_unrelated_chat_does_not_depend_on_another_chats_broken_home(tmp_path):
         operations = revocation.begin_group('blocked-chat', 'MINT84', [home, broken])
         for owner, operation in operations:
             revocation.complete(operation, owner)
-        (broken / '.forget-authority/ledger.json').write_text('{broken')
+        (broken / '.forget-authority/ledger.json').write_text('{broken', encoding="utf-8")
         assert not memory.payload_is_current('The orchard key is silver.', chat_id='blocked-chat')
         operations = revocation.begin_group('healthy-chat', 'BLUE92', [home, healthy])
         for owner, operation in operations:
@@ -291,7 +291,7 @@ def test_low_level_memory_readers_use_the_common_pending_gate(tmp_path, monkeypa
             return load_jsonl(path)
     elif reader == 'metadata':
         path = home / 'data/chat_session_meta.json'
-        path.write_text(json.dumps({chat: {'title': body}}))
+        path.write_text(json.dumps({chat: {'title': body}}), encoding="utf-8")
         def read():
             return read_session_metadata(path)
     elif reader == 'short_term':

@@ -60,7 +60,7 @@ def _wait_for_log_line(log: Path, prefix: str, timeout: float = 5.0) -> bool:
 
     deadline = _time.monotonic() + timeout
     while _time.monotonic() < deadline:
-        if any(line.startswith(prefix) for line in log.read_text().splitlines()):
+        if any(line.startswith(prefix) for line in log.read_text(encoding="utf-8").splitlines()):
             return True
         _time.sleep(0.05)
     return False

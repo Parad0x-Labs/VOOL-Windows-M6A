@@ -36,6 +36,7 @@ from dataclasses import replace as dataclasses_replace
 from typing import Any
 
 from core import x_platform_policy as policy
+from core.path_scrub import WINDOWS_PATH_RE
 from core.x_platform_policy import weighted_length
 
 X_EDITORIAL_SKILL_ID = "x-editorial-studio"
@@ -309,7 +310,8 @@ def _privacy_hits(text: str) -> list[str]:
     from core.secret_redaction import contains_secret
 
     hits: list[str] = []
-    if _ABSOLUTE_PATH_PATTERN.search(str(text or "")):
+    # The shared recogniser too: escaped, slashed, UNC/device and spaced-account Windows paths.
+    if _ABSOLUTE_PATH_PATTERN.search(str(text or "")) or WINDOWS_PATH_RE.search(str(text or "")):
         hits.append("local_path")
     try:
         if contains_secret(str(text or "")):

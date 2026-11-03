@@ -46,6 +46,16 @@ GROUP_TIMEOUTS: dict[str, float] = {"g1_continuation": 240.0, "harness_control":
 _STRIPPED = (
     "VOOL_HOME", "VOOL_WORKSPACE_ROOT", "VOOL_PROJECT_ROOT", "VOOL_DAEMON_BIND_PORT",
     "VOOL_DISABLE_MESH_DAEMON", "VOOL_PUBLIC_HIVE_ENABLED", "VOOL_PUBLIC_HIVE_REMOTE_CONFIG",
+    # Cloud credentials are developer-shell state too, and worse: with OPENAI_API_KEY inherited,
+    # the Windows baseline child auto-registered a REAL paid remote lane and made it the default
+    # provider. Names mirror core/cloud_providers.py PROVIDERS.env_names plus the generic-remote
+    # and tether aliases in core/runtime_provider_defaults.py; restated because this module never
+    # imports the runtime. tests/gauntlet/test_hermetic_boundary.py pins this list.
+    "OPENAI_API_KEY", "VOOL_OPENAI_API_KEY", "VOOL_REMOTE_API_KEY", "VOOL_CLOUD_API_KEY",
+    "OPENROUTER_API_KEY", "VOOL_OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "VOOL_ANTHROPIC_API_KEY",
+    "GROQ_API_KEY", "VOOL_GROQ_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "VOOL_GEMINI_API_KEY",
+    "DEEPSEEK_API_KEY", "VOOL_DEEPSEEK_API_KEY", "KIMI_API_KEY", "MOONSHOT_API_KEY", "VOOL_KIMI_API_KEY",
+    "TETHER_API_KEY", "VOOL_TETHER_API_KEY", "VOOL_CUSTOM_API_KEY", "VOOL_USEPOD_TOKEN",
 )
 
 

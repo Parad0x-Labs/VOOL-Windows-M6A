@@ -179,7 +179,7 @@ def _seed_stub_model(home: Path, provider: SequencedToolProvider) -> None:
     seed = textwrap.dedent(
         f"""
         import sys
-        sys.path.insert(0, "{REPO_ROOT}")
+        sys.path.insert(0, {REPO_ROOT.as_posix()!r})
         from storage.db import get_connection
         from storage.migrations import run_migrations
         from storage.model_provider_manifest import ModelProviderManifest, list_provider_manifests, upsert_provider_manifest
@@ -336,7 +336,7 @@ def _orders_rows(db_path: Path) -> tuple[int, set[str]]:
 
 _CREATE_DB_IN_HOME = """
 import sys
-sys.path.insert(0, "{root}")
+sys.path.insert(0, {root!r})
 from tests._toolchain_fixtures import internal_scope, executor_kwargs
 from tests._vool_database_pack import DB_PLUGIN_ID
 from core.tool_intent_executor import execute_tool_intent
@@ -369,9 +369,9 @@ def journey(tmp_path: Path):
             f"""
             import sys
             from pathlib import Path
-            sys.path.insert(0, "{REPO_ROOT}")
+            sys.path.insert(0, {REPO_ROOT.as_posix()!r})
             from core.plugin_lifecycle import enable, install, verify
-            pack = Path("{plugins_root}") / "plugins" / "{DB_PLUGIN_ID}"
+            pack = Path({plugins_root.as_posix()!r}) / "plugins" / "{DB_PLUGIN_ID}"
             install("{DB_PLUGIN_ID}", root=pack, source="test-isolated")
             verify("{DB_PLUGIN_ID}", root=pack)
             enable("{DB_PLUGIN_ID}")
@@ -453,7 +453,7 @@ def test_served_seed_then_real_restart_keeps_activation_and_selectability(journe
     # world (approvals resolved by the real permission controller, same as the scenario pack).
     out = run_in_home(
         home,
-        _CREATE_DB_IN_HOME.format(root=REPO_ROOT, plugin=DB_PLUGIN_ID, ddl=ORDERS_DDL, seed=ORDERS_SEED),
+        _CREATE_DB_IN_HOME.format(root=str(REPO_ROOT), plugin=DB_PLUGIN_ID, ddl=ORDERS_DDL, seed=ORDERS_SEED),
         env_extra={
             "VOOL_PLUGINS_DIR": str(journey["plugins_root"]),
             "VOOL_PLUGIN_RUNTIME_TOOLS": "1",
@@ -488,7 +488,7 @@ def test_served_seed_then_real_restart_keeps_activation_and_selectability(journe
             home,
             (
                 "import sys\n"
-                f"sys.path.insert(0, '{REPO_ROOT}')\n"
+                f"sys.path.insert(0, {REPO_ROOT.as_posix()!r})\n"
                 "from tests._toolchain_fixtures import executor_kwargs\n"
                 f"from tests._vool_database_pack import DB_PLUGIN_ID\n"
                 "from core.tool_intent_executor import execute_tool_intent\n"

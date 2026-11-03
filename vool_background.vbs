@@ -8,6 +8,8 @@ shell.CurrentDirectory = scriptDir
 Set env = shell.Environment("Process")
 env("PYTHONPATH") = scriptDir
 env("VOOL_PROJECT_ROOT") = scriptDir
+' UTF-8 mode for every Python vool_background.cmd starts.
+env("PYTHONUTF8") = "1"
 If env("VOOL_HOME") = "" Then
   env("VOOL_HOME") = runtimeHome
 End If

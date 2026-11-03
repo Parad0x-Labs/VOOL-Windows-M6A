@@ -20,6 +20,8 @@ from core.updater.download import _release_tls_context
 def test_packaged_ca_roots_work_without_a_host_ca_installation(tmp_path, monkeypatch):
     monkeypatch.setenv('SSL_CERT_FILE', str(tmp_path / 'absent.pem'))
     monkeypatch.setenv('SSL_CERT_DIR', str(tmp_path / 'absent-directory'))
+    # Windows loads its OS store whatever the env says, so hide host roots there too.
+    monkeypatch.setattr(ssl.SSLContext, 'load_default_certs', lambda self, purpose=ssl.Purpose.SERVER_AUTH: None)
     assert ssl.create_default_context().cert_store_stats()['x509_ca'] == 0
     context = _release_tls_context()
     assert context.cert_store_stats()['x509_ca'] > 0

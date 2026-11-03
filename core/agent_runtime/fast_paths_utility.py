@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 import re
+import sys
 import zoneinfo
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -2486,6 +2487,44 @@ def _canonical_zone_leaves() -> dict[str, str]:
                     leaves.setdefault(leaf, []).append(zone)
         if leaves:
             break
+    if sys.platform == "win32" and not leaves:
+        # Windows ships no system tz database, so `zoneinfo.TZPATH` names no readable directory
+        # and the scan above found nothing: every named place resolved to "" and the clock lane
+        # declined the turn or answered this machine's own zone (Windows baseline slices
+        # 02b/04/05/06, head d6866a4, 70 red node ids). On exactly such a host
+        # `ZoneInfo("Asia/Tokyo")` still resolves, because zoneinfo's own fallback is the pip
+        # `tzdata` package, whose tables sit in `tzdata/zoneinfo/` -- a directory TZPATH never
+        # lists. Read the same database from there. The POSIX system-tzdb scan above is
+        # untouched, and a Windows host with no `tzdata` package keeps the empty table, so every
+        # named-place turn still fails closed exactly as before.
+        tzdata_tables = ""
+        try:
+            import tzdata
+
+            tzdata_tables = str(getattr(tzdata, "__file__", "") or "")
+        except ImportError:
+            pass
+        if tzdata_tables:
+            for name in ("zone1970.tab", "zone.tab"):
+                path = Path(tzdata_tables).parent / "zoneinfo" / name
+                if not path.exists():
+                    continue
+                try:
+                    text = path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                for line in text.splitlines():
+                    if not line.strip() or line.lstrip().startswith("#"):
+                        continue
+                    parts = line.split("\t")
+                    if len(parts) < 3:
+                        continue
+                    zone = parts[2].strip()
+                    if not zone:
+                        continue
+                    leaf = zone.rsplit("/", 1)[-1].replace("_", " ").strip().lower()
+                    if leaf:
+                        leaves.setdefault(leaf, []).append(zone)
     resolved: dict[str, str] = {}
     for leaf, zones in leaves.items():
         unique = sorted(set(zones))

@@ -10,7 +10,7 @@ from core.conductor.planner import ProposedClause, build_plan_from_clauses
 from core.conductor.registry import NodeContext, computed_dependency_bindings
 from core.conductor.scheduler import _context_for, run_conductor_plan
 
-PORTFOLIO = (Path(__file__).parent / "fixtures/portfolio_last_run.txt").read_text()
+PORTFOLIO = (Path(__file__).parent / "fixtures/portfolio_last_run.txt").read_text(encoding="utf-8")
 TANK = (
     "A tank holds 960 litres. Split it 35% to line A and 65% to line B.\n"
     "Line A loses 8% during filtering. Calculate:\n"

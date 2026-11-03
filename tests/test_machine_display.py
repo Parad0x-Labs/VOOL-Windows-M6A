@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import core.machine_diagnostics as md
 from core.execution.constants import machine_display_intent
 from core.runtime_execution_tools import execute_runtime_tool
+from tests._windows_system32 import trust_system32
 
 
 def test_display_intent_routes_only_this_host_questions() -> None:
@@ -39,6 +40,7 @@ def _fake_runner(resolution_lines: str, edid_lines: str = ""):
 
 def test_display_info_parses_resolution_and_refresh(monkeypatch) -> None:
     monkeypatch.setattr(md.sys, "platform", "win32")
+    trust_system32(monkeypatch)
     runner = _fake_runner("Intel UHD Graphics|1920|1080|60\n")
     info = md.display_info(runner=runner)
     assert info["supported"] is True
@@ -48,6 +50,7 @@ def test_display_info_parses_resolution_and_refresh(monkeypatch) -> None:
 
 def test_display_info_reports_verified_physical_size_from_edid(monkeypatch) -> None:
     monkeypatch.setattr(md.sys, "platform", "win32")
+    trust_system32(monkeypatch)
     runner = _fake_runner("Display|2560|1440|144\n", edid_lines="60|34\n")
     info = md.display_info(runner=runner)
     assert info["displays"][0]["width"] == 2560

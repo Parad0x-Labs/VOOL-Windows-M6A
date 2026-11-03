@@ -11,6 +11,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import unquote, urlparse
 
+from network.listen_policy import ExclusiveThreadingHTTPServer
+
 MAX_BODY_BYTES = 256 * 1024  # 256 KB
 
 
@@ -213,7 +215,7 @@ class WebhookIngressServer:
             return
 
         handler = build_handler(self.forwarder)
-        self.httpd = ThreadingHTTPServer((self.config.host, self.config.port), handler)
+        self.httpd = ExclusiveThreadingHTTPServer((self.config.host, self.config.port), handler)
         self._thread = threading.Thread(
             target=self.httpd.serve_forever,
             name="vool-webhook-ingress",

@@ -23,8 +23,21 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from core.process_liveness import pid_alive
+from core.process_liveness import pid_alive, system_taskkill, system_tool
 from core.runtime_paths import active_vool_home, runtime_home_identity
+from core.windows_job import CREATE_SUSPENDED, new_kill_on_close_job, resume_suspended
+
+
+def _windows_cmd_starter(command: list[str]) -> str | None:
+    """The .bat a Windows wrapper command runs through ``cmd /d /s /c``, or None for any other command."""
+    if len(command) == 5 and [part.lower() for part in command[1:4]] == ["/d", "/s", "/c"]:
+        return command[4]
+    return None
+
+
+#: Job objects are a kernel32 feature, so the job is used only when this interpreter really runs
+#: on Windows. Tests that stand in for Windows through a patched ``os`` set this and pass fakes.
+_JOB_HOST = os.name == "nt"
 
 
 class NativeRuntimeError(RuntimeError):
@@ -65,6 +78,8 @@ class NativeRuntimeSupervisor:
         popen: Callable[..., Any] = subprocess.Popen,
         sleep: Callable[[float], None] = time.sleep,
         monotonic: Callable[[], float] = time.monotonic,
+        job_factory: Callable[[], Any] | None = None,
+        resume: Callable[[int], None] | None = None,
     ) -> None:
         self.project_root = Path(project_root).expanduser().resolve()
         self.command = [str(part) for part in command]
@@ -83,6 +98,11 @@ class NativeRuntimeSupervisor:
         self._popen = popen
         self._sleep = sleep
         self._monotonic = monotonic
+        self._job_factory = job_factory or new_kill_on_close_job
+        self._resume = resume or resume_suspended
+        # Windows: the Job object the owned tree lives in. When this process ends, however it ends,
+        # Windows closes the handle and kills the tree (G4 orphan check, Steve, 177621c).
+        self._job: Any | None = None
         self._unhealthy_since: float | None = None
         self.process: Any | None = None
         self.log_handle: Any | None = None
@@ -96,6 +116,17 @@ class NativeRuntimeSupervisor:
         mode = str(os.environ.get("VOOL_RUNTIME_MODE") or "wrapper").strip().lower()
         if mode == "self-contained":
             command = [sys.executable, "-m", "apps.vool_api_server"]
+        elif sys.platform == "win32":
+            # The Windows bundle ships Start_VOOL.bat; there is no bash. A missing .bat is refused
+            # by ensure_ready before anything is spawned.
+            starter = root / "Start_VOOL.bat"
+            # System32's cmd.exe only, never ComSpec or a cmd found on PATH (#97). When it can't be
+            # trusted the command keeps an empty interpreter and ensure_ready refuses to spawn.
+            try:
+                cmd = system_tool("cmd")
+            except OSError:
+                cmd = ""
+            command = [cmd, "/d", "/s", "/c", str(starter)]
         else:
             starter = root / "Start_VOOL.sh"
             command = ["bash", str(starter)]
@@ -213,11 +244,30 @@ class NativeRuntimeSupervisor:
         )
 
     def _owned_identity_matches(self, payload: dict[str, Any] | None) -> bool:
-        return (
-            self.process is not None
-            and self._identity_matches(payload)
-            and self._identity(payload).get("pid") == self.process.pid
-        )
+        if self.process is None or not self._identity_matches(payload):
+            return False
+        pid = self._identity(payload).get("pid")
+        if pid == self.process.pid:
+            return True
+        # The Windows wrapper's own child is cmd.exe; the API it starts is that cmd's descendant.
+        return _windows_cmd_starter(self.command) is not None and pid in self._descendant_pids()
+
+    def _descendant_pids(self) -> set[int]:
+        """Pids under the owned child (psutil drops reused pids); empty, never a guess, on any failure."""
+        try:
+            import psutil
+
+            return {int(proc.pid) for proc in psutil.Process(self.process.pid).children(recursive=True)}
+        except Exception:
+            return set()
+
+    def _spawn_command(self) -> list[str] | str:
+        starter = _windows_cmd_starter(self.command)
+        if starter is None or os.name != "nt":
+            return self.command
+        # cmd /s strips only the outer pair of quotes, so the inner pair reaches the .bat path intact
+        # even with ( ) & ^ in it. list2cmdline would escape the inner quotes instead.
+        return f'"{self.command[0]}" /d /s /c ""{starter}""'
 
     def ensure_ready(self) -> dict[str, Any]:
         """Return the exact runtime stamp, or raise before any native window is created."""
@@ -247,6 +297,15 @@ class NativeRuntimeSupervisor:
             raise NativeRuntimeError("native runtime start command is empty")
         if self.command[0] == "bash" and len(self.command) > 1 and not Path(self.command[1]).is_file():
             raise NativeRuntimeError(f"runtime starter is missing: {self.command[1]}")
+        cmd_starter = _windows_cmd_starter(self.command)
+        if cmd_starter is not None:
+            if not self.command[0]:
+                raise NativeRuntimeError("Windows' own cmd.exe in System32 can't be trusted here; nothing was started")
+            if not Path(cmd_starter).is_file():
+                raise NativeRuntimeError(f"runtime starter is missing: {cmd_starter}")
+            if '"' in cmd_starter or "%" in cmd_starter:
+                # cmd expands %...% even inside quotes; refuse rather than run a different path.
+                raise NativeRuntimeError(f"runtime starter path cannot be passed to cmd safely: {cmd_starter}")
 
         log_dir = active_vool_home(self.env) / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -269,11 +328,32 @@ class NativeRuntimeSupervisor:
             kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
                 subprocess, "CREATE_NO_WINDOW", 0
             )
+            try:
+                self._job = self._job_factory() if _JOB_HOST else None
+            except Exception as exc:
+                self._close_log()
+                raise NativeRuntimeError(
+                    f"the Windows job that ties the runtime to this window could not be created "
+                    f"({type(exc).__name__}: {exc}); nothing was started"
+                ) from exc
+            if self._job is not None:
+                # Suspended until it is in the job, so it starts nothing outside it (core.windows_job).
+                kwargs["creationflags"] |= CREATE_SUSPENDED
         try:
-            self.process = self._popen(self.command, **kwargs)
+            self.process = self._popen(self._spawn_command(), **kwargs)
         except Exception as exc:
+            self._close_job()
             self._close_log()
             raise NativeRuntimeError(f"runtime spawn failed: {type(exc).__name__}: {exc}") from exc
+        if self._job is not None:
+            try:
+                self._job.assign(self.process.pid)
+                self._resume(self.process.pid)
+            except Exception as exc:
+                self.shutdown()
+                raise NativeRuntimeError(
+                    f"the runtime could not be tied to this window ({type(exc).__name__}: {exc}); it was stopped"
+                ) from exc
 
         while time.monotonic() < deadline:
             returncode = self.process.poll()
@@ -342,6 +422,16 @@ class NativeRuntimeSupervisor:
             with contextlib.suppress(Exception):
                 if os.name == "posix":
                     os.killpg(os.getpgid(child.pid), signal.SIGTERM)
+                elif os.name == "nt":
+                    # Windows has no group signalling: take the child's whole tree
+                    # down through the recorded PID while the root still runs (once
+                    # it has exited, taskkill /T can't walk to the helpers it
+                    # started). Nothing outside that tree is ever touched; if the
+                    # tree kill fails, the wait below falls back to killing the child.
+                    subprocess.run(
+                        (system_taskkill(), "/PID", str(child.pid), "/T", "/F"),
+                        capture_output=True, check=False, timeout=8,
+                    )
                 else:
                     child.terminate()
             try:
@@ -354,6 +444,14 @@ class NativeRuntimeSupervisor:
                         child.kill()
                 with contextlib.suppress(Exception):
                     child.wait(timeout=3)
+        # Closing the job ends anything of the tree the kill above missed.
+        self._close_job()
         self._close_log()
+
+    def _close_job(self) -> None:
+        job, self._job = self._job, None
+        if job is not None:
+            with contextlib.suppress(Exception):
+                job.close()
 
     close = shutdown

@@ -257,8 +257,10 @@ def _target_file_digests(checkout: Path, target: str) -> dict[str, str]:
         files = sorted(p for p in root.rglob("*.py") if p.is_file())
     else:
         return {}
+    # Artifact file ids are forward-slash on every platform: the .v1 record is compared
+    # across revisions and hosts, and `str(relative_to(...))` answers OS separators.
     return {
-        str(p.relative_to(checkout)): hashlib.sha256(p.read_bytes()).hexdigest() for p in files
+        p.relative_to(checkout).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in files
     }
 
 

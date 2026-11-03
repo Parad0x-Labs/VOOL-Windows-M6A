@@ -224,7 +224,7 @@ def served(tmp_path: Path):
             textwrap.dedent(
                 f'''
                 import sys
-                sys.path.insert(0, "{REPO_ROOT}")
+                sys.path.insert(0, {REPO_ROOT.as_posix()!r})
                 from storage.model_provider_manifest import list_provider_manifests
                 from tests._authorship_certification import certify_for_authorship
                 for m in list_provider_manifests():

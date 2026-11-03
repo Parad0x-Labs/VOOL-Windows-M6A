@@ -89,7 +89,7 @@ def test_registry_rejects_public_callable_aliases_on_the_swarm_store(assignment)
 
     root = Path(revocation.__file__).resolve().parents[2]
     module = 'storage/swarm_memory.py'
-    source = (root / module).read_text() + '\nimport functools\n' + assignment + '\n'
+    source = (root / module).read_text(encoding="utf-8") + '\nimport functools\n' + assignment + '\n'
     errors = _audit(root, source_overrides={module: source})
     print('SWARM_ALIAS_AUDIT', assignment, errors)
     assert any('unclassified' in e and module in e for e in errors), errors

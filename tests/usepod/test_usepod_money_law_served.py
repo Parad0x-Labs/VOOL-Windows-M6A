@@ -24,6 +24,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from ops.process_tree import stop_process_tree
 from tests.usepod.strict_usepod_service import Listing, StrictUsePodService
 from tests.usepod.test_usepod_served_flow import (
     INFERENCE_PATHS,
@@ -84,6 +85,12 @@ class MoneyLawDaemon(UsePodServedDaemon):
 
     def kill(self) -> None:
         if self.process is None:
+            return
+        if os.name == "nt":
+            # Windows has no os.killpg, os.getpgid or SIGKILL: taskkill /T /F ends this rig's own
+            # daemon tree at once (TerminateProcess), the same crash with no cleanup.
+            stop_process_tree(self.process, grace_seconds=15.0)
+            self.process = None
             return
         try:
             os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)

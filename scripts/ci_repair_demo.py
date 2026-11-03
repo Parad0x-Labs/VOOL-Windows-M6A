@@ -52,9 +52,9 @@ def build_sandbox(base):
     run(root, "config", "user.email", "ninja@test")
     run(root, "config", "user.name", "Git Ninja")
     os.makedirs(os.path.join(root, "tests"))
-    with open(os.path.join(root, "app.py"), "w") as f:
+    with open(os.path.join(root, "app.py"), "w", encoding="utf-8") as f:
         f.write("def divide(a, b):\n    return a / b\n")          # the bug
-    with open(os.path.join(root, "tests", "test_app.py"), "w") as f:
+    with open(os.path.join(root, "tests", "test_app.py"), "w", encoding="utf-8") as f:
         f.write("from app import divide\n\n"
                 "def test_divide_by_zero_raises():\n"
                 "    import pytest\n"

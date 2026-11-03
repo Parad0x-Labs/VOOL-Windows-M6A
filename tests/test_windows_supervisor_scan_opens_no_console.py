@@ -24,6 +24,7 @@ import pytest
 
 from installer.bundle import bundle_supervisor
 from installer.bundle.bundle_supervisor import BundleSupervisor
+from tests._windows_system32 import POWERSHELL, program, trust_system32
 
 _CREATE_NO_WINDOW = 0x08000000  # winbase.h
 _CREATE_NEW_CONSOLE = 0x00000010  # with it, Windows ignores CREATE_NO_WINDOW
@@ -38,6 +39,7 @@ def supervisor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Bund
     monkeypatch.setattr(subprocess, "CREATE_NO_WINDOW", _CREATE_NO_WINDOW, raising=False)
     monkeypatch.setattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200, raising=False)
     monkeypatch.setattr(bundle_supervisor, "_is_windows_platform", lambda: True)
+    trust_system32(monkeypatch)
     root = tmp_path / "bundle"
     root.mkdir()
     supervisor = BundleSupervisor(root, env={"VOOL_HOME": str(tmp_path / "home")})
@@ -60,7 +62,7 @@ def test_the_stale_api_scan_starts_powershell_without_a_console_window(superviso
         supervisor._clear_stale_api_processes()
 
     [(argv, kwargs)] = runs
-    assert argv[0] == "powershell.exe"
+    assert argv[0] == POWERSHELL
     assert _windowless(int(kwargs.get("creationflags", 0)))
 
 
@@ -70,14 +72,14 @@ def test_every_process_the_supervisor_starts_on_windows_has_no_console_window(su
     started: list[tuple[str, int]] = []
 
     def popen(argv: list[str], **kwargs: object) -> mock.Mock:
-        started.append((Path(argv[0]).name, int(kwargs.get("creationflags", 0))))
+        started.append((program(argv[0]), int(kwargs.get("creationflags", 0))))
         child = mock.Mock(pid=1001 + 2 * len(started))  # odd: no Windows process has this pid
         child.poll.return_value = None
         child.wait.return_value = 0
         return child
 
     def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
-        started.append((Path(argv[0]).name, int(kwargs.get("creationflags", 0))))
+        started.append((program(argv[0]), int(kwargs.get("creationflags", 0))))
         return subprocess.CompletedProcess(argv, 0, b"", b"")
 
     with (

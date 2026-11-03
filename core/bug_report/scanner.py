@@ -27,6 +27,7 @@ from core.bug_report.redaction import (
     _COOKIE_HEADER_RE,
     _EMAIL_RE,
     _ENTROPY_RUN_RE,
+    _ESCAPED_HOME_SEGMENT_RE,
     _EVM_ADDRESS_RE,
     _HEX_BLOB_RE,
     _HOME_ENV_RE,
@@ -47,6 +48,7 @@ from core.bug_report.redaction import (
     _is_v6_candidate,
     _looks_like_secret_run,
 )
+from core.path_scrub import DEVICE_PATH_RE
 from core.secret_redaction import contains_personal_secret, contains_secret, mnemonic_redaction_available
 
 # Spans the pipeline itself generated from sanitized material (content-free digests).
@@ -183,6 +185,10 @@ def scan_text(text: str) -> tuple[ScanFinding, ...]:
     check("home_path", _HOME_SEGMENT_RE)
     check("home_path", _TILDE_HOME_RE)
     check("home_path", _HOME_ENV_RE)
+    # Escaped (doubled-backslash) home paths and \\?\ device paths, as a JSON payload carries them.
+    # A bare UNC shape is not re-checked here: a JSON-encoded "\foo\bar" reads as one.
+    check("home_path", _ESCAPED_HOME_SEGMENT_RE)
+    check("home_path", DEVICE_PATH_RE)
     check("username_label", _USERNAME_LABEL_RE)
     check("email", _EMAIL_RE)
     check("ip_v4", _IPV4_RE)

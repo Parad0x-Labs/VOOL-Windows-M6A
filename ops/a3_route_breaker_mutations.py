@@ -28,7 +28,7 @@ TEST_FILE = os.path.join(PROJECT, "tests/test_tool_loop_liveness.py")
 
 
 def _readlines(path):
-    with open(path) as f: return f.readlines()
+    with open(path, encoding="utf-8") as f: return f.readlines()
 def _invalidate_bytecode(path):
     """Drop the cached .pyc for ``path`` so the next import re-reads the source.
 
@@ -49,10 +49,10 @@ def _invalidate_bytecode(path):
 
 
 def _writelines(path, lines):
-    with open(path, "w") as f: f.writelines(lines)
+    with open(path, "w", encoding="utf-8") as f: f.writelines(lines)
     _invalidate_bytecode(path)
 def synth(path):
-    r = subprocess.run([PYTHON, "-c", f"import ast;ast.parse(open('{path}').read())"],
+    r = subprocess.run([PYTHON, "-c", f"import ast;ast.parse(open({str(path)!r}, encoding='utf-8').read())"],
                        capture_output=True, text=True)
     return r.returncode == 0
 def run(test):

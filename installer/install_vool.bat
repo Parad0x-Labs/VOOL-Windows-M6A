@@ -1,5 +1,8 @@
 @echo off
 setlocal enabledelayedexpansion
+rem UTF-8 mode for every Python this launcher starts (as installer\bundle\vool-launch.cmd does):
+rem without it Python on Windows reads and writes text as cp1252.
+set "PYTHONUTF8=1"
 
 set "SCRIPT_DIR=%~dp0"
 for %%I in ("%SCRIPT_DIR%..") do set "PROJECT_ROOT=%%~fI"
@@ -135,14 +138,14 @@ if not "%VOOL_HOME_OVERRIDE%"=="" (
   set "VOOL_HOME=%VOOL_HOME_DEFAULT%"
 ) else (
   set /p "VOOL_HOME=VOOL runtime folder [%VOOL_HOME_DEFAULT%]: "
-  if "%VOOL_HOME%"=="" set "VOOL_HOME=%VOOL_HOME_DEFAULT%"
+  if "!VOOL_HOME!"=="" set "VOOL_HOME=%VOOL_HOME_DEFAULT%"
 )
 if not "%AGENT_NAME_OVERRIDE%"=="" set "AGENT_NAME_DEFAULT=%AGENT_NAME_OVERRIDE%"
 if "%AUTO_YES%"=="1" (
   set "AGENT_NAME=%AGENT_NAME_DEFAULT%"
 ) else (
   set /p "AGENT_NAME=Agent display name [%AGENT_NAME_DEFAULT%]: "
-  if "%AGENT_NAME%"=="" set "AGENT_NAME=%AGENT_NAME_DEFAULT%"
+  if "!AGENT_NAME!"=="" set "AGENT_NAME=%AGENT_NAME_DEFAULT%"
 )
 
 if not exist "%VENV_DIR%\Scripts\python.exe" (
@@ -246,7 +249,7 @@ if "%LIQUEFY_DIR%"=="" (
   )
 )
 if not "%LIQUEFY_DIR%"=="" (
-  powershell -NoProfile -Command "(Get-Content '%LIQUEFY_DIR%\pyproject.toml') -replace 'setuptools\.backends\._legacy:_Backend','setuptools.build_meta' | Set-Content '%LIQUEFY_DIR%\pyproject.toml'"
+  powershell -NoProfile -Command "$p = Join-Path $env:LIQUEFY_DIR 'pyproject.toml'; (Get-Content -LiteralPath $p) -replace 'setuptools\.backends\._legacy:_Backend','setuptools.build_meta' | Set-Content -LiteralPath $p"
   "%VENV_DIR%\Scripts\python.exe" -m pip install "%LIQUEFY_DIR%" >nul 2>&1
   if !errorlevel! equ 0 (
     echo Liquefy installed into VOOL venv from OpenClaw folder.
@@ -315,7 +318,7 @@ set /p HARDWARE_SUMMARY=<"%TEMP%\vool_hw.txt"
 del /f /q "%TEMP%\vool_hw.txt" >nul 2>&1
 set "INSTALL_PROFILE=local-only"
 set "RECOMMENDED_INSTALL_PROFILE=local-only"
-"%VENV_DIR%\Scripts\python.exe" -c "from core.runtime_backbone import build_provider_registry_snapshot; from core.runtime_install_profiles import build_install_profile_truth; snapshot = build_provider_registry_snapshot(); print(build_install_profile_truth(selected_model=r'%MODEL_TAG%', runtime_home=r'%VOOL_HOME%', provider_capability_truth=snapshot.capability_truth).profile_id)" 2>nul > "%TEMP%\vool_install_profile.txt"
+"%VENV_DIR%\Scripts\python.exe" -c "import os; from core.runtime_backbone import build_provider_registry_snapshot; from core.runtime_install_profiles import build_install_profile_truth; snapshot = build_provider_registry_snapshot(); print(build_install_profile_truth(selected_model=r'%MODEL_TAG%', runtime_home=os.environ.get('VOOL_HOME', ''), provider_capability_truth=snapshot.capability_truth).profile_id)" 2>nul > "%TEMP%\vool_install_profile.txt"
 if exist "%TEMP%\vool_install_profile.txt" (
   set /p RECOMMENDED_INSTALL_PROFILE=<"%TEMP%\vool_install_profile.txt"
   del /f /q "%TEMP%\vool_install_profile.txt" >nul 2>&1
@@ -325,20 +328,20 @@ if "%INSTALL_PROFILE_OVERRIDE%"=="" (
     set "INSTALL_PROFILE_OVERRIDE=auto-recommended"
   ) else (
     set /p "INSTALL_PROFILE_OVERRIDE=Install profile [auto-recommended/local-only/local-max] [auto-recommended]: "
-    if "%INSTALL_PROFILE_OVERRIDE%"=="" set "INSTALL_PROFILE_OVERRIDE=auto-recommended"
-    call :validate_install_profile "%INSTALL_PROFILE_OVERRIDE%"
+    if "!INSTALL_PROFILE_OVERRIDE!"=="" set "INSTALL_PROFILE_OVERRIDE=auto-recommended"
+    call :validate_install_profile "!INSTALL_PROFILE_OVERRIDE!"
     if errorlevel 1 exit /b 2
   )
 )
 set "VOOL_INSTALL_PROFILE=%INSTALL_PROFILE_OVERRIDE%"
 set "INSTALL_PROFILE_SUMMARY=%RECOMMENDED_INSTALL_PROFILE% -> %MODEL_TAG%"
-"%VENV_DIR%\Scripts\python.exe" -c "from core.runtime_backbone import build_provider_registry_snapshot; from core.runtime_install_profiles import build_install_profile_truth; snapshot = build_provider_registry_snapshot(); print(build_install_profile_truth(requested_profile=r'%VOOL_INSTALL_PROFILE%', selected_model=r'%MODEL_TAG%', runtime_home=r'%VOOL_HOME%', provider_capability_truth=snapshot.capability_truth).display_summary())" 2>nul > "%TEMP%\vool_install_profile_summary.txt"
+"%VENV_DIR%\Scripts\python.exe" -c "import os; from core.runtime_backbone import build_provider_registry_snapshot; from core.runtime_install_profiles import build_install_profile_truth; snapshot = build_provider_registry_snapshot(); print(build_install_profile_truth(requested_profile=r'%VOOL_INSTALL_PROFILE%', selected_model=r'%MODEL_TAG%', runtime_home=os.environ.get('VOOL_HOME', ''), provider_capability_truth=snapshot.capability_truth).display_summary())" 2>nul > "%TEMP%\vool_install_profile_summary.txt"
 if exist "%TEMP%\vool_install_profile_summary.txt" (
   set /p INSTALL_PROFILE_SUMMARY=<"%TEMP%\vool_install_profile_summary.txt"
   del /f /q "%TEMP%\vool_install_profile_summary.txt" >nul 2>&1
 )
 set "INSTALL_PROFILE=%RECOMMENDED_INSTALL_PROFILE%"
-"%VENV_DIR%\Scripts\python.exe" -c "from core.runtime_backbone import build_provider_registry_snapshot; from core.runtime_install_profiles import build_install_profile_truth; snapshot = build_provider_registry_snapshot(); print(build_install_profile_truth(requested_profile=r'%VOOL_INSTALL_PROFILE%', selected_model=r'%MODEL_TAG%', runtime_home=r'%VOOL_HOME%', provider_capability_truth=snapshot.capability_truth).profile_id)" 2>nul > "%TEMP%\vool_selected_install_profile.txt"
+"%VENV_DIR%\Scripts\python.exe" -c "import os; from core.runtime_backbone import build_provider_registry_snapshot; from core.runtime_install_profiles import build_install_profile_truth; snapshot = build_provider_registry_snapshot(); print(build_install_profile_truth(requested_profile=r'%VOOL_INSTALL_PROFILE%', selected_model=r'%MODEL_TAG%', runtime_home=os.environ.get('VOOL_HOME', ''), provider_capability_truth=snapshot.capability_truth).profile_id)" 2>nul > "%TEMP%\vool_selected_install_profile.txt"
 if exist "%TEMP%\vool_selected_install_profile.txt" (
   set /p INSTALL_PROFILE=<"%TEMP%\vool_selected_install_profile.txt"
   del /f /q "%TEMP%\vool_selected_install_profile.txt" >nul 2>&1
@@ -454,7 +457,7 @@ if "%OLLAMA_EXE%"=="" if exist "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" set "
 if "%OLLAMA_EXE%"=="" (
   echo Ollama not found. Downloading installer...
   set "OLLAMA_SETUP=%TEMP%\OllamaSetup.exe"
-  powershell -NoProfile -Command "Invoke-WebRequest -Uri 'https://ollama.com/download/OllamaSetup.exe' -OutFile '%TEMP%\OllamaSetup.exe' -UseBasicParsing"
+  powershell -NoProfile -Command "Invoke-WebRequest -Uri 'https://ollama.com/download/OllamaSetup.exe' -OutFile (Join-Path $env:TEMP 'OllamaSetup.exe') -UseBasicParsing"
   if not exist "%TEMP%\OllamaSetup.exe" (
     echo ERROR: Failed to download Ollama. Check your internet connection.
     echo You can install Ollama manually from https://ollama.com/download
@@ -540,7 +543,7 @@ if not exist "%BACKGROUND_CMD_PATH%" (
   exit /b 1
 )
 REM Register with Task Scheduler (runs at logon, no admin required)
-schtasks /create /tn "VOOL_Daemon" /tr "\"%SystemRoot%\System32\wscript.exe\" \"%VBS_PATH%\"" /sc onlogon /rl limited /f >nul 2>&1
+schtasks /create /tn "VOOL_Daemon" /tr "\"%SystemRoot%\System32\wscript.exe\" \"!VBS_PATH!\"" /sc onlogon /rl limited /f >nul 2>&1
 if !errorlevel! equ 0 (
   echo VOOL registered as startup task.
 ) else (
@@ -573,11 +576,11 @@ echo ===============================================
 echo.
 echo VOOL starts automatically at login. No manual steps.
 echo.
-echo Visible agent name: %AGENT_NAME%
+echo Visible agent name: !AGENT_NAME!
 echo Selected model: %MODEL_TAG%
-echo To chat now:   %PROJECT_ROOT%\Open_Chat.bat
-echo Web0 browser:  %PROJECT_ROOT%\Open_Web0.bat
-echo To start headless:  %PROJECT_ROOT%\Start_VOOL.bat
+echo To chat now:   !PROJECT_ROOT!\Open_Chat.bat
+echo Web0 browser:  !PROJECT_ROOT!\Open_Web0.bat
+echo To start headless:  !PROJECT_ROOT!\Start_VOOL.bat
 if defined DESKTOP_SHORTCUT echo Desktop:      %DESKTOP_SHORTCUT%
 echo.
 echo VOOL is the default agent, memory is automatic,

@@ -188,7 +188,7 @@ def test_schema_never_accepts_extra_or_transferable():
 
 def test_no_pace_or_guilt_language_in_user_surface():
     from pathlib import Path
-    group = Path("core/command_registry/groups/lifeform_group.py").read_text()
+    group = Path("core/command_registry/groups/lifeform_group.py").read_text(encoding="utf-8")
     for banned in ("days remaining", "on pace", "deadline", "streak", "you must",
                    "don't lose", "keep your"):
         assert banned not in group.lower()

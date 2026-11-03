@@ -140,7 +140,7 @@ def _seed_stub_model(home: Path, provider: SequencedToolProvider) -> None:
     seed = textwrap.dedent(
         f"""
         import sys
-        sys.path.insert(0, "{REPO_ROOT}")
+        sys.path.insert(0, {REPO_ROOT.as_posix()!r})
         from storage.db import get_connection
         from storage.migrations import run_migrations
         from storage.model_provider_manifest import ModelProviderManifest, list_provider_manifests, upsert_provider_manifest
@@ -424,7 +424,7 @@ def test_served_auto_mode_runs_a_full_journey_and_a_restart_keeps_the_lane(journ
         assert record["state"] in {"closed", "cancelled"}, record
         receipts_path = Path(record["receipts_path"])
         assert receipts_path.is_file()
-        rows = [json.loads(line) for line in receipts_path.read_text().splitlines() if line.strip()]
+        rows = [json.loads(line) for line in receipts_path.read_text(encoding="utf-8").splitlines() if line.strip()]
         ops = [row["op"] for row in rows]
         assert "session.open" in ops and "inspect" in ops and "session.close" in ops, ops
         profile_dir = Path(record["profile_dir"])
@@ -457,7 +457,7 @@ def test_served_auto_mode_runs_a_full_journey_and_a_restart_keeps_the_lane(journ
             textwrap.dedent(
                 f"""
                 import sys
-                sys.path.insert(0, "{REPO_ROOT}")
+                sys.path.insert(0, {REPO_ROOT.as_posix()!r})
                 from tests._toolchain_fixtures import executor_kwargs, internal_scope
                 from core.tool_intent_executor import execute_tool_intent
 
@@ -499,7 +499,7 @@ def test_served_auto_mode_runs_a_full_journey_and_a_restart_keeps_the_lane(journ
 
         registry = json.loads((scratch / "registry.json").read_text())
         record = registry["postrestart"]
-        rows = [json.loads(line) for line in Path(record["receipts_path"]).read_text().splitlines() if line.strip()]
+        rows = [json.loads(line) for line in Path(record["receipts_path"]).read_text(encoding="utf-8").splitlines() if line.strip()]
         assert any(row["op"] == "assert" and row["outcome"] == "asserted" for row in rows), rows
         assert not Path(record["profile_dir"]).exists()
     finally:

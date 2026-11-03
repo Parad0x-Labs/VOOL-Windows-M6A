@@ -141,6 +141,67 @@ The runtime and lean dependencies are included; Ollama/models and optional
 training/native GTK capabilities are separate. Supported package test targets:
 Ubuntu 22.04 and 24.04 on x86_64. The tarball is the only Linux package in 0.7.0.
 
+## Windows: installing an unsigned build
+
+The Windows installer is `VOOL-Setup.exe`, an Inno Setup installer that installs for the current
+user only and never asks for administrator rights. A build made without a code-signing
+certificate is **unsigned**, and Windows warns about it. That is expected. Signing never blocks a
+release: unsigned builds are supported, and once signed builds exist this path stays documented
+for any build made without a certificate.
+
+### Step 1: verify the download
+
+Download `VOOL-Setup.exe` and `SHA256SUMS` from the same release page into the same folder (for
+example `Downloads`). Open PowerShell in that folder and print the file's SHA-256:
+
+```powershell
+(Get-FileHash .\VOOL-Setup.exe -Algorithm SHA256).Hash
+```
+
+Open `SHA256SUMS` in Notepad, find the line ending in `VOOL-Setup.exe`, and compare its first
+field with the printed value. Case does not matter; every character must match.
+
+Or let PowerShell compare for you. It prints `MATCH` or `MISMATCH`:
+
+```powershell
+$f='VOOL-Setup.exe'; $want=((Get-Content .\SHA256SUMS | Where-Object { $_ -match ('\s\*?'+[regex]::Escape($f)+'$') }) -split '\s+')[0]; if ($want -and ((Get-FileHash ".\$f" -Algorithm SHA256).Hash -eq $want)) { 'MATCH' } else { 'MISMATCH' }
+```
+
+`MISMATCH` also appears if `SHA256SUMS` has no line for that file name.
+
+**On a mismatch, do not run the file.** Delete it, download it again from the release page, and
+check again. If it still does not match, stop and report it; do not install it.
+
+A match proves the file is the one listed in `SHA256SUMS`. When the release also publishes
+`SHA256SUMS.asc`, check that signature with the release key as shown in
+[the 0.7 readiness notes](releases/0.7-readiness.md) so you know `SHA256SUMS` itself came from
+the VOOL release.
+
+### Step 2: get past SmartScreen
+
+When you open an unsigned installer, Windows may show a blue **Windows protected your PC**
+screen. It appears because the file has no publisher signature Windows recognises, or the
+publisher has not yet built download reputation. It does not mean the file is malicious, but it
+also means Windows cannot vouch for it.
+
+Proceed **only for a build you verified in step 1**:
+
+1. Click **More info**.
+2. Click **Run anyway**.
+
+If you did not verify the file, or step 1 reported a mismatch, click **Don't run** instead.
+
+### Step 3: the "Unknown Publisher" warning
+
+Windows may instead, or afterwards, show an **Open File - Security Warning** dialog that reads
+**Publisher: Unknown Publisher**. It means the same thing as step 2: the file carries no valid
+signature, so Windows cannot name its maker. For a build you verified in step 1, click **Run**;
+otherwise click **Cancel**.
+
+The VOOL installer never asks for administrator rights. If a User Account Control prompt
+(**Do you want to allow this app to make changes to your device?**) appears while you install
+VOOL, choose **No** and report it: the file you opened is not behaving like the VOOL installer.
+
 ## What The Source Installer Does
 
 1. creates a Python environment and installs dependencies

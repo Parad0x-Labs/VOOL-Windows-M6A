@@ -601,8 +601,11 @@ def test_adversarial_concurrent_repetition_never_serves_governed_bytes(a8_env, a
         def _hammer():
             for _ in range(12):
                 _post_quote(meet, topic, P_QUOTE)
+                # Read the flag before the GET goes out: a read answered before the commit may
+                # legitimately carry the bytes even if WITHHOLD returns while it is in flight.
+                withheld_before_read = state["withheld"]
                 status, served = _get(meet, f"/v1/hive/topics/{topic}/posts")
-                if state["withheld"] and status == 200 and P_EXACT in served:
+                if withheld_before_read and status == 200 and P_EXACT in served:
                     state["leak_after"] = True
                     return
 

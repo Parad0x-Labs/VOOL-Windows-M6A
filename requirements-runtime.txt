@@ -28,6 +28,8 @@ huggingface_hub>=0.28
 playwright>=1.52,<2.0
 zstandard>=0.22.0
 xxhash>=3.4.0
+# Windows has no system tz database; zoneinfo and the clock lane read the tzdata package there.
+tzdata>=2024.1; sys_platform == 'win32'
 pytest>=7.0
 # Solana: required at RUNTIME, not just for live payments. The .null resolver needs
 # solders' find_program_address (the hand-rolled fallback derives wrong PDAs for some

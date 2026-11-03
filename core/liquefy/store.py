@@ -42,7 +42,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from core import windows_path_policy
+from core import windows_path_policy, windows_sharing_retry
 from core.liquefy import api
 from core.liquefy.redaction import redact_payload
 
@@ -118,7 +118,7 @@ def _atomic_write_json(path: Path, payload: dict) -> None:
         os.fsync(fd)
     finally:
         os.close(fd)
-    os.replace(str(tmp), str(path))
+    windows_sharing_retry.replace(tmp, path)
     _fsync_directory(path.parent)
 
 
@@ -345,7 +345,7 @@ class LiquefyLogStore:
                 os.fsync(fd)
             finally:
                 os.close(fd)
-            os.replace(str(tmp_path), str(final_path))
+            windows_sharing_retry.replace(tmp_path, final_path)
             _fsync_directory(self.segments_dir)
 
             # Verify-before-commit: read the durable file through the exact read
@@ -355,10 +355,10 @@ class LiquefyLogStore:
                 if api.canonical_jsonl(recovered) != canonical:
                     raise SegmentCorruptError(segment_id, "roundtrip", "recovered canonical bytes differ")
             except SegmentKeyError as exc:
-                final_path.unlink(missing_ok=True)
+                windows_sharing_retry.unlink(final_path, missing_ok=True)
                 raise SealVerifyError(f"seal verify failed ({exc}); hot log untouched") from exc
             except SegmentCorruptError as exc:
-                final_path.unlink(missing_ok=True)
+                windows_sharing_retry.unlink(final_path, missing_ok=True)
                 raise SealVerifyError(f"seal verify failed ({exc}); hot log untouched") from exc
 
             segment_hash = _sha256_hex(frame)
@@ -404,7 +404,7 @@ class LiquefyLogStore:
             os.fsync(fd)
         finally:
             os.close(fd)
-        os.replace(str(tmp), str(self.hot_path))
+        windows_sharing_retry.replace(tmp, self.hot_path)
         _fsync_directory(self.root)
 
     # ------------------------------------------------------------------- read
@@ -757,8 +757,7 @@ class LiquefyLogStore:
             self._write_cursor_locked()
             for segment_id in removed:
                 path = self._segment_path(segment_id)
-                if path.exists():
-                    os.unlink(str(path))
+                windows_sharing_retry.unlink(path, missing_ok=True)
             _fsync_directory(self.segments_dir)
             _append_receipt_line(
                 self.receipts_dir / "erasure.jsonl",
@@ -795,7 +794,7 @@ class LiquefyLogStore:
             os.fsync(fd)
         finally:
             os.close(fd)
-        os.replace(str(tmp), str(path))
+        windows_sharing_retry.replace(tmp, path)
         _fsync_directory(self.segments_dir)
         first["segment_hash"] = _sha256_hex(frame)
 

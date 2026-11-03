@@ -63,7 +63,7 @@ def main():
     )
     from core.memory.entries import resolve_memory_access_policy
 
-    doc = json.loads(Path(args.input).read_text())
+    doc = json.loads(Path(args.input).read_text(encoding="utf-8"))
     main_chat, foreign_chat = doc["main_chat"], doc["foreign_chat"]
     for chat in [main_chat, foreign_chat]:
         ensure_chat_namespace(chat, grant_current_receipts=False)
@@ -118,7 +118,7 @@ def main():
     )
 
     output = {"operation": args.operation, "network_blocked": True, "blocked_attempts": blocked, "receipts": receipts, "revoked": revoked, "active_grants": [g.source_id for g in list_context_imports(main_chat)], "retained_sources": sources, "assertion_nodes": assertion_nodes, "conversation_log": conversation_log_path().read_text() if conversation_log_path().exists() else "", "profile_facts": {"memory_entries": memory_entries_path().read_text() if memory_entries_path().exists() else "", "heuristics": user_heuristics_path().read_text() if user_heuristics_path().exists() else "", "operator_profile": operator_dense_profile_path().read_text() if operator_dense_profile_path().exists() else ""}}
-    Path(args.out).write_text(json.dumps(output, indent=2))
+    Path(args.out).write_text(json.dumps(output, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__":

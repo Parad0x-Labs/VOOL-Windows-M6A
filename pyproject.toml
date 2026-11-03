@@ -41,6 +41,9 @@ dependencies = [
     # Required for correct .null PDA derivation (find_program_address) and x402 signing;
     # the hand-rolled PDA fallback is unreliable, so this is a hard dependency, not optional.
     "solders>=0.21",
+    # Windows ships no system tz database: zoneinfo and the clock lane's city-to-zone table read
+    # the pip tzdata package there. Declared directly so it never rests on a transitive pull.
+    "tzdata>=2024.1; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

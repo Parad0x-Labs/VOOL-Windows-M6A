@@ -524,8 +524,9 @@ def test_double_submit_is_one_proposal(browser):
     page.locator("#vwHomeSend").click()
     page.fill("#vwHomeSendTo", RECIPIENT)
     page.fill("#vwHomeSendAmount", "0.01")
-    page.locator("#vwHomeSendGo").click()
-    page.evaluate("document.getElementById('vwHomeSendGo').click()")  # a second impatient click in the same breath
+    # Two impatient clicks in the same breath. Both land in one evaluate: the first click's request redraws the
+    # panel, so a second evaluate can find the button already gone.
+    page.evaluate("() => { const go = document.getElementById('vwHomeSendGo'); go.click(); go.click(); }")
     page.wait_for_selector("#vwSheet")
     assert len(facts.proposals) == 1, "double clicks must not create duplicate operations"
     assert not errors

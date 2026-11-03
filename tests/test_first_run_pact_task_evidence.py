@@ -130,3 +130,23 @@ def test_a_broken_chain_is_refused_even_when_the_last_receipt_verifies_alone(pac
     status, payload = _claim(pact_rig, request_id)
     assert status == 409
     assert payload["error"] == "evidence_unverifiable"
+
+
+def test_a_task_the_windows_write_gate_refused_says_why_it_cannot_complete(pact_rig, monkeypatch):
+    """On Windows with no folder marked as a disposable workspace, the gate refuses the task's
+    write and the turn's proof is INCOMPLETE. The claim stays refused with the same fault code,
+    but its detail names the rule instead of only the proof state."""
+    from core import windows_write_gate
+
+    monkeypatch.setattr(windows_write_gate, "_IS_WINDOWS", True)
+    monkeypatch.delenv(windows_write_gate.ENV_VAR, raising=False)
+    pact_rig.walk_to("local_task")
+    request_id, _frames, _commit = pact_rig.run_task_turn(TASK_PROMPT)
+    assert not (pact_rig.workspace / "welcome-notes.txt").exists(), "the gate must have refused the write"
+
+    status, payload = _claim(pact_rig, request_id)
+    assert status == 409
+    assert payload["error"] == "evidence_unverifiable"
+    assert windows_write_gate.ENV_VAR in payload["detail"]
+    assert "isn't marked" in payload["detail"]
+    assert pact_rig.pact()["steps"]["task"] != "done"

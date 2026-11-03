@@ -262,5 +262,5 @@ def test_blackbox_module_cli_forwards():
 def test_repl_summary_uses_registry():
     from pathlib import Path
 
-    source = Path("apps/vool_chat.py").read_text()
+    source = Path("apps/vool_chat.py").read_text(encoding="utf-8")
     assert 'execute_command("status.show"' in source, "the REPL /summary must go through the registry"

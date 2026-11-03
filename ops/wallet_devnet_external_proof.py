@@ -48,6 +48,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from network.listen_policy import ExclusiveListenMixin
+
 DEVNET_RPC = "https://api.devnet.solana.com"
 #: The endpoint every read and every broadcast in this run actually used. Only the public devnet
 #: endpoint can yield a DEVNET-PROVEN verdict; anything else is a rehearsal and says so in the record.
@@ -356,6 +358,11 @@ def cmd_prepare(args: argparse.Namespace) -> int:
 RESOURCE_BODY = b"vool-x402-paid-resource: the bytes a 402 was guarding.\n"
 
 
+class _ExclusiveHTTPServer(ExclusiveListenMixin, HTTPServer):
+    """The proof origin: single-threaded like the HTTPServer it always was, with the platform
+    listen policy (exclusive bind on Windows) every VOOL listener uses."""
+
+
 class _X402Server:
     """A local origin that answers 402 until it is shown a payment it verifies ON PUBLIC DEVNET.
 
@@ -372,7 +379,7 @@ class _X402Server:
         self.deliveries = 0
         self.accepted_signatures: list[str] = []
         self.rejections: list[str] = []
-        self._server: HTTPServer | None = None
+        self._server: _ExclusiveHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
     # -- verification ---------------------------------------------------------------------
@@ -450,7 +457,10 @@ class _X402Server:
                 self.end_headers()
                 self.wfile.write(RESOURCE_BODY)
 
-        self._server = HTTPServer(("127.0.0.1", 0), Handler)
+        # The one listener class with the platform listen policy (exclusive bind
+        # on Windows) — same as every other VOOL listener, not a bare HTTPServer
+        # whose default SO_REUSEADDR hands any same-user process a share of the port.
+        self._server = _ExclusiveHTTPServer(("127.0.0.1", 0), Handler)
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
         return f"http://127.0.0.1:{self._server.server_address[1]}/paid-resource"

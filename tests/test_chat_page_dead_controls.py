@@ -55,7 +55,7 @@ def test_chat_page_javascript_is_syntactically_valid() -> None:
     with tempfile.NamedTemporaryFile("w", suffix=".js", encoding="utf-8", delete=False) as handle:
         handle.write(scripts[0])
         path = handle.name
-    result = subprocess.run([node, "--check", path], capture_output=True, text=True)
+    result = subprocess.run([node, "--check", path], capture_output=True, text=True, encoding="utf-8")
     assert result.returncode == 0, f"chat-page JS syntax error:\n{result.stderr}"
 
 

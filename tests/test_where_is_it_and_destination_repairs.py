@@ -202,7 +202,7 @@ def test_the_approval_ask_shows_the_absolute_write_destination(tmp_path):
         {"path": "finalbot/README.md", "content": "x"},
         {"workspace": str(tmp_path / "ws")},
     )
-    assert displayed == [f"{tmp_path / 'ws'}/finalbot/README.md"]
+    assert displayed == [str(tmp_path / 'ws' / 'finalbot' / 'README.md')]
 
 
 def test_the_approval_ask_never_rewrites_non_path_fields(tmp_path):

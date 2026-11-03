@@ -1,5 +1,7 @@
 import dataclasses
 import json
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -64,6 +66,44 @@ def test_durable_recovery_restores_a_crashed_filesystem_transition(tmp_path, mon
     path = _journal_path(plugin_id); path.parent.mkdir(exist_ok=True)
     path.write_bytes(canonical(journal))
     recover(plugin_id, root)
+    assert destination.exists() and plugin_lifecycle.is_available(plugin_id)
+    assert not path.exists() and not owned.exists()
+    client.close()
+
+
+def test_recovery_removes_read_only_package_files_from_its_scratch(tmp_path, monkeypatch):
+    """Installed package files are 0o444 (artifact.materialize). Windows refuses to delete a
+    read-only file, so recovery must restore the write bit before it removes its scratch."""
+    _, _, _, _, _, client, plugin_id = installed_fixture(tmp_path, monkeypatch)
+    previous = plugin_lifecycle.record_for(plugin_id)
+    root = tmp_path / "plugin-home"
+    owned = root / ".registry-scratch/invocation-read-only-fixture"
+    owned.mkdir()
+    destination = Path(previous.root)
+    destination.rename(owned / "previous")
+    leftover = owned / "failed" / "payload.txt"
+    leftover.parent.mkdir()
+    leftover.write_text("crashed update", encoding="utf-8")
+    leftover.chmod(0o444)
+    receipt = json.loads(_receipt_path(plugin_id).read_text())
+    journal = {"schema": "vool.registry.transaction.v1", "plugin_id": plugin_id, "root": str(root.resolve()),
+        "owned": owned.name, "source": previous.source, "new_digest": "f" * 64,
+        "previous": dataclasses.asdict(previous), "receipt": receipt, "was_disabled": False}
+    path = _journal_path(plugin_id); path.parent.mkdir(exist_ok=True)
+    path.write_bytes(canonical(journal))
+    real_unlink = os.unlink
+
+    def windows_unlink(target, *, dir_fd=None):  # Windows: a read-only file cannot be deleted
+        mode = os.lstat(target, dir_fd=dir_fd).st_mode
+        if not stat.S_ISLNK(mode) and not mode & stat.S_IWUSR:
+            raise PermissionError(13, "Access is denied", str(target))
+        return real_unlink(target, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "unlink", windows_unlink)
+    try:
+        recover(plugin_id, root)
+    finally:
+        monkeypatch.setattr(os, "unlink", real_unlink)
     assert destination.exists() and plugin_lifecycle.is_available(plugin_id)
     assert not path.exists() and not owned.exists()
     client.close()

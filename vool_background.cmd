@@ -1,5 +1,8 @@
 @echo off
 setlocal
+rem UTF-8 mode for every Python this launcher starts (as installer\bundle\vool-launch.cmd does):
+rem without it Python on Windows reads and writes text as cp1252.
+set "PYTHONUTF8=1"
 set "SCRIPT_DIR=%~dp0"
 for %%I in ("%SCRIPT_DIR%.") do set "SCRIPT_ROOT=%%~fI"
 if "%VOOL_HOME%"=="" if not "%NULLA_HOME%"=="" set "VOOL_HOME=%NULLA_HOME%"
@@ -31,8 +34,10 @@ if not errorlevel 1 (
 )
 rem A self-update is swapping code; do NOT restart mid-swap. But if the lock is stale
 rem (older than 10 min, i.e. the updater died), clear it and restart so we never brick.
+rem PowerShell reads the path from $env:SCRIPT_ROOT: pasted into its code, an apostrophe in the path
+rem would fail the parse, and that exit 1 would read as a stale lock.
 if not exist "%SCRIPT_ROOT%\.vool_updating.lock" goto no_update_lock
-powershell -NoProfile -Command "$f=Get-Item -LiteralPath '%SCRIPT_ROOT%\.vool_updating.lock' -ErrorAction SilentlyContinue; if ($f -and ((Get-Date) - $f.LastWriteTime).TotalMinutes -gt 10) { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue; exit 1 } else { exit 0 }" >nul 2>&1
+powershell -NoProfile -Command "$f=Get-Item -LiteralPath (Join-Path $env:SCRIPT_ROOT '.vool_updating.lock') -ErrorAction SilentlyContinue; if ($f -and ((Get-Date) - $f.LastWriteTime).TotalMinutes -gt 10) { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue; exit 1 } else { exit 0 }" >nul 2>&1
 if errorlevel 1 (
   echo [%date% %time%] Stale self-update lock cleared (^>10min); resuming restart. >> "%VOOL_LOG_DIR%\vool_api.log"
   goto no_update_lock
@@ -64,7 +69,8 @@ echo [%date% %time%] VOOL API detached start requested. >> "%VOOL_LOG_DIR%\vool_
 goto wait_ready
 
 :direct_start
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$p='%SCRIPT_ROOT%\Start_VOOL.bat'; $q=[char]34; Start-Process -WindowStyle Hidden -FilePath $env:ComSpec -ArgumentList @('/c', ($q + $p + $q))" >nul 2>&1
+rem /s with the doubled outer quotes keeps the path quoted even when it holds an ampersand or brackets.
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$p=Join-Path $env:SCRIPT_ROOT 'Start_VOOL.bat'; $q=[char]34; Start-Process -WindowStyle Hidden -FilePath $env:ComSpec -ArgumentList @('/s', '/c', ($q + $q + $p + $q + $q))" >nul 2>&1
 if errorlevel 1 (
   echo [%date% %time%] VOOL API hidden direct start failed. Retrying... >> "%VOOL_LOG_DIR%\vool_api.log"
   powershell -NoProfile -Command "Start-Sleep -Seconds 2" >nul 2>&1

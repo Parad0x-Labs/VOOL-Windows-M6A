@@ -27,9 +27,9 @@ from core.execution_requirements import requirements_for
 from core.normalized_provider_result import classify_empty_reply, empty_reply_diagnostics
 
 FIXTURES = Path(__file__).parent / "fixtures"
-BRIEF = (FIXTURES / "community_bot_design_brief.txt").read_text()
-EVALUATION = (FIXTURES / "pasted_reasoning_evaluation.txt").read_text()
-DESIGN_REVIEW = (FIXTURES / "contact_wallet_design_review.txt").read_text()
+BRIEF = (FIXTURES / "community_bot_design_brief.txt").read_text(encoding="utf-8")
+EVALUATION = (FIXTURES / "pasted_reasoning_evaluation.txt").read_text(encoding="utf-8")
+DESIGN_REVIEW = (FIXTURES / "contact_wallet_design_review.txt").read_text(encoding="utf-8")
 NOVEL = (
     "We are planning a small incident bot for our ops team.\n\n"
     "Members can post reports, check status, transfer credits, and view rankings.\n\n"

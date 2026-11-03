@@ -107,7 +107,7 @@ _REAL_HOME_LANE_DIRS = ("Desktop", "Downloads", "Documents")
 
 
 def operator_home():
-    """The operator's real home, resolved from the password database.
+    """The operator's real home, resolved from the password database (on Windows, the token's profile).
 
     Never from ``HOME``: a test that has already redirected HOME must still be
     measured against the real home, or the residue guard would grade the
@@ -120,13 +120,39 @@ def operator_home():
     directory the guard watches.
     """
     import os
-    import pwd
     from pathlib import Path
 
     override = os.environ.get("VOOL_TEST_OPERATOR_HOME_OVERRIDE")
     if override:
         return Path(override)
+    if os.name == "nt":
+        return _windows_profile_directory()
+    import pwd
+
     return Path(pwd.getpwuid(os.getuid()).pw_dir)
+
+
+def _windows_profile_directory():
+    """The Windows twin of the password-database lookup: the profile directory of the account
+    this process runs as, read from its access token by GetUserProfileDirectoryW.
+
+    Never from ``USERPROFILE`` or ``HOME``: tests redirect those. A failed lookup raises, so
+    the guard cannot quietly watch nothing.
+    """
+    import ctypes
+    from ctypes import wintypes
+    from pathlib import Path
+
+    userenv = ctypes.WinDLL("userenv", use_last_error=True)
+    userenv.GetUserProfileDirectoryW.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+    userenv.GetUserProfileDirectoryW.restype = wintypes.BOOL
+    token = wintypes.HANDLE(-4)  # GetCurrentProcessToken(): a pseudo-handle, nothing to close
+    size = wintypes.DWORD(0)
+    userenv.GetUserProfileDirectoryW(token, None, ctypes.byref(size))
+    buffer = ctypes.create_unicode_buffer(max(size.value, 1))
+    if not userenv.GetUserProfileDirectoryW(token, buffer, ctypes.byref(size)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return Path(buffer.value)
 
 
 def _real_home_snapshot() -> dict:
@@ -185,6 +211,8 @@ def synthetic_machine_home(tmp_path, monkeypatch):
     for name in _REAL_HOME_LANE_DIRS:
         (home / name).mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("HOME", str(home))
+    # Windows reads the home from USERPROFILE (Path.home, expanduser), not HOME.
+    monkeypatch.setenv("USERPROFILE", str(home))
 
     # A redirect that silently did not take would make every assertion below
     # read the developer's real machine and fail somewhere far less legible

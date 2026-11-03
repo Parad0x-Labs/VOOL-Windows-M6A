@@ -96,7 +96,7 @@ def test_media_tools_source_has_no_raw_urlopen_path():
     """Standing source guard: the media lane must not carry its own socket."""
     import pathlib
 
-    source = pathlib.Path("core/media_tools.py").read_text()
+    source = pathlib.Path("core/media_tools.py").read_text(encoding="utf-8")
     assert "open_remote" in source
     assert "urllib.request.urlopen" not in source.replace(
         "import urllib.request", ""

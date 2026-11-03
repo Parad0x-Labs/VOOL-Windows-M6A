@@ -126,7 +126,7 @@ def test_repl_module_imports_and_owns_the_law():
     build_context delegates to pager.assemble (grep-level proof, cheap and honest)."""
     import pathlib
 
-    source = pathlib.Path("core/kernel/repl.py").read_text()
+    source = pathlib.Path("core/kernel/repl.py").read_text(encoding="utf-8")
     assert "from core.kernel.paged_memory import" in source
     assert "pager.assemble(" in source
     assert "pager.admit_turn(" in source
@@ -138,7 +138,7 @@ def test_paged_memory_has_no_model_and_no_network():
     """Structural law: memory is deterministic — stdlib + lexical authority only."""
     import pathlib
 
-    source = pathlib.Path("core/kernel/paged_memory.py").read_text()
+    source = pathlib.Path("core/kernel/paged_memory.py").read_text(encoding="utf-8")
     imports = re.findall(r"^(?:import|from)\s+([a-zA-Z_][\w.]*)", source, re.M)
     allowed_roots = {"hashlib", "re", "dataclasses", "typing", "__future__", "core"}
     assert {i.split(".")[0] for i in imports} <= allowed_roots

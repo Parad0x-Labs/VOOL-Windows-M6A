@@ -16,6 +16,7 @@ from core.brain_hive_service import BrainHiveService
 from core.hive_write_grants import consume_hive_write_grant
 from core.meet_and_greet_service import MeetAndGreetConfig, MeetAndGreetService
 from core.public_hive_quotas import reserve_public_hive_write_quota
+from network.listen_policy import ExclusiveThreadingHTTPServer
 
 from .readiness import build_meet_readiness
 from .routes import (
@@ -422,7 +423,7 @@ def build_server(
             if write_body:
                 self.wfile.write(body)
 
-    server = ThreadingHTTPServer((cfg.host, cfg.port), Handler)
+    server = ExclusiveThreadingHTTPServer((cfg.host, cfg.port), Handler)
     server.write_windows = write_windows  # type: ignore[attr-defined]
     server.write_lock = write_lock  # type: ignore[attr-defined]
     server.policy_get = policy_get  # type: ignore[attr-defined]

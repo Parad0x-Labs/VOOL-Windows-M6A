@@ -49,7 +49,7 @@ def seed_repo(root):
     git(root, "config", "user.email", "n@x")
     git(root, "config", "user.name", "Ninja")
     for name in ("app.py", "util.py"):
-        with open(os.path.join(root, name), "w") as fh:
+        with open(os.path.join(root, name), "w", encoding="utf-8") as fh:
             fh.write(f"# {name} v1\n")
     git(root, "add", "-A")
     git(root, "commit", "-m", "base")
@@ -82,11 +82,11 @@ def main():
     print(f"1. workspace {ws.key}\n   HEAD {snap.head_sha[:12]} branch={snap.branch} dirty={snap.dirty}")
 
     # 2 make the two requested changes PLUS an unrelated dirty file
-    with open(f"{root}/app.py", "w") as fh:
+    with open(f"{root}/app.py", "w", encoding="utf-8") as fh:
         fh.write("# app.py v2 — repaired\n")
-    with open(f"{root}/util.py", "w") as fh:
+    with open(f"{root}/util.py", "w", encoding="utf-8") as fh:
         fh.write("# util.py v2 — repaired\n")
-    with open(f"{root}/notes.txt", "w") as fh:
+    with open(f"{root}/notes.txt", "w", encoding="utf-8") as fh:
         fh.write("unrelated scratch\n")
     snap = capture_snapshot(ws)
     print(f"2. dirty paths now: {snap.unstaged_paths}")
@@ -147,7 +147,7 @@ def main():
     # 10 cherry-pick CONFLICT case — truthful state, no lying about effect
     git(root, "branch", "rival", pre_repair)
     git(root, "switch", "rival")
-    with open(f"{root}/util.py", "w") as fh:
+    with open(f"{root}/util.py", "w", encoding="utf-8") as fh:
         fh.write("# RIVAL edit\n")
     git(root, "commit", "-am", "rival edit")
     rival_head = capture_snapshot(ws).head_sha

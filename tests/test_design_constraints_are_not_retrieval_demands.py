@@ -5,7 +5,7 @@ import pytest
 from core.agent_runtime.grounded_mode import forbids_inference
 from core.execution_requirements import requirements_for
 
-PROMPT = (Path(__file__).parent / 'fixtures/contact_wallet_design_review.txt').read_text()
+PROMPT = (Path(__file__).parent / 'fixtures/contact_wallet_design_review.txt').read_text(encoding='utf-8')
 
 
 def test_original_design_review_does_not_require_live_retrieval():

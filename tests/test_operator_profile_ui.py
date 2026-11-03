@@ -54,7 +54,7 @@ def _run(program: str) -> dict:
         handle.write(DOM + "\n" + _WALK + "\n" + program)
         path = handle.name
     try:
-        result = subprocess.run([node, path], capture_output=True, text=True, timeout=90)
+        result = subprocess.run([node, path], capture_output=True, text=True, encoding="utf-8", timeout=90)
     finally:
         Path(path).unlink(missing_ok=True)
     assert result.returncode == 0, result.stderr

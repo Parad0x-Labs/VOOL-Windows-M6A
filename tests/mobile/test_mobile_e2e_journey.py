@@ -145,7 +145,7 @@ def test_headless_pairing_chat_approval_journey(tmp_path):
             cwd=str(REPO_ROOT / "mobile"),
             env=journey_env,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8",
             timeout=420,
         )
         evidence = f"# healthz: {health}\n# exit: {result.returncode}\n{result.stdout}\n{result.stderr}"

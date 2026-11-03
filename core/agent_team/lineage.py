@@ -38,6 +38,9 @@ ENV_TOKEN = "VOOL_AGENT_RUN"
 #: "unreadable now" — never as a crash of the coordinator's watch.
 _PROC_READ_ERRORS = (psutil.Error, OSError, SystemError, ValueError)
 _CT_TOLERANCE = 0.01
+#: Windows never reparents an orphan to pid 1: it keeps its dead parent's pid, which a newer
+#: process may now hold.
+_IS_WINDOWS = os.name == "nt"
 
 
 @dataclass(frozen=True)
@@ -215,6 +218,8 @@ class LineageTracker:
             parent_pid = queue.popleft()
             agent_id, depth, _via = owner[parent_pid]
             for child_pid in children.get(parent_pid, ()):
+                if table[child_pid][1].create_time < table[parent_pid][1].create_time - _CT_TOLERANCE:
+                    continue  # older than the pid's holder: its real parent died and the pid was reused
                 if child_pid in owner:
                     known_agent, known_depth, via = owner[child_pid]
                     if known_agent == agent_id and known_depth is None and depth is not None:
@@ -239,9 +244,17 @@ class LineageTracker:
             self._known[ident] = (agent_id, member)
             lineages.setdefault(agent_id, {})[pid] = member
 
+        def _orphaned(ident: ProcId, ppid: int) -> bool:
+            if ppid in (0, 1):
+                return True
+            if not _IS_WINDOWS:
+                return False
+            parent = table.get(ppid)
+            return parent is None or parent[1].create_time > ident.create_time + _CT_TOLERANCE
+
         strays: list[Member] = []
         for pid, (proc, ident, ppid) in table.items():
-            if pid in owner or ident.create_time < since or ppid not in (0, 1):
+            if pid in owner or ident.create_time < since or not _orphaned(ident, ppid):
                 continue
             strays.append(Member(pid, ident.create_time, ppid, None, _cmdline(proc), "stray"))
         return lineages, strays

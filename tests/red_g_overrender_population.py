@@ -57,7 +57,7 @@ from collections import Counter
 
 
 def load_population(path: str) -> list[str]:
-    with open(path) as fh:
+    with open(path, encoding="utf-8") as fh:
         data = json.load(fh)
     texts: list[str] = []
     seen: set[str] = set()
@@ -155,7 +155,7 @@ def main() -> int:
         print(f"    -> ALWAYS-RENDER unit: {unit[:88]!r}")
 
     if args.out:
-        with open(args.out, "w") as fh:
+        with open(args.out, "w", encoding="utf-8") as fh:
             json.dump(
                 {
                     "tree": tree, "population": len(population),

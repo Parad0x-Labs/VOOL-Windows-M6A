@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -227,6 +228,12 @@ class TestAtomicSwap:
         assert remaining == [".VOOL.app.prior-c"]
 
 
+def _uname(fields):
+    """What os.uname() returns. Windows has neither os.uname nor os.uname_result, so the fake
+    is built here and set with raising=False."""
+    return SimpleNamespace(**dict(zip(("sysname", "nodename", "release", "version", "machine"), fields, strict=True)))
+
+
 class _FakeStat:
     def __init__(self, st_dev: int):
         self.st_dev = st_dev
@@ -256,16 +263,16 @@ class TestUpdateFeedFollowsTheBundleNotTheProcess:
         exe = self._bundle(tmp_path, "arm64")
         monkeypatch.setattr(platforms.sys, "executable", str(exe))
         # what a Rosetta-translated process reports:
-        monkeypatch.setattr(platforms.os, "uname", lambda: os.uname_result(
-            ("Darwin", "h", "25.5.0", "v", "x86_64")))
+        monkeypatch.setattr(platforms.os, "uname", lambda: _uname(
+            ("Darwin", "h", "25.5.0", "v", "x86_64")), raising=False)
 
         assert platform_key("darwin") == "macos-arm64"
 
     def test_an_intel_bundle_selects_the_intel_feed(self, tmp_path, monkeypatch):
         exe = self._bundle(tmp_path, "x86_64")
         monkeypatch.setattr(platforms.sys, "executable", str(exe))
-        monkeypatch.setattr(platforms.os, "uname", lambda: os.uname_result(
-            ("Darwin", "h", "25.5.0", "v", "arm64")))
+        monkeypatch.setattr(platforms.os, "uname", lambda: _uname(
+            ("Darwin", "h", "25.5.0", "v", "arm64")), raising=False)
 
         assert platform_key("darwin") == "macos-x64"
 
@@ -275,8 +282,8 @@ class TestUpdateFeedFollowsTheBundleNotTheProcess:
         loose.parent.mkdir(parents=True)
         loose.write_text("", encoding="utf-8")
         monkeypatch.setattr(platforms.sys, "executable", str(loose))
-        monkeypatch.setattr(platforms.os, "uname", lambda: os.uname_result(
-            ("Darwin", "h", "25.5.0", "v", "arm64")))
+        monkeypatch.setattr(platforms.os, "uname", lambda: _uname(
+            ("Darwin", "h", "25.5.0", "v", "arm64")), raising=False)
 
         assert platform_key("darwin") == "macos-arm64"
 

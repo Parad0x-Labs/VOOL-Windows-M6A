@@ -257,6 +257,11 @@ class StagedDownloader:
                     # declared size means the document does not describe this artifact.
                     extra = body.read(1)
                     if extra:
+                        # Windows refuses to delete a file this process still holds open, so the unlink
+                        # below raised WinError 32 and the overshoot verdict became FETCH_FAILED.
+                        # Close the write handle first; the with block's own close is idempotent.
+                        if os.name == "nt":
+                            out.close()
                         part_path.unlink(missing_ok=True)
                         meta_path.unlink(missing_ok=True)
                         return DownloadResult(False, DownloadReason.SIZE_MISMATCH)

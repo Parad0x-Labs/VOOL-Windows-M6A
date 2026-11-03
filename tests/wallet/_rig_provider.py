@@ -145,7 +145,7 @@ class PromptRoutedProvider:
 #: author role the way an operator's probe run would, so the runtime is willing to call it with tools.
 CERTIFY_SEED = '''
 import sys
-sys.path.insert(0, "{root}")
+sys.path.insert(0, {root!r})
 from storage.model_provider_manifest import list_provider_manifests
 from tests._authorship_certification import certify_for_authorship
 
@@ -160,4 +160,4 @@ def seed_daemon(home, provider_base_url: str) -> None:
     from tests._blackbox_served_rig import REPO_ROOT, SEED_MANIFEST, run_in_home
 
     run_in_home(home, SEED_MANIFEST.format(root=REPO_ROOT, base_url=provider_base_url, registered=[MODEL]))
-    run_in_home(home, CERTIFY_SEED.format(root=REPO_ROOT, registered=[MODEL]))
+    run_in_home(home, CERTIFY_SEED.format(root=str(REPO_ROOT), registered=[MODEL]))

@@ -43,7 +43,7 @@ def run_node(program: str, *, timeout: int = 90) -> dict:
         handle.write(program)
         path = handle.name
     try:
-        result = subprocess.run([node, path], capture_output=True, text=True, timeout=timeout)
+        result = subprocess.run([node, path], capture_output=True, text=True, encoding="utf-8", timeout=timeout)
     finally:
         Path(path).unlink(missing_ok=True)
     assert result.returncode == 0, f"the chat page harness failed under node:\n{result.stderr}"

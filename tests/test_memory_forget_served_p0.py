@@ -56,7 +56,7 @@ SESSION = "p0-served-chat"
 # memory bootstrap lane must actually ride for this proof to be non-vacuous.
 SEED = '''
 import sys
-sys.path.insert(0, "{root}")
+sys.path.insert(0, {root!r})
 from storage.db import get_connection
 from storage.migrations import run_migrations
 from storage.model_provider_manifest import ModelProviderManifest, list_provider_manifests, upsert_provider_manifest
@@ -139,7 +139,7 @@ def served(tmp_path: Path):
             daemon.start(timeout=240)
         except Exception as exc:  # pragma: no cover - environment, not the fix
             pytest.skip(f"served daemon could not boot here: {exc}")
-        run_in_home(home, SEED.format(root=REPO_ROOT, base_url=provider.base_url, models=[MODEL]))
+        run_in_home(home, SEED.format(root=str(REPO_ROOT), base_url=provider.base_url, models=[MODEL]))
         result = _certify(daemon, MODEL)
         assert result.get("state") == "verified", f"model certification failed: {result}"
         provider.reset()

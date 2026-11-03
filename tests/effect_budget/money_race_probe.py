@@ -38,6 +38,14 @@ from types import SimpleNamespace
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+# How a worker that killed itself shows up to its parent. POSIX: SIGKILL, reported as -9. Windows
+# has no SIGKILL; os.kill with any other value calls TerminateProcess, which is just as abrupt (no
+# cleanup, no finally blocks) and leaves that value as the exit code.
+if hasattr(signal, "SIGKILL"):
+    KILLED_RETURNCODE = -signal.SIGKILL
+else:
+    KILLED_RETURNCODE = 9
 PROBE_MODULE = "tests.effect_budget.money_race_probe"
 DESTINATION = "11111111111111111111111111111111"
 
@@ -196,7 +204,7 @@ def race(home: Path, worker_name: str, arguments: list[dict[str, Any]], *, timeo
                 parsed = candidate
                 break
         parsed["returncode"] = process.returncode
-        if process.returncode not in (0, -signal.SIGKILL):
+        if process.returncode not in (0, KILLED_RETURNCODE):
             parsed["stderr_tail"] = (stderr or "")[-1200:]
         results.append(parsed)
     return results
@@ -220,7 +228,7 @@ def _child_main(worker_name: str, home: Path, barrier: Path, args: dict[str, Any
 def die_now(result: dict[str, Any]) -> None:
     """Report, then die the way a crash dies: no cleanup, no finally blocks."""
     print(json.dumps({"pid": os.getpid(), "killed_self": True, **result}, sort_keys=True, default=str), flush=True)
-    os.kill(os.getpid(), signal.SIGKILL)
+    os.kill(os.getpid(), signal.SIGKILL if hasattr(signal, "SIGKILL") else KILLED_RETURNCODE)
 
 
 # ---------------------------------------------------------------------------

@@ -25,12 +25,16 @@ import os
 import signal
 import subprocess
 import time
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.process_liveness import pid_alive, system_taskkill
 from ops.served_reality.classify import BenchError
 from ops.served_reality.wire import WireClient, WireLog, free_port
+
+_IS_WINDOWS = os.name == "nt"
 
 
 def _child_pids(parent_pid: int) -> list[int]:
@@ -98,15 +102,43 @@ def _signal_if_same_process(pid: int, token: str, sig: int) -> bool:
         return False
 
 
-def terminate_tree(pid: int, *, term_wait_s: float = 12.0) -> None:
+def _terminate_tree_windows(pid: int, term_wait_s: float, process: subprocess.Popen | None) -> None:
+    """taskkill the whole tree while the root is alive, wait bounded, then kill().
+
+    ``ps`` and POSIX signals do not exist here, and ``os.kill(pid, 0)`` would
+    terminate the process, so liveness goes through ``pid_alive``.
+    """
+    if not pid_alive(pid):
+        return
+    with suppress(Exception):
+        subprocess.run(
+            [system_taskkill(), "/PID", str(pid), "/T", "/F"],
+            capture_output=True,
+            check=False,
+            timeout=15,
+        )
+    deadline = time.monotonic() + term_wait_s
+    while time.monotonic() < deadline:
+        if not pid_alive(pid):
+            return
+        time.sleep(0.1)
+    if process is not None:
+        with suppress(Exception):
+            process.kill()
+
+
+def terminate_tree(pid: int, *, term_wait_s: float = 12.0, process: subprocess.Popen | None = None) -> None:
     """SIGTERM the tree bottom-up, wait bounded, then SIGKILL the rest.
 
     Every signal is identity-checked against the process start token, so a
     recycled PID (a freshly booted replacement daemon) can never be killed
-    by a stale teardown.
+    by a stale teardown. On Windows the tree is stopped with taskkill instead.
     """
     if pid <= 1:
         raise BenchError(f"refusing to terminate tree of pid {pid}")
+    if _IS_WINDOWS:
+        _terminate_tree_windows(pid, term_wait_s, process)
+        return
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -159,7 +191,7 @@ class DaemonHandle:
             return self.process.returncode
         self._terminated = True
         if self.process.poll() is None:
-            terminate_tree(self.process.pid)
+            terminate_tree(self.process.pid, process=self.process)
         try:
             return self.process.wait(timeout=10)
         except subprocess.TimeoutExpired:

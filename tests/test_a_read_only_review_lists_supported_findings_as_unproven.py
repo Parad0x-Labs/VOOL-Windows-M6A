@@ -15,7 +15,7 @@ from types import SimpleNamespace
 from core.agent_runtime.stepped_audit import run_stepped_audit
 
 FIXTURE = Path(__file__).with_name("fixtures") / "multi_file_review"
-SOURCES = {p.name: p.read_text() for p in FIXTURE.glob("*.py")}
+SOURCES = {p.name: p.read_text(encoding="utf-8") for p in FIXTURE.glob("*.py")}
 MANIFEST = SimpleNamespace(provider_id="test:pinned", model_name="test-model")
 REAL = {
     "title": "Partial line cancellation never releases stock", "file": "orders.py", "line_start": 25, "line_end": 28,

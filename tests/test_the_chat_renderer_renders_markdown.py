@@ -67,7 +67,7 @@ def render():
         )
         proc = subprocess.run(
             [NODE, "--input-type=module", "-e", script],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", timeout=30,
         )
         assert proc.returncode == 0, proc.stderr
         return proc.stdout
@@ -255,7 +255,7 @@ def test_the_raw_text_is_still_kept_for_copy(render) -> None:
         + "process.stdout.write(el.dataset.raw);\n"
     )
     proc = subprocess.run([NODE, "--input-type=module", "-e", script],
-                          capture_output=True, text=True, timeout=30)
+                          capture_output=True, text=True, encoding="utf-8", timeout=30)
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout == "## Hi\n\nthere"
 

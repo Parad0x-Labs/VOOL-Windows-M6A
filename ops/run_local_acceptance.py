@@ -29,6 +29,7 @@ REPO_ROOT = _repo_root()
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from core.path_scrub import NETWORK_PATH_RE, SEP, SPACED_HOME_RE
 from core.proof_manifest import build_proof_manifest, write_proof_manifest
 
 DEFAULT_PROFILE_PATH = REPO_ROOT / "config" / "acceptance" / "local_ollama_bundle_profile.json"
@@ -36,6 +37,9 @@ LEGACY_PROFILE_PATH = REPO_ROOT / "config" / "acceptance" / "local_qwen25_7b_pro
 DEFAULT_START_SCRIPT = REPO_ROOT / "run.sh"
 DEFAULT_RUNTIME_LAUNCH_AGENT_LABEL = "ai.vool.runtime"
 DEFAULT_BASE_URL = "http://127.0.0.1:11435"
+# The Windows home in the spellings the /Users pattern misses: doubled backslashes (as a repr or
+# JSON shows it), a slash or backslash after the drive, or a rooted \Users.
+_WINDOWS_HOME_RE = re.compile(r"(?<![\w\\/])([A-Za-z]:)?" + SEP + r"(?i:users)" + SEP + r"[^\\/\s\"'<>|*?:]+")
 
 
 @dataclass(frozen=True)
@@ -69,7 +73,13 @@ def _sanitize_text(value: str, *, repo_root: Path) -> str:
         pass
     for variant in sorted((item for item in repo_variants if item), key=len, reverse=True):
         sanitized = sanitized.replace(variant, "<repo>")
-    sanitized = re.sub(r"/Users/[^/\s]+", "/Users/<redacted>", sanitized)
+    # Network and device paths whole first; a spaced account before the strict pattern, which
+    # would stop inside the name and keep its tail.
+    sanitized = NETWORK_PATH_RE.sub("<redacted>", sanitized)
+    sanitized = SPACED_HOME_RE.sub(lambda m: f"{m.group(1) or ''}/{m.group(2)}/<redacted>", sanitized)
+    # ``/home/`` only where it starts a path: a URL's ``https://host/home/index`` is not a home.
+    sanitized = re.sub(r"/Users/[^/\s]+|(?<![\w.-])/home/[^/\s]+", lambda m: m.group(0)[:6].rstrip("/") + "/<redacted>", sanitized)
+    sanitized = _WINDOWS_HOME_RE.sub(lambda m: f"{m.group(1) or ''}/Users/<redacted>", sanitized)
     return sanitized
 
 
@@ -1012,7 +1022,9 @@ def _stop_runtime(base_url: str) -> None:
             return
         pid = int(dict(health.get("runtime") or {}).get("pid") or 0) if isinstance(health, dict) else 0
         if pid > 0 and pid != last_pid:
-            with suppress(ProcessLookupError):
+            # OSError, not only ProcessLookupError: on Windows a just-exited pid answers
+            # WinError 87 or PermissionError; either way the runtime is already gone.
+            with suppress(OSError):
                 os.kill(pid, signal.SIGTERM)
             last_pid = pid
         time.sleep(0.5)
@@ -1020,15 +1032,23 @@ def _stop_runtime(base_url: str) -> None:
     pid = int(dict(health.get("runtime") or {}).get("pid") or 0) if isinstance(health, dict) else 0
     if pid <= 0:
         return
+    refused = False
     try:
-        os.kill(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        return
+        # Windows has no SIGKILL; os.kill with SIGTERM is already TerminateProcess there.
+        os.kill(pid, getattr(signal, "SIGKILL", signal.SIGTERM))
+    except PermissionError:
+        # Windows answers this both for a pid that just exited and for one this account may not
+        # stop, so only the runtime's own health decides below.
+        refused = True
+    except OSError:
+        return  # ProcessLookupError, or WinError 87 on Windows: the pid is gone
     kill_deadline = time.time() + 5.0
     while time.time() < kill_deadline:
         if _current_health(base_url) is None:
             return
         time.sleep(0.5)
+    if refused:
+        raise RuntimeError(f"the runtime at {base_url} (pid {pid}) refused to stop and is still serving")
 
 
 def _wait_for_runtime(base_url: str, *, expected_commit: str, expected_model: str, timeout: float = 120.0) -> dict[str, Any]:

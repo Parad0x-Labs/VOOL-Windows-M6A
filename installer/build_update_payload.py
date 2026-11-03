@@ -50,7 +50,7 @@ def write_tree_zip(source: Path, output: Path, *, prefix: str) -> None:
 
 
 def _validate_source(source: Path, version: str) -> None:
-    tree = ast.parse((source / "core/app_version.py").read_text())
+    tree = ast.parse((source / "core/app_version.py").read_text(encoding="utf-8"))
     declared = next((ast.literal_eval(node.value) for node in tree.body
                      if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name)
                      and target.id == "VOOL_VERSION" for target in node.targets)), "")
@@ -69,7 +69,7 @@ def build_payload(source: Path, output_dir: Path, *, platform: str, version: str
     if platform in ("macos-arm64", "macos-x64"):
         arch = "arm64" if platform == "macos-arm64" else "x86_64"
         resources = source / "Contents/Resources"
-        manifest = json.loads((resources / "BUILD_MANIFEST.json").read_text())
+        manifest = json.loads((resources / "BUILD_MANIFEST.json").read_text(encoding="utf-8"))
         if (manifest.get("arch") != arch or manifest.get("version") != version + "-beta"
                 or not manifest.get("source_tree_clean") or not manifest.get("release")
                 or not re.fullmatch(r"[0-9a-f]{40}", str(manifest.get("exact_sha") or ""))):
@@ -93,7 +93,7 @@ def build_payload(source: Path, output_dir: Path, *, platform: str, version: str
                             "--output", str(archive), "HEAD"], check=True)
             stage = root / "stage"
             extract_update_zip(archive, stage)
-            (stage / "config/build-source.json").write_text(json.dumps(provenance, indent=2) + "\n")
+            (stage / "config/build-source.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
             write_tree_zip(stage, output, prefix=f"vool-{version}-beta")
     else:
         raise ValueError(f"unsupported release platform: {platform}")

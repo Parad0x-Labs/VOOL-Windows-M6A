@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
+from network.listen_policy import ExclusiveThreadingHTTPServer
+
 MAX_BODY_BYTES = 256 * 1024  # 256 KB
 
 
@@ -280,7 +282,7 @@ class HttpMirrorServer:
             return
 
         handler = build_handler(self.store)
-        self.httpd = ThreadingHTTPServer((self.config.host, self.config.port), handler)
+        self.httpd = ExclusiveThreadingHTTPServer((self.config.host, self.config.port), handler)
 
         self._thread = threading.Thread(
             target=self.httpd.serve_forever,

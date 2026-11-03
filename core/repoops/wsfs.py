@@ -63,7 +63,7 @@ class WorkspaceFS:
     def read(self, rel_path: str) -> str:
         path = self.resolve(rel_path)
         try:
-            return path.read_text()
+            return path.read_text(encoding="utf-8")
         except FileNotFoundError as exc:
             raise FileNotFoundError(f"{rel_path!r} not in workspace") from exc
 
@@ -111,7 +111,7 @@ class WorkspaceFS:
                     evidence={"expected": expected_prior_sha256, "actual": prior},
                 )
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content)
+            path.write_text(content, encoding="utf-8")
             return EffectOutcome(status="applied", evidence={
                 "path": rel_path, "bytes": len(content.encode()),
                 "new_sha256": _sha256(path.read_bytes())[:16],

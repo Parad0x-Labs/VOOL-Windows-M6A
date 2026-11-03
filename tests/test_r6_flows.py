@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+from contextlib import contextmanager
+from pathlib import Path
 
 import pytest
 
@@ -21,6 +24,36 @@ from tests.test_quarantine_destination_isolation import _begin_classify, _point_
 from tests.test_r5_flows import _openai_chat, _store_and_descriptor
 
 R6_KEY = "nv1_r6identity-" + hashlib.sha256(b"revision-6-identity").hexdigest()[:32]
+
+
+@contextmanager
+def _unreadable(path: Path):
+    """No one can open `path` while this holds. On POSIX that is mode 000. On Windows chmod only
+    sets the read-only flag, which never denies a read, so this holds the file open sharing
+    nothing: every other open, read or write, then fails with a sharing violation."""
+    if os.name != "nt":
+        path.chmod(0o000)
+        try:
+            yield
+        finally:
+            path.chmod(0o600)
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    kernel32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                     wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    generic_read, share_none, open_existing, normal = 0x80000000, 0, 3, 0x80
+    handle = kernel32.CreateFileW(str(path), generic_read, share_none, None, open_existing, normal, None)
+    if handle in (None, wintypes.HANDLE(-1).value):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        yield
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def _payload(body):
@@ -173,13 +206,10 @@ def test_strict_reads_tell_unreadable_vault_states_from_absence(pact_rig):
         assert cs.get_credential("r6.boundary.one") == "boundary-value-one"
 
     vault = data_path("credentials.enc.json")
-    vault.chmod(0o000)
-    try:
+    with _unreadable(vault):
         assert cs.get_credential("r6.boundary.one") is None, "the lenient contract changed for other consumers"
         with cs.strict_reads(), pytest.raises(cs.CredentialReadError):
             cs.get_credential("r6.boundary.absent")
-    finally:
-        vault.chmod(0o600)
 
     raw = json.loads(vault.read_text(encoding="utf-8"))
     raw["r6.boundary.one"]["ct_b64"] = raw["r6.boundary.one"]["ct_b64"][:-4] + "AAAA"
@@ -211,8 +241,7 @@ def test_replacement_save_over_unreadable_storage_refuses_before_journaling_and_
         vault_before = vault.read_bytes()
         journal_before = journal.read_bytes() if journal.exists() else b""
 
-        vault.chmod(0o000)
-        try:
+        with _unreadable(vault):
             with pytest.raises(StorageUnavailableError):
                 store.save_verified(descriptor, THIRD_KEY, _verified(), endpoint=b.url + "/v1")
             # the pair reader tells the unreadable store from an absent pair too: typed, never ("", "")
@@ -220,8 +249,6 @@ def test_replacement_save_over_unreadable_storage_refuses_before_journaling_and_
 
             with pytest.raises(StorageReadError):
                 resolved_custom_pair()
-        finally:
-            vault.chmod(0o600)
 
         assert store._pending_intents() == {}, "an operation was journaled over an unreadable prior pair"
         assert (journal.read_bytes() if journal.exists() else b"") == journal_before
@@ -266,11 +293,8 @@ def test_failed_save_then_reconcile_over_unreadable_storage_retains_recovery_and
         assert "llm.cloud.custom" in store._pending_intents()
 
         vault = data_path("credentials.enc.json")
-        vault.chmod(0o000)
-        try:
+        with _unreadable(vault):
             report = _store_and_descriptor()[0].reconcile()
-        finally:
-            vault.chmod(0o600)
         row = load_index()["custom"]
         assert row["status"] == "verified" and row.get("endpoint") == a.url + "/v1", (
             f"an unreadable read degraded the committed row: {row}")

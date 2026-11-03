@@ -282,7 +282,7 @@ def _receipt_lines(store: LiquefyLogStore, kind: str, *, tail: int) -> list[dict
     rows: list[dict] = []
     for path in sorted(store.receipts_dir.glob("*.corrupt.json")):
         try:
-            for line in path.read_text().splitlines():
+            for line in path.read_text(encoding="utf-8").splitlines():
                 if not line.strip():
                     continue
                 parsed = json.loads(line)
@@ -299,7 +299,7 @@ def _receipt_line_count(store: LiquefyLogStore, name: str) -> int:
     if not path.exists():
         return 0
     with contextlib.suppress(OSError):
-        return sum(1 for line in path.read_text().splitlines() if line.strip())
+        return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
     return 0
 
 
