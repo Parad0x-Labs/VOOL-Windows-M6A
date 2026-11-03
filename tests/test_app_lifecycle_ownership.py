@@ -371,11 +371,29 @@ def test_sigterm_before_ownership_capture_still_sweeps_the_dead_childs_pidfile(
 # ------------------------------------------------------------------------------------------
 
 def test_supervisor_teardown_kills_grandchildren_of_the_owned_runtime(tmp_path: Path) -> None:
-    """Child-death propagation: the owned runtime's own children must not survive teardown."""
+    """Child-death propagation: the owned runtime's own children must not survive teardown.
+
+    POSIX: the runtime leads its own session and teardown signals the whole group. Windows has
+    no process groups to signal: the runtime gets its own process group and teardown takes the
+    recorded pid's whole tree down (taskkill /T). The child and grandchild here are this
+    interpreter on Windows, because bash and /bin/sleep are not Windows programs, and liveness
+    goes through pid_alive, because os.kill(pid, 0) on Windows TERMINATES the process."""
     sys.path.insert(0, str(REPO))
     marker = tmp_path / "grandchild.pid"
-    command = ["bash", "-c", f'/bin/sleep 60 & echo $! > {marker}; wait']
+    from core.process_liveness import pid_alive
     from installer.bundle.native_runtime_supervisor import NativeRuntimeSupervisor
+
+    if os.name == "nt":
+        child_code = (
+            "import subprocess, sys, time; "
+            "g = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+            f"open({str(marker)!r}, 'w').write(str(g.pid)); time.sleep(60)"
+        )
+        command = [sys.executable, "-c", child_code]
+        group = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    else:
+        command = ["bash", "-c", f'/bin/sleep 60 & echo $! > {marker}; wait']
+        group = {"start_new_session": True}
 
     supervisor = NativeRuntimeSupervisor(
         tmp_path, command, expected_sha="a" * 40,
@@ -384,23 +402,17 @@ def test_supervisor_teardown_kills_grandchildren_of_the_owned_runtime(tmp_path: 
     )
     supervisor.process = supervisor._popen(
         command, cwd=str(tmp_path), stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, **group,
     )
-    deadline = time.time() + 5
-    while not marker.exists() and time.time() < deadline:
+    deadline = time.time() + 15
+    while not (marker.exists() and marker.read_text().strip()) and time.time() < deadline:
         time.sleep(0.02)
     grandchild = int(marker.read_text().strip())
-    try:
-        os.kill(grandchild, 0)
-    except OSError:
+    if not pid_alive(grandchild):
         pytest.fail("grandchild never started")
     supervisor.shutdown()
     time.sleep(0.3)
-    try:
-        os.kill(grandchild, 0)
-    except OSError:
-        pass
-    else:
+    if pid_alive(grandchild):
         pytest.fail("grandchild survived the owned teardown")
 
 
