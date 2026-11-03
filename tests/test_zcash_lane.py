@@ -205,7 +205,7 @@ def test_an_unpinned_or_changed_binary_is_never_run(chain, monkeypatch) -> None:
         _lane(chain).devtool.run("get-info")
     assert unpinned.value.code == "devtool_unpinned"
     monkeypatch.setenv("VOOL_ZCASH_DEVTOOL_SHA256", chain.sha256)
-    chain.script.write_text(chain.script.read_text() + "\n# tampered\n")
+    chain.script.write_bytes(chain.script.read_bytes() + b"\n# tampered\n")  # on Windows the tool is an .exe
     with pytest.raises(ZcashWatchError) as changed:
         _lane(chain).devtool.run("get-info")
     assert changed.value.code == "devtool_hash_mismatch"
