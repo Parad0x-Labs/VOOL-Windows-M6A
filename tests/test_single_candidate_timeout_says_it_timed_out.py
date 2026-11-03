@@ -42,7 +42,9 @@ def _sole_candidate(error: str, *, timeout_seconds: float = 180.0) -> SimpleName
 def test_a_sole_model_that_timed_out_is_reported_as_a_timeout() -> None:
     message = _single_candidate_failure_hint(_sole_candidate(_READ_TIMEOUT))
     assert "timed out after 180 s" in message
-    assert "did not return a usable reply" not in message
+    # The live gauntlet failure lists (tests/gauntlet/test_general_knowledge_baseline_live.py,
+    # tests/live/runtime_model_gauntlet.py) match this phrase; a timeout must still score as one.
+    assert "did not return a usable reply" in message
     # Still the single-model notice, so it closes its exchange in replayed history.
     assert "was the only model this turn was allowed to use" in message
     assert assistant_text_is_runtime_failure_notice(message)
