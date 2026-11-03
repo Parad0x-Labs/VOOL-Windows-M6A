@@ -145,6 +145,10 @@ def test_project_reveal_opens_the_folder(tmp_path, monkeypatch) -> None:
 
     calls: list = []
     monkeypatch.setattr(subprocess, "Popen", lambda args, **k: calls.append(list(args)))
+    from core import generated_files
+
+    # The macOS (Finder) branch; the Windows Explorer branch is pinned in test_windows_show_in_folder.py.
+    monkeypatch.setattr(generated_files, "host_is_windows", lambda: False)
     folder = tmp_path / "proj"
     folder.mkdir()
     pid = _j(_post("/api/projects", {"name": "P", "root": str(folder)}))["project"]["id"]

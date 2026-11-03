@@ -45,6 +45,7 @@ def test_open_file_refuses_outside_and_launches_inside(_root, monkeypatch) -> No
 
     calls: list = []
     monkeypatch.setattr(subprocess, "Popen", lambda args, **k: calls.append(list(args)))
+    monkeypatch.setattr(gf, "host_is_windows", lambda: False)  # the macOS branch; Windows: test_windows_show_in_folder.py
     assert gf.open_file("/etc/passwd") is False
     assert calls == []                                   # never launched for a disallowed path
     assert gf.open_file(str(_root / "render.png")) is True
@@ -102,6 +103,7 @@ def test_open_reveal_flag_selects_finder_vs_native(_root, monkeypatch) -> None:
 
     calls: list = []
     monkeypatch.setattr(subprocess, "Popen", lambda args, **k: calls.append(list(args)))
+    monkeypatch.setattr(gf, "host_is_windows", lambda: False)  # the macOS branch; Windows: test_windows_show_in_folder.py
     assert gf.open_file(str(_root / "render.png"), reveal=True) is True
     assert calls[-1][:2] == ["open", "-R"]          # Finder reveal
     assert gf.open_file(str(_root / "render.png"), reveal=False) is True
