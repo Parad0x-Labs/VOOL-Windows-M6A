@@ -7,6 +7,7 @@ the runtime. No request data is placed in argv, environment or temporary files.
 from __future__ import annotations
 
 import base64
+import errno
 import ipaddress
 import json
 import os
@@ -42,6 +43,97 @@ def is_loopback_url(url):
         return False
 
 
+#: Loopback (host, port) endpoints that failed to CONNECT, with the time of that failure.
+#: A refused loopback connect costs about 2 s on Windows (Linux refuses at once), and with no
+#: local model server listening each turn dialled 127.0.0.1:11434 several times from separate
+#: subsystems (resident models, inventory, certification identity): the gauntlet's
+#: harness_control group took 674.5 s on Windows against its 600 s budget (Steve, cc81b925).
+#: Inside the window a bodiless GET probe of that endpoint (/api/ps, /api/tags, /api/version
+#: and the like) fails exactly as a refused connect does, without dialling. Every other request
+#: -- a chat POST, a model pull -- still dials, so a model server that has just started is used
+#: at once; any connect that succeeds clears the memory for the probes too. Known effect: for up
+#: to 10 s after a refused probe, a local server that has just started can still read as down to
+#: probe-driven choices (Auto may pick its cloud fallback in that window, under all its gates). "Failed to connect" is a refusal or a connect-phase timeout: Windows retries the SYN
+#: after an RST, so a refusal reaches the caller only after ~2.03 s and a 2 s connect timeout
+#: fires first (Steve, d3b25bab). A live loopback server accepts at once, so on loopback a
+#: connect timeout means nothing is accepting. Read timeouts, HTTP errors and non-loopback URLs
+#: are never remembered, and the window is short so a local server that starts is reached again
+#: within seconds.
+_REFUSED_LOOPBACK_TTL_S = 10.0
+_REFUSED_LOOPBACK: dict[tuple[str, int], float] = {}
+_REFUSED_LOOPBACK_LOCK = threading.Lock()
+_refused_clock = time.monotonic
+
+
+def _loopback_endpoint(url):
+    if not is_loopback_url(url):
+        return None
+    try:
+        parsed = urllib.parse.urlparse(str(url))
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    except (TypeError, ValueError):
+        return None
+    return (str(parsed.hostname or "").lower(), int(port))
+
+
+def _recently_refused(endpoint):
+    if endpoint is None:
+        return False
+    with _REFUSED_LOOPBACK_LOCK:
+        refused_at = _REFUSED_LOOPBACK.get(endpoint)
+        if refused_at is None:
+            return False
+        if _refused_clock() - refused_at < _REFUSED_LOOPBACK_TTL_S:
+            return True
+        _REFUSED_LOOPBACK.pop(endpoint, None)
+        return False
+
+
+def _note_refused(endpoint):
+    if endpoint is not None:
+        with _REFUSED_LOOPBACK_LOCK:
+            _REFUSED_LOOPBACK[endpoint] = _refused_clock()
+
+
+def _forget_refused(endpoint):
+    """A connect that succeeded proves the endpoint is up again: probes may dial it at once."""
+    if endpoint is not None:
+        with _REFUSED_LOOPBACK_LOCK:
+            _REFUSED_LOOPBACK.pop(endpoint, None)
+
+
+def _connect_failed(exc):
+    """True when ``exc`` is a connect-phase failure: a requests ConnectTimeout, or (anywhere in
+    what it wraps) a refused TCP connect."""
+    if isinstance(exc, exceptions.ConnectTimeout):
+        return True
+    return _refused_connect(exc)
+
+
+def _refused_connect(exc):
+    """True when ``exc`` (or anything it wraps) is a refused TCP connect."""
+    seen = set()
+    pending = [exc]
+    while pending:
+        current = pending.pop()
+        # ``reason`` is a plain string on HTTPError and some URLErrors; only exceptions nest.
+        if not isinstance(current, BaseException) or id(current) in seen or len(seen) > 16:
+            continue
+        seen.add(id(current))
+        if isinstance(current, ConnectionRefusedError):
+            return True
+        # Explicit wrapping only (``reason``, ``raise ... from``, args): an implicit __context__
+        # can be an unrelated refusal that happened to be in flight when this error was raised.
+        pending.extend([getattr(current, "reason", None), current.__cause__])
+        pending.extend(arg for arg in getattr(current, "args", ()) if isinstance(arg, BaseException))
+    return False
+
+
+def _refusal_message(endpoint):
+    host, port = endpoint
+    return f"loopback endpoint {host}:{port} could not be connected to within the last {_REFUSED_LOOPBACK_TTL_S:.0f} s"
+
+
 class _RefuseLoopbackRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         raise urllib.error.HTTPError(req.full_url, code, "loopback provider redirect refused", headers, fp)
@@ -51,8 +143,26 @@ def urlopen(request, *, timeout):
     """Loopback means a direct local socket, with no ambient proxy or redirects."""
     url = getattr(request, "full_url", request)
     if is_loopback_url(url):
+        endpoint = _loopback_endpoint(url)
+        probe = isinstance(request, str) or (request.get_method() == "GET" and request.data is None)
+        if probe and _recently_refused(endpoint):
+            raise urllib.error.URLError(ConnectionRefusedError(errno.ECONNREFUSED, _refusal_message(endpoint)))
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _RefuseLoopbackRedirect())
-        return opener.open(request, timeout=timeout)
+        try:
+            response = opener.open(request, timeout=timeout)
+        except urllib.error.HTTPError:
+            _forget_refused(endpoint)  # an HTTP status means the connect succeeded
+            raise
+        except urllib.error.URLError as exc:
+            # urllib wraps only connect/send-phase errors in URLError, so a TimeoutError here is
+            # a connect timeout, never a slow response.
+            # A timeout counts only for a bodiless probe, whose send is trivial; a large POST that
+            # times out while sending says nothing about whether the endpoint is up.
+            if (probe and isinstance(exc.reason, TimeoutError)) or _refused_connect(exc):
+                _note_refused(endpoint)
+            raise
+        _forget_refused(endpoint)
+        return response
     return urllib.request.urlopen(request, timeout=timeout)
 
 
@@ -137,6 +247,8 @@ class _Transfer:
                 continue
             if frame.get("type") == "error":
                 error = frame.get("class")
+                if frame.get("refused") is True:
+                    _note_refused(getattr(self, "endpoint", None))
                 cls = (
                     exceptions.Timeout if error in {"Timeout", "ReadTimeout", "ConnectTimeout"}
                     else exceptions.TooManyRedirects if error == "TooManyRedirects"
@@ -212,11 +324,17 @@ class _Response(_requests.Response):
 
 def _request(method, url, **options):
     streaming = bool(options.pop("stream", False))
+    endpoint = _loopback_endpoint(url)
+    probe = str(method).upper() == "GET" and not any(options.get(k) for k in ("data", "json", "files"))
+    if probe and _recently_refused(endpoint):
+        raise exceptions.ConnectionError("provider HTTP worker failed: " + _refusal_message(endpoint))
     owner = _Transfer(method, url, options)
+    owner.endpoint = endpoint
     try:
         header = owner.receive()
         if header.get("type") != "response":
             raise exceptions.ConnectionError("provider worker did not return response headers")
+        _forget_refused(endpoint)
         response = _Response(owner, header)
         if not streaming:
             _ = response.content
@@ -280,7 +398,10 @@ def _worker():
                     emit({"type": "chunk", "data": base64.b64encode(chunk).decode("ascii")})
                 emit({"type": "done"})
     except Exception as exc:
-        emit({"type": "error", "class": type(exc).__name__})
+        frame = {"type": "error", "class": type(exc).__name__}
+        if _connect_failed(exc):
+            frame["refused"] = True
+        emit(frame)
     finally:
         if timer is not None:
             timer.cancel()
