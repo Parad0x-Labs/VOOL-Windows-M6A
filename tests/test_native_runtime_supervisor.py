@@ -62,6 +62,41 @@ class _Child:
         self.killed += 1
 
 
+class _PosixOs:
+    """The supervisor module's ``os`` as macOS and Linux see it.
+
+    The process-group teardown asserted here (start_new_session, getpgid + killpg) is the POSIX
+    branch of the supervisor. Windows has no getpgid or killpg, so on a Windows host these tests
+    stand a POSIX host in, the mirror of ``_NtOs`` in test_native_runtime_supervisor_windows_launcher.py,
+    which holds the Windows tree-kill and job contract. Each test still replaces getpgid/killpg."""
+
+    name = "posix"
+
+    def __getattr__(self, attr):
+        return getattr(os, attr)
+
+    @staticmethod
+    def getpgid(pid):
+        if hasattr(os, "getpgid"):
+            return os.getpgid(pid)
+        raise OSError("this host has no POSIX process groups")
+
+    @staticmethod
+    def killpg(pgid, sig):
+        if hasattr(os, "killpg"):
+            return os.killpg(pgid, sig)
+        raise OSError("this host has no POSIX process groups")
+
+
+@pytest.fixture
+def posix_host(monkeypatch):
+    """Run the POSIX supervisor branch on every host; no real Windows job for the fake child pid."""
+    import installer.bundle.native_runtime_supervisor as nrs
+
+    monkeypatch.setattr(nrs, "os", _PosixOs())
+    monkeypatch.setattr(nrs, "_JOB_HOST", False)
+
+
 def _supervisor(
     tmp_path, *, child: _Child | None = None, require_owned: bool = True
 ) -> NativeRuntimeSupervisor:
@@ -104,7 +139,7 @@ def test_bundle_mode_never_replaces_a_matching_preexisting_runtime(tmp_path, mon
     assert supervisor.owns_runtime is False
 
 
-def test_missing_runtime_is_spawned_and_gated_on_exact_health_identity(tmp_path) -> None:
+def test_missing_runtime_is_spawned_and_gated_on_exact_health_identity(tmp_path, posix_host) -> None:
     child = _Child()
     supervisor = _supervisor(tmp_path, child=child)
     supervisor._health = mock.Mock(side_effect=[None, None, _health(pid=child.pid, home=tmp_path / "home")])
@@ -153,7 +188,7 @@ def test_recognized_stale_runtime_cannot_be_replaced_even_in_the_same_profile(tm
     assert supervisor.owns_runtime is False
 
 
-def test_spawned_identity_mismatch_is_red_and_child_is_torn_down(tmp_path, monkeypatch) -> None:
+def test_spawned_identity_mismatch_is_red_and_child_is_torn_down(tmp_path, monkeypatch, posix_host) -> None:
     child = _Child(pid=9003)
     supervisor = _supervisor(tmp_path, child=child)
     supervisor._health = mock.Mock(side_effect=[None, _health(OTHER_SHA, pid=9003, home=tmp_path / "home")])
@@ -166,7 +201,7 @@ def test_spawned_identity_mismatch_is_red_and_child_is_torn_down(tmp_path, monke
     assert supervisor.owns_runtime is False
 
 
-def test_owned_child_process_group_is_torn_down_on_native_quit(tmp_path, monkeypatch) -> None:
+def test_owned_child_process_group_is_torn_down_on_native_quit(tmp_path, monkeypatch, posix_host) -> None:
     child = _Child(pid=9004)
     supervisor = _supervisor(tmp_path, child=child)
     supervisor._health = mock.Mock(side_effect=[None, _health(SHA, pid=9004, home=tmp_path / "home")])
@@ -245,7 +280,7 @@ def test_same_commit_occupant_requires_profile_proof(tmp_path, monkeypatch, requ
 
 
 @pytest.mark.parametrize("kind", ["foreign-profile", "missing-profile", "wrong-pid"])
-def test_spawned_readiness_requires_the_owned_child_and_profile(tmp_path, monkeypatch, kind) -> None:
+def test_spawned_readiness_requires_the_owned_child_and_profile(tmp_path, monkeypatch, kind, posix_host) -> None:
     child = _Child(pid=9500)
     supervisor = _supervisor(tmp_path, child=child)
     home = None if kind == "missing-profile" else tmp_path / ("foreign" if kind == "foreign-profile" else "home")
@@ -261,7 +296,7 @@ def test_spawned_readiness_requires_the_owned_child_and_profile(tmp_path, monkey
     assert supervisor.owns_runtime is False
 
 
-def test_owned_watchdog_rejects_a_health_pid_changed_under_the_same_commit(tmp_path, monkeypatch) -> None:
+def test_owned_watchdog_rejects_a_health_pid_changed_under_the_same_commit(tmp_path, monkeypatch, posix_host) -> None:
     child = _Child(pid=9600)
     supervisor = _supervisor(tmp_path, child=child)
     supervisor._health = mock.Mock(side_effect=[None, _health(pid=child.pid, home=tmp_path / "home"),
