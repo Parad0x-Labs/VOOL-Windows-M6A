@@ -19,11 +19,15 @@ from __future__ import annotations
 import os
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from core import plugin_executor
+
+#: Prints exactly the environment the child received, one NAME=value per line.
+_PRINT_ENVIRONMENT = "import os\nfor k, v in os.environ.items(): print(f'{k}={v}')"
 
 SCHEMA = {
     "type": "object",
@@ -162,13 +166,17 @@ def test_build_child_env_returns_only_what_was_granted(monkeypatch: pytest.Monke
 
 
 def test_the_exec_boundary_passes_exactly_the_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Asserted against `/usr/bin/env`, which adds nothing of its own."""
+    """Asserted against a child that adds nothing of its own: `/usr/bin/env` on POSIX.
+
+    Windows has no `/usr/bin/env`, so there the child is this interpreter printing its
+    environment. (Not on POSIX: CPython's locale coercion adds LC_CTYPE to a child with no
+    LANG, so `env` stays the POSIX witness.)
+    """
 
     monkeypatch.setenv("MY_SECRET_KEY", "sk-do-not-leak")
     env = plugin_executor.build_child_env(secrets={"GRANTED": "1"})
-    completed = subprocess.run(
-        ["/usr/bin/env"], capture_output=True, text=True, env=env, shell=False
-    )
+    argv = [sys.executable, "-c", _PRINT_ENVIRONMENT] if os.name == "nt" else ["/usr/bin/env"]
+    completed = subprocess.run(argv, capture_output=True, text=True, env=env, shell=False)
     seen = {line.split("=", 1)[0] for line in completed.stdout.splitlines() if line.strip()}
     assert "MY_SECRET_KEY" not in seen
     assert seen <= {"PATH", "TMPDIR", "LANG", "LC_ALL", "TZ", "GRANTED", "PLUGIN_SCRATCH"}
