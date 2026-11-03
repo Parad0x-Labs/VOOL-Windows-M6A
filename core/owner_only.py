@@ -140,23 +140,26 @@ def make_tree_owner_only(path: str | os.PathLike[str]) -> OwnerOnlyReport:
     the repair keep their old inherited ACL. Each folder is secured (by handle, refusing a link)
     before it is listed, and the first entry that cannot be secured, a link included, fails the whole
     tree: what is left is not owner-only, and saying so is the point."""
-    folder = os.fspath(path)
-    if _WINDOWS and _non_local(folder):
+    top = os.fspath(path)
+    if _WINDOWS and _non_local(top):
         return OwnerOnlyReport(False, "non_local_path")
-    report = make_owner_only(folder, directory=True)
-    if not report.ok:
-        return report
-    try:
-        entries = sorted(os.scandir(folder), key=lambda entry: entry.name)
-    except OSError:
-        return OwnerOnlyReport(False, "unreadable")
-    for entry in entries:
-        if entry.is_dir(follow_symlinks=False):
-            report = make_tree_owner_only(entry.path)
-        else:
-            report = make_owner_only(entry.path)
+    pending = [top]  # folders to secure and then list; a list, not recursion, so depth is unbounded
+    while pending:
+        folder = pending.pop()
+        report = make_owner_only(folder, directory=True)
         if not report.ok:
             return report
+        try:
+            entries = sorted(os.scandir(folder), key=lambda entry: entry.name)
+        except OSError:
+            return OwnerOnlyReport(False, "unreadable")
+        for entry in entries:
+            if entry.is_dir(follow_symlinks=False):
+                pending.append(entry.path)
+                continue
+            report = make_owner_only(entry.path)
+            if not report.ok:
+                return report
     return OwnerOnlyReport(True)
 
 
@@ -287,7 +290,10 @@ def _drive_type(root: str) -> int:
         return 0
     import ctypes
 
-    return int(ctypes.windll.kernel32.GetDriveTypeW(ctypes.c_wchar_p(root)))
+    get_drive_type = ctypes.windll.kernel32.GetDriveTypeW
+    get_drive_type.argtypes = [ctypes.c_wchar_p]
+    get_drive_type.restype = ctypes.c_uint
+    return int(get_drive_type(root))
 
 
 def _win_long_path(path: str) -> str:
