@@ -616,13 +616,14 @@ def _single_candidate_failure_hint(model_execution: Any) -> str:
         if timed_out_after is not None:
             # Mac Intel smoke recall (runs 41531657501, 41568073330, 41597602096): qwen3:8b on a
             # CPU-only Mac ran past its 180 s read timeout, and "did not return a usable reply"
-            # read as a model fault. Name the limit the attempt actually ran under.
+            # read as a model fault. Name the limit the attempt actually ran under, and keep the
+            # "did not return a usable reply" phrase the live gauntlet failure lists match.
             limit = f" after {int(timed_out_after)} s" if timed_out_after > 0 else ""
             return (
-                f"`{name}` was the only model this turn was allowed to use, and it timed out{limit} "
-                "before it finished its reply. I won't answer as a different model than the one "
-                "selected. Retry, or switch the model selector to Auto so the turn can fall back to "
-                "another provider."
+                f"`{name}` was the only model this turn was allowed to use, and it did not return a "
+                f"usable reply: it timed out{limit} before it finished. I won't answer as a different "
+                "model than the one selected. Retry, or switch the model selector to Auto so the "
+                "turn can fall back to another provider."
             )
         return (
             f"`{name}` was the only model this turn was allowed to use, and it did not return a usable "
