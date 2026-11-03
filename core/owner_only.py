@@ -14,6 +14,10 @@ gets a protected DACL with one ACE, full access for the current user, and the us
 owner is set explicitly: an elevated process creates files owned by ``BUILTIN\\Administrators``.
 SYSTEM and Administrators get no ACE, matching ``0o600``.
 
+Only local drive paths are accepted: a network share (``\\\\srv\\share``, ``//srv``) or a device or NT
+path (``\\\\?\\``, ``\\\\.\\``, ``\\\\?\\GLOBALROOT``) is refused ``non_local_path`` before anything is opened.
+``\\\\?\\`` is only ever added here, for a local path too long for the plain form.
+
 Everything is done by handle, never by path (docs/WINDOWS_BROKER.md: never ``SetNamedSecurityInfo``):
 the file is opened with FILE_FLAG_OPEN_REPARSE_POINT, a reparse point (symlink, junction) is refused
 on that handle, and the descriptor is set and then read back on the same handle. A volume without
@@ -23,6 +27,10 @@ target would let whoever placed the link pick what gets re-permissioned.
 A folder passes ``verify_owner_only`` only when its owner-only ACE is inherited by every file and
 folder created anywhere below it (object and container inherit, not no-propagate), so a folder
 protected without inheritance is reported ``ace_not_inheritable`` and repaired by ``ensure_private_dir``.
+A path whose only ACEs are inherit-only is not granted to the user itself (``ace_inherit_only``).
+Setting a folder's descriptor does not reach files already inside it (SetSecurityInfo does not
+propagate), and a handle opened before the change keeps its access: for a secret, prefer a folder
+``ensure_private_dir`` creates over repairing one, and make each existing secret file owner-only too.
 
 ``make_owner_only`` and ``verify_owner_only`` return an :class:`OwnerOnlyReport` and never raise for
 an expected failure; ``require_owner_only`` and ``ensure_private_dir`` raise
@@ -46,6 +54,7 @@ _ACCESS_ALLOWED_ACE_TYPE = 0
 _OBJECT_INHERIT_ACE = 0x1
 _CONTAINER_INHERIT_ACE = 0x2
 _NO_PROPAGATE_INHERIT_ACE = 0x4
+_INHERIT_ONLY_ACE = 0x8
 #: Windows hands a path this long or longer to the long-path form (``\\?\``); MAX_PATH less room
 #: for an 8.3 name, as CreateDirectoryW counts it.
 _LONG_PATH = 248
@@ -71,6 +80,8 @@ def make_owner_only(path: str | os.PathLike[str], *, directory: bool = False) ->
     """Make ``path`` (an existing file, or folder when ``directory``) owner-only, then verify it."""
     if not _WINDOWS:
         return _posix_make(os.fspath(path), directory=directory)
+    if _non_local(os.fspath(path)):
+        return OwnerOnlyReport(False, "non_local_path")
     return _windows_apply(os.fspath(path), directory=directory, set_descriptor=True)
 
 
@@ -78,6 +89,8 @@ def verify_owner_only(path: str | os.PathLike[str]) -> OwnerOnlyReport:
     """Whether ``path`` is owner-only now. Reads only; never changes anything."""
     if not _WINDOWS:
         return _posix_verify(os.fspath(path))
+    if _non_local(os.fspath(path)):
+        return OwnerOnlyReport(False, "non_local_path")
     return _windows_apply(os.fspath(path), directory=None, set_descriptor=False)
 
 
@@ -91,6 +104,8 @@ def require_owner_only(path: str | os.PathLike[str], *, directory: bool = False)
 def ensure_private_dir(path: str | os.PathLike[str]) -> Path:
     """Create ``path`` owner-only (its parents are created as ordinary folders), or make an existing
     one owner-only; raise :class:`OwnerOnlyUnavailable` when it cannot be."""
+    if _WINDOWS and _non_local(os.fspath(path)):
+        raise OwnerOnlyUnavailable(path, "non_local_path")
     folder = os.path.abspath(os.fspath(path))
     if not _WINDOWS:
         os.makedirs(folder, mode=0o700, exist_ok=True)
@@ -187,11 +202,20 @@ def _judge_descriptor(
         return OwnerOnlyReport(False, "empty_dacl")  # locks the user out too: not what was asked
     if any(ace[0] != _ACCESS_ALLOWED_ACE_TYPE or ace[1] != user for ace in dacl):
         return OwnerOnlyReport(False, "foreign_ace")
+    if not any(_applies_here(ace) for ace in dacl):
+        # Every ACE is inherit-only: the user is not granted the path itself, so "owner-only" is not true.
+        return OwnerOnlyReport(False, "ace_inherit_only")
     if directory and not any(_hands_down(ace) for ace in dacl):
         # A folder whose ACE is not inherited is owner-only itself, but each file or folder created
         # inside gets the creator's default DACL (SYSTEM, Administrators): not a private folder.
         return OwnerOnlyReport(False, "ace_not_inheritable")
     return OwnerOnlyReport(True)
+
+
+def _applies_here(ace: tuple[int, ...]) -> bool:
+    """Whether the ACE applies to the path itself (not inherit-only). A two-item ACE has no known flags,
+    and an ACE without flags applies here."""
+    return len(ace) < 3 or not int(ace[2]) & _INHERIT_ONLY_ACE
 
 
 def _hands_down(ace: tuple[int, ...]) -> bool:
@@ -203,12 +227,21 @@ def _hands_down(ace: tuple[int, ...]) -> bool:
     return flags & both == both and not flags & _NO_PROPAGATE_INHERIT_ACE
 
 
+def _non_local(path: str) -> bool:
+    """Whether ``path`` names a network share or a device (``\\\\srv\\share``, ``//srv``, ``\\\\?\\``,
+    ``\\\\.\\``, ``\\\\?\\GLOBALROOT``): the project refuses them all. On a share, "owner-only" would be
+    judged on a server whose other administrators and sessions this check cannot see. A relative path
+    is checked as made absolute too, since the working folder can be on a share."""
+    return any(form.replace("/", "\\").startswith("\\\\") for form in (path, os.path.abspath(path)))
+
+
 def _win_long_path(path: str) -> str:
-    """``path`` in the ``\\\\?\\`` form when it is too long for the plain one."""
-    if len(path) < _LONG_PATH or path.startswith("\\\\?\\"):
+    """A local drive ``path`` in the ``\\\\?\\`` form when it is too long for the plain one. Shares and
+    device paths are refused before this (``_non_local``), so one reaching here is a bug."""
+    if path.replace("/", "\\").startswith("\\\\"):
+        raise ValueError(f"not a local drive path: {path!r}")
+    if len(path) < _LONG_PATH:
         return path
-    if path.startswith("\\\\"):
-        return "\\\\?\\UNC\\" + path[2:]
     return "\\\\?\\" + path
 
 
