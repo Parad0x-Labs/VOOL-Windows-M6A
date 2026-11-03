@@ -6607,8 +6607,9 @@ def _write_file(
                 "before_text": previous,
                 "after_text": content,
                 "before_mode": previous_mode,
-                # Text cannot carry bytes that are not UTF-8; a rollback must not write U+FFFD instead.
-                "before_restorable": _is_utf8(previous_bytes),
+                # Text cannot carry bytes that are not UTF-8; a rollback must not write U+FFFD instead. An
+                # absent file (None) has nothing to restore: its rollback removes it.
+                "before_restorable": previous_bytes is None or _is_utf8(previous_bytes),
             }
         ],
     )
