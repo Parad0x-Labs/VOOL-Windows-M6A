@@ -268,9 +268,15 @@ def test_searching_never_sends_a_turn_or_calls_anything(page_ctx) -> None:
         }"""
     )
     page.wait_for_timeout(200)
-    # The wallet strip's own status poll (every 2500 ms since load) is page traffic, not search's:
-    # landing inside this window made the check fail by timing alone.
-    new_requests = [(m, u) for m, u in seen[before:] if (m, u) != ("GET", "http://vool.test/api/wallet/status")]
+    # The page's own timed status polls are page traffic, not search's: the wallet strip polls
+    # every 2500 ms and the update chip every 3500 ms (core/vool_chat_page.py, refreshUpdateStatus).
+    # Either one landing inside this window made the check fail by timing alone (the update poll
+    # did on Windows run 41670907215). Only these exact GETs are excused; anything else still fails.
+    page_polls = {
+        ("GET", "http://vool.test/api/wallet/status"),
+        ("GET", "http://vool.test/api/update/status"),
+    }
+    new_requests = [(m, u) for m, u in seen[before:] if (m, u) not in page_polls]
     assert new_requests == [], f"searching issued requests: {new_requests}"
 
 
