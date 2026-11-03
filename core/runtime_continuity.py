@@ -177,6 +177,11 @@ def _within_one_availability_connection(func):
     one _serve_event_rows uses: verdicts stay per-check and uncached, no read transaction is held
     between checks, and the connection closes when the write returns. The durable-boundary
     re-checks still run after the early gate and before the runtime write, as before.
+
+    The scope's state lives in a ContextVar and is a plain list shared by every copy of that
+    context. A wrapped writer must not hand its context to another thread (asyncio.to_thread,
+    contextvars.copy_context().run in a worker, or Python 3.14's thread-inherited contexts): two
+    threads would then share one sqlite3 connection.
     """
 
     @functools.wraps(func)
