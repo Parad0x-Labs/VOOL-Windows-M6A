@@ -151,7 +151,7 @@ def main(argv: list[str]) -> int:
 
     fails, report = check(app, arch, min_os)
     if "--json" in argv:
-        Path(argv[argv.index("--json") + 1]).write_text(json.dumps(report, indent=2))
+        Path(argv[argv.index("--json") + 1]).write_text(json.dumps(report, indent=2), encoding="utf-8")
 
     print(f"architecture gate: {app}")
     print(f"  target {arch}, minimum macOS {min_os}, {report['macho_count']} Mach-O files")
