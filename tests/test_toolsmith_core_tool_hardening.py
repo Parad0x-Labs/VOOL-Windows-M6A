@@ -264,7 +264,7 @@ class ApplyUnifiedDiffFailureClassificationTests(unittest.TestCase):
     def test_a_patch_whose_context_no_longer_matches_is_reported_as_stale_base(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             workspace = Path(tmpdir).resolve()
-            (workspace / "f.txt").write_text("completely different content\n", encoding="utf-8")
+            (workspace / "f.txt").write_bytes(b"completely different content\n")  # LF bytes on every OS
             patch = "--- a/f.txt\n+++ b/f.txt\n@@ -1,2 +1,2 @@\n-one\n-two\n+ONE\n+TWO\n"
 
             with mock.patch("core.execution.workspace_tools.shutil.which", return_value=None):

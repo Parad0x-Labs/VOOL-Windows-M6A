@@ -139,10 +139,10 @@ class SymlinkedParentDirectoryEscapeTests(unittest.TestCase):
 class MultiFileRollbackZeroWritesTests(unittest.TestCase):
     def test_multi_file_rollback_with_one_escaping_target_performs_zero_writes(self) -> None:
         with tempfile.TemporaryDirectory() as workspace_dir, tempfile.TemporaryDirectory() as outside_dir:
-            (Path(workspace_dir) / "a.txt").write_text("a-original", encoding="utf-8")
+            (Path(workspace_dir) / "a.txt").write_bytes(b"a-original\n")  # LF, ends with a newline
             subdir = Path(workspace_dir) / "subdir"
             subdir.mkdir()
-            (subdir / "b.txt").write_text("b-original", encoding="utf-8")
+            (subdir / "b.txt").write_bytes(b"b-original\n")  # LF, ends with a newline
 
             patch_text = (
                 "--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-a-original\n+a-changed\n"
