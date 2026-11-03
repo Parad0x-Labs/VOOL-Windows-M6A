@@ -22,7 +22,8 @@ from typing import Any
 
 SCHEMA = "vool.installed_slices.v1"
 _TIMEOUT = 10.0
-_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost"})
+#: The address itself, not "localhost": a name goes wherever the hosts file or a resolver says.
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1"})
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
