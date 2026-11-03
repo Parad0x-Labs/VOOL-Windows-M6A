@@ -1492,7 +1492,30 @@ def _availability_connection():
     else:
         if state[1] is None:
             state[1] = get_connection()
-        yield state[1]
+        try:
+            yield state[1]
+        finally:
+            _leave_no_transaction_open(state)
+
+
+def _leave_no_transaction_open(state: list) -> None:
+    """A scoped connection is shared by the checks that follow, so it must end each one idle.
+
+    `_migrate_legacy_digest_tombstones` writes on it and rolls back on failure with the error
+    suppressed; a rollback that itself failed would leave the shared connection holding the write
+    lock for the rest of the scope, where a fresh per-check connection would have been closed.
+    Roll back what is open; if that fails too, close the connection so the next check opens a
+    new one.
+    """
+    conn = state[1]
+    if conn is None or not conn.in_transaction:
+        return
+    with contextlib.suppress(Exception):
+        conn.rollback()
+    if conn.in_transaction:
+        state[1] = None
+        with contextlib.suppress(Exception):
+            conn.close()
 
 
 def payload_availability_for_hash(content_hash: str) -> str | None:
