@@ -395,6 +395,14 @@
     "attach.upload_failed": "فشل التحميل.",
     "attach.upload_failed_http": "فشل الرفع (HTTP {status}).",
     "attach.uploading": "جارٍ التحميل…",
+    "broker.line.stopped": "توقف تغيير في الملفات في منتصف الطريق. لن يغيّر VOOL أي ملفات حتى يتم فحصه.",
+    "broker.line.no_undo": "لا يستطيع VOOL الاحتفاظ بسجلات التراجع الآن، لذا لن يغيّر الملفات.",
+    "broker.line.not_running": "حماية ملفات Windows في VOOL لا تعمل، لذا لن يغيّر VOOL الملفات في مجلداتك.",
+    "broker.line.show_details": "عرض التفاصيل",
+    "broker.line.recheck": "التحقق مرة أخرى",
+    "broker.line.pending_item": "الدفعة {id}: لا تزال في غير مكانها: {items}",
+    "broker.line.torn_item": "الدفعة {id}: تم الاحتفاظ بسجل غير مكتمل في {file}",
+    "broker.line.clear_note": "لم تتوفر إزالة هذا من داخل VOOL بعد. افحص الملفات المدرجة قبل أن يغيّرها أي شيء آخر.",
     "bypass.banner_active": "وضع تجاوز الأذونات مُفعّل الآن.",
     "bypass.cancel": "إلغاء",
     "bypass.chat_only_until_off": "تجاوز الأذونات · هذه المحادثة فقط · نشط حتى توقفه (الإلغاء متاح دائمًا)",
@@ -1889,13 +1897,14 @@
     "fault.wallet_payment_channel_off.action": "شغّل قناة دفع في إعدادات العملات المشفرة فقط إن أردت أن تتم الدفعات عبرها؛ الحد الأقصى وموافقتك يسريان على كل قناة.",
     "fault.wallet_x402_sdk_unavailable.message": "لا يستطيع هذا الإصدار دفع عروض x402 على Base عبر x402 Foundation SDK: الإضافة الاختيارية x402 غير مثبتة على هذه الآلة. لم يوقَّع أو يُرسل شيء. كل وظائف المحفظة الأخرى تعمل بدونها؛ بعد تثبيتها أعد المحاولة."
   },
-  "source_catalog_sha256": "d8a67e14feb003241cd996a68463f6eda16a86addc0e96ebfd548712768af8e8",
+  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
     "cross_check": "language-family agent self-check + deterministic validator",
     "generated_at": "2026-09-04T14:20:28Z",
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
-    "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)"
+    "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
+    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)"
   }
 }

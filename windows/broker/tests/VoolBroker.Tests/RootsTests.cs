@@ -31,7 +31,9 @@ public sealed class RootsTests : IDisposable
 
     private static string Code(JsonDocument refusal) => refusal.RootElement.GetProperty("error").GetProperty("code").GetString()!;
 
-    // F1, F2, F3, F5, F6, case-sensitive: each refused entry stops the start, names the entry, and creates no pipe.
+    // F1, F2, F3, F5, F6, case-sensitive: each refused entry is skipped (Phase C pick 1, owner 23 Oct):
+    // the broker starts without it, names it and its reason under "skipped" on the start line, and
+    // changes nothing.
     [Theory]
     [InlineData("relative", "invalid_flagged")]
     [InlineData("missing", "invalid_flagged")]
@@ -46,7 +48,7 @@ public sealed class RootsTests : IDisposable
     [InlineData("volume_guid", "invalid_flagged")]
     [InlineData("mapped_drive", "unsupported_filesystem")]
     [InlineData("embedded_nul", "invalid_flagged")]
-    public async Task Refused_flagged_entry_stops_the_start_without_a_pipe(string kind, string code)
+    public async Task Refused_flagged_entry_is_skipped_and_named_on_the_start_line(string kind, string code)
     {
         // F5: windows-broker.yml maps a local share as a drive letter and names a folder on it.
         if (kind == "mapped_drive" && TestSupport.AdminFolder("VOOL_BROKER_TEST_MAPPED_ROOT") is null)
@@ -74,19 +76,31 @@ public sealed class RootsTests : IDisposable
         if (kind == "junction") TestSupport.CreateJunction(entry, target);
         if (kind == "symlink") TestSupport.CreateDirectorySymlinkOrSkip(entry, target);
         if (kind == "case_sensitive") TestSupport.SetCaseSensitiveOrSkip(entry, enable: true);
+        // A broker that starts opens its journal and writes there, so the journal lives outside the
+        // tree whose hash shows that the skipped entry was left alone.
+        var ownJournal = TestSupport.NewTempDirectory();
         try
         {
             var before = TestSupport.TreeHash(temp);
-            var pipes = TestSupport.BrokerPipes();
-            using var refusal = await TestSupport.StartRefused(TestSupport.DefaultBootstrap([entry], journal));
-            Assert.Equal(code, Code(refusal));
-            Assert.Equal(entry, refusal.RootElement.GetProperty("error").GetProperty("entry").GetString());
-            Assert.Empty(TestSupport.BrokerPipes().Except(pipes));
+            var (broker, ready) = await TestSupport.StartReady(TestSupport.DefaultBootstrap([entry], ownJournal));
+            try
+            {
+                Assert.Empty(ready.RootElement.GetProperty("flagged").EnumerateArray());
+                var skipped = Assert.Single(ready.RootElement.GetProperty("skipped").EnumerateArray());
+                Assert.Equal(entry, skipped.GetProperty("entry").GetString());
+                Assert.Equal(code, skipped.GetProperty("code").GetString());
+            }
+            finally
+            {
+                ready.Dispose();
+                await TestSupport.Kill(broker);
+            }
             Assert.Equal(before, TestSupport.TreeHash(temp));
         }
         finally
         {
             if (kind == "case_sensitive") TestSupport.SetCaseSensitiveOrSkip(entry, enable: false);
+            TestSupport.DeleteTree(ownJournal);
         }
     }
 
@@ -103,17 +117,32 @@ public sealed class RootsTests : IDisposable
         Assert.Empty(TestSupport.BrokerPipes().Except(pipes));
     }
 
-    // F10: one refused entry among good ones refuses the whole start, naming that entry.
+    // F10 (Phase C pick 1, owner 23 Oct): one refused entry among good ones is skipped and named; the
+    // good ones are flagged as before, in bootstrap order.
     [Fact]
-    public async Task One_refused_entry_refuses_the_whole_start()
+    public async Task One_refused_entry_is_skipped_and_the_others_stay_flagged()
     {
         var good = NewFolder("good");
         var bad = Path.Combine(temp, "absent");
-        var pipes = TestSupport.BrokerPipes();
-        using var refusal = await TestSupport.StartRefused(TestSupport.DefaultBootstrap([good, bad, NewFolder("good2")], journal));
-        Assert.Equal("invalid_flagged", Code(refusal));
-        Assert.Equal(bad, refusal.RootElement.GetProperty("error").GetProperty("entry").GetString());
-        Assert.Empty(TestSupport.BrokerPipes().Except(pipes));
+        var good2 = NewFolder("good2");
+        var (broker, ready) = await TestSupport.StartReady(TestSupport.DefaultBootstrap([good, bad, good2], journal));
+        try
+        {
+            var flagged = ready.RootElement.GetProperty("flagged").EnumerateArray().Select(entry => entry.GetProperty("path").GetString()!).ToArray();
+            // The reported paths are final paths, so compared by their last folder (the temp folder
+            // may be spelled with an 8.3 name).
+            Assert.Equal(2, flagged.Length);
+            Assert.EndsWith("\\good", flagged[0], StringComparison.OrdinalIgnoreCase);
+            Assert.EndsWith("\\good2", flagged[1], StringComparison.OrdinalIgnoreCase);
+            var skipped = Assert.Single(ready.RootElement.GetProperty("skipped").EnumerateArray());
+            Assert.Equal(bad, skipped.GetProperty("entry").GetString());
+            Assert.Equal("invalid_flagged", skipped.GetProperty("code").GetString());
+        }
+        finally
+        {
+            ready.Dispose();
+            await TestSupport.Kill(broker);
+        }
     }
 
     // F9: the journal folder inside a flagged folder, by its plain path, through a junction, or not created yet.
@@ -246,13 +275,21 @@ public sealed class RootsTests : IDisposable
             TestSupport.SkipOrFailAdminRow(reason);
             return;
         }
-        var pipes = TestSupport.BrokerPipes();
-        using var refusal = await TestSupport.StartRefused(TestSupport.DefaultBootstrap([flagged], journal));
-        // Shown with a failure, so a wrong reason carries its cause.
-        TestContext.Current.TestOutputHelper?.WriteLine($"{variable}: {refusal.RootElement.GetRawText()}");
-        Assert.Equal("unsupported_filesystem", Code(refusal));
-        Assert.Equal(flagged, refusal.RootElement.GetProperty("error").GetProperty("entry").GetString());
-        Assert.Empty(TestSupport.BrokerPipes().Except(pipes));
+        var (broker, ready) = await TestSupport.StartReady(TestSupport.DefaultBootstrap([flagged], journal));
+        try
+        {
+            // Shown with a failure, so a wrong reason carries its cause.
+            TestContext.Current.TestOutputHelper?.WriteLine($"{variable}: {ready.RootElement.GetRawText()}");
+            Assert.Empty(ready.RootElement.GetProperty("flagged").EnumerateArray());
+            var skipped = Assert.Single(ready.RootElement.GetProperty("skipped").EnumerateArray());
+            Assert.Equal("unsupported_filesystem", skipped.GetProperty("code").GetString());
+            Assert.Equal(flagged, skipped.GetProperty("entry").GetString());
+        }
+        finally
+        {
+            ready.Dispose();
+            await TestSupport.Kill(broker);
+        }
     }
 
     // The held flagged folder by itself, with no walk under it: it cannot be renamed or deleted
@@ -489,18 +526,29 @@ public sealed class RootsTests : IDisposable
 
     // A flagged entry whose real path holds an unpaired surrogate (here reached through a junction
     // above the entry, so the entry text itself is valid) cannot go on the start line unchanged:
-    // the start is refused invalid_name, never repaired and never a crash (coordinator, 20 Oct).
+    // the entry is skipped invalid_name, never repaired and never a crash (coordinator, 20 Oct;
+    // skipped rather than refusing the start since Phase C pick 1).
     [Fact]
-    public async Task A_flagged_folder_whose_real_path_is_not_valid_unicode_stops_the_start()
+    public async Task A_flagged_folder_whose_real_path_is_not_valid_unicode_is_skipped()
     {
         var odd = Path.Combine(temp, "odd\uDC80name");
         Directory.CreateDirectory(Path.Combine(odd, "flag"));
         Assert.Contains(Directory.GetDirectories(temp), path => path == odd);
         var link = NewFolder("link");
         TestSupport.TurnIntoJunction(link, odd);
-        using var refusal = await TestSupport.StartRefused(TestSupport.DefaultBootstrap([Path.Combine(link, "flag")], journal));
-        Assert.Equal("invalid_name", Code(refusal));
-        Assert.Equal(Path.Combine(link, "flag"), refusal.RootElement.GetProperty("error").GetProperty("entry").GetString());
+        var (broker, ready) = await TestSupport.StartReady(TestSupport.DefaultBootstrap([Path.Combine(link, "flag")], journal));
+        try
+        {
+            Assert.Empty(ready.RootElement.GetProperty("flagged").EnumerateArray());
+            var skipped = Assert.Single(ready.RootElement.GetProperty("skipped").EnumerateArray());
+            Assert.Equal("invalid_name", skipped.GetProperty("code").GetString());
+            Assert.Equal(Path.Combine(link, "flag"), skipped.GetProperty("entry").GetString());
+        }
+        finally
+        {
+            ready.Dispose();
+            await TestSupport.Kill(broker);
+        }
     }
 
     private static bool TryRenameAndRestore(string source, string destination)

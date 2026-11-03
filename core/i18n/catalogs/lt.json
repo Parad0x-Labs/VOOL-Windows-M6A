@@ -395,6 +395,14 @@
     "attach.upload_failed": "Nepavyko įkelti.",
     "attach.upload_failed_http": "Įkelti nepavyko (HTTP {status}).",
     "attach.uploading": "įkeliama…",
+    "broker.line.stopped": "Failų keitimas sustojo pusiaukelėje. VOOL nekeis failų, kol jis nebus patikrintas.",
+    "broker.line.no_undo": "VOOL šiuo metu negali saugoti atšaukimo įrašų, todėl nekeis failų.",
+    "broker.line.not_running": "VOOL Windows failų apsauga neveikia, todėl VOOL nekeis failų jūsų aplankuose.",
+    "broker.line.show_details": "Rodyti išsamiau",
+    "broker.line.recheck": "Tikrinti dar kartą",
+    "broker.line.pending_item": "Paketas {id}: vis dar ne savo vietoje: {items}",
+    "broker.line.torn_item": "Paketas {id}: nebaigtas įrašas išsaugotas faile {file}",
+    "broker.line.clear_note": "Išvalymo per VOOL dar nėra. Patikrinkite išvardytus failus, kol niekas jų nepakeitė.",
     "bypass.banner_active": "Leidimų apėjimas aktyvus.",
     "bypass.cancel": "Atšaukti",
     "bypass.chat_only_until_off": "Leidimų apejimas · tik šis pokalbis · aktyvus, kol patys išjungsite (Atšaukti lieka prieinamas)",
@@ -1889,13 +1897,14 @@
     "fault.wallet_payment_channel_off.action": "Įjunkite mokėjimo kanalą Kripto nustatymuose tik jei norite, kad mokėjimai eitų per jį; riba ir jūsų patvirtinimas galioja kiekviename kanale.",
     "fault.wallet_x402_sdk_unavailable.message": "Ši versija negali apmokėti x402 pasiūlymų Base tinkle per x402 Foundation SDK: šiame kompiuteryje neįdiegtas pasirenkamas papildinys x402. Niekas nebuvo pasirašyta ar išsiųsta. Visos kitos piniginės funkcijos veikia ir be jo; jį įdiegę bandykite dar kartą."
   },
-  "source_catalog_sha256": "d8a67e14feb003241cd996a68463f6eda16a86addc0e96ebfd548712768af8e8",
+  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
     "cross_check": "language-family agent self-check + deterministic validator",
     "generated_at": "2026-09-04T14:20:28Z",
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
-    "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)"
+    "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
+    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)"
   }
 }

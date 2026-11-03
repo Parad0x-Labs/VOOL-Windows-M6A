@@ -1583,6 +1583,13 @@
       "registry_command_id": "",
       "surface": "http"
     },
+    "http:GET:/api/windows/broker/status": {
+      "classification": "EXTERNAL_TRANSPORT_ONLY",
+      "name": "GET /api/windows/broker/status",
+      "note": "windows broker lane read feed (journal and flagged-folder report)",
+      "registry_command_id": "",
+      "surface": "http"
+    },
     "http:GET:/api/zcash/*": {
       "classification": "EXTERNAL_TRANSPORT_ONLY",
       "name": "GET /api/zcash/*",
@@ -3056,7 +3063,7 @@
   },
   "totals": {
     "DEAD": 0,
-    "EXTERNAL_TRANSPORT_ONLY": 297,
+    "EXTERNAL_TRANSPORT_ONLY": 298,
     "GENERATED_ADAPTER": 130,
     "LEGACY_UNMIGRATED": 0,
     "REGISTRY_OWNED": 8

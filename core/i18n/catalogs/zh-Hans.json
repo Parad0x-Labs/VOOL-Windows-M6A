@@ -395,6 +395,14 @@
     "attach.upload_failed": "上传失败。",
     "attach.upload_failed_http": "上传失败（HTTP {status}）。",
     "attach.uploading": "上传中…",
+    "broker.line.stopped": "一项文件更改中途停止。在检查之前，VOOL 不会更改任何文件。",
+    "broker.line.no_undo": "VOOL 目前无法保存撤销记录，因此不会更改文件。",
+    "broker.line.not_running": "VOOL 的 Windows 文件保护未在运行，因此不会更改你文件夹中的文件。",
+    "broker.line.show_details": "显示详情",
+    "broker.line.recheck": "重新检查",
+    "broker.line.pending_item": "批次 {id}：仍未归位：{items}",
+    "broker.line.torn_item": "批次 {id}：未完成的记录已保存在 {file} 中",
+    "broker.line.clear_note": "目前还不能在 VOOL 中直接清除。请在其他操作更改这些文件之前先检查列出的文件。",
     "bypass.banner_active": "权限旁路已启用。",
     "bypass.cancel": "取消",
     "bypass.chat_only_until_off": "绕过权限 · 仅此对话 · 关闭前一直有效（可随时撤销）",
@@ -1889,13 +1897,14 @@
     "fault.wallet_payment_channel_off.action": "只有在希望通过某个支付通道付款时，才在加密设置中打开它；上限和你的批准在每个通道上都适用。",
     "fault.wallet_x402_sdk_unavailable.message": "此构建无法通过 x402 Foundation SDK 支付 Base 上的 x402 报价：这台机器上没有安装可选的 x402 扩展。没有签名或发送任何内容。钱包的其他所有功能没有它也能工作；安装之后请重试。"
   },
-  "source_catalog_sha256": "d8a67e14feb003241cd996a68463f6eda16a86addc0e96ebfd548712768af8e8",
+  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
     "cross_check": "language-family agent self-check + deterministic validator",
     "generated_at": "2026-09-04T14:20:28Z",
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
-    "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)"
+    "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
+    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)"
   }
 }

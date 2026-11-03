@@ -254,6 +254,53 @@ def _restore_file_bytes(target: Path, data: bytes, mode: int | None) -> None:
     _fsync_directory(target.parent)
 
 
+class _BrokerSteps:
+    """Rollback steps through the Windows broker (Phase C C3): each one broker request relative to the
+    flagged folder's handle, never by path. A restore is `write_file` with `expect` from the bytes the
+    step has just checked (`absent` when there is none); a remove is `delete` (a folder must be empty).
+    A refusal raises, so the step is journaled as failed and the next attempt resumes; a lost reply
+    raises the client's EffectOutcomeUnknown and leaves the step open for `recover_open_effects`.
+    No mode is set; the broker's file is new."""
+
+    def __init__(self) -> None:
+        from core.windows_broker.writes import OutcomeUnknown, Refused, delete, write_file
+
+        self.refused: type[Exception] = Refused
+        self.unknown: type[Exception] = OutcomeUnknown
+        self._delete = delete
+        self._write = write_file
+
+    def restore(self, target: Path, data: bytes, current: Any) -> None:
+        if current.kind == "file" and current.sha256:
+            expect = "sha256:" + str(current.sha256).lower()
+        else:
+            expect = "absent"  # a folder or link here is refused by the broker
+        self._write(target, data, expect)
+
+    def remove(self, target: Path) -> None:
+        self._delete(target)
+
+    def remove_folder(self, target: Path) -> bool:
+        """A folder the turn made, removed when the broker can (empty, still there); False otherwise,
+        as the by-path `rmdir` left it."""
+        try:
+            self._delete(target)
+        except self.refused:
+            return False
+        return True
+
+
+def _broker_steps() -> _BrokerSteps | None:
+    """The broker's steps when this process routes writes through it, else None (writes by path)."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return None
+    from core.windows_broker.writes import routed
+
+    return _BrokerSteps() if routed() else None
+
+
 def _rollback_identity(source_context: dict[str, Any], *, task_id: str) -> EffectIdentity:
     base = identity_from_context(source_context, task_id=task_id)
     return EffectIdentity(**{**base.to_dict(), "turn_id": f"rollback:{uuid.uuid4().hex}"})
@@ -301,6 +348,7 @@ def execute_turn_rollback(
                       "steps": [{"path": s.path, "action": s.action, "state": s.state} for s in plan.steps]})
         restored: list[str] = []
         removed: list[str] = []
+        broker = _broker_steps()
         already: list[str] = [s.path for s in plan.steps if s.state == "already"]
         left_nonempty: list[str] = []
         base = {"schema": SCHEMA, **identity.to_dict(), "root": str(root), "intent": "workspace.rollback_last_change",
@@ -339,27 +387,46 @@ def execute_turn_rollback(
             try:
                 if step.action == "restore":
                     data = store.blobs.get(str(step.initial.blob))
-                    _restore_file_bytes(step.target, data, step.initial.mode)
+                    if broker is not None:
+                        broker.restore(step.target, data, current)
+                    else:
+                        _restore_file_bytes(step.target, data, step.initial.mode)
                     restored.append(step.path)
                 elif step.action == "remove":
                     if step.target.is_symlink():
                         raise RuntimeError("target became a symlink before remove")
-                    step.target.unlink()
-                    _fsync_directory(step.target.parent)
+                    if broker is not None:
+                        broker.remove(step.target)
+                    else:
+                        step.target.unlink()
+                        _fsync_directory(step.target.parent)
                     removed.append(step.path)
                     for parent in step.missing_parents:
                         parent_path = root / parent
-                        try:
-                            parent_path.rmdir()
-                            removed.append(parent)
-                        except OSError:
+                        if broker is not None:
+                            gone = broker.remove_folder(parent_path)
+                        else:
+                            try:
+                                parent_path.rmdir()
+                                gone = True
+                            except OSError:
+                                gone = False
+                        if not gone:
                             left_nonempty.append(parent)
                             break
+                        removed.append(parent)
                 elif step.action == "rmdir":
-                    step.target.rmdir()
-                    _fsync_directory(step.target.parent)
+                    if broker is not None:
+                        broker.remove(step.target)
+                    else:
+                        step.target.rmdir()
+                        _fsync_directory(step.target.parent)
                     removed.append(step.path)
             except Exception as exc:
+                if broker is not None and isinstance(exc, broker.unknown):
+                    # The broker may have made the change: no terminal is journaled, so the step stays
+                    # open for `recover_open_effects` to reconcile against the disk.
+                    raise
                 outcome = OUTCOME_FAILED
                 error = f"{type(exc).__name__}: {exc}"
             after = store.snapshot(step.target)

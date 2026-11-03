@@ -306,6 +306,8 @@ _EXTERNAL: dict[str, str] = {
     "http:GET:/api/notifications": "notifications lane read feed (centre inbox)",
     "http:GET:/api/notifications/preferences": "notifications lane read feed (preferences)",
     "http:GET:/api/notifications/native/status": "notifications lane read feed (native helper status)",
+    # Windows broker lane (Phase C C5): the owner-local report the "Check and clear" banner reads.
+    "http:GET:/api/windows/broker/status": "windows broker lane read feed (journal and flagged-folder report)",
     "http:POST:/api/notifications/action": "notifications lane operator action (inbox row action)",
     "http:POST:/api/notifications/read": "notifications lane operator action (inbox mark-read)",
     "http:POST:/api/notifications/migrate": "notifications lane operator action (legacy state import)",

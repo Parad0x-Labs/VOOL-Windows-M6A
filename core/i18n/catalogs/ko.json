@@ -395,6 +395,14 @@
     "attach.upload_failed": "업로드에 실패했습니다.",
     "attach.upload_failed_http": "업로드 실패 (HTTP {status}).",
     "attach.uploading": "업로드 중…",
+    "broker.line.stopped": "파일 변경이 중간에 멈췄습니다. 확인할 때까지 VOOL은 파일을 변경하지 않습니다.",
+    "broker.line.no_undo": "VOOL이 지금은 실행 취소 기록을 남길 수 없어 파일을 변경하지 않습니다.",
+    "broker.line.not_running": "VOOL의 Windows 파일 보호가 실행 중이 아니므로 폴더의 파일을 변경하지 않습니다.",
+    "broker.line.show_details": "자세히 보기",
+    "broker.line.recheck": "다시 확인",
+    "broker.line.pending_item": "배치 {id}: 아직 제자리에 없음: {items}",
+    "broker.line.torn_item": "배치 {id}: 완료되지 않은 기록을 {file}에 보관했습니다",
+    "broker.line.clear_note": "VOOL에서 바로 정리하는 기능은 아직 없습니다. 다른 변경이 생기기 전에 목록의 파일을 확인하세요.",
     "bypass.banner_active": "권한 바이패스가 활성화되어 있습니다.",
     "bypass.cancel": "취소",
     "bypass.chat_only_until_off": "권한 우회 · 이 채팅만 · 끌 때까지 활성 (철회 항상 가능)",
@@ -1889,13 +1897,14 @@
     "fault.wallet_payment_channel_off.action": "그 채널로 결제하려는 경우에만 암호화폐 설정에서 결제 채널을 켜세요; 한도와 사용자 승인은 모든 채널에 적용됩니다.",
     "fault.wallet_x402_sdk_unavailable.message": "이 빌드는 x402 Foundation SDK를 통해 Base의 x402 제안을 결제할 수 없습니다: 선택적 x402 추가 요소가 이 기기에 설치되지 않았습니다. 서명되거나 보내진 것은 없습니다. 지갑의 다른 모든 기능은 없이도 작동합니다; 설치한 뒤 다시 시도하세요."
   },
-  "source_catalog_sha256": "d8a67e14feb003241cd996a68463f6eda16a86addc0e96ebfd548712768af8e8",
+  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
     "cross_check": "language-family agent self-check + deterministic validator",
     "generated_at": "2026-09-04T14:20:28Z",
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
-    "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)"
+    "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
+    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)"
   }
 }

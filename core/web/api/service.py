@@ -977,6 +977,14 @@ def dispatch_get(
                 json_response(500, {"ok": False, "error": "calendar_store_unavailable", "reason": type(exc).__name__}), runtime
             )
         return apply_runtime_headers(json_response(200, view), runtime)
+    if normalized_path == "/api/windows/broker/status":
+        # The broker report the "Check and clear" banner reads (docs/WINDOWS_BROKER.md section 8).
+        # It names flagged folders, so it is an owner-local read, and it is never cached.
+        if not is_loopback_host(client_host):
+            return apply_runtime_headers(json_response(403, {"ok": False, "error": "owner_local_required"}), runtime)
+        from core.windows_write_gate import broker_report
+
+        return apply_runtime_headers(json_response(200, broker_report(), headers={"Cache-Control": "no-store"}), runtime)
     if normalized_path == "/api/notifications/native/status":
         if not is_loopback_host(client_host):
             return apply_runtime_headers(json_response(403, {"ok": False, "error": "owner_local_required"}), runtime)

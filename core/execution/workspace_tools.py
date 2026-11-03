@@ -881,9 +881,30 @@ def _apply_protected_unified_diff(
     unchanged = {str(path) for path, text in rendered
                  if planned[str(path)]["bytes"] is not None and str(text) == verified_text[str(path)]}
     written: list[tuple[Path, str, tuple[int, int]]] = []
+    to_write = [(path, str(text)) for path, text in rendered if str(path) not in unchanged]
+    brokered = bool(to_write) and windows_write_gate.active() and _broker_routed()
+    if brokered:
+        # Windows, once the API started the broker (Phase C C3): one `apply_batch`, every file checked
+        # against the bytes the patch was rendered from before any changes, and put back by the
+        # broker's journal if the batch stops part way, so no compensation runs here. A batch the
+        # broker could not put back raises the client's BatchNotRestored: its outcome is unknown.
+        from core.windows_broker.writes import Refused, expect_for_reviewed, write_files
+
+        try:
+            write_files([(path, text.encode("utf-8"), expect_for_reviewed(snapshots[str(path)]["reviewed_sha256"]))
+                         for path, text in to_write])
+        except Refused as refused:
+            made = list(refused.created)
+            text = f"The Windows broker did not apply the patch ({refused.code}"
+            text += f": {refused.message})" if refused.message else ")"
+            text += ("; no file was written, but the broker had already created " + ", ".join(f"`{item}`" for item in made) + "."
+                     if made else "; nothing was written.")
+            return {"ok": False, "status": windows_write_gate.STATUS, "response_text": text,
+                    "details": {"paths": touched_paths, "changed_paths": [], "engine": "protected_python",
+                                "executed": False, "broker_code": refused.code, "created_folders": made}}
     for path, text in rendered:
         snapshot = snapshots[str(path)]
-        if str(path) in unchanged:
+        if brokered or str(path) in unchanged:
             continue
         try:
             identity = pinned_atomic_write_text(path, str(text), expected_prior_sha256=snapshot["reviewed_sha256"])
@@ -911,7 +932,8 @@ def _apply_protected_unified_diff(
                                                   after=after_text, extra={"engine": "protected_python"}))
         if str(path) in unchanged:
             continue
-        force_fresh_source_timestamp(path, minimum_mtime_ns=int(snapshot.get("before_mtime_ns") or 0))
+        if not brokered:  # the broker's files are new; nothing is touched by path afterwards
+            force_fresh_source_timestamp(path, minimum_mtime_ns=int(snapshot.get("before_mtime_ns") or 0))
         if snapshot["before_text"] != after_text or not snapshot["existed_before"]:
             changed_paths.append(snapshot["path"])
         mutation_changes.append({"path": snapshot["path"], "action": action, "existed_before": bool(snapshot["existed_before"]),
@@ -940,6 +962,13 @@ def _apply_protected_unified_diff(
             },
         },
     }
+
+
+def _broker_routed() -> bool:
+    """Whether writes go through the Windows broker: on Windows, once the API has started it."""
+    from core.windows_broker.writes import routed
+
+    return routed()
 
 
 def _extract_patch_paths(patch_text: str) -> list[str]:

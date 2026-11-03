@@ -395,6 +395,14 @@
     "attach.upload_failed": "Tải lên thất bại.",
     "attach.upload_failed_http": "Tải lên thất bại (HTTP {status}).",
     "attach.uploading": "đang tải lên…",
+    "broker.line.stopped": "Một thay đổi tệp đã dừng giữa chừng. VOOL sẽ không thay đổi tệp cho đến khi nó được kiểm tra.",
+    "broker.line.no_undo": "VOOL hiện không thể lưu bản ghi hoàn tác, nên sẽ không thay đổi tệp.",
+    "broker.line.not_running": "Lớp bảo vệ tệp Windows của VOOL không chạy, nên VOOL sẽ không thay đổi tệp trong các thư mục của bạn.",
+    "broker.line.show_details": "Hiện chi tiết",
+    "broker.line.recheck": "Kiểm tra lại",
+    "broker.line.pending_item": "Lô {id}: vẫn chưa về đúng chỗ: {items}",
+    "broker.line.torn_item": "Lô {id}: một bản ghi dở dang đã được giữ trong {file}",
+    "broker.line.clear_note": "Chưa thể dọn việc này ngay trong VOOL. Hãy kiểm tra các tệp được liệt kê trước khi có gì thay đổi chúng.",
     "bypass.banner_active": "Bỏ qua quyền đang bật.",
     "bypass.cancel": "Hủy",
     "bypass.chat_only_until_off": "Bỏ qua quyền · chỉ cuộc trò chuyện này · hoạt động đến khi bạn tắt (Thu hồi vẫn sẵn sàng)",
@@ -1889,13 +1897,14 @@
     "fault.wallet_payment_channel_off.action": "Chỉ bật một kênh thanh toán trong cài đặt Tiền điện tử nếu bạn muốn thanh toán qua kênh đó; trần chi tiêu và sự chấp thuận của bạn áp dụng trên mọi kênh.",
     "fault.wallet_x402_sdk_unavailable.message": "Bản dựng này không trả được các đề nghị x402 trên Base qua x402 Foundation SDK: phần bổ sung tùy chọn x402 chưa cài trên máy này. Chưa ký hay gửi gì. Mọi chức năng ví khác chạy không cần nó; sau khi cài, thử lại."
   },
-  "source_catalog_sha256": "d8a67e14feb003241cd996a68463f6eda16a86addc0e96ebfd548712768af8e8",
+  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
     "cross_check": "language-family agent self-check + deterministic validator",
     "generated_at": "2026-09-04T14:20:28Z",
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
-    "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)"
+    "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
+    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)"
   }
 }

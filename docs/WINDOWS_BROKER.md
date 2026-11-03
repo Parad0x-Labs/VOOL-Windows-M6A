@@ -185,7 +185,7 @@ with approval ingress; it starts only after **both Job 6 and Job 7 have merged**
 | F7 | Volume not NTFS (FAT, exFAT, ReFS) | G accepts | Refuse start, `unsupported_filesystem`. Checked first, from the opened folder's handle (`GetVolumeInformationByHandleW`), before any other check on it; the refusal carries a message naming the file system. | stricter |
 | F8 | Two entries naming the same folder, or one inside another | G keeps both | Accepted. One id per distinct file id; a nested entry keeps its own id. | same |
 | F9 | Journal folder inside a flagged folder | n/a | Refuse start, `journal_inside_flagged` (B §2). The check resolves the deepest existing ancestor's final path, so junction, subst and 8.3 spellings are caught. | new |
-| F10 | Any refused entry | n/a | The whole start is refused, naming the entry and its reason | stricter |
+| F10 | Any refused entry | G skips it and warns | Skipped (Phase C pick 1, owner 23 Oct): the broker starts without it and names it, with its code and message, under `skipped` on the start line; the API logs a warning. The F rows above give the code. | same entries skipped |
 
 - A flagged path holding NUL is refused `invalid_flagged`, and a `journal_dir` holding NUL is
   refused `invalid_bootstrap`. Windows reads a path only up to a NUL, so `C:\a\0\b` would
@@ -314,7 +314,9 @@ Operations (Step 2 set):
 | `apply_batch(root, ops[])` | see below | workspace.apply_unified_diff (section 6.1), workspace.rollback_last_change, code.task.rollback (in its task's folder, section 6.1) |
 | `restore_batch(batch_id)` | see below | undoing a part-done batch |
 
-The protocol also has `ping` (no fields) and `close_root(root_id)`, which releases a root and the
+The protocol also has `ping` (no fields), `flagged_path(flagged_id)`, which answers a flagged
+folder's current final path from its held handle in the start line's form (section 4, one list),
+and `close_root(root_id)`, which releases a root and the
 folders it holds; a connection's roots are also released when it closes. A root is known only on
 the connection that opened it (`unknown_root` elsewhere), and an unknown operation is refused
 `unknown_op` (Channel.cs:227-246, 286, 326). For `rename`, `to_root_id` is optional; a rename
@@ -370,6 +372,30 @@ inside `apply_batch` stays in the batch's root.
     can't be written names that step, then `N later step(s) not attempted`; the batch stays in
     the journal and the next restore finishes it (undo is idempotent).
 
+Single writes, as built (Phase C C2, core/windows_broker/writes.py): once the API has started the
+broker, workspace.write_file, machine.write_file, workspace.ensure_directory and
+machine.ensure_directory on Windows are sent to the broker and never written by path.
+- The target is placed in the flagged folder that holds its final path (the deepest one when
+  entries nest); a target in none is refused `outside_flagged`. The root is always
+  `open_root(flagged_id, "")`, and the path inside it is the target's final path below the folder.
+- Before the change Python asks `flagged_path` and refuses `flagged_moved` on a mismatch.
+- `expect` is `sha256:` of the bytes VOOL read before the write (or, for a reviewed destination,
+  the reviewed hash), or `absent` when it found no file.
+- Missing parent folders are made by one `ensure_directory` first, as the by-path writers did. If
+  the write is then refused, the refusal names the folders already made.
+- The bytes are the ones each by-path writer puts on disk: UTF-8 with no newline translation,
+  except an unreviewed machine.write_file, which wrote in text mode, so `\n` is sent as `\r\n`.
+- No time stamp or mode is set by path afterwards; the broker's file is new.
+- A process that never started a broker (tests, tools run outside the API) writes by path as before.
+
+Moves, as built (Phase C C4): once the API has started the broker, machine.move_path
+(core/machine_file_ops.py) and an approved operator.move_path (core/local_operator_actions.py) are
+the broker's `rename` with `replace` false, after each folder's `flagged_path` check; a move into
+another flagged folder opens it as `to_root_id`. The operator move makes its destination folder with
+`ensure_directory`. A refusal moves nothing; a lost reply raises the client's outcome-unknown error,
+which neither writer reports as a failed move. writes.py resolves the folders above a path, never
+its own name, so a link given as the source or target is named to the broker and refused.
+
 Moves across volumes are refused (`cross_volume`). Today `machine.move_path` copies across volumes
 (core/machine_file_ops.py:209 `shutil.move`), so this is a behaviour change (section 10, item 5);
 a copy-then-delete by handle, with its own partial-failure receipt, is later work.
@@ -422,6 +448,24 @@ Job 6.
   `rev-parse` either): a patch goes through VOOL's own engine only, rename, copy, mode and binary
   sections are refused, and paths are placed inside the workspace. In Step 3 that engine applies
   the patch through `apply_batch`, so every path is walked by handle by the broker itself.
+  As built (Phase C C3, core/execution/workspace_tools.py): once the API has started the broker,
+  the rendered files go to `writes.write_files` as one `apply_batch` of `write_file` operations,
+  each with `expect` from the bytes the patch was rendered from (`absent` for a new file), after
+  one `ensure_directory` per missing folder of a new file. All files must lie in one flagged folder
+  (`spans_flagged` otherwise). A refused or restored batch writes nothing and is reported under the
+  gate's status with the broker's code; a batch not put back raises `BatchNotRestored`, so no
+  by-path compensation runs.
+  `workspace.rollback_last_change` (the tracked-change ledger, core/execution/artifacts.py) is one
+  `apply_batch` too: an edited file gets its earlier text back with `expect` = the hash of the bytes
+  on disk, re-checked just before against what the change left; a created file is deleted. The
+  broker's `delete` carries no `expect`, so a file rewritten between that check and the batch is
+  still set aside (in the journal, so it can be restored), as the by-path rollback would have
+  removed it. A refused batch leaves the change tracked.
+  The Blackbox turn rollback (and so `code.task.rollback`, core/blackbox/rollback.py) journals each
+  step, so each step is one broker request: a restore is `write_file` with `expect` from the bytes
+  the step has just checked, a remove is `delete` (a folder the turn made must be empty, else it is
+  left and named, as before). A refused step is journaled as failed and the next attempt resumes;
+  a lost reply leaves the step open for the store's recovery. No mode is restored on Windows.
 - Whether git runs at all inside an AppContainer is unknown (Git for Windows reads
   `%USERPROFILE%\.gitconfig`, which an AppContainer cannot read, and needs its own folders under
   Program Files); a test must show it before Step 3 relies on it.
@@ -626,6 +670,26 @@ Client outcomes as built (`core/windows_broker/client.py`):
   `error.code` and `error.cause`, for `restore_incomplete` and `restored:false`. The connection
   is closed after either, so a caller reconnects to call `restore_batch`.
 
+As built (Phase C C5, core/windows_broker/writes.py and core/effect_reconciliation.py):
+- A change request whose reply was lost, whose reply makes no sense, or a batch the broker could not
+  put back, raises `writes.OutcomeUnknown`, which is VOOL's own `EffectOutcomeUnknown` (reasons
+  `broker_reply_lost`, `broker_reply_unclear`, `broker_batch_not_restored`, the last with the
+  broker's `batch`) and the client's too. The executor then records an A6-reserved intent with a
+  claim as `unknown`, not safe to retry.
+- On Windows, while the broker is routed, machine.ensure_directory, machine.move_path and
+  code.task.rollback are A6-reserved as well. Mac and Linux keep today's list.
+- The host keeps the start line's `journal` and `skipped` entries, and `session.report()` gives
+  them as one plain dict: `wired`, `running`, `reason`, `flagged`, `skipped`, `undo_records`
+  (`available` only when `journal.available` is literally true, else `unavailable`), `pending`
+  (`batch_id`, `left`), `torn` (`batch_id`, `bytes`, `kept_in`) and `needs_check` (pending or torn
+  is non-empty). A malformed row is kept as an `unknown` row, so it still needs a check.
+- `GET /api/windows/broker/status` returns that dict as it is. It names flagged folders, so it is an
+  owner-local read: a peer that is not loopback gets 403 `owner_local_required`, a rebound Host
+  header is refused before any route, and the answer carries `Cache-Control: no-store`. The app's
+  Origin check covers POST and DELETE only; this GET changes nothing and sends no CORS header, so a
+  page on another origin cannot read the answer. The chat page reads it for its one broker line
+  (`broker.line.*`); a "Check and clear" action is a later slice.
+
 Client follow-up for Phase C:
 - Map `EffectOutcomeUnknown` and `BatchNotRestored` to VOOL's "outcome unknown, not safe to
   retry" state, never to a plain refusal.
@@ -777,7 +841,8 @@ for when it is built; item 15 (the stop button must reach the broker) applies to
 from Phase B.
 
 1. A bad entry in VOOL_WINDOWS_DISPOSABLE_WORKSPACES stops the whole broker. The alternative is to
-   drop that entry and show a visible warning.
+   drop that entry and show a visible warning. **Decided 23 Oct (owner): skip and warn; built in
+   Phase C C1 (the start line's `skipped` list).**
 2. OneDrive placeholders are refused. This matters a lot when a flagged folder sits in
    OneDrive-synced Documents.
 3. Hard-linked files are refused, including git objects from a local clone. That collides with the

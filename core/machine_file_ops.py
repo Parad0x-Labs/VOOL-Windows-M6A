@@ -205,8 +205,34 @@ def move_path(
                             "No OS confirmation prompt is available, so the move was refused.",
                             str(src), str(dst))
 
+    brokered = _brokered_move(src, dst)
+    if brokered is not None:
+        return brokered
     try:
         shutil.move(str(src), str(dst))
     except Exception as exc:
         return FileOpResult(False, "error", f"Move failed: {exc}", str(src), str(dst))
+    return FileOpResult(True, "moved", f"Moved {src} to {dst}.", str(src), str(dst))
+
+
+def _brokered_move(src: Path, dst: Path) -> FileOpResult | None:
+    """The move through the Windows broker's `rename` (Phase C C4), or None to move by path.
+
+    On Windows, once the API has started the broker, nothing is moved by path. A move across
+    volumes is refused `cross_volume` instead of copied (docs/WINDOWS_BROKER.md section 6). A lost
+    reply raises the client's outcome-unknown error: the move may have happened."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return None
+    from core.windows_broker.writes import Refused, rename, routed
+
+    if not routed():
+        return None
+    try:
+        rename(src, dst)
+    except Refused as refused:
+        return FileOpResult(False, windows_write_gate.STATUS,
+                            f"The Windows broker did not move {src} to {dst} ({refused}); nothing was moved.",
+                            str(src), str(dst))
     return FileOpResult(True, "moved", f"Moved {src} to {dst}.", str(src), str(dst))

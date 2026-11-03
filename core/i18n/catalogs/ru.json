@@ -395,6 +395,14 @@
     "attach.upload_failed": "Не удалось загрузить.",
     "attach.upload_failed_http": "Загрузка не удалась (HTTP {status}).",
     "attach.uploading": "загрузка…",
+    "broker.line.stopped": "Изменение файлов остановилось на полпути. VOOL не будет менять файлы, пока его не проверят.",
+    "broker.line.no_undo": "VOOL сейчас не может сохранять записи для отмены, поэтому не будет менять файлы.",
+    "broker.line.not_running": "Защита файлов Windows в VOOL не запущена, поэтому VOOL не будет менять файлы в ваших папках.",
+    "broker.line.show_details": "Показать подробности",
+    "broker.line.recheck": "Проверить снова",
+    "broker.line.pending_item": "Пакет {id}: ещё не на своём месте: {items}",
+    "broker.line.torn_item": "Пакет {id}: незавершённая запись сохранена в {file}",
+    "broker.line.clear_note": "Очистка из VOOL пока не реализована. Проверьте перечисленные файлы, пока их ничто не изменило.",
     "bypass.banner_active": "Обход разрешений активен.",
     "bypass.cancel": "Отменить",
     "bypass.chat_only_until_off": "Обход разрешений · только этот чат · активно, пока не выключите (Отозвать доступно)",
@@ -1889,13 +1897,14 @@
     "fault.wallet_payment_channel_off.action": "Включайте платёжный канал в настройках Крипто, только если хотите платить через него; лимит и ваше одобрение действуют на каждом канале.",
     "fault.wallet_x402_sdk_unavailable.message": "Эта сборка не умеет оплачивать предложения x402 в сети Base через x402 Foundation SDK: необязательное дополнение x402 не установлено на этой машине. Ничего не подписано и не отправлено. Все прочие функции кошелька работают без него; после установки повторите."
   },
-  "source_catalog_sha256": "d8a67e14feb003241cd996a68463f6eda16a86addc0e96ebfd548712768af8e8",
+  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
     "cross_check": "language-family agent self-check + deterministic validator",
     "generated_at": "2026-09-04T14:20:28Z",
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
-    "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)"
+    "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
+    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)"
   }
 }

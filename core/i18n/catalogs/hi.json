@@ -395,6 +395,14 @@
     "attach.upload_failed": "अपलोड विफल रहा।",
     "attach.upload_failed_http": "अपलोड असफल (HTTP {status})।",
     "attach.uploading": "अपलोड हो रहा है…",
+    "broker.line.stopped": "फ़ाइलों में एक बदलाव बीच में रुक गया। जाँच होने तक VOOL कोई फ़ाइल नहीं बदलेगा।",
+    "broker.line.no_undo": "VOOL अभी पूर्ववत करने के रिकॉर्ड नहीं रख सकता, इसलिए वह फ़ाइलें नहीं बदलेगा।",
+    "broker.line.not_running": "VOOL की Windows फ़ाइल सुरक्षा नहीं चल रही है, इसलिए वह आपके फ़ोल्डरों में फ़ाइलें नहीं बदलेगा।",
+    "broker.line.show_details": "विवरण दिखाएँ",
+    "broker.line.recheck": "फिर से जाँचें",
+    "broker.line.pending_item": "बैच {id}: अभी भी अपनी जगह पर नहीं: {items}",
+    "broker.line.torn_item": "बैच {id}: एक अधूरा रिकॉर्ड {file} में रखा गया",
+    "broker.line.clear_note": "VOOL से इसे साफ़ करने की सुविधा अभी नहीं बनी है। कुछ और इन्हें बदले, उससे पहले सूची की फ़ाइलें जाँच लें।",
     "bypass.banner_active": "अनुमति बायपास सक्रिय है।",
     "bypass.cancel": "रद्द करें",
     "bypass.chat_only_until_off": "अनुमतियाँ बायपास · केवल यह चैट · बंद करने तक सक्रिय (वापसी उपलब्ध)",
@@ -1889,13 +1897,14 @@
     "fault.wallet_payment_channel_off.action": "क्रिप्टो सेटिंग्स में भुगतान चैनल तभी चालू करें जब आप उसके ज़रिए भुगतान चाहते हों; सीमा और आपकी मंज़ूरी हर चैनल पर लागू होती है।",
     "fault.wallet_x402_sdk_unavailable.message": "यह बिल्ड x402 Foundation SDK के ज़रिए Base पर x402 ऑफ़र का भुगतान नहीं कर सकता: वैकल्पिक x402 ऐड-ऑन इस मशीन पर नहीं है। कुछ हस्ताक्षरित या भेजा नहीं गया। वॉलेट की बाकी हर सुविधा इसके बिना चलती है; इसे लगाने पर दोबारा कोशिश करें।"
   },
-  "source_catalog_sha256": "d8a67e14feb003241cd996a68463f6eda16a86addc0e96ebfd548712768af8e8",
+  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
     "cross_check": "language-family agent self-check + deterministic validator",
     "generated_at": "2026-09-04T14:20:28Z",
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
-    "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)"
+    "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
+    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)"
   }
 }

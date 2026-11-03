@@ -242,6 +242,13 @@ public sealed class Channel(int apiPid, long apiCreationTime, byte[] secret, str
                     connectionRoots.Add(rootId);
                     return new { id = idValue, ok = true, root_id = rootId };
                 }
+                case "flagged_path":
+                {
+                    // Section 4, one list: the API checks this against the path the gate checked
+                    // before it hands a call over. From the held handle, never the path again.
+                    ExpectFields(request, "flagged_id");
+                    return new { id = idValue, ok = true, path = Roots.FinalPath(StringField(request, "flagged_id")) };
+                }
                 case "close_root":
                 {
                     ExpectFields(request, "root_id");

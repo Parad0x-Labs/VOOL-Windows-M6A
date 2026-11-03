@@ -318,6 +318,7 @@ def _handle_move_path(
     task_id: str,
     session_id: str,
 ) -> OperatorActionResult:
+    move_fn, ensure_directory_fn, reraise = _move_functions()
     return operator_handlers.handle_move_path(
         intent,
         task_id=task_id,
@@ -329,9 +330,29 @@ def _handle_move_path(
         create_pending_action_fn=_create_pending_action,
         mark_action_executed_fn=_mark_action_executed,
         evaluate_local_action_fn=ExecutionGate.evaluate_local_action,
-        move_fn=shutil.move,
+        move_fn=move_fn,
         audit_log_fn=audit_logger.log,
+        ensure_directory_fn=ensure_directory_fn,
+        reraise=reraise,
     )
+
+
+def _move_functions() -> tuple[Any, Any, tuple[type[BaseException], ...]]:
+    """How an approved operator move changes files: (move, make folder, errors to raise).
+
+    By path (`shutil.move`, `mkdir`) everywhere, except on Windows once the API has started the
+    broker (Phase C C4): there the broker's `rename` and `ensure_directory`, and its outcome-unknown
+    error is raised, never reported as a failed move. A refusal is raised as the broker's refusal,
+    which the handler reports as a failed move with nothing moved."""
+    from core import windows_write_gate
+
+    if windows_write_gate.active():
+        from core.windows_broker.writes import OutcomeUnknown, ensure_directory, rename, routed
+
+        if routed():
+            return ((lambda source, destination: rename(Path(source), Path(destination))),
+                    (lambda folder: ensure_directory(Path(folder))), (OutcomeUnknown,))
+    return shutil.move, None, ()
 
 
 def _handle_schedule_calendar_event(

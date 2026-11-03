@@ -641,6 +641,12 @@ def rollback_last_workspace_mutation(
     # Pass 2: every change verified clean above -- safe to actually write now.
     restored_paths: list[str] = []
     removed_paths: list[str] = []
+    brokered = _broker_rollback(changes, workspace_root=workspace_root, target_record=target_record)
+    if brokered is not None:
+        if brokered.get("status") != "rolled_back":
+            return brokered
+        restored_paths, removed_paths = brokered["restored_paths"], brokered["removed_paths"]
+        changes = []  # done by the broker; nothing below runs by path
     for change in reversed(changes):
         relative_path = str(change.get("path") or "").strip()
         if not relative_path:
@@ -679,6 +685,59 @@ def rollback_last_workspace_mutation(
         "removed_paths": removed_paths,
         "changes": list(target_record.get("changes") or []),
     }
+
+
+def _broker_rollback(changes: list[dict[str, Any]], *, workspace_root: Path, target_record: dict[str, Any]
+                     ) -> dict[str, Any] | None:
+    """Pass 2 through the Windows broker (Phase C C3), or None when writes are not routed to it.
+
+    One `apply_batch`, in the same order as the by-path pass: an edited file gets its earlier text
+    back with `expect` = the hash of the bytes on disk now, re-read and re-checked here against what
+    the change left (else a conflict, nothing sent); a created file still there is deleted (set aside
+    in the broker's journal). No mode or time stamp is set by path. A refused or restored batch is
+    returned as `broker_refused`, with the change still tracked; a batch the broker could not put back
+    raises the client's BatchNotRestored."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return None
+    from core.windows_broker.writes import Refused, apply_batch, expect_for, routed
+
+    if not routed():
+        return None
+    batch: list[tuple[Path, bytes | None, str]] = []
+    restored: list[str] = []
+    removed: list[str] = []
+    conflicts: list[dict[str, Any]] = []
+    for change in reversed(changes):
+        relative_path = str(change.get("path") or "").strip()
+        if not relative_path:
+            continue
+        target = workspace_root / relative_path
+        if bool(change.get("existed_before", False)):
+            current = target.read_bytes() if target.is_file() and not fs_links.is_link(target) else None
+            expected_after_hash = str(change.get("after_hash") or content_sha256(str(change.get("after_text") or "")))
+            if bool(change.get("existed_after", False)) and (
+                current is None or content_sha256(current.decode("utf-8", errors="replace")) != expected_after_hash
+            ):
+                conflicts.append({"path": relative_path, "reason": "changed while the rollback was being prepared",
+                                  "expected_hash": expected_after_hash, "current_hash": ""})
+                continue
+            batch.append((target, str(change.get("before_text") or "").encode("utf-8"), expect_for(current)))
+            restored.append(relative_path)
+        elif target.exists() and not fs_links.is_link(target):
+            batch.append((target, None, ""))
+            removed.append(relative_path)
+    mutation_id = str(target_record.get("mutation_id") or "").strip()
+    intent = str(target_record.get("intent") or "").strip()
+    if conflicts:
+        return {"status": "conflict", "mutation_id": mutation_id, "intent": intent, "conflicts": conflicts}
+    try:
+        apply_batch(batch)
+    except Refused as refused:
+        return {"status": "broker_refused", "mutation_id": mutation_id, "intent": intent, "broker_code": refused.code,
+                "message": refused.message, "created_folders": list(refused.created)}
+    return {"status": "rolled_back", "restored_paths": restored, "removed_paths": removed}
 
 
 def latest_workspace_mutation(

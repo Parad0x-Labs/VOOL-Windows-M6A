@@ -14,7 +14,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = "core.windows_broker"
 #: The one production use phase B allows: the API server starting and stopping the broker.
-ALLOWED = {"apps/vool_api_server.py": "core.windows_broker.process"}
+ALLOWED = {
+    "apps/vool_api_server.py": "core.windows_broker.process",
+    # Phase C C1: the gate takes its flagged folders from the broker (section 4, one list).
+    "core/windows_write_gate.py": "core.windows_broker.session",
+    # Phase C C2: single writes go through the broker (sections 6 and 8).
+    "core/runtime_execution_tools.py": "core.windows_broker.writes",
+    # Phase C C3: patches and the tracked-change rollback go through the broker as one batch.
+    "core/execution/workspace_tools.py": "core.windows_broker.writes",
+    "core/execution/artifacts.py": "core.windows_broker.writes",
+    "core/blackbox/rollback.py": "core.windows_broker.writes",
+    # Phase C C4: moves are the broker's rename.
+    "core/machine_file_ops.py": "core.windows_broker.writes",
+    "core/local_operator_actions.py": "core.windows_broker.writes",
+    # Phase C C5: broker-backed intents are A6-reserved on Windows while the broker is routed.
+    "core/effect_reconciliation.py": "core.windows_broker.session",
+}
 
 
 def _python_files() -> list[Path]:

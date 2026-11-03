@@ -99,6 +99,16 @@ def _windows_root(part: str) -> str | None:
 
 
 def flagged_roots(environ: dict[str, str] | None = None) -> list[str]:
+    """The flagged folders, each as a normalised final path.
+
+    Once this process has started the Windows broker, they are the broker's (docs/WINDOWS_BROKER.md
+    section 4, one list), each still at the path the broker reported, and none while it does not
+    run; otherwise the variable is read."""
+    if environ is None and _IS_WINDOWS:
+        from core.windows_broker.session import checked_folders, wired
+
+        if wired():
+            return [os.path.normcase(path) for path in checked_folders()]
     raw = (os.environ if environ is None else environ).get(ENV_VAR, "")
     roots = []
     for part in raw.split(os.pathsep):
@@ -112,6 +122,15 @@ def flagged_roots(environ: dict[str, str] | None = None) -> list[str]:
         elif os.path.isabs(part) and os.path.isdir(part):
             roots.append(os.path.normcase(os.path.realpath(part)))
     return roots
+
+
+def broker_report() -> dict[str, Any]:
+    """The Windows broker's report for GET /api/windows/broker/status (docs/WINDOWS_BROKER.md
+    section 8): ``{"wired": False}`` in a process that never started a broker. Kept here so the
+    API reads the broker through the gate, the one place that already asks it."""
+    from core.windows_broker.session import report
+
+    return report()
 
 
 def _inside(path: str, roots: list[str]) -> bool:
@@ -413,4 +432,4 @@ def refusal(
     )
 
 
-__all__ = ["ENV_VAR", "STATUS", "active", "flagged_roots", "may_refuse", "refusal"]
+__all__ = ["ENV_VAR", "STATUS", "active", "broker_report", "flagged_roots", "may_refuse", "refusal"]
