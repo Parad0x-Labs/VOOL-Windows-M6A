@@ -8,12 +8,12 @@ uses a proxy. These tests serve stand-ins on loopback only.
 """
 from __future__ import annotations
 
-import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
+from tests import _network_seal as network_seal
 from tools import installed_slices
 
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
@@ -49,11 +49,22 @@ class _Server:
 
 
 @pytest.fixture()
-def no_sockets(monkeypatch):
-    def refuse(*args, **kwargs):
-        raise AssertionError("a connection was opened")
+def no_sockets():
+    """Records every connection the harness opens, through the process's socket seal; a connection
+    to anywhere but loopback fails the test."""
+    opened: list[str] = []
 
-    monkeypatch.setattr(socket, "create_connection", refuse)
+    def policy(kind, address) -> None:
+        host = str(address[0]) if isinstance(address, tuple) else str(address)
+        opened.append(host)
+        if host not in ("127.0.0.1", "localhost"):
+            raise AssertionError(f"a connection to {host} was opened ({kind})")
+
+    token = network_seal.push("installed-slices-loopback-only", policy)
+    try:
+        yield opened
+    finally:
+        network_seal.release(token)
 
 
 @pytest.mark.parametrize(
@@ -63,13 +74,15 @@ def no_sockets(monkeypatch):
 def test_a_url_that_is_not_http_loopback_is_refused_before_anything_is_opened(no_sockets, url):
     with pytest.raises(ValueError):
         installed_slices._get_json(url)
+    assert no_sockets == []
 
 
-def test_run_against_a_remote_base_fails_every_slice_without_opening_a_connection(no_sockets):
+def test_run_against_a_remote_base_fails_every_slice_and_opens_only_loopback(no_sockets):
     report = installed_slices.run("http://example.invalid", COMMIT)
 
     assert report["status"] == "fail"
     assert all(row["evidence"]["http_status"] == 0 for row in report["slices"])
+    assert set(no_sockets) <= {"127.0.0.1"}  # only the health control's closed loopback port
 
 
 def test_a_redirect_is_never_followed():
