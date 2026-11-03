@@ -20,6 +20,10 @@ on that handle, and the descriptor is set and then read back on the same handle.
 persistent ACLs (FAT, exFAT, some shares) is refused. Nothing here follows a link: securing a link's
 target would let whoever placed the link pick what gets re-permissioned.
 
+A folder passes ``verify_owner_only`` only when its owner-only ACE is inherited by every file and
+folder created anywhere below it (object and container inherit, not no-propagate), so a folder
+protected without inheritance is reported ``ace_not_inheritable`` and repaired by ``ensure_private_dir``.
+
 ``make_owner_only`` and ``verify_owner_only`` return an :class:`OwnerOnlyReport` and never raise for
 an expected failure; ``require_owner_only`` and ``ensure_private_dir`` raise
 :class:`OwnerOnlyUnavailable`, for secrets that must not be written unprotected.
@@ -39,6 +43,9 @@ _WINDOWS = sys.platform == "win32"
 _FILE_SDDL = "O:{sid}D:P(A;;FA;;;{sid})"
 _DIRECTORY_SDDL = "O:{sid}D:P(A;OICI;FA;;;{sid})"
 _ACCESS_ALLOWED_ACE_TYPE = 0
+_OBJECT_INHERIT_ACE = 0x1
+_CONTAINER_INHERIT_ACE = 0x2
+_NO_PROPAGATE_INHERIT_ACE = 0x4
 #: Windows hands a path this long or longer to the long-path form (``\\?\``); MAX_PATH less room
 #: for an 8.3 name, as CreateDirectoryW counts it.
 _LONG_PATH = 248
@@ -161,14 +168,15 @@ def _windows_apply(path: str, *, directory: bool | None, set_descriptor: bool) -
             owner, protected, dacl = api.read_descriptor(handle)
         except OSError:
             return OwnerOnlyReport(False, "unreadable")
-        return _judge_descriptor(user, owner, protected, dacl)
+        return _judge_descriptor(user, owner, protected, dacl, directory=is_directory)
     finally:
         api.close(handle)
 
 
 def _judge_descriptor(
-    user: str, owner: str, protected: bool, dacl: list[tuple[int, str]] | None
+    user: str, owner: str, protected: bool, dacl: list[tuple[int, ...]] | None, *, directory: bool = False
 ) -> OwnerOnlyReport:
+    """Each ACE is ``(ace_type, sid, ace_flags)``; a two-item ACE has no known flags."""
     if dacl is None:
         return OwnerOnlyReport(False, "null_dacl")  # a NULL DACL grants everyone everything
     if owner != user:
@@ -177,9 +185,22 @@ def _judge_descriptor(
         return OwnerOnlyReport(False, "dacl_not_protected")
     if not dacl:
         return OwnerOnlyReport(False, "empty_dacl")  # locks the user out too: not what was asked
-    if any(ace_type != _ACCESS_ALLOWED_ACE_TYPE or sid != user for ace_type, sid in dacl):
+    if any(ace[0] != _ACCESS_ALLOWED_ACE_TYPE or ace[1] != user for ace in dacl):
         return OwnerOnlyReport(False, "foreign_ace")
+    if directory and not any(_hands_down(ace) for ace in dacl):
+        # A folder whose ACE is not inherited is owner-only itself, but each file or folder created
+        # inside gets the creator's default DACL (SYSTEM, Administrators): not a private folder.
+        return OwnerOnlyReport(False, "ace_not_inheritable")
     return OwnerOnlyReport(True)
+
+
+def _hands_down(ace: tuple[int, ...]) -> bool:
+    """Whether the ACE is inherited by every file and folder created anywhere below (unknown flags: no)."""
+    if len(ace) < 3:
+        return False
+    flags = int(ace[2])
+    both = _OBJECT_INHERIT_ACE | _CONTAINER_INHERIT_ACE
+    return flags & both == both and not flags & _NO_PROPAGATE_INHERIT_ACE
 
 
 def _win_long_path(path: str) -> str:
@@ -380,7 +401,7 @@ class _WinApi:
         finally:
             self._kernel32.LocalFree(sd)
 
-    def read_descriptor(self, handle: int) -> tuple[str, bool, list[tuple[int, str]] | None]:
+    def read_descriptor(self, handle: int) -> tuple[str, bool, list[tuple[int, str, int]] | None]:
         ctypes, wintypes = self._ctypes, self._wintypes
         owner, dacl, sd = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
         status = self._advapi32.GetSecurityInfo(
@@ -399,16 +420,18 @@ class _WinApi:
                 return owner_sid, protected, None
             # ACL header: AclRevision (BYTE), Sbz1 (BYTE), AclSize (WORD), AceCount (WORD), Sbz2 (WORD).
             ace_count = ctypes.c_uint16.from_address(dacl.value + 4).value
-            aces: list[tuple[int, str]] = []
+            aces: list[tuple[int, str, int]] = []
             for index in range(ace_count):
                 ace = ctypes.c_void_p()
                 if not self._advapi32.GetAce(dacl, index, ctypes.byref(ace)):
                     raise self._error("GetAce")
+                # ACE_HEADER: AceType (BYTE), AceFlags (BYTE), AceSize (WORD); then Mask (DWORD).
                 ace_type = ctypes.c_uint8.from_address(ace.value).value
-                # ACE_HEADER (4 bytes) then Mask (DWORD); the SID starts at offset 8 for the
-                # ACCESS_ALLOWED / ACCESS_DENIED shapes. Any other type is foreign anyway.
+                ace_flags = ctypes.c_uint8.from_address(ace.value + 1).value
+                # The SID starts at offset 8 for the ACCESS_ALLOWED / ACCESS_DENIED shapes. Any
+                # other type is foreign anyway.
                 sid = self._sid_string(ace.value + 8) if ace_type in (0, 1) else ""
-                aces.append((ace_type, sid))
+                aces.append((ace_type, sid, ace_flags))
             return owner_sid, protected, aces
         finally:
             self._kernel32.LocalFree(sd)
