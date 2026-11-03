@@ -31,7 +31,7 @@ from core import first_run_pact, policy_engine
 from core.first_run_pact import PactFault
 from tests.first_run_pact_rig import pact_rig
 
-REPO = __file__.rsplit("/tests/", 1)[0]
+REPO = str(Path(__file__).resolve().parents[1])
 
 
 # --- 1. the return contract -----------------------------------------------------------------
@@ -95,14 +95,15 @@ def test_the_return_contract_holds_for_the_full_composite_write(pact_rig):
 
 
 def _hold_policy_lock(pact_rig):
-    import fcntl
-
+    """Hold the policy publication lock through the same lock the product takes (flock on
+    POSIX, msvcrt.locking on Windows), so the contention is real on every platform."""
+    from core.cross_process_lock import PublicationLock
     from core.runtime_paths import active_config_home_dir
 
     lock_path = active_config_home_dir() / ".default_policy.yaml.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    holder = open(lock_path, "w", encoding="utf-8")
-    fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+    holder = PublicationLock(lock_path)
+    holder.__enter__()
     return holder
 
 
@@ -125,10 +126,7 @@ def test_boundary_contention_through_the_registry_is_typed_lock_unavailable_with
         assert status == 409, payload
         assert _typed_error(payload) == "lock_unavailable", payload
     finally:
-        import fcntl
-
-        fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
-        holder.close()
+        holder.__exit__(None, None, None)
 
     # ZERO mutations anywhere: policy untouched, pact untouched.
     assert (pact_rig.home / "data" / "first_run_pact_state.json").read_bytes() == before["pact"]
@@ -160,10 +158,7 @@ def test_boundary_contention_through_the_http_boundary_is_typed_with_zero_mutati
         assert status == 409, payload
         assert payload["error"] == "lock_unavailable", payload
     finally:
-        import fcntl
-
-        fcntl.flock(holder.fileno(), fcntl.LOCK_UN)
-        holder.close()
+        holder.__exit__(None, None, None)
 
     after_bytes = policy_file.read_bytes() if policy_file.exists() else None
     assert after_bytes == policy_bytes
@@ -439,19 +434,16 @@ def test_a_racing_publisher_between_lock_release_and_read_cannot_change_the_retu
 
     def hooking_get(path, default=None):
         if not state["interleaved"] and lock_path.exists():
-            import fcntl
+            from core.cross_process_lock import LockUnavailable, PublicationLock
 
-            probe = open(lock_path, "w", encoding="utf-8")
             try:
-                fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                # A has released the lock: writer B publishes NOW, before A reads.
-                state["interleaved"] = True
-                fcntl.flock(probe.fileno(), fcntl.LOCK_UN)
-                policy_engine._write_operator_values_locked({"system.local_only_mode": False})
-            except OSError:
+                with PublicationLock(lock_path):
+                    # A has released the lock: writer B publishes NOW, before A reads.
+                    state["interleaved"] = True
+            except LockUnavailable:
                 pass  # A still holds the lock: no interleave window yet
-            finally:
-                probe.close()
+            if state["interleaved"]:
+                policy_engine._write_operator_values_locked({"system.local_only_mode": False})
         return real_get(path, default)
 
     monkeypatch.setattr(policy_engine, "get", hooking_get)
