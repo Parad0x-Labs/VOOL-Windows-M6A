@@ -5813,13 +5813,15 @@ def _write_machine_file(
         target.parent.mkdir(parents=True, exist_ok=True)
     already_present = target.exists()
     expected_hash = str(arguments.get("expected_hash") or "").strip().lower()
+    checked: bytes | None = None
     if already_present and expected_hash:
         # A claimed prior-content hash is ENFORCED at the physical mutation: the write
         # refuses when the file on disk is not the bytes the caller claimed to replace.
         # Without this the hash would be classification evidence the mutation never checks.
         import hashlib
 
-        actual = hashlib.sha256(target.read_bytes()).hexdigest()
+        checked = target.read_bytes()
+        actual = hashlib.sha256(checked).hexdigest()
         if actual != expected_hash:
             return RuntimeExecutionResult(
                 handled=True,
@@ -5851,7 +5853,12 @@ def _write_machine_file(
         else:
             data = content.replace("\n", "\r\n").encode("utf-8")
             # A folder in the file's place is left to the broker, which refuses it (`is_a_directory`).
-            expect = expect_for(target.read_bytes() if already_present and target.is_file() else None)
+            # The bytes the `expected_hash` check read, so the broker refuses a file changed since;
+            # with no claimed hash, the file as it is now.
+            if checked is not None:
+                expect = expect_for(checked)
+            else:
+                expect = expect_for(target.read_bytes() if already_present and target.is_file() else None)
         try:
             brokered_write_file(target, data, expect)
         except Refused as refused:
