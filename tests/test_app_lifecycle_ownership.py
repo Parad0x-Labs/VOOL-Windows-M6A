@@ -241,8 +241,14 @@ def _write_pidfile(tmp_path: Path, name: str, pid: int) -> Path:
     return pid_file
 
 
+def _sleeper(seconds: float) -> subprocess.Popen:
+    """A plain child that sleeps, started with this interpreter so it exists on every host
+    (``/bin/sleep`` is not a Windows program)."""
+    return subprocess.Popen([sys.executable, "-c", f"import time; time.sleep({seconds!r})"])
+
+
 def _dead_pid() -> int:
-    proc = subprocess.Popen(["/bin/sleep", "0"])
+    proc = _sleeper(0)
     proc.wait()
     assert proc.poll() is not None
     return proc.pid
@@ -263,7 +269,7 @@ def test_teardown_sweeps_the_owned_childs_pidfile(tmp_path: Path) -> None:
 
 
 def test_teardown_never_touches_a_foreign_pidfile(tmp_path: Path) -> None:
-    alive = subprocess.Popen(["/bin/sleep", "20"])
+    alive = _sleeper(20)
     try:
         pid_file = _write_pidfile(tmp_path, "sweep-foreign", alive.pid)
         body = f"""
@@ -295,7 +301,7 @@ def test_boot_sweeps_a_stale_pidfile_naming_a_dead_pid(tmp_path: Path) -> None:
 
 
 def test_boot_keeps_a_live_occupants_pidfile(tmp_path: Path) -> None:
-    alive = subprocess.Popen(["/bin/sleep", "20"])
+    alive = _sleeper(20)
     try:
         pid_file = _write_pidfile(tmp_path, "keep-live", alive.pid)
         body = f"""
@@ -417,7 +423,7 @@ _PARENT_WATCH_DRIVER = """
 
 
 def test_daemon_sets_should_exit_when_its_parent_window_host_dies(tmp_path: Path) -> None:
-    parent = subprocess.Popen(["/bin/sleep", "30"])
+    parent = _sleeper(30)
     time.sleep(0.2)
     parent.kill()
     parent.wait()
