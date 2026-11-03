@@ -127,6 +127,8 @@ def test_verify_accepts_only_a_protected_user_only_dacl(fake, descriptor, reason
         ([(_ALLOWED, _USER, _CI)], "ace_not_inheritable"),
         ([(_ALLOWED, _USER, _OI | _CI | _NP)], "ace_not_inheritable"),
         ([(_ALLOWED, _USER)], "ace_not_inheritable"),  # flags unknown: fails closed
+        # Inherit-only applies to what is created inside, not to the folder itself.
+        ([(_ALLOWED, _USER, _OI | _CI | _IO)], "ace_inherit_only"),
     ],
 )
 def test_verify_requires_a_folder_to_hand_its_owner_only_ace_to_what_is_created_inside(fake, dacl, reason):
@@ -144,6 +146,42 @@ def test_a_file_ace_needs_no_inheritance_flags(fake):
     path = _path("f.key")
     fake.descriptors[path] = (_USER, True, [(_ALLOWED, _USER, 0)])
     assert owner_only.verify_owner_only(path).ok
+
+
+def test_a_file_whose_only_ace_is_inherit_only_is_not_owner_only(fake):
+    path = _path("f.key")
+    fake.descriptors[path] = (_USER, True, [(_ALLOWED, _USER, _IO)])
+    assert owner_only.verify_owner_only(path).reason == "ace_inherit_only"
+
+
+# --- only local drive paths: network shares and device paths are refused (project rule) ---------------
+_NON_LOCAL = [
+    "\\\\srv\\share\\f.key",
+    "//srv/share/f.key",
+    "\\/srv/share/f.key",
+    "\\\\?\\UNC\\srv\\share\\f.key",
+    "\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1\\f.key",
+    "\\\\?\\C:\\f.key",
+    "\\\\.\\C:\\f.key",
+]
+
+
+@pytest.mark.parametrize("path", _NON_LOCAL)
+def test_a_share_or_device_path_is_refused_before_anything_is_opened(fake, path):
+    fake.descriptors[path] = (_USER, True, [(_ALLOWED, _USER, 0)])
+    assert owner_only.verify_owner_only(path).reason == "non_local_path"
+    assert owner_only.make_owner_only(path).reason == "non_local_path"
+    assert fake.set_calls == [] and fake.open_handles == 0
+
+
+@pytest.mark.parametrize("path", _NON_LOCAL)
+def test_ensure_private_dir_refuses_a_share_or_device_path(fake, monkeypatch, path):
+    made: list[str] = []
+    monkeypatch.setattr(owner_only.os, "makedirs", lambda folder, **_k: made.append(folder))
+    with pytest.raises(OwnerOnlyUnavailable) as raised:
+        owner_only.ensure_private_dir(path)
+    assert raised.value.reason == "non_local_path"
+    assert made == [] and fake.directories == set()
 
 
 def test_ensure_private_dir_repairs_a_folder_whose_ace_is_not_inherited(fake, monkeypatch):
@@ -267,7 +305,9 @@ def test_ensure_private_dir_raises_when_the_folder_cannot_be_made_private(fake, 
 def test_a_long_path_is_handed_to_windows_with_the_long_path_prefix():
     long_path = "C:\\" + "\\".join(["d" * 50] * 6) + "\\f.key"
     assert owner_only._win_long_path(long_path).startswith("\\\\?\\C:\\")
-    assert owner_only._win_long_path("\\\\srv\\share\\" + "d" * 260).startswith("\\\\?\\UNC\\srv\\share\\")
+    # Only local drive paths reach this (shares and device paths are refused first); a share is never converted.
+    with pytest.raises(ValueError):
+        owner_only._win_long_path("\\\\srv\\share\\" + "d" * 260)
     assert owner_only._win_long_path("C:\\short\\f.key") == "C:\\short\\f.key"
 
 
