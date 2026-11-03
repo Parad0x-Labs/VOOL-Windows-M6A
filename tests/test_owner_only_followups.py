@@ -179,3 +179,25 @@ def test_a_mapped_network_drive_is_refused_before_anything_is_opened(fake, monke
     with pytest.raises(OwnerOnlyUnavailable):
         owner_only.ensure_private_dir("Z:\\VOOL\\keys")
     assert fake.open_handles == 0 and fake.set_calls == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the POSIX half")
+def test_a_tree_deeper_than_the_recursion_limit_is_still_walked(tmp_path):
+    import sys
+
+    root = tmp_path / "keys"
+    deepest = root
+    for _ in range(120):
+        deepest = deepest / "d"
+    deepest.mkdir(parents=True)
+    (deepest / "a.key").write_bytes(b"a")
+    (deepest / "a.key").chmod(0o644)
+    limit = sys.getrecursionlimit()
+    sys.setrecursionlimit(100)
+    try:
+        report = owner_only.make_tree_owner_only(root)
+    finally:
+        sys.setrecursionlimit(limit)
+
+    assert report.ok, report.reason
+    assert owner_only.verify_owner_only(deepest / "a.key").ok
