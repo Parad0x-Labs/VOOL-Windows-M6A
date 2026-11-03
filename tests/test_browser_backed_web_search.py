@@ -12,6 +12,7 @@ measurements actually turned up.
 from __future__ import annotations
 
 import gzip
+import os
 import subprocess
 import sys
 import urllib.request
@@ -303,8 +304,26 @@ def test_the_timeout_kills_the_whole_process_group(monkeypatch: pytest.MonkeyPat
             killed.append(-1)
 
     monkeypatch.setattr(br.subprocess, "Popen", lambda *a, **k: _FakeProcess())
-    monkeypatch.setattr(br.os, "getpgid", lambda pid: pid)
-    monkeypatch.setattr(br.os, "killpg", lambda pgid, sig: killed.append(pgid))
+    # This is the POSIX branch (own session, getpgid + killpg). Windows has no getpgid, killpg or
+    # SIGKILL; its tree-kill contract is tests/test_browser_render_windows_tree_kill.py. So a POSIX
+    # host is stood in for browser_render on every host.
+    class _PosixOs:
+        name = "posix"
+
+        def __getattr__(self, attr):
+            return getattr(os, attr)
+
+        @staticmethod
+        def getpgid(pid):
+            return pid
+
+        @staticmethod
+        def killpg(pgid, sig):
+            killed.append(pgid)
+
+    monkeypatch.setattr(br, "os", _PosixOs())
+    if not hasattr(br.signal, "SIGKILL"):
+        monkeypatch.setattr(br.signal, "SIGKILL", 9, raising=False)
 
     with pytest.raises(subprocess.TimeoutExpired):
         br._run_chrome(["/fake/chrome"], timeout_s=1.0)
