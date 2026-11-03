@@ -190,24 +190,97 @@ def _wait_for_server(timeout_s: float | None = None) -> bool:
     return False
 
 
-def _fallback_to_edge() -> None:
-    """Open via the Edge --app opener when the native window is unavailable; log if even that fails."""
+# vool-open.ps1 exits with this code when Edge is missing and it handed the chat to the default
+# browser: that window belongs to the operator's own browser process, so nothing can wait on it.
+_OPENER_UNWATCHED = 10
+
+
+def _fallback_to_edge() -> subprocess.Popen | None:
+    """Open via the Edge --app opener when the native window is unavailable; log if even that fails.
+
+    Returns the opener process, which waits for its Edge window and exits when that window closes,
+    or None when nothing was launched."""
     ps1 = os.path.join(_HERE, "vool-open.ps1")
     if not os.path.exists(ps1):
         _log("fallback: vool-open.ps1 not found; no window opened")
-        return
+        return None
     try:
         from core.process_liveness import system_powershell
         from core.runtime_paths import native_runtime_home
 
-        subprocess.Popen(
+        opener = subprocess.Popen(
             [system_powershell(), "-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-File", ps1],
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             env={**os.environ, "VOOL_HOME": str(native_runtime_home())},
         )
         _log("opened via Edge --app fallback")
+        return opener
     except Exception as exc:
         _log(f"fallback FAILED to launch Edge opener: {exc!r}")
+        return None
+
+
+def _stop_opener(proc: object) -> None:
+    """End the opener and the Edge window it started (its own process tree only)."""
+    pid = getattr(proc, "pid", None)
+    if not isinstance(pid, int) or pid <= 0:
+        return
+    with contextlib.suppress(Exception):
+        from core.process_liveness import system_taskkill
+
+        subprocess.run(
+            [system_taskkill(), "/PID", str(pid), "/T", "/F"],
+            capture_output=True,
+            timeout=15,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+
+
+def _hold_runtime_for_browser(supervisor: object, opener: object) -> int:
+    """Keep the owned runtime up while the browser fallback window is open.
+
+    main() owns the runtime and its finally block shuts it down, so returning straight after
+    launching the opener left the Edge window on a runtime that was already gone. This waits for
+    the opener (which waits for its Edge window) and returns 0 when it exits, the same as closing
+    the native window. The runtime is checked each tick, as the native watchdog does: on loss the
+    Edge window is closed and this returns 3. When the opener reports a default-browser window it
+    cannot watch, the runtime is held until it is lost or this host is told to stop. Supervisors
+    without the assert_alive contract (test stand-ins) are not held."""
+    check = getattr(supervisor, "assert_alive", None)
+    if not callable(check):
+        return 0
+    try:
+        interval = max(0.05, float(os.environ.get("VOOL_RUNTIME_WATCHDOG_POLL") or "2.0"))
+    except ValueError:
+        interval = 2.0
+    if interval != interval or interval > 60.0:  # NaN or inf would stall or crash the hold
+        interval = 2.0
+    watching = callable(getattr(opener, "poll", None))
+    while True:
+        if watching:
+            code = opener.poll()
+            if code is not None:
+                if code != _OPENER_UNWATCHED:
+                    _log(f"browser fallback window closed (opener exit {code})")
+                    return 0
+                _log("browser fallback opened the default browser; holding the runtime until stopped")
+                watching = False
+        try:
+            check()
+        except Exception as exc:
+            _log(f"runtime lost ({exc}); closing the browser fallback window")
+            if watching:
+                _stop_opener(opener)
+            return 3
+        time.sleep(interval)
+
+
+def _open_windows_browser_fallback(supervisor: object) -> int:
+    """Windows with no native window: open the Edge fallback and hold the owned runtime for it."""
+    opener = _fallback_to_edge()
+    if opener is None or not getattr(supervisor, "owns_runtime", False):
+        return 0
+    return _hold_runtime_for_browser(supervisor, opener)
 
 
 _MAC_APP_MODE_BROWSERS = (
@@ -1599,8 +1672,7 @@ def main() -> int:
         # operators must provision GTK/WebKitGTK or Qt before this native lane.
         if sys.platform == "win32" and not _has_webview2():
             _log("WebView2 runtime not found; using Edge fallback")
-            _fallback_to_edge()
-            return 0
+            return _open_windows_browser_fallback(supervisor)
         try:
             import webview  # pywebview -> WebView2 (Windows) / WKWebView (macOS) / WebKitGTK (Linux)
         except Exception as exc:
