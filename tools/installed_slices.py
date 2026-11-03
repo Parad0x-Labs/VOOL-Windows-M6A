@@ -22,11 +22,30 @@ from typing import Any
 
 SCHEMA = "vool.installed_slices.v1"
 _TIMEOUT = 10.0
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost"})
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A 3xx is the answer, never a hop: a redirect could point anywhere."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+#: Loopback only: no proxy from the environment or the registry, and no redirects.
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
+
+
+def _require_loopback(url: str) -> None:
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme != "http" or parsed.hostname not in _LOOPBACK_HOSTS:
+        raise ValueError(f"not an http loopback URL, so it is not opened: {url}")
 
 
 def _get_json(url: str) -> tuple[int, Any]:
+    _require_loopback(url)
     try:
-        with urllib.request.urlopen(url, timeout=_TIMEOUT) as response:
+        with _OPENER.open(url, timeout=_TIMEOUT) as response:
             status, raw = response.status, response.read()
     except urllib.error.HTTPError as exc:
         status, raw = exc.code, exc.read()
@@ -40,7 +59,7 @@ def _probe(url: str) -> tuple[int, Any, str]:
     try:
         status, body = _get_json(url)
         return status, body, ""
-    except (OSError, urllib.error.URLError) as exc:
+    except (OSError, ValueError, urllib.error.URLError) as exc:
         return 0, None, f"{type(exc).__name__}: {exc}"
 
 
@@ -122,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", required=True)
     args = parser.parse_args(argv)
     parsed = urllib.parse.urlsplit(args.base_url)
-    if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost"} or parsed.path not in {"", "/"}:
+    if parsed.scheme != "http" or parsed.hostname not in _LOOPBACK_HOSTS or parsed.path not in {"", "/"}:
         parser.error("--base-url must be http://127.0.0.1:<port>: the slices only drive a local install")
     commit = args.expected_commit.strip().lower()
     if len(commit) != 40 or any(c not in "0123456789abcdef" for c in commit):
