@@ -22,8 +22,12 @@ if ($edge) {
   if (-not $runtimeHome) { $runtimeHome = Join-Path $env:LOCALAPPDATA 'VOOL' }
   $profileDir = Join-Path $runtimeHome 'browser'
   New-Item -ItemType Directory -Force -Path $profileDir -ErrorAction Stop | Out-Null
-  Start-Process -FilePath $edge -ArgumentList `
+  # -Wait: the VOOL window host keeps its runtime while this script runs, so it must not return
+  # until the app window closes.
+  Start-Process -FilePath $edge -Wait -ArgumentList `
     "--app=$url", "--user-data-dir=`"$profileDir`"", "--no-first-run", "--no-default-browser-check", "--window-size=1220,860"
 } else {
   Start-Process $url
+  # The default browser's window cannot be waited on; tell the host (see _OPENER_UNWATCHED).
+  exit 10
 }
