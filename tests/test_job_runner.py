@@ -13,6 +13,51 @@ from sandbox.job_runner import JobRunner, KernelIsolationUnavailableError, _maco
 from sandbox.resource_limits import ExecutionPolicy
 
 
+class _PosixGroupOs:
+    """``sandbox.job_runner``'s ``os`` as macOS and Linux see it, for the process-group teardown
+    tests below. That teardown is the POSIX branch; Windows has no getpgid/killpg (or SIGKILL), so
+    on a Windows host these tests stand a POSIX host in for the one call under test. Each test
+    still replaces killpg; getpgid(0) answers a fixed group that is never the test's PGID."""
+
+    OWN_GROUP = 4242
+
+    def __getattr__(self, attr):
+        return getattr(os, attr)
+
+    def getpgid(self, pid):
+        if hasattr(os, "getpgid"):
+            return os.getpgid(pid)
+        return self.OWN_GROUP
+
+    def killpg(self, pgid, sig):  # replaced by every test; a real call here would be a bug
+        raise AssertionError("killpg was not hooked")
+
+
+class _PosixSignals:
+    def __getattr__(self, attr):
+        import signal
+
+        return getattr(signal, attr)
+
+    SIGKILL = 9
+
+
+def _posix_group_host():
+    """Patch job_runner for one POSIX teardown call on any host (the real POSIX host is unchanged)."""
+    import contextlib
+    import signal
+
+    from sandbox import job_runner
+
+    stack = contextlib.ExitStack()
+    stack.enter_context(patch.object(job_runner, "_is_windows_platform", return_value=False))
+    if not hasattr(os, "killpg"):
+        stack.enter_context(patch.object(job_runner, "os", _PosixGroupOs()))
+    if not hasattr(signal, "SIGKILL"):
+        stack.enter_context(patch.object(job_runner, "signal", _PosixSignals()))
+    return stack
+
+
 class JobRunnerTests(unittest.TestCase):
     def test_network_command_is_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -560,8 +605,9 @@ class DescendantCleanupTests(unittest.TestCase):
         fake = subprocess.Popen([sys.executable, "-c", "pass"])
         fake.wait()
         signalled: list[int] = []
-        with patch.object(job_runner.os, "killpg", side_effect=lambda pgid, sig: signalled.append(sig)):
-            job_runner._terminate_process_group(fake, pgid=os.getpgid(0))
+        with _posix_group_host(), \
+                patch.object(job_runner.os, "killpg", side_effect=lambda pgid, sig: signalled.append(sig)):
+            job_runner._terminate_process_group(fake, pgid=job_runner.os.getpgid(0))
         self.assertEqual(signalled, [], "our own group must never be signalled")
 
 
@@ -592,7 +638,7 @@ class ProcessGroupTeardownTests(unittest.TestCase):
             if len(calls) == 3:  # the SECOND probe answers: the group has disappeared
                 raise ProcessLookupError()
 
-        with patch.object(job_runner.os, "killpg", side_effect=fake_killpg):
+        with _posix_group_host(), patch.object(job_runner.os, "killpg", side_effect=fake_killpg):
             job_runner._terminate_process_group(self._reaped_process(), pgid=self.PGID)
         self.assertEqual(calls, [0, signal_mod.SIGTERM, 0],
                          "the recorded sequence must END at the failing probe — no SIGKILL after "
@@ -607,7 +653,7 @@ class ProcessGroupTeardownTests(unittest.TestCase):
             calls.append(sig)
             raise ProcessLookupError()
 
-        with patch.object(job_runner.os, "killpg", side_effect=fake_killpg):
+        with _posix_group_host(), patch.object(job_runner.os, "killpg", side_effect=fake_killpg):
             job_runner._terminate_process_group(self._reaped_process(), pgid=self.PGID)
         self.assertEqual(calls, [0], "a first-probe ProcessLookup must end everything: probe only")
 
@@ -619,12 +665,14 @@ class ProcessGroupTeardownTests(unittest.TestCase):
         calls: list[int] = []
         clock = iter(float(t) for t in range(0, 20))
 
-        with patch.object(job_runner.os, "killpg", side_effect=lambda pgid, sig: calls.append(sig)), \
+        with _posix_group_host(), \
+                patch.object(job_runner.os, "killpg", side_effect=lambda pgid, sig: calls.append(sig)), \
                 patch.object(job_runner.time, "monotonic", side_effect=lambda: next(clock)), \
                 patch.object(job_runner.time, "sleep", side_effect=lambda s: None):
             job_runner._terminate_process_group(self._reaped_process(), pgid=self.PGID)
+            sigkill = job_runner.signal.SIGKILL
         self.assertIn(signal_mod.SIGTERM, calls)
-        self.assertEqual(calls[-1], signal_mod.SIGKILL,
+        self.assertEqual(calls[-1], sigkill,
                          "a group still present at the deadline is escalated to SIGKILL")
         self.assertNotIn(None, calls)
 
