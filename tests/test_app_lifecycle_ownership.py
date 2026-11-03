@@ -67,6 +67,14 @@ def _driver(tmp_path: Path, name: str, body: str, env: dict[str, str] | None = N
         "VOOL_HOME": str(tmp_path / ("vool-home-" + name)),
         **(env or {}),
     }
+    if os.name == "nt":
+        # What every Windows shell carries: Python needs SYSTEMROOT to start (sockets, random), and
+        # Path.home() reads USERPROFILE, not HOME. Without it the host's single-instance check
+        # cannot resolve a home and fails closed, so main() returns 0 before the code under test.
+        full_env.setdefault("USERPROFILE", str(home))
+        for var in ("SYSTEMROOT", "SystemDrive", "TEMP", "TMP"):
+            if os.environ.get(var):
+                full_env.setdefault(var, os.environ[var])
     return subprocess.run([sys.executable, str(driver)], capture_output=True, text=True,
                           env=full_env, timeout=timeout)
 
