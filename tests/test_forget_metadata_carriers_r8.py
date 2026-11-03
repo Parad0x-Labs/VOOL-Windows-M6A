@@ -60,7 +60,7 @@ def test_every_field_emitted_by_metadata_writers_is_swept(tmp_path):
                      project_id="project-blue", emoji="🔒", color="#112233")
     _stamp_import_trust("metadata-shape", "owner-export")
     path = chat_session_meta_path()
-    shape = json.loads(path.read_text())["metadata-shape"]
+    shape = json.loads(path.read_text(encoding="utf-8"))["metadata-shape"]
     assert shape and shape["import_trust"] == "owner-export"
     for index, leaf in enumerate(_leaves(shape)):
         chat = f"metadata-field-{index}"
@@ -71,19 +71,19 @@ def test_every_field_emitted_by_metadata_writers_is_swept(tmp_path):
         for key in leaf[:-1]:
             parent = parent[key]
         parent[leaf[-1]] = token
-        document = json.loads(path.read_text())
+        document = json.loads(path.read_text(encoding="utf-8"))
         document[chat] = row
         # Exercise the actual persisted writer shape, independently of its
         # input validation and the eraser's field names.
-        path.write_text(json.dumps(document))
-        path.with_name(path.name + ".bak").write_text(json.dumps(document))
-        assert token in path.read_text()
+        path.write_text(json.dumps(document), encoding="utf-8")
+        path.with_name(path.name + ".bak").write_text(json.dumps(document), encoding="utf-8")
+        assert token in path.read_text(encoding="utf-8")
 
         reply = _forget(profile, chat, token)
 
         assert reply.startswith("Forget applied"), (leaf, reply)
         for carrier in path.parent.glob(path.name + "*"):
-            assert token not in carrier.read_text(), (leaf, carrier.name)
+            assert token not in carrier.read_text(encoding="utf-8"), (leaf, carrier.name)
 
 
 def test_unknown_nested_metadata_is_removed_from_all_recovery_copies(tmp_path):
@@ -95,7 +95,7 @@ def test_unknown_nested_metadata_is_removed_from_all_recovery_copies(tmp_path):
     _ingest(profile, chat, [(1760000000, "The locker code is MINT-84.")])
     set_session_meta(chat, title="Blue notebook", emoji="🔒")
     path = chat_session_meta_path()
-    document = json.loads(path.read_text())
+    document = json.loads(path.read_text(encoding="utf-8"))
     document[chat]["future_metadata"] = {
         "nested": {"answer": "MINT-84", "keep": "blue"},
         "values": ["MINT-84", "survives"],
@@ -105,13 +105,13 @@ def test_unknown_nested_metadata_is_removed_from_all_recovery_copies(tmp_path):
     paths = [path, path.with_name(path.name + ".bak"),
              path.with_name(path.name + ".corrupt-legacy"), path.with_name(path.name + ".tmp-old")]
     for carrier in paths:
-        carrier.write_text(json.dumps(document))
+        carrier.write_text(json.dumps(document), encoding="utf-8")
 
     reply = _forget(profile, chat, "MINT-84")
 
     assert reply.startswith("Forget applied"), reply
     for carrier in paths:
-        result = json.loads(carrier.read_text())
+        result = json.loads(carrier.read_text(encoding="utf-8"))
         assert "MINT-84" not in str(result[chat])
         assert result[chat]["title"] == "Blue notebook"
         assert result[chat]["emoji"] == "🔒"
@@ -128,7 +128,7 @@ def test_unreadable_metadata_copy_names_incomplete_erasure(tmp_path):
     _ingest(profile, chat, [(1760000000, "The locker code is MINT-84.")])
     set_session_meta(chat, title="Locker MINT-84")
     path = chat_session_meta_path()
-    path.with_name(path.name + ".corrupt-old").write_text('{"corrupt-metadata":{"title":"MINT-84"')
+    path.with_name(path.name + ".corrupt-old").write_text('{"corrupt-metadata":{"title":"MINT-84"', encoding="utf-8")
 
     reply = _forget(profile, chat, "MINT-84")
 
@@ -151,13 +151,13 @@ def test_final_verifier_detects_new_metadata_copy_after_sweep(tmp_path, monkeypa
 
     def append_after_sweep(*args, **kwargs):
         original(*args, **kwargs)
-        late_copy.write_text(json.dumps({chat: {"future_metadata": {"value": "MINT-84"}}}))
+        late_copy.write_text(json.dumps({chat: {"future_metadata": {"value": "MINT-84"}}}), encoding="utf-8")
 
     monkeypatch.setattr(entries, "forget_profile_derivatives", append_after_sweep)
 
     reply = _forget(profile, chat, "MINT-84")
 
-    assert "MINT-84" in late_copy.read_text()
+    assert "MINT-84" in late_copy.read_text(encoding="utf-8")
     assert not reply.startswith("Forget applied"), reply
     assert "session metadata" in reply.lower(), reply
     assert "MINT-84" not in str(entries.load_session_meta())
@@ -180,7 +180,7 @@ def test_import_metadata_writer_refuses_completed_revocation(tmp_path):
 
     path = chat_session_meta_path()
     for carrier in path.parent.glob(path.name + "*"):
-        assert "MINT-84" not in carrier.read_text()
+        assert "MINT-84" not in carrier.read_text(encoding="utf-8")
 
 
 def test_backup_write_failure_prevents_verified_metadata_erasure(tmp_path, monkeypatch):
@@ -204,7 +204,7 @@ def test_backup_write_failure_prevents_verified_metadata_erasure(tmp_path, monke
 
     reply = _forget(profile, chat, "MINT-84")
 
-    assert "MINT-84" in backup.read_text()
+    assert "MINT-84" in backup.read_text(encoding="utf-8")
     assert not reply.startswith("Forget applied"), reply
     assert "session metadata" in reply.lower(), reply
     assert "MINT-84" not in str(entries.load_session_meta())

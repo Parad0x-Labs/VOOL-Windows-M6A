@@ -78,7 +78,7 @@ def _run_js(program: str) -> dict:
         handle.write(program)
         path = handle.name
     try:
-        result = subprocess.run([_node(), path], capture_output=True, text=True, timeout=90)
+        result = subprocess.run([_node(), path], capture_output=True, text=True, encoding="utf-8", timeout=90)
     finally:
         Path(path).unlink(missing_ok=True)
     assert result.returncode == 0, result.stderr[:800]

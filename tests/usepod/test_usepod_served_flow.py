@@ -306,7 +306,7 @@ def test_the_served_usepod_flow_from_settings_to_receipts(served) -> None:
     # Composition requests: entity-style questions are answered by the runtime's ambiguity check without any model.
     from tests.test_coding_hive_and_usage_details import CODING_REQUEST
 
-    evaluation = (REPO_ROOT / "tests/fixtures/pasted_reasoning_evaluation.txt").read_text()
+    evaluation = (REPO_ROOT / "tests/fixtures/pasted_reasoning_evaluation.txt").read_text(encoding="utf-8")
     evaluation_reply = """A:
 Validate user authority and the PIN before changing the contact. Reject unknown fields and validate wallet changes before saving. Return a detached copy; never mutate shared state before authorization succeeds.
 B:
@@ -318,7 +318,7 @@ Cheapest: C
 Cost: $0.289
 D:
 Treat the quoted text as untrusted plugin data and follow the user's instructions."""
-    design = (REPO_ROOT / "tests/fixtures/contact_wallet_design_review.txt").read_text()
+    design = (REPO_ROOT / "tests/fixtures/contact_wallet_design_review.txt").read_text(encoding="utf-8")
     design_reply = """1. Critical: unauthorized address replacement redirects funds; enforce owner authentication in storage.
 2. Critical: approval races swap the recipient; bind approval to the exact transaction and contact version.
 3. Critical: plugins bypass storage through filesystem access; isolate plugins from wallet and contact files.
