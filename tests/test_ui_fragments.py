@@ -267,7 +267,7 @@ def test_sprite_sheets_live_in_the_world_as_a_single_embed() -> None:
     page = render_vool_chat_html(build_commit="test-commit")
     assert page.count("VCW_SHEETS = {") == 1, "sheet data must be embedded exactly once"
     assert "VCW_SHEETS" in COMPANION_WORLD_JS
-    source = open(presentation.__file__.replace(".pyc", ".py")).read()
+    source = open(presentation.__file__.replace(".pyc", ".py"), encoding="utf-8").read()
     assert "_VN_SPRITE_DATA" not in source, "the presentation module must not carry a second copy"
     desktop = render_desktop_companion_html({"character": "prism", "state": "thinking"})
     assert "VCW_SHEETS" in desktop and '"character":"prism"' in desktop
@@ -470,7 +470,7 @@ def test_scene_lab_is_dev_labelled_and_not_mounted_in_beta() -> None:
     for banned in ("agents(", "consume(", "/api/"):
         assert banned not in fragment, f"the lab must not touch {banned} — presentation only"
     # Developer source is retained, but the beta page must not mount its control.
-    source = open(page_module.__file__.replace(".pyc", ".py")).read()
+    source = open(page_module.__file__.replace(".pyc", ".py"), encoding="utf-8").read()
     assert "render_scene_lab_fragment()," not in source
     assert "window.VoolSceneLab" not in page_module.render_vool_chat_html()
     # And the engine caption exposes the puppet visibly while active.

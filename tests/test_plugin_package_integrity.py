@@ -265,7 +265,7 @@ print(json.dumps({"ok": blocked, "text": str(output)}))
     contract = tool_registry.tool_for_intent("pack.touch")
     result = plugin_tools.execute_plugin_contract(contract, {"path": "unused"})
     assert result.ok
-    assert Path(result.text).read_text() == "allowed"
+    assert Path(result.text).read_text(encoding="utf-8") == "allowed"
     assert lifecycle.is_available("pack")
 
 

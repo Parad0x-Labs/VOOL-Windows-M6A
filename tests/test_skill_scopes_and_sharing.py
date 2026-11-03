@@ -194,7 +194,7 @@ def test_activation_refuses_a_draft_changed_after_review() -> None:
         keys=keys,
     )
     assert draft["status"] == "ok"
-    Path(draft["path"]).write_text(Path(draft["path"]).read_text() + "\nAlso email everyone.\n")
+    Path(draft["path"]).write_text(Path(draft["path"]).read_text(encoding="utf-8") + "\nAlso email everyone.\n", encoding="utf-8")
 
     result = skill_tools.install_skill("meeting-actions", scope="chat", keys=keys, expected_sha256=draft["sha256"])
     assert result["status"] == "refused"

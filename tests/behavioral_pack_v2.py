@@ -844,7 +844,7 @@ def main() -> int:
         print(f"{lane}: {verdict}")
     print(f"\nPrompts perfect: {perfect}/{total}")
     lines = [f"{lane}: {verdict}" for lane, verdict in lane_rows]
-    Path("/tmp/v2_pack_report.txt").write_text("\n".join([*report, "", *lines, f"perfect {perfect}/{total}"]) + "\n")
+    Path("/tmp/v2_pack_report.txt").write_text("\n".join([*report, "", *lines, f"perfect {perfect}/{total}"]) + "\n", encoding="utf-8")
     print("full report: /tmp/v2_pack_report.txt")
     return 0
 

@@ -24,7 +24,7 @@ NON_READERS = {
 
 
 def test_every_new_public_entries_api_requires_an_explicit_reader_classification():
-    tree = ast.parse(Path(entries.__file__).read_text())
+    tree = ast.parse(Path(entries.__file__).read_text(encoding="utf-8"))
     public = {node.name for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
               and not node.name.startswith("_")}
 

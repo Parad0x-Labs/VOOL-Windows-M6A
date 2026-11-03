@@ -86,7 +86,7 @@ def test_every_state_has_an_explanation():
 def test_the_mount_is_real_in_finalize_turn_trace():
     """The verdict must be stamped into the turn.trace_completed details — the
     served surface, not just the module."""
-    source = pathlib.Path("core/web/api/runtime.py").read_text()
+    source = pathlib.Path("core/web/api/runtime.py").read_text(encoding="utf-8")
     finalize = source[source.index("def finalize_turn_trace"):]
     emit_block = finalize[finalize.index('"turn.trace_completed"'):]
     assert "classify_turn" in finalize, "finalize must compute the verdict"

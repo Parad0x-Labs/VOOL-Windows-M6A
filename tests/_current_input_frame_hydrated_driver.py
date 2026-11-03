@@ -29,7 +29,7 @@ def main() -> None:
     configure_runtime_home(args.home)
     from core.web.api import runtime
 
-    writer = json.loads(Path(os.environ["VOOL_CURRENT_INPUT_HYDRATION_FROM"]).read_text())
+    writer = json.loads(Path(os.environ["VOOL_CURRENT_INPUT_HYDRATION_FROM"]).read_text(encoding="utf-8"))
     rows = [row for row in writer["retained_sources"]
             if row["chat_scope"] == "allotment-log" and row["status"] == "active"
             and row["role"] == "user" and row["authority"] == "observed-user-statement"]
@@ -57,7 +57,7 @@ def main() -> None:
     module = runpy.run_path(str(driver))
     assert module["main"]() == 0
     out = Path(args.out)
-    result = json.loads(out.read_text())
+    result = json.loads(out.read_text(encoding="utf-8"))
     result["authorized_hydration"] = {
         "proof_level": "Declared prior fixture exchange hydration, not native source discovery or live inference",
         "channel": "conversation_history+client_conversation_history",
@@ -66,7 +66,7 @@ def main() -> None:
                      "role": row["role"], "body_sha256": hashlib.sha256(row["body"].encode()).hexdigest()}
                     for row in rows],
     }
-    out.write_text(json.dumps(result, indent=2))
+    out.write_text(json.dumps(result, indent=2), encoding="utf-8")
 
 
 if __name__ == "__main__":

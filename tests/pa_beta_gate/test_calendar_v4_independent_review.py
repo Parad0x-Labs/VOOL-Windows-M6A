@@ -216,7 +216,7 @@ def _live_calendar_worker(path, aid, config, entered, release, dispatch_log):
         return []
 
     def create(cal, value):
-        with open(dispatch_log, 'a') as f:
+        with open(dispatch_log, 'a', encoding='utf-8') as f:
             f.write('worker-create\n')
         return value
 

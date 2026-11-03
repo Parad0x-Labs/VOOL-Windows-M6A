@@ -20,7 +20,7 @@ from core.agent_runtime.audit_claim_verifier import AuditEvidence
 from core.agent_runtime.stepped_audit import _finding_defect, run_stepped_audit
 
 FIXTURE = Path(__file__).with_name("fixtures") / "multi_file_review"
-SOURCES = {p.name: p.read_text() for p in FIXTURE.glob("*.py")}
+SOURCES = {p.name: p.read_text(encoding="utf-8") for p in FIXTURE.glob("*.py")}
 MANIFEST = SimpleNamespace(provider_id="test:pinned", model_name="test-model")
 
 # Verbatim from the pass-u3 ledger (the model's first nomination on t1_shop).

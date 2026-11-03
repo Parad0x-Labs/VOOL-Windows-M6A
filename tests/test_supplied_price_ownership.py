@@ -10,7 +10,7 @@ from core.conductor.registry import NodeContext
 from core.conductor.shared_context import extract_shared_context
 from core.turn_ir import parse_turn_ir
 
-ORIGINAL = (Path(__file__).parent / "fixtures/portfolio_last_run.txt").read_text()
+ORIGINAL = (Path(__file__).parent / "fixtures/portfolio_last_run.txt").read_text(encoding="utf-8")
 NOVEL = (
     "I have 1000 USD. Use these assumptions:\n"
     "Gold = 2500 USD per troy ounce\n"

@@ -10,7 +10,7 @@ from core.conductor.planner import _verify_no_invented_content, parse_clauses
 from core.turn_ir import parse_turn_ir
 from tests.test_shared_preclassification_planner import _Agent, _candidates
 
-PORTFOLIO = (Path(__file__).parent / "fixtures/portfolio_last_run.txt").read_text()
+PORTFOLIO = (Path(__file__).parent / "fixtures/portfolio_last_run.txt").read_text(encoding="utf-8")
 FRESH = (
     "A kiln receives 780 kg of clay, with 18% allocated to tiles and the rest to bowls.\n"
     "1. Calculate the mass for each product.\n"

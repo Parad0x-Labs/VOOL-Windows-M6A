@@ -90,7 +90,7 @@ def _child():
                        'body_sha256': hashlib.sha256(row.body.encode()).hexdigest()}
                       for row, _ in VoolMemory(runtime_home=home, agent_id=cr._AGENT_ID).occurrence_search(
                           'willow bench', chat_scope='presentation-source', limit=10)])
-    Path(args.out).write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n')
+    Path(args.out).write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 
 
 if __name__ == '__main__':

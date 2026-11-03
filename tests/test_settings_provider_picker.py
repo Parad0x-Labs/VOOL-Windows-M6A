@@ -5,7 +5,7 @@ from tests.chat_page_js_harness import DOM, run_node
 
 
 def test_settings_provider_search_and_pin_keep_exact_provider():
-    source=Path('core/vool_settings_page.py').read_text()
+    source=Path('core/vool_settings_page.py').read_text(encoding='utf-8')
     start=source.index('function modelSearchKey(value)')
     widget=source[start:source.index('const USEPOD_ORIGIN_DEFAULT',start)]
     assert 'function widgetModel(stack)' in widget

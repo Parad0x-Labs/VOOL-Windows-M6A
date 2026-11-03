@@ -89,7 +89,7 @@ def test_live_seatbelt_blocks_reading_a_secret_file(tmp_path):
         pytest.skip("cannot write a canary into ~/.ssh")
     try:
         prof = _macos_confined_profile((tmp_path,))
-        with tempfile.NamedTemporaryFile("w", suffix=".sb", delete=False) as f:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".sb", delete=False) as f:
             f.write(prof)
             sbf = f.name
         r = subprocess.run(
@@ -110,7 +110,7 @@ def test_live_seatbelt_blocks_listing_external_volumes(tmp_path):
     if not Path("/Volumes").is_dir():
         pytest.skip("no /Volumes mount point on this host")
     prof = _macos_confined_profile((tmp_path.resolve(),))
-    with tempfile.NamedTemporaryFile("w", suffix=".sb", delete=False) as f:
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".sb", delete=False) as f:
         f.write(prof)
         sbf = f.name
     denied = subprocess.run(
@@ -145,7 +145,7 @@ def test_live_named_root_is_restored_inside_a_denied_tree_and_siblings_stay_deni
         (named / "readme.txt").write_text("ALLOWED")
         (sibling / "secret.txt").write_text("DENIED")
         prof = _macos_confined_profile((control / "job-ws",), read_roots=(named,))
-        with tempfile.NamedTemporaryFile("w", suffix=".sb", delete=False) as f:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".sb", delete=False) as f:
             f.write(prof)
             sbf = f.name
         script = (

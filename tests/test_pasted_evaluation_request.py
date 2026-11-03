@@ -4,7 +4,7 @@ from core.active_mission import extract_active_mission_slots
 from core.agent_runtime.demand_ownership import execution_unit_spans
 from core.inline_payload import turn_supplies_its_own_content
 
-PROMPT = (Path(__file__).parent / 'fixtures/pasted_reasoning_evaluation.txt').read_text()
+PROMPT = (Path(__file__).parent / 'fixtures/pasted_reasoning_evaluation.txt').read_text(encoding='utf-8')
 
 
 def test_tool_prohibition_is_not_a_vocabulary_ban():
