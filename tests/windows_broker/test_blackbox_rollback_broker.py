@@ -147,3 +147,23 @@ def test_without_a_started_broker_the_rollback_is_by_path(turn: tuple[Path, str]
     result = _rollback(workspace, turn_id)
     assert result.ok, result.response_text
     assert (workspace / "bin.dat").read_bytes() == b"\x00raw\xff" and not (workspace / "made").exists()
+
+
+def test_a_lost_reply_leaves_the_step_open_not_failed(turn: tuple[Path, str], monkeypatch: pytest.MonkeyPatch) -> None:
+    """A broker reply lost after the restore was sent may have changed the file: the step stays open for
+    `recover_open_effects` to reconcile against the disk, and is never journaled as a failed restore."""
+    from core.blackbox import store as store_module
+    from core.windows_broker.protocol import EffectOutcomeUnknown
+
+    workspace, turn_id = turn
+    broker = _StepBroker(workspace, fail={"write_file": EffectOutcomeUnknown("broker response lost")})
+    _wire(monkeypatch, broker)
+    try:
+        result = _rollback(workspace, turn_id)
+    except Exception:  # either surfacing is fine; the journal is what is checked
+        result = None
+    assert result is None or not result.ok
+    store = store_module.default_store()
+    open_paths = [record.path for record in store.open_effects()]
+    assert open_paths == ["bin.dat"], open_paths
+    assert "restore_failed" not in str(result.details if result is not None else "")
