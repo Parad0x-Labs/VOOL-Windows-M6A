@@ -29,6 +29,12 @@ from core import fact_extractor as fx
 
 
 def _open_fds() -> int:
+    """Open descriptors on POSIX; on Windows, where there is no ``/dev/fd``, the process's open
+    kernel handles (sockets, files and SQLite/WAL handles are all handles there)."""
+    if os.name == "nt":
+        import psutil
+
+        return psutil.Process().num_handles()
     return len(os.listdir("/dev/fd"))
 
 
