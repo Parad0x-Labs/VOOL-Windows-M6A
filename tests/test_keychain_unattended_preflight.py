@@ -197,8 +197,11 @@ def test_preflight_selects_bundled_chromium_and_a_fresh_profile_root(
     binary.chmod(0o700)
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(cache))
     monkeypatch.setenv("VOOL_TEST_MODE", "1")
-    monkeypatch.delenv("VOOL_BROWSER_BINARY", raising=False)
-    monkeypatch.delenv(up.BROWSER_PROFILE_ROOT_ENV, raising=False)
+    # preflight sets these in os.environ itself; setenv first so monkeypatch removes them again afterwards
+    # (delenv of an absent name records nothing, and the fake binary leaked into later browser tests).
+    for name in ("VOOL_BROWSER_BINARY", up.BROWSER_PROFILE_ROOT_ENV):
+        monkeypatch.setenv(name, "")
+        monkeypatch.delenv(name)
     report = up.preflight("tests.browser-select")
     assert report.browser_binary == str(binary)
     assert report.browser_binary, "a machine with a bundled chromium must select it"
