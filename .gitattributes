@@ -28,3 +28,9 @@ scripts/hooks/* text eol=lf
 
 # Recorded code-task fixtures: the journals hold the hash of these exact bytes, so no checkout may rewrite their line endings.
 tests/fixtures/code_task_journals/**/workspace/** -text
+
+# Vendored third-party files and pinned data: a manifest, a canonical hash or a signed package holds
+# the hash of these exact bytes, so no checkout (Windows' CRLF one included) may rewrite their line endings.
+core/web_assets/** -text
+core/wallet/bip39_english.txt -text
+docs/registry/examples/** -text
