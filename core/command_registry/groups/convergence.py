@@ -578,7 +578,7 @@ def _probe_runtime_continuity(context: dict) -> tuple[bool, str]:
     try:
         from core.runtime_continuity import _conn as _rc
 
-        _rc()
+        _rc().close()  # a probe: the caller owns the connection, and an open one locks the file on Windows
         return True, ""
     except Exception as exc:
         return False, f"runtime continuity store unreachable: {exc}"
