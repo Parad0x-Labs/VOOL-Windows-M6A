@@ -380,3 +380,15 @@ def test_windows_refuses_a_symlink(tmp_path):
         pytest.skip("creating a symlink needs Developer Mode or the symlink privilege")
     assert owner_only.make_owner_only(link).reason == "reparse_point"
     assert not owner_only.verify_owner_only(target).ok
+
+
+def test_a_relative_path_under_a_share_working_folder_is_refused(fake, monkeypatch):
+    """A relative path becomes a share path when the process's working folder is on a share."""
+    share = "\\\\srv\\share\\cwd\\f.key"
+    monkeypatch.setattr(owner_only.os.path, "abspath", lambda _p: share)
+    fake.descriptors[share] = (_USER, True, [(_ALLOWED, _USER, 0)])
+    assert owner_only.verify_owner_only("f.key").reason == "non_local_path"
+    assert owner_only.make_owner_only("f.key").reason == "non_local_path"
+    with pytest.raises(OwnerOnlyUnavailable):
+        owner_only.ensure_private_dir("keys")
+    assert fake.set_calls == [] and fake.open_handles == 0
