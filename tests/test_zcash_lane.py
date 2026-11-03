@@ -73,6 +73,22 @@ def _memo(text: str) -> bytes:
     return text.encode() + b"\x00" * (512 - len(text.encode()))
 
 
+def _windows_launcher(script: str) -> bytes:
+    """A Windows executable that runs `script` with this interpreter: pip's console-script launcher, a #! line
+    naming sys.executable, then a zip whose __main__.py is the script (the layout pip writes for every
+    console script on Windows)."""
+    import io
+    import zipfile
+
+    from pip._vendor import distlib
+
+    launcher = (Path(distlib.__file__).parent / ("t64.exe" if sys.maxsize > 2**32 else "t32.exe")).read_bytes()
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w") as archive:
+        archive.writestr("__main__.py", script.split("\n", 1)[1])
+    return launcher + f'#!"{sys.executable}"\n'.encode() + stream.getvalue()
+
+
 class Chain:
     """The fake devtool's world: a tip, how far the wallet scans, transactions, and how each subcommand answers.
 
@@ -85,8 +101,15 @@ class Chain:
         self.config = root / "fake-devtool.json"
         self.log = root / "fake-devtool.log"
         self.script = root / "zcash-devtool"
-        self.script.write_text(FAKE.replace("/usr/bin/env python3", sys.executable, 1)
-                               .replace("__CFG__", repr(str(self.config))).replace("__LOG__", repr(str(self.log))))
+        body = FAKE.replace("/usr/bin/env python3", sys.executable, 1).replace("__CFG__", repr(str(self.config))).replace(
+            "__LOG__", repr(str(self.log)))
+        if os.name == "nt":
+            # Windows cannot run a #! script: the lane runs its pinned copy directly, as it would the real
+            # zcash-devtool.exe. pip's own console-script launcher (a real executable) runs the script appended
+            # to it with this interpreter, whatever the copy is named.
+            self.script.write_bytes(_windows_launcher(body))
+        else:
+            self.script.write_text(body)
         self.script.chmod(self.script.stat().st_mode | stat.S_IEXEC)
         self.wallet = root / "data" / "test" / "wallet"  # where the lane's default devtool keeps it (VOOL_ZCASH_DATA_DIR/test)
         self.tip = 1000
@@ -208,7 +231,9 @@ def test_the_checked_bytes_are_the_bytes_that_run(chain, tmp_path) -> None:
     assert not marker.exists() and len(chain.calls()) == 2
 
 
-@pytest.mark.parametrize("odd", ["dir?x", "dir#x", "dir%3Fx"])
+# '?' cannot appear in a Windows file name, so the Windows run puts the URI query separator's neighbours
+# ('&', '=') in its place: a folder name must still never be read as sqlite URI parameters.
+@pytest.mark.parametrize("odd", ["dir#x", "dir%3Fx", "dir&mode=rw" if os.name == "nt" else "dir?x"])
 def test_the_wallet_is_opened_read_only_whatever_its_path(tmp_path, odd) -> None:
     wallet = tmp_path / odd / "wallet"
     wallet.mkdir(parents=True)
