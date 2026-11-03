@@ -40,6 +40,7 @@ def probe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (folder / "five-lines.txt").write_text("one\ntwo\nthree\nfour\nfive\n")
     (folder / "nested" / "deep.txt").write_text("deep secret token is PLUM-9182\n")
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Path.home() reads USERPROFILE on Windows
     return folder
 
 

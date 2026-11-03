@@ -31,6 +31,7 @@ def world(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))  # Path.home() reads USERPROFILE on Windows
     monkeypatch.setenv("VOOL_HOME", str(home / ".vool_runtime"))
     monkeypatch.setenv("VOOL_PLUGIN_LIFECYCLE_PATH", str(tmp_path / "lifecycle.json"))
     monkeypatch.delenv("VOOL_PLUGINS_DIR", raising=False)

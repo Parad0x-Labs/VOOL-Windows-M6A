@@ -38,6 +38,7 @@ def fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (desktop / "unrelated-project").mkdir()
     (desktop / "VOOL_RENTED_AB").mkdir()
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Path.home() reads USERPROFILE on Windows
     return tmp_path
 
 

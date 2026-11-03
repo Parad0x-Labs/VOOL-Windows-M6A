@@ -311,7 +311,13 @@ def append_runtime_event(
     # just the message column.
     clean_details = _gate_payload_tree(clean_details)
     timestamp = str(created_at or _utcnow())
-    with _LOCK:
+    from core.finalization import A8_TRAVERSAL_LOCK
+
+    # The erase traversal holds A8_TRAVERSAL_LOCK across its availability flip and its sweep. Held
+    # here across the durable re-check AND the commit, this write is either wholly before an erase
+    # (and swept by it) or wholly after it (and vetoed). Taken before _LOCK and before any SQLite
+    # transaction, the order every A8 writer uses.
+    with A8_TRAVERSAL_LOCK, _LOCK:
         conn = _conn()
         try:
             existing = conn.execute(
@@ -322,10 +328,11 @@ def append_runtime_event(
             request_preview = _clean_request_preview(clean_details.get("request_preview") or (existing["request_preview"] if existing else ""))
             task_class = str(clean_details.get("task_class") or (existing["task_class"] if existing else "")).strip()
             checkpoint_id = str(clean_details.get("checkpoint_id") or (existing["last_checkpoint_id"] if existing else "")).strip()
-            # A8 PASS003 ERASE-dominance: durable-boundary re-check INSIDE the
-            # runtime write transaction — a verdict that raced an in-flight
-            # erase is re-derived here; sqlite serialization makes check+commit
-            # atomic against the erase's own transaction.
+            # A8 PASS003 ERASE-dominance: durable-boundary re-check under
+            # A8_TRAVERSAL_LOCK — a verdict that raced an in-flight erase is
+            # re-derived here, and the lock (not SQLite: this check runs before
+            # the first write, on another connection) keeps an erase from
+            # completing between it and the commit below.
             def _durable_veto(value: Any) -> bool:
                 try:
                     return not writer_may_persist_text(str(value or ""))
@@ -1028,14 +1035,20 @@ def update_runtime_checkpoint(
             if next_final_response
             else stored_final_hash
         )
-    with _LOCK:
+    from core.finalization import A8_TRAVERSAL_LOCK
+
+    # Same rule as append_runtime_event: A8_TRAVERSAL_LOCK across the durable re-check and the
+    # commit, taken before _LOCK and before any SQLite transaction.
+    with A8_TRAVERSAL_LOCK, _LOCK:
         conn = _conn()
         try:
             # A8 PASS003 ERASE-dominance (SHADOW-C): the pass-002 gate above is
             # necessary but not sufficient — an erase can win between that
             # early check and this durable UPDATE. Re-derive the verdict here,
-            # inside the runtime write transaction; sqlite serialization makes
-            # check+commit atomic against the erase transaction. Fail closed:
+            # under A8_TRAVERSAL_LOCK: the erase holds it across its flip and
+            # its sweep, so it cannot complete between this check and the
+            # commit (the check runs before the first write, on another
+            # connection, so SQLite alone would not order them). Fail closed:
             # an outage refuses the write rather than risking resurrection.
             from core.finalization import writer_may_persist_text as _wpt
 
