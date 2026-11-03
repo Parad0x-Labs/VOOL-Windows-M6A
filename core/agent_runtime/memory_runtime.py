@@ -612,6 +612,19 @@ def _single_candidate_failure_hint(model_execution: Any) -> str:
         # Genuinely singular pool: nothing else was ever eligible (an ordinary single-candidate
         # lane), or an explicit pin narrowed ranking to exactly this one provider before any
         # attempt was made. The original claim is true here.
+        timed_out_after = _sole_attempt_timeout_seconds(details)
+        if timed_out_after is not None:
+            # Mac Intel smoke recall (runs 41531657501, 41568073330, 41597602096): qwen3:8b on a
+            # CPU-only Mac ran past its 180 s read timeout, and "did not return a usable reply"
+            # read as a model fault. Name the limit the attempt actually ran under, and keep the
+            # "did not return a usable reply" phrase the live gauntlet failure lists match.
+            limit = f" after {int(timed_out_after)} s" if timed_out_after > 0 else ""
+            return (
+                f"`{name}` was the only model this turn was allowed to use, and it did not return a "
+                f"usable reply: it timed out{limit} before it finished. I won't answer as a different "
+                "model than the one selected. Retry, or switch the model selector to Auto so the "
+                "turn can fall back to another provider."
+            )
         return (
             f"`{name}` was the only model this turn was allowed to use, and it did not return a usable "
             "reply. I won't answer as a different model than the one selected. Retry, or switch the "
@@ -641,6 +654,22 @@ def _single_candidate_failure_hint(model_execution: Any) -> str:
         "turn but were not tried. Retry, or switch the model selector to Auto so the turn can fall "
         "back to another provider."
     )
+
+
+def _sole_attempt_timeout_seconds(details: dict[str, Any]) -> float | None:
+    """The ceiling the turn's one attempt ran under when its own failure was a timeout, else None.
+
+    0.0 means a timeout whose ceiling the decision did not record. The kind comes from the same
+    per-attempt reading the other hints use, so a cancelled wait is never called a timeout.
+    """
+    records = _attempt_records(details)
+    if len(records) != 1 or records[0].get("kind") != "TIMEOUT":
+        return None
+    timings = [item for item in list(details.get("attempt_timings") or []) if isinstance(item, dict)]
+    try:
+        return max(0.0, float((timings[0] if timings else {}).get("timeout_seconds") or 0.0))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 #: Word-bounded status markers. A bare substring "401" matched the PRICE 1401000 in

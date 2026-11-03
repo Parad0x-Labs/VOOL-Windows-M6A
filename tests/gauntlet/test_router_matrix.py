@@ -42,11 +42,16 @@ def test_ordinary_lane_gpu_budget_is_60s():
 
 
 @pytest.mark.parametrize("forced_cpu,no_gpu", [(True, False), (False, True), (True, True)])
-def test_ordinary_lane_cpu_budget_is_180s(forced_cpu, no_gpu):
+def test_ordinary_lane_cpu_budget_is_180s_scaled_for_the_cpu(forced_cpu, no_gpu):
+    from core.local_compute_budget import CPU_ONLY_FACTOR
     from core.memory_first_router import resolve_fallback_budget_seconds
 
-    # CPU-only runs get the larger budget so a slow local generation can finish.
-    assert resolve_fallback_budget_seconds("daily", forced_cpu=forced_cpu, no_usable_gpu=no_gpu) == 180.0
+    # CPU-only runs get the larger budget so a slow local generation can finish: 180 s times the
+    # CPU factor, the same scaling the local Ollama lane's own answer timeout gets.
+    assert (
+        resolve_fallback_budget_seconds("daily", forced_cpu=forced_cpu, no_usable_gpu=no_gpu)
+        == 180.0 * CPU_ONLY_FACTOR
+    )
 
 
 # ---------------------------------------------------------------------------

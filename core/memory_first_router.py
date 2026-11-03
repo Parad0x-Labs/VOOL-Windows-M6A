@@ -308,7 +308,14 @@ def resolve_fallback_budget_seconds(
     if lane in {"deep", "cloud", "human"}:
         return None
     if forced_cpu or no_usable_gpu:
-        return float(policy_engine.get("model_orchestration.provider_fallback_budget_seconds_cpu", 180.0))
+        # The policy value is the GPU-measured local answer timeout; a CPU-only run scales it by
+        # the same factor as that timeout (core.runtime_provider_defaults), or this budget would
+        # cap the scaled call back to 180 s. Mac Intel smoke recall ran 198-207 s and failed.
+        from core.local_compute_budget import CPU_ONLY_FACTOR
+
+        return CPU_ONLY_FACTOR * float(
+            policy_engine.get("model_orchestration.provider_fallback_budget_seconds_cpu", 180.0)
+        )
     if output_mode == "tool_intent":
         return float(policy_engine.get("model_orchestration.provider_fallback_budget_seconds_tool_intent", 180.0))
     return float(policy_engine.get("model_orchestration.provider_fallback_budget_seconds", 60.0))
@@ -5540,8 +5547,8 @@ class MemoryFirstRouter:
         #
         # The finite budget is compute-aware: a full agent turn on pure CPU
         # cannot finish inside the 60s GPU default, so a CPU-only run gets the
-        # larger provider_fallback_budget_seconds_cpu (default 180s, matching the
-        # per-manifest timeout_seconds) so a slow CPU generation can complete
+        # larger provider_fallback_budget_seconds_cpu (default 180s, the GPU-measured
+        # per-manifest timeout_seconds, times CPU_ONLY_FACTOR like that timeout) so a slow CPU generation can complete
         # instead of being cut off. A run is treated as CPU-only when the Ollama
         # lane is forced to CPU (VOOL_OLLAMA_NUM_GPU == "0") or the machine has
         # no usable GPU accelerator (probed accelerator is cpu/absent). The budget

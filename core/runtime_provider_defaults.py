@@ -739,6 +739,10 @@ def _ensure_local_ollama_provider(
         and has_num_gpu_contract
         and bool(existing_runtime_config.get("supports_json_schema", False))
     )
+    answer_timeout_seconds = _ollama_answer_timeout_seconds(forced_num_gpu)
+    # Compared like the context contract: a manifest an older build persisted with the flat 180 s
+    # must be rewritten on a CPU-only machine, or the scaled timeout never reaches existing installs.
+    has_timeout_contract = existing_runtime_config.get("timeout_seconds") == answer_timeout_seconds
     expected_tps = float(manifest_profile.get("tokens_per_second") or 0.0)
     has_measurement_contract = (
         expected_tps <= 0 or float(existing_metadata.get("tokens_per_second") or 0.0) == expected_tps
@@ -752,6 +756,7 @@ def _ensure_local_ollama_provider(
         and has_context_contract
         and has_measurement_contract
         and has_sizing_contract
+        and has_timeout_contract
         and str(existing_runtime_config.get("base_url") or "").rstrip("/") == selected_base_url.rstrip("/")
     ):
         return False
@@ -760,7 +765,7 @@ def _ensure_local_ollama_provider(
     runtime_config: dict[str, object] = {
         "base_url": selected_base_url,
         "health_path": "/v1/models",
-        "timeout_seconds": 180,
+        "timeout_seconds": answer_timeout_seconds,
         "health_timeout_seconds": 10,
         "temperature": 0.7,
         **_thinking_runtime_config(model_tag),
@@ -2003,6 +2008,27 @@ def _env_int(env: Mapping[str, str], *names: str, default: int) -> int:
         except Exception:
             continue
     return max(1, int(default))
+
+
+#: The local Ollama lane's whole-answer timeout as measured on GPU hosts. The chat call is not
+#: streamed, so this bounds the entire answer, not the gap between tokens.
+_OLLAMA_ANSWER_TIMEOUT_SECONDS = 180
+
+
+def _ollama_answer_timeout_seconds(forced_num_gpu: int | None) -> int:
+    """The local Ollama lane's answer timeout, scaled once when inference runs on the CPU.
+
+    Mac Intel smoke "recall answers from memory" (runs 41531657501, 41568073330, 41597602096,
+    i7-8700B, qwen3:8b): the recall answer ran 198-207 s against the flat 180 s and the turn
+    failed. CPU-only is this machine having no usable GPU (core.local_compute_budget), or
+    VOOL_OLLAMA_NUM_GPU=0 forcing the model onto the CPU of a machine that has one. A GPU host
+    keeps 180 s. The timeout is a ceiling, not a wait: a fast answer returns when it is ready.
+    """
+    from core.local_compute_budget import CPU_ONLY_FACTOR, local_compute_seconds
+
+    if forced_num_gpu == 0:
+        return int(_OLLAMA_ANSWER_TIMEOUT_SECONDS * CPU_ONLY_FACTOR)
+    return int(local_compute_seconds(_OLLAMA_ANSWER_TIMEOUT_SECONDS))
 
 
 def _resolve_ollama_num_gpu(env: Mapping[str, str]) -> int | None:
