@@ -52,7 +52,7 @@ def _instruments_on_disk() -> set[str]:
             continue
         if any(part in _OUTPUT_DIRS for part in path.relative_to(REPO_ROOT).parts):
             continue
-        found.add(str(path.relative_to(REPO_ROOT)))
+        found.add(path.relative_to(REPO_ROOT).as_posix())  # git ls-files names use /
     return found
 
 

@@ -251,7 +251,7 @@ def test_every_binding_module_is_either_gated_or_explicitly_exempt() -> None:
     for path in (root / "core").rglob("*.py"):
         text = path.read_text(encoding="utf-8", errors="ignore")
         if re.search(r"^\s*from core\.retrieval_observability import .*begin_web_retrieval", text, re.M):
-            binders.add(str(path.relative_to(root)).replace("/", ".")[: -len(".py")])
+            binders.add(path.relative_to(root).as_posix().replace("/", ".")[: -len(".py")])
 
     classified = set(BINDING_MODULES) | set(EXEMPT_MODULES)
     assert binders <= classified, (
