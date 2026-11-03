@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from dataclasses import replace
 from typing import Any
@@ -151,6 +152,34 @@ _CLOUD_TOOL_CALL_FLOOR_TOKENS = 3000
 # on purpose: a server's capability does not change under us, and re-probing per turn would tax every
 # request to re-learn the same fact.
 _NATIVE_TOOL_PROBE_CACHE: dict[str, bool] = {}
+
+#: Native Ollama bases whose certification identity read failed to CONNECT, with the monotonic
+#: time of that failure. A refused loopback connect costs about 2 s on Windows (Linux refuses at
+#: once), and ``certification_status`` reads the identity -- three requests -- for every candidate
+#: manifest from ranking and from the authorship fence on every turn. With nothing listening, a
+#: Windows gauntlet child spent 95 s in those connects before its first turn (Steve, 5c1157c9).
+#: Inside the window a read of that base answers ``unknown`` without I/O, which is exactly what a
+#: failed read answers; only connect failures are remembered, and the window is short so a backend
+#: that starts is seen again almost at once.
+_IDENTITY_UNREACHABLE_TTL_S = 10.0
+_IDENTITY_UNREACHABLE: dict[str, float] = {}
+_IDENTITY_UNREACHABLE_LOCK = threading.Lock()
+
+
+def _identity_base_recently_unreachable(native_base: str) -> bool:
+    with _IDENTITY_UNREACHABLE_LOCK:
+        failed_at = _IDENTITY_UNREACHABLE.get(native_base)
+        if failed_at is None:
+            return False
+        if time.monotonic() - failed_at < _IDENTITY_UNREACHABLE_TTL_S:
+            return True
+        _IDENTITY_UNREACHABLE.pop(native_base, None)
+        return False
+
+
+def _note_identity_base_unreachable(native_base: str) -> None:
+    with _IDENTITY_UNREACHABLE_LOCK:
+        _IDENTITY_UNREACHABLE[native_base] = time.monotonic()
 
 
 def _request_timeout(read_timeout: float) -> tuple[float, float]:
@@ -1739,14 +1768,19 @@ class OpenAICompatibleAdapter(ModelAdapter):
             return configured
         if self._runtime_family() != "ollama":
             return "unknown"
+        native_base = _native_ollama_base_url(base_url)
+        if _identity_base_recently_unreachable(native_base):
+            return "unknown"
         try:
             response = requests.get(
-                f"{_native_ollama_base_url(base_url)}/api/version",
+                f"{native_base}/api/version",
                 headers=self._headers(),
                 timeout=_request_timeout(5.0),
             )
             if response.ok:
                 return str(dict(response.json() or {}).get("version") or "unknown")[:128]
+        except requests.exceptions.ConnectionError:
+            _note_identity_base_unreachable(native_base)
         except Exception:
             pass
         return "unknown"
@@ -1782,6 +1816,8 @@ class OpenAICompatibleAdapter(ModelAdapter):
         if not _strict_tool_certification_loopback(base_url) or self._runtime_family() != "ollama":
             return identity
         native_base = _native_ollama_base_url(base_url)
+        if _identity_base_recently_unreachable(native_base):
+            return identity
         try:
             tags_response = requests.get(
                 f"{native_base}/api/tags",
@@ -1802,6 +1838,9 @@ class OpenAICompatibleAdapter(ModelAdapter):
                         details.get("quantization_level") or identity["quantization"]
                     )
                     break
+        except requests.exceptions.ConnectionError:
+            _note_identity_base_unreachable(native_base)
+            return identity
         except Exception:
             pass
         try:
@@ -1820,6 +1859,8 @@ class OpenAICompatibleAdapter(ModelAdapter):
                 identity["quantization"] = str(
                     details.get("quantization_level") or identity["quantization"]
                 )
+        except requests.exceptions.ConnectionError:
+            _note_identity_base_unreachable(native_base)
         except Exception:
             pass
         return identity
