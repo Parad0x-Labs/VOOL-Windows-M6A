@@ -14,6 +14,7 @@ the run, and logs are always kept):
              by the installing user; the window host is still alive after the settle period
   slices     tools/installed_slices.py against the installed API: health and version identity,
              each with a negative control (slices.json)
+             then API recovery: the listener is killed and the supervisor must start a new one
   restart    stop leaves no owned process and a free port; relaunch is healthy again; the data
              directory persisted
   uninstall  a foreign listener survives uninstall; program files removed; no VOOL process left;
@@ -215,6 +216,18 @@ try {
         Start-Sleep -Seconds $WindowSettleSeconds
         $window = @(Get-VoolProcesses | Where-Object { $_.CommandLine -like "*vool_window.py*" })
         Require "launch" "window_host_alive_after_settle" ($window.Count -ge 1) "window processes=$($window.Count) after ${WindowSettleSeconds}s"
+
+        # --- installed slice: API recovery (Step 4.2) -------------------------------------------
+        # Kill the API listener proved above to be VOOL's own python; the bundle supervisor must start a
+        # new one. Negative control: the killed pid is gone, so a healthy answer afterwards cannot be it.
+        $killedApi = $listener.ProcessId
+        Stop-Process -Id $killedApi -Force
+        $deadline = (Get-Date).AddSeconds(30)
+        while ((Get-Date) -lt $deadline -and (Get-Process -Id $killedApi -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 500 }
+        Require "slices" "api_recovery_control_killed_pid_gone" (-not (Get-Process -Id $killedApi -ErrorAction SilentlyContinue)) "pid=$killedApi"
+        Require "slices" "api_recovered_healthz_200" (Wait-Health $HealthTimeoutSeconds) "after killing pid $killedApi"
+        $recovered = Get-Listener $ApiPort
+        Require "slices" "api_recovered_as_new_vools_python" ($recovered -and $recovered.ProcessId -ne $killedApi -and $recovered.ExecutablePath -and $recovered.ExecutablePath.StartsWith($InstallRoot + "\", [StringComparison]::OrdinalIgnoreCase) -and $recovered.CommandLine -like "*vool_api_server.py*") $(if ($recovered) { "pid=$($recovered.ProcessId) $($recovered.ExecutablePath)" } else { "no listener" })
 
         # --- restart -------------------------------------------------------------------------
         Stop-Vool
