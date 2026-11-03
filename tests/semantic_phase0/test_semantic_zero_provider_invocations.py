@@ -296,6 +296,9 @@ def _run_phase(flag: str) -> _ModelLayerLog:
             for name in ("SYSTEMROOT", "WINDIR", "TEMP", "TMP"):
                 if os.environ.get(name):
                     env[name] = os.environ[name]
+            # Path.home() on Windows reads USERPROFILE and ignores HOME: point it at the same
+            # throwaway home, never the real profile.
+            env["USERPROFILE"] = home
         script = (
             _PHASE_DRIVER.replace("__TREE__", repr(str(tree)))
             .replace("__ENTRIES__", repr(list(_MODEL_LAYER_ENTRY_POINTS)))
