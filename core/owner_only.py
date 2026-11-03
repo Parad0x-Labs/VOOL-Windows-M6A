@@ -29,8 +29,10 @@ folder created anywhere below it (object and container inherit, not no-propagate
 protected without inheritance is reported ``ace_not_inheritable`` and repaired by ``ensure_private_dir``.
 A path whose only ACEs are inherit-only is not granted to the user itself (``ace_inherit_only``).
 Setting a folder's descriptor does not reach files already inside it (SetSecurityInfo does not
-propagate), and a handle opened before the change keeps its access: for a secret, prefer a folder
-``ensure_private_dir`` creates over repairing one, and make each existing secret file owner-only too.
+propagate), so ``make_tree_owner_only`` secures the folder and then everything already inside it.
+A handle opened before the change keeps its access, so for a secret prefer a folder
+``ensure_private_dir(fresh=True)`` creates, which refuses one that already exists. A drive letter
+that maps a share (GetDriveTypeW remote, unknown or no root) is refused like a share path.
 
 ``make_owner_only`` and ``verify_owner_only`` return an :class:`OwnerOnlyReport` and never raise for
 an expected failure; ``require_owner_only`` and ``ensure_private_dir`` raise
@@ -101,19 +103,26 @@ def require_owner_only(path: str | os.PathLike[str], *, directory: bool = False)
         raise OwnerOnlyUnavailable(path, report.reason)
 
 
-def ensure_private_dir(path: str | os.PathLike[str]) -> Path:
+def ensure_private_dir(path: str | os.PathLike[str], *, fresh: bool = False) -> Path:
     """Create ``path`` owner-only (its parents are created as ordinary folders), or make an existing
-    one owner-only; raise :class:`OwnerOnlyUnavailable` when it cannot be."""
+    one owner-only; raise :class:`OwnerOnlyUnavailable` when it cannot be. With ``fresh`` an existing
+    folder is refused (``already_exists``): a handle opened on it before the repair would keep its
+    access, so a store of secrets can insist on a folder this call created."""
     if _WINDOWS and _non_local(os.fspath(path)):
         raise OwnerOnlyUnavailable(path, "non_local_path")
     folder = os.path.abspath(os.fspath(path))
     if not _WINDOWS:
-        os.makedirs(folder, mode=0o700, exist_ok=True)
+        try:
+            os.makedirs(folder, mode=0o700, exist_ok=not fresh)
+        except FileExistsError:
+            raise OwnerOnlyUnavailable(folder, "already_exists") from None
         require_owner_only(folder, directory=True)
         return Path(folder)
     os.makedirs(os.path.dirname(folder), exist_ok=True)
     api = _win_api()
     created = api.create_directory(_win_long_path(folder), _DIRECTORY_SDDL.format(sid=api.user_sid()))
+    if fresh and not created:
+        raise OwnerOnlyUnavailable(folder, "already_exists")
     report = (
         _windows_apply(folder, directory=True, set_descriptor=False)
         if created
@@ -122,6 +131,33 @@ def ensure_private_dir(path: str | os.PathLike[str]) -> Path:
     if not report.ok:
         raise OwnerOnlyUnavailable(folder, report.reason)
     return Path(folder)
+
+
+def make_tree_owner_only(path: str | os.PathLike[str]) -> OwnerOnlyReport:
+    """Make the folder ``path`` owner-only, then every file and folder already inside it.
+
+    Setting a folder's descriptor does not reach what is already inside it, so files created before
+    the repair keep their old inherited ACL. Each folder is secured (by handle, refusing a link)
+    before it is listed, and the first entry that cannot be secured, a link included, fails the whole
+    tree: what is left is not owner-only, and saying so is the point."""
+    folder = os.fspath(path)
+    if _WINDOWS and _non_local(folder):
+        return OwnerOnlyReport(False, "non_local_path")
+    report = make_owner_only(folder, directory=True)
+    if not report.ok:
+        return report
+    try:
+        entries = sorted(os.scandir(folder), key=lambda entry: entry.name)
+    except OSError:
+        return OwnerOnlyReport(False, "unreadable")
+    for entry in entries:
+        if entry.is_dir(follow_symlinks=False):
+            report = make_tree_owner_only(entry.path)
+        else:
+            report = make_owner_only(entry.path)
+        if not report.ok:
+            return report
+    return OwnerOnlyReport(True)
 
 
 # --- POSIX ---------------------------------------------------------------------------------------------
@@ -232,7 +268,26 @@ def _non_local(path: str) -> bool:
     ``\\\\.\\``, ``\\\\?\\GLOBALROOT``): the project refuses them all. On a share, "owner-only" would be
     judged on a server whose other administrators and sessions this check cannot see. A relative path
     is checked as made absolute too, since the working folder can be on a share."""
-    return any(form.replace("/", "\\").startswith("\\\\") for form in (path, os.path.abspath(path)))
+    forms = (path, os.path.abspath(path))
+    if any(form.replace("/", "\\").startswith("\\\\") for form in forms):
+        return True
+    # A drive letter can be a mapped share (Z: on SMB): judged by the drive's type, failing closed.
+    drive = os.path.splitdrive(forms[1])[0]
+    return bool(drive) and _drive_type(drive + "\\") not in _LOCAL_DRIVE_TYPES
+
+
+#: GetDriveTypeW: DRIVE_REMOVABLE, DRIVE_FIXED, DRIVE_CDROM, DRIVE_RAMDISK. Not DRIVE_REMOTE (4),
+#: DRIVE_UNKNOWN (0) or DRIVE_NO_ROOT_DIR (1).
+_LOCAL_DRIVE_TYPES = frozenset({2, 3, 5, 6})
+
+
+def _drive_type(root: str) -> int:
+    """GetDriveTypeW for a drive root such as ``Z:\\``; 0 (unknown, so refused) off Windows."""
+    if sys.platform != "win32":
+        return 0
+    import ctypes
+
+    return int(ctypes.windll.kernel32.GetDriveTypeW(ctypes.c_wchar_p(root)))
 
 
 def _win_long_path(path: str) -> str:
