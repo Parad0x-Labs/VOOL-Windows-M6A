@@ -16,6 +16,7 @@ from unittest import mock
 import pytest
 
 from adapters.base_adapter import ModelRequest, ModelResponse
+from core.local_compute_budget import CPU_ONLY_FACTOR
 from core.local_inference_autopilot import (
     _deep_lane_fits,
     _message_complexity,
@@ -381,8 +382,8 @@ def test_heavy_lanes_have_no_fallback_budget(lane):
 
 def test_ordinary_lane_budget_gpu_vs_cpu():
     assert resolve_fallback_budget_seconds("daily", forced_cpu=False, no_usable_gpu=False) == 60.0
-    assert resolve_fallback_budget_seconds("daily", forced_cpu=True, no_usable_gpu=False) == 180.0
-    assert resolve_fallback_budget_seconds("daily", forced_cpu=False, no_usable_gpu=True) == 180.0
+    assert resolve_fallback_budget_seconds("daily", forced_cpu=True, no_usable_gpu=False) == 180.0 * CPU_ONLY_FACTOR
+    assert resolve_fallback_budget_seconds("daily", forced_cpu=False, no_usable_gpu=True) == 180.0 * CPU_ONLY_FACTOR
 
 
 # --- verifier-required for deep / action-plan work ---

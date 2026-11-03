@@ -8,6 +8,7 @@ from adapters.base_adapter import ModelRequest
 from adapters.openai_compatible_adapter import OpenAICompatibleAdapter
 from core.hardware_tier import MachineProbe, _select_accelerator, detect_gpu_devices, tier_summary
 from core.install_recommendations import cpu_fallback_model
+from core.local_compute_budget import CPU_ONLY_FACTOR
 from core.local_model_bundles import model_parameter_billions
 from core.memory_first_router import resolve_fallback_budget_seconds
 from core.model_registry import ModelRegistry
@@ -174,9 +175,10 @@ def test_prewarm_request_carries_num_gpu_zero() -> None:
 
 def test_cpu_only_run_uses_larger_budget() -> None:
     # Drives the REAL router decision function, not a mirror of it.
-    assert resolve_fallback_budget_seconds("daily", forced_cpu=True, no_usable_gpu=False) == 180.0
+    # 180 s scaled by the CPU factor, like the local Ollama lane's own timeout.
+    assert resolve_fallback_budget_seconds("daily", forced_cpu=True, no_usable_gpu=False) == 180.0 * CPU_ONLY_FACTOR
     # No usable GPU also counts as CPU-only.
-    assert resolve_fallback_budget_seconds("tiny", forced_cpu=False, no_usable_gpu=True) == 180.0
+    assert resolve_fallback_budget_seconds("tiny", forced_cpu=False, no_usable_gpu=True) == 180.0 * CPU_ONLY_FACTOR
 
 
 def test_gpu_run_uses_default_sixty_second_budget() -> None:
@@ -211,7 +213,7 @@ def test_tool_intent_gets_the_larger_budget_even_on_a_fast_gpu_lane() -> None:
         resolve_fallback_budget_seconds(
             "tiny", forced_cpu=True, no_usable_gpu=False, output_mode="tool_intent"
         )
-        == 180.0
+        == 180.0 * CPU_ONLY_FACTOR
     )
 
 
