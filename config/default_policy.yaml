@@ -145,8 +145,10 @@ model_orchestration:
   provider_fallback_budget_seconds: 60
   # Larger budget used instead when the run is CPU-only (Ollama forced to CPU via
   # VOOL_OLLAMA_NUM_GPU=0, or no usable GPU offload is active). A full CPU turn
-  # cannot finish inside 60s; 180s matches the per-manifest timeout_seconds so a
-  # slow CPU generation can complete rather than being cut off.
+  # cannot finish inside 60s. 180s is the GPU-measured per-manifest timeout_seconds;
+  # the router multiplies it by CPU_ONLY_FACTOR (core/local_compute_budget.py), the
+  # same factor the local Ollama lane's timeout gets on a CPU-only machine (720s at
+  # factor 4), so a slow CPU generation can complete rather than being cut off.
   provider_fallback_budget_seconds_cpu: 180
 
 observability:
