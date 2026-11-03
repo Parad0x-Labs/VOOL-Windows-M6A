@@ -33,7 +33,7 @@ def git_repo(tmp_path):
     run("init", "-q", "-b", "main")
     run("config", "user.email", "ninja@test")
     run("config", "user.name", "Ninja")
-    (root / "README.md").write_text("hello\n")
+    (root / "README.md").write_text("hello\n", newline="\n")
     run("add", "-A")
     run("commit", "-q", "-m", "init")
     return root
