@@ -112,7 +112,9 @@ def report() -> dict[str, Any]:
         "reason": status.reason,
         "flagged": [{"id": folder.id, "path": folder.path} for folder in status.flagged],
         "skipped": [dict(item) for item in status.skipped],
-        "undo_records": "available" if journal.get("available") is True else "unavailable",
+        # Both row lists must be there: a journal state without them is malformed, never healthy.
+        "undo_records": ("available" if journal.get("available") is True and isinstance(pending, list)
+                         and isinstance(torn, list) else "unavailable"),
         "pending": pending_rows,
         "torn": torn_rows,
         "needs_check": bool(pending_rows or torn_rows),
