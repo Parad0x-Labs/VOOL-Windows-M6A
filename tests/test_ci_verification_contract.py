@@ -10,6 +10,8 @@ from typing import Any
 import pytest
 import yaml
 
+from tests.platform_helpers import bash_executable
+
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - exercised by compatibility CI on Python 3.10
@@ -413,7 +415,7 @@ def _run_preflight(script: str, sandbox: Path, stubbin: Path):
         "VOOL_STUB_TIMEOUT_S": "3",
     }
     return subprocess.run(
-        ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", script],
+        [bash_executable(), "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", script],
         capture_output=True, text=True, env=env, timeout=60,
     )
 

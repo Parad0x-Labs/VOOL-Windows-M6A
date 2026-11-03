@@ -12,6 +12,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.platform_helpers import bash_executable
+
 ROOT = Path(__file__).resolve().parents[1]
 LINUX = ROOT / "installer/bundle/linux"
 spec = importlib.util.spec_from_file_location("linux_install", LINUX / "install_bundle.py")
@@ -148,9 +150,9 @@ def test_uninstall_refuses_unowned_root_and_unknown_version_content(package, hom
 def test_bundle_scripts_parse_and_wrong_host_build_refuses_without_staging(tmp_path):
     scripts = [ROOT / "installer/bundle/build_linux_bundle.sh", LINUX / "install.sh", LINUX / "uninstall.sh", LINUX / "vool"]
     for script in scripts:
-        subprocess.run(["bash", "-n", str(script)], check=True)
+        subprocess.run([bash_executable(), "-n", str(script)], check=True)
     if sys.platform != "linux":
-        result = subprocess.run(["bash", str(scripts[0]), "--out", str(tmp_path / "output")], capture_output=True, text=True)
+        result = subprocess.run([bash_executable(), str(scripts[0]), "--out", str(tmp_path / "output")], capture_output=True, text=True)
         assert result.returncode == 1 and "Build on Linux x86_64" in result.stderr
         assert not (tmp_path / "output").exists()
 
@@ -182,13 +184,13 @@ def test_workflow_builds_once_smokes_both_targets_and_gates_release():
 def test_bootstrap_explicit_beta_pin_and_trunk_override_resolve_correct_archives(home):
     bootstrap = ROOT / "installer/bootstrap_vool.sh"
     environment = {"HOME": str(home), "PATH": "/usr/bin:/bin"}
-    result = subprocess.run(["bash", str(bootstrap), "--ref", "v0.7.0-beta", "--help"], env=environment, capture_output=True, text=True, check=True)
+    result = subprocess.run([bash_executable(), str(bootstrap), "--ref", "v0.7.0-beta", "--help"], env=environment, capture_output=True, text=True, check=True)
     assert "default: v0.7.0-beta" in result.stdout
     definitions = bootstrap.read_text(encoding="utf-8").rsplit('main "$@"', 1)[0]
-    result = subprocess.run(["bash"], input=definitions + '\nparse_args --ref v0.7.0-beta\nprintf "%s\\n" "$ARCHIVE_URL"\n', env=environment, capture_output=True, text=True, check=True)
+    result = subprocess.run([bash_executable()], input=definitions + '\nparse_args --ref v0.7.0-beta\nprintf "%s\\n" "$ARCHIVE_URL"\n', env=environment, capture_output=True, text=True, check=True)
     assert result.stdout.strip().endswith("/archive/refs/tags/v0.7.0-beta.tar.gz")
     environment["VOOL_GITHUB_REF"] = "main"
-    result = subprocess.run(["bash"], input=definitions + '\nprintf "%s\\n" "$ARCHIVE_URL"\n', env=environment, capture_output=True, text=True, check=True)
+    result = subprocess.run([bash_executable()], input=definitions + '\nprintf "%s\\n" "$ARCHIVE_URL"\n', env=environment, capture_output=True, text=True, check=True)
     assert result.stdout.strip().endswith("/archive/refs/heads/main.tar.gz")
     assert not (home / "vool-local").exists()
 

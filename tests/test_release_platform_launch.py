@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.platform_helpers import bash_executable
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -40,7 +42,7 @@ def linux_shortcuts(tmp_path: Path, *, desktop: bool = False) -> tuple[Path, Pat
         functions.insert(1, function("desktop_entry_arg"))
     env = {**os.environ, "HOME": str(home), "XDG_DATA_HOME": str(home / "data"), "PROJECT_ROOT": str(project)}
     code = '\n'.join(functions) + '\nuname() { echo Linux; }\nxdg-user-dir() { echo "$HOME/Desktop"; }\nsay() { :; }\ncreate_desktop_shortcut\n'
-    result = subprocess.run(["bash", "-c", code], env=env, text=True, capture_output=True, timeout=15)
+    result = subprocess.run([bash_executable(), "-c", code], env=env, text=True, capture_output=True, timeout=15)
     assert result.returncode == 0, result.stderr
     return home, project
 
@@ -109,7 +111,7 @@ def test_mac_rejects_incompatible_build_before_python(tmp_path: Path, host: str,
     env = {**os.environ, "HOME": str(tmp_path / "home"), "PATH": f"{shims}:/usr/bin:/bin",
            "VOOL_TEST_MARKER": str(marker),
            "VOOL_HOME": str(tmp_path / "home/Library/Application Support/VOOL/runtime")}
-    done = subprocess.run(["bash", str(launcher)], env=env, capture_output=True, text=True, timeout=15)
+    done = subprocess.run([bash_executable(), str(launcher)], env=env, capture_output=True, text=True, timeout=15)
     assert marker.exists() is accepted
     assert (done.returncode == 0) is accepted
     if not accepted:
@@ -211,7 +213,7 @@ def test_linux_workflow_owns_its_window_manager(tmp_path: Path, smoke_exit: int)
         f"sys.exit({smoke_exit})\n")
     for script in (shims / "xvfb-run", shims / "openbox", python):
         script.chmod(0o755)
-    result = subprocess.run(["bash", "-c", run], cwd=ROOT,
+    result = subprocess.run([bash_executable(), "-c", run], cwd=ROOT,
                             env={**os.environ, "RUNNER_TEMP": str(runner), "PATH": f"{shims}:{os.environ['PATH']}"},
                             text=True, capture_output=True, timeout=15)
     assert result.returncode == smoke_exit, result.stderr
