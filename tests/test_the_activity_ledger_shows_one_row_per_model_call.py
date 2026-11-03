@@ -79,7 +79,8 @@ def _render_ledger_rows(events: list[dict]) -> list[dict]:
         + "const rows = events.map(ledgerRow).filter(Boolean);\n"
         + "process.stdout.write(JSON.stringify(rows));\n"
     )
-    proc = subprocess.run([NODE, "--input-type=module", "-e", script], capture_output=True, text=True, encoding="utf-8", timeout=30)
+    # on stdin, not -e: the program outgrows the 32,767-character Windows command line (WinError 206)
+    proc = subprocess.run([NODE, "--input-type=module"], input=script, capture_output=True, text=True, encoding="utf-8", timeout=30)
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout)
 

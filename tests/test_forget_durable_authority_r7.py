@@ -8,6 +8,7 @@ import selectors
 import sqlite3
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -78,10 +79,19 @@ def _child(home, mode):
 
 
 def _read_child_line(process):
-    with selectors.DefaultSelector() as selector:
-        selector.register(process.stdout, selectors.EVENT_READ)
-        assert selector.select(timeout=20), "authority reader did not respond"
-    line = process.stdout.readline()
+    if os.name == "nt":
+        # Windows select() takes sockets only, never a pipe: read the line on a thread, same 20 s bound.
+        got: list[str] = []
+        reader = threading.Thread(target=lambda: got.append(process.stdout.readline()), daemon=True)
+        reader.start()
+        reader.join(20)
+        assert got, "authority reader did not respond"
+        line = got[0]
+    else:
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            assert selector.select(timeout=20), "authority reader did not respond"
+        line = process.stdout.readline()
     assert line, "authority reader exited before reporting a state"
     return json.loads(line)
 
