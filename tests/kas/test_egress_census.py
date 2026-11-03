@@ -28,7 +28,7 @@ KNOWN_DIRECT_EGRESS: dict[str, tuple[int, str]] = {
     # --- verified third-party egress outside the door. These are the real bypasses. ---
     "adapters/openai_compatible_adapter.py": (11, "verified: requests-named calls now delegate to core.provider_http; raw transport is owned by its worker"),
     "core/email_providers/base.py": (2, "verified: the email lane's own provider transport -- OAuth token refresh and provider REST calls to fixed endpoints, default TLS context, bounded timeouts, typed refusal mapping; read for this entry when the census flagged it after the email lane merge"),
-    "core/provider_http.py": (4, "verified: three requests imports for the provider worker and one urllib fallback for selected Ollama inventory/pulls; loopback uses an empty proxy handler and refuses redirects, non-loopback admission stays with its caller"),
+    "core/provider_http.py": (5, "verified: three requests imports for the provider worker and one urllib fallback for selected Ollama inventory/pulls (its build_opener and urlopen are two sites); loopback uses an empty proxy handler and refuses redirects, non-loopback admission stays with its caller"),
     "core/wallet/lifecycle.py": (1, "verified: Solana JSON-RPC client; constructor checks network and RPC URL allowlists before transport"),
     "tools/probe_openrouter_reasoning_budget.py": (1, "verified: explicit development CLI sends a credentialed completion to the fixed OpenRouter endpoint"),
     "core/cloud_transport.py": (1, "verified: re-implements the door's veto->report->open sequence with its own requests call"),
@@ -37,6 +37,9 @@ KNOWN_DIRECT_EGRESS: dict[str, tuple[int, str]] = {
     "core/mesh/task_router.py": (6, "verified: posts to arbitrary peer endpoints"),
     "core/local_model_presence.py": (1, "verified: a GET of the model listing (Ollama /api/tags, or a registered local lane's /models) with a 0.75 s timeout, to tell whether a local model runs; the base URLs come from the Ollama endpoint setting and local lane manifests, and loopback is not enforced, so it is listed with the bypasses"),
     "core/agent_team/model_agent.py": (2,"verified: an agent turn posts the team's chat body to /api/cloud/model and /api/chat at the caller-supplied base_url; meant for the VOOL daemon itself, but loopback is not enforced, so it is listed with the bypasses"),
+    "core/eyebrow_client.py": (1, "verified: fetch_bytes builds an opener with no proxy and no redirects, size-capped, for the caller's URL (Eyebrow add-on scans); counted since the census learned openers"),
+    "core/registry/client.py": (1, "verified: fetch builds an opener that refuses redirects and caps bytes, for the vool.dev skill registry; counted since the census learned openers"),
+    "core/pinned_http.py": (1, "verified: the socket connect to addresses an outbound caller already approved, keeping the hostname for Host/SNI/TLS; its docstring says it is used only inside the effect door"),
     # --- verified local-service transport: reaches a service on this machine, not a third party ---
     "core/council/dispatch.py": (3, "verified: the local VOOL daemon on loopback"),
     "core/updater/health.py": (1, "verified: the local health endpoint on loopback"),
@@ -47,6 +50,8 @@ KNOWN_DIRECT_EGRESS: dict[str, tuple[int, str]] = {
     "core/llamacpp_capability_probe.py": (2, "verified: a local llama.cpp probe"),
     "tools/native_window_startup_drive.py": (1, "verified: development driver reads loopback native-runtime health"),
     "tools/profile_chat_turn_stream.py": (3, "verified: development driver reads chat, proof, and history from its isolated loopback daemon"),
+    "network/listen_policy.py": (1, "verified: binds the API's listening sockets (getaddrinfo AI_PASSIVE); no outbound connect"),
+    "network/nat_probe.py": (1, "verified: a UDP socket connected to 8.8.8.8:80 only to read the local address; a UDP connect sends no packet"),
     # --- found by the census, not yet read by this lane ---
     "core/agent_runtime/builder/controller.py": (2, "unreviewed"),
     "core/backend_acceleration_truth.py": (3, "unreviewed"),
@@ -60,8 +65,12 @@ KNOWN_DIRECT_EGRESS: dict[str, tuple[int, str]] = {
     "core/llm_eval/procedural_runner.py": (1, "unreviewed"),
     "core/local_media_render.py": (1, "unreviewed"),
     "core/normalized_provider_result.py": (1, "unreviewed"),
-    "core/task_router.py": (1, "unreviewed"),
+    "core/task_router.py": (2, "unreviewed"),
     "core/web/api/runtime.py": (1, "unreviewed"),
+    # Found when the census learned raw sockets and mail clients (not read yet):
+    "core/email_tools.py": (2, "unreviewed: imaplib and smtplib imports"),
+    "network/stream_transport.py": (2, "unreviewed: socket.socket and socket.create_connection, peer transport"),
+    "network/transport.py": (4, "unreviewed: four socket.socket sites, peer transport"),
 }
 
 
