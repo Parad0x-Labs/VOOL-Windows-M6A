@@ -263,9 +263,10 @@ class _BrokerSteps:
     No mode is set; the broker's file is new."""
 
     def __init__(self) -> None:
-        from core.windows_broker.writes import Refused, delete, write_file
+        from core.windows_broker.writes import OutcomeUnknown, Refused, delete, write_file
 
         self.refused: type[Exception] = Refused
+        self.unknown: type[Exception] = OutcomeUnknown
         self._delete = delete
         self._write = write_file
 
@@ -422,6 +423,10 @@ def execute_turn_rollback(
                         _fsync_directory(step.target.parent)
                     removed.append(step.path)
             except Exception as exc:
+                if broker is not None and isinstance(exc, broker.unknown):
+                    # The broker may have made the change: no terminal is journaled, so the step stays
+                    # open for `recover_open_effects` to reconcile against the disk.
+                    raise
                 outcome = OUTCOME_FAILED
                 error = f"{type(exc).__name__}: {exc}"
             after = store.snapshot(step.target)
