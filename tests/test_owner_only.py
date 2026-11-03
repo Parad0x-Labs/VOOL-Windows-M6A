@@ -21,11 +21,14 @@ _USER = "S-1-5-21-1-2-3-1001"
 _OTHER = "S-1-5-32-545"  # BUILTIN\Users
 _ALLOWED = 0
 _DENIED = 1
+#: ACE flags: OBJECT_INHERIT_ACE, CONTAINER_INHERIT_ACE, NO_PROPAGATE_INHERIT_ACE, INHERIT_ONLY_ACE.
+_OI, _CI, _NP, _IO = 0x1, 0x2, 0x4, 0x8
 
 
 class _FakeWinApi:
     """The Windows calls ``core.owner_only`` makes, as plain data: each path holds a descriptor
-    ``(owner, protected, dacl)``, where ``dacl`` is a list of ``(ace_type, sid)`` or None."""
+    ``(owner, protected, dacl)``, where ``dacl`` is a list of ``(ace_type, sid)`` or
+    ``(ace_type, sid, ace_flags)``, or None. A two-item ACE has no known flags."""
 
     def __init__(self) -> None:
         self.descriptors: dict[str, tuple[str, bool, list[tuple[int, str]] | None]] = {}
@@ -64,7 +67,8 @@ class _FakeWinApi:
             raise OSError(5, "Access is denied")
         if handle in self.set_is_ignored:
             return
-        self.descriptors[handle] = (_USER, True, [(_ALLOWED, _USER)])
+        flags = _OI | _CI if "(A;OICI;" in sddl else 0
+        self.descriptors[handle] = (_USER, True, [(_ALLOWED, _USER, flags)])
 
     def read_descriptor(self, handle: str) -> tuple[str, bool, list[tuple[int, str]] | None]:
         return self.descriptors[handle]
@@ -72,7 +76,8 @@ class _FakeWinApi:
     def create_directory(self, path: str, sddl: str) -> bool:
         if path in self.descriptors:
             return False
-        self.descriptors[path] = (_USER, True, [(_ALLOWED, _USER)])
+        flags = _OI | _CI if "(A;OICI;" in sddl else 0
+        self.descriptors[path] = (_USER, True, [(_ALLOWED, _USER, flags)])
         self.directories.add(path)
         return True
 
@@ -109,6 +114,46 @@ def test_verify_accepts_only_a_protected_user_only_dacl(fake, descriptor, reason
     assert report.ok is (reason == "")
     assert report.reason == reason
     assert fake.open_handles == 0
+
+
+@pytest.mark.parametrize(
+    ("dacl", "reason"),
+    [
+        ([(_ALLOWED, _USER, _OI | _CI)], ""),
+        # The split form Explorer writes: one ACE for the folder itself, one for what is created inside.
+        ([(_ALLOWED, _USER, 0), (_ALLOWED, _USER, _OI | _CI | _IO)], ""),
+        ([(_ALLOWED, _USER, 0)], "ace_not_inheritable"),
+        ([(_ALLOWED, _USER, _OI)], "ace_not_inheritable"),
+        ([(_ALLOWED, _USER, _CI)], "ace_not_inheritable"),
+        ([(_ALLOWED, _USER, _OI | _CI | _NP)], "ace_not_inheritable"),
+        ([(_ALLOWED, _USER)], "ace_not_inheritable"),  # flags unknown: fails closed
+    ],
+)
+def test_verify_requires_a_folder_to_hand_its_owner_only_ace_to_what_is_created_inside(fake, dacl, reason):
+    """A protected user-only folder whose ACE is not inherited still passes as owner-only itself, but every
+    file created inside gets the creator's default DACL (SYSTEM and Administrators): not a private folder."""
+    path = _path("keys")
+    fake.descriptors[path] = (_USER, True, dacl)
+    fake.directories.add(path)
+    report = owner_only.verify_owner_only(path)
+    assert report.ok is (reason == "")
+    assert report.reason == reason
+
+
+def test_a_file_ace_needs_no_inheritance_flags(fake):
+    path = _path("f.key")
+    fake.descriptors[path] = (_USER, True, [(_ALLOWED, _USER, 0)])
+    assert owner_only.verify_owner_only(path).ok
+
+
+def test_ensure_private_dir_repairs_a_folder_whose_ace_is_not_inherited(fake, monkeypatch):
+    monkeypatch.setattr(owner_only.os, "makedirs", lambda *_a, **_k: None)
+    path = _path("keys")
+    fake.descriptors[path] = (_USER, True, [(_ALLOWED, _USER, 0)])
+    fake.directories.add(path)
+    assert owner_only.verify_owner_only(path).reason == "ace_not_inheritable"
+    owner_only.ensure_private_dir(path)
+    assert owner_only.verify_owner_only(path).ok
 
 
 def test_verify_refuses_a_reparse_point_without_reading_through_it(fake):
@@ -280,7 +325,7 @@ def test_windows_private_dir_hands_its_owner_only_ace_to_new_files(tmp_path):
     finally:
         api.close(handle)
     assert dacl, dacl
-    assert {sid for _type, sid in dacl} == {api.user_sid()}
+    assert {sid for _type, sid, _flags in dacl} == {api.user_sid()}
     assert owner_only.make_owner_only(child).ok
 
 
