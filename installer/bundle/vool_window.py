@@ -1258,8 +1258,10 @@ def _teardown_owned_runtime_and_exit(supervisor: object, owned_pid: dict[str, in
 
 #: Termination signals this platform actually defines. Windows has no SIGHUP, and naming it
 #: raised AttributeError before any handler was installed, so the host crashed at launch.
+#: Windows' SIGTERM is TerminateProcess and never reaches a handler; its catchable stop is
+#: CTRL_BREAK (SIGBREAK), which the runtime daemon already handles (core/agent_runtime/daemon.py).
 _TERMINATION_SIGNALS = tuple(
-    getattr(signal, name) for name in ("SIGTERM", "SIGINT", "SIGHUP") if hasattr(signal, name)
+    getattr(signal, name) for name in ("SIGTERM", "SIGINT", "SIGHUP", "SIGBREAK") if hasattr(signal, name)
 )
 
 
