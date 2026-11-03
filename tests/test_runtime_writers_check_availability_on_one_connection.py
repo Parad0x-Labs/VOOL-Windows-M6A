@@ -41,6 +41,10 @@ def runtime_env(tmp_path, monkeypatch):
 def _count_availability_connections(monkeypatch) -> list[int]:
     import core.finalization as fin
 
+    # The store-readiness probe opens its own connection once per database and is then cached;
+    # warm it so only the per-write checks are counted.
+    assert fin.governance_store_state() == fin.GOVERNANCE_STORE_READY
+
     opened: list[int] = []
     real = fin.get_connection
 
