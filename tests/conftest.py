@@ -288,6 +288,22 @@ def supervisor_job_stays_with_its_own_tests(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def windows_broker_session_does_not_outlive_its_test(monkeypatch):
+    """Put the broker session back as it was after every test.
+
+    `apps.vool_api_server.main()` on Windows registers a broker host for the process and, by design,
+    never unregisters it (core/windows_broker/session.py: once the API has started a broker the gate
+    reads only its list, and stays fail-closed). A test that runs main() in-process therefore left
+    the host behind, and every later test in that shard was refused writes with "No folder is marked"
+    (Windows suite 41632077555, shard 14). The restore keeps test order from changing the gate's answer.
+    """
+    from core.windows_broker import session
+
+    monkeypatch.setattr(session, "_host", session._host)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def windows_own_tmp_path_is_disposable(request, monkeypatch):
     """On Windows, list this test's own tmp_path as its disposable workspace (tests/_windows_disposable_tmp.py)."""
     from tests._windows_disposable_tmp import (
