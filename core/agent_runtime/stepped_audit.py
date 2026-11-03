@@ -3105,15 +3105,16 @@ def run_stepped_audit(
        than falling back into the single-shot lane this module exists to replace.
     """
     # SCALPEL fix, failure class I/8, 2026-08-06: runtime-owned monotonic timing per stage. Never
-    # model-generated (rule: "do not ask the model to estimate wall-clock time") -- `time.monotonic`
+    # model-generated (rule: "do not ask the model to estimate wall-clock time") -- `time.perf_counter`
     # is immune to wall-clock adjustment, which matters for a stage that can span a real network
-    # call. Accumulated (not overwritten) at each stage's own call site below, since nomination and
+    # call, and unlike `time.monotonic` on Windows/Python 3.12 (a ~15.6 ms tick) it does not report
+    # 0.0 for a stage that finished inside one tick. Accumulated (not overwritten) at each stage's own call site below, since nomination and
     # challenge can each run more than once per turn.
-    _turn_started = time.monotonic()
+    _turn_started = time.perf_counter()
     stage_timing: dict[str, float] = {
         "context_collection": 0.0, "nomination": 0.0, "challenge": 0.0, "proof": 0.0, "rendering": 0.0,
     }
-    _context_collection_started = time.monotonic()
+    _context_collection_started = time.perf_counter()
     # SCALPEL final-tip verification, 2026-08-06: computed here, not only after evidence resolves,
     # so an early BLOCKED exit (no evidence, a vendor collision, no reachable provider) can still
     # name which daemon checkout actually ran it -- this never depended on the audited workspace,
@@ -3239,7 +3240,7 @@ def run_stepped_audit(
             effective_input=effective_input,
             session_id=session_id,
             fixture_identity={"daemon_checkout_sha": _daemon_checkout_sha},
-            elapsed_seconds=time.monotonic() - _turn_started,
+            elapsed_seconds=time.perf_counter() - _turn_started,
             source_context=ctx,
             task_id=getattr(task, "task_id", ""),
         )
@@ -3298,7 +3299,7 @@ def run_stepped_audit(
             session_id=session_id,
             target_path=_blocked_target,
             fixture_identity=_blocked_fixture_identity(_blocked_target),
-            elapsed_seconds=time.monotonic() - _turn_started,
+            elapsed_seconds=time.perf_counter() - _turn_started,
             source_context=ctx,
             task_id=getattr(task, "task_id", ""),
         )
@@ -3316,7 +3317,7 @@ def run_stepped_audit(
             model_label=pinned_model,
             routing=RoutingLedger(routing=routing),
             fixture_identity=_blocked_fixture_identity(_blocked_target),
-            elapsed_seconds=time.monotonic() - _turn_started,
+            elapsed_seconds=time.perf_counter() - _turn_started,
             source_context=ctx,
             task_id=getattr(task, "task_id", ""),
         )
@@ -3418,7 +3419,7 @@ def run_stepped_audit(
     # function's own scope gets to "source/context collection" -- the evidence READ itself happens
     # upstream in workspace_audit.py, before this function is ever called, so it is not measurable
     # from here; this stage's number honestly covers audit-turn setup, not file I/O.
-    stage_timing["context_collection"] = time.monotonic() - _context_collection_started
+    stage_timing["context_collection"] = time.perf_counter() - _context_collection_started
 
     for _candidate_index in range(_MAX_CANDIDATES):
         carried_candidate = carried is not None
@@ -3427,7 +3428,7 @@ def run_stepped_audit(
         else:
             finding = None
             for manifest in manifests:
-                _nominate_started = time.monotonic()
+                _nominate_started = time.perf_counter()
                 (
                     finding,
                     resolved,
@@ -3456,7 +3457,7 @@ def run_stepped_audit(
                         )
                     ),
                 )
-                stage_timing["nomination"] += time.monotonic() - _nominate_started
+                stage_timing["nomination"] += time.perf_counter() - _nominate_started
                 used_manifest = manifest
                 # The rest of the SAME nomination call, kept whether or not the primary survives.
                 # Observations were never going to be proven - they are not challenged and not
@@ -3569,7 +3570,7 @@ def run_stepped_audit(
         # gate on the turn that displayed it; challenging it again would change the continuation's
         # subject and spend a call before the explicitly requested proof.
         if not policy.proof_authorized and not (carried_candidate and carried_prechallenged):
-            _challenge_started = time.monotonic()
+            _challenge_started = time.perf_counter()
             challenge = _challenge_finding(
                 agent,
                 manifest=used_manifest,
@@ -3580,7 +3581,7 @@ def run_stepped_audit(
                 budget=budget,
                 usages=usages,
             )
-            stage_timing["challenge"] += time.monotonic() - _challenge_started
+            stage_timing["challenge"] += time.perf_counter() - _challenge_started
             if challenge.verdict != "supported":
                 screened_signatures.append(claim_signature(finding.title, finding.failure_scenario))
                 screened_rows.append(
@@ -3658,7 +3659,7 @@ def run_stepped_audit(
             finding = None
             continue
 
-        _proof_started = time.monotonic()
+        _proof_started = time.perf_counter()
         proof = _prove_finding(
             agent,
             manifest=used_manifest,
@@ -3672,7 +3673,7 @@ def run_stepped_audit(
             policy=policy,
             banned_signatures=capsule.banned_signatures() + tuple(screened_signatures),
         )
-        stage_timing["proof"] += time.monotonic() - _proof_started
+        stage_timing["proof"] += time.perf_counter() - _proof_started
         if proof.proven:
             terminal = PROVEN
             break
@@ -4031,9 +4032,9 @@ def run_stepped_audit(
     # SCALPEL fix, failure class I, 2026-08-06: the final-answer contract names wall time and the
     # largest context component as required fields, alongside the token figures `audit_usage_
     # sentence` already renders. Runtime-measured only -- `stage_timing["total"]` is `time.
-    # monotonic()`, never asked of the model -- and states the field explicitly rather than
+    # perf_counter()`, never asked of the model -- and states the field explicitly rather than
     # omitting it when a figure is genuinely unavailable (`token_breakdown` has no rows).
-    _wall_time_line = f"Measured wall time: {time.monotonic() - _turn_started:.1f}s"
+    _wall_time_line = f"Measured wall time: {time.perf_counter() - _turn_started:.1f}s"
     _largest_context = token_breakdown.get("assembled_project_context_largest")
     _largest_context_line = (
         f"Largest context component: ~{int(_largest_context):,} tokens (assembled project context)"
@@ -4088,9 +4089,9 @@ def run_stepped_audit(
             if rendered is not None
         ],
     )
-    _render_started = time.monotonic()
+    _render_started = time.perf_counter()
     report = render_audit_report(verdict)
-    stage_timing["rendering"] = time.monotonic() - _render_started
+    stage_timing["rendering"] = time.perf_counter() - _render_started
 
     with suppress(Exception):
         record_decision(
@@ -4247,7 +4248,7 @@ def run_stepped_audit(
                 # invoked more than once per turn, like nomination or challenge, sums every call).
                 # A stage that never ran this turn (e.g. `proof` on a read-only turn) reads 0.0 --
                 # an honest zero, not an absent key.
-                "timing": {**stage_timing, "total": time.monotonic() - _turn_started},
+                "timing": {**stage_timing, "total": time.perf_counter() - _turn_started},
     }
     # SCALPEL fix, failure class Activity/7, 2026-08-06: this entire structured record used to live
     # ONLY on the returned `ModelExecutionDecision.details` object, which nothing persists -- once
