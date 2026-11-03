@@ -290,6 +290,12 @@ def _run_phase(flag: str) -> _ModelLayerLog:
             "PYTHONDONTWRITEBYTECODE": "1",
             "VOOL_SEMANTIC_REACH": flag,
         }
+        # A Windows child needs SYSTEMROOT to start Winsock (else WinError 10106 on `import
+        # socket`), and WINDIR/TEMP for the OS's own paths. Copied only on Windows, only these.
+        if os.name == "nt":
+            for name in ("SYSTEMROOT", "WINDIR", "TEMP", "TMP"):
+                if os.environ.get(name):
+                    env[name] = os.environ[name]
         script = (
             _PHASE_DRIVER.replace("__TREE__", repr(str(tree)))
             .replace("__ENTRIES__", repr(list(_MODEL_LAYER_ENTRY_POINTS)))
