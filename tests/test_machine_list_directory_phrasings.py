@@ -214,6 +214,7 @@ def spaced_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     target.mkdir(parents=True)
     (tmp_path / "Downloads" / "plain").mkdir()
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Path.home() reads USERPROFILE on Windows
     # These tests assert on what the DISK says, so a fixture that silently failed to redirect HOME
     # would read the real machine and fail somewhere far less legible than here.
     assert Path("~/Downloads/Telegram Bot").expanduser() == target, "HOME redirect did not take"
@@ -328,6 +329,7 @@ def test_the_planner_extractor_keeps_a_spaced_folder_name(
 
     (tmp_path / "Documents" / "Vool testing").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Path.home() reads USERPROFILE on Windows
     extracted = _extract_safe_machine_directory_listing(
         "check ~/Documents/Vool testing and tell me whats there"
     )
@@ -388,6 +390,7 @@ def test_the_count_is_the_whole_directory_not_the_printed_page(
     (downloads / "a-folder").mkdir()
     (downloads / ".hidden").write_text("x")
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Path.home() reads USERPROFILE on Windows
 
     result = execute_runtime_tool(
         "machine.list_directory",
@@ -490,6 +493,7 @@ def test_a_typed_directory_plus_a_content_cue_is_a_listing(
     for name in ("my-lyrics-folder", "my-budget-folder", "my-harbor-folder"):
         (tmp_path / "Desktop" / name).mkdir(parents=True)
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Path.home() reads USERPROFILE on Windows
     assert machine_path_listing_intent(text) == expected
 
 
@@ -521,6 +525,7 @@ def test_the_fallback_declines_what_is_not_a_listing(
     proj.mkdir(parents=True)
     (proj / "chorus.txt").write_text("x")
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Path.home() reads USERPROFILE on Windows
     assert machine_path_listing_intent(text) is None
 
 
@@ -548,6 +553,7 @@ def crowded_desktop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     for index in range(81):
         (desktop / f"folder-{index:03d}").mkdir()
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Path.home() reads USERPROFILE on Windows
     return desktop
 
 
@@ -600,6 +606,7 @@ def test_the_fast_path_asks_for_the_same_limit_as_the_planner(
     """
     (tmp_path / "Desktop").mkdir()
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Path.home() reads USERPROFILE on Windows
 
     _result, calls = _drive(
         monkeypatch,
