@@ -85,13 +85,21 @@ def _minimal_env(bin_dir: Path, log: Path, home: Path) -> dict[str, str]:
     These children start with NOTHING pinned: only what a real shell would carry plus the
     fake-binary PATH and the spy log location.
     """
-    return {
+    env = {
         "PATH": f"{bin_dir}{os.pathsep}/usr/bin:/bin",
         "HOME": str(home),
         "TMPDIR": os.environ.get("TMPDIR", "/tmp"),
         "LOGNAME": os.environ.get("LOGNAME", os.environ.get("USER", "nobody")),
         "C15_FAKE_BIN_LOG": str(log),
     }
+    if os.name == "nt":
+        # What every Windows shell carries: Python needs SYSTEMROOT to start (sockets, random), and
+        # Path.home() reads USERPROFILE, not HOME. No session pin is inherited through these.
+        env["USERPROFILE"] = str(home)
+        for name in ("SYSTEMROOT", "SystemDrive", "TEMP", "TMP"):
+            if os.environ.get(name):
+                env[name] = os.environ[name]
+    return env
 
 
 def _scratch_env(tmp_path: Path, log: Path, home: Path, *, hostile_grant: bool = True) -> dict[str, str]:
