@@ -82,6 +82,18 @@ def test_malformed_pending_and_torn_rows_are_kept_as_unknown_rows(tmp_path: Path
     assert report["needs_check"] is True
 
 
+@pytest.mark.parametrize(
+    "journal",
+    [{"available": True}, {"available": True, "pending": []}, {"available": True, "torn": []},
+     {"available": True, "pending": "b1", "torn": []}, {"available": True, "pending": [], "torn": {"b": 1}}],
+)
+def test_an_available_journal_without_both_row_lists_reads_as_unavailable(tmp_path: Path, journal: Any) -> None:
+    """`pending` and `torn` missing or not lists is a malformed journal state: never read as healthy."""
+    session.register(_host(tmp_path, journal=journal))
+    report = session.report()
+    assert report["undo_records"] == "unavailable", journal
+
+
 def test_a_broker_that_is_not_running_says_why(monkeypatch: pytest.MonkeyPatch) -> None:
     class _Host:
         status = BrokerStatus(False, "refused:reparse_point")
