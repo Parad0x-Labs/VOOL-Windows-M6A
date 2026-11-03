@@ -47,6 +47,7 @@ KNOWN_DIRECT_EGRESS: dict[str, tuple[int, str]] = {
     "core/llamacpp_capability_probe.py": (2, "verified: a local llama.cpp probe"),
     "tools/native_window_startup_drive.py": (1, "verified: development driver reads loopback native-runtime health"),
     "tools/profile_chat_turn_stream.py": (3, "verified: development driver reads chat, proof, and history from its isolated loopback daemon"),
+    "tools/installed_slices.py": (2, "verified: install-smoke slice harness; http loopback only, no redirects, no proxy; its one socket binds 127.0.0.1:0 to find a closed port"),
     # --- found by the census, not yet read by this lane ---
     "core/agent_runtime/builder/controller.py": (2, "unreviewed"),
     "core/backend_acceleration_truth.py": (3, "unreviewed"),
