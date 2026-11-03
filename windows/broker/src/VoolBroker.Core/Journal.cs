@@ -14,42 +14,79 @@ public sealed record TornRecord(int Bytes, string KeptIn);
 /// append-only file of JSON lines in the journal folder; a record is flushed to disk before the
 /// step it names is made. A batch is finished, cleaned up or undone from these records alone, by
 /// folder file id and exact name, never by a name pattern, and only inside a flagged folder.
+/// The folder is opened once, at start, and held without delete sharing until Dispose (Phase C
+/// pick 19): it cannot be renamed, deleted or replaced meanwhile, and every batch file is opened,
+/// listed and deleted relative to that handle, never by path, so swapping the folder or a folder
+/// above it cannot hand recovery another journal.
 /// </summary>
-public sealed class Journal
+public sealed class Journal : IDisposable
 {
     private const string Prefix = "batch-";
     private const string Suffix = ".jsonl";
 
-    private Journal(string folder, bool available) { Folder = folder; Available = available; }
+    private readonly SafeFileHandle? held;
+    // A listing keeps its scan on the held handle: one at a time.
+    private readonly object listing = new();
 
+    private Journal(string folder, SafeFileHandle? held) { Folder = folder; this.held = held; }
+
+    /// <summary>The held journal folder, or null; for checks on the folder itself (Roots.ValidateJournalOutsideFlagged).</summary>
+    internal SafeFileHandle? Handle => held;
+
+    /// <summary>The path the journal was opened by; used only to report it, never to reach a file.</summary>
     public string Folder { get; }
 
-    /// <summary>False when the journal folder cannot be created or written: every change is then refused.</summary>
-    public bool Available { get; }
+    /// <summary>False when the journal folder cannot be created or written (or the journal is disposed): every change is then refused.</summary>
+    public bool Available => held is { IsClosed: false };
 
-    /// <summary>Creates the journal folder if needed and proves a file can be written and removed in it.</summary>
+    /// <summary>
+    /// Creates the journal folder if needed, opens and holds it (refusing a folder that is itself a
+    /// reparse point), and proves a file can be written and removed in it through that handle.
+    /// </summary>
     public static Journal Open(string folder)
     {
+        SafeFileHandle? handle = null;
         try
         {
             Directory.CreateDirectory(folder);
-            var probe = Path.Combine(folder, "probe-" + NewId() + ".tmp");
-            using (var stream = new FileStream(probe, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.WriteThrough))
+            // FILE_LIST_DIRECTORY is a data access, so the missing delete sharing is enforced.
+            handle = Native.CreateFileW(folder, Native.FileListDirectory | Native.FileReadAttributes | Native.Synchronize,
+                Native.ShareRead | Native.ShareWrite, 0, Native.OpenExisting, Native.FileFlagBackupSemantics | Native.FileFlagOpenReparsePoint, 0);
+            if (handle.IsInvalid) return Refused(folder, handle);
+            var tag = Native.GetAttributeTag(handle);
+            if ((tag.FileAttributes & Native.FileAttributeReparsePoint) != 0 || tag.ReparseTag != 0 || (tag.FileAttributes & Native.FileAttributeDirectory) == 0)
+                return Refused(folder, handle);
+            var name = "probe-" + NewId() + ".tmp";
+            var probe = Native.OpenRelative(handle, name, Native.FileWriteData | Native.Delete,
+                Native.FileNonDirectoryFile | Native.FileWriteThrough, 0, Native.FileCreate);
+            using (var stream = Unbuffered(probe, FileAccess.Write))
             {
-                stream.WriteByte(0);
-                stream.Flush(flushToDisk: true);
+                try
+                {
+                    stream.WriteByte(0);
+                    stream.Flush(flushToDisk: true);
+                }
+                finally { Native.DeleteNow(probe, name); }
             }
-            File.Delete(probe);
-            return new Journal(folder, true);
+            return new Journal(folder, handle);
         }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or BrokerRefusal)
         {
-            return new Journal(folder, false);
+            return Refused(folder, handle);
         }
     }
 
+    private static Journal Refused(string folder, SafeFileHandle? handle)
+    {
+        handle?.Dispose();
+        return new Journal(folder, null);
+    }
+
     /// <summary>A journal that refuses every change, for a channel started without one.</summary>
-    public static Journal Unavailable(string folder) => new(folder, false);
+    public static Journal Unavailable(string folder) => new(folder, null);
+
+    /// <summary>Lets go of the journal folder; the journal is unavailable from then on.</summary>
+    public void Dispose() => held?.Dispose();
 
     public static string NewId() => Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
 
@@ -59,36 +96,56 @@ public sealed class Journal
     public IReadOnlyList<string> Pending()
     {
         if (!Available) return [];
-        return new DirectoryInfo(Folder).EnumerateFiles(Prefix + "*" + Suffix)
-            .OrderBy(file => file.CreationTimeUtc)
-            .Select(file => file.Name[Prefix.Length..^Suffix.Length])
+        List<Native.DirectoryEntry> entries;
+        try { lock (listing) entries = Native.ListDirectory(held!); }
+        catch (BrokerRefusal refusal) { throw new BrokerRefusal("journal_unavailable", refusal.Message); }
+        // The files named batch-*.jsonl (any case, as a name pattern matched), oldest first.
+        return entries
+            .Where(entry => (entry.Attributes & Native.FileAttributeDirectory) == 0 && entry.Name.Length >= Prefix.Length + Suffix.Length &&
+                entry.Name.StartsWith(Prefix, StringComparison.OrdinalIgnoreCase) && entry.Name.EndsWith(Suffix, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(entry => entry.CreationTime)
+            .Select(entry => entry.Name[Prefix.Length..^Suffix.Length])
             .Where(IsBatchId)
             .ToArray();
     }
 
-    public bool Holds(string batchId) => IsBatchId(batchId) && File.Exists(PathOf(batchId));
+    /// <summary>True when the held folder has a file (a link counts, never followed) under the batch's name.</summary>
+    public bool Holds(string batchId)
+    {
+        if (!IsBatchId(batchId) || !Available) return false;
+        try
+        {
+            using var file = Native.OpenRelative(held!, NameOf(batchId), 0, Native.FileNonDirectoryFile);
+            return true;
+        }
+        catch (BrokerRefusal refusal) when (refusal.Code is "not_found" or "is_a_directory") { return false; }
+        catch (BrokerRefusal refusal) { throw new BrokerRefusal("journal_unavailable", refusal.Message); }
+    }
 
     /// <summary>Starts a batch's file. It fails, and nothing is changed, if the journal cannot be written.</summary>
     public BatchLog Begin(string batchId, int operations)
     {
         if (!Available) throw new BrokerRefusal("journal_unavailable", "The journal folder cannot be written; no file is changed.");
+        SafeFileHandle? file = null;
         FileStream? stream = null;
         try
         {
-            stream = new FileStream(PathOf(batchId), FileMode.CreateNew, FileAccess.Write, FileShare.Read, 1, FileOptions.WriteThrough);
+            file = OpenFile(NameOf(batchId), Native.FileWriteData, Native.FileWriteThrough, Native.ShareRead, Native.FileCreate);
+            stream = new FileStream(file, FileAccess.Write, 1);
             var log = new BatchLog(stream);
             log.Append(new Dictionary<string, object?> { ["t"] = "begin", ["batch"] = batchId, ["ops"] = operations });
             return log;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or BrokerRefusal)
         {
-            // Nothing has changed yet: the file this call just created (CreateNew) is removed, so a
-            // failed begin never leaves a batch that blocks every later change.
-            if (stream is not null)
+            // Nothing has changed yet: the file this call just created (FILE_CREATE) is removed, so
+            // a failed begin never leaves a batch that blocks every later change.
+            if (file is not null)
             {
-                stream.Dispose();
-                try { File.Delete(PathOf(batchId)); }
-                catch (Exception deleteError) when (deleteError is IOException or UnauthorizedAccessException) { }
+                if (stream is not null) stream.Dispose();
+                else file.Dispose();
+                try { DeleteFile(NameOf(batchId)); }
+                catch (BrokerRefusal) { }
             }
             if (error is BrokerRefusal) throw;
             throw new BrokerRefusal("journal_unavailable", error.Message);
@@ -176,8 +233,8 @@ public sealed class Journal
         if (notAttempted > 0) left.Add($"{notAttempted} later step(s) not attempted");
         if (left.Count == 0)
         {
-            try { File.Delete(PathOf(batchId)); }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            try { DeleteFile(NameOf(batchId)); }
+            catch (BrokerRefusal error)
             {
                 // Everything is finished, but the batch stays pending until its file is removed.
                 return new RecoveryOutcome(batchId, committed, false, [$"the batch's journal file could not be removed: {error.Message}"], torn);
@@ -187,7 +244,61 @@ public sealed class Journal
         return new RecoveryOutcome(batchId, committed, false, left, torn);
     }
 
-    private string PathOf(string batchId) => Path.Combine(Folder, Prefix + batchId + Suffix);
+    private static string NameOf(string batchId) => Prefix + batchId + Suffix;
+
+    /// <summary>
+    /// Opens name in the held folder, never through a reparse point (FILE_OPEN_REPARSE_POINT and
+    /// OBJ_DONT_REPARSE), never sharing delete. Any failure refuses journal_unavailable.
+    /// </summary>
+    private SafeFileHandle OpenFile(string name, uint access, uint options, uint share, uint disposition)
+    {
+        if (!Available) throw new BrokerRefusal("journal_unavailable", "The journal folder is not held.");
+        try { return Native.OpenRelative(held!, name, access, Native.FileNonDirectoryFile | options, share, disposition); }
+        catch (BrokerRefusal refusal) { throw new BrokerRefusal("journal_unavailable", refusal.Message); }
+    }
+
+    /// <summary>
+    /// A stream on an existing batch file in the held folder. A file that is a reparse point is
+    /// never read or written through: it is damage, refused journal_unreadable.
+    /// </summary>
+    private FileStream OpenExisting(string name, FileAccess access)
+    {
+        var write = access == FileAccess.Write;
+        var file = OpenFile(name, write ? Native.FileWriteData : 0, write ? Native.FileWriteThrough : 0,
+            write ? Native.ShareRead : Native.ShareRead | Native.ShareWrite, Native.FileOpen);
+        try
+        {
+            var tag = Native.GetAttributeTag(file);
+            if ((tag.FileAttributes & Native.FileAttributeReparsePoint) != 0 || tag.ReparseTag != 0)
+                throw new BrokerRefusal("journal_unreadable", $"Journal file '{name}' is a reparse point.");
+        }
+        catch (BrokerRefusal refusal)
+        {
+            file.Dispose();
+            if (refusal.Code == "journal_unreadable") throw;
+            throw new BrokerRefusal("journal_unavailable", refusal.Message);
+        }
+        return Unbuffered(file, access);
+    }
+
+    /// <summary>An unbuffered stream that owns file; file is closed if the stream cannot be made.</summary>
+    private static FileStream Unbuffered(SafeFileHandle file, FileAccess access)
+    {
+        try { return new FileStream(file, access, 1); }
+        catch
+        {
+            file.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>Deletes name in the held folder at once, through a handle opened relative to it; a link is deleted, never followed.</summary>
+    private void DeleteFile(string name)
+    {
+        using var file = OpenFile(name, Native.Delete, 0, Native.ShareRead | Native.ShareWrite, Native.FileOpen);
+        try { Native.DeleteNow(file, name); }
+        catch (BrokerRefusal refusal) { throw new BrokerRefusal("journal_unavailable", refusal.Message); }
+    }
 
     /// <summary>
     /// Writes a torn last record's bytes to a new file beside the batch's file (batch-ID.torn, or
@@ -199,11 +310,18 @@ public sealed class Journal
         for (var attempt = 1; attempt <= 100; attempt++)
         {
             var name = attempt == 1 ? $"{Prefix}{batchId}.torn" : $"{Prefix}{batchId}.{attempt}.torn";
-            var path = Path.Combine(Folder, name);
-            if (File.Exists(path)) continue;
+            SafeFileHandle file;
+            try { file = Native.OpenRelative(held!, name, Native.FileWriteData, Native.FileNonDirectoryFile | Native.FileWriteThrough, 0, Native.FileCreate); }
+            // A file (or a link) already has the name: the next name is tried. Anything else
+            // under it, a folder say, means the bytes cannot be kept.
+            catch (BrokerRefusal refusal) when (refusal.Code == "destination_exists" && IsFile(name)) { continue; }
+            catch (BrokerRefusal refusal)
+            {
+                throw new BrokerRefusal("journal_unavailable", $"The torn last record of batch {batchId} could not be kept: {refusal.Message}");
+            }
             try
             {
-                using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.WriteThrough);
+                using var stream = Unbuffered(file, FileAccess.Write);
                 stream.Write(tail);
                 stream.Flush(flushToDisk: true);
                 return name;
@@ -216,12 +334,22 @@ public sealed class Journal
         throw new BrokerRefusal("journal_unavailable", $"Batch {batchId} already has 100 kept torn records.");
     }
 
+    private bool IsFile(string name)
+    {
+        try
+        {
+            using var file = Native.OpenRelative(held!, name, 0, Native.FileNonDirectoryFile);
+            return true;
+        }
+        catch (BrokerRefusal) { return false; }
+    }
+
     /// <summary>Cuts a record whose write never finished (tailBytes long) off the end of a batch's file, before anything is appended after it.</summary>
     private void DropTornTail(string batchId, int tailBytes)
     {
         try
         {
-            using var stream = new FileStream(PathOf(batchId), FileMode.Open, FileAccess.Write, FileShare.Read, 1, FileOptions.WriteThrough);
+            using var stream = OpenExisting(NameOf(batchId), FileAccess.Write);
             stream.SetLength(stream.Length - tailBytes);
             stream.Flush(flushToDisk: true);
         }
@@ -231,14 +359,7 @@ public sealed class Journal
         }
     }
 
-    private void DeleteBatchFile(string batchId)
-    {
-        try { File.Delete(PathOf(batchId)); }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-        {
-            throw new BrokerRefusal("journal_unavailable", error.Message);
-        }
-    }
+    private void DeleteBatchFile(string batchId) => DeleteFile(NameOf(batchId));
 
     /// <summary>
     /// Every record. Each one is written whole, with its line end, in one write that is flushed to
@@ -253,7 +374,7 @@ public sealed class Journal
     {
         var records = new List<JsonElement>();
         byte[] bytes;
-        using (var stream = new FileStream(PathOf(batchId), FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        using (var stream = OpenExisting(NameOf(batchId), FileAccess.Read))
         {
             bytes = new byte[stream.Length];
             stream.ReadExactly(bytes);
@@ -407,7 +528,17 @@ public sealed class Journal
     /// <summary>Opens a batch's file to add the records recovery writes.</summary>
     private BatchLog Reopen(string batchId)
     {
-        try { return new BatchLog(new FileStream(PathOf(batchId), FileMode.Append, FileAccess.Write, FileShare.Read, 1, FileOptions.WriteThrough)); }
+        try
+        {
+            var stream = OpenExisting(NameOf(batchId), FileAccess.Write);
+            try { stream.Seek(0, SeekOrigin.End); }
+            catch
+            {
+                stream.Dispose();
+                throw;
+            }
+            return new BatchLog(stream);
+        }
         catch (IOException error) { throw new BrokerRefusal("journal_unavailable", error.Message); }
         catch (UnauthorizedAccessException error) { throw new BrokerRefusal("journal_unavailable", error.Message); }
     }

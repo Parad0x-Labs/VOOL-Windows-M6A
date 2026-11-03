@@ -696,6 +696,15 @@ internal static class TestSupport
         return Convert.ToHexString(hash.GetHashAndReset());
     }
 
+    /// <summary>
+    /// Lets go of the journal folder a journal holds (Phase C pick 19). Cast through object so it
+    /// also builds against a broker whose Journal holds no handle (then it does nothing).
+    /// </summary>
+    public static void Release(Journal journal)
+    {
+        if ((object)journal is IDisposable held) held.Dispose();
+    }
+
     /// <summary>Deletes a test tree; junctions and symlinks are removed, never followed.</summary>
     public static void DeleteTree(string path)
     {
@@ -846,6 +855,7 @@ internal sealed class Workspace : IDisposable
     public void Restart()
     {
         Registry.Dispose();
+        TestSupport.Release(Journal);
         Start();
     }
 
@@ -853,6 +863,7 @@ internal sealed class Workspace : IDisposable
     public void Reset()
     {
         Registry.Dispose();
+        TestSupport.Release(Journal);
         TestSupport.DeleteTree(Root);
         Directory.CreateDirectory(Root);
         Start();
@@ -881,6 +892,11 @@ internal sealed class Workspace : IDisposable
         BatchRunner.AfterPlanForTests = null;
         BatchRunner.AfterCommitRecordForTests = null;
         Registry.Dispose();
+        TestSupport.Release(Journal);
+        // A journal a test opened on the same folder and dropped without disposing (JournalTests'
+        // folder-outside test) holds the folder until its handle is finalized.
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
         TestSupport.DeleteTree(Root);
         TestSupport.DeleteTree(Outside);
     }

@@ -331,7 +331,9 @@ inside `apply_batch` stays in the batch's root.
   - place: rename into place, never replacing.
 
   A file is never overwritten in place. A replace is not one atomic step: between aside and place
-  the name is briefly empty, and a reader in that moment finds no file (Phase C item 18).
+  the name is briefly empty. The broker's own `read`, `stat` and `open_root` wait for a running change to end
+  (`BatchRunner.Reading`, Phase C item 18), so VOOL never sees that moment; another program reading
+  then finds no file once, and normally retries.
 - `write_file` requires `expect`: `any`, `absent` or `sha256:<64 lowercase hex>`. There is no
   `mode` field. A hash mismatch is `changed_since_check`, and a read-only destination is
   `read_only`.
@@ -836,13 +838,17 @@ from Phase B.
     not exist, and another program, or a broker read on another connection, gets not_found. VOOL's
     Python writers replace atomically (os.replace). Decide whether that window is acceptable for
     the tools Phase C wires in, or whether reads take the change lock and a replace uses another
-    method.
+    method. **Decided 23 Oct (owner): reads take the change lock; built in Phase C.**
 19. The journal folder is used by path after the start checks. A same-user
     process that swaps it could hand restore_batch a crafted journal. Recovery stays contained: it
     only touches objects inside folders flagged now, by file id, and only this batch's own temp and
     aside names. The fix: hold the journal folder's handle, without delete sharing, for the
     broker's life, and make batch files relative to it. Decide at Phase C, together with Phase B's
-    install layout.
+    install layout. **Decided 23 Oct (owner); built in Phase C (pick 19): the broker opens the
+    journal folder once at start, refusing one that is itself a reparse point, holds that handle
+    without delete sharing until it exits, and creates, appends, reads, lists, deletes and probes
+    every journal file relative to it (NtCreateFile with the held handle as root, no reparse point
+    followed; FileIdBothDirectoryInfo on the handle to list).**
 
 ## 11. Proposed changes to the contracts doc
 
