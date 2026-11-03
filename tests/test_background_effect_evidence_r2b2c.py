@@ -483,12 +483,12 @@ def test_exactly_the_three_relay_daemon_scopes_are_wired_durable():
 
     wired = []
     for path in sorted(pathlib.Path(".").rglob("*.py")):
-        if "__pycache__" in str(path) or "tests/" in str(path):
+        if "__pycache__" in path.as_posix() or "tests/" in path.as_posix():
             continue
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", SyntaxWarning)
-                tree = ast.parse(path.read_text())
+                tree = ast.parse(path.read_text(encoding="utf-8"))
         except (SyntaxError, UnicodeDecodeError):
             continue
         for node in ast.walk(tree):
@@ -507,7 +507,7 @@ def test_exactly_the_three_relay_daemon_scopes_are_wired_durable():
             if node.args and isinstance(node.args[0], ast.Constant):
                 name = str(node.args[0].value)
             if durable:
-                wired.append(f"{path}:{name}")
+                wired.append(f"{path.as_posix()}:{name}")
     assert sorted(wired) == sorted(
         [
             "relay/bridge_workers/discord_bridge.py:relay.discord",

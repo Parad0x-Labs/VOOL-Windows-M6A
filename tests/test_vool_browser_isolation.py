@@ -113,7 +113,7 @@ def test_launch_arguments_carry_the_isolation_flags(browser_world) -> None:
     from core.vool_browser.engine import isolation_launch_flags
 
     flags = " ".join(isolation_launch_flags(profile_dir="/x/profile"))
-    assert "--user-data-dir=/x/profile" in flags
+    assert f"--user-data-dir={Path('/x/profile')}" in flags  # the engine passes the path in this platform's spelling
     assert "--use-mock-keychain" in flags, "the engine must never touch the real Keychain"
     assert "--password-store=basic" in flags
     assert "--disable-sync" in flags and "--disable-extensions" in flags
