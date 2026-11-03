@@ -298,6 +298,30 @@ def test_machine_write_file_over_a_file_carries_its_hash(machine: pytest.MonkeyP
     assert broker.last("write_file")["expect"] == "sha256:" + hashlib.sha256(b"before").hexdigest()
 
 
+def test_machine_write_file_with_expected_hash_sends_expect_from_the_bytes_it_checked(
+    machine: pytest.MonkeyPatch, flagged: Path
+) -> None:
+    """The `expected_hash` check and the broker's `expect` come from one read: a file changed after the
+    check is refused by the broker, never written over because expect was read again later."""
+    target = flagged / "m.txt"
+    target.write_bytes(b"before")
+    reads = iter([b"before", b"changed by someone else"])
+    real_read_bytes = Path.read_bytes
+
+    def read_bytes(self: Path) -> bytes:
+        if self == target:
+            return next(reads, b"changed by someone else")
+        return real_read_bytes(self)
+
+    machine.setattr(Path, "read_bytes", read_bytes)
+    broker = _Broker(flagged)
+    _wire(machine, broker)
+    before = hashlib.sha256(b"before").hexdigest()
+    result = tools._write_machine_file({"path": "m.txt", "content": "after", "expected_hash": before})
+    assert result.ok, result.response_text
+    assert broker.last("write_file")["expect"] == "sha256:" + before
+
+
 def test_machine_write_file_refused_by_the_broker(machine: pytest.MonkeyPatch, flagged: Path) -> None:
     broker = _Broker(flagged, fail={"write_file": BrokerRefusal("changed_since_check", "changed")})
     _wire(machine, broker)
