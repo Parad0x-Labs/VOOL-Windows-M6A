@@ -252,7 +252,7 @@ def test_write_file_creates_a_new_file_and_rolling_it_back_removes_it(home: Path
 UNSPLIT = {
     "form-feed": b"x\n\x0c\nx\nx\n",
     "vertical-tab": b"a\x0bb\nc\n",
-    "line-separator": "a b\nc\n".encode("utf-8"),
+    "line-separator": "a b\nc\n".encode(),
     "no-final-newline": b"a\nlast",
 }
 PATCHES = {
@@ -264,7 +264,7 @@ PATCHES = {
 EXPECTED = {
     "form-feed": b"x\n\x0c\nx\ny\n",
     "vertical-tab": b"a\x0bb\nC\n",
-    "line-separator": "a b\nC\n".encode("utf-8"),
+    "line-separator": "a b\nC\n".encode(),
     "no-final-newline": b"A\nlast",
 }
 
