@@ -254,6 +254,47 @@ _CORPUS = [
 ]
 
 
+# A single call on the small input takes ~0.1-0.3 ms, close to timer and scheduler noise on a
+# busy runner: one slow sample turned a linear x8 into "x24" (Windows run 41670907215), and the
+# old best-of-3 also failed 3 of 25 local Linux runs. So each sample times a loop of calls lasting
+# at least _MIN_SAMPLE_SECONDS and reports the per-call cost, and small and large samples are
+# taken in turns so a slow stretch of the machine hits both sides; the best of _ROUNDS is kept
+# for each. Input sizes and the x16 bound are unchanged, so the super-linear shape (x~30-60 at
+# x8 size) still fails. A regressed scanner is slow per call, so it gets one call per sample
+# (eight per side in all).
+_MIN_SAMPLE_SECONDS = 0.01
+_ROUNDS = 7
+
+
+def _growth_ratio(small_call, large_call) -> float:
+    return _growth_ratio_of_best((small_call,), (large_call,))
+
+
+def _growth_ratio_of_best(small_calls, large_calls) -> float:
+    """Ratio of the cheapest large call to the cheapest small call, as the per-shape tests had."""
+
+    def loops_for(call) -> int:
+        start = time.perf_counter()
+        call()
+        return max(1, int(_MIN_SAMPLE_SECONDS / max(time.perf_counter() - start, 1e-9)))
+
+    def per_call(call, loops: int) -> float:
+        start = time.perf_counter()
+        for _ in range(loops):
+            call()
+        return (time.perf_counter() - start) / loops
+
+    small = [(call, loops_for(call)) for call in small_calls]
+    large = [(call, loops_for(call)) for call in large_calls]
+    small_best = large_best = float("inf")
+    for _ in range(_ROUNDS):
+        for call, loops in small:
+            small_best = min(small_best, per_call(call, loops))
+        for call, loops in large:
+            large_best = min(large_best, per_call(call, loops))
+    return large_best / max(small_best, 1e-9)
+
+
 @pytest.mark.parametrize(("name", "spec", "live", "grow"), _SCANNERS, ids=[s[0] for s in _SCANNERS])
 def test_scanner_agrees_with_the_pinned_spec(name, spec, live, grow) -> None:
     for text in _CORPUS:
@@ -293,20 +334,9 @@ def test_scanner_is_linear_on_its_adversarial_shape(name, spec, live, grow) -> N
     small = 1500
     large = 8 * small
 
-    def cost(size: int) -> float:
-        text = grow(size)
-        best = float("inf")
-        for _ in range(3):
-            start = time.perf_counter()
-            live.search(text)
-            best = min(best, time.perf_counter() - start)
-        return best
-
-    small_cost = cost(small)
-    large_cost = cost(large)
-    assert large_cost / max(small_cost, 1e-6) < 16.0, (
-        f"x8 size grew x{large_cost / max(small_cost, 1e-6):.1f} — super-linear whitespace re-splitting is back"
-    )
+    small_text, large_text = grow(small), grow(large)
+    ratio = _growth_ratio(lambda: live.search(small_text), lambda: live.search(large_text))
+    assert ratio < 16.0, f"x8 size grew x{ratio:.1f} — super-linear whitespace re-splitting is back"
 
 
 def test_parse_entrypoint_is_linear_on_newline_runs() -> None:
@@ -315,20 +345,17 @@ def test_parse_entrypoint_is_linear_on_newline_runs() -> None:
     small = 400
     large = 8 * small
 
-    def cost(size: int) -> float:
-        best = float("inf")
-        for text in (
+    def calls(size: int):
+        texts = (
             "answer" + "\n" * size + "five words",
             "explain" + "\n" * size + "five sentences",
             "one" + "\n" * size + "zzz",
             "each" + "\n" * size + "zzz",
-        ):
-            start = time.perf_counter()
-            rc.parse_response_constraint(text)
-            best = min(best, time.perf_counter() - start)
-        return best
+        )
+        return [lambda text=text: rc.parse_response_constraint(text) for text in texts]
 
-    assert cost(large) / max(cost(small), 1e-6) < 16.0
+    ratio = _growth_ratio_of_best(calls(small), calls(large))
+    assert ratio < 16.0, f"x8 size grew x{ratio:.1f}"
 
 
 def test_check_entrypoint_is_linear_on_table_whitespace_runs() -> None:
@@ -337,16 +364,13 @@ def test_check_entrypoint_is_linear_on_table_whitespace_runs() -> None:
     small = 1500
     large = 8 * small
 
-    def cost(size: int) -> float:
-        text = "|a|" + "\n" * size + "|b"
-        best = float("inf")
-        for _ in range(3):
-            start = time.perf_counter()
-            rc.check_response_constraint(text, constraint)
-            best = min(best, time.perf_counter() - start)
-        return best
-
-    assert cost(large) / max(cost(small), 1e-6) < 16.0
+    small_text = "|a|" + "\n" * small + "|b"
+    large_text = "|a|" + "\n" * large + "|b"
+    ratio = _growth_ratio(
+        lambda: rc.check_response_constraint(small_text, constraint),
+        lambda: rc.check_response_constraint(large_text, constraint),
+    )
+    assert ratio < 16.0, f"x8 size grew x{ratio:.1f}"
 
 
 # --- correction round: the PR91-head delta must be exact, and the lead's frozen
@@ -380,20 +404,17 @@ def test_timeline_check_is_linear_on_leading_whitespace_runs() -> None:
     small = 1500
     large = 8 * small
 
-    def cost(size: int) -> float:
-        best = float("inf")
-        for text in (
+    def calls(size: int):
+        texts = (
             " " * size + "notadate",
             "\n" * size + "notadate",
             "- " + " " * size + "notadate",
             "1." + " " * size + "notadate",
-        ):
-            start = time.perf_counter()
-            rc.check_response_constraint(text, constraint)
-            best = min(best, time.perf_counter() - start)
-        return best
+        )
+        return [lambda text=text: rc.check_response_constraint(text, constraint) for text in texts]
 
-    assert cost(large) / max(cost(small), 1e-6) < 16.0
+    ratio = _growth_ratio_of_best(calls(small), calls(large))
+    assert ratio < 16.0, f"x8 size grew x{ratio:.1f}"
 
 
 def test_parse_entrypoint_is_linear_on_the_optional_qualifier_arm() -> None:
@@ -402,15 +423,12 @@ def test_parse_entrypoint_is_linear_on_the_optional_qualifier_arm() -> None:
     small = 400
     large = 8 * small
 
-    def cost(size: int) -> float:
-        best = float("inf")
-        for text in (
+    def calls(size: int):
+        texts = (
             "as" + "\n" * size + "notalist",
             "as a" + "\n" * size + "notalist",
-        ):
-            start = time.perf_counter()
-            rc.parse_response_constraint(text)
-            best = min(best, time.perf_counter() - start)
-        return best
+        )
+        return [lambda text=text: rc.parse_response_constraint(text) for text in texts]
 
-    assert cost(large) / max(cost(small), 1e-6) < 16.0
+    ratio = _growth_ratio_of_best(calls(small), calls(large))
+    assert ratio < 16.0, f"x8 size grew x{ratio:.1f}"
