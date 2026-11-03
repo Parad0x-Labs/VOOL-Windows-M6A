@@ -47,13 +47,29 @@ DIRECT_EGRESS_CALLS: frozenset[str] = frozenset(
         "httpx.request",
         "http.client.HTTPConnection",
         "http.client.HTTPSConnection",
+        # An opener reaches the network through `.open`, which no call-name scan can tell from a
+        # file's; making or installing the opener is the site.
+        "urllib.request.build_opener",
+        "build_opener",
+        "urllib.request.OpenerDirector",
+        "OpenerDirector",
+        "urllib.request.install_opener",
+        "install_opener",
+        # Raw sockets and connections.
+        "socket.socket",
+        "socket.create_connection",
+        "create_connection",
+        "asyncio.open_connection",
+        "xmlrpc.client.ServerProxy",
     }
 )
 
 
 #: Importing one of these into product code is itself a transport capability, whether or not the
 #: scan can see the call.
-TRANSPORT_MODULES: frozenset[str] = frozenset({"requests", "httpx", "aiohttp", "websockets"})
+TRANSPORT_MODULES: frozenset[str] = frozenset(
+    {"requests", "httpx", "aiohttp", "websockets", "urllib3", "smtplib", "ftplib", "imaplib", "poplib"}
+)
 
 
 @dataclass(frozen=True)
@@ -82,7 +98,8 @@ def scan_file(path: Path, *, repo_root: Path) -> list[EgressSite]:
         tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
     except (OSError, SyntaxError):
         return []
-    relative = str(path.relative_to(repo_root))
+    # Forward slashes on every OS: the ledger and DOOR_MODULES are written that way.
+    relative = path.relative_to(repo_root).as_posix()
     sites: list[EgressSite] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
@@ -116,7 +133,7 @@ def scan_tree(repo_root: Path | None = None) -> list[EgressSite]:
         for path in sorted(base.rglob("*.py")):
             if "__pycache__" in path.parts:
                 continue
-            relative = str(path.relative_to(root))
+            relative = path.relative_to(root).as_posix()
             if relative in DOOR_MODULES:
                 continue
             sites.extend(scan_file(path, repo_root=root))
