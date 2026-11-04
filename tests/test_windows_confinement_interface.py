@@ -105,3 +105,19 @@ def test_a_status_limit_outside_the_documented_set_is_no_proof(tmp_path: Path) -
     path = tmp_path / "status.json"
     path.write_text(json.dumps({"schema": wc.STATUS_SCHEMA, "child_started": True, "limit": "cpu"}), encoding="utf-8")
     assert wc.read_status(path) is None
+
+
+def test_a_new_repository_in_the_status_is_carried_so_the_runner_can_refuse(tmp_path: Path) -> None:
+    path = tmp_path / "status.json"
+    body = {"schema": wc.STATUS_SCHEMA, "child_started": True, "exit_code": 0, "new_repositories": ["C:\\w\\x\\.git"]}
+    path.write_text(json.dumps(body), encoding="utf-8")
+    assert wc.read_status(path).new_repositories == ("C:\\w\\x\\.git",)
+    path.write_text(json.dumps({**body, "new_repositories": "C:\\w\\x\\.git"}), encoding="utf-8")
+    assert wc.read_status(path) is None
+
+
+def test_deny_all_paths_round_trip_and_are_checked() -> None:
+    policy = wc.WindowsConfinementPolicy(**GOOD, deny_all_paths=("C:\\Users\\me\\.ssh",))
+    assert wc.WindowsConfinementPolicy.from_json(policy.to_json()).deny_all_paths == ("C:\\Users\\me\\.ssh",)
+    with pytest.raises(wc.PolicyError):
+        wc.WindowsConfinementPolicy(**GOOD, deny_all_paths=("relative",)).validate()

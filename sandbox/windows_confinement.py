@@ -19,6 +19,7 @@ STATUS_SCHEMA = "vool.windows_confinement.status.v1"
 #: Launcher exit codes (docs/WINDOWS_CONFINEMENT.md section 2). A child may exit with any code,
 #: including these, so a code alone proves nothing: only the launcher's status file (outside every
 #: writable root, so the confined child cannot write it) says whether the child started.
+EXIT_NEW_REPOSITORY = 123
 EXIT_TIMEOUT = 124
 EXIT_SETUP_FAILED = 125
 EXIT_POLICY_INVALID = 126
@@ -29,6 +30,7 @@ _KEYS = (
     "write_roots",
     "read_roots",
     "deny_write_paths",
+    "deny_all_paths",
     "deny_write_git",
     "network",
     "max_seconds",
@@ -68,6 +70,7 @@ class WindowsConfinementPolicy:
     status_path: str
     read_roots: tuple[str, ...] = ()
     deny_write_paths: tuple[str, ...] = ()
+    deny_all_paths: tuple[str, ...] = ()
     deny_write_git: bool = True
     network: bool = False
     max_seconds: int = 120
@@ -83,6 +86,8 @@ class WindowsConfinementPolicy:
             _check_path(p, "read_roots entry")
         for p in self.deny_write_paths:
             _check_path(p, "deny_write_paths entry")
+        for p in self.deny_all_paths:
+            _check_path(p, "deny_all_paths entry")
         temp = _check_path(self.temp_dir, "temp_dir")
         if not any(_inside(temp, root) for root in roots):
             raise PolicyError("temp_dir must sit inside a write root")
@@ -105,6 +110,7 @@ class WindowsConfinementPolicy:
                 "write_roots": list(self.write_roots),
                 "read_roots": list(self.read_roots),
                 "deny_write_paths": list(self.deny_write_paths),
+                "deny_all_paths": list(self.deny_all_paths),
                 "deny_write_git": self.deny_write_git,
                 "network": self.network,
                 "max_seconds": self.max_seconds,
@@ -132,7 +138,7 @@ class WindowsConfinementPolicy:
         missing = [key for key in ("write_roots", "temp_dir", "status_path") if key not in data]
         if missing:
             raise PolicyError(f"missing policy keys: {missing}")
-        for key in ("write_roots", "read_roots", "deny_write_paths"):
+        for key in ("write_roots", "read_roots", "deny_write_paths", "deny_all_paths"):
             value = data.get(key, [])
             if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
                 raise PolicyError(f"{key} must be a list of strings")
@@ -142,6 +148,7 @@ class WindowsConfinementPolicy:
             status_path=data["status_path"],
             read_roots=tuple(data.get("read_roots", [])),
             deny_write_paths=tuple(data.get("deny_write_paths", [])),
+            deny_all_paths=tuple(data.get("deny_all_paths", [])),
             deny_write_git=data.get("deny_write_git", True),
             network=data.get("network", False),
             max_seconds=data.get("max_seconds", 120),
@@ -163,6 +170,9 @@ class LaunchStatus:
     error: str | None = None
     #: The job limit that ended the child, if one did: "time", "memory" or "processes".
     limit: str | None = None
+    #: Repository layouts (a `.git` dir, or a bare repo) that appeared under a write root during the
+    #: job. Non-empty means the result is refused (the launcher also exits 123).
+    new_repositories: tuple[str, ...] = ()
 
 
 def read_status(path: Path) -> LaunchStatus | None:
@@ -187,7 +197,10 @@ def read_status(path: Path) -> LaunchStatus | None:
         return None
     if not (error is None or isinstance(error, str)) or limit not in (None, *LIMITS):
         return None
-    return LaunchStatus(data["child_started"], timed_out, exit_code, error, limit)
+    repos = data.get("new_repositories", [])
+    if not isinstance(repos, list) or not all(isinstance(item, str) for item in repos):
+        return None
+    return LaunchStatus(data["child_started"], timed_out, exit_code, error, limit, tuple(repos))
 
 
 #: AppContainer identity (docs/WINDOWS_CONFINEMENT.md section 2, "Identity").

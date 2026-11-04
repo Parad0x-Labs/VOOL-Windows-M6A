@@ -8,6 +8,7 @@ public sealed class PolicyException(string message) : Exception(message);
 /// <summary>The launcher's exit codes (docs/WINDOWS_CONFINEMENT.md section 2).</summary>
 public static class ExitCodes
 {
+    public const int NewRepository = 123;
     public const int Timeout = 124;
     public const int SetupFailed = 125;
     public const int PolicyInvalid = 126;
@@ -21,6 +22,7 @@ public sealed record Policy(
     IReadOnlyList<string> WriteRoots,
     IReadOnlyList<string> ReadRoots,
     IReadOnlyList<string> DenyWritePaths,
+    IReadOnlyList<string> DenyAllPaths,
     bool DenyWriteGit,
     bool Network,
     int MaxSeconds,
@@ -33,7 +35,7 @@ public sealed record Policy(
 
     static readonly HashSet<string> Keys =
     [
-        "schema", "write_roots", "read_roots", "deny_write_paths", "deny_write_git",
+        "schema", "write_roots", "read_roots", "deny_write_paths", "deny_all_paths", "deny_write_git",
         "network", "max_seconds", "memory_mb", "max_processes", "temp_dir", "status_path",
     ];
 
@@ -54,6 +56,7 @@ public sealed record Policy(
             if (write.Count == 0) throw new PolicyException("write_roots must not be empty");
             var read = Paths(root, "read_roots", required: false);
             var deny = Paths(root, "deny_write_paths", required: false);
+            var denyAll = Paths(root, "deny_all_paths", required: false);
             if (!root.TryGetProperty("temp_dir", out var tempEl) || tempEl.ValueKind != JsonValueKind.String)
                 throw new PolicyException("temp_dir is required");
             var temp = CheckPath(tempEl.GetString()!, "temp_dir");
@@ -62,7 +65,7 @@ public sealed record Policy(
                 throw new PolicyException("status_path is required");
             var status = CheckPath(statusEl.GetString()!, "status_path");
             if (write.Any(r => Inside(status, r))) throw new PolicyException("status_path must sit outside every write root");
-            return new Policy(write, read, deny,
+            return new Policy(write, read, deny, denyAll,
                 Bool(root, "deny_write_git", true), Bool(root, "network", false),
                 Positive(root, "max_seconds", 120), Positive(root, "memory_mb", 512), Positive(root, "max_processes", 64),
                 temp, status);

@@ -25,7 +25,12 @@ proven to work. `None` means the caller refuses the job. Nothing ever runs unwra
   accepts the launcher only when every listed file matches and no unlisted file is present, because
   a planted DLL is code too. A missing pin, a mismatch, an extra file or a missing file all mean
   unavailable.
-- Command line: `VoolConfine.exe --policy <path> -- <program> [args...]`. Everything after `--` is
+- Command line, three forms. All are run unconfined by VOOL, never by a job:
+  - `VoolConfine.exe --policy <path> -- <program> [args...]` runs a job. It only VERIFIES the ACLs
+    and never writes them; a verify miss is 125.
+  - `VoolConfine.exe grant --policy <path>` writes the grants and deny ACEs (idempotent).
+  - `VoolConfine.exe revoke --policy <path>` removes exactly what grant added.
+- For the run form: Everything after `--` is
   the child's argv, passed on with Windows quoting rules. `--policy` is required.
 - The child runs in an **AppContainer** (no capabilities unless the policy grants network). It
   starts inside a **Job Object** with:
@@ -48,6 +53,7 @@ proven to work. `None` means the caller refuses the job. Nothing ever runs unwra
 | child's code | The child ran; this is its exit code, passed through unchanged. |
 | 125 | Confinement could not be set up (profile, ACL verify, job, process creation). **The child never started.** |
 | 126 | The command line or the policy is invalid. The child never started. |
+| 123 | The child ran, but a repository layout (a `.git` dir, or a bare repo) appeared under a write root. The result is refused; the status file lists the paths. |
 | 124 | `max_seconds` elapsed. The job was closed, so the whole tree is gone. |
 
 A child may exit with ANY code, 124-126 included, and it shares the launcher's stderr, so neither
@@ -71,13 +77,15 @@ Status file fields:
 | `timed_out` | bool | `max_seconds` elapsed (the launcher also exits 124). |
 | `limit` | `"time"`, `"memory"`, `"processes"` or null | The job limit that ended the child, if any. |
 | `error` | string or null | Why setup failed, when `child_started` is false. |
+| `new_repositories` | list of paths | Repository layouts that appeared under a write root during the job. Non-empty means refused (and exit 123). |
 
 ### Identity: one profile, one capability per write root
 
 - **Profile.** One fixed AppContainer profile named `VOOL.Confine.v1`. Its package SID is shared by
   every job, so it only ever receives READ grants, plus explicit DENY-write ACEs.
 - **Read grants (package SID).** Read and execute on `read_roots`.
-- **Deny ACEs (package SID).** Deny write on `deny_write_paths` and on every `.git` under a write root.
+- **Deny ACEs (package SID).** Deny write on `deny_write_paths` and on every `.git` under a write root;
+  deny all access on `deny_all_paths`.
   Because the package SID is in every job's token, these deny ACEs bind every job.
 - **Write grants (per-root capability).** Read and write (inheritable) go to a capability SID made
   for that root only: `DeriveCapabilitySidsFromName("vool.root.<sha256 hex>")`, where the hash is of
@@ -108,7 +116,8 @@ every writable root**, and deletes both after the job.
   "schema": "vool.windows_confinement.v1",
   "write_roots": ["C:\\work\\repo"],
   "read_roots": ["C:\\Python312", "C:\\work\\repo\\.venv"],
-  "deny_write_paths": ["C:\\Users\\me\\.vool_runtime"],
+  "deny_write_paths": ["C:\\work\\repo\\vendor-code"],
+  "deny_all_paths": ["C:\\Users\\me\\.vool_runtime", "C:\\Users\\me\\.ssh"],
   "deny_write_git": true,
   "network": false,
   "max_seconds": 120,
@@ -125,7 +134,8 @@ Rules, all enforced by the launcher (126 if broken):
   already resolved (no junction or link in it).
 - **`write_roots`.** Non-empty. Read and write for the container.
 - **`read_roots`.** Read and execute only.
-- **`deny_write_paths`.** Explicitly denied write, beating any inherited grant.
+- **`deny_write_paths`.** Explicitly denied write, beating any inherited grant (code roots).
+- **`deny_all_paths`.** Denied read AND write, like the Mac's secret and state denies (VOOL runtime state, credentials).
 - **`deny_write_git`.** When true, every `.git` directory under a write root is denied write.
   Nested `.git` directories created during the job are caught by the post-job scan on the Python side.
 - **`network`.** Default false. Only true adds the `internetClient` capability. Loopback is never granted.
@@ -140,7 +150,8 @@ Rules, all enforced by the launcher (126 if broken):
 |---|---|
 | this doc, `sandbox/windows_confinement.py` dataclasses, schema, status and identity, `VoolConfine.Core/Policy.cs`, `Identity.cs`, the .sln | 🔐 Broker. Ask for changes; don't edit them in a chunk branch. |
 | `VoolConfine/Program.cs`, `VoolConfine.Core/Launcher*.cs`, `Job*.cs`, `AppContainer*.cs` | Chunk 1, launcher |
-| `VoolConfine.Core/Acl*.cs` | Chunk 2, ACL |
+| `VoolConfine.Core/Sids.cs` (package SID and capability SID derivation, one helper for chunks 1 and 2) | Chunk 1, launcher |
+| `VoolConfine.Core/Acl*.cs`, `RepoScan*.cs` (grant/verify/revoke; the pre/post-job repository scan the launcher calls) | Chunk 2, ACL |
 | bodies of `probe` / `confinement_prefix` in `sandbox/windows_confinement.py`, the Windows branch in `sandbox/job_runner.py` | Chunk 3, runner |
 | `sandbox/windows_confinement_pin.py`, `windows/broker/publish.ps1`, the pin manifest | Chunk 4, shipping |
 | new test files | each chunk adds its own; nobody edits an existing test |
