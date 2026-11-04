@@ -8,6 +8,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VoolBroker.Core", "src\Vool
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VoolBroker.Tests", "tests\VoolBroker.Tests\VoolBroker.Tests.csproj", "{4EA85555-EC34-4094-A537-88E0DD89F847}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VoolConfine", "src\VoolConfine\VoolConfine.csproj", "{7C1E2A40-5B3D-4F6A-9E21-0D4C8B7A1F01}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VoolConfine.Core", "src\VoolConfine.Core\VoolConfine.Core.csproj", "{7C1E2A40-5B3D-4F6A-9E21-0D4C8B7A1F02}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VoolConfine.Tests", "tests\VoolConfine.Tests\VoolConfine.Tests.csproj", "{7C1E2A40-5B3D-4F6A-9E21-0D4C8B7A1F03}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -26,5 +32,17 @@ Global
 		{4EA85555-EC34-4094-A537-88E0DD89F847}.Debug|x64.Build.0 = Debug|Any CPU
 		{4EA85555-EC34-4094-A537-88E0DD89F847}.Release|x64.ActiveCfg = Release|Any CPU
 		{4EA85555-EC34-4094-A537-88E0DD89F847}.Release|x64.Build.0 = Release|Any CPU
+		{7C1E2A40-5B3D-4F6A-9E21-0D4C8B7A1F01}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{7C1E2A40-5B3D-4F6A-9E21-0D4C8B7A1F01}.Debug|x64.Build.0 = Debug|Any CPU
+		{7C1E2A40-5B3D-4F6A-9E21-0D4C8B7A1F01}.Release|x64.ActiveCfg = Release|Any CPU
+		{7C1E2A40-5B3D-4F6A-9E21-0D4C8B7A1F01}.Release|x64.Build.0 = Release|Any CPU
+		{7C1E2A40-5B3D-4F6A-9E21-0D4C8B7A1F02}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{7C1E2A40-5B3D-4F6A-9E21-0D4C8B7A1F02}.Debug|x64.Build.0 = Debug|Any CPU
+		{7C1E2A40-5B3D-4F6A-9E21-0D4C8B7A1F02}.Release|x64.ActiveCfg = Release|Any CPU
+		{7C1E2A40-5B3D-4F6A-9E21-0D4C8B7A1F02}.Release|x64.Build.0 = Release|Any CPU
+		{7C1E2A40-5B3D-4F6A-9E21-0D4C8B7A1F03}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{7C1E2A40-5B3D-4F6A-9E21-0D4C8B7A1F03}.Debug|x64.Build.0 = Debug|Any CPU
+		{7C1E2A40-5B3D-4F6A-9E21-0D4C8B7A1F03}.Release|x64.ActiveCfg = Release|Any CPU
+		{7C1E2A40-5B3D-4F6A-9E21-0D4C8B7A1F03}.Release|x64.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
