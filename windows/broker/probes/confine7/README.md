@@ -49,7 +49,7 @@ Never granted, even if named with `--allow-grant`:
 - `%APPDATA%`;
 - any folder at or above the profile, `%APPDATA%` or `%LOCALAPPDATA%`.
 
-`--create-profile` registers the `VOOL.Confine.Probe7` AppContainer profile. That writes HKCU and makes a `%LOCALAPPDATA%\Packages\` folder, and both are removed by DeleteAppContainerProfile at the end. A profile that already existed is reused and left as found. It needs Jesse's go naming the sha. Run 20261104 (v2, no profile) failed every launch with winerror 2, and the likely cause is the unregistered profile.
+`--create-profile` registers the `VOOL.Confine.Probe7` AppContainer profile. That writes HKCU and makes a `%LOCALAPPDATA%\Packages\` folder, and both are removed by DeleteAppContainerProfile at the end. A profile that already existed is reused and left as found. From v6 the journal also records a profile this run created, so `--revoke-only` deletes it after a kill. It needs Jesse's go naming the sha. Run 20261104 (v2, no profile) failed every launch with winerror 2, and the likely cause is the unregistered profile.
 
 Before any tool probe, a launch ladder runs `cmd.exe /d /c exit 7` three ways:
 - L0: the same code with no AppContainer (the control);

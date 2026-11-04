@@ -443,11 +443,14 @@ def main() -> int:
     profile_made = False
     granted: list[str] = []
 
+    def write_journal() -> None:
+        journal.write_text(json.dumps({"package_sid": pkg_s, "capability_sid": cap_s, "paths": granted,
+                                       "profile_created_by_probe": profile_made}), encoding="utf-8")
+
     def record(path: str) -> None:
         # Journal BEFORE icacls runs, so a killed run can still be revoked (--revoke-only).
         granted.append(path)
-        journal.write_text(json.dumps({"package_sid": pkg_s, "capability_sid": cap_s, "paths": granted}),
-                           encoding="utf-8")
+        write_journal()
 
     try:
         if a.create_profile:
@@ -456,6 +459,8 @@ def main() -> int:
             hr &= 0xFFFFFFFF
             # 0x800700B7 = already exists: reuse it, and leave it as found (only delete what we made).
             profile_made = hr == 0
+            if profile_made:
+                write_journal()  # so --revoke-only also deletes the profile after a kill
             emit({"tag": "P0-profile", "hr": f"0x{hr:08x}", "created_by_this_run": profile_made,
                   "already_existed": hr == 0x800700B7})
 
@@ -599,14 +604,17 @@ def main() -> int:
         for p in reversed(granted):
             rc, msg = icacls(p, "/remove", f"*{pkg_s}", f"*{cap_s}")
             emit({"tag": "R-revoke", "path": p, "rc": rc, "out": msg})
-        clean = all_revoked(granted, pkg_s, cap_s)
+        if profile_made:
+            hr = uenv.DeleteAppContainerProfile(PROFILE) & 0xFFFFFFFF
+            emit({"tag": "R-profile", "hr": f"0x{hr:08x}", "deleted": hr == 0})
+            profile_made = hr != 0
+            write_journal()
+        clean = all_revoked(granted, pkg_s, cap_s) and not profile_made
         emit({"tag": "R-check", "all_probe_aces_gone": clean,
-              "note": "full icacls /T /C listing of every granted path" if clean
-              else "PROBE ACEs MAY REMAIN: journal kept; rerun with --revoke-only and the same flags"})
+              "note": "full icacls /T /C listing of every granted path; profile deleted if made" if clean
+              else "PROBE ACEs OR PROFILE MAY REMAIN: journal kept; rerun with --revoke-only and the same flags"})
         if clean:
             journal.unlink(missing_ok=True)
-        if profile_made:
-            uenv.DeleteAppContainerProfile(PROFILE)
         log.close()
     _summary(results, out / "SUMMARY.md")
     return 0
@@ -644,7 +652,15 @@ def _revoke_from_journal(journal: Path, ws: Path, allowed: list[Path]) -> int:
     for p in reversed(paths):
         rc, msg = icacls(p, "/remove", f"*{pkg_s}", f"*{cap_s}")
         print(f"revoke {p}: rc={rc} {msg}")
-    if len(paths) == len(data["paths"]) and all_revoked(paths, pkg_s, cap_s):
+    profile_left = False
+    if data.get("profile_created_by_probe"):
+        hr = uenv.DeleteAppContainerProfile(PROFILE) & 0xFFFFFFFF
+        print(f"delete profile {PROFILE}: hr=0x{hr:08x}")
+        profile_left = hr != 0
+        if not profile_left:
+            data["profile_created_by_probe"] = False
+            journal.write_text(json.dumps(data), encoding="utf-8")
+    if not profile_left and len(paths) == len(data["paths"]) and all_revoked(paths, pkg_s, cap_s):
         journal.unlink()
         print("all probe ACEs removed")
         return 0
