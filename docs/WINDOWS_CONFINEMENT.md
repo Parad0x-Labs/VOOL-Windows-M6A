@@ -136,8 +136,19 @@ every writable root**, and deletes both after the job.
 
 Rules, all enforced by the launcher (126 if broken):
 
-- **Paths.** Every path is absolute, drive-letter form (no `\\?\`, UNC, or device paths), and
-  already resolved (no junction or link in it).
+- **Paths.** One canonical spelling only, because every containment rule below is a string compare
+  and Win32 rewrites some spellings before it opens them. Each path is `X:\` followed by
+  backslash-separated segments, with no `\\?\`, UNC or device prefix and no `/`. No segment is
+  empty, `.` or `..`, ends in a dot or a space, contains `~` (8.3 short names), `:` (streams),
+  `<>"|?*` or a control character, or is a device name (`CON`, `NUL`, `COM1`, ... with or without an
+  extension). Both sides check exactly this: `_check_path` in Python and `Policy.CheckPath` in C#.
+  "Inside a root" is case-insensitive under either upper- or lower-casing, so a disagreement only
+  ever refuses a status path.
+- **Resolved on disk (chunk 1).** Before it creates the child, the launcher opens each write root and
+  the status folder and compares `GetFinalPathNameByHandle` with the input, case-insensitively. Any
+  difference (a junction, a symlink, a short name that slipped through) is 126.
+- **Fresh status (chunk 3).** The caller creates a new, empty status folder per job and refuses to
+  launch if a status file already exists there, so an earlier job's status can never be read as this one's.
 - **`write_roots`.** Non-empty. Read and write for the container.
 - **`read_roots`.** Read and execute only.
 - **`deny_write_paths`.** Explicitly denied write, beating any inherited grant (code roots).
