@@ -25,6 +25,17 @@ proven to work. `None` means the caller refuses the job. Nothing ever runs unwra
   accepts the launcher only when every listed file matches and no unlisted file is present, because
   a planted DLL is code too. A missing pin, a mismatch, an extra file or a missing file all mean
   unavailable.
+- **Pin file shape.** UTF-8 without a BOM, exactly two keys:
+  `{"schema": "vool.windows_confinement.pin.v1", "files": {"<relpath with />": "<sha256, lowercase hex>"}}`.
+  Any other key or shape means unavailable.
+- **The launcher's own environment (caller, chunk 3).** The pin proves the files, but the .NET host
+  still loads code named by environment variables. The launcher is published with
+  `StartupHookSupport=false`, and the caller drops every variable starting `CORECLR_`, `COR_`,
+  `COMPlus_`, `DOTNET_` or `COREHOST_` (case-insensitive) from the env it launches VoolConfine.exe
+  with. Otherwise a planted profiler or hook loads a DLL from outside the pinned folder, unconfined.
+- **Lifetime (caller, chunk 3).** Each launcher runs inside VOOL's own kill-on-close job, the way
+  the broker does, so no launcher outlives VOOL. Otherwise one would hold its files open and block
+  an upgrade.
 - Command line, three forms. All are run unconfined by VOOL, never by a job:
   - `VoolConfine.exe --policy <path> -- <program> [args...]` runs a job. It only VERIFIES the ACLs
     and never writes them; a verify miss is 125.
