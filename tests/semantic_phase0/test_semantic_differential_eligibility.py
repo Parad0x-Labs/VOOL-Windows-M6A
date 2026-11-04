@@ -569,6 +569,52 @@ def test_executable_controller_reexecs_isolated_from_cwd_and_pythonpath(tmp_path
     assert "--candidate" in completed.stdout
 
 
+def test_executable_controller_reexec_quotes_spaced_paths_and_child_exit_code(tmp_path) -> None:
+    """The Windows re-exec must not lose arguments to unquoted argv joining.
+
+    `os.execve` on Windows is CRT emulation: argv is joined into ONE command line WITHOUT
+    quoting, so a space in the interpreter or script path split the re-exec (the child opened
+    a bogus script while the parent still exited 0), and the re-exec was observed dying with
+    0xC0000005 (Windows full suites 41747731923 and 41757562731). The parent must exit with the
+    CHILD's code, and the isolated child must still ignore the hostile script directory,
+    PYTHONPATH and cwd. POSIX `execve` passes argv verbatim and keeps its behaviour byte for byte.
+    """
+    import os
+    import shutil
+    import subprocess
+    import sys
+
+    spaced = tmp_path / "controller dir with spaces"
+    spaced.mkdir()
+    shutil.copyfile(_SCRIPT, spaced / _SCRIPT.name)
+    (spaced / "hashlib.py").write_text("raise RuntimeError('shadow imported')\n", encoding="utf-8")
+    (spaced / "json.py").write_text("raise RuntimeError('shadow imported')\n", encoding="utf-8")
+    (spaced / "subprocess.py").write_text("raise RuntimeError('shadow imported')\n", encoding="utf-8")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(spaced)
+    help_run = subprocess.run(
+        [sys.executable, str(spaced / _SCRIPT.name), "--help"],
+        cwd=str(spaced),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert help_run.returncode == 0, help_run.stderr
+    assert "--candidate" in help_run.stdout
+    bad_flag_run = subprocess.run(
+        [sys.executable, str(spaced / _SCRIPT.name), "--no-such-flag"],
+        cwd=str(spaced),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    # The unfixed parent exits 0 (spawn-and-exit emulation) or 0xC0000005, whatever the child
+    # did; the child's own argparse exit code 2 must be the one the caller sees.
+    assert bad_flag_run.returncode == 2, (bad_flag_run.returncode, bad_flag_run.stderr)
+
+
 def test_mixed_host_drift_never_launders_a_stable_candidate_regression() -> None:
     module = _differential()
     base = {
