@@ -169,6 +169,53 @@ public static class AclRules
         return null;
     }
 
+    /// <summary>ALL APPLICATION PACKAGES and ALL RESTRICTED APP PACKAGES: every job's token matches both.</summary>
+    internal static readonly SecurityIdentifier[] EveryAppContainer =
+        [new SecurityIdentifier("S-1-15-2-1"), new SecurityIdentifier("S-1-15-2-2")];
+
+    /// <summary>
+    /// The first SID of sids, or ALL APPLICATION PACKAGES / ALL RESTRICTED APP PACKAGES, that an
+    /// allow ACE gives any of bits (GENERIC_* included), INHERIT-ONLY ACEs counted too: on a folder
+    /// they are what files and folders made inside it later receive. Null when there is none.
+    /// This is the test a protected object (a repository, a denied path) must pass: a deny ACE for
+    /// an AppContainer SID does not stop an allow to the package SID's capabilities or to every
+    /// AppContainer (measured, windows-broker runs 41901543557 and 41902677009), so protection is
+    /// the absence of any allow, never a deny.
+    /// </summary>
+    public static SecurityIdentifier? AllowedTo(RawAcl acl, IEnumerable<SecurityIdentifier> sids, int bits)
+    {
+        var watched = sids.Concat(EveryAppContainer).ToHashSet();
+        foreach (GenericAce ace in acl)
+        {
+            if (ace is not CommonAce common || common.AceQualifier != AceQualifier.AccessAllowed) continue;
+            if ((common.AccessMask & bits) == 0) continue;
+            if (watched.Contains(common.SecurityIdentifier)) return common.SecurityIdentifier;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Removes every allow ACE for one of sids (ours only: the package SID and our capabilities)
+    /// that carries any of bits. Returns true when one was removed.
+    /// </summary>
+    internal static bool RemoveAllows(RawAcl acl, IReadOnlyCollection<SecurityIdentifier> sids, int bits)
+    {
+        var removed = false;
+        for (var i = acl.Count - 1; i >= 0; i--)
+        {
+            if (acl[i] is CommonAce common && common.AceQualifier == AceQualifier.AccessAllowed
+                && (common.AccessMask & bits) != 0 && sids.Contains(common.SecurityIdentifier))
+            {
+                acl.RemoveAce(i);
+                removed = true;
+            }
+        }
+        return removed;
+    }
+
+    /// <summary>Every bit an ACE may carry: any allow at all.</summary>
+    internal const int AnyBits = unchecked((int)0xFFFFFFFF);
+
     /// <summary>
     /// ALL APPLICATION PACKAGES (S-1-15-2-1) or ALL RESTRICTED APP PACKAGES (S-1-15-2-2) when an
     /// allow ACE (not inherit-only) gives it any of bits; null otherwise.

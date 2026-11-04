@@ -55,8 +55,10 @@ public static class RepoScan
 
     /// <summary>
     /// Every repository layout under root, each marked protected when its DACL holds an explicit
-    /// deny ACE for each of denySids (the package SID and the root's capability) covering every write right (and, on a folder, inherited by
-    /// files and folders made inside it). A link named .git is never protected.
+    /// deny ACE for each of denySids (the package SID and the root's capability) covering every write
+    /// right (and, on a folder, inherited by files and folders made inside it), AND no allow ACE gives
+    /// any of denySids, ALL APPLICATION PACKAGES or ALL RESTRICTED APP PACKAGES a write right.
+    /// A link named .git is never protected.
     /// Any failure to open or list a folder throws: an unlisted folder could hide a repository.
     /// </summary>
     public static IReadOnlyList<RepoEntry> Scan(string root, IReadOnlyList<SecurityIdentifier> denySids)
@@ -132,6 +134,10 @@ public static class RepoScan
         var acl = descriptor.DiscretionaryAcl;
         if (acl is null || denySids.Count == 0) return false;
         RawAcl dacl = acl;
-        return denySids.All(sid => AclRules.HasExplicitDeny(dacl, sid, AclRules.DenyWriteMask, directory));
+        // The deny ACEs are the marker; what protects it is that no SID of a job's token (the
+        // package SID, the root's capability, every AppContainer) is allowed any write right, by an
+        // ACE here or by an inherit-only one that what is made inside later would receive.
+        return denySids.All(sid => AclRules.HasExplicitDeny(dacl, sid, AclRules.DenyWriteMask, directory))
+            && AclRules.AllowedTo(dacl, denySids, AclRules.WriteOrGenericWriteBits) is null;
     }
 }

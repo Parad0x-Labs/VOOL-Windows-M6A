@@ -43,13 +43,17 @@ public sealed record AclReport(
 ///   last so every deny already there still wins.
 /// - Read root: the same with <see cref="AclRules.ReadExecuteMask"/> for the package SID.
 /// - Every repository layout under a write root (see <see cref="RepoScan"/>), and everything inside
-///   it: an explicit DENY <see cref="AclRules.DenyWriteMask"/> for the package SID AND the root's
-///   capability, first in the DACL. Both are needed: Windows grants an AppContainer what its
-///   package SID or any of its capabilities is allowed, each judged on its own, so a deny for one
-///   SID does not stop a grant to another.
-/// - deny_write_paths / deny_all_paths: an explicit DENY of write / of everything for the package
-///   SID (and, under a write root, that root's capability), on the object and on everything inside
-///   it. Matched by file id.
+///   it: the root's capability gets READ AND EXECUTE ONLY (no write allow for any of the job's SIDs
+///   is left there), plus an explicit DENY <see cref="AclRules.DenyWriteMask"/> for the package SID
+///   and the root's capability, first in the DACL, as the marker. The deny alone protects nothing:
+///   measured on Windows (windows-broker runs 41901543557 and 41902677009), neither a package-SID
+///   deny nor a capability deny stops a write the capability is allowed. So the protection is that
+///   no allow reaches the job, and a grant to every AppContainer (ALL APPLICATION PACKAGES, ALL
+///   RESTRICTED APP PACKAGES) on a protected object is refused (foreign_access): no ACE we may write
+///   takes it back.
+/// - deny_write_paths / deny_all_paths: the same, matched by file id: under a deny-write path our
+///   SIDs get read only; under a deny-all path no allow of ours at all; each with the deny marker
+///   for the package SID (and, under a write root, that root's capability).
 ///
 /// Never widened: a file with more than one hard link (the other name may be outside every root),
 /// an object whose DACL is protected (and everything under it), and a reparse point (never opened
@@ -81,6 +85,7 @@ public static class Acl
     public static AclReport Grant(Policy policy, ConfinementSids sids)
     {
         RefuseNestedWriteRoots(policy);
+        RefuseAppearedRepositories(policy, sids);
         var counts = new Counts();
         var denies = OpenDenyTargets(policy);
         try
@@ -112,9 +117,8 @@ public static class Acl
 
     /// <summary>
     /// Walks root and puts each object's ACEs in place. allowSid gets the grant (null for a deny-only
-    /// walk); every deny names each SID in denySids, because the AppContainer check grants what the
-    /// package SID OR any capability is allowed, each judged on its own: a deny for the package SID
-    /// does not stop a write the root's capability is allowed (measured: windows-broker run 41901543557).
+    /// walk); every deny marker names each SID in denySids, and inside a protected object no allow
+    /// for allowSid or denySids keeps the access it must not have (a deny does not stop it).
     /// foreignAllowed: the AppContainer SIDs, besides ours, that may hold write here (null: no check).
     /// </summary>
     private static void WalkGrant(string root, Mode mode, SecurityIdentifier? allowSid, SecurityIdentifier[] denySids,
@@ -232,18 +236,36 @@ public static class Acl
             counts.ProtectedDacl++;
             context = context with { AllowBlocked = true };
         }
+        // A deny ACE for an AppContainer SID does not stop what another of the token's SIDs is allowed
+        // (windows-broker runs 41901543557 and 41902677009: neither a package-SID nor a capability deny
+        // stopped a write the capability was allowed). So a protected object is protected by holding
+        // no allow that reaches the job, and a grant to every AppContainer there is refused, since no
+        // ACE we may write could take it back. The deny ACEs stay as the marker Verify and the
+        // repository scan look for, and for any check that does honour them.
+        var writeBlocked = context.Deny == DenyKind.Write || context.InRepo;
+        if (context.Deny != DenyKind.None || context.InRepo)
+        {
+            var bits = context.Deny == DenyKind.All ? AclRules.AnyReadBits | AclRules.WriteOrGenericWriteBits : AclRules.WriteOrGenericWriteBits;
+            var every = AclRules.AllowedTo(acl, [], bits);
+            if (every is not null)
+                throw new AclException("foreign_access", $"{path} gives {every.Value} access it must not have; no ACE we may write takes that back.");
+        }
         var changed = false;
+        SecurityIdentifier[] ours = allowSid is null ? denySids : [allowSid, .. denySids];
+        if (context.Deny == DenyKind.All) changed |= AclRules.RemoveAllows(acl, ours, AclRules.AnyBits);
+        else if (writeBlocked) changed |= AclRules.RemoveAllows(acl, ours, AclRules.WriteOrGenericWriteBits);
         foreach (var sid in denySids)
         {
             if (context.Deny == DenyKind.All) changed |= AclRules.Ensure(acl, AclRules.ExplicitDeny(sid, AclRules.DenyAllMask, directory));
-            if (context.Deny == DenyKind.Write || context.InRepo) changed |= AclRules.Ensure(acl, AclRules.ExplicitDeny(sid, AclRules.DenyWriteMask, directory));
+            if (writeBlocked) changed |= AclRules.Ensure(acl, AclRules.ExplicitDeny(sid, AclRules.DenyWriteMask, directory));
         }
         if (allowSid is not null && !context.AllowBlocked)
         {
             if (linkCount > 1) counts.HardLinks++;
             else
             {
-                var mask = mode == Mode.Write ? AclRules.ReadWriteMask : AclRules.ReadExecuteMask;
+                // Inside a repository or a deny-write path the root's capability gets read only.
+                var mask = mode == Mode.Write && !writeBlocked ? AclRules.ReadWriteMask : AclRules.ReadExecuteMask;
                 changed |= AclRules.Ensure(acl, isRoot ? AclRules.ExplicitAllow(allowSid, mask, directory) : AclRules.PropagatedAllow(allowSid, mask, directory));
             }
         }
@@ -325,6 +347,31 @@ public static class Acl
         policy.WriteRoots.SelectMany(root => RepoScan.Scan(Normalize(root), [sids.Package, sids.CapabilityFor(root)]))
             .Where(entry => !entry.Protected).ToList();
 
+    /// <summary>
+    /// Grant never heals a repository layout that appeared after the root was granted
+    /// (docs/WINDOWS_CONFINEMENT.md section 2, command line): a job may have made it, so it is left
+    /// for the operator. Only a first grant (the root does not yet hold its capability's grant)
+    /// protects the repositories it finds.
+    /// </summary>
+    private static void RefuseAppearedRepositories(Policy policy, ConfinementSids sids)
+    {
+        if (!policy.DenyWriteGit) return;
+        foreach (var policyRoot in policy.WriteRoots)
+        {
+            var root = Normalize(policyRoot);
+            var capability = sids.CapabilityFor(policyRoot);
+            RawAcl acl;
+            try { acl = ReadRootAcl(root); }
+            catch (AclException) { continue; } // the walk refuses it with its own reason
+            if (!AclRules.HasExplicitAllow(acl, capability, AclRules.ReadWriteMask, directory: true)) continue;
+            var appeared = RepoScan.Scan(root, [sids.Package, capability]).Where(entry => !entry.Protected).ToList();
+            if (appeared.Count > 0)
+                throw new AclException("repo_appeared",
+                    "Repository layouts appeared under an already granted write root; grant leaves them for the operator: "
+                    + string.Join("; ", appeared.Select(e => $"{e.Path} ({e.Kind})")));
+        }
+    }
+
     /// <summary>A write root inside another is refused: the outer root's capability would write the inner one.</summary>
     private static void RefuseNestedWriteRoots(Policy policy)
     {
@@ -368,9 +415,14 @@ public static class Acl
                         throw new AclException("foreign_access", $"Denied path {path} gives {every.Value} the access it must deny.");
                 }
                 // The package SID, and the capability of every write root whose grant reaches it.
-                foreach (var sid in ContainingCapabilities(policy, sids, path).Prepend(sids.Package))
+                var reaching = ContainingCapabilities(policy, sids, path).Prepend(sids.Package).ToArray();
+                foreach (var sid in reaching)
                     if (!AclRules.HasExplicitDeny(acl, sid, mask, directory))
                         throw new AclException("deny_missing", $"Denied path {path} does not carry its deny ACE for {sid.Value} (run grant).");
+                // The deny is only the marker: what protects the path is that none of the job's SIDs is allowed the denied access.
+                var allowed = AclRules.AllowedTo(acl, reaching, kind == DenyKind.All ? AclRules.AnyBits : AclRules.WriteOrGenericWriteBits);
+                if (allowed is not null)
+                    throw new AclException("deny_unbound", $"Denied path {path} still allows {allowed.Value} the access it must deny (run grant).");
             }
         }
     }
@@ -461,6 +513,71 @@ public static class Acl
         descriptor.GetBinaryForm(bytes, 0);
         AclNative.SetDacl(handle, bytes, (descriptor.ControlFlags & ControlFlags.DiscretionaryAclProtected) != 0, path);
         counts.Updated++;
+    }
+
+    // ---------------------------------------------------------------- the launcher's own folders
+
+    /// <summary>
+    /// Grants and blocks for the launcher's own folders (docs/WINDOWS_CONFINEMENT.md section 2,
+    /// environment), shared by every job:
+    /// - the confine folder (VoolConfine.exe and the pinned trampoline VoolConfineStart.exe): read and
+    ///   execute for the package SID, so the job's first process can start; no AppContainer SID may
+    ///   write it (a planted trampoline would run as the next job);
+    /// - the profile's AC\Temp (%LOCALAPPDATA%\Packages\&lt;profile&gt;\AC\Temp), which Windows points
+    ///   an AppContainer's TEMP/TMP at whatever the env block says: no write for the package SID, so
+    ///   anything that still lands there fails instead of sharing one folder across jobs. The
+    ///   profile's own allow for the package SID is taken off AC\Temp and everything in it (a deny
+    ///   alone is not enough, see <see cref="AclRules.AllowedTo"/>), and a deny-write ACE marks it.
+    /// The launcher (chunk 1) passes the paths: the confine folder is its own folder, AC\Temp is
+    /// GetAppContainerFolderPath + "\Temp" for the profile.
+    /// </summary>
+    public sealed record HostPaths(string ConfineFolder, string ProfileTemp);
+
+    /// <summary>Writes the host grants and blocks (idempotent), then <see cref="VerifyHost"/>. Run by the grant form.</summary>
+    public static AclReport GrantHost(HostPaths host, SecurityIdentifier package)
+    {
+        var counts = new Counts();
+        var none = new Dictionary<(ulong, string), DenyKind>();
+        WalkGrant(Normalize(host.ConfineFolder), Mode.Read, package, [package], foreignAllowed: [], false, none, counts, denyOnly: DenyKind.None);
+        WalkGrant(Normalize(host.ProfileTemp), Mode.Read, allowSid: null, [package], foreignAllowed: null, false, none, counts, denyOnly: DenyKind.Write);
+        VerifyHost(host, package);
+        return counts.Report([]);
+    }
+
+    /// <summary>Before every job: throws unless the confine folder holds the package's read grant and no AppContainer SID may write it, and AC\Temp is closed to writes.</summary>
+    public static void VerifyHost(HostPaths host, SecurityIdentifier package)
+    {
+        var confine = Normalize(host.ConfineFolder);
+        var acl = ReadRootAcl(confine);
+        if (!AclRules.HasExplicitAllow(acl, package, AclRules.ReadExecuteMask, directory: true))
+            throw new AclException("grant_missing", $"The confine folder {confine} does not hold the package's read grant (run grant).");
+        var writer = AclRules.AllowedTo(acl, [package], AclRules.WriteOrGenericWriteBits) ?? AclRules.ForeignWriter(acl, []);
+        if (writer is not null)
+            throw new AclException("foreign_writer", $"The confine folder {confine} lets an AppContainer SID ({writer.Value}) write it.");
+        var temp = Normalize(host.ProfileTemp);
+        RawAcl tempAcl;
+        try { tempAcl = ReadRootAcl(temp); }
+        catch (AclException error) when (error.Code == "root_missing")
+        {
+            throw new AclException("profile_temp_missing", $"The profile's temp folder {temp} does not exist, so it cannot be checked closed.");
+        }
+        if (!AclRules.HasExplicitDeny(tempAcl, package, AclRules.DenyWriteMask, directory: true))
+            throw new AclException("deny_missing", $"The profile's temp folder {temp} does not carry its deny-write ACE (run grant).");
+        var open = AclRules.AllowedTo(tempAcl, [package], AclRules.WriteOrGenericWriteBits);
+        if (open is not null)
+            throw new AclException("deny_unbound", $"The profile's temp folder {temp} still lets {open.Value} write it (run grant).");
+    }
+
+    /// <summary>
+    /// Takes the package SID's grant off the confine folder. AC\Temp is left closed: the profile is
+    /// VOOL's own, and the allow Windows gave it there comes back only when the profile is deleted
+    /// and made again (DeleteAppContainerProfile), which uninstall does.
+    /// </summary>
+    public static AclReport RevokeHost(HostPaths host, SecurityIdentifier package)
+    {
+        var counts = new Counts();
+        WalkRevoke(Normalize(host.ConfineFolder), [package], counts);
+        return counts.Report([]);
     }
 
     // ---------------------------------------------------------------- roots and deny paths
