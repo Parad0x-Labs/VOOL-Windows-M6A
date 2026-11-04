@@ -39,13 +39,17 @@ _STATUS = wc.STATUS_SCHEMA
 #: exit123  - run the child and exit 123 with no repository listed;
 #: grant-fails - the unconfined `grant` form exits 1;
 #: unconfined-probe - run the child with no confinement at all (a launcher that confines nothing).
-#: Every `grant`/`revoke` call is logged to forms.log next to the launcher.
+#: Every `grant`/`revoke` call is logged to forms.log next to the launcher, and each form's
+#: environment variable names to env-<form>.json.
 _FAKE = r'''#!{python}
 import json, os, subprocess, sys
 MODE = {mode!r}
 args = sys.argv[1:]
+here = os.path.dirname(os.path.abspath(__file__))
+with open(os.path.join(here, "env-" + (args[0] if args and args[0] in ("grant", "revoke") else "run") + ".json"), "w") as f:
+    json.dump(sorted(os.environ), f)
 if args and args[0] in ("grant", "revoke"):
-    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "forms.log"), "a") as f:
+    with open(os.path.join(here, "forms.log"), "a") as f:
         f.write(args[0] + "\n")
     sys.exit(1 if MODE == "grant-fails" and args[0] == "grant" else 0)
 if len(args) < 4 or args[0] != "--policy" or args[2] != "--":
@@ -471,3 +475,83 @@ def test_confinement_prefix_never_writes_a_policy_inside_a_write_root(tmp_path, 
                       "--policy", str(outside), "--", program, "-c", "0"]
     assert wc.WindowsConfinementPolicy.from_json(outside.read_text(encoding="utf-8")) == policy
     assert wc.confinement_prefix(["python"], policy, project_root=tmp_path, policy_path=outside) is None
+
+
+# --- the launcher's own process: environment and lifetime -------------------------------------
+
+
+_LOADER_VARS = {
+    "DOTNET_STARTUP_HOOKS": "C:\\evil\\hook.dll",
+    "COR_ENABLE_PROFILING": "1",
+    "CoreClr_Profiler_Path": "C:\\evil\\p.dll",
+    "COMPlus_EnableDiagnostics": "1",
+    "COREHOST_TRACE": "1",
+}
+
+
+def test_the_launcher_never_sees_a_dotnet_loader_variable(windows, tmp_path, private_tmp) -> None:
+    launcher = _fake_launcher(tmp_path / "bin", "run")
+    _use_launcher(windows, launcher)
+    for key, value in _LOADER_VARS.items():
+        windows.setenv(key, value)
+    real_env = jr.JobRunner._child_environment
+    windows.setattr(jr.JobRunner, "_child_environment", lambda self, cwd: {**real_env(self, cwd), **_LOADER_VARS})
+    assert _runner(tmp_path).run(["python", "-c", "0"]).returncode == 0
+    for form in ("grant", "run"):
+        seen = {key.upper() for key in json.loads((launcher.parent / f"env-{form}.json").read_text())}
+        assert not seen & {key.upper() for key in _LOADER_VARS}, form
+    assert "SAFE" in wc.launcher_environment({"SAFE": "1", "dotnet_root": "x"})
+    assert "dotnet_root" not in wc.launcher_environment({"SAFE": "1", "dotnet_root": "x"})
+
+
+class _FakeJob:
+    def __init__(self, fail: bool = False) -> None:
+        self.pids: list[int] = []
+        self.fail = fail
+
+    def assign(self, pid: int) -> None:
+        if self.fail:
+            raise OSError("access denied")
+        self.pids.append(pid)
+
+
+def test_every_launcher_is_adopted_by_vools_own_job(windows, tmp_path, private_tmp) -> None:
+    launcher = _fake_launcher(tmp_path / "bin", "run")
+    _use_launcher(windows, launcher)
+    job = _FakeJob()
+    windows.setattr(wc, "_vool_job", lambda: job)
+    assert _runner(tmp_path).run(["python", "-c", "0"]).returncode == 0
+    assert len(job.pids) == 2, "the grant form and the run form both run inside VOOL's job"
+    assert wc.launcher_form(launcher, "revoke", tmp_path / "p.json") is True
+    assert len(job.pids) == 3
+
+
+def test_a_launcher_that_cannot_join_vools_job_is_stopped_and_the_job_refused(windows, tmp_path, private_tmp) -> None:
+    launcher = _fake_launcher(tmp_path / "bin", "run")
+    _use_launcher(windows, launcher)
+    windows.setattr(wc, "_vool_job", lambda: _FakeJob(fail=True))
+    marker = tmp_path / "ws" / "ran"
+    with pytest.raises(jr.KernelIsolationUnavailableError, match="grant"):
+        _runner(tmp_path).run(["python", "-c", f"open({str(marker)!r}, 'w')"])
+    assert not marker.exists()
+
+
+def test_a_run_form_that_cannot_join_vools_job_is_refused(windows, tmp_path, private_tmp) -> None:
+    launcher = _fake_launcher(tmp_path / "bin", "run")
+    _use_launcher(windows, launcher)
+    jobs = iter([_FakeJob(), _FakeJob(fail=True)])  # the grant joins, the run form doesn't
+    windows.setattr(wc, "_vool_job", lambda: next(jobs))
+    with pytest.raises(jr.KernelIsolationUnavailableError, match="VOOL's own job"):
+        _runner(tmp_path).run(["python", "-c", "import time; time.sleep(1)"])
+    assert _staging_folders(private_tmp) == set()
+
+
+def test_a_read_root_inside_a_write_root_is_denied_writes(windows, tmp_path) -> None:
+    _use_launcher(windows, _fake_launcher(tmp_path / "bin", "run"))
+    venv = _mk(tmp_path / "ws" / ".venv").resolve()
+    runner = jr.JobRunner(
+        ExecutionPolicy(workspace_root=tmp_path / "ws", writable_roots=(tmp_path / "ws",), read_roots=(venv,))
+    )
+    policy = json.loads(Path(runner._with_network_isolation(["python", "-c", "0"])[2]).read_text())
+    assert str(venv) in policy["read_roots"] and str(venv) in policy["deny_write_paths"]
+    assert str((tmp_path / "ws").resolve()) not in policy["deny_write_paths"], "the workspace itself stays writable"
