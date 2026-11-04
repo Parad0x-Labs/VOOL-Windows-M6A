@@ -51,7 +51,7 @@ Never granted, even if named with `--allow-grant`:
 
 `--create-profile` registers the `VOOL.Confine.Probe7` AppContainer profile. That writes HKCU and makes a `%LOCALAPPDATA%\Packages\` folder, and both are removed by DeleteAppContainerProfile at the end. A profile that already existed is reused and left as found. From v7, the profile is handled like this:
 - Intent is journalled **before** CreateAppContainerProfile runs.
-- If any trace of the profile already exists (the HKCU `AppContainer\Mappings\<SID>` or `Storage\<SID>` key, or `%LOCALAPPDATA%\Packages\VOOL.Confine.Probe7`), the profile is reused and never deleted.
+- If any trace of the profile already exists (the HKCU `AppContainer\Mappings\<SID>` key, the `Storage\vool.confine.probe7` key (Storage is keyed by moniker), either under the other spelling, or `%LOCALAPPDATA%\Packages\VOOL.Confine.Probe7`), the profile is reused and never deleted.
 - Deletion only ever names `VOOL.Confine.Probe7` with its derived SID, and logs the hr.
 - The journal is kept until all three traces are confirmed gone.
 - Every clean-up step runs in its own try/finally.

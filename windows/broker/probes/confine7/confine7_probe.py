@@ -655,14 +655,18 @@ def profile_traces(pkg_s: str) -> dict[str, bool]:
     import winreg
 
     out: dict[str, bool] = {}
-    for kind in ("Mappings", "Storage"):
+    # Mappings is keyed by SID; Storage is keyed by the lower-case moniker (measured on Steve:
+    # 166/166 Mappings by SID, 129/129 Storage by moniker). Both spellings are checked for both.
+    for label, sub in (("Mappings", pkg_s), ("Mappings-moniker", PROFILE.lower()),
+                       ("Storage", PROFILE.lower()), ("Storage-sid", pkg_s)):
+        kind = label.split("-")[0]
         try:
-            winreg.CloseKey(winreg.OpenKey(winreg.HKEY_CURRENT_USER, f"{_AC_KEY}\\{kind}\\{pkg_s}"))
-            out[kind] = True
+            winreg.CloseKey(winreg.OpenKey(winreg.HKEY_CURRENT_USER, f"{_AC_KEY}\\{kind}\\{sub}"))
+            out[label] = True
         except FileNotFoundError:
-            out[kind] = False
+            out[label] = False
         except OSError:
-            out[kind] = True
+            out[label] = True
     local = os.environ.get("LOCALAPPDATA")
     out["Packages"] = True if not local else (Path(local) / "Packages" / PROFILE).exists()
     return out
