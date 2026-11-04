@@ -179,19 +179,44 @@ def test_an_existing_git_directory_is_not_writable(ws: Path) -> None:
     assert not (hooks / "pre-commit").exists()
 
 
+_PLANT = """
+root = os.path.join("nested", ".git") if P["layout"] == "dot_git" else "planted.git"
+for sub in ("objects", "refs", "hooks"):
+    os.makedirs(os.path.join(root, sub), exist_ok=True)
+open(os.path.join(root, "HEAD"), "w").write("ref: refs/heads/main\\n")
+open(os.path.join(root, "config"), "w").write("[core]\\n\\tbare = true\\n\\tfsmonitor = calc.exe\\n")
+"""
+
+
+def _refused_for_the_repository(ws: Path, body: str, params: dict, **policy) -> None:
+    from sandbox.job_runner import NestedGitMetadataError
+
+    try:
+        result = _run(ws, body, params, **policy)
+    except NestedGitMetadataError:
+        return  # the result was refused: the pass
+    raise AssertionError(f"a job that planted a repository was not refused (exit {result.returncode})")
+
+
 @pytest.mark.parametrize("layout", ["dot_git", "bare"])
 def test_a_repository_planted_during_the_job_fails_the_job(ws: Path, layout: str) -> None:
-    body = """
-    root = os.path.join("nested", ".git") if P["layout"] == "dot_git" else "planted.git"
-    for sub in ("objects", "refs", "hooks"):
-        os.makedirs(os.path.join(root, sub), exist_ok=True)
-    open(os.path.join(root, "HEAD"), "w").write("ref: refs/heads/main\\n")
-    open(os.path.join(root, "config"), "w").write("[core]\\n\\tbare = true\\n\\tfsmonitor = calc.exe\\n")
-    raise PermissionError("planted; the launcher must refuse the result")
-    """
-    result = _run(ws, body, {"layout": layout})
-    assert RAN in result.stdout, result.stderr[-400:]
-    assert result.returncode != 0, "a job that planted a repository must not be reported as a success"
+    body = _PLANT + 'raise PermissionError("planted; the launcher must refuse the result")\n'
+    _refused_for_the_repository(ws, body, {"layout": layout})
+
+
+@pytest.mark.parametrize("layout", ["dot_git", "bare"])
+def test_a_repository_planted_by_a_job_that_then_hangs_is_still_refused(ws: Path, layout: str) -> None:
+    # The runner's timeout kills the launcher before its own post-job scan runs, so the runner must
+    # scan (the launcher's `scan` form) before it returns anything. Otherwise a job could plant a
+    # repository and simply never exit.
+    body = _PLANT + "import time\ntime.sleep(600)\n"
+    _refused_for_the_repository(ws, body, {"layout": layout}, max_seconds=5)
+    # And the next job on the same workspace is refused too: grant must not "heal" the planted layout.
+    from sandbox.job_runner import KernelIsolationUnavailableError, NestedGitMetadataError
+
+    with pytest.raises((KernelIsolationUnavailableError, NestedGitMetadataError)):
+        _run(ws, 'open("after.txt", "w").write("x")')
+    assert not (ws / "after.txt").exists()
 
 
 # ---- reads -------------------------------------------------------------------------------------
