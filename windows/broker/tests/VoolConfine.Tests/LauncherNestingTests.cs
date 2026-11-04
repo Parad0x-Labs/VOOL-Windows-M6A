@@ -44,28 +44,42 @@ public class LauncherNestingTests
         Assert.True(variants[0].Code == 7, $"the default job could not start a grandchild: {table}");
     }
 
-    // From inside the box, CreateProcessW with each creation-flag, environment and directory choice,
-    // printed as "flags/env/cwd=result" so a failure names the choice that matters.
+    // From inside the box, CreateProcessW with a NULL or explicit directory, with and without handle
+    // inheritance, before and after the child resets its own current directory, printed as
+    // "case=OK<exit>" or "case=ERR<win32>" so a failure names the choice that matters.
+    // PowerShell turns $null into "" for a string parameter, so a real NULL directory needs
+    // [NullString]::Value (run 41906745205's "=ERR123" rows were "" and say nothing about NULL).
     const string Matrix = """
-        $sig = '[DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] public static extern bool CreateProcessW(string app, System.Text.StringBuilder cmd, IntPtr pa, IntPtr ta, bool inherit, uint flags, IntPtr env, string dir, byte[] si, byte[] pi);'
+        $sig = @'
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] public static extern bool CreateProcessW(string app, System.Text.StringBuilder cmd, IntPtr pa, IntPtr ta, bool inherit, uint flags, IntPtr env, string dir, byte[] si, byte[] pi);
+        [DllImport("kernel32.dll")] public static extern uint WaitForSingleObject(IntPtr h, uint ms);
+        [DllImport("kernel32.dll")] public static extern bool GetExitCodeProcess(IntPtr h, out uint code);
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] public static extern bool SetCurrentDirectoryW(string dir);
+        '@
         $k = Add-Type -MemberDefinition $sig -Name K -Namespace VoolConfineNest -PassThru
         $app = "$env:SystemRoot\System32\cmd.exe"
-        $block = [Runtime.InteropServices.Marshal]::StringToHGlobalUni("SystemRoot=$env:SystemRoot`0TEMP=$env:TEMP`0`0")
         $here = [Environment]::CurrentDirectory
         $out = @("CWD=$here", "TEMP=$env:TEMP")
-        foreach ($flags in 0, 0x8) {
-          foreach ($envKind in 'inherit', 'explicit') {
-            foreach ($dir in $null, 'C:\Windows', "$env:SystemRoot\System32", $here, $env:TEMP, 'WORKROOT') {
-              $si = New-Object byte[] 104; $si[0] = 104
-              $pi = New-Object byte[] 24
-              $cmd = New-Object System.Text.StringBuilder 'cmd.exe /c exit 0'
-              $f = $flags; $e = [IntPtr]::Zero
-              if ($envKind -eq 'explicit') { $f = $f -bor 0x400; $e = $block }
-              $ok = $k::CreateProcessW($app, $cmd, [IntPtr]::Zero, [IntPtr]::Zero, $false, $f, $e, $dir, $si, $pi)
-              $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
-              $out += "0x{0:X}/{1}/{2}={3}" -f $flags, $envKind, $dir, $(if ($ok) { 'OK' } else { "ERR$err" })
-            }
-          }
+        function Try-Create($label, $dir, $inherit) {
+          $si = New-Object byte[] 104; $si[0] = 104
+          $pi = New-Object byte[] 24
+          $cmd = New-Object System.Text.StringBuilder 'cmd.exe /c exit 7'
+          $ok = $k::CreateProcessW($app, $cmd, [IntPtr]::Zero, [IntPtr]::Zero, $inherit, 0, [IntPtr]::Zero, $dir, $si, $pi)
+          $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+          if (-not $ok) { return "$label=ERR$err" }
+          $h = [IntPtr][BitConverter]::ToInt64($pi, 0)
+          [void]$k::WaitForSingleObject($h, 10000)
+          $code = 0; [void]$k::GetExitCodeProcess($h, [ref]$code)
+          return "$label=OK$code"
+        }
+        foreach ($inherit in $false, $true) {
+          $out += Try-Create "null/inherit=$inherit" ([NullString]::Value) $inherit
+          $out += Try-Create "here/inherit=$inherit" $here $inherit
+        }
+        $set = $k::SetCurrentDirectoryW($here)
+        $out += "SETCWD=$set"
+        foreach ($inherit in $false, $true) {
+          $out += Try-Create "afterset-null/inherit=$inherit" ([NullString]::Value) $inherit
         }
         'MATRIX ' + ($out -join '; ')
         """;
@@ -76,6 +90,6 @@ public class LauncherNestingTests
         using var box = new ConfineSandbox();
         var result = Launch(box, PowerShellArgs(Matrix.Replace("WORKROOT", box.Work)));
         Assert.True(Started(result), result.Stderr);
-        Assert.True(result.Stdout.Contains("0x0/inherit/=OK"), $"exit {result.ExitCode}; {result.Stdout}; err: {result.Stderr}");
+        Assert.True(result.Stdout.Contains("null/inherit=False=OK7"), $"exit {result.ExitCode}; {result.Stdout}; err: {result.Stderr}");
     }
 }
