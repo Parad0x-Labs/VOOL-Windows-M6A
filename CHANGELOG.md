@@ -6,7 +6,7 @@ history is not republished here.
 ## [Unreleased] — Windows
 
 ### Known limitations
-- On Windows, VOOL can't yet run code tools (tests, git, npm, Python scripts) for you in its sandbox. It refuses them rather than run them unprotected. Everything else works. To run code tools, use VOOL under WSL2/Linux.
+- On Windows, VOOL can't yet run code tools (tests, git, npm, Python scripts) for you in its sandbox, and it doesn't start plugins or MCP servers or open files that need an external decoder. It refuses all of these rather than run them unprotected. Chat, local and cloud models, and workspace edits work. To run code tools, use VOOL under WSL2/Linux.
 
 ### Planned
 - A native Windows sandbox for code tools (AppContainer + Job Object).
