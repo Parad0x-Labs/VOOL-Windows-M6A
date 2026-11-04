@@ -101,9 +101,16 @@ Status file fields:
 - **Profile.** One fixed AppContainer profile named `VOOL.Confine.v1`. Its package SID is shared by
   every job, so it only ever receives READ grants, plus explicit DENY-write ACEs.
 - **Read grants (package SID).** Read and execute on `read_roots`.
-- **Deny ACEs (package SID).** Deny write on `deny_write_paths` and on every `.git` under a write root;
-  deny all access on `deny_all_paths`.
-  Because the package SID is in every job's token, these deny ACEs bind every job.
+- **Deny ACEs.** Deny write on `deny_write_paths` and on every `.git` under a write root; deny all
+  access on `deny_all_paths`.
+  **A deny binds only the SIDs it names.** Windows judges the package SID and each capability on its
+  own, and grants whatever any one of them is allowed. Measured in windows-broker run 41901543557:
+  a package-SID deny did NOT stop a write that the root's capability was allowed. So:
+  - under a write root, every deny names the package SID AND that root's capability, and a
+    repository counts as protected only when both are denied;
+  - outside every write root, the deny names the package SID, and Verify refuses (125) a deny path
+    whose own DACL gives ALL APPLICATION PACKAGES or ALL RESTRICTED APP PACKAGES the denied access,
+    because no deny we write there would bind them.
 - **Write grants (per-root capability).** Read and write (inheritable) go to a capability SID made
   for that root only: `DeriveCapabilitySidsFromName("vool.root.<sha256 hex>")`, where the hash is of
   the root with `/` turned into `\`, trailing `\` stripped, ASCII letters upper-cased (nothing else), UTF-8
