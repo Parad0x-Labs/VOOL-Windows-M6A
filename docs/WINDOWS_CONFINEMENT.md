@@ -41,6 +41,13 @@ proven to work. `None` means the caller refuses the job. Nothing ever runs unwra
     and never writes them; a verify miss is 125.
   - `VoolConfine.exe grant --policy <path>` writes the grants and deny ACEs (idempotent).
   - `VoolConfine.exe revoke --policy <path>` removes exactly what grant added.
+  - `VoolConfine.exe scan --policy <path>` runs the repository scan alone (unconfined, no child)
+    and rewrites the status file's `new_repositories` and `repositories_scanned`. Exit 0 when no
+    unprotected layout exists, 123 when one does, 125 when the scan could not finish. The caller
+    runs it after every job whose launcher it killed.
+  - Grant never "heals" a layout that appeared after the root was granted: if a write root already
+    holds its capability's grant and a repository layout under it lacks the deny, grant refuses
+    (125, `repo_appeared`) and leaves it for the operator. Only a first grant protects existing repositories.
 - For the run form: Everything after `--` is
   the child's argv, passed on with Windows quoting rules. `--policy` is required.
 - The child runs in an **AppContainer** (no capabilities unless the policy grants network). It
@@ -59,9 +66,13 @@ proven to work. `None` means the caller refuses the job. Nothing ever runs unwra
 - stdin, stdout and stderr are the launcher's own, handed to the child through an explicit handle
   list. No other handle is inherited.
 - Environment: the launcher's own (the caller builds it), with `TEMP`/`TMP` set to the policy's
-  `temp_dir`. That folder is inside a write root and is the same workspace temp folder the caller
-  already uses (`.sandbox-tmp`). The launcher never points them at the AppContainer profile's own
-  `AC\Temp`, which would outlive the job.
+  `temp_dir`, inside a write root (the caller uses its workspace `.sandbox-tmp`). Windows rewrites
+  TEMP/TMP of an AppContainer process to the profile's shared `AC\Temp` whatever the env block says
+  (measured, windows-broker run 41902285066). So the launcher starts a pinned trampoline,
+  `VoolConfineStart.exe`, from the same confine folder. It sets TEMP/TMP to `temp_dir`, starts
+  the program with its command line passed through verbatim, in the same job, and exits with its
+  code. The confine folder gets a read grant for the package SID, and `AC\Temp` is denied write for
+  the package SID, so anything still landing there fails instead of sharing one folder across jobs.
 
 ### Exit codes
 
@@ -95,6 +106,7 @@ Status file fields:
 | `limit` | `"time"`, `"memory"`, `"processes"` or null | The job limit that ended the child, if any. |
 | `error` | string or null | Why setup failed, when `child_started` is false. |
 | `new_repositories` | list of paths | Repository layouts that appeared under a write root during the job. Non-empty means refused (and exit 123). |
+| `repositories_scanned` | bool | True only once the post-job repository scan COMPLETED. A launcher that was killed (cancel, the caller's timeout) never sets it, so an empty `new_repositories` without it proves nothing: the caller runs the `scan` form before it trusts or returns anything. |
 
 ### Identity: one profile, one capability per write root
 

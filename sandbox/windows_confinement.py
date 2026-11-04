@@ -201,6 +201,10 @@ class LaunchStatus:
     #: Repository layouts (a `.git` dir, or a bare repo) that appeared under a write root during the
     #: job. Non-empty means the result is refused (the launcher also exits 123).
     new_repositories: tuple[str, ...] = ()
+    #: True only after the post-job repository scan COMPLETED (a killed launcher never gets there).
+    #: Without it, `new_repositories` being empty proves nothing, so the caller refuses the result
+    #: or runs the `scan` form itself.
+    repositories_scanned: bool = False
 
 
 def read_status(path: Path) -> LaunchStatus | None:
@@ -228,7 +232,10 @@ def read_status(path: Path) -> LaunchStatus | None:
     repos = data.get("new_repositories", [])
     if not isinstance(repos, list) or not all(isinstance(item, str) for item in repos):
         return None
-    return LaunchStatus(data["child_started"], timed_out, exit_code, error, limit, tuple(repos))
+    scanned = data.get("repositories_scanned", False)
+    if not isinstance(scanned, bool):
+        return None
+    return LaunchStatus(data["child_started"], timed_out, exit_code, error, limit, tuple(repos), scanned)
 
 
 #: AppContainer identity (docs/WINDOWS_CONFINEMENT.md section 2, "Identity").
