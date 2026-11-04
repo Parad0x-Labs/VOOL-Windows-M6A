@@ -551,6 +551,21 @@ public class AclTests
         Assert.False(job.CanWrite(f.In("a.txt")));
     }
 
+    [Fact]
+    public void An_outside_deny_all_folder_every_app_container_can_read_is_refused()
+    {
+        using var f = new AclFixture();
+        Touch(f.Out("plain", "token"));
+        Touch(f.Out("open", "token"));
+        AclTest.AddAce(f.Out("open"), AceQualifier.AccessAllowed, AclRules.ReadExecuteMask, new SecurityIdentifier("S-1-15-2-1"),
+            AceFlags.ObjectInherit | AceFlags.ContainerInherit);
+        f.AddDenyAll(f.Out("plain"));
+        f.Grant();
+        f.AddDenyAll(f.Out("open"));
+        Assert.Equal("foreign_access", Assert.Throws<AclException>(() => f.Grant()).Code);
+        Assert.Equal("foreign_access", Assert.Throws<AclException>(() => Acl.Verify(f.MakePolicy(), f.Sids())).Code);
+    }
+
     // ---- pure rules (no file system)
 
     [Theory]
