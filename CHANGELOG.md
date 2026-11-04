@@ -3,6 +3,14 @@
 All notable changes to VOOL. Dates are YYYY-MM-DD. Earlier internal development
 history is not republished here.
 
+## [Unreleased] — Windows
+
+### Known limitations
+- On Windows, VOOL can't yet run code tools (tests, git, npm, Python scripts) for you in its sandbox. It refuses them rather than run them unprotected. Everything else works. To run code tools, use VOOL under WSL2/Linux.
+
+### Planned
+- A native Windows sandbox for code tools (AppContainer + Job Object).
+
 ## [0.7.0-beta] — 2026-10-13
 
 Downloads: Apple Silicon Mac, Intel Mac and Linux x86_64 on the
