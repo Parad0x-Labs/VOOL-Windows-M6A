@@ -198,6 +198,15 @@ def test_browser_chat_flow_user_asks_model_proposes_operator_approves_with_pin(b
     page.fill("#input", f"Please pay 1500 lamports to {DESTINATION} for the quarterly report")
     page.click("#send")
     _wait_replies(page, 1, daemon=daemon)
+    # The proposal bubble can land before its "State: pending_approval." line on a loaded runner (CI 40843532973):
+    # wait until the reply has settled (status line and proposal id present, no reply still pending) before the
+    # snapshot. On timeout the snapshot is taken anyway, so the assert below carries the page text as evidence.
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    try:
+        page.wait_for_function("() => { const t = document.body.innerText; return t.includes('pending_approval') && t.includes('pay-') && !document.querySelector('.msg.assistant.pending'); }", timeout=60000)
+    except PlaywrightTimeoutError:
+        pass
     reply = page.evaluate("() => document.body.innerText")
     assert "pending_approval" in reply and "pay-" in reply, reply
     assert daemon["rpc"].send_count() == 0
