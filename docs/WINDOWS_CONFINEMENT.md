@@ -25,11 +25,29 @@ proven to work. `None` means the caller refuses the job. Nothing ever runs unwra
   accepts the launcher only when every listed file matches and no unlisted file is present, because
   a planted DLL is code too. A missing pin, a mismatch, an extra file or a missing file all mean
   unavailable.
+- **Pin file shape.** UTF-8 without a BOM, exactly two keys:
+  `{"schema": "vool.windows_confinement.pin.v1", "files": {"<relpath with />": "<sha256, lowercase hex>"}}`.
+  Any other key or shape means unavailable.
+- **The launcher's own environment (caller, chunk 3).** The pin proves the files, but the .NET host
+  still loads code named by environment variables. The launcher is published with
+  `StartupHookSupport=false`, and the caller drops every variable starting `CORECLR_`, `COR_`,
+  `COMPlus_`, `DOTNET_` or `COREHOST_` (case-insensitive) from the env it launches VoolConfine.exe
+  with. Otherwise a planted profiler or hook loads a DLL from outside the pinned folder, unconfined.
+- **Lifetime (caller, chunk 3).** Each launcher runs inside VOOL's own kill-on-close job, the way
+  the broker does, so no launcher outlives VOOL. Otherwise one would hold its files open and block
+  an upgrade.
 - Command line, three forms. All are run unconfined by VOOL, never by a job:
   - `VoolConfine.exe --policy <path> -- <program> [args...]` runs a job. It only VERIFIES the ACLs
     and never writes them; a verify miss is 125.
   - `VoolConfine.exe grant --policy <path>` writes the grants and deny ACEs (idempotent).
   - `VoolConfine.exe revoke --policy <path>` removes exactly what grant added.
+  - `VoolConfine.exe scan --policy <path>` runs the repository scan alone (unconfined, no child)
+    and rewrites the status file's `new_repositories` and `repositories_scanned`. Exit 0 when no
+    unprotected layout exists, 123 when one does, 125 when the scan could not finish. The caller
+    runs it after every job whose launcher it killed.
+  - Grant never "heals" a layout that appeared after the root was granted: if a write root already
+    holds its capability's grant and a repository layout under it lacks the deny, grant refuses
+    (125, `repo_appeared`) and leaves it for the operator. Only a first grant protects existing repositories.
 - For the run form: Everything after `--` is
   the child's argv, passed on with Windows quoting rules. `--policy` is required.
 - The child runs in an **AppContainer** (no capabilities unless the policy grants network). It
@@ -48,9 +66,13 @@ proven to work. `None` means the caller refuses the job. Nothing ever runs unwra
 - stdin, stdout and stderr are the launcher's own, handed to the child through an explicit handle
   list. No other handle is inherited.
 - Environment: the launcher's own (the caller builds it), with `TEMP`/`TMP` set to the policy's
-  `temp_dir`. That folder is inside a write root and is the same workspace temp folder the caller
-  already uses (`.sandbox-tmp`). The launcher never points them at the AppContainer profile's own
-  `AC\Temp`, which would outlive the job.
+  `temp_dir`, inside a write root (the caller uses its workspace `.sandbox-tmp`). Windows rewrites
+  TEMP/TMP of an AppContainer process to the profile's shared `AC\Temp` whatever the env block says
+  (measured, windows-broker run 41902285066). So the launcher starts a pinned trampoline,
+  `VoolConfineStart.exe`, from the same confine folder. It sets TEMP/TMP to `temp_dir`, starts
+  the program with its command line passed through verbatim, in the same job, and exits with its
+  code. The confine folder gets a read grant for the package SID, and `AC\Temp` is denied write for
+  the package SID, so anything still landing there fails instead of sharing one folder across jobs.
 
 ### Exit codes
 
@@ -84,15 +106,23 @@ Status file fields:
 | `limit` | `"time"`, `"memory"`, `"processes"` or null | The job limit that ended the child, if any. |
 | `error` | string or null | Why setup failed, when `child_started` is false. |
 | `new_repositories` | list of paths | Repository layouts that appeared under a write root during the job. Non-empty means refused (and exit 123). |
+| `repositories_scanned` | bool | True only once the post-job repository scan COMPLETED. A launcher that was killed (cancel, the caller's timeout) never sets it, so an empty `new_repositories` without it proves nothing: the caller runs the `scan` form before it trusts or returns anything. |
 
 ### Identity: one profile, one capability per write root
 
 - **Profile.** One fixed AppContainer profile named `VOOL.Confine.v1`. Its package SID is shared by
   every job, so it only ever receives READ grants, plus explicit DENY-write ACEs.
 - **Read grants (package SID).** Read and execute on `read_roots`.
-- **Deny ACEs (package SID).** Deny write on `deny_write_paths` and on every `.git` under a write root;
-  deny all access on `deny_all_paths`.
-  Because the package SID is in every job's token, these deny ACEs bind every job.
+- **Deny ACEs.** Deny write on `deny_write_paths` and on every `.git` under a write root; deny all
+  access on `deny_all_paths`.
+  **A deny binds only the SIDs it names.** Windows judges the package SID and each capability on its
+  own, and grants whatever any one of them is allowed. Measured in windows-broker run 41901543557:
+  a package-SID deny did NOT stop a write that the root's capability was allowed. So:
+  - under a write root, every deny names the package SID AND that root's capability, and a
+    repository counts as protected only when both are denied;
+  - outside every write root, the deny names the package SID, and Verify refuses (125) a deny path
+    whose own DACL gives ALL APPLICATION PACKAGES or ALL RESTRICTED APP PACKAGES the denied access,
+    because no deny we write there would bind them.
 - **Write grants (per-root capability).** Read and write (inheritable) go to a capability SID made
   for that root only: `DeriveCapabilitySidsFromName("vool.root.<sha256 hex>")`, where the hash is of
   the root with `/` turned into `\`, trailing `\` stripped, ASCII letters upper-cased (nothing else), UTF-8
@@ -100,6 +130,10 @@ Status file fields:
   which both tests pin to the vector `C:\work\a` → `vool.root.b144b923…5d7e40`). The launcher puts in the token only the
   capabilities of THIS job's write roots, so a job can never write another job's workspace.
 - **Network.** `internetClient` is added only when `network` is true.
+- **No other writer.** Verify refuses (125) a write root on which any other AppContainer SID
+  (`S-1-15-2-*` or `S-1-15-3-*`, including ALL APPLICATION PACKAGES and another root's capability)
+  is allowed any write right, and a read root on which any of them is. It also refuses a NULL DACL
+  anywhere it walks. Otherwise one job could write another's workspace or the toolchain.
 
 ### Teardown
 
@@ -122,7 +156,7 @@ every writable root**, and deletes both after the job.
   "schema": "vool.windows_confinement.v1",
   "write_roots": ["C:\\work\\repo"],
   "read_roots": ["C:\\Python312", "C:\\work\\repo\\.venv"],
-  "deny_write_paths": ["C:\\work\\repo\\vendor-code"],
+  "deny_write_paths": ["C:\\work\\repo\\vendor-code", "C:\\work\\repo\\.venv"],
   "deny_all_paths": ["C:\\Users\\me\\.vool_runtime", "C:\\Users\\me\\.ssh"],
   "deny_write_git": true,
   "network": false,
@@ -150,7 +184,8 @@ Rules, all enforced by the launcher (126 if broken):
 - **Fresh status (chunk 3).** The caller creates a new, empty status folder per job and refuses to
   launch if a status file already exists there, so an earlier job's status can never be read as this one's.
 - **`write_roots`.** Non-empty. Read and write for the container.
-- **`read_roots`.** Read and execute only.
+- **`read_roots`.** Read and execute only. A read root inside a write root is still writable through
+  the write root's grant; to make it read-only (a workspace `.venv`), also list it in `deny_write_paths`.
 - **`deny_write_paths`.** Explicitly denied write, beating any inherited grant (code roots).
 - **`deny_all_paths`.** Denied read AND write, like the Mac's secret and state denies (VOOL runtime state, credentials).
 - **`deny_write_git`.** When true, every `.git` directory under a write root is denied write.
