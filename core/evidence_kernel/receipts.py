@@ -38,6 +38,7 @@ def _sha256(data: str | bytes) -> str:
 
 _DIGEST_KEY_NAME = ".digest_key"
 _DIGEST_KEY_LOCK = threading.Lock()
+_WINDOWS_OWNER_ONLY = os.name == "nt"
 
 
 def _digest_key() -> bytes:
@@ -55,6 +56,12 @@ def _digest_key() -> bytes:
         tmp = path.with_suffix(".tmp")
         fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
+            if _WINDOWS_OWNER_ONLY:
+                # The 0o600 above only sets the read-only bit on Windows; make the still-empty file
+                # owner-only (protected one-ACE DACL) or raise OwnerOnlyUnavailable before the key lands.
+                from core.owner_only import require_owner_only
+
+                require_owner_only(tmp)
             os.write(fd, key)
             os.fsync(fd)
         finally:
