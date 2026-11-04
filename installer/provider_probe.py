@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Any
 from urllib import request
@@ -73,6 +74,45 @@ def _format_ollama_size_label(value: Any) -> str:
     if size > 0:
         return f"{int(size)} B"
     return ""
+
+
+def _run_bounded_child(argv: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
+    """Run a probe child with its output in temporary files, never in pipes, under a hard bound.
+
+    ``ollama list`` / ``ollama run`` start the Ollama server when it is not running, and that
+    long-lived grandchild inherits the CLI's stdout/stderr. With ``capture_output`` pipes the
+    reader waits for EOF, which only comes when the server exits; on Windows a timed-out
+    ``subprocess.run`` even re-reads the pipes with no timeout after killing the CLI, so the
+    probe hung for hours. A file has no EOF to wait for: once the CLI exits (or is killed at the
+    bound) the output written so far is read back at once. Only the direct child, which this
+    probe started, is killed; the server it may have started is left alone. A ``str`` output on
+    the returned process (a stand-in ``subprocess.run``) is passed through as given.
+    """
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+
+        def _read(handle: Any) -> str:
+            handle.flush()
+            handle.seek(0)
+            return handle.read().decode("utf-8", errors="replace")
+
+        try:
+            # With file handles there are no pipes for run() to drain: at the bound it kills the
+            # direct child and only waits for that child to exit.
+            completed = subprocess.run(
+                argv,
+                stdin=subprocess.DEVNULL,
+                stdout=out,
+                stderr=err,
+                encoding="utf-8",  # same decoding as the files are read back with below
+                errors="replace",
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            raise subprocess.TimeoutExpired(argv, timeout, output=_read(out), stderr=_read(err)) from None
+        stdout = completed.stdout if isinstance(completed.stdout, str) else _read(out)
+        stderr = completed.stderr if isinstance(completed.stderr, str) else _read(err)
+        return subprocess.CompletedProcess(argv, completed.returncode, stdout, stderr)
 
 
 def _list_ollama_models_via_api(api_url: str | None = None) -> list[dict[str, str]]:
@@ -179,15 +219,7 @@ def list_ollama_models(ollama_binary: str | None = None, ollama_api_url: str | N
     if not binary:
         return []
     try:
-        completed = subprocess.run(
-            [binary, "list"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=15,
-            check=False,
-        )
+        completed = _run_bounded_child([binary, "list"], timeout=15)
     except Exception:
         return []
     lines = [line.rstrip() for line in str(completed.stdout or "").splitlines() if line.strip()]
@@ -233,15 +265,7 @@ def run_ollama_benchmark(
     )
     started = time.perf_counter()
     try:
-        completed = subprocess.run(
-            [binary, "run", model, prompt],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=max(1, int(timeout_seconds)),
-            check=False,
-        )
+        completed = _run_bounded_child([binary, "run", model, prompt], timeout=max(1, int(timeout_seconds)))
     except subprocess.TimeoutExpired as exc:
         elapsed = max(0.0, time.perf_counter() - started)
         output = str(getattr(exc, "stdout", "") or "")
