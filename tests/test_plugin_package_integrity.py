@@ -101,6 +101,12 @@ def test_links_and_special_files_fail_closed(inventory, kind):
         added.symlink_to(pack / "bin/run")
     elif kind == "hardlink":
         os.link(pack / "bin/run", added)
+    elif os.name == "nt":
+        # Windows has no FIFOs. Its special entry a package walk can meet is a reparse point that
+        # is not a symlink: a directory junction, which needs no privilege to create.
+        import _winapi
+
+        _winapi.CreateJunction(str(pack / "bin"), str(added))
     else:
         os.mkfifo(added)
     assert not lifecycle.is_available("pack")
