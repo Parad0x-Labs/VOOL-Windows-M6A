@@ -45,6 +45,10 @@ proven to work. `None` means the caller refuses the job. Nothing ever runs unwra
     and rewrites the status file's `new_repositories` and `repositories_scanned`. Exit 0 when no
     unprotected layout exists, 123 when one does, 125 when the scan could not finish. The caller
     runs it after every job whose launcher it killed.
+  - **Grant lifetime (phase 1).** Grants stay on a workspace after its jobs end; the caller grants once
+    per policy shape per VOOL process, and every run form re-verifies. Revoke runs when VOOL drops a
+    workspace (and `includeShared` only when no other granted workspace names the same read roots).
+    A leftover grant gives nothing to anyone but a confined job of that root.
   - Grant never "heals" a layout that appeared after the root was granted: if a write root already
     holds its capability's grant and a repository layout under it lacks the deny, grant refuses
     (125, `repo_appeared`) and leaves it for the operator. Only a first grant protects existing repositories.
