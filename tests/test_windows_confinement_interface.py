@@ -171,3 +171,18 @@ def test_a_status_path_inside_a_write_root_under_any_casing_is_refused(root: str
         wc.WindowsConfinementPolicy(
             write_roots=(root,), temp_dir=root.rstrip("\\") + "\\t", status_path=status
         ).validate()
+
+
+def test_a_status_without_a_completed_scan_says_so(tmp_path: Path) -> None:
+    path = tmp_path / "status.json"
+    path.write_text(json.dumps({"schema": wc.STATUS_SCHEMA, "child_started": True, "exit_code": 0}), encoding="utf-8")
+    assert wc.read_status(path).repositories_scanned is False
+    path.write_text(
+        json.dumps({"schema": wc.STATUS_SCHEMA, "child_started": True, "exit_code": 0, "repositories_scanned": True}),
+        encoding="utf-8",
+    )
+    assert wc.read_status(path).repositories_scanned is True
+    path.write_text(
+        json.dumps({"schema": wc.STATUS_SCHEMA, "child_started": True, "repositories_scanned": "yes"}), encoding="utf-8"
+    )
+    assert wc.read_status(path) is None
