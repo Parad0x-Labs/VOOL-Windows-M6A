@@ -41,10 +41,16 @@ proven to work. `None` means the caller refuses the job. Nothing ever runs unwra
   - UI restrictions.
   The launcher holds the only job handle. Ending the launcher, for any reason, ends the child's
   whole tree.
-- **argv[0] must be an absolute path.** The launcher never searches PATH; a relative program is 126.
+- **argv[0] must be an absolute path to an `.exe`** (case-insensitive). The launcher never searches
+  PATH; a relative program is 126. A `.cmd`, `.bat` or any other extension is 126 too, because
+  CreateProcess runs a batch file through `cmd.exe` and its own quoting rules (argument injection).
+  The caller resolves shims such as `npm` to `node.exe` plus the tool's JS entry point.
 - stdin, stdout and stderr are the launcher's own, handed to the child through an explicit handle
   list. No other handle is inherited.
-- Environment: the launcher's own, with `TEMP`/`TMP` set to the policy's `temp_dir`.
+- Environment: the launcher's own (the caller builds it), with `TEMP`/`TMP` set to the policy's
+  `temp_dir`. That folder is inside a write root and is the same workspace temp folder the caller
+  already uses (`.sandbox-tmp`). The launcher never points them at the AppContainer profile's own
+  `AC\Temp`, which would outlive the job.
 
 ### Exit codes
 
