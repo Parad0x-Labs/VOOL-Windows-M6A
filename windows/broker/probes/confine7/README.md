@@ -37,7 +37,7 @@ Time limits:
 
 Recovery and checks:
 - Every ACE is journalled to `<root>\out\grants-journal.json` **before** icacls runs. If the run is killed anyway, run the same command with `--revoke-only`. It checks the journal's SIDs against the probe's own derived SIDs, then removes them and confirms with icacls that nothing is left.
-- The journal is deleted only once icacls shows no probe SID on any listed path.
+- The journal is deleted only once the FULL `icacls <path> /T /C` listing of every listed path (every file and folder below it) exits 0 and names neither probe SID nor the profile. The 600-character tail is only for the log. Otherwise an `R-check` line says ACEs may remain.
 
 Grant times are not chunk 2's numbers. `icacls /grant (OI)(CI)` rewrites the ACL of every existing file below the folder. Chunk 2 writes by handle and never propagates like that.
 

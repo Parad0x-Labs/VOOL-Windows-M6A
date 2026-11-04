@@ -194,9 +194,15 @@ def root_capability_name(root: str) -> str:
 ICACLS = str(Path(os.environ["SystemRoot"]) / "System32" / "icacls.exe")
 
 
-def icacls(*args: str) -> tuple[int, str]:
+def icacls_full(*args: str) -> tuple[int, str]:
     p = subprocess.run([ICACLS, *args], capture_output=True, text=True, errors="replace")
-    return p.returncode, (p.stdout + p.stderr).strip()[-600:]
+    return p.returncode, (p.stdout + p.stderr)
+
+
+def icacls(*args: str) -> tuple[int, str]:
+    """For the log only: the last 600 characters. Never used to decide anything was revoked."""
+    rc, text = icacls_full(*args)
+    return rc, text.strip()[-600:]
 
 
 def env_block(env: dict[str, str]) -> ctypes.Array:
@@ -566,7 +572,11 @@ def main() -> int:
         for p in reversed(granted):
             rc, msg = icacls(p, "/remove", f"*{pkg_s}", f"*{cap_s}")
             emit({"tag": "R-revoke", "path": p, "rc": rc, "out": msg})
-        if all_revoked(granted, pkg_s, cap_s):
+        clean = all_revoked(granted, pkg_s, cap_s)
+        emit({"tag": "R-check", "all_probe_aces_gone": clean,
+              "note": "full icacls /T /C listing of every granted path" if clean
+              else "PROBE ACEs MAY REMAIN: journal kept; rerun with --revoke-only and the same flags"})
+        if clean:
             journal.unlink(missing_ok=True)
         if profile_made:
             uenv.DeleteAppContainerProfile(PROFILE)
@@ -576,12 +586,15 @@ def main() -> int:
 
 
 def all_revoked(paths: list[str], *sids: str) -> bool:
-    """True when no listed path still carries an ACE for either probe SID."""
+    """True only when the FULL `icacls <path> /T /C` listing of every listed path (each file and folder
+    under it) exits 0 and names neither probe SID nor the profile, case-insensitively."""
+    needles = [n.upper() for n in (*sids, PROFILE)]
     for p in paths:
         if not os.path.exists(p):
             continue
-        rc, text = icacls(p)
-        if rc != 0 or any(s in text for s in (*sids, PROFILE)):
+        rc, text = icacls_full(p, "/T", "/C")
+        upper = text.upper()
+        if rc != 0 or any(n in upper for n in needles):
             return False
     return True
 
