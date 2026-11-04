@@ -7,6 +7,7 @@ class fixed on 2026-09-07.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -117,8 +118,16 @@ def test_a_verb_with_its_own_object_still_opens_a_second_request(wording):
 from core.effect_reconciliation import clear_in_flight_effect, set_in_flight_effect
 from core.runtime_execution_tools import execute_runtime_tool
 
+# The same outside places in each OS's own spelling. On Windows "/tmp" is not a full local path, so
+# the path policy refuses it as non-local before the workspace check this class pins ever runs.
+_OUTSIDE_DIRS = (
+    ["C:\\Windows\\Temp", "C:\\ProgramData", "../../..", "C:\\Windows\\System32\\drivers\\etc"]
+    if os.name == "nt"
+    else ["/tmp", "/Library", "../../..", "/etc"]
+)
 
-@pytest.mark.parametrize("cwd", ["/tmp", "/Library", "../../..", "/etc"])
+
+@pytest.mark.parametrize("cwd", _OUTSIDE_DIRS)
 def test_other_outside_directories_are_refused_by_name_even_mid_effect(tmp_path: Path, cwd: str):
     workspace = tmp_path / "ws"
     workspace.mkdir(exist_ok=True)

@@ -7,6 +7,7 @@ the endpoint arms, the api module, the orchestrator thread, the run store — is
 from __future__ import annotations
 
 import json
+import tempfile
 import time
 
 import pytest
@@ -121,7 +122,7 @@ def _get(path, host, query=None):
 def _post(path, body, host):
     res = dispatch_post(path=path, body=body, headers={"content-type": "application/json"},
                         runtime=RuntimeServices(display_name="N"), model_name="vool",
-                        workspace_root_provider=lambda: "/tmp", client_host=host)
+                        workspace_root_provider=tempfile.gettempdir, client_host=host)
     return res.status, json.loads(res.body.decode("utf-8"))
 
 

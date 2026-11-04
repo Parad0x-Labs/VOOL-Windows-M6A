@@ -14,6 +14,7 @@ to belong to, and a double-terminal persist that must leave exactly one message.
 from __future__ import annotations
 
 import json
+import tempfile
 
 import pytest
 
@@ -383,7 +384,7 @@ def test_a_convened_run_leaves_its_verdict_in_the_chat_transcript(isolated_counc
         },
         headers={"content-type": "application/json"},
         runtime=RuntimeServices(display_name="N"), model_name="vool",
-        workspace_root_provider=lambda: "/tmp", client_host="127.0.0.1",
+        workspace_root_provider=tempfile.gettempdir, client_host="127.0.0.1",
     )
     payload = json.loads(res.body.decode("utf-8"))
     assert payload["ok"], payload

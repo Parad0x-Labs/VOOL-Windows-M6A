@@ -16,6 +16,7 @@ from off the machine, and a stop racing a resume.
 from __future__ import annotations
 
 import json
+import tempfile
 import threading
 import time
 
@@ -72,7 +73,7 @@ def _post(path, body, *, host="127.0.0.1"):
     res = dispatch_post(
         path=path, body=body, headers={"content-type": "application/json"},
         runtime=RuntimeServices(display_name="N"), model_name="vool",
-        workspace_root_provider=lambda: "/tmp", client_host=host,
+        workspace_root_provider=tempfile.gettempdir, client_host=host,
     )
     return res.status, json.loads(res.body.decode("utf-8"))
 
