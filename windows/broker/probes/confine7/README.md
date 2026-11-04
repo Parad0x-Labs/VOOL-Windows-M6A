@@ -64,3 +64,15 @@ Before any tool probe, a launch ladder runs `cmd.exe /d /c exit 7` three ways:
 The `L-verdict` line names which step broke. If any step fails, every tool probe is skipped, so a launch bug can't pass for data.
 
 Results land in `<root>\out\results.jsonl` and `SUMMARY.md`. Copy both back to `jobs/broker/confinement-B/chunk7-probe/run-<date>/`.
+
+v9 adds the follow-ups from the v7 run (where `git commit` got through the package-SID deny on `.git`):
+- **D1-D4**: four copies of the fixture repo, one per `.git` protection shape:
+  - D1: deny for the package SID (repeats v7);
+  - D2: deny for the root capability SID;
+  - D3: deny for both;
+  - D4: no deny at all; inheritance is turned off and the capability's allow is removed.
+  Each one tries a real commit, a file write and a mkdir in `.git`. It records the ACL just before, and HEAD before and after (read unconfined).
+- **E1-E3**: deny-all (F) inside the write root, for the package SID, the capability SID, or both. Read, list and write must all fail.
+- **P8b**: a fixture file outside every grant (`<root>\fixture-outside\fake.npmrc`, harmless content) must not open.
+- **P7-cargo-unconfined-control**: the same crate built outside any container, plus `where link`.
+- P7-cargo-proxy no longer resolves the cargo.exe symlink.

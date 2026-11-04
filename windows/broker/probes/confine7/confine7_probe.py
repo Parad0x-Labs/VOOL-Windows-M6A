@@ -491,6 +491,34 @@ def main() -> int:
         (crate / "src").mkdir(parents=True, exist_ok=True)
         (crate / "Cargo.toml").write_text('[package]\nname = "p7"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\n')
         (crate / "src" / "main.rs").write_text('fn main() { println!("hi"); }\n')
+        # D: four copies of the repo, one per deny shape (v9; v7 found the package-SID deny did NOT
+        # stop `git commit`). E: two folders inside the write root, one per deny-all shape.
+        dshapes = {"D1-deny-package": "pkg", "D2-deny-capability": "cap", "D3-deny-both": "both",
+                   "D4-no-inheritance-no-capability": "noinherit"}
+        drepos: dict[str, Path] = {}
+        if tools.get("git"):
+            g = [tools["git"], "-c", "core.hooksPath=NUL", "-c", "user.name=probe", "-c", "user.email=probe@invalid"]
+            for tag in dshapes:
+                d = ws / tag.lower()
+                if not (d / ".git").exists():
+                    d.mkdir(exist_ok=True)
+                    subprocess.run([*g, "init", "-q"], cwd=d, check=False)
+                    (d / "a.txt").write_text("hello\n")
+                    subprocess.run([*g, "add", "a.txt"], cwd=d, check=False)
+                    subprocess.run([*g, "commit", "-q", "-m", "init"], cwd=d, check=False)
+                (d / "a.txt").write_text("hello\nchanged\n")
+                drepos[tag] = d
+        eshapes = {"E1-denyall-package": "pkg", "E2-denyall-capability": "cap", "E3-denyall-both": "both"}
+        edirs: dict[str, Path] = {}
+        for tag in eshapes:
+            d = ws / tag.lower()
+            d.mkdir(exist_ok=True)
+            (d / "fixture.txt").write_text("probe-fixture-not-a-secret\n")
+            edirs[tag] = d
+        # A fixture "credential" OUTSIDE every grant (beside ws, never granted): P8b must not open it.
+        fixture_secret = root / "fixture-outside" / "fake.npmrc"
+        fixture_secret.parent.mkdir(exist_ok=True)
+        fixture_secret.write_text("probe-fixture-not-a-secret\n")
 
         # ---- grants ----
         record(str(ws))
@@ -500,6 +528,26 @@ def main() -> int:
             record(str(repo / ".git"))
             rc, msg = icacls(str(repo / ".git"), "/deny", f"*{pkg_s}:(OI)(CI)(W,D)")
             emit({"tag": "G-deny-git", "rc": rc, "out": msg})
+
+        def deny(path: Path, who: str, rights: str, tag: str) -> None:
+            record(str(path))
+            sids = {"pkg": [pkg_s], "cap": [cap_s], "both": [pkg_s, cap_s]}[who]
+            for sid in sids:
+                rc, msg = icacls(str(path), "/deny", f"*{sid}:(OI)(CI){rights}")
+                emit({"tag": f"G-{tag}", "sid": sid, "rc": rc, "out": msg})
+
+        for tag, d in drepos.items():
+            shape = dshapes[tag]
+            if shape == "noinherit":
+                # Remove the allow instead of adding a deny: copy inherited ACEs, then drop the capability's.
+                record(str(d / ".git"))
+                rc1, m1 = icacls(str(d / ".git"), "/inheritance:d")
+                rc2, m2 = icacls(str(d / ".git"), "/remove:g", f"*{cap_s}")
+                emit({"tag": f"G-{tag}", "rc": [rc1, rc2], "out": [m1, m2]})
+            else:
+                deny(d / ".git", shape, "(W,D)", tag)
+        for tag, d in edirs.items():
+            deny(d, eshapes[tag], "(F)", tag)
         needs: dict[str, str] = {}
         for name, d in wanted.items():
             if grantable(d):
@@ -600,7 +648,38 @@ def main() -> int:
             links = [str(p) for p in (crate / "target").rglob("*") if p.is_file() and os.lstat(p).st_nlink > 1]
             emit({"tag": "P7-hardlinks", "count": len(links), "sample": links[:5]})
         if tools.get("cargo"):
-            go("P7-cargo-proxy", [str(Path(tools["cargo"]).resolve()), "-V"], cwd=crate)
+            # Not resolved: on Steve cargo.exe is a symlink to rustup.exe, and resolving it ran rustup.
+            go("P7-cargo-proxy", [str(Path(tools["cargo"])), "-V"], cwd=crate)
+        # Unconfined control: does this machine link a Rust binary at all, outside any container?
+        if cargo:
+            ctl = ws / "crate-control"
+            shutil.copytree(crate, ctl, dirs_exist_ok=True, ignore=shutil.ignore_patterns("target"))
+            try:
+                r = subprocess.run([cargo, "build", "--offline"], cwd=ctl, capture_output=True, text=True, timeout=120)
+                emit({"tag": "P7-cargo-unconfined-control", "exit_code": r.returncode,
+                      "stderr_tail": r.stderr[-800:], "where_link": shutil.which("link")})
+            except Exception as e:
+                emit({"tag": "P7-cargo-unconfined-control", "error": repr(e)})
+        # D: each deny shape vs a real commit, plus a direct write and mkdir in .git. ACL dumped
+        # just before; HEAD read unconfined before and after, so "exit 0" is never the only evidence.
+        for tag, d in drepos.items():
+            _, acl = icacls_full(str(d / ".git"))
+            head0 = subprocess.run([tools["git"], "rev-parse", "HEAD"], cwd=d, capture_output=True, text=True).stdout.strip()
+            go(f"{tag}-commit-must-fail", [tools["git"], "-c", "user.name=p", "-c", "user.email=p@invalid",
+                                           "commit", "-am", "x"], cwd=d)
+            head1 = subprocess.run([tools["git"], "rev-parse", "HEAD"], cwd=d, capture_output=True, text=True).stdout.strip()
+            go(f"{tag}-write-must-fail", [py, "-c", "import os,sys\nfor a in ('w','mkdir'):\n    try:\n        "
+                                          "(open(os.path.join('.git','probe-w.txt'),'w').close() if a=='w' else os.mkdir(os.path.join('.git','probe-d')));print(a,'ALLOWED')\n    "
+                                          "except OSError as x: print(a, type(x).__name__)"], cwd=d)
+            emit({"tag": f"{tag}-head", "head_moved": head0 != head1, "before": head0, "after": head1,
+                  "acl_before": acl.strip()[-1500:]})
+        # E: deny-all shapes inside the write root: read, list and write must all fail.
+        for tag, d in edirs.items():
+            _, acl = icacls_full(str(d))
+            go(f"{tag}-access-must-fail", [py, "-c", "import os,sys\nd=sys.argv[1]\nfor a in ('read','list','write'):\n    try:\n        "
+                                           "(open(os.path.join(d,'fixture.txt'),'rb').close() if a=='read' else os.listdir(d) if a=='list' else open(os.path.join(d,'w.txt'),'w').close());print(a,'ALLOWED')\n    "
+                                           "except OSError as x: print(a, type(x).__name__)", str(d)])
+            emit({"tag": f"{tag}-acl", "acl_before": acl.strip()[-1500:]})
         # P8 credential files: only whether open() succeeds, never the contents
         real = real_profile
         cands = [real / ".npmrc", real / ".cargo" / "credentials.toml", real / ".git-credentials",
@@ -609,6 +688,7 @@ def main() -> int:
               "(os.listdir(p) if os.path.isdir(p) else open(p,'rb').close());r='OPENED'\n    "
               "except OSError as x: r=type(x).__name__\n    print(p, 'exists' if e else 'absent?', r)")
         go("P8-credential-reads-must-fail", [py, "-c", p8, *map(str, cands)])
+        go("P8b-fixture-outside-read-must-fail", [py, "-c", p8, str(fixture_secret), str(fixture_secret.parent)])
     finally:
         # Each clean-up step runs whatever the one before it raised: the ACE revokes one by one,
         # then the profile delete, then the check. An exception is logged and never skips a step.
