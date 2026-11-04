@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import contextlib
 import json
 import os
@@ -96,10 +97,47 @@ _WINDOWS_STAGED: dict[str, tuple[Path, str]] = {}
 _WINDOWS_STAGED_LOCK = threading.Lock()
 
 #: Grants the launcher's `grant` form already applied in this process, keyed by everything in a
-#: policy that shapes ACLs. The run form verifies them on every job, so a grant that was removed
+#: policy that shapes ACLs. They are not revoked when a job ends or when VOOL exits: a workspace
+#: root keeps its per-root capability grant (which only a confined job holding that root's
+#: capability can use) until `VoolConfine.exe revoke` is run for it. Grant lifetime and cleanup
+#: belong to the ACL chunk. The run form verifies them on every job, so a grant that was removed
 #: since is a 125 there, never a silent pass, and that key is then forgotten so the next job grants
 #: again.
 _WINDOWS_GRANTED: set[str] = set()
+
+
+def _repository_layouts(roots: tuple[Path, ...]) -> tuple[set[str], bool]:
+    """Every repository layout under *roots*, and whether the walk finished inside the scan cap.
+
+    A layout is any `.git` entry, folder or file (a `gitdir:` redirect), in any case and with
+    the trailing dots or spaces Win32 strips. A bare repository counts too: a folder holding a
+    `HEAD` file next to `objects` and `refs` folders. An unfinished walk proves nothing, so the
+    caller refuses."""
+    found: set[str] = set()
+    seen = 0
+    for root in roots:
+        for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+            seen += len(dirnames) + len(filenames)
+            if seen > _HARDLINK_SCAN_FILE_LIMIT:
+                return found, False
+            for name in (*dirnames, *filenames):
+                if name.lower().rstrip(". ") == ".git":
+                    found.add(os.path.normcase(os.path.join(dirpath, name)))
+            lowered_dirs = {name.lower() for name in dirnames}
+            if {"objects", "refs"} <= lowered_dirs and any(name.lower() == "head" for name in filenames):
+                found.add(os.path.normcase(dirpath))
+    return found, True
+
+
+def _forget_staged_at_exit() -> None:
+    """Remove staging folders that were built but never run (a caller that only wanted the argv)."""
+    with _WINDOWS_STAGED_LOCK:
+        for stage, _key in _WINDOWS_STAGED.values():
+            shutil.rmtree(stage, ignore_errors=True)
+        _WINDOWS_STAGED.clear()
+
+
+atexit.register(_forget_staged_at_exit)
 
 
 def _windows_path_text(path: Path | str) -> str:
@@ -665,7 +703,7 @@ class JobRunner:
             return self._run_wrapped(argv, cwd_path, cancel_event)
         stage, grant_key = staged
         try:
-            return self._run_windows_confined(argv, cwd_path, cancel_event, stage, grant_key)
+            return self._run_windows_confined(argv, cwd_path, cancel_event, stage, grant_key, allowed_roots)
         finally:
             shutil.rmtree(stage, ignore_errors=True)
 
@@ -676,6 +714,7 @@ class JobRunner:
         cancel_event: threading.Event | None,
         stage: Path,
         grant_key: str,
+        allowed_roots: tuple[Path, ...],
     ) -> ExecutionResult:
         """Run the VoolConfine-wrapped job, then trust nothing the launcher did not record.
 
@@ -686,7 +725,44 @@ class JobRunner:
         (`KernelIsolationUnavailableError`), never reported as a command failure. A repository
         layout the job created (exit 123, or `new_repositories` in the record) refuses the result
         whatever else happened (`NestedGitMetadataError`).
+
+        The launcher's own repository scan runs only when the job ends by itself. A timeout or a
+        cancel kills the launcher first, and a crashed launcher never scans. So the runner also
+        scans the write roots before the job and again after it, on EVERY outcome: timeout,
+        cancel, refusal and exception included. A new layout refuses the result.
         """
+        from sandbox import windows_confinement
+
+        roots = tuple(dict.fromkeys(Path(root).resolve() for root in allowed_roots))
+        layouts_before, complete = _repository_layouts(roots)
+        if not complete:
+            raise HardLinkedWritableRootError(
+                f"the writable roots hold more than {_HARDLINK_SCAN_FILE_LIMIT} entries, so they "
+                "could not be checked for repository layouts. Refusing rather than reporting a "
+                "confinement that was not verified."
+            )
+        try:
+            return self._run_windows_launcher(argv, cwd_path, cancel_event, stage, grant_key)
+        finally:
+            # Deliberately raises from `finally`: a planted repository outranks whatever the run
+            # returned or raised, including a timeout or a cancel.
+            layouts_after, complete = _repository_layouts(roots)
+            planted = sorted(layouts_after - layouts_before)
+            if planted or not complete:
+                where = planted[0] if planted else "the writable roots (scan cap reached)"
+                raise NestedGitMetadataError(  # noqa: B012
+                    f"the job created git metadata at '{where}'. Git would run hooks and config from "
+                    "it outside the sandbox, so this result is refused. Nothing was removed."
+                )
+
+    def _run_windows_launcher(
+        self,
+        argv: list[str],
+        cwd_path: Path,
+        cancel_event: threading.Event | None,
+        stage: Path,
+        grant_key: str,
+    ) -> ExecutionResult:
         from sandbox import windows_confinement
 
         def adopt(process: subprocess.Popen) -> None:
@@ -712,6 +788,29 @@ class JobRunner:
         # job object closed and the tree is gone, whatever the status file says.
         operator_outcome = outcome.get("kind") in {"cancelled", "timed_out"}
         status = windows_confinement.read_status(stage / "status.json")
+        child_never_ran = status is not None and not status.child_started
+        if not child_never_ran and (status is None or not status.repositories_scanned):
+            # The launcher never finished its own repository scan: the runner killed it (timeout,
+            # cancel), or it died. An empty `new_repositories` then proves nothing, so the scan
+            # form runs before anything is trusted or returned, even a timeout or a cancel. (A
+            # missing record counts as "may have run": the launcher writes child_started only
+            # after the resume, so a crash in between leaves no record of a child that ran.)
+            scan_rc = windows_confinement.launcher_scan(argv[0], Path(argv[2]))
+            rescanned = windows_confinement.read_status(stage / "status.json")
+            if scan_rc == windows_confinement.EXIT_NEW_REPOSITORY or (
+                rescanned is not None and rescanned.new_repositories
+            ):
+                where = rescanned.new_repositories[0] if rescanned and rescanned.new_repositories else "a write root"
+                raise NestedGitMetadataError(
+                    f"the job created git metadata at '{where}'. Git would run hooks and config "
+                    "from it outside the sandbox, so this result is refused. Nothing was removed."
+                )
+            if scan_rc != 0 or rescanned is None or not rescanned.repositories_scanned:
+                raise KernelIsolationUnavailableError(
+                    "Windows confinement could not finish the repository scan after this job "
+                    f"(scan exit {scan_rc}), so its result is refused: a repository it planted "
+                    "could not be ruled out."
+                )
         if status is not None and status.new_repositories:
             raise NestedGitMetadataError(
                 f"the job created git metadata at '{status.new_repositories[0]}'. Git would run "
@@ -1068,7 +1167,7 @@ class JobRunner:
         name = Path(program.replace("\\", "/")).name.lower()
         stem = name[:-4] if name.endswith(".exe") else name
         rest = [str(item) for item in argv[1:]]
-        if program == name or program == stem:  # a bare name, not a path
+        if "/" not in program and "\\" not in program:  # a bare name, not a path (any case)
             if stem in _WINDOWS_PYTHON_NAMES:
                 return [str(interpreter), *rest]
             if stem in _WINDOWS_PYTEST_NAMES:

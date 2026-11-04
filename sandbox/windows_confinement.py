@@ -400,6 +400,18 @@ def launcher_form(launcher: Path | str, form: str, policy_path: Path, *, timeout
         return False
 
 
+def launcher_scan(launcher: Path | str, policy_path: Path, *, timeout: float = 300) -> int | None:
+    """Run the launcher's unconfined `scan` form: the repository scan alone, no child. It rewrites the
+    status file's `new_repositories` and `repositories_scanned`. Its exit code (0 none, 123 found,
+    125 unfinished), or None when it could not run or didn't finish in time."""
+    import subprocess
+
+    try:
+        return _run_launcher([str(launcher), "scan", "--policy", str(policy_path)], timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
 def probe(project_root: Path) -> bool:
     """Whether the backend demonstrably confines a no-op job on this host.
 
