@@ -51,10 +51,11 @@ public class LauncherNestingTests
         $k = Add-Type -MemberDefinition $sig -Name K -Namespace VoolConfineNest -PassThru
         $app = "$env:SystemRoot\System32\cmd.exe"
         $block = [Runtime.InteropServices.Marshal]::StringToHGlobalUni("SystemRoot=$env:SystemRoot`0TEMP=$env:TEMP`0`0")
-        $out = @()
-        foreach ($flags in 0, 0x8, 0x10, 0x08000000) {
+        $here = [Environment]::CurrentDirectory
+        $out = @("CWD=$here", "TEMP=$env:TEMP")
+        foreach ($flags in 0, 0x8) {
           foreach ($envKind in 'inherit', 'explicit') {
-            foreach ($dir in $null, 'C:\Windows') {
+            foreach ($dir in $null, 'C:\Windows', "$env:SystemRoot\System32", $here, $env:TEMP, 'WORKROOT') {
               $si = New-Object byte[] 104; $si[0] = 104
               $pi = New-Object byte[] 24
               $cmd = New-Object System.Text.StringBuilder 'cmd.exe /c exit 0'
@@ -73,7 +74,7 @@ public class LauncherNestingTests
     public void Process_creation_from_inside_the_box_works_with_the_defaults()
     {
         using var box = new ConfineSandbox();
-        var result = Launch(box, PowerShellArgs(Matrix));
+        var result = Launch(box, PowerShellArgs(Matrix.Replace("WORKROOT", box.Work)));
         Assert.True(Started(result), result.Stderr);
         Assert.True(result.Stdout.Contains("0x0/inherit/=OK"), $"exit {result.ExitCode}; {result.Stdout}; err: {result.Stderr}");
     }
