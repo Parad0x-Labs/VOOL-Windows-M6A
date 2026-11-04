@@ -43,4 +43,38 @@ public class LauncherNestingTests
         var table = string.Join("; ", variants.Select(v => v.Detail));
         Assert.True(variants[0].Code == 7, $"the default job could not start a grandchild: {table}");
     }
+
+    // From inside the box, CreateProcessW with each creation-flag, environment and directory choice,
+    // printed as "flags/env/cwd=result" so a failure names the choice that matters.
+    const string Matrix = """
+        $sig = '[DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] public static extern bool CreateProcessW(string app, System.Text.StringBuilder cmd, IntPtr pa, IntPtr ta, bool inherit, uint flags, IntPtr env, string dir, byte[] si, byte[] pi);'
+        $k = Add-Type -MemberDefinition $sig -Name K -Namespace VoolConfineNest -PassThru
+        $app = "$env:SystemRoot\System32\cmd.exe"
+        $block = [Runtime.InteropServices.Marshal]::StringToHGlobalUni("SystemRoot=$env:SystemRoot`0TEMP=$env:TEMP`0`0")
+        $out = @()
+        foreach ($flags in 0, 0x8, 0x10, 0x08000000) {
+          foreach ($envKind in 'inherit', 'explicit') {
+            foreach ($dir in $null, 'C:\Windows') {
+              $si = New-Object byte[] 104; $si[0] = 104
+              $pi = New-Object byte[] 24
+              $cmd = New-Object System.Text.StringBuilder 'cmd.exe /c exit 0'
+              $f = $flags; $e = [IntPtr]::Zero
+              if ($envKind -eq 'explicit') { $f = $f -bor 0x400; $e = $block }
+              $ok = $k::CreateProcessW($app, $cmd, [IntPtr]::Zero, [IntPtr]::Zero, $false, $f, $e, $dir, $si, $pi)
+              $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+              $out += "0x{0:X}/{1}/{2}={3}" -f $flags, $envKind, $dir, $(if ($ok) { 'OK' } else { "ERR$err" })
+            }
+          }
+        }
+        'MATRIX ' + ($out -join '; ')
+        """;
+
+    [Fact]
+    public void Process_creation_from_inside_the_box_works_with_the_defaults()
+    {
+        using var box = new ConfineSandbox();
+        var result = Launch(box, PowerShellArgs(Matrix));
+        Assert.True(Started(result), result.Stderr);
+        Assert.True(result.Stdout.Contains("0x0/inherit/=OK"), $"exit {result.ExitCode}; {result.Stdout}; err: {result.Stderr}");
+    }
 }
