@@ -131,8 +131,10 @@ public static class Launcher
 
         // The main child is gone (or out of time). Whatever it left running in the job goes too,
         // so no grandchild outlives the run.
+        // A job that will not empty can't be scanned or reported as finished: refuse the run (the
+        // job handle closes on the way out, which ends whatever is left).
         if (!job.KillAll(timedOut ? (uint)ExitCodes.Timeout : 1u, KillWait))
-            stderr.WriteLine($"{ExitCodes.RefusedMarker} warning: the job still had processes after {KillWait.TotalSeconds:0}s; they end when the launcher exits");
+            throw new SetupException($"the job still had processes {KillWait.TotalSeconds:0}s after it was ended; the run is refused");
         job.Drain(TimeSpan.FromSeconds(1));
 
         var exitCode = timedOut ? ExitCodes.Timeout : unchecked((int)code);
