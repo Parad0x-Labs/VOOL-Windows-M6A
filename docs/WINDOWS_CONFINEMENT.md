@@ -25,6 +25,17 @@ proven to work. `None` means the caller refuses the job. Nothing ever runs unwra
   accepts the launcher only when every listed file matches and no unlisted file is present, because
   a planted DLL is code too. A missing pin, a mismatch, an extra file or a missing file all mean
   unavailable.
+- **Pin file shape.** UTF-8 without a BOM, exactly two keys:
+  `{"schema": "vool.windows_confinement.pin.v1", "files": {"<relpath with />": "<sha256, lowercase hex>"}}`.
+  Any other key or shape means unavailable.
+- **The launcher's own environment (caller, chunk 3).** The pin proves the files, but the .NET host
+  still loads code named by environment variables. The launcher is published with
+  `StartupHookSupport=false`, and the caller drops every variable starting `CORECLR_`, `COR_`,
+  `COMPlus_`, `DOTNET_` or `COREHOST_` (case-insensitive) from the env it launches VoolConfine.exe
+  with. Otherwise a planted profiler or hook loads a DLL from outside the pinned folder, unconfined.
+- **Lifetime (caller, chunk 3).** Each launcher runs inside VOOL's own kill-on-close job, the way
+  the broker does, so no launcher outlives VOOL. Otherwise one would hold its files open and block
+  an upgrade.
 - Command line, three forms. All are run unconfined by VOOL, never by a job:
   - `VoolConfine.exe --policy <path> -- <program> [args...]` runs a job. It only VERIFIES the ACLs
     and never writes them; a verify miss is 125.
@@ -90,9 +101,16 @@ Status file fields:
 - **Profile.** One fixed AppContainer profile named `VOOL.Confine.v1`. Its package SID is shared by
   every job, so it only ever receives READ grants, plus explicit DENY-write ACEs.
 - **Read grants (package SID).** Read and execute on `read_roots`.
-- **Deny ACEs (package SID).** Deny write on `deny_write_paths` and on every `.git` under a write root;
-  deny all access on `deny_all_paths`.
-  Because the package SID is in every job's token, these deny ACEs bind every job.
+- **Deny ACEs.** Deny write on `deny_write_paths` and on every `.git` under a write root; deny all
+  access on `deny_all_paths`.
+  **A deny binds only the SIDs it names.** Windows judges the package SID and each capability on its
+  own, and grants whatever any one of them is allowed. Measured in windows-broker run 41901543557:
+  a package-SID deny did NOT stop a write that the root's capability was allowed. So:
+  - under a write root, every deny names the package SID AND that root's capability, and a
+    repository counts as protected only when both are denied;
+  - outside every write root, the deny names the package SID, and Verify refuses (125) a deny path
+    whose own DACL gives ALL APPLICATION PACKAGES or ALL RESTRICTED APP PACKAGES the denied access,
+    because no deny we write there would bind them.
 - **Write grants (per-root capability).** Read and write (inheritable) go to a capability SID made
   for that root only: `DeriveCapabilitySidsFromName("vool.root.<sha256 hex>")`, where the hash is of
   the root with `/` turned into `\`, trailing `\` stripped, ASCII letters upper-cased (nothing else), UTF-8
@@ -100,6 +118,10 @@ Status file fields:
   which both tests pin to the vector `C:\work\a` → `vool.root.b144b923…5d7e40`). The launcher puts in the token only the
   capabilities of THIS job's write roots, so a job can never write another job's workspace.
 - **Network.** `internetClient` is added only when `network` is true.
+- **No other writer.** Verify refuses (125) a write root on which any other AppContainer SID
+  (`S-1-15-2-*` or `S-1-15-3-*`, including ALL APPLICATION PACKAGES and another root's capability)
+  is allowed any write right, and a read root on which any of them is. It also refuses a NULL DACL
+  anywhere it walks. Otherwise one job could write another's workspace or the toolchain.
 
 ### Teardown
 
@@ -122,7 +144,7 @@ every writable root**, and deletes both after the job.
   "schema": "vool.windows_confinement.v1",
   "write_roots": ["C:\\work\\repo"],
   "read_roots": ["C:\\Python312", "C:\\work\\repo\\.venv"],
-  "deny_write_paths": ["C:\\work\\repo\\vendor-code"],
+  "deny_write_paths": ["C:\\work\\repo\\vendor-code", "C:\\work\\repo\\.venv"],
   "deny_all_paths": ["C:\\Users\\me\\.vool_runtime", "C:\\Users\\me\\.ssh"],
   "deny_write_git": true,
   "network": false,
@@ -150,7 +172,8 @@ Rules, all enforced by the launcher (126 if broken):
 - **Fresh status (chunk 3).** The caller creates a new, empty status folder per job and refuses to
   launch if a status file already exists there, so an earlier job's status can never be read as this one's.
 - **`write_roots`.** Non-empty. Read and write for the container.
-- **`read_roots`.** Read and execute only.
+- **`read_roots`.** Read and execute only. A read root inside a write root is still writable through
+  the write root's grant; to make it read-only (a workspace `.venv`), also list it in `deny_write_paths`.
 - **`deny_write_paths`.** Explicitly denied write, beating any inherited grant (code roots).
 - **`deny_all_paths`.** Denied read AND write, like the Mac's secret and state denies (VOOL runtime state, credentials).
 - **`deny_write_git`.** When true, every `.git` directory under a write root is denied write.
