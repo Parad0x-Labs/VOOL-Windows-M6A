@@ -217,7 +217,7 @@ def inheritable_handle(f) -> int:
     return h
 
 
-def run_confined(argv: list[str], *, cwd: Path, env: dict[str, str], pkg: int, caps: list[int],
+def run_confined(argv: list[str], *, cwd: Path, env: dict[str, str], pkg: int | None, caps: list[int],
                  out_dir: Path, tag: str, timeout: float) -> dict:
     rec: dict = {"tag": tag, "argv": argv, "cwd": str(cwd)}
     attrs = (SID_AND_ATTRIBUTES * max(1, len(caps)))()
@@ -228,12 +228,15 @@ def run_confined(argv: list[str], *, cwd: Path, env: dict[str, str], pkg: int, c
     with open(os.devnull, "rb") as fin, open(stdout_p, "wb") as fout, open(stderr_p, "wb") as ferr:
         handles = (wt.HANDLE * 3)(inheritable_handle(fin), inheritable_handle(fout), inheritable_handle(ferr))
         size = ctypes.c_size_t()
-        k32.InitializeProcThreadAttributeList(None, 2, 0, ctypes.byref(size))
+        # pkg=None is the CONTROL launch: the same code path with no AppContainer attribute, so a
+        # failure that also happens here is the launcher code, not the container.
+        nattr = 2 if pkg is not None else 1
+        k32.InitializeProcThreadAttributeList(None, nattr, 0, ctypes.byref(size))
         alist = ctypes.create_string_buffer(size.value)
-        if not k32.InitializeProcThreadAttributeList(alist, 2, 0, ctypes.byref(size)):
+        if not k32.InitializeProcThreadAttributeList(alist, nattr, 0, ctypes.byref(size)):
             raise ctypes.WinError(ctypes.get_last_error())
         try:
-            if not k32.UpdateProcThreadAttribute(alist, 0, 0x00020009, ctypes.byref(sc), ctypes.sizeof(sc), None, None):
+            if pkg is not None and not k32.UpdateProcThreadAttribute(alist, 0, 0x00020009, ctypes.byref(sc), ctypes.sizeof(sc), None, None):
                 raise ctypes.WinError(ctypes.get_last_error())
             if not k32.UpdateProcThreadAttribute(alist, 0, 0x00020002, handles, ctypes.sizeof(handles), None, None):
                 raise ctypes.WinError(ctypes.get_last_error())
@@ -450,8 +453,11 @@ def main() -> int:
         if a.create_profile:
             sid = PSID()
             hr = uenv.CreateAppContainerProfile(PROFILE, PROFILE, "VOOL chunk 7 probe", None, 0, ctypes.byref(sid))
+            hr &= 0xFFFFFFFF
+            # 0x800700B7 = already exists: reuse it, and leave it as found (only delete what we made).
             profile_made = hr == 0
-            emit({"tag": "P0-profile", "hr": f"0x{hr & 0xFFFFFFFF:08x}"})
+            emit({"tag": "P0-profile", "hr": f"0x{hr:08x}", "created_by_this_run": profile_made,
+                  "already_existed": hr == 0x800700B7})
 
         # ---- fixtures, made unconfined ----
         repo = ws / "repo"
@@ -496,15 +502,36 @@ def main() -> int:
         none, inet = [cap], [cap, net]
 
         deadline = time.monotonic() + a.budget
+        gate = {"open": True}
 
-        def go(tag, argv, *, env=prop, caps=none, cwd=ws):
+        def go(tag, argv, *, env=prop, caps=none, cwd=ws, package="probe"):
+            if not gate["open"]:
+                emit({"tag": tag, "child_started": False, "error": "skipped: launch ladder failed"})
+                return None
             if time.monotonic() > deadline:
                 emit({"tag": tag, "child_started": False, "error": "skipped: probe budget used up"})
-                return
+                return None
             try:
-                emit(run_confined(argv, cwd=cwd, env=env, pkg=pkg, caps=caps, out_dir=out, tag=tag, timeout=T))
+                rec = run_confined(argv, cwd=cwd, env=env, pkg=pkg if package == "probe" else None, caps=caps,
+                                   out_dir=out, tag=tag, timeout=T)
             except Exception as e:
-                emit({"tag": tag, "child_started": False, "error": repr(e)})
+                rec = {"tag": tag, "child_started": False, "error": repr(e)}
+            emit(rec)
+            return rec
+
+        # L: launch ladder, smallest first. cmd.exe lives in System32, which every AppContainer can
+        # read, so a failure here is the launch itself, never a missing grant.
+        cmd = str(Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe")
+        l0 = go("L0-control-no-appcontainer", [cmd, "/d", "/c", "exit 7"], caps=[], package=None)
+        l1 = go("L1-appcontainer-no-capabilities", [cmd, "/d", "/c", "exit 7"], caps=[])
+        l2 = go("L2-appcontainer-root-capability", [cmd, "/d", "/c", "exit 7"])
+        ok = [bool(r and r.get("child_started") and r.get("exit_code") == 7) for r in (l0, l1, l2)]
+        emit({"tag": "L-verdict", "control": ok[0], "appcontainer": ok[1], "with_capability": ok[2],
+              "profile_registered_by_flag": bool(a.create_profile),
+              "reading": ("launch code broken (control fails too)" if not ok[0] else
+                          "AppContainer launch fails; with no --create-profile the profile is unregistered" if not ok[1] else
+                          "capability SID breaks the launch" if not ok[2] else "launch path works")})
+        gate["open"] = all(ok)
 
         # P1 env
         p1 = "import os,socket,asyncio;print(sorted(os.environ));asyncio.new_event_loop().close();print('asyncio-ok')"

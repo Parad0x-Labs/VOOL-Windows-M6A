@@ -49,6 +49,12 @@ Never granted, even if named with `--allow-grant`:
 - `%APPDATA%`;
 - any folder at or above the profile, `%APPDATA%` or `%LOCALAPPDATA%`.
 
-Optional, with a further Jesse OK only: `--create-profile`. It writes HKCU and is deleted at the end.
+`--create-profile` registers the `VOOL.Confine.Probe7` AppContainer profile. That writes HKCU and makes a `%LOCALAPPDATA%\Packages\` folder, and both are removed by DeleteAppContainerProfile at the end. A profile that already existed is reused and left as found. It needs Jesse's go naming the sha. Run 20261104 (v2, no profile) failed every launch with winerror 2, and the likely cause is the unregistered profile.
+
+Before any tool probe, a launch ladder runs `cmd.exe /d /c exit 7` three ways:
+- L0: the same code with no AppContainer (the control);
+- L1: AppContainer with no capabilities;
+- L2: AppContainer with the root capability.
+The `L-verdict` line names which step broke. If any step fails, every tool probe is skipped, so a launch bug can't pass for data.
 
 Results land in `<root>\out\results.jsonl` and `SUMMARY.md`. Copy both back to `jobs/broker/confinement-B/chunk7-probe/run-<date>/`.
