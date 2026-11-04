@@ -76,3 +76,5 @@ v9 adds the follow-ups from the v7 run (where `git commit` got through the packa
 - **P8b**: a fixture file outside every grant (`<root>\fixture-outside\fake.npmrc`, harmless content) must not open.
 - **P7-cargo-unconfined-control**: the same crate built outside any container, plus `where link`.
 - P7-cargo-proxy no longer resolves the cargo.exe symlink.
+
+Note on D4: `icacls /inheritance:d` on the fixture `d4-…\.git` can't be undone by the revoke. That `.git` belongs to the probe and is disposable, so an explicit-ACL `.git` left there is expected. It is not a leak, and it carries no probe SID.
