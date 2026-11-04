@@ -41,6 +41,7 @@ from tests.pa_beta_gate.test_served_operator_approval_words import (
     _pending_move,
     _served,
     _session,
+    _system_temp_is_tmp_path,
     served_notes,
     temp_root,
 )
