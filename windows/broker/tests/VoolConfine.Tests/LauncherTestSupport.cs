@@ -216,8 +216,9 @@ internal static class LauncherTestSupport
         var status = result.Status!.Value;
         Assert.Equal(ExitCodes.StatusSchema, status.GetProperty("schema").GetString());
         Assert.True(status.GetProperty("child_started").GetBoolean(), $"child_started false; stderr: {result.Stderr}");
-        Assert.Equal(exitCode, status.GetProperty("exit_code").GetInt32());
-        Assert.Equal(exitCode, result.ExitCode);
+        var detail = $"exit {result.ExitCode}; stdout: {result.Stdout}; stderr: {result.Stderr}";
+        Assert.True(exitCode == status.GetProperty("exit_code").GetInt32(), $"expected exit {exitCode}; {detail}");
+        Assert.True(exitCode == result.ExitCode, $"expected exit {exitCode}; {detail}");
     }
 
     internal static void AssertRefused(LaunchResult result, int exitCode)

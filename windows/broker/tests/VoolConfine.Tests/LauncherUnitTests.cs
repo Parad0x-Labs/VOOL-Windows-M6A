@@ -129,7 +129,7 @@ public class LauncherUnitTests
     public void A_job_carries_only_its_own_root_capabilities_and_internet_only_when_granted()
     {
         var offline = Policy.Parse("""
-            {"schema":"vool.windows_confinement.v1","write_roots":["C:\\work\\a","C:\\work\\a\\"],
+            {"schema":"vool.windows_confinement.v1","write_roots":["C:\\work\\a","c:\\WORK\\a"],
              "temp_dir":"C:\\work\\a\\t","status_path":"C:\\s\\status.json"}
             """);
         Assert.Equal(new[] { Sids.RootCapability(@"C:\work\a") }, Sids.CapabilitiesFor(offline));

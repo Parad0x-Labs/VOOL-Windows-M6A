@@ -131,31 +131,34 @@ public class LauncherRunTests
     public void The_child_is_a_low_integrity_appcontainer_with_only_its_own_capabilities(bool network)
     {
         using var box = new ConfineSandbox();
-        using var other = new ConfineSandbox();
         var result = Launch(box, [Whoami, "/groups", "/fo", "csv", "/nh"], p => p["network"] = network);
         AssertStartedAndFinished(result, 0);
-        Assert.Contains("S-1-16-4096", result.Stdout); // Low mandatory level
-        Assert.Contains(Sids.RootCapability(box.Work), result.Stdout);
-        Assert.DoesNotContain(Sids.RootCapability(other.Work), result.Stdout);
-        if (network) Assert.Contains($"\"{Sids.InternetClientSid}\"", result.Stdout);
-        else Assert.DoesNotContain($"\"{Sids.InternetClientSid}\"", result.Stdout);
+        // whoami does not list capability SIDs that have no name, so the root capability is proven by
+        // the write tests instead; internetClient has a name and is listed.
+        Assert.True(result.Stdout.Contains("S-1-16-4096"), $"not Low integrity: {result.Stdout}");
+        var internet = result.Stdout.Contains($"\"{Sids.InternetClientSid}\"");
+        Assert.True(internet == network, $"internetClient present={internet}, network={network}: {result.Stdout}");
     }
 
     // ---- network ----
 
-    static bool CurlReaches(string url, ConfineSandbox? box, bool network, out string detail)
+    /// <summary>curl's exit codes for "could not connect" (7) and "timed out" (28).</summary>
+    static readonly int[] Unreachable = [7, 28];
+
+    /// <summary>Runs curl, unconfined when box is null. Returns curl's exit code (0 = reached).</summary>
+    static int RunCurl(string url, ConfineSandbox? box, bool network, out string detail)
     {
-        string[] args = ["-s", "-o", "NUL", "--max-time", "10", "--connect-timeout", "5", url];
+        string[] args = ["-s", "-S", "--max-time", "10", "--connect-timeout", "5", url];
         if (box is null)
         {
             var (code, output) = RunPlain(Curl, args);
             detail = $"unconfined curl exit {code}: {output}";
-            return code == 0;
+            return code;
         }
         var result = Launch(box, [Curl, .. args], p => p["network"] = network);
-        detail = $"confined curl exit {result.ExitCode}; stderr: {result.Stderr}";
+        detail = $"confined curl exit {result.ExitCode}; stdout: {result.Stdout}; stderr: {result.Stderr}";
         Assert.True(Started(result), detail);
-        return result.ExitCode == 0;
+        return result.ExitCode;
     }
 
     [Theory]
@@ -183,10 +186,12 @@ public class LauncherRunTests
                 }
             }, token);
             // Positive control: the same request unconfined does reach the listener.
-            Assert.True(CurlReaches(url, null, network, out var plain), plain);
+            Assert.True(RunCurl(url, null, network, out var plain) == 0, plain);
             Assert.Equal(1, Volatile.Read(ref accepted));
-            Assert.False(CurlReaches(url, box, network, out var confined), confined);
-            Assert.Equal(1, Volatile.Read(ref accepted));
+            // Blocked means curl could not connect, not any other failure.
+            var code = RunCurl(url, box, network, out var confined);
+            Assert.True(Unreachable.Contains(code), $"expected could-not-connect; {confined}");
+            Assert.True(Volatile.Read(ref accepted) == 1, $"the box reached the listener; {confined}");
         }
         finally { listener.Stop(); }
     }
@@ -196,11 +201,14 @@ public class LauncherRunTests
     [Fact]
     public void The_internet_is_blocked_without_network_and_reachable_with_it()
     {
-        Assert.True(CurlReaches(External, null, false, out var plain), $"this machine has no internet, so the test proves nothing: {plain}");
+        Assert.True(RunCurl(External, null, false, out var plain) == 0, $"this machine has no internet, so the test proves nothing: {plain}");
         using (var box = new ConfineSandbox())
-            Assert.False(CurlReaches(External, box, network: false, out var blocked), blocked);
+        {
+            var code = RunCurl(External, box, network: false, out var blocked);
+            Assert.True(Unreachable.Contains(code), $"expected could-not-connect; {blocked}");
+        }
         using (var box = new ConfineSandbox())
-            Assert.True(CurlReaches(External, box, network: true, out var allowed), allowed);
+            Assert.True(RunCurl(External, box, network: true, out var allowed) == 0, allowed);
     }
 
     // ---- files ----
@@ -494,5 +502,14 @@ public class LauncherRunTests
         var missing = Path.Combine(box.Top, "missing");
         var result = Launch(box, [Cmd, "/c", "exit 0"], p => p["write_roots"] = new[] { box.Work, missing });
         AssertRefused(result, ExitCodes.PolicyInvalid);
+    }
+
+    [Fact]
+    public void A_child_can_start_a_grandchild_by_its_full_path()
+    {
+        using var box = new ConfineSandbox();
+        var result = Launch(box, [Cmd, "/c", $"cd & set & {Cmd} /c echo nested-ok"]);
+        Assert.True(result.Stdout.Contains("nested-ok") && result.ExitCode == 0,
+            $"exit {result.ExitCode}; stdout: {result.Stdout}; stderr: {result.Stderr}");
     }
 }
