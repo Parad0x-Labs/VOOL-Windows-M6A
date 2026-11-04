@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -290,6 +291,92 @@ def _no_window_flags() -> int:
     return int(getattr(subprocess, "CREATE_NO_WINDOW", 0)) | int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
 
 
+#: Variables the .NET host reads to load extra code (profilers, startup hooks, host overrides).
+#: The pin proves the launcher's files, not what these would make it load, so every launch drops them.
+_LOADER_ENV_PREFIXES = ("CORECLR_", "COR_", "COMPLUS_", "DOTNET_", "COREHOST_")
+
+
+def launcher_environment(env: dict[str, str] | None = None) -> dict[str, str]:
+    """*env* (default: this process's) without any variable that makes the .NET host load code."""
+    import os
+
+    source = os.environ if env is None else env
+    return {key: value for key, value in source.items() if not key.upper().startswith(_LOADER_ENV_PREFIXES)}
+
+
+_VOOL_JOB = None
+_VOOL_JOB_LOCK = threading.Lock()
+
+
+def _vool_job():
+    """VOOL's own kill-on-close job for its launchers, created once and held for this process's life,
+    so no launcher outlives VOOL (and holds the program folder open through an upgrade). None off
+    Windows. Failing to create it raises, and the caller refuses the launch."""
+    import os
+
+    global _VOOL_JOB
+    if os.name != "nt":
+        return None
+    with _VOOL_JOB_LOCK:
+        if _VOOL_JOB is None:
+            from core.windows_job import new_kill_on_close_job
+
+            _VOOL_JOB = new_kill_on_close_job()
+        return _VOOL_JOB
+
+
+def launcher_creationflags() -> int:
+    """No console, its own process group, and on Windows SUSPENDED until `adopt_launcher` runs."""
+    import os
+
+    flags = _no_window_flags()
+    if os.name == "nt":
+        from core.windows_job import CREATE_SUSPENDED
+
+        flags |= CREATE_SUSPENDED
+    return flags
+
+
+def adopt_launcher(pid: int) -> None:
+    """Put a launcher started with `launcher_creationflags` in VOOL's job, then let it run.
+
+    Raises when it can't, and the caller kills the launcher (still suspended, so it ran nothing)."""
+    import os
+
+    job = _vool_job()
+    if job is not None:
+        job.assign(pid)
+    if os.name == "nt":
+        if job is None:  # pragma: no cover - _vool_job raises rather than return None on Windows
+            raise OSError("VOOL's launcher job is unavailable")
+        from core.windows_job import resume_suspended
+
+        resume_suspended(pid)
+
+
+def _run_launcher(argv: list[str], *, timeout: float) -> int:
+    """Run one launcher invocation in VOOL's job with the scrubbed environment; its exit code."""
+    import subprocess
+
+    process = subprocess.Popen(
+        argv,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        shell=False,
+        env=launcher_environment(),
+        creationflags=launcher_creationflags(),
+    )
+    try:
+        adopt_launcher(process.pid)
+        process.communicate(timeout=timeout)
+    except BaseException:
+        process.kill()
+        process.communicate()
+        raise
+    return int(process.returncode)
+
+
 def launcher_form(launcher: Path | str, form: str, policy_path: Path, *, timeout: float = 300) -> bool:
     """Run the launcher's unconfined `grant` or `revoke` form for a policy. True only on exit 0.
 
@@ -301,18 +388,9 @@ def launcher_form(launcher: Path | str, form: str, policy_path: Path, *, timeout
     if form not in ("grant", "revoke"):
         raise ValueError(f"unknown launcher form {form!r}")
     try:
-        completed = subprocess.run(
-            [str(launcher), form, "--policy", str(policy_path)],
-            capture_output=True,
-            timeout=timeout,
-            shell=False,
-            check=False,
-            stdin=subprocess.DEVNULL,
-            creationflags=_no_window_flags(),
-        )
+        return _run_launcher([str(launcher), form, "--policy", str(policy_path)], timeout=timeout) == 0
     except (OSError, subprocess.SubprocessError):
         return False
-    return completed.returncode == 0
 
 
 def probe(project_root: Path) -> bool:
@@ -327,7 +405,6 @@ def probe(project_root: Path) -> bool:
     Anything else, including an exception, means unavailable."""
     import shutil
     import socket
-    import subprocess
     import sys
     import tempfile
 
@@ -366,21 +443,13 @@ def probe(project_root: Path) -> bool:
         granted_policy = stage / "policy.json"
         if not launcher_form(argv[0], "grant", granted_policy, timeout=60):
             return False
-        completed = subprocess.run(
-            argv,
-            capture_output=True,
-            timeout=60,
-            shell=False,
-            check=False,
-            stdin=subprocess.DEVNULL,
-            creationflags=_no_window_flags(),
-        )
+        returncode = _run_launcher(argv, timeout=60)
         status = read_status(stage / "status.json")
         revoked = launcher_form(argv[0], "revoke", granted_policy, timeout=60)
         granted_policy = None
         return (
             revoked
-            and completed.returncode == 0
+            and returncode == 0
             and status is not None
             and status.child_started
             and not status.timed_out

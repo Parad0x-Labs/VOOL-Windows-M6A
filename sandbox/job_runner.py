@@ -689,9 +689,25 @@ class JobRunner:
         """
         from sandbox import windows_confinement
 
-        flags = windows_confinement._no_window_flags()
+        def adopt(process: subprocess.Popen) -> None:
+            try:
+                windows_confinement.adopt_launcher(process.pid)
+            except Exception as exc:
+                raise KernelIsolationUnavailableError(
+                    f"the Windows confinement launcher could not be put in VOOL's own job ({exc}), "
+                    "so it was stopped before it ran anything."
+                ) from None
+
         outcome: dict[str, str] = {}
-        result = self._run_wrapped(argv, cwd_path, cancel_event, creationflags=flags, outcome=outcome)
+        result = self._run_wrapped(
+            argv,
+            cwd_path,
+            cancel_event,
+            creationflags=windows_confinement.launcher_creationflags(),
+            outcome=outcome,
+            env_filter=windows_confinement.launcher_environment,
+            after_spawn=adopt,
+        )
         # The cancel and timeout outcomes are the runner's own: it killed the launcher, so the
         # job object closed and the tree is gone, whatever the status file says.
         operator_outcome = outcome.get("kind") in {"cancelled", "timed_out"}
@@ -732,10 +748,14 @@ class JobRunner:
         *,
         creationflags: int = 0,
         outcome: dict[str, str] | None = None,
+        env_filter=None,
+        after_spawn=None,
     ) -> ExecutionResult:
         if outcome is None:
             outcome = {}
         env = self._child_environment(cwd_path)
+        if env_filter is not None:
+            env = env_filter(env)
         # `start_new_session=True` puts the child in its OWN process group, which is what makes
         # the whole tree killable. `subprocess.run(timeout=…)` kills the direct child and reaps
         # it; anything that child spawned keeps running, reparented to init, with the caller
@@ -774,6 +794,8 @@ class JobRunner:
             _terminate_process_group(process, pgid=pgid)
 
         try:
+            if after_spawn is not None:
+                after_spawn(process)
             stdout, stderr = self._wait(process, cancel_event)
         except _JobCancelledError:
             # The operator withdrew the job. Same teardown as a timeout — the whole process
@@ -1119,7 +1141,20 @@ class JobRunner:
             policy = windows_confinement.WindowsConfinementPolicy(
                 write_roots=tuple(_windows_path_text(root) for root in write_roots),
                 read_roots=tuple(_windows_path_text(root) for root in read_roots),
-                deny_write_paths=tuple(_windows_path_text(root) for root in code),
+                # A read root inside a write root would stay writable through the root's grant
+                # (a workspace .venv), so it is denied writes as well.
+                deny_write_paths=tuple(
+                    dict.fromkeys(
+                        _windows_path_text(root)
+                        for root in (
+                            *code,
+                            *(
+                                r for r in read_roots
+                                if r not in write_roots and any(within(r, w) for w in write_roots)
+                            ),
+                        )
+                    )
+                ),
                 # Like the Mac's secret and state denies: no read, no write. Only folders that
                 # exist are named; a job can't create one, because nothing outside its write roots
                 # is granted to it.
