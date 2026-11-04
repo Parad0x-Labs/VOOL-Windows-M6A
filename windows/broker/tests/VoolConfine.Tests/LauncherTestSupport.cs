@@ -6,7 +6,7 @@ using VoolConfine.Core;
 using Xunit;
 
 // The launcher tests start real processes and count them; one at a time keeps the counts exact.
-[assembly: CollectionBehavior(DisableTestParallelization = true)]
+[assembly: Xunit.v3.Parallelization(Mode = Xunit.Sdk.ParallelMode.None)]
 
 namespace VoolConfine.Tests;
 
