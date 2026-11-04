@@ -120,12 +120,18 @@ def test_a_missing_pinned_file_is_refused(tmp_path: Path, rel: str) -> None:
     assert pin.verified_launcher(app) is None
 
 
-@pytest.mark.skipif(os.name == "nt", reason="the held files can't be changed on Windows; see the Windows test below")
-def test_a_file_changed_after_verification_is_refused_where_nothing_is_held(tmp_path: Path) -> None:
+def test_a_file_changed_after_verification_is_refused_or_cannot_be_changed(tmp_path: Path) -> None:
     app, folder, _ = _install(tmp_path)
     assert pin.verified_launcher(app) is not None
-    (folder / "VoolConfine.dll").write_bytes(b"other code")
-    assert pin.verified_launcher(app) is None
+    if os.name == "nt":
+        # Held with FILE_SHARE_READ only: the change itself is refused, and the launcher stays good.
+        with pytest.raises(PermissionError):
+            (folder / "VoolConfine.dll").write_bytes(b"other code")
+        assert pin.verified_launcher(app) == folder / "VoolConfine.exe"
+    else:
+        # Nothing can be held here, so the next call re-hashes and refuses the change.
+        (folder / "VoolConfine.dll").write_bytes(b"other code")
+        assert pin.verified_launcher(app) is None
 
 
 def test_a_missing_pin_is_refused(tmp_path: Path) -> None:
@@ -213,32 +219,45 @@ def test_names_are_compared_as_windows_compares_them(tmp_path: Path) -> None:
     assert pin.verified_launcher(app) == folder / "VoolConfine.exe"
 
 
-@pytest.mark.skipif(os.name == "nt", reason="symlinks need a privilege on Windows; junctions are the Windows row")
-def test_a_linked_file_or_folder_is_refused_never_followed(tmp_path: Path) -> None:
+def _link(link: Path, target_dir: Path) -> None:
+    """A reparse point at `link`: a junction on Windows (no privilege needed), a symlink elsewhere.
+    The target is a directory, because a junction can only point at one."""
+    target_dir.mkdir(parents=True, exist_ok=True)
+    if os.name == "nt":
+        done = subprocess.run(["cmd", "/d", "/c", "mklink", "/J", str(link), str(target_dir)], capture_output=True, text=True)
+        assert done.returncode == 0, done.stdout + done.stderr
+    else:
+        link.symlink_to(target_dir, target_is_directory=True)
+
+
+def test_a_linked_pinned_file_is_refused_never_followed(tmp_path: Path) -> None:
     app, folder, _ = _install(tmp_path)
-    real = tmp_path / "elsewhere.dll"
-    real.write_bytes(FILES["VoolConfine.dll"])
     (folder / "VoolConfine.dll").unlink()
-    (folder / "VoolConfine.dll").symlink_to(real)
+    _link(folder / "VoolConfine.dll", tmp_path / "elsewhere")
     assert pin.verified_launcher(app) is None
 
-    app2, folder2, _ = _install(tmp_path / "two")
-    moved = tmp_path / "two" / "real-sub"
-    (folder2 / "sub").rename(moved)
-    (folder2 / "sub").symlink_to(moved, target_is_directory=True)
-    assert pin.verified_launcher(app2) is None
 
-    app3, folder3, _ = _install(tmp_path / "three")
-    real_folder = tmp_path / "three" / "real-confine"
-    folder3.rename(real_folder)
-    folder3.symlink_to(real_folder, target_is_directory=True)
-    assert pin.verified_launcher(app3) is None
+def test_a_linked_subfolder_is_refused_never_followed(tmp_path: Path) -> None:
+    app, folder, _ = _install(tmp_path)
+    moved = tmp_path / "real-sub"
+    (folder / "sub").rename(moved)
+    _link(folder / "sub", moved)
+    assert pin.verified_launcher(app) is None
 
-    app4, _, pin4 = _install(tmp_path / "four")
-    real_pin = tmp_path / "four" / "real-pin.json"
-    pin4.rename(real_pin)
-    pin4.symlink_to(real_pin)
-    assert pin.verified_launcher(app4) is None
+
+def test_a_linked_launcher_folder_is_refused_never_followed(tmp_path: Path) -> None:
+    app, folder, _ = _install(tmp_path)
+    real_folder = tmp_path / "real-confine"
+    folder.rename(real_folder)
+    _link(folder, real_folder)
+    assert pin.verified_launcher(app) is None
+
+
+def test_a_linked_pin_is_refused_never_followed(tmp_path: Path) -> None:
+    app, _, pin_path = _install(tmp_path)
+    pin_path.unlink()
+    _link(pin_path, tmp_path / "elsewhere")
+    assert pin.verified_launcher(app) is None
 
 
 # --- Windows: the verified files are held -----------------------------------------------------
