@@ -117,11 +117,11 @@ public class LauncherUnitTests
         var package = Sids.EnsureProfile();
         Assert.StartsWith("S-1-15-2-", package);
         Assert.Equal(package, Sids.EnsureProfile());
-        Assert.Equal(package, Sids.PackageSid());
-        var a = Sids.RootCapabilitySid(@"C:\work\a");
+        Assert.Equal(package, Sids.Package());
+        var a = Sids.RootCapability(@"C:\work\a");
         Assert.StartsWith("S-1-15-3-1024-", a);
-        Assert.Equal(a, Sids.RootCapabilitySid("c:/work/a/"));
-        Assert.NotEqual(a, Sids.RootCapabilitySid(@"C:\work\b"));
+        Assert.Equal(a, Sids.RootCapability("c:/work/a/"));
+        Assert.NotEqual(a, Sids.RootCapability(@"C:\work\b"));
         Assert.Contains(@"\Packages\", Sids.FolderPath(package), StringComparison.OrdinalIgnoreCase);
     }
 
@@ -132,8 +132,8 @@ public class LauncherUnitTests
             {"schema":"vool.windows_confinement.v1","write_roots":["C:\\work\\a","C:\\work\\a\\"],
              "temp_dir":"C:\\work\\a\\t","status_path":"C:\\s\\status.json"}
             """);
-        Assert.Equal(new[] { Sids.RootCapabilitySid(@"C:\work\a") }, Sids.CapabilitiesFor(offline));
+        Assert.Equal(new[] { Sids.RootCapability(@"C:\work\a") }, Sids.CapabilitiesFor(offline));
         var online = offline with { Network = true };
-        Assert.Equal(new[] { Sids.RootCapabilitySid(@"C:\work\a"), Sids.InternetClientSid }, Sids.CapabilitiesFor(online));
+        Assert.Equal(new[] { Sids.RootCapability(@"C:\work\a"), Sids.InternetClientSid }, Sids.CapabilitiesFor(online));
     }
 }

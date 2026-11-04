@@ -14,6 +14,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VoolConfine.Core", "src\Voo
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VoolConfine.Tests", "tests\VoolConfine.Tests\VoolConfine.Tests.csproj", "{7C1E2A40-5B3D-4F6A-9E21-0D4C8B7A1F03}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VoolConfine.TestHost", "tests\VoolConfine.TestHost\VoolConfine.TestHost.csproj", "{7C1E2A40-5B3D-4F6A-9E21-0D4C8B7A1F04}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -44,5 +46,9 @@ Global
 		{7C1E2A40-5B3D-4F6A-9E21-0D4C8B7A1F03}.Debug|x64.Build.0 = Debug|Any CPU
 		{7C1E2A40-5B3D-4F6A-9E21-0D4C8B7A1F03}.Release|x64.ActiveCfg = Release|Any CPU
 		{7C1E2A40-5B3D-4F6A-9E21-0D4C8B7A1F03}.Release|x64.Build.0 = Release|Any CPU
+		{7C1E2A40-5B3D-4F6A-9E21-0D4C8B7A1F04}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{7C1E2A40-5B3D-4F6A-9E21-0D4C8B7A1F04}.Debug|x64.Build.0 = Debug|Any CPU
+		{7C1E2A40-5B3D-4F6A-9E21-0D4C8B7A1F04}.Release|x64.ActiveCfg = Release|Any CPU
+		{7C1E2A40-5B3D-4F6A-9E21-0D4C8B7A1F04}.Release|x64.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

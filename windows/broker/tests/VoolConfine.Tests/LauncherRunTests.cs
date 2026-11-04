@@ -135,8 +135,8 @@ public class LauncherRunTests
         var result = Launch(box, [Whoami, "/groups", "/fo", "csv", "/nh"], p => p["network"] = network);
         AssertStartedAndFinished(result, 0);
         Assert.Contains("S-1-16-4096", result.Stdout); // Low mandatory level
-        Assert.Contains(Sids.RootCapabilitySid(box.Work), result.Stdout);
-        Assert.DoesNotContain(Sids.RootCapabilitySid(other.Work), result.Stdout);
+        Assert.Contains(Sids.RootCapability(box.Work), result.Stdout);
+        Assert.DoesNotContain(Sids.RootCapability(other.Work), result.Stdout);
         if (network) Assert.Contains($"\"{Sids.InternetClientSid}\"", result.Stdout);
         else Assert.DoesNotContain($"\"{Sids.InternetClientSid}\"", result.Stdout);
     }
@@ -314,7 +314,7 @@ public class LauncherRunTests
                     }
                 });
             Assert.Equal(ExitCodes.Timeout, result.ExitCode);
-            Assert.InRange(clock.Elapsed.TotalSeconds, 2.5, 30);
+            Assert.InRange(clock.Elapsed.TotalSeconds, 2.5, 30.0);
             var status = result.Status!.Value;
             Assert.True(status.GetProperty("child_started").GetBoolean());
             Assert.True(status.GetProperty("timed_out").GetBoolean());
@@ -418,5 +418,81 @@ public class LauncherRunTests
         Assert.True(Started(result), result.Stderr);
         Assert.NotEqual(0, result.ExitCode);
         Assert.Equal("processes", result.Status!.Value.GetProperty("limit").GetString());
+    }
+
+    // ---- the checks seam and resolved paths ----
+
+    [Fact]
+    public void The_shipped_launcher_refuses_every_run_until_the_acl_verify_exists()
+    {
+        using var box = new ConfineSandbox();
+        var marker = Path.Combine(box.Work, "ran.txt");
+        var result = Launch(box, [Cmd, "/c", $"echo ran> {marker}"], host: Host.Real);
+        AssertRefused(result, ExitCodes.SetupFailed);
+        Assert.Contains("chunk 2", result.Status!.Value.GetProperty("error").GetString());
+        Assert.False(File.Exists(marker), "the child ran");
+    }
+
+    [Fact]
+    public void A_missed_acl_verify_is_125_and_the_child_never_starts()
+    {
+        using var box = new ConfineSandbox();
+        var marker = Path.Combine(box.Work, "ran.txt");
+        var result = Launch(box, [Cmd, "/c", $"echo ran> {marker}"], host: Host.FailVerify);
+        AssertRefused(result, ExitCodes.SetupFailed);
+        Assert.False(File.Exists(marker), "the child ran");
+    }
+
+    [Fact]
+    public void A_repository_made_by_the_job_is_123_and_listed_in_the_status()
+    {
+        using var box = new ConfineSandbox();
+        var git = Path.Combine(box.Work, ".git");
+        var result = Launch(box, [Cmd, "/c", $"mkdir {git}"]);
+        Assert.True(Directory.Exists(git), $"the job could not make the folder; stderr: {result.Stderr}");
+        Assert.Equal(ExitCodes.NewRepository, result.ExitCode);
+        var status = result.Status!.Value;
+        Assert.True(status.GetProperty("child_started").GetBoolean());
+        Assert.Equal(0, status.GetProperty("exit_code").GetInt32());
+        Assert.Equal(git, Assert.Single(status.GetProperty("new_repositories").EnumerateArray()).GetString(), ignoreCase: true);
+    }
+
+    [Fact]
+    public void A_write_root_that_is_a_junction_is_126_and_the_child_never_starts()
+    {
+        using var box = new ConfineSandbox();
+        var link = Path.Combine(box.Top, "link");
+        var (code, output) = RunPlain(Cmd, ["/c", "mklink", "/J", link, box.Work]);
+        Assert.True(code == 0, output);
+        var marker = Path.Combine(box.Work, "ran.txt");
+        var result = Launch(box, [Cmd, "/c", $"echo ran> {marker}"], p =>
+        {
+            p["write_roots"] = new[] { link };
+            p["temp_dir"] = Path.Combine(link, "tmp");
+        });
+        AssertRefused(result, ExitCodes.PolicyInvalid);
+        Assert.Contains("resolves to", result.Stderr);
+        Assert.False(File.Exists(marker), "the child ran");
+    }
+
+    [Fact]
+    public void A_status_folder_that_is_a_junction_is_126_and_nothing_is_written_through_it()
+    {
+        using var box = new ConfineSandbox();
+        var link = Path.Combine(box.Top, "status-link");
+        var (code, output) = RunPlain(Cmd, ["/c", "mklink", "/J", link, box.Outside]);
+        Assert.True(code == 0, output);
+        var result = Launch(box, [Cmd, "/c", "exit 0"], p => p["status_path"] = Path.Combine(link, "status.json"));
+        Assert.Equal(ExitCodes.PolicyInvalid, result.ExitCode);
+        Assert.False(File.Exists(Path.Combine(box.Outside, "status.json")), "the status was written through the junction");
+    }
+
+    [Fact]
+    public void A_missing_write_root_is_126()
+    {
+        using var box = new ConfineSandbox();
+        var missing = Path.Combine(box.Top, "missing");
+        var result = Launch(box, [Cmd, "/c", "exit 0"], p => p["write_roots"] = new[] { box.Work, missing });
+        AssertRefused(result, ExitCodes.PolicyInvalid);
     }
 }

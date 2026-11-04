@@ -36,7 +36,7 @@ internal sealed class ConfineSandbox : IDisposable
         Directory.CreateDirectory(Outside);
         Directory.CreateDirectory(Path.Combine(Top, "status"));
         StatusPath = Path.Combine(Top, "status", "status.json");
-        if (grantWork) Grant(Work, Sids.RootCapabilitySid(Work));
+        if (grantWork) Grant(Work, Sids.RootCapability(Work));
     }
 
     /// <summary>Read and write, inherited by new files and folders, for one SID (what chunk 2 will do).</summary>
@@ -95,10 +95,10 @@ internal static class LauncherTestSupport
     internal static string Whoami => Path.Combine(System32, "whoami.exe");
 
     /// <summary>
-    /// The launcher the solution build produced, beside this test assembly's own configuration. A
-    /// missing launcher fails the test; it is never skipped.
+    /// A program the solution build produced, beside this test assembly's own configuration. A
+    /// missing build fails the test; it is never skipped.
     /// </summary>
-    internal static string LauncherExe()
+    static string Built(string folder, string project)
     {
         var baseDirectory = AppContext.BaseDirectory;
         var directory = new DirectoryInfo(baseDirectory);
@@ -109,19 +109,31 @@ internal static class LauncherTestSupport
         var parts = baseDirectory.TrimEnd('\\').Split('\\');
         var bin = Array.LastIndexOf(parts, "bin");
         Assert.True(bin >= 0 && bin + 2 < parts.Length, $"unexpected test output folder {baseDirectory}");
-        var exe = Path.Combine(directory!.FullName, "src", "VoolConfine", "bin", parts[bin + 1], parts[bin + 2], "VoolConfine.exe");
-        Assert.True(File.Exists(exe), $"the launcher was not built: {exe}");
+        var exe = Path.Combine(directory!.FullName, folder, project, "bin", parts[bin + 1], parts[bin + 2], project + ".exe");
+        Assert.True(File.Exists(exe), $"not built: {exe}");
         return exe;
     }
+
+    /// <summary>The shipped launcher, VoolConfine.exe (PendingChecks until chunk 2 lands).</summary>
+    internal static string RealLauncherExe() => Built("src", "VoolConfine");
+
+    /// <summary>The test host: the same launcher code with the checks named by its first argument.</summary>
+    internal static string TestHostExe() => Built("tests", "VoolConfine.TestHost");
 
     /// <summary>PowerShell's -EncodedCommand form, so no quoting layer touches the script.</summary>
     internal static string[] PowerShellArgs(string script) =>
         [PowerShell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand",
             Convert.ToBase64String(Encoding.Unicode.GetBytes(script))];
 
-    internal static ProcessStartInfo StartInfo(string policyPath, IReadOnlyList<string> argv)
+    /// <summary>
+    /// How a run is launched: through the test host with checks that pass (the default), with a
+    /// missed ACL verify, or through the real VoolConfine.exe.
+    /// </summary>
+    internal enum Host { Pass, FailVerify, Real }
+
+    internal static ProcessStartInfo StartInfo(string policyPath, IReadOnlyList<string> argv, Host host = Host.Pass)
     {
-        var start = new ProcessStartInfo(LauncherExe())
+        var start = new ProcessStartInfo(host == Host.Real ? RealLauncherExe() : TestHostExe())
         {
             UseShellExecute = false,
             RedirectStandardOutput = true,
@@ -131,6 +143,7 @@ internal static class LauncherTestSupport
             // The box can read System32 (ALL APPLICATION PACKAGES); the test folder it can't.
             WorkingDirectory = System32,
         };
+        if (host != Host.Real) start.ArgumentList.Add(host == Host.Pass ? "pass" : "fail-verify");
         start.ArgumentList.Add("--policy");
         start.ArgumentList.Add(policyPath);
         start.ArgumentList.Add("--");
@@ -146,10 +159,11 @@ internal static class LauncherTestSupport
     }
 
     internal static LaunchResult Launch(ConfineSandbox box, IReadOnlyList<string> argv,
-        Action<Dictionary<string, object>>? change = null, TimeSpan? wait = null, Action<Process>? whileRunning = null)
+        Action<Dictionary<string, object>>? change = null, TimeSpan? wait = null, Action<Process>? whileRunning = null,
+        Host host = Host.Pass)
     {
         var policyPath = WritePolicy(box, box.Policy(change));
-        using var process = Process.Start(StartInfo(policyPath, argv))!;
+        using var process = Process.Start(StartInfo(policyPath, argv, host))!;
         process.StandardInput.Close();
         var stdout = process.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
         var stderr = process.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
