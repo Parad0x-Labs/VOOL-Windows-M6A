@@ -15,6 +15,7 @@ swap `_check_path` for one that still demands an absolute path. Every other rule
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import stat
@@ -38,6 +39,10 @@ _STATUS = wc.STATUS_SCHEMA
 #: newrepo-status-only - report a new repository but exit with the child's code;
 #: exit123  - run the child and exit 123 with no repository listed;
 #: grant-fails - the unconfined `grant` form exits 1;
+#: crash    - run the child, then die without the final record or the repository scan;
+#: noscan   - like run, but the final record says the repository scan did not complete;
+#: scan-fails - the `scan` form exits 125 (the scan could not finish).
+#: The `scan` form reports any `.git` folder under a `nested` folder of a write root (exit 123).
 #: unconfined-probe - run the child with no confinement at all (a launcher that confines nothing).
 #: Every `grant`/`revoke` call is logged to forms.log next to the launcher, and each form's
 #: environment variable names to env-<form>.json.
@@ -46,8 +51,26 @@ import json, os, subprocess, sys
 MODE = {mode!r}
 args = sys.argv[1:]
 here = os.path.dirname(os.path.abspath(__file__))
-with open(os.path.join(here, "env-" + (args[0] if args and args[0] in ("grant", "revoke") else "run") + ".json"), "w") as f:
+with open(os.path.join(here, "env-" + (args[0] if args and args[0] in ("grant", "revoke", "scan") else "run") + ".json"), "w") as f:
     json.dump(sorted(os.environ), f)
+if args and args[0] == "scan":
+    with open(os.path.join(here, "forms.log"), "a") as f:
+        f.write("scan\n")
+    if MODE == "scan-fails":
+        sys.exit(125)
+    policy = json.load(open(args[2], encoding="utf-8"))
+    found = []
+    for root in policy["write_roots"]:
+        for dirpath, dirnames, _files in os.walk(root):
+            found += [os.path.join(dirpath, d) for d in dirnames if d.lower() == ".git" and "nested" in dirpath]
+    status = os.path.join(os.path.dirname(args[2]), "status.json")
+    try:
+        data = json.load(open(status, encoding="utf-8"))
+    except (OSError, ValueError):
+        data = dict(schema={schema!r}, child_started=False)
+    data.update(new_repositories=found, repositories_scanned=True)
+    json.dump(data, open(status, "w", encoding="utf-8"))
+    sys.exit(123 if found else 0)
 if args and args[0] in ("grant", "revoke"):
     with open(os.path.join(here, "forms.log"), "a") as f:
         f.write(args[0] + "\n")
@@ -67,8 +90,11 @@ if MODE == "refuse-started-false":
     sys.exit(125)
 record(child_started=True)
 rc = subprocess.call(args[3:])
+if MODE == "crash":
+    os._exit(3)  # died after the child, before its final record and its own repository scan
 repos = [policy["write_roots"][0] + "/nested/.git"] if MODE.startswith("newrepo") else []
-record(child_started=True, timed_out=False, exit_code=0 if MODE == "lie" else rc, new_repositories=repos)
+record(child_started=True, timed_out=False, exit_code=0 if MODE == "lie" else rc, new_repositories=repos,
+       repositories_scanned=MODE != "noscan")
 sys.exit(123 if MODE in ("newrepo", "exit123") else rc)
 '''
 
@@ -555,3 +581,153 @@ def test_a_read_root_inside_a_write_root_is_denied_writes(windows, tmp_path) -> 
     policy = json.loads(Path(runner._with_network_isolation(["python", "-c", "0"])[2]).read_text())
     assert str(venv) in policy["read_roots"] and str(venv) in policy["deny_write_paths"]
     assert str((tmp_path / "ws").resolve()) not in policy["deny_write_paths"], "the workspace itself stays writable"
+
+
+# --- the runner's own repository scan (every outcome) -----------------------------------------
+
+
+_PLANT = "import os; os.makedirs(os.path.join('nested', {name!r}, 'hooks'), exist_ok=True)"
+
+
+def test_a_job_that_plants_a_repo_then_times_out_is_refused(windows, tmp_path, private_tmp) -> None:
+    """The launcher is killed on a timeout before its own scan, so the runner's scan must catch it."""
+    _use_launcher(windows, _fake_launcher(tmp_path / "bin", "run"))
+    code = _PLANT.format(name=".git") + "; import time; time.sleep(5)"
+    with pytest.raises(jr.NestedGitMetadataError, match="git metadata"):
+        _runner(tmp_path, max_seconds=1).run(["python", "-c", code])
+    assert (tmp_path / "ws" / "nested" / ".git").is_dir(), "nothing the job made is deleted"
+    assert _staging_folders(private_tmp) == set()
+
+
+def test_a_job_that_plants_a_repo_then_is_cancelled_is_refused(windows, tmp_path, private_tmp) -> None:
+    import threading
+
+    _use_launcher(windows, _fake_launcher(tmp_path / "bin", "run"))
+    flag = tmp_path / "ws" / "planted"
+    code = _PLANT.format(name=".git") + f"; open({str(flag)!r}, 'w').close(); import time; time.sleep(10)"
+    cancel = threading.Event()
+
+    def cancel_once_planted() -> None:
+        import time
+
+        deadline = time.monotonic() + 8
+        while not flag.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        cancel.set()
+
+    threading.Thread(target=cancel_once_planted, daemon=True).start()
+    with pytest.raises(jr.NestedGitMetadataError):
+        _runner(tmp_path, max_seconds=20).run(["python", "-c", code], cancel_event=cancel)
+
+
+def test_a_job_whose_launcher_crashed_still_has_its_planted_repo_caught(windows, tmp_path, private_tmp) -> None:
+    _use_launcher(windows, _fake_launcher(tmp_path / "bin", "crash"))
+    with pytest.raises(jr.NestedGitMetadataError):
+        _runner(tmp_path).run(["python", "-c", _PLANT.format(name=".git")])
+
+
+def test_a_crashed_launcher_with_no_planted_repo_is_still_refused(windows, tmp_path, private_tmp) -> None:
+    _use_launcher(windows, _fake_launcher(tmp_path / "bin", "crash"))
+    with pytest.raises(jr.KernelIsolationUnavailableError, match="does not match"):
+        _runner(tmp_path).run(["python", "-c", "0"])
+
+
+@pytest.mark.parametrize("name", [".git", ".GIT", ".Git.", ".git "])
+def test_every_spelling_of_a_planted_git_folder_is_refused(windows, tmp_path, private_tmp, name) -> None:
+    _use_launcher(windows, _fake_launcher(tmp_path / "bin", "run"))
+    with pytest.raises(jr.NestedGitMetadataError):
+        _runner(tmp_path).run(["python", "-c", _PLANT.format(name=name)])
+
+
+def test_a_planted_gitdir_redirect_file_is_refused(windows, tmp_path, private_tmp) -> None:
+    _use_launcher(windows, _fake_launcher(tmp_path / "bin", "run"))
+    with pytest.raises(jr.NestedGitMetadataError):
+        _runner(tmp_path).run(["python", "-c", "open('.git', 'w').write('gitdir: C:/elsewhere')"])
+
+
+def test_a_planted_bare_repository_is_refused(windows, tmp_path, private_tmp) -> None:
+    _use_launcher(windows, _fake_launcher(tmp_path / "bin", "run"))
+    code = (
+        "import os; os.makedirs('vendor/lib/objects'); os.makedirs('vendor/lib/refs'); "
+        "open('vendor/lib/HEAD', 'w').write('ref: refs/heads/main')"
+    )
+    with pytest.raises(jr.NestedGitMetadataError, match="vendor"):
+        _runner(tmp_path).run(["python", "-c", code])
+
+
+def test_a_repository_that_was_there_before_the_job_is_not_a_planted_one(windows, tmp_path, private_tmp) -> None:
+    _use_launcher(windows, _fake_launcher(tmp_path / "bin", "run"))
+    (tmp_path / "ws" / ".git" / "hooks").mkdir(parents=True)
+    assert _runner(tmp_path).run(["python", "-c", "print('ok')"]).returncode == 0
+
+
+def test_a_bare_program_name_is_matched_in_any_case(windows, tmp_path) -> None:
+    _use_launcher(windows, _fake_launcher(tmp_path / "bin", "run"))
+    for program in ("PYTHON", "Python3.EXE", "PyTest"):
+        argv = _runner(tmp_path)._with_network_isolation([program, "-c", "0"])
+        assert argv[4] == str(Path(sys.executable).resolve()), program
+
+
+def test_staging_folders_built_but_never_run_are_removed_at_exit(windows, tmp_path, private_tmp) -> None:
+    _use_launcher(windows, _fake_launcher(tmp_path / "bin", "run"))
+    _runner(tmp_path)._with_network_isolation(["python", "-c", "0"])
+    assert _staging_folders(private_tmp)
+    jr._forget_staged_at_exit()
+    assert _staging_folders(private_tmp) == set() and not jr._WINDOWS_STAGED
+
+
+# --- the launcher's scan form after a job whose scan did not complete (owner review R1) --------
+
+
+def test_a_job_that_ends_cleanly_with_a_completed_scan_needs_no_scan_form(windows, tmp_path, private_tmp) -> None:
+    launcher = _fake_launcher(tmp_path / "bin", "run")
+    _use_launcher(windows, launcher)
+    assert _runner(tmp_path).run(["python", "-c", "0"]).returncode == 0
+    assert "scan" not in _forms(launcher)
+
+
+@pytest.mark.parametrize("mode", ["noscan", "crash"])
+def test_a_job_without_a_completed_scan_gets_the_scan_form(windows, tmp_path, private_tmp, mode) -> None:
+    launcher = _fake_launcher(tmp_path / "bin", mode)
+    _use_launcher(windows, launcher)
+    with contextlib.suppress(jr.KernelIsolationUnavailableError):  # a crash is still refused after the scan
+        _runner(tmp_path).run(["python", "-c", "0"])
+    assert _forms(launcher).count("scan") == 1
+
+
+def test_a_timed_out_job_is_scanned_by_the_launcher_before_it_returns(windows, tmp_path, private_tmp) -> None:
+    launcher = _fake_launcher(tmp_path / "bin", "run")
+    _use_launcher(windows, launcher)
+    result = _runner(tmp_path, max_seconds=1).run(["python", "-c", "import time; time.sleep(4)"])
+    assert result.returncode == 124
+    assert _forms(launcher).count("scan") == 1
+
+
+def test_the_launchers_scan_alone_refuses_a_repo_planted_before_a_timeout(windows, tmp_path, private_tmp) -> None:
+    """With the runner's own walk disabled, the scan form still catches it (R1 on its own)."""
+    launcher = _fake_launcher(tmp_path / "bin", "run")
+    _use_launcher(windows, launcher)
+    windows.setattr(jr, "_repository_layouts", lambda roots: (set(), True))
+    code = _PLANT.format(name=".git") + "; import time; time.sleep(5)"
+    with pytest.raises(jr.NestedGitMetadataError, match="nested"):
+        _runner(tmp_path, max_seconds=1).run(["python", "-c", code])
+
+
+def test_a_scan_that_cannot_finish_refuses_even_a_timeout(windows, tmp_path, private_tmp) -> None:
+    _use_launcher(windows, _fake_launcher(tmp_path / "bin", "scan-fails"))
+    with pytest.raises(jr.KernelIsolationUnavailableError, match="repository scan"):
+        _runner(tmp_path, max_seconds=1).run(["python", "-c", "import time; time.sleep(4)"])
+
+
+def test_the_scan_form_is_skipped_only_when_the_record_says_the_child_never_ran(windows, tmp_path, private_tmp) -> None:
+    never = _fake_launcher(tmp_path / "never", "refuse-started-false")
+    _use_launcher(windows, never)
+    with pytest.raises(jr.KernelIsolationUnavailableError):
+        _runner(tmp_path).run(["python", "-c", "0"])
+    assert "scan" not in _forms(never)
+    jr.reset_isolation_backend_probe_cache()
+    unknown = _fake_launcher(tmp_path / "unknown", "refuse")  # no record at all: it may have run
+    _use_launcher(windows, unknown)
+    with pytest.raises(jr.KernelIsolationUnavailableError, match="never ran"):
+        _runner(tmp_path).run(["python", "-c", "0"])
+    assert _forms(unknown).count("scan") == 1
