@@ -121,3 +121,53 @@ def test_deny_all_paths_round_trip_and_are_checked() -> None:
     assert wc.WindowsConfinementPolicy.from_json(policy.to_json()).deny_all_paths == ("C:\\Users\\me\\.ssh",)
     with pytest.raises(wc.PolicyError):
         wc.WindowsConfinementPolicy(**GOOD, deny_all_paths=("relative",)).validate()
+
+
+#: Spellings Win32 rewrites before it opens a path (📝 chunk-0 review). Each one could make a status
+#: file that is lexically outside `C:\w` land inside it, so each is refused. The C# twin is
+#: PolicyTests.A_path_spelling_Win32_would_rewrite_is_refused, with the same list.
+NON_CANONICAL = [
+    "C:\\w.\\status.json",
+    "C:\\w \\status.json",
+    "C:\\W~1\\status.json",
+    "C:\\w\\.\\status.json",
+    "C:\\w\\\\status.json",
+    "C:\\w\\",
+    "C:/w/status.json",
+    "C:\\w/status.json",
+    "C:w\\status.json",
+    "C:\\w\\status.json:stream",
+    "C:\\w\\NUL",
+    "C:\\w\\con.txt",
+    "C:\\w\\COM1 .log",
+    "C:\\w\\a?b",
+    "C:\\w\\a\tb",
+    "\\\\?\\C:\\w\\status.json",
+    "ß:\\w",
+]
+
+
+@pytest.mark.parametrize("spelling", NON_CANONICAL)
+def test_a_path_spelling_win32_would_rewrite_is_refused(spelling: str) -> None:
+    with pytest.raises(wc.PolicyError):
+        wc.WindowsConfinementPolicy(**{**GOOD, "status_path": spelling}).validate()
+    with pytest.raises(wc.PolicyError):
+        wc.WindowsConfinementPolicy(**{**GOOD, "read_roots": (spelling,)}).validate()
+
+
+@pytest.mark.parametrize(
+    "spelling", ["C:\\", "C:\\Users\\José\\vc\\status.json", "d:\\a b\\c.d\\status.json", "C:\\w\\.vool-tmp"]
+)
+def test_canonical_spellings_are_accepted(spelling: str) -> None:
+    wc.WindowsConfinementPolicy(**{**GOOD, "read_roots": (spelling,)}).validate()
+
+
+@pytest.mark.parametrize(
+    ("root", "status"),
+    [("C:\\w", "c:\\W\\s.json"), ("C:\\é", "C:\\É\\s.json"), ("C:\\", "C:\\s.json")],
+)
+def test_a_status_path_inside_a_write_root_under_any_casing_is_refused(root: str, status: str) -> None:
+    with pytest.raises(wc.PolicyError):
+        wc.WindowsConfinementPolicy(
+            write_roots=(root,), temp_dir=root.rstrip("\\") + "\\t", status_path=status
+        ).validate()

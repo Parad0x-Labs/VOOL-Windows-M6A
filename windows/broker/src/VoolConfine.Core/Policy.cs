@@ -108,23 +108,60 @@ public sealed record Policy(
         return value;
     }
 
-    /// <summary>Absolute drive-letter path, no UNC/device prefix, no '..' segment.</summary>
+    /// <summary>Win32 maps these names to devices in any folder, with or without an extension.</summary>
+    static readonly HashSet<string> DeviceNames = new(StringComparer.Ordinal)
+    {
+        "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    };
+
+    const string BadSegmentChars = "<>\"|?*~:/";
+
+    /// <summary>
+    /// One canonical spelling only. Win32 rewrites trailing dots and spaces, '.' segments, 8.3 names and
+    /// device names before it opens a path, so the lexical containment check in Inside() is sound only when
+    /// no such spelling gets in. The Python twin is sandbox.windows_confinement._check_path; keep them identical.
+    /// </summary>
     public static string CheckPath(string path, string what)
     {
         if (path.StartsWith(@"\\", StringComparison.Ordinal) || path.StartsWith("//", StringComparison.Ordinal))
             throw new PolicyException($"{what} must be a drive-letter path, not a UNC or device path: {path}");
-        if (path.Length < 3 || !char.IsAsciiLetter(path[0]) || path[1] != ':' || (path[2] != '\\' && path[2] != '/'))
-            throw new PolicyException($"{what} must be an absolute drive-letter path: {path}");
-        if (path.Split('\\', '/').Any(part => part == ".."))
-            throw new PolicyException($"{what} must be resolved (no '..'): {path}");
+        if (path.Length < 3 || !char.IsAsciiLetter(path[0]) || path[1] != ':' || path[2] != '\\')
+            throw new PolicyException($"{what} must be an absolute drive-letter path with backslashes: {path}");
+        if (path.Length == 3) return path;
+        foreach (var part in path[3..].Split('\\'))
+        {
+            if (part is "" or "." or "..")
+                throw new PolicyException($"{what} must be resolved (no empty, '.' or '..' segment): {path}");
+            if (part[^1] is '.' or ' ')
+                throw new PolicyException($"{what} has a segment ending in a dot or space: {path}");
+            if (part.Any(c => BadSegmentChars.Contains(c) || c < ' '))
+                throw new PolicyException($"{what} has a short name, stream or reserved character: {path}");
+            var dot = part.IndexOf('.');
+            var stem = (dot < 0 ? part : part[..dot]).TrimEnd(' ');
+            if (DeviceNames.Contains(AsciiUpper(stem)))
+                throw new PolicyException($"{what} names a device: {path}");
+        }
         return path;
     }
 
+    static string AsciiUpper(string s) =>
+        string.Create(s.Length, s, (span, src) =>
+        {
+            for (var i = 0; i < src.Length; i++) span[i] = src[i] is >= 'a' and <= 'z' ? (char)(src[i] - 32) : src[i];
+        });
+
+    /// <summary>
+    /// Whether child is root or under it, case-insensitively. NTFS folds case with its own table, so this
+    /// counts a match under EITHER invariant upper- or lower-casing: "inside" is the side that refuses a
+    /// status_path, and a disagreement between the two sides can only refuse.
+    /// </summary>
     static bool Inside(string child, string root)
     {
-        static string Norm(string p) => p.Replace('/', '\\').TrimEnd('\\').ToUpperInvariant();
-        var c = Norm(child);
-        var r = Norm(root);
-        return c == r || c.StartsWith(r + "\\", StringComparison.Ordinal);
+        static bool Under(string c, string r) => c == r || c.StartsWith(r + "\\", StringComparison.Ordinal);
+        var c = child.TrimEnd('\\');
+        var r = root.TrimEnd('\\');
+        return Under(c.ToUpperInvariant(), r.ToUpperInvariant()) || Under(c.ToLowerInvariant(), r.ToLowerInvariant());
     }
 }
