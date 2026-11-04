@@ -25,6 +25,7 @@ Results: <root>\out\results.jsonl and <root>\out\SUMMARY.md
 from __future__ import annotations
 
 import argparse
+import contextlib
 import ctypes
 import hashlib
 import json
@@ -482,7 +483,11 @@ def main() -> int:
             (repo / "a.txt").write_text("hello\n")
             subprocess.run([*g, "add", "a.txt"], cwd=repo, check=False)
             subprocess.run([*g, "commit", "-q", "-m", "init"], cwd=repo, check=False)
-            (repo / "a.txt").write_text("hello\nchanged\n")
+        stamp = time.strftime("%Y%m%dT%H%M%S")
+        if (repo / ".git").exists():
+            # A fresh change every run, so a reused ws never turns "commit must fail" into
+            # "nothing to commit" (exit 1, a false pass).
+            (repo / "a.txt").write_text(f"hello\nchanged {stamp}\n")
         (ws / "pkg").mkdir(exist_ok=True)
         (ws / "pkg" / "package.json").write_text(json.dumps({"name": "p", "version": "1.0.0", "scripts": {
             "hello": "node -e \"console.log('hello-from-script')\""}}))
@@ -506,7 +511,7 @@ def main() -> int:
                     (d / "a.txt").write_text("hello\n")
                     subprocess.run([*g, "add", "a.txt"], cwd=d, check=False)
                     subprocess.run([*g, "commit", "-q", "-m", "init"], cwd=d, check=False)
-                (d / "a.txt").write_text("hello\nchanged\n")
+                (d / "a.txt").write_text(f"hello\nchanged {stamp}\n")
                 drepos[tag] = d
         eshapes = {"E1-denyall-package": "pkg", "E2-denyall-capability": "cap", "E3-denyall-both": "both"}
         edirs: dict[str, Path] = {}
@@ -651,15 +656,13 @@ def main() -> int:
             # Not resolved: on Steve cargo.exe is a symlink to rustup.exe, and resolving it ran rustup.
             go("P7-cargo-proxy", [str(Path(tools["cargo"])), "-V"], cwd=crate)
         # Unconfined control: does this machine link a Rust binary at all, outside any container?
+        # Same launch path with no AppContainer (a kill-on-close job, output to files, never pipes)
+        # and the proposed env, so CARGO_HOME is the sandbox home, never the real ~\.cargo.
         if cargo:
             ctl = ws / "crate-control"
             shutil.copytree(crate, ctl, dirs_exist_ok=True, ignore=shutil.ignore_patterns("target"))
-            try:
-                r = subprocess.run([cargo, "build", "--offline"], cwd=ctl, capture_output=True, text=True, timeout=120)
-                emit({"tag": "P7-cargo-unconfined-control", "exit_code": r.returncode,
-                      "stderr_tail": r.stderr[-800:], "where_link": shutil.which("link")})
-            except Exception as e:
-                emit({"tag": "P7-cargo-unconfined-control", "error": repr(e)})
+            emit({"tag": "P7-where-link", "where_link": shutil.which("link")})
+            go("P7-cargo-unconfined-control", [cargo, "build", "--offline"], cwd=ctl, caps=[], package=None)
         # D: each deny shape vs a real commit, plus a direct write and mkdir in .git. ACL dumped
         # just before; HEAD read unconfined before and after, so "exit 0" is never the only evidence.
         for tag, d in drepos.items():
@@ -721,6 +724,11 @@ def main() -> int:
                     emit({"tag": "R-check", "all_probe_aces_gone": False, "error": repr(e),
                           "note": "journal kept; rerun with --revoke-only and the same flags"})
                 finally:
+                    # The P8b fixture never outlives the run, whatever happened above.
+                    with contextlib.suppress(OSError):
+                        (root / "fixture-outside" / "fake.npmrc").unlink()
+                    with contextlib.suppress(OSError):
+                        (root / "fixture-outside").rmdir()
                     log.close()
     _summary(results, out / "SUMMARY.md")
     return 0

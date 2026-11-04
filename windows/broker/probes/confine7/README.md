@@ -78,3 +78,8 @@ v9 adds the follow-ups from the v7 run (where `git commit` got through the packa
 - P7-cargo-proxy no longer resolves the cargo.exe symlink.
 
 Note on D4: `icacls /inheritance:d` on the fixture `d4-…\.git` can't be undone by the revoke. That `.git` belongs to the probe and is disposable, so an explicit-ACL `.git` left there is expected. It is not a leak, and it carries no probe SID.
+
+v10 applies Steve's review of v9:
+- The P8b fixture is deleted in `finally`.
+- Every run writes a fresh change into the fixture repos, so a reused ws can't make "commit must fail" pass as "nothing to commit".
+- The cargo control runs through the same job launch with no AppContainer, so the tree dies on timeout and output goes to files, never pipes. It also uses the proposed env, so CARGO_HOME is the sandbox home and never the real `~\.cargo`.
