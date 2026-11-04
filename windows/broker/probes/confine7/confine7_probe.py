@@ -445,7 +445,8 @@ def main() -> int:
 
     def write_journal() -> None:
         journal.write_text(json.dumps({"package_sid": pkg_s, "capability_sid": cap_s, "paths": granted,
-                                       "profile_created_by_probe": profile_made}), encoding="utf-8")
+                                       "profile_name": PROFILE, "profile_created_by_probe": profile_made}),
+                           encoding="utf-8")
 
     def record(path: str) -> None:
         # Journal BEFORE icacls runs, so a killed run can still be revoked (--revoke-only).
@@ -454,15 +455,23 @@ def main() -> int:
 
     try:
         if a.create_profile:
-            sid = PSID()
-            hr = uenv.CreateAppContainerProfile(PROFILE, PROFILE, "VOOL chunk 7 probe", None, 0, ctypes.byref(sid))
-            hr &= 0xFFFFFFFF
-            # 0x800700B7 = already exists: reuse it, and leave it as found (only delete what we made).
-            profile_made = hr == 0
-            if profile_made:
-                write_journal()  # so --revoke-only also deletes the profile after a kill
-            emit({"tag": "P0-profile", "hr": f"0x{hr:08x}", "created_by_this_run": profile_made,
-                  "already_existed": hr == 0x800700B7})
+            before = profile_traces(pkg_s)
+            if any(before.values()):
+                # Something of a Probe7 profile already exists: reuse it and leave it exactly as found.
+                emit({"tag": "P0-profile", "created_by_this_run": False, "already_existed": True, "traces": before})
+            else:
+                # Journal the intent BEFORE creating, so a kill at any point leaves a record that
+                # --revoke-only acts on (deleting a profile that was never made is harmless).
+                profile_made = True
+                write_journal()
+                sid = PSID()
+                hr = uenv.CreateAppContainerProfile(PROFILE, PROFILE, "VOOL chunk 7 probe", None, 0, ctypes.byref(sid))
+                hr &= 0xFFFFFFFF
+                emit({"tag": "P0-profile", "hr": f"0x{hr:08x}", "created_by_this_run": hr == 0,
+                      "traces_after_create": profile_traces(pkg_s)})
+                if hr != 0 and not any(profile_traces(pkg_s).values()):
+                    profile_made = False
+                    write_journal()
 
         # ---- fixtures, made unconfined ----
         repo = ws / "repo"
@@ -601,23 +610,70 @@ def main() -> int:
               "except OSError as x: r=type(x).__name__\n    print(p, 'exists' if e else 'absent?', r)")
         go("P8-credential-reads-must-fail", [py, "-c", p8, *map(str, cands)])
     finally:
-        for p in reversed(granted):
-            rc, msg = icacls(p, "/remove", f"*{pkg_s}", f"*{cap_s}")
-            emit({"tag": "R-revoke", "path": p, "rc": rc, "out": msg})
-        if profile_made:
-            hr = uenv.DeleteAppContainerProfile(PROFILE) & 0xFFFFFFFF
-            emit({"tag": "R-profile", "hr": f"0x{hr:08x}", "deleted": hr == 0})
-            profile_made = hr != 0
-            write_journal()
-        clean = all_revoked(granted, pkg_s, cap_s) and not profile_made
-        emit({"tag": "R-check", "all_probe_aces_gone": clean,
-              "note": "full icacls /T /C listing of every granted path; profile deleted if made" if clean
-              else "PROBE ACEs OR PROFILE MAY REMAIN: journal kept; rerun with --revoke-only and the same flags"})
-        if clean:
-            journal.unlink(missing_ok=True)
-        log.close()
+        # Each clean-up step runs whatever the one before it raised: the ACE revokes one by one,
+        # then the profile delete, then the check. An exception is logged and never skips a step.
+        try:
+            for p in reversed(granted):
+                try:
+                    rc, msg = icacls(p, "/remove", f"*{pkg_s}", f"*{cap_s}")
+                    emit({"tag": "R-revoke", "path": p, "rc": rc, "out": msg})
+                except Exception as e:
+                    emit({"tag": "R-revoke", "path": p, "error": repr(e)})
+        finally:
+            try:
+                if profile_made:
+                    hr, left = delete_probe_profile(PROFILE, pkg_s)
+                    gone = not any(left.values())
+                    emit({"tag": "R-profile", "hr": f"0x{hr:08x}", "traces_left": left, "all_gone": gone})
+                    profile_made = not gone
+            except Exception as e:
+                emit({"tag": "R-profile", "error": repr(e)})
+            finally:
+                try:
+                    write_journal()
+                    clean = all_revoked(granted, pkg_s, cap_s) and not profile_made
+                    emit({"tag": "R-check", "all_probe_aces_gone": clean,
+                          "note": "full icacls /T /C listing of every granted path; profile deleted if made" if clean
+                          else "PROBE ACEs OR PROFILE MAY REMAIN: journal kept; rerun with --revoke-only and the same flags"})
+                    if clean:
+                        journal.unlink(missing_ok=True)
+                except Exception as e:
+                    emit({"tag": "R-check", "all_probe_aces_gone": False, "error": repr(e),
+                          "note": "journal kept; rerun with --revoke-only and the same flags"})
+                finally:
+                    log.close()
     _summary(results, out / "SUMMARY.md")
     return 0
+
+
+_AC_KEY = r"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppContainer"
+
+
+def profile_traces(pkg_s: str) -> dict[str, bool]:
+    """Which traces of the probe profile exist now: the HKCU Mappings and Storage keys for its SID,
+    and its %LOCALAPPDATA%\\Packages folder. Unknown (an error other than not-found) counts as present."""
+    import winreg
+
+    out: dict[str, bool] = {}
+    for kind in ("Mappings", "Storage"):
+        try:
+            winreg.CloseKey(winreg.OpenKey(winreg.HKEY_CURRENT_USER, f"{_AC_KEY}\\{kind}\\{pkg_s}"))
+            out[kind] = True
+        except FileNotFoundError:
+            out[kind] = False
+        except OSError:
+            out[kind] = True
+    local = os.environ.get("LOCALAPPDATA")
+    out["Packages"] = True if not local else (Path(local) / "Packages" / PROFILE).exists()
+    return out
+
+
+def delete_probe_profile(name: str, pkg_s: str) -> tuple[int, dict[str, bool]]:
+    """Delete the probe's own profile and nothing else, then report what is left."""
+    if name != PROFILE or pkg_s != sid_str(package_sid()):
+        raise ValueError(f"refusing to delete a profile that is not {PROFILE}")
+    hr = uenv.DeleteAppContainerProfile(PROFILE) & 0xFFFFFFFF
+    return hr, profile_traces(pkg_s)
 
 
 def all_revoked(paths: list[str], *sids: str) -> bool:
@@ -654,9 +710,11 @@ def _revoke_from_journal(journal: Path, ws: Path, allowed: list[Path]) -> int:
         print(f"revoke {p}: rc={rc} {msg}")
     profile_left = False
     if data.get("profile_created_by_probe"):
-        hr = uenv.DeleteAppContainerProfile(PROFILE) & 0xFFFFFFFF
-        print(f"delete profile {PROFILE}: hr=0x{hr:08x}")
-        profile_left = hr != 0
+        if data.get("profile_name") != PROFILE:
+            print("journal names a different profile; refusing"); return 2
+        hr, left = delete_probe_profile(PROFILE, pkg_s)
+        print(f"delete profile {PROFILE}: hr=0x{hr:08x} traces left: {left}")
+        profile_left = any(left.values())
         if not profile_left:
             data["profile_created_by_probe"] = False
             journal.write_text(json.dumps(data), encoding="utf-8")
