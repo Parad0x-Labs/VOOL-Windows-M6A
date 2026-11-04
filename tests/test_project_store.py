@@ -53,7 +53,15 @@ def test_create_rejects_missing_and_non_dir(tmp_path) -> None:
     ok3, err3 = ps.create_project("x", "   ")
     assert ok3 is False and "required" in err3
     ok4, err4 = ps.create_project("x", "/")
-    assert ok4 is False and "whole filesystem" in err4
+    if os.name == "nt":
+        # Windows refuses a bare "/" by its spelling before anything looks it up; its whole
+        # filesystem root is the drive root, which must still be refused as one.
+        assert ok4 is False and "not a full local path" in err4
+        drive_root = os.path.splitdrive(str(tmp_path))[0] + "\\"
+        ok5, err5 = ps.create_project("x", drive_root)
+        assert ok5 is False and "whole filesystem" in err5
+    else:
+        assert ok4 is False and "whole filesystem" in err4
 
 
 def test_name_defaults_to_folder_basename(tmp_path) -> None:
