@@ -6,11 +6,12 @@ namespace VoolConfine.Core;
 ///   --policy &lt;path&gt; -- &lt;program.exe&gt; [args...]   run a job (verifies ACLs, never writes them)
 ///   grant --policy &lt;path&gt;                        write the grants and deny ACEs (chunk 2)
 ///   revoke --policy &lt;path&gt;                       remove exactly what grant added (chunk 2)
+///   scan --policy &lt;path&gt;                         the repository scan alone, no child
 /// </summary>
 public static class LauncherCli
 {
     public const string Usage =
-        "usage: VoolConfine.exe --policy <path> -- <program.exe> [args...] | grant --policy <path> | revoke --policy <path>";
+        "usage: VoolConfine.exe --policy <path> -- <program.exe> [args...] | grant --policy <path> | revoke --policy <path> | scan --policy <path>";
 
     /// <summary>
     /// Parses and runs one form. <paramref name="grant"/> and <paramref name="revoke"/> take the
@@ -24,6 +25,12 @@ public static class LauncherCli
             var loaded = Load(args[2], stderr, out var failure);
             if (loaded is null) return failure;
             return args[0] == "grant" ? grant(loaded) : revoke(loaded);
+        }
+        if (args.Length == 3 && args[0] == "scan" && args[1] == "--policy")
+        {
+            var loaded = Load(args[2], stderr, out var failure);
+            if (loaded is null) return failure;
+            return Launcher.Scan(loaded, checks, stderr);
         }
         var separator = Array.IndexOf(args, "--");
         if (args.Length < 4 || args[0] != "--policy" || separator != 2 || separator == args.Length - 1)
@@ -72,4 +79,7 @@ public sealed class PendingChecks : IConfinementChecks
     public void VerifyAcls(Policy policy, string packageSid) => throw new SetupException(Reason);
 
     public IRepositoryScan StartRepositoryScan(Policy policy) => throw new SetupException(Reason);
+
+    public IReadOnlyList<string> UnprotectedRepositories(Policy policy) =>
+        throw new SetupException("the repository scan is not built yet (chunk 2)");
 }

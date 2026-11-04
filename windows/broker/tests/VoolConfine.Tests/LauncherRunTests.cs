@@ -27,6 +27,7 @@ public class LauncherRunTests
         Assert.False(status.GetProperty("timed_out").GetBoolean());
         Assert.Equal(System.Text.Json.JsonValueKind.Null, status.GetProperty("limit").ValueKind);
         Assert.Empty(status.GetProperty("new_repositories").EnumerateArray());
+        Assert.True(status.GetProperty("repositories_scanned").GetBoolean(), "the post-job scan completed, so the record must say so");
     }
 
     [Theory]
@@ -447,6 +448,7 @@ public class LauncherRunTests
         var result = Launch(box, [Cmd, "/c", $"echo ran> {marker}"], host: Host.FailVerify);
         AssertRefused(result, ExitCodes.SetupFailed);
         Assert.False(File.Exists(marker), "the child ran");
+        Assert.False(result.Status!.Value.GetProperty("repositories_scanned").GetBoolean(), "no scan ran, so the record must not claim one");
     }
 
     [Fact]
@@ -461,6 +463,7 @@ public class LauncherRunTests
         Assert.True(status.GetProperty("child_started").GetBoolean());
         Assert.Equal(0, status.GetProperty("exit_code").GetInt32());
         Assert.Equal(git, Assert.Single(status.GetProperty("new_repositories").EnumerateArray()).GetString(), ignoreCase: true);
+        Assert.True(status.GetProperty("repositories_scanned").GetBoolean());
     }
 
     [Fact]

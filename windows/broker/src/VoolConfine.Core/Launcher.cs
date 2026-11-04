@@ -22,6 +22,12 @@ public interface IConfinementChecks
 
     /// <summary>Records the repository layouts under the write roots before the child starts.</summary>
     IRepositoryScan StartRepositoryScan(Policy policy);
+
+    /// <summary>
+    /// The scan form on its own (no child): every repository layout under a write root that lacks
+    /// the deny. Throws when the scan can't finish.
+    /// </summary>
+    IReadOnlyList<string> UnprotectedRepositories(Policy policy);
 }
 
 /// <summary>The second half of the repository scan, after the job has ended.</summary>
@@ -166,6 +172,41 @@ public static class Launcher
         }
         status.Finished(exitCode, timedOut, limit, newRepositories);
         return exitCode;
+    }
+
+    /// <summary>
+    /// The scan form (docs/WINDOWS_CONFINEMENT.md section 2): unconfined, no child. Rewrites the status
+    /// file's new_repositories and repositories_scanned and keeps the rest of the record. 0 when no
+    /// unprotected layout exists, 123 when one does, 125 when the scan or the rewrite can't finish
+    /// (the file is then left as it was, so it never claims a scan that did not complete).
+    /// </summary>
+    public static int Scan(Policy policy, IConfinementChecks checks, TextWriter stderr)
+    {
+        ArgumentNullException.ThrowIfNull(checks);
+        var status = new LauncherStatus(policy.StatusPath);
+        IReadOnlyList<string> unprotected;
+        try
+        {
+            CheckResolved(Path.GetDirectoryName(policy.StatusPath) ?? policy.StatusPath, "status folder");
+            foreach (var root in policy.WriteRoots) CheckResolved(root, "write root");
+            unprotected = checks.UnprotectedRepositories(policy);
+        }
+        catch (Exception e)
+        {
+            var reason = e is SetupException or PolicyException ? e.Message : $"{e.GetType().Name}: {e.Message}";
+            return Refuse(stderr, ExitCodes.SetupFailed, $"the repository scan could not finish: {reason}");
+        }
+        try
+        {
+            status.Scanned(unprotected);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or SetupException)
+        {
+            return Refuse(stderr, ExitCodes.SetupFailed, $"status file not rewritten after the scan: {e.Message}");
+        }
+        if (unprotected.Count == 0) return 0;
+        stderr.WriteLine($"{ExitCodes.RefusedMarker} a repository layout under a write root lacks the deny: {string.Join(", ", unprotected)}");
+        return ExitCodes.NewRepository;
     }
 
     /// <summary>Waits for the child, true when it exited within the time. Long limits are waited in slices.</summary>
