@@ -1,4 +1,5 @@
 using System.Security.AccessControl;
+using System.Security.Principal;
 using VoolConfine.Core;
 using Xunit;
 
@@ -421,6 +422,133 @@ public class AclTests
         using var job = f.Job();
         Assert.False(job.CanWrite(f.In("later", "x.txt")));
         Assert.DoesNotContain(f.Capability.Value, AclTest.Sddl(f.In("later", "x.txt")), StringComparison.Ordinal);
+    }
+
+    // ---- no other AppContainer writer (owner review R1, R2, N1)
+
+    [Fact]
+    public void Verify_refuses_a_root_another_roots_capability_can_write()
+    {
+        using var f = new AclFixture();
+        f.Grant();
+        AclTest.AddAce(f.Root, AceQualifier.AccessAllowed, AclRules.ReadWriteMask, AclTest.CapabilitySid("vool.root.someone-else"),
+            AceFlags.ObjectInherit | AceFlags.ContainerInherit);
+        Assert.Equal("foreign_writer", Assert.Throws<AclException>(() => Acl.Verify(f.MakePolicy(), f.Sids())).Code);
+    }
+
+    [Theory]
+    [InlineData("S-1-15-2-1")] // ALL APPLICATION PACKAGES
+    [InlineData("S-1-15-2-2")] // ALL RESTRICTED APP PACKAGES
+    public void Verify_refuses_a_root_every_app_container_can_write(string sid)
+    {
+        using var f = new AclFixture();
+        f.Grant();
+        AclTest.AddAce(f.Root, AceQualifier.AccessAllowed, AclRules.ReadWriteMask, new SecurityIdentifier(sid),
+            AceFlags.ObjectInherit | AceFlags.ContainerInherit);
+        Assert.Equal("foreign_writer", Assert.Throws<AclException>(() => Acl.Verify(f.MakePolicy(), f.Sids())).Code);
+    }
+
+    [Fact]
+    public void Read_only_access_for_every_app_container_is_not_a_foreign_writer()
+    {
+        using var f = new AclFixture();
+        f.Grant();
+        AclTest.AddAce(f.Root, AceQualifier.AccessAllowed, AclRules.ReadExecuteMask, new SecurityIdentifier("S-1-15-2-1"),
+            AceFlags.ObjectInherit | AceFlags.ContainerInherit);
+        Acl.Verify(f.MakePolicy(), f.Sids());
+    }
+
+    [Fact]
+    public void Grant_refuses_a_read_root_every_app_container_can_write()
+    {
+        using var f = new AclFixture();
+        var tools = Path.Combine(f.Base, "python");
+        Touch(Path.Combine(tools, "python.exe"));
+        AclTest.AddAce(tools, AceQualifier.AccessAllowed, AclRules.ReadWriteMask, new SecurityIdentifier("S-1-15-2-1"),
+            AceFlags.ObjectInherit | AceFlags.ContainerInherit);
+        f.AddReadRoot(tools);
+        Assert.Equal("foreign_writer", Assert.Throws<AclException>(() => f.Grant()).Code);
+    }
+
+    [Fact]
+    public void An_overlapping_workspace_is_refused()
+    {
+        using var f = new AclFixture();
+        Directory.CreateDirectory(f.In("inner"));
+        Touch(f.In("inner", "b.txt"));
+        f.Grant();
+        // The outer root's capability already writes everything under it, so the inner root is refused.
+        var (inner, innerSids) = f.Single(f.In("inner"));
+        Assert.Equal("foreign_writer", Assert.Throws<AclException>(() => Acl.Grant(inner, innerSids)).Code);
+        // Nothing was written before the refusal.
+        Assert.DoesNotContain(innerSids.CapabilityFor(f.In("inner")).Value, AclTest.Sddl(f.In("inner", "b.txt")), StringComparison.Ordinal);
+        // And inside one policy.
+        f.AddWriteRoot(f.In("inner"));
+        Assert.Equal("nested_write_roots", Assert.Throws<AclException>(() => Acl.Verify(f.MakePolicy(), f.Sids())).Code);
+    }
+
+    [Fact]
+    public void A_grant_inside_the_root_for_another_capability_is_refused()
+    {
+        using var f = new AclFixture();
+        Touch(f.In("shared", "b.txt"));
+        AclTest.AddAce(f.In("shared"), AceQualifier.AccessAllowed, AclRules.ReadWriteMask, AclTest.CapabilitySid("vool.root.someone-else"),
+            AceFlags.ObjectInherit | AceFlags.ContainerInherit);
+        Assert.Equal("foreign_writer", Assert.Throws<AclException>(() => f.Grant()).Code);
+    }
+
+    [Fact]
+    public void A_null_dacl_file_under_a_write_root_is_refused()
+    {
+        using var f = new AclFixture();
+        Touch(f.In("src", "open.txt"));
+        AclTest.SetSddl(f.In("src", "open.txt"), "D:NO_ACCESS_CONTROL");
+        Assert.Equal("null_dacl", Assert.Throws<AclException>(() => f.Grant()).Code);
+    }
+
+    [Fact]
+    public void An_outside_deny_reaches_existing_children_that_grant_every_app_container()
+    {
+        using var f = new AclFixture();
+        Touch(f.Out("runtime", "sub", "token"));
+        // A child that itself lets every AppContainer read it: only a deny on the child itself stops that.
+        AclTest.AddAce(f.Out("runtime", "sub", "token"), AceQualifier.AccessAllowed, AclRules.ReadExecuteMask, new SecurityIdentifier("S-1-15-2-1"), AceFlags.None);
+        using (var before = f.Job()) Assert.True(before.CanRead(f.Out("runtime", "sub", "token")));
+        f.AddDenyAll(f.Out("runtime"));
+        f.Grant();
+        using var job = f.Job();
+        Assert.False(job.CanRead(f.Out("runtime", "sub", "token")));
+    }
+
+    [Fact]
+    public void A_read_root_inside_the_write_root_stays_writable_by_that_root()
+    {
+        using var f = new AclFixture();
+        Touch(f.In(".venv", "Lib", "site.py"));
+        f.AddReadRoot(f.In(".venv"));
+        f.Grant();
+        using var job = f.Job();
+        Assert.True(job.CanRead(f.In(".venv", "Lib", "site.py")));
+        Assert.True(job.CanWrite(f.In(".venv", "Lib", "site.py")));
+        // A job of another workspace gets read only.
+        using var other = JobToken.Create(f.Package, AclTest.CapabilitySid("vool.root.someone-else"));
+        Assert.True(other.CanRead(f.In(".venv", "Lib", "site.py")));
+        Assert.False(other.CanWrite(f.In(".venv", "Lib", "site.py")));
+    }
+
+    [Fact]
+    public void A_deny_for_the_package_sid_alone_does_not_stop_a_capability_grant()
+    {
+        // The measured fact the deny design rests on (windows-broker run 41901543557): Windows judges
+        // the package SID and each capability on its own, so every deny must also name the capability.
+        using var f = new AclFixture();
+        Touch(f.In("a.txt"));
+        f.Grant();
+        AclTest.AddAce(f.In("a.txt"), AceQualifier.AccessDenied, AclRules.DenyWriteMask, f.Package, AceFlags.None);
+        using var job = f.Job();
+        Assert.True(job.CanWrite(f.In("a.txt")));
+        AclTest.AddAce(f.In("a.txt"), AceQualifier.AccessDenied, AclRules.DenyWriteMask, f.Capability, AceFlags.None);
+        Assert.False(job.CanWrite(f.In("a.txt")));
     }
 
     // ---- pure rules (no file system)

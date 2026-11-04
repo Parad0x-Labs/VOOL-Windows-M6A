@@ -304,6 +304,20 @@ internal sealed class AclFixture : IDisposable
 
     public AclReport Grant() => Acl.Grant(MakePolicy(), Sids());
 
+    /// <summary>A second policy with one write root of its own (its own capability), e.g. a folder inside this root.</summary>
+    public (Policy Policy, ConfinementSids Sids) Single(string root)
+    {
+        var json = JsonSerializer.Serialize(new Dictionary<string, object>
+        {
+            ["schema"] = Policy.Schema,
+            ["write_roots"] = new[] { root },
+            ["temp_dir"] = Path.Combine(root, ".vool-tmp"),
+            ["status_path"] = Path.Combine(Outside, "status2", "status.json"),
+        });
+        return (Policy.Parse(json), new ConfinementSids(Package,
+            new Dictionary<string, SecurityIdentifier>(StringComparer.Ordinal) { [root] = AclTest.CapabilitySid(Identity.RootCapabilityName(root)) }));
+    }
+
     /// <summary>The job's token: the package SID plus the capability of this fixture's own root.</summary>
     public JobToken Job() => JobToken.Create(Package, Capability);
 
