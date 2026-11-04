@@ -39,6 +39,39 @@ if __name__ == "__main__" and not _bootstrap_sys.flags.isolated:
     _clean_env = dict(_bootstrap_os.environ)
     _clean_env.pop("PYTHONPATH", None)
     _clean_env.pop("PYTHONHOME", None)
+    if _bootstrap_sys.platform == "win32":
+        # ``os.execve`` on Windows is CRT emulation, not exec: the argv list is joined into ONE
+        # command line WITHOUT quoting, and the parent exits with a status of its own. A space in
+        # the interpreter path ("...VOOL Windows\.venv\Scripts\python.exe") split the re-exec
+        # command line, so the child opened a bogus script while the parent still exited 0, and
+        # the re-exec was also observed dying with 0xC0000005. Spawn the isolated child and exit
+        # with ITS return code; the isolation (-I, env minus PYTHONPATH/PYTHONHOME) is exactly
+        # what the POSIX exec below passes on.
+        _stdlib = _bootstrap_os.path.dirname(_bootstrap_os.path.abspath(_bootstrap_os.__file__))
+        # ``subprocess`` is stdlib, not builtin: import it with ``sys.path`` pinned to the real
+        # stdlib, so a planted scripts/subprocess.py cannot ride the script directory onto this
+        # bootstrap the way scripts/hashlib.py once tried to. The path is restored after.
+        _saved_path = list(_bootstrap_sys.path)
+        _bootstrap_sys.path[:] = [_stdlib]
+        try:
+            import subprocess as _bootstrap_subprocess
+        finally:
+            _bootstrap_sys.path[:] = _saved_path
+        _child_rc = _bootstrap_subprocess.run(
+            [
+                _bootstrap_sys.executable,
+                "-I",
+                _bootstrap_os.path.abspath(__file__),
+                *_bootstrap_sys.argv[1:],
+            ],
+            env=_clean_env,
+        ).returncode
+        # A crash status such as 0xC0000005 arrives unsigned and does not fit the C long that
+        # ``sys.exit`` hands to the CRT; pass it as the signed 32-bit value with the same bits so
+        # the parent's exit status is the child's exactly.
+        if _child_rc >= 0x80000000:
+            _child_rc -= 0x100000000
+        _bootstrap_sys.exit(_child_rc)
     _bootstrap_os.execve(
         _bootstrap_sys.executable,
         [_bootstrap_sys.executable, "-I", _bootstrap_os.path.abspath(__file__), *_bootstrap_sys.argv[1:]],
