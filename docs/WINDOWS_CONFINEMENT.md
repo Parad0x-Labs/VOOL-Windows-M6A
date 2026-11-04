@@ -100,6 +100,10 @@ Status file fields:
   which both tests pin to the vector `C:\work\a` → `vool.root.b144b923…5d7e40`). The launcher puts in the token only the
   capabilities of THIS job's write roots, so a job can never write another job's workspace.
 - **Network.** `internetClient` is added only when `network` is true.
+- **No other writer.** Verify refuses (125) a write root on which any other AppContainer SID
+  (`S-1-15-2-*` or `S-1-15-3-*`, including ALL APPLICATION PACKAGES and another root's capability)
+  is allowed any write right, and a read root on which any of them is. It also refuses a NULL DACL
+  anywhere it walks. Otherwise one job could write another's workspace or the toolchain.
 
 ### Teardown
 
@@ -122,7 +126,7 @@ every writable root**, and deletes both after the job.
   "schema": "vool.windows_confinement.v1",
   "write_roots": ["C:\\work\\repo"],
   "read_roots": ["C:\\Python312", "C:\\work\\repo\\.venv"],
-  "deny_write_paths": ["C:\\work\\repo\\vendor-code"],
+  "deny_write_paths": ["C:\\work\\repo\\vendor-code", "C:\\work\\repo\\.venv"],
   "deny_all_paths": ["C:\\Users\\me\\.vool_runtime", "C:\\Users\\me\\.ssh"],
   "deny_write_git": true,
   "network": false,
@@ -150,7 +154,8 @@ Rules, all enforced by the launcher (126 if broken):
 - **Fresh status (chunk 3).** The caller creates a new, empty status folder per job and refuses to
   launch if a status file already exists there, so an earlier job's status can never be read as this one's.
 - **`write_roots`.** Non-empty. Read and write for the container.
-- **`read_roots`.** Read and execute only.
+- **`read_roots`.** Read and execute only. A read root inside a write root is still writable through
+  the write root's grant; to make it read-only (a workspace `.venv`), also list it in `deny_write_paths`.
 - **`deny_write_paths`.** Explicitly denied write, beating any inherited grant (code roots).
 - **`deny_all_paths`.** Denied read AND write, like the Mac's secret and state denies (VOOL runtime state, credentials).
 - **`deny_write_git`.** When true, every `.git` directory under a write root is denied write.
