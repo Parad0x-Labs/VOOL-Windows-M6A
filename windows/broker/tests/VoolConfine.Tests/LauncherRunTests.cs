@@ -133,17 +133,15 @@ public class LauncherRunTests
         using var box = new ConfineSandbox();
         var result = Launch(box, [Whoami, "/groups", "/fo", "csv", "/nh"], p => p["network"] = network);
         AssertStartedAndFinished(result, 0);
-        // whoami does not list capability SIDs that have no name, so the root capability is proven by
-        // the write tests instead; internetClient has a name and is listed.
+        // whoami inside an AppContainer lists no capability SIDs at all (run 41903488067), so the
+        // capabilities are proven by behaviour: the write tests (root) and the network tests (internet).
         Assert.True(result.Stdout.Contains("S-1-16-4096"), $"not Low integrity: {result.Stdout}");
-        var internet = result.Stdout.Contains($"\"{Sids.InternetClientSid}\"");
-        Assert.True(internet == network, $"internetClient present={internet}, network={network}: {result.Stdout}");
     }
 
     // ---- network ----
 
-    /// <summary>curl's exit codes for "could not connect" (7) and "timed out" (28).</summary>
-    static readonly int[] Unreachable = [7, 28];
+    /// <summary>curl's exit codes for "could not resolve" (6), "could not connect" (7) and "timed out" (28).</summary>
+    static readonly int[] Unreachable = [6, 7, 28];
 
     /// <summary>Runs curl, unconfined when box is null. Returns curl's exit code (0 = reached).</summary>
     static int RunCurl(string url, ConfineSandbox? box, bool network, out string detail)

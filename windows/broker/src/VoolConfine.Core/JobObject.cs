@@ -27,6 +27,7 @@ internal sealed class ConfinementJob : IDisposable
     readonly ManualResetEventSlim empty = new(false);
     readonly uint maxProcesses;
     readonly ulong memoryLimit;
+    readonly uint uiRestrictions;
     string? limitHit;
 
     internal SafeWaitHandle Handle => job;
@@ -34,8 +35,9 @@ internal sealed class ConfinementJob : IDisposable
     /// <summary>"memory" or "processes" once that job limit has stopped something; else null.</summary>
     internal string? LimitHit => Volatile.Read(ref limitHit);
 
-    ConfinementJob(SafeWaitHandle job, SafeWaitHandle port, uint maxProcesses, ulong memoryLimit)
+    ConfinementJob(SafeWaitHandle job, SafeWaitHandle port, uint maxProcesses, ulong memoryLimit, uint uiRestrictions)
     {
+        this.uiRestrictions = uiRestrictions;
         this.job = job;
         this.port = port;
         this.maxProcesses = maxProcesses;
@@ -44,7 +46,11 @@ internal sealed class ConfinementJob : IDisposable
     }
 
     /// <summary>Creates the job, sets every limit, then reads them back; any mismatch is a setup failure.</summary>
-    internal static ConfinementJob Create(int maxProcesses, int memoryMb)
+    internal static ConfinementJob Create(int maxProcesses, int memoryMb) =>
+        Create(maxProcesses, memoryMb, LauncherNative.JobObjectUiLimitAll);
+
+    /// <summary>Tests only: the same job with a chosen UI-restriction set, to find which one a toolchain trips.</summary>
+    internal static ConfinementJob Create(int maxProcesses, int memoryMb, uint uiRestrictions)
     {
         if (maxProcesses <= 0) throw new SetupException("max_processes must be positive");
         if (memoryMb <= 0) throw new SetupException("memory_mb must be positive");
@@ -56,7 +62,7 @@ internal sealed class ConfinementJob : IDisposable
         {
             port = LauncherNative.CreateIoCompletionPort(new IntPtr(-1), 0, 0, 1);
             if (port.IsInvalid) throw new SetupException($"CreateIoCompletionPort failed: {LastError()}");
-            var created = new ConfinementJob(handle, port, (uint)maxProcesses, memoryLimit);
+            var created = new ConfinementJob(handle, port, (uint)maxProcesses, memoryLimit, uiRestrictions);
             created.Configure();
             created.watcher.Start();
             return created;
@@ -84,7 +90,7 @@ internal sealed class ConfinementJob : IDisposable
         Set(LauncherNative.JobObjectExtendedLimitInformationClass, limits);
         Set(LauncherNative.JobObjectBasicUiRestrictionsClass, new LauncherNative.JobObjectBasicUiRestrictions
         {
-            UiRestrictionsClass = LauncherNative.JobObjectUiLimitAll,
+            UiRestrictionsClass = uiRestrictions,
         });
 
         // Trust what the kernel holds, not what was asked for.
@@ -95,7 +101,7 @@ internal sealed class ConfinementJob : IDisposable
             throw new SetupException($"job process limit read back as {actual.ActiveProcessLimit}, expected {maxProcesses}");
         if (actual.JobMemoryLimit != memoryLimit)
             throw new SetupException($"job memory limit read back as {actual.JobMemoryLimit}, expected {memoryLimit}");
-        if (actual.UiRestrictions != LauncherNative.JobObjectUiLimitAll)
+        if (actual.UiRestrictions != uiRestrictions)
             throw new SetupException($"job UI restrictions read back as 0x{actual.UiRestrictions:X}");
     }
 

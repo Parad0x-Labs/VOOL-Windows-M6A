@@ -38,7 +38,8 @@ internal static class LauncherProcess
     const int StdError = -12;
 
     internal static SuspendedChild CreateSuspendedInJob(string program, string commandLine, string packageSid,
-        IReadOnlyList<string> capabilitySids, ConfinementJob job, IReadOnlyDictionary<string, string> environment)
+        IReadOnlyList<string> capabilitySids, ConfinementJob job, IReadOnlyDictionary<string, string> environment,
+        string? currentDirectory = null)
     {
         var allocations = new List<nint>();
         var duplicated = new List<nint>();
@@ -134,7 +135,7 @@ internal static class LauncherProcess
             var line = new StringBuilder(commandLine, 32768);
             if (!LauncherNative.CreateProcessW(program, line, 0, 0, inheritHandles: handleList != 0,
                     LauncherNative.CreateSuspended | LauncherNative.ExtendedStartupInfoPresent | LauncherNative.CreateUnicodeEnvironment,
-                    environmentMemory, null, ref startup, out var info))
+                    environmentMemory, currentDirectory, ref startup, out var info))
                 throw new SetupException($"CreateProcess failed for {program}: {LastError()}");
             return new SuspendedChild(info);
         }
