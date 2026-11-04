@@ -192,6 +192,15 @@ internal static class AclTest
         AclNative.SetDacl(handle, bytes, (descriptor.ControlFlags & ControlFlags.DiscretionaryAclProtected) != 0, path);
     }
 
+    /// <summary>One ACE as SDDL, the way <see cref="Sddl"/> prints it (to find and swap it in a test).</summary>
+    public static string AceSddl(AceQualifier qualifier, int mask, SecurityIdentifier sid, bool inherited)
+    {
+        var acl = new RawAcl(GenericAcl.AclRevision, 1);
+        acl.InsertAce(0, new CommonAce(inherited ? AceFlags.Inherited : AceFlags.None, qualifier, mask, sid, false, null));
+        var sddl = new RawSecurityDescriptor(ControlFlags.DiscretionaryAclPresent, null, null, null, acl).GetSddlForm(AccessControlSections.Access);
+        return sddl[sddl.IndexOf('(')..];
+    }
+
     /// <summary>Puts one ACE first in path's DACL, by handle (to tamper with a grant in a test).</summary>
     public static void AddAce(string path, AceQualifier qualifier, int mask, SecurityIdentifier sid, AceFlags flags)
     {

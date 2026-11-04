@@ -507,17 +507,17 @@ public class AclTests
     }
 
     [Fact]
-    public void An_outside_deny_reaches_existing_children_that_grant_every_app_container()
+    public void An_outside_deny_over_a_child_that_grants_every_app_container_is_refused()
     {
         using var f = new AclFixture();
         Touch(f.Out("runtime", "sub", "token"));
-        // A child that itself lets every AppContainer read it: only a deny on the child itself stops that.
+        // A child that itself lets every AppContainer read it. No deny we may write stops that
+        // (A_deny_for_an_app_container_sid_stops_no_grant), so grant refuses and no job runs.
         AclTest.AddAce(f.Out("runtime", "sub", "token"), AceQualifier.AccessAllowed, AclRules.ReadExecuteMask, new SecurityIdentifier("S-1-15-2-1"), AceFlags.None);
         using (var before = f.Job()) Assert.True(before.CanRead(f.Out("runtime", "sub", "token")));
         f.AddDenyAll(f.Out("runtime"));
-        f.Grant();
-        using var job = f.Job();
-        Assert.False(job.CanRead(f.Out("runtime", "sub", "token")));
+        Assert.Equal("foreign_access", Assert.Throws<AclException>(() => f.Grant()).Code);
+        Assert.Equal("grant_missing", Assert.Throws<AclException>(() => Acl.Verify(f.MakePolicy(), f.Sids())).Code);
     }
 
     [Fact]
@@ -537,10 +537,11 @@ public class AclTests
     }
 
     [Fact]
-    public void A_deny_for_the_package_sid_alone_does_not_stop_a_capability_grant()
+    public void A_deny_for_an_app_container_sid_stops_no_grant()
     {
-        // The measured fact the deny design rests on (windows-broker run 41901543557): Windows judges
-        // the package SID and each capability on its own, so every deny must also name the capability.
+        // The measured facts the design rests on: a deny ACE for the package SID (windows-broker run
+        // 41901543557) or for the root's capability (run 41902677009), first in the DACL, does not
+        // stop a write the capability is allowed. Only taking the allow away does.
         using var f = new AclFixture();
         Touch(f.In("a.txt"));
         f.Grant();
@@ -548,7 +549,115 @@ public class AclTests
         using var job = f.Job();
         Assert.True(job.CanWrite(f.In("a.txt")));
         AclTest.AddAce(f.In("a.txt"), AceQualifier.AccessDenied, AclRules.DenyWriteMask, f.Capability, AceFlags.None);
+        Assert.True(job.CanWrite(f.In("a.txt")));
+        // Read only for the capability, as grant leaves a repository: now the write is refused.
+        AclTest.SetSddl(f.In("a.txt"), AclTest.Sddl(f.In("a.txt")).Replace(
+            AclTest.AceSddl(AceQualifier.AccessAllowed, AclRules.ReadWriteMask, f.Capability, inherited: true),
+            AclTest.AceSddl(AceQualifier.AccessAllowed, AclRules.ReadExecuteMask, f.Capability, inherited: true), StringComparison.Ordinal));
+        Assert.True(job.CanRead(f.In("a.txt")));
         Assert.False(job.CanWrite(f.In("a.txt")));
+    }
+
+    [Fact]
+    public void A_package_deny_does_not_stop_a_package_grant()
+    {
+        // The same question for one SID: the package's own allow (as a profile's AC folder holds it)
+        // under a package deny first in the DACL.
+        using var f = new AclFixture();
+        Touch(f.Out("profile", "Temp", "t.txt"));
+        AclTest.AddAce(f.Out("profile", "Temp"), AceQualifier.AccessAllowed, AclRules.DenyAllMask, f.Package, AceFlags.ObjectInherit | AceFlags.ContainerInherit);
+        AclTest.AddAce(f.Out("profile", "Temp", "t.txt"), AceQualifier.AccessAllowed, AclRules.DenyAllMask, f.Package, AceFlags.None);
+        using var job = f.Job();
+        Assert.True(job.CanWrite(f.Out("profile", "Temp", "t.txt")));
+        AclTest.AddAce(f.Out("profile", "Temp", "t.txt"), AceQualifier.AccessDenied, AclRules.DenyWriteMask, f.Package, AceFlags.None);
+        Assert.True(job.CanWrite(f.Out("profile", "Temp", "t.txt")));
+    }
+
+    // ---- grant never heals; the launcher's own folders
+
+    [Fact]
+    public void Grant_refuses_a_repository_that_appeared_after_the_root_was_granted()
+    {
+        using var f = new AclFixture();
+        MakeRepository(f.In(".git"));
+        f.Grant();
+        using (var job = f.Job())
+        {
+            Assert.True(job.CanCreateDirectory(f.In("sub")));
+            Assert.True(job.CanCreateDirectory(f.In("sub", ".git")));
+            Assert.True(job.CanCreateDirectory(f.In("sub", ".git", "hooks")));
+        }
+        var refused = Assert.Throws<AclException>(() => f.Grant());
+        Assert.Equal("repo_appeared", refused.Code);
+        Assert.Contains(f.In("sub", ".git"), refused.Message, StringComparison.Ordinal);
+        // Left as it was: still unprotected, still refused before a job.
+        Assert.Contains(Acl.UnprotectedRepositories(f.MakePolicy(), f.Sids()), r => r.Path == f.In("sub", ".git"));
+        Assert.Equal("repo_unprotected", Assert.Throws<AclException>(() => Acl.Verify(f.MakePolicy(), f.Sids())).Code);
+    }
+
+    [Fact]
+    public void A_repository_whose_folder_passes_write_on_to_new_files_is_unprotected()
+    {
+        using var f = new AclFixture();
+        MakeRepository(f.In(".git"));
+        f.Grant();
+        // An inherit-only allow: nothing on .git itself, but what git makes inside it later gets write.
+        AclTest.AddAce(f.In(".git"), AceQualifier.AccessAllowed, AclRules.ReadWriteMask, f.Capability,
+            AceFlags.ObjectInherit | AceFlags.ContainerInherit | AceFlags.InheritOnly);
+        Assert.Equal("repo_unprotected", Assert.Throws<AclException>(() => Acl.Verify(f.MakePolicy(), f.Sids())).Code);
+    }
+
+    [Fact]
+    public void The_confine_folder_is_readable_never_writable_and_the_profile_temp_is_closed()
+    {
+        using var f = new AclFixture();
+        Touch(f.Out("confine", "VoolConfineStart.exe"));
+        Touch(f.Out("profile", "AC", "Temp", "old.tmp"));
+        // As the profile's own folder has it: the package SID may do everything there.
+        AclTest.AddAce(f.Out("profile", "AC", "Temp"), AceQualifier.AccessAllowed, AclRules.DenyAllMask, f.Package, AceFlags.ObjectInherit | AceFlags.ContainerInherit);
+        AclTest.AddAce(f.Out("profile", "AC", "Temp", "old.tmp"), AceQualifier.AccessAllowed, AclRules.DenyAllMask, f.Package, AceFlags.None);
+        var host = new Acl.HostPaths(f.Out("confine"), f.Out("profile", "AC", "Temp"));
+        using var job = f.Job();
+        Assert.False(job.CanRead(f.Out("confine", "VoolConfineStart.exe")));
+        Assert.True(job.CanCreateFile(f.Out("profile", "AC", "Temp", "before.tmp")));
+        Assert.Equal("grant_missing", Assert.Throws<AclException>(() => Acl.VerifyHost(host, f.Package)).Code);
+        Acl.GrantHost(host, f.Package);
+        Acl.VerifyHost(host, f.Package);
+        Assert.True(job.CanRead(f.Out("confine", "VoolConfineStart.exe")));
+        Assert.False(job.CanWrite(f.Out("confine", "VoolConfineStart.exe")));
+        Assert.False(job.CanCreateFile(f.Out("confine", "planted.exe")));
+        Assert.False(job.CanCreateFile(f.Out("profile", "AC", "Temp", "after.tmp")));
+        Assert.False(job.CanWrite(f.Out("profile", "AC", "Temp", "old.tmp")));
+        Assert.False(job.CanCreateDirectory(f.Out("profile", "AC", "Temp", "dir")));
+        // Idempotent.
+        Assert.Equal(0, Acl.GrantHost(host, f.Package).Updated);
+        // Windows putting the package's allow back on AC\Temp is caught before the next job.
+        AclTest.AddAce(f.Out("profile", "AC", "Temp"), AceQualifier.AccessAllowed, AclRules.DenyAllMask, f.Package, AceFlags.ObjectInherit | AceFlags.ContainerInherit);
+        Assert.Equal("deny_unbound", Assert.Throws<AclException>(() => Acl.VerifyHost(host, f.Package)).Code);
+        Acl.RevokeHost(host, f.Package);
+        Assert.False(job.CanRead(f.Out("confine", "VoolConfineStart.exe")));
+    }
+
+    [Fact]
+    public void A_confine_folder_another_app_container_can_write_is_refused()
+    {
+        using var f = new AclFixture();
+        Touch(f.Out("confine", "VoolConfine.exe"));
+        Directory.CreateDirectory(f.Out("profile", "AC", "Temp"));
+        AclTest.AddAce(f.Out("confine"), AceQualifier.AccessAllowed, AclRules.ReadWriteMask, new SecurityIdentifier("S-1-15-2-1"),
+            AceFlags.ObjectInherit | AceFlags.ContainerInherit);
+        var host = new Acl.HostPaths(f.Out("confine"), f.Out("profile", "AC", "Temp"));
+        Assert.Equal("foreign_writer", Assert.Throws<AclException>(() => Acl.GrantHost(host, f.Package)).Code);
+    }
+
+    [Fact]
+    public void A_missing_profile_temp_is_refused()
+    {
+        using var f = new AclFixture();
+        Directory.CreateDirectory(f.Out("confine"));
+        var host = new Acl.HostPaths(f.Out("confine"), f.Out("profile", "AC", "Temp"));
+        Assert.ThrowsAny<AclException>(() => Acl.GrantHost(host, f.Package));
+        Assert.ThrowsAny<AclException>(() => Acl.VerifyHost(host, f.Package));
     }
 
     [Fact]
