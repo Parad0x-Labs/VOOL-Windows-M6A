@@ -66,6 +66,21 @@ proven to work. `None` means the caller refuses the job. Nothing ever runs unwra
   the program with its command line passed through verbatim, in the same job, and exits with its
   code. The confine folder gets a read grant for the package SID, and `AC\Temp` is denied write for
   the package SID, so anything still landing there fails instead of sharing one folder across jobs.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| child's code | The child ran; this is its exit code, passed through unchanged. |
+| 125 | Confinement could not be set up (profile, ACL verify, job, process creation). **The child never started.** |
+| 126 | The command line or the policy is invalid. The child never started. |
+| 123 | The child ran, but a repository layout (a `.git` dir, or a bare repo) appeared under a write root. The result is refused; the status file lists the paths. |
+| 124 | `max_seconds` elapsed. The job was closed, so the whole tree is gone. |
+
+A child may exit with ANY code, 124-126 included, and it shares the launcher's stderr, so neither
+the code nor a stderr line proves anything. The trusted record is the **status file** at the
+policy's `status_path`. It sits outside every writable root, so the confined child can't write it:
+
 - The launcher writes `{"schema": "vool.windows_confinement.status.v1", "child_started": true}`
   only after the child was created SUSPENDED, assigned to the job, and only then resumed.
 - At exit it rewrites the file with `"timed_out"` (bool) and `"exit_code"` (int).
