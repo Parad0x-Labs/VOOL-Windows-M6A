@@ -114,19 +114,22 @@ Status file fields:
 
 ### Identity: one profile, one capability per write root
 
-- **Profile.** One fixed AppContainer profile named `VOOL.Confine.v1`. Its package SID is shared by
-  every job, so it only ever receives READ grants, plus explicit DENY-write ACEs.
+- **Profile.** One fixed AppContainer profile named `VOOL.Confine.v1`, registered before any launch
+  (an unregistered profile fails to launch, winerror 2, measured on Steve). Its package SID is shared
+  by every job, so it only ever receives READ grants.
 - **Read grants (package SID).** Read and execute on `read_roots`.
-- **Deny ACEs.** Deny write on `deny_write_paths` and on every `.git` under a write root; deny all
-  access on `deny_all_paths`.
-  **A deny binds only the SIDs it names.** Windows judges the package SID and each capability on its
-  own, and grants whatever any one of them is allowed. Measured in windows-broker run 41901543557:
-  a package-SID deny did NOT stop a write that the root's capability was allowed. So:
-  - under a write root, every deny names the package SID AND that root's capability, and a
-    repository counts as protected only when both are denied;
-  - outside every write root, the deny names the package SID, and Verify refuses (125) a deny path
-    whose own DACL gives ALL APPLICATION PACKAGES or ALL RESTRICTED APP PACKAGES the denied access,
-    because no deny we write there would bind them.
+- **Protection is the ABSENCE of an allow, never a deny.** Measured in windows-broker run 41902677009
+  (and on Steve, probe v7: `git commit` succeeded inside the box under a package-SID deny): no deny
+  ACE for an AppContainer SID (package or capability) stopped access that one of the token's
+  AppContainer SIDs was allowed. So:
+  - every `.git` / repository layout under a write root, and every `deny_write_paths` entry, has our
+    write allows removed from it and everything in it; the root's capability keeps read+execute only;
+  - a `deny_all_paths` entry and everything in it carries no allow of ours at all;
+  - deny ACEs may stay as markers, but nothing relies on them;
+  - Verify and the repository scan call a layout protected only when NO SID a job token can hold
+    (package, any capability, ALL APPLICATION PACKAGES, ALL RESTRICTED APP PACKAGES) has a write
+    allow on it, inherit-only included; ALL APPLICATION PACKAGES or ALL RESTRICTED APP PACKAGES
+    access on a protected or denied object is refused (125, `foreign_access`).
 - **Write grants (per-root capability).** Read and write (inheritable) go to a capability SID made
   for that root only: `DeriveCapabilitySidsFromName("vool.root.<sha256 hex>")`, where the hash is of
   the root with `/` turned into `\`, trailing `\` stripped, ASCII letters upper-cased (nothing else), UTF-8
