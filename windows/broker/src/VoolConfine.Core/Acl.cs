@@ -358,6 +358,15 @@ public static class Acl
                 var acl = new RawSecurityDescriptor(AclNative.GetDacl(handle, path), 0).DiscretionaryAcl
                     ?? throw new AclException("null_dacl", $"Denied path {path} has a NULL DACL.");
                 var mask = kind == DenyKind.All ? AclRules.DenyAllMask : AclRules.DenyWriteMask;
+                // Outside every write root only the package SID's deny is there, and a group grant to every
+                // AppContainer may not be judged with it (a package deny does not stop a capability's grant),
+                // so a deny path whose own DACL opens the denied access to them is refused.
+                if (!policy.WriteRoots.Any(root => Inside(path, root)))
+                {
+                    var every = AclRules.EveryAppContainerAllowed(acl, kind == DenyKind.All ? AclRules.AnyReadBits | AclRules.WriteOrGenericWriteBits : AclRules.WriteOrGenericWriteBits);
+                    if (every is not null)
+                        throw new AclException("foreign_access", $"Denied path {path} gives {every.Value} the access it must deny.");
+                }
                 // The package SID, and the capability of every write root whose grant reaches it.
                 foreach (var sid in ContainingCapabilities(policy, sids, path).Prepend(sids.Package))
                     if (!AclRules.HasExplicitDeny(acl, sid, mask, directory))

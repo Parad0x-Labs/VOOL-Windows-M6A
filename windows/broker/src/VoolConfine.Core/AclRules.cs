@@ -30,6 +30,9 @@ public static class AclRules
     public const int DenyAllMask = 0x001F01FF;
     // Every right that changes an object, its name, its attributes or its security.
     internal const int AnyWriteBits = DenyWriteMask;
+    // FILE_READ_DATA 0x1 | FILE_READ_EA 0x8 | FILE_EXECUTE 0x20 | FILE_READ_ATTRIBUTES 0x80 | READ_CONTROL 0x20000,
+    // with GENERIC_READ (0x80000000), GENERIC_EXECUTE (0x20000000) and GENERIC_ALL (0x10000000).
+    internal const int AnyReadBits = 0x000200A9 | unchecked((int)0x80000000) | 0x20000000 | 0x10000000;
     // The same, with GENERIC_WRITE (0x40000000) and GENERIC_ALL (0x10000000), which an ACE may carry unmapped.
     internal const int WriteOrGenericWriteBits = AnyWriteBits | 0x50000000;
 
@@ -162,6 +165,21 @@ public static class AclRules
             var text = sid.Value;
             if (!text.StartsWith("S-1-15-2-", StringComparison.Ordinal) && !text.StartsWith("S-1-15-3-", StringComparison.Ordinal)) continue;
             if (!allowed.Contains(sid)) return sid;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// ALL APPLICATION PACKAGES (S-1-15-2-1) or ALL RESTRICTED APP PACKAGES (S-1-15-2-2) when an
+    /// allow ACE (not inherit-only) gives it any of bits; null otherwise.
+    /// </summary>
+    public static SecurityIdentifier? EveryAppContainerAllowed(RawAcl acl, int bits)
+    {
+        foreach (GenericAce ace in acl)
+        {
+            if (ace is not CommonAce common || common.AceQualifier != AceQualifier.AccessAllowed) continue;
+            if ((ace.AceFlags & AceFlags.InheritOnly) != 0 || (common.AccessMask & bits) == 0) continue;
+            if (common.SecurityIdentifier.Value is "S-1-15-2-1" or "S-1-15-2-2") return common.SecurityIdentifier;
         }
         return null;
     }
