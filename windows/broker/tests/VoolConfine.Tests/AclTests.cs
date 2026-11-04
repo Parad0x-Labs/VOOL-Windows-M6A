@@ -124,6 +124,36 @@ public class AclTests
     }
 
     [Fact]
+    public void Nothing_inside_a_repository_holds_or_passes_on_a_write_for_the_job()
+    {
+        using var f = new AclFixture();
+        MakeRepository(f.In(".git"));
+        f.Grant();
+        // Made by the person's own (unconfined) git after the grant.
+        Touch(f.In(".git", "objects", "ab", "made-later"));
+        Directory.CreateDirectory(f.In(".git", "refs", "tags"));
+        Touch(f.In(".git", "refs", "tags", "v1"));
+        string[] inside =
+        [
+            f.In(".git"), f.In(".git", "config"), f.In(".git", "HEAD"), f.In(".git", "hooks"),
+            f.In(".git", "objects"), f.In(".git", "objects", "ab"), f.In(".git", "objects", "ab", "cdef"),
+            f.In(".git", "objects", "ab", "made-later"), f.In(".git", "refs", "tags"), f.In(".git", "refs", "tags", "v1"),
+        ];
+        foreach (var path in inside)
+        {
+            using var handle = AclNative.OpenRoot(path, writeDac: false);
+            var acl = new RawSecurityDescriptor(AclNative.GetDacl(handle, path), 0).DiscretionaryAcl!;
+            // No allow (inherit-only ones included) gives the job's SIDs any write right here.
+            Assert.Null(AclRules.AllowedTo(acl, [f.Package, f.Capability], AclRules.WriteOrGenericWriteBits));
+            Assert.True(AclRules.AllowedBits(acl, f.Capability) != 0, path);
+        }
+        using var job = f.Job();
+        Assert.False(job.CanWrite(f.In(".git", "objects", "ab", "made-later")));
+        Assert.False(job.CanWrite(f.In(".git", "refs", "tags", "v1")));
+        Assert.True(job.CanRead(f.In(".git", "refs", "tags", "v1")));
+    }
+
+    [Fact]
     public void Nested_and_variant_repositories_are_all_denied()
     {
         using var f = new AclFixture();
