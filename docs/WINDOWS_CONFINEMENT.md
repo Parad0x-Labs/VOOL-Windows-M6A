@@ -41,6 +41,13 @@ proven to work. `None` means the caller refuses the job. Nothing ever runs unwra
     and never writes them; a verify miss is 125.
   - `VoolConfine.exe grant --policy <path>` writes the grants and deny ACEs (idempotent).
   - `VoolConfine.exe revoke --policy <path>` removes exactly what grant added.
+  - `VoolConfine.exe scan --policy <path>` runs the repository scan alone (unconfined, no child)
+    and rewrites the status file's `new_repositories` and `repositories_scanned`. Exit 0 when no
+    unprotected layout exists, 123 when one does, 125 when the scan could not finish. The caller
+    runs it after every job whose launcher it killed.
+  - Grant never "heals" a layout that appeared after the root was granted: if a write root already
+    holds its capability's grant and a repository layout under it lacks the deny, grant refuses
+    (125, `repo_appeared`) and leaves it for the operator. Only a first grant protects existing repositories.
 - For the run form: Everything after `--` is
   the child's argv, passed on with Windows quoting rules. `--policy` is required.
 - The child runs in an **AppContainer** (no capabilities unless the policy grants network). It
@@ -99,6 +106,7 @@ Status file fields:
 | `limit` | `"time"`, `"memory"`, `"processes"` or null | The job limit that ended the child, if any. |
 | `error` | string or null | Why setup failed, when `child_started` is false. |
 | `new_repositories` | list of paths | Repository layouts that appeared under a write root during the job. Non-empty means refused (and exit 123). |
+| `repositories_scanned` | bool | True only once the post-job repository scan COMPLETED. A launcher that was killed (cancel, the caller's timeout) never sets it, so an empty `new_repositories` without it proves nothing: the caller runs the `scan` form before it trusts or returns anything. |
 
 ### Identity: one profile, one capability per write root
 
