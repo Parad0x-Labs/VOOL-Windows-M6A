@@ -141,8 +141,14 @@ class InvoiceStore:
         if not self.path.exists():  # payer names, amounts and txids: owner-only from the first byte
             with contextlib.suppress(FileExistsError):
                 os.close(os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
-        with contextlib.suppress(OSError):
-            os.chmod(self.path, 0o600)
+        if config._WINDOWS:
+            # chmod only flips the read-only bit on Windows; refuse to open the store unprotected.
+            from core.owner_only import require_owner_only
+
+            require_owner_only(self.path)
+        else:
+            with contextlib.suppress(OSError):
+                os.chmod(self.path, 0o600)
         conn = sqlite3.connect(self.path, timeout=10)
         try:
             yield conn
