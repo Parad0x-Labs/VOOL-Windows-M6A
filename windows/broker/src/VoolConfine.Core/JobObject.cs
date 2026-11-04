@@ -72,7 +72,7 @@ internal sealed class ConfinementJob : IDisposable
     void Configure()
     {
         // The completion port is attached before any process can be in the job, so no limit message is lost.
-        Set(LauncherNative.JobObjectAssociateCompletionPortInformation, new LauncherNative.JobObjectAssociateCompletionPort
+        Set(LauncherNative.JobObjectAssociateCompletionPortInformationClass, new LauncherNative.JobObjectAssociateCompletionPort
         {
             CompletionKey = 1,
             CompletionPort = port.DangerousGetHandle(),
@@ -81,8 +81,8 @@ internal sealed class ConfinementJob : IDisposable
         limits.BasicLimitInformation.LimitFlags = RequiredFlags;
         limits.BasicLimitInformation.ActiveProcessLimit = maxProcesses;
         limits.JobMemoryLimit = (nuint)memoryLimit;
-        Set(LauncherNative.JobObjectExtendedLimitInformation, limits);
-        Set(LauncherNative.JobObjectBasicUiRestrictions, new LauncherNative.JobObjectBasicUiRestrictions
+        Set(LauncherNative.JobObjectExtendedLimitInformationClass, limits);
+        Set(LauncherNative.JobObjectBasicUiRestrictionsClass, new LauncherNative.JobObjectBasicUiRestrictions
         {
             UiRestrictionsClass = LauncherNative.JobObjectUiLimitAll,
         });
@@ -101,14 +101,14 @@ internal sealed class ConfinementJob : IDisposable
 
     internal JobLimits ReadBack()
     {
-        var limits = Query<LauncherNative.JobObjectExtendedLimitInformation>(LauncherNative.JobObjectExtendedLimitInformation);
-        var ui = Query<LauncherNative.JobObjectBasicUiRestrictions>(LauncherNative.JobObjectBasicUiRestrictions);
+        var limits = Query<LauncherNative.JobObjectExtendedLimitInformation>(LauncherNative.JobObjectExtendedLimitInformationClass);
+        var ui = Query<LauncherNative.JobObjectBasicUiRestrictions>(LauncherNative.JobObjectBasicUiRestrictionsClass);
         return new JobLimits(limits.BasicLimitInformation.LimitFlags, limits.BasicLimitInformation.ActiveProcessLimit,
             limits.JobMemoryLimit, ui.UiRestrictionsClass);
     }
 
     internal uint ActiveProcesses() =>
-        Query<LauncherNative.JobObjectBasicAccountingInformation>(LauncherNative.JobObjectBasicAccountingInformation).ActiveProcesses;
+        Query<LauncherNative.JobObjectBasicAccountingInformation>(LauncherNative.JobObjectBasicAccountingInformationClass).ActiveProcesses;
 
     /// <summary>Ends every process in the job and waits until the kernel reports none left.</summary>
     internal bool KillAll(uint exitCode, TimeSpan wait)

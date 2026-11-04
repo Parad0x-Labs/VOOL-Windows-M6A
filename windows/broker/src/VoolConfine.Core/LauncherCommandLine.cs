@@ -17,16 +17,13 @@ public static class LauncherCommandLine
     public static string CheckProgram(string program)
     {
         if (string.IsNullOrEmpty(program)) throw new PolicyException("the program (argv[0]) is empty");
-        if (program.Contains('"') || program.Contains('\0'))
-            throw new PolicyException("the program (argv[0]) contains a quote or NUL");
-        if (program.Length < 3 || !char.IsAsciiLetter(program[0]) || program[1] != ':' || (program[2] != '\\' && program[2] != '/'))
-            throw new PolicyException($"the program (argv[0]) must be an absolute drive-letter path: {program}");
-        if (program.Split('\\', '/').Any(part => part == ".."))
-            throw new PolicyException($"the program (argv[0]) must be resolved (no '..'): {program}");
+        // The same canonical spelling the policy paths need: absolute X:\ with backslashes, no '.',
+        // '..', short-name, stream, device or trailing-dot segment, and no quote.
+        Policy.CheckPath(program, "the program (argv[0])");
         // Exactly ".exe" at the end: a trailing dot or space is trimmed by Win32 path handling, and
         // an alternate data stream (name:stream) is not a program file, so both are refused.
-        var name = program[(program.LastIndexOfAny(['\\', '/']) + 1)..];
-        if (!name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) || name.Length <= 4 || name.Contains(':'))
+        var name = program[(program.LastIndexOf('\\') + 1)..];
+        if (!name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) || name.Length <= 4)
             throw new PolicyException($"the program (argv[0]) must be an .exe (a .cmd or .bat runs through cmd.exe): {program}");
         return program;
     }

@@ -38,7 +38,7 @@ public static class Sids
     }
 
     /// <summary>The package SID of the profile, derived from its name without creating anything.</summary>
-    public static string PackageSid()
+    public static string Package()
     {
         var hr = LauncherNative.DeriveAppContainerSidFromAppContainerName(Identity.ProfileName, out var sid);
         if (hr < 0) throw new SetupException($"DeriveAppContainerSidFromAppContainerName failed (0x{hr:X8})");
@@ -69,7 +69,7 @@ public static class Sids
     }
 
     /// <summary>The capability SID a write root's grants go to.</summary>
-    public static string RootCapabilitySid(string root) => CapabilitySid(Identity.RootCapabilityName(root));
+    public static string RootCapability(string root) => CapabilitySid(Identity.RootCapabilityName(root));
 
     /// <summary>
     /// The capabilities a job's token carries: only this job's write roots, plus internetClient when

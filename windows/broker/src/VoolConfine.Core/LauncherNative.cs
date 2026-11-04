@@ -28,10 +28,10 @@ internal static class LauncherNative
     internal const uint JobObjectUiLimitAll = 0x000000FF;
 
     // Job information classes.
-    internal const int JobObjectBasicAccountingInformation = 1;
-    internal const int JobObjectBasicUiRestrictions = 4;
-    internal const int JobObjectAssociateCompletionPortInformation = 7;
-    internal const int JobObjectExtendedLimitInformation = 9;
+    internal const int JobObjectBasicAccountingInformationClass = 1;
+    internal const int JobObjectBasicUiRestrictionsClass = 4;
+    internal const int JobObjectAssociateCompletionPortInformationClass = 7;
+    internal const int JobObjectExtendedLimitInformationClass = 9;
 
     // Job completion-port messages.
     internal const uint JobObjectMsgActiveProcessLimit = 3;
@@ -234,4 +234,16 @@ internal static class LauncherNative
     [DllImport("advapi32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool IsValidSid(nint sid);
+
+    internal const uint FileReadAttributes = 0x0080;
+    internal const uint FileShareAll = 0x1 | 0x2 | 0x4;
+    internal const uint OpenExisting = 3;
+    internal const uint FileFlagBackupSemantics = 0x02000000;
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern SafeFileHandle CreateFileW(string name, uint access, uint share, nint security,
+        uint creation, uint flags, nint template);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern uint GetFinalPathNameByHandleW(SafeFileHandle handle, System.Text.StringBuilder path, uint length, uint flags);
 }

@@ -45,6 +45,16 @@ public static class Launcher
     {
         ArgumentNullException.ThrowIfNull(checks);
         var status = new LauncherStatus(policy.StatusPath);
+        try
+        {
+            // Before the first write to it, so a link can't carry the status file anywhere else.
+            CheckResolved(Path.GetDirectoryName(policy.StatusPath) ?? policy.StatusPath, "status folder");
+        }
+        catch (PolicyException e)
+        {
+            return Refuse(stderr, ExitCodes.PolicyInvalid, e.Message);
+        }
+
         string commandLine;
         try
         {
@@ -70,6 +80,12 @@ public static class Launcher
         {
             return RunConfined(policy, argv[0], commandLine, checks, status, stderr);
         }
+        catch (PolicyException e)
+        {
+            // A path that does not resolve on disk to its own spelling (section 3): nothing started.
+            TryNotStarted(status, e.Message, stderr);
+            return Refuse(stderr, ExitCodes.PolicyInvalid, e.Message);
+        }
         catch (Exception e)
         {
             // SetupException or anything unexpected: the child is not running (the job, if it was
@@ -83,6 +99,7 @@ public static class Launcher
     static int RunConfined(Policy policy, string program, string commandLine, IConfinementChecks checks,
         LauncherStatus status, TextWriter stderr)
     {
+        foreach (var root in policy.WriteRoots) CheckResolved(root, "write root");
         CheckTempDir(policy.TempDir);
         var packageSid = Sids.EnsureProfile();
         var capabilities = Sids.CapabilitiesFor(policy);
@@ -164,6 +181,29 @@ public static class Launcher
             if (result == LauncherNative.WaitObject0) return true;
             if (result != LauncherNative.WaitTimeout) throw new SetupException($"WaitForSingleObject failed: {LastError()}");
         }
+    }
+
+    /// <summary>
+    /// docs/WINDOWS_CONFINEMENT.md section 3, "Resolved on disk": the folder, opened (links followed),
+    /// must have exactly the final path it was given, case-insensitively. A junction, a symlink, a
+    /// short name or a missing folder anywhere on the way is a PolicyException (126).
+    /// </summary>
+    internal static void CheckResolved(string folder, string what)
+    {
+        using var handle = LauncherNative.CreateFileW(folder, LauncherNative.FileReadAttributes, LauncherNative.FileShareAll, 0,
+            LauncherNative.OpenExisting, LauncherNative.FileFlagBackupSemantics, 0);
+        if (handle.IsInvalid) throw new PolicyException($"the {what} could not be opened: {folder}: {LastError()}");
+        var buffer = new System.Text.StringBuilder(32768);
+        var length = LauncherNative.GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Capacity, 0);
+        if (length == 0 || length >= buffer.Capacity)
+            throw new PolicyException($"the {what}'s final path could not be read: {folder}: {LastError()}");
+        var final = buffer.ToString();
+        const string Prefix = @"\\?\";
+        if (!final.StartsWith(Prefix, StringComparison.Ordinal) || final.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
+            throw new PolicyException($"the {what} resolves to {final}, not a drive-letter path: {folder}");
+        final = final[Prefix.Length..];
+        if (!string.Equals(final.TrimEnd('\\'), folder.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+            throw new PolicyException($"the {what} {folder} resolves to {final}; give the resolved path");
     }
 
     /// <summary>
