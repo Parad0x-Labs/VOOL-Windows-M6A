@@ -30,6 +30,8 @@ public static class AclRules
     public const int DenyAllMask = 0x001F01FF;
     // Every right that changes an object, its name, its attributes or its security.
     internal const int AnyWriteBits = DenyWriteMask;
+    // The same, with GENERIC_WRITE (0x40000000) and GENERIC_ALL (0x10000000), which an ACE may carry unmapped.
+    internal const int WriteOrGenericWriteBits = AnyWriteBits | 0x50000000;
 
     internal const AceFlags FolderInherit = AceFlags.ObjectInherit | AceFlags.ContainerInherit;
 
@@ -143,6 +145,25 @@ public static class AclRules
             if (ace is CommonAce common && common.AceQualifier == AceQualifier.AccessAllowed && common.SecurityIdentifier == sid
                 && common.AccessMask == mask && ace.AceFlags == flags) return true;
         return false;
+    }
+
+    /// <summary>
+    /// The first AppContainer SID (package S-1-15-2-*, ALL APPLICATION PACKAGES and ALL RESTRICTED
+    /// APP PACKAGES included, or capability S-1-15-3-*) not in allowed that an allow ACE (explicit or
+    /// inherited, not inherit-only) gives any write right; null when there is none.
+    /// </summary>
+    public static SecurityIdentifier? ForeignWriter(RawAcl acl, IReadOnlyCollection<SecurityIdentifier> allowed)
+    {
+        foreach (GenericAce ace in acl)
+        {
+            if (ace is not CommonAce common || common.AceQualifier != AceQualifier.AccessAllowed) continue;
+            if ((ace.AceFlags & AceFlags.InheritOnly) != 0 || (common.AccessMask & WriteOrGenericWriteBits) == 0) continue;
+            var sid = common.SecurityIdentifier;
+            var text = sid.Value;
+            if (!text.StartsWith("S-1-15-2-", StringComparison.Ordinal) && !text.StartsWith("S-1-15-3-", StringComparison.Ordinal)) continue;
+            if (!allowed.Contains(sid)) return sid;
+        }
+        return null;
     }
 
     /// <summary>The union of every allow ACE's mask for sid (explicit or inherited, inherit-only excluded).</summary>

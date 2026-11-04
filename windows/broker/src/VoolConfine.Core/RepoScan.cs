@@ -55,11 +55,11 @@ public static class RepoScan
 
     /// <summary>
     /// Every repository layout under root, each marked protected when its DACL holds an explicit
-    /// deny ACE for the package SID covering every write right (and, on a folder, inherited by
+    /// deny ACE for each of denySids (the package SID and the root's capability) covering every write right (and, on a folder, inherited by
     /// files and folders made inside it). A link named .git is never protected.
     /// Any failure to open or list a folder throws: an unlisted folder could hide a repository.
     /// </summary>
-    public static IReadOnlyList<RepoEntry> Scan(string root, SecurityIdentifier packageSid)
+    public static IReadOnlyList<RepoEntry> Scan(string root, IReadOnlyList<SecurityIdentifier> denySids)
     {
         var found = new List<RepoEntry>();
         using var rootHandle = AclNative.OpenRoot(root, writeDac: false);
@@ -67,14 +67,14 @@ public static class RepoScan
             throw new AclException("reparse_point", $"Root {root} is a reparse point.");
         var rootEntries = AclNative.List(rootHandle, root);
         if (IsBareShape(rootEntries))
-            found.Add(new RepoEntry(root, RepoKind.BareRepository, IsProtected(rootHandle, root, true, packageSid)));
+            found.Add(new RepoEntry(root, RepoKind.BareRepository, IsProtected(rootHandle, root, true, denySids)));
         else
-            Walk(rootHandle, root, rootEntries, packageSid, found);
+            Walk(rootHandle, root, rootEntries, denySids, found);
         return found;
     }
 
     private static void Walk(SafeFileHandle top, string topPath, List<AclNative.Entry> topEntries,
-        SecurityIdentifier packageSid, List<RepoEntry> found)
+        IReadOnlyList<SecurityIdentifier> denySids, List<RepoEntry> found)
     {
         // An explicit stack, so a deep tree cannot overflow the thread's stack.
         var stack = new Stack<Frame>();
@@ -97,7 +97,7 @@ public static class RepoScan
                     if (entry.IsReparsePoint) { found.Add(new RepoEntry(path, RepoKind.GitLink, false)); continue; }
                     using var handle = OpenOrThrow(frame.Handle, entry, path);
                     found.Add(new RepoEntry(path, entry.IsDirectory ? RepoKind.GitDirectory : RepoKind.GitFile,
-                        IsProtected(handle, path, entry.IsDirectory, packageSid)));
+                        IsProtected(handle, path, entry.IsDirectory, denySids)));
                     continue;
                 }
                 if (!entry.IsDirectory || entry.IsReparsePoint) continue;
@@ -107,7 +107,7 @@ public static class RepoScan
                 catch { child.Dispose(); throw; }
                 if (IsBareShape(entries))
                 {
-                    try { found.Add(new RepoEntry(path, RepoKind.BareRepository, IsProtected(child, path, true, packageSid))); }
+                    try { found.Add(new RepoEntry(path, RepoKind.BareRepository, IsProtected(child, path, true, denySids))); }
                     finally { child.Dispose(); }
                     continue;
                 }
@@ -126,11 +126,12 @@ public static class RepoScan
         AclNative.OpenChild(parent, entry.Name, entry.IsDirectory, writeDac: false)
         ?? throw new AclException("access_denied", $"Cannot open {path} to check it (access denied).");
 
-    internal static bool IsProtected(SafeFileHandle handle, string path, bool directory, SecurityIdentifier packageSid)
+    internal static bool IsProtected(SafeFileHandle handle, string path, bool directory, IReadOnlyList<SecurityIdentifier> denySids)
     {
         var descriptor = new RawSecurityDescriptor(AclNative.GetDacl(handle, path), 0);
         var acl = descriptor.DiscretionaryAcl;
-        if (acl is null) return false;
-        return AclRules.HasExplicitDeny(acl, packageSid, AclRules.DenyWriteMask, directory);
+        if (acl is null || denySids.Count == 0) return false;
+        RawAcl dacl = acl;
+        return denySids.All(sid => AclRules.HasExplicitDeny(dacl, sid, AclRules.DenyWriteMask, directory));
     }
 }

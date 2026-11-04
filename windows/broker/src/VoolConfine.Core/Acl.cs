@@ -6,12 +6,20 @@ namespace VoolConfine.Core;
 
 /// <summary>
 /// The SIDs one policy's ACEs are for (docs/WINDOWS_CONFINEMENT.md section 2, "Identity"):
-/// the profile's package SID (read grants and every deny), and one capability SID per write root
-/// (that root's read-write grant). RootCapabilities is keyed by the write root exactly as the
-/// policy spells it.
+/// the profile's package SID (read grants, and every deny), and one capability SID per write root
+/// (that root's read-write grant, and every deny under that root). RootCapabilities is keyed by the
+/// write root exactly as the policy spells it.
 /// </summary>
 public sealed record ConfinementSids(SecurityIdentifier Package, IReadOnlyDictionary<string, SecurityIdentifier> RootCapabilities)
 {
+    /// <summary>
+    /// The SIDs for a policy from the launcher's own derivation (VoolConfine.Core.Sids:
+    /// <c>ConfinementSids.For(policy, Sids.Package(), Sids.RootCapability)</c>), so they are derived once, in one place.
+    /// </summary>
+    public static ConfinementSids For(Policy policy, string packageSid, Func<string, string> rootCapabilitySid) =>
+        new(new SecurityIdentifier(packageSid),
+            policy.WriteRoots.Distinct(StringComparer.Ordinal).ToDictionary(root => root, root => new SecurityIdentifier(rootCapabilitySid(root)), StringComparer.Ordinal));
+
     public SecurityIdentifier CapabilityFor(string root) =>
         RootCapabilities.TryGetValue(root, out var sid) ? sid
         : throw new AclException("sid_missing", $"No capability SID was given for write root {root}.");
@@ -35,9 +43,13 @@ public sealed record AclReport(
 ///   last so every deny already there still wins.
 /// - Read root: the same with <see cref="AclRules.ReadExecuteMask"/> for the package SID.
 /// - Every repository layout under a write root (see <see cref="RepoScan"/>), and everything inside
-///   it: an explicit DENY <see cref="AclRules.DenyWriteMask"/> for the package SID, first in the DACL.
+///   it: an explicit DENY <see cref="AclRules.DenyWriteMask"/> for the package SID AND the root's
+///   capability, first in the DACL. Both are needed: Windows grants an AppContainer what its
+///   package SID or any of its capabilities is allowed, each judged on its own, so a deny for one
+///   SID does not stop a grant to another.
 /// - deny_write_paths / deny_all_paths: an explicit DENY of write / of everything for the package
-///   SID, on the object and (when it lies under a root) on everything inside it. Matched by file id.
+///   SID (and, under a write root, that root's capability), on the object and on everything inside
+///   it. Matched by file id.
 ///
 /// Never widened: a file with more than one hard link (the other name may be outside every root),
 /// an object whose DACL is protected (and everything under it), and a reparse point (never opened
@@ -68,36 +80,71 @@ public static class Acl
     /// <summary>Writes every grant and deny the policy needs (idempotent), then verifies. Throws on any failure.</summary>
     public static AclReport Grant(Policy policy, ConfinementSids sids)
     {
+        RefuseNestedWriteRoots(policy);
         var counts = new Counts();
         var denies = OpenDenyTargets(policy);
         try
         {
             foreach (var root in policy.WriteRoots)
-                WalkGrant(Normalize(root), Mode.Write, sids.CapabilityFor(root), sids.Package, policy.DenyWriteGit, denies.ById, counts);
+            {
+                var capability = sids.CapabilityFor(root);
+                WalkGrant(Normalize(root), Mode.Write, capability, [sids.Package, capability], [capability],
+                    policy.DenyWriteGit, denies.ById, counts, denyOnly: DenyKind.None);
+            }
             foreach (var root in policy.ReadRoots)
-                WalkGrant(Normalize(root), Mode.Read, sids.Package, sids.Package, false, denies.ById, counts);
-            // A deny path under no root: one ACE on the object, inherited by whatever is made inside.
-            // Nothing under it carries a grant of ours, so its existing children need no copy.
+                WalkGrant(Normalize(root), Mode.Read, sids.Package, [sids.Package], ContainingCapabilities(policy, sids, root),
+                    false, denies.ById, counts, denyOnly: DenyKind.None);
+            // A deny path under no root: the deny on the object and, since it only narrows, on
+            // everything already inside it (a child could carry its own grant to some AppContainer).
             foreach (var (path, handle, kind, directory) in denies.Outside)
-                Apply(handle, path, directory, isRoot: true, Mode.Read, allowSid: null, sids.Package,
-                    new Context(true, false, kind), counts, linkCount: 1);
+            {
+                if (directory)
+                    WalkGrant(path, Mode.Read, allowSid: null, [sids.Package], [], false, denies.ById, counts, denyOnly: kind);
+                else
+                    Apply(handle, path, directory, isRoot: true, Mode.Read, allowSid: null, [sids.Package], foreignAllowed: null,
+                        new Context(true, false, kind), counts, linkCount: 1);
+            }
         }
         finally { denies.Dispose(); }
         var repositories = Verify(policy, sids);
         return counts.Report(repositories);
     }
 
-    private static void WalkGrant(string root, Mode mode, SecurityIdentifier allowSid, SecurityIdentifier package, bool denyGit,
-        IReadOnlyDictionary<(ulong, string), DenyKind> denyById, Counts counts)
+    /// <summary>
+    /// Walks root and puts each object's ACEs in place. allowSid gets the grant (null for a deny-only
+    /// walk); every deny names each SID in denySids, because the AppContainer check grants what the
+    /// package SID OR any capability is allowed, each judged on its own: a deny for the package SID
+    /// does not stop a write the root's capability is allowed (measured: windows-broker run 41901543557).
+    /// foreignAllowed: the AppContainer SIDs, besides ours, that may hold write here (null: no check).
+    /// </summary>
+    private static void WalkGrant(string root, Mode mode, SecurityIdentifier? allowSid, SecurityIdentifier[] denySids,
+        SecurityIdentifier[]? foreignAllowed, bool denyGit, IReadOnlyDictionary<(ulong, string), DenyKind> denyById,
+        Counts counts, DenyKind denyOnly)
     {
         using var rootHandle = AclNative.OpenRoot(root, writeDac: true);
         CheckRoot(rootHandle, root);
         var rootEntries = AclNative.List(rootHandle, root);
         if (mode == Mode.Write && RepoScan.IsBareShape(rootEntries))
             throw new AclException("root_is_repository", $"Write root {root} is itself a bare repository.");
-        var rootContext = new Context(false, false, DenyOf(rootHandle, root, denyById));
-        if (rootContext.Deny != DenyKind.None)
-            throw new AclException("root_inside_denied", $"Root {root} is a denied path.");
+        Context rootContext;
+        if (denyOnly != DenyKind.None) rootContext = new Context(true, false, denyOnly);
+        else
+        {
+            rootContext = new Context(false, false, DenyOf(rootHandle, root, denyById));
+            if (rootContext.Deny != DenyKind.None)
+                throw new AclException("root_inside_denied", $"Root {root} is a denied path.");
+        }
+        var foreign = denyOnly == DenyKind.None ? foreignAllowed : null;
+        if (foreign is not null)
+        {
+            // Before anything is written: a root another AppContainer SID may already write is refused whole.
+            var rootAcl = new RawSecurityDescriptor(AclNative.GetDacl(rootHandle, root), 0).DiscretionaryAcl
+                ?? throw new AclException("null_dacl", $"Root {root} has a NULL DACL (everyone has full access).");
+            SecurityIdentifier[] allowed = allowSid is null ? foreign : [allowSid, .. foreign];
+            var writer = AclRules.ForeignWriter(rootAcl, allowed);
+            if (writer is not null)
+                throw new AclException("foreign_writer", $"Root {root} lets another AppContainer SID ({writer.Value}) write it.");
+        }
 
         var stack = new Stack<Frame>();
         stack.Push(new Frame(rootHandle, root, rootEntries, 0, false, rootContext));
@@ -141,7 +188,7 @@ public static class Acl
                     if (own > deny) deny = own;
                     var context = new Context(frame.Context.AllowBlocked || deny == DenyKind.All, inRepo, deny);
                     var links = directory ? 1u : AclNative.GetLinkCount(handle, path);
-                    context = Apply(handle, path, directory, isRoot: false, mode, allowSid, package, context, counts, links);
+                    context = Apply(handle, path, directory, isRoot: false, mode, allowSid, denySids, foreign, context, counts, links);
                     if (entries is not null)
                     {
                         stack.Push(new Frame(handle, path, entries, 0, true, context));
@@ -156,27 +203,29 @@ public static class Acl
             while (stack.Count > 0) { var frame = stack.Pop(); if (frame.Own) frame.Handle.Dispose(); }
         }
         // Last: the root's own explicit ACE.
-        Apply(rootHandle, root, directory: true, isRoot: true, mode, allowSid, package, rootContext, counts, linkCount: 1);
+        Apply(rootHandle, root, directory: true, isRoot: true, mode, allowSid, denySids, foreign, rootContext, counts, linkCount: 1);
     }
 
     private readonly record struct Frame(SafeFileHandle Handle, string Path, List<AclNative.Entry> Entries, int Index, bool Own, Context Context);
 
     /// <summary>Puts this object's ACEs in place. Returns the context its children inherit.</summary>
     private static Context Apply(SafeFileHandle handle, string path, bool directory, bool isRoot, Mode mode,
-        SecurityIdentifier? allowSid, SecurityIdentifier package, Context context, Counts counts, uint linkCount)
+        SecurityIdentifier? allowSid, SecurityIdentifier[] denySids, SecurityIdentifier[]? foreignAllowed,
+        Context context, Counts counts, uint linkCount)
     {
         var descriptor = new RawSecurityDescriptor(AclNative.GetDacl(handle, path), 0);
         var isProtected = (descriptor.ControlFlags & ControlFlags.DiscretionaryAclProtected) != 0;
-        var acl = descriptor.DiscretionaryAcl;
-        var mustNarrow = context.InRepo || context.Deny != DenyKind.None;
-        if (acl is null)
+        // A NULL DACL grants everything to everyone, every AppContainer (so every other job) included.
+        var acl = descriptor.DiscretionaryAcl
+            ?? throw new AclException("null_dacl", $"{path} has a NULL DACL (everyone, every AppContainer included, has full access).");
+        if (foreignAllowed is not null)
         {
-            // A NULL DACL grants everything to everyone, AppContainers included. Under a write root,
-            // outside any repository or denied path, that is no wider than the root's own grant.
-            if (mustNarrow || isRoot || mode == Mode.Read)
-                throw new AclException("null_dacl", $"{path} has a NULL DACL (everyone, every AppContainer included, has full access).");
-            counts.Unchanged++;
-            return context;
+            // Another AppContainer SID that may write here (another root's capability: overlapping
+            // workspaces; ALL APPLICATION PACKAGES): that job, or every job, could write this root.
+            SecurityIdentifier[] allowed = allowSid is null ? foreignAllowed : [allowSid, .. foreignAllowed];
+            var writer = AclRules.ForeignWriter(acl, allowed);
+            if (writer is not null)
+                throw new AclException("foreign_writer", $"{path} lets another AppContainer SID ({writer.Value}) write it.");
         }
         if (isProtected && !isRoot && !context.AllowBlocked)
         {
@@ -184,8 +233,11 @@ public static class Acl
             context = context with { AllowBlocked = true };
         }
         var changed = false;
-        if (context.Deny == DenyKind.All) changed |= AclRules.Ensure(acl, AclRules.ExplicitDeny(package, AclRules.DenyAllMask, directory));
-        if (context.Deny == DenyKind.Write || context.InRepo) changed |= AclRules.Ensure(acl, AclRules.ExplicitDeny(package, AclRules.DenyWriteMask, directory));
+        foreach (var sid in denySids)
+        {
+            if (context.Deny == DenyKind.All) changed |= AclRules.Ensure(acl, AclRules.ExplicitDeny(sid, AclRules.DenyAllMask, directory));
+            if (context.Deny == DenyKind.Write || context.InRepo) changed |= AclRules.Ensure(acl, AclRules.ExplicitDeny(sid, AclRules.DenyWriteMask, directory));
+        }
         if (allowSid is not null && !context.AllowBlocked)
         {
             if (linkCount > 1) counts.HardLinks++;
@@ -211,14 +263,17 @@ public static class Acl
 
     /// <summary>
     /// The check the launcher runs before every job (a miss is exit 125). Throws unless: each root
-    /// is the folder the policy names (no link on the way, on a volume that keeps ACLs); each write
-    /// root holds its capability's exact grant and nothing wider; no root lets the package SID
-    /// write; each read root holds the package's read grant; every repository layout under a write
-    /// root carries the deny (when deny_write_git); every deny path carries its deny.
+    /// is the folder the policy names (no link on the way, on a volume that keeps ACLs); no write
+    /// root lies inside another; each write root holds its capability's exact grant and nothing
+    /// wider; no other AppContainer SID may write a root (a read root may be written only by the
+    /// capability of a write root it lies in); each read root holds the package's read grant; every
+    /// repository layout under a write root carries the deny for the package SID and the root's
+    /// capability (when deny_write_git); every deny path carries its deny.
     /// Returns the repository layouts found, all protected.
     /// </summary>
     public static IReadOnlyList<RepoEntry> Verify(Policy policy, ConfinementSids sids)
     {
+        RefuseNestedWriteRoots(policy);
         var repositories = new List<RepoEntry>();
         foreach (var policyRoot in policy.WriteRoots)
         {
@@ -229,8 +284,11 @@ public static class Acl
                 throw new AclException("grant_missing", $"Write root {root} does not hold its read-write grant (run grant).");
             if ((AclRules.AllowedBits(acl, capability) & ~AclRules.ReadWriteMask) != 0)
                 throw new AclException("grant_widened", $"Write root {root} grants its capability more than read-write.");
-            if ((AclRules.AllowedBits(acl, sids.Package) & AclRules.AnyWriteBits) != 0)
+            if ((AclRules.AllowedBits(acl, sids.Package) & AclRules.WriteOrGenericWriteBits) != 0)
                 throw new AclException("package_can_write", $"Write root {root} lets every confined job write it.");
+            var writer = AclRules.ForeignWriter(acl, [capability]);
+            if (writer is not null)
+                throw new AclException("foreign_writer", $"Write root {root} lets another AppContainer SID ({writer.Value}) write it.");
         }
         foreach (var policyRoot in policy.ReadRoots)
         {
@@ -238,15 +296,18 @@ public static class Acl
             var acl = ReadRootAcl(root);
             if (!AclRules.HasExplicitAllow(acl, sids.Package, AclRules.ReadExecuteMask, directory: true))
                 throw new AclException("grant_missing", $"Read root {root} does not hold its read grant (run grant).");
-            if ((AclRules.AllowedBits(acl, sids.Package) & AclRules.AnyWriteBits) != 0)
+            if ((AclRules.AllowedBits(acl, sids.Package) & AclRules.WriteOrGenericWriteBits) != 0)
                 throw new AclException("package_can_write", $"Read root {root} lets every confined job write it.");
+            var writer = AclRules.ForeignWriter(acl, ContainingCapabilities(policy, sids, policyRoot));
+            if (writer is not null)
+                throw new AclException("foreign_writer", $"Read root {root} lets an AppContainer SID ({writer.Value}) write it.");
         }
-        CheckDenyTargets(policy, sids.Package);
+        CheckDenyTargets(policy, sids);
         if (policy.DenyWriteGit)
         {
             var unprotected = new List<RepoEntry>();
             foreach (var policyRoot in policy.WriteRoots)
-                foreach (var entry in RepoScan.Scan(Normalize(policyRoot), sids.Package))
+                foreach (var entry in RepoScan.Scan(Normalize(policyRoot), [sids.Package, sids.CapabilityFor(policyRoot)]))
                     (entry.Protected ? repositories : unprotected).Add(entry);
             if (unprotected.Count > 0)
                 throw new AclException("repo_unprotected",
@@ -261,7 +322,21 @@ public static class Acl
     /// bare repo), and the result is refused (exit 123). Throws when a folder cannot be listed.
     /// </summary>
     public static IReadOnlyList<RepoEntry> UnprotectedRepositories(Policy policy, ConfinementSids sids) =>
-        policy.WriteRoots.SelectMany(root => RepoScan.Scan(Normalize(root), sids.Package)).Where(entry => !entry.Protected).ToList();
+        policy.WriteRoots.SelectMany(root => RepoScan.Scan(Normalize(root), [sids.Package, sids.CapabilityFor(root)]))
+            .Where(entry => !entry.Protected).ToList();
+
+    /// <summary>A write root inside another is refused: the outer root's capability would write the inner one.</summary>
+    private static void RefuseNestedWriteRoots(Policy policy)
+    {
+        foreach (var a in policy.WriteRoots)
+            foreach (var b in policy.WriteRoots)
+                if (!ReferenceEquals(a, b) && Inside(a, b))
+                    throw new AclException("nested_write_roots", $"Write root {Normalize(a)} lies inside write root {Normalize(b)}.");
+    }
+
+    /// <summary>The capabilities of the write roots that path lies in (their grant reaches it).</summary>
+    private static SecurityIdentifier[] ContainingCapabilities(Policy policy, ConfinementSids sids, string path) =>
+        policy.WriteRoots.Where(root => Inside(path, root)).Select(sids.CapabilityFor).ToArray();
 
     private static RawAcl ReadRootAcl(string root)
     {
@@ -271,7 +346,7 @@ public static class Acl
         return acl ?? throw new AclException("null_dacl", $"Root {root} has a NULL DACL (everyone has full access).");
     }
 
-    private static void CheckDenyTargets(Policy policy, SecurityIdentifier package)
+    private static void CheckDenyTargets(Policy policy, ConfinementSids sids)
     {
         foreach (var (path, kind) in DenyPaths(policy))
         {
@@ -283,8 +358,10 @@ public static class Acl
                 var acl = new RawSecurityDescriptor(AclNative.GetDacl(handle, path), 0).DiscretionaryAcl
                     ?? throw new AclException("null_dacl", $"Denied path {path} has a NULL DACL.");
                 var mask = kind == DenyKind.All ? AclRules.DenyAllMask : AclRules.DenyWriteMask;
-                if (!AclRules.HasExplicitDeny(acl, package, mask, directory))
-                    throw new AclException("deny_missing", $"Denied path {path} does not carry its deny ACE (run grant).");
+                // The package SID, and the capability of every write root whose grant reaches it.
+                foreach (var sid in ContainingCapabilities(policy, sids, path).Prepend(sids.Package))
+                    if (!AclRules.HasExplicitDeny(acl, sid, mask, directory))
+                        throw new AclException("deny_missing", $"Denied path {path} does not carry its deny ACE for {sid.Value} (run grant).");
             }
         }
     }
@@ -311,7 +388,13 @@ public static class Acl
                 if (UnderAnyRoot(policy, path)) continue;
                 var handle = TryOpenDenyTarget(policy, path, writeDac: true);
                 if (handle is null) continue;
-                using (handle) Strip(handle, path, [sids.Package], counts);
+                bool directory;
+                using (handle)
+                {
+                    directory = (AclNative.GetAttributes(handle, path) & AclNative.FileAttributeDirectory) != 0;
+                    if (!directory) Strip(handle, path, [sids.Package], counts);
+                }
+                if (directory) WalkRevoke(path, [sids.Package], counts);
             }
         }
         return counts.Report([]);
