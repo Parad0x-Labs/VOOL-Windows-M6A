@@ -28,6 +28,9 @@ def test_provider_probe_runs_as_direct_script_entrypoint() -> None:
         capture_output=True,
         text=True,
         check=False,
+        # Above the probe's own worst case (90 s GPU check, 15 s ollama list, 3 s API read), so a
+        # hung probe fails this test instead of stalling the suite (Steve, 4 Nov: hours).
+        timeout=300,
     )
 
     assert completed.returncode == 0, completed.stderr
