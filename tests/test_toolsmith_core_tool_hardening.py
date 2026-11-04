@@ -84,7 +84,7 @@ class AtomicWriteTests(unittest.TestCase):
 class ReadFileHashTests(unittest.TestCase):
     def test_read_file_reports_a_content_hash_matching_the_file_on_disk(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            (Path(tmpdir) / "notes.txt").write_text("alpha\nbeta\n", encoding="utf-8")
+            (Path(tmpdir) / "notes.txt").write_text("alpha\nbeta\n", encoding="utf-8", newline="\n")
             result = execute_runtime_tool(
                 "workspace.read_file", {"path": "notes.txt"}, source_context={"workspace": tmpdir}
             )
@@ -97,7 +97,7 @@ class ReadFileHashTests(unittest.TestCase):
     def test_read_file_hash_is_over_the_whole_file_not_just_the_shown_slice(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             full_text = "\n".join(f"line{i}" for i in range(1, 21)) + "\n"
-            (Path(tmpdir) / "big.txt").write_text(full_text, encoding="utf-8")
+            (Path(tmpdir) / "big.txt").write_text(full_text, encoding="utf-8", newline="\n")
             result = execute_runtime_tool(
                 "workspace.read_file",
                 {"path": "big.txt", "start_line": 1, "max_lines": 3},
