@@ -127,6 +127,7 @@ class SessionHandle:
         self.profile_dir.mkdir(parents=True, exist_ok=True)
         self.staging_dir.mkdir(parents=True, exist_ok=True)
         self.downloads_dir.mkdir(parents=True, exist_ok=True)
+        _seed_download_folder(self.profile_dir, self.downloads_dir)
 
         self._queue: queue.Queue[tuple[Callable[[Any], Any], dict] | None] = queue.Queue()
         self._done = threading.Event()
@@ -331,6 +332,25 @@ class SessionHandle:
         record = self.describe()
         record["engine_error"] = self._engine_error
         return record
+
+
+def _seed_download_folder(profile_dir: Path, downloads_dir: Path) -> None:
+    """Name `downloads_dir` as the fresh profile's download and save folder before the engine starts.
+
+    Playwright's downloads path applies only once the browser is up; Edge already creates a probe
+    `.tmp` file in its default folder, the user's real Downloads, at startup (Steve job 48g). The
+    profile is a new, disposable folder, so its Preferences file is VOOL's to write.
+    """
+    import json
+
+    folder = str(downloads_dir)
+    preferences = {
+        "download": {"default_directory": folder, "prompt_for_download": False, "directory_upgrade": True},
+        "savefile": {"default_directory": folder},
+    }
+    default = profile_dir / "Default"
+    default.mkdir(parents=True, exist_ok=True)
+    (default / "Preferences").write_text(json.dumps(preferences), encoding="utf-8")
 
 
 def _purge_profile(profile_dir: Path) -> None:
