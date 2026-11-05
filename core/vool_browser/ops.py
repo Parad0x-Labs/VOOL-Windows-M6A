@@ -445,13 +445,13 @@ def _fetch_bounded(context: Any, handle: SessionHandle, url: str, *, target: Pat
     """
     from urllib.parse import urljoin
 
-    deadline = time.time() + timeout_seconds
+    deadline = time.monotonic() + timeout_seconds
     current = url
     for _ in range(_DOWNLOAD_MAX_HOPS + 1):
         status, reason = _download_hop_refusal(handle, current)
         if status:
             raise OpFailed(status, reason)
-        remaining = deadline - time.time()
+        remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise OpTimeout(f"download of {url} exceeded {timeout_seconds}s")
         try:
