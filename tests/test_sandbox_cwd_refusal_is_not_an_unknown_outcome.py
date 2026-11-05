@@ -10,11 +10,15 @@ must be decided before an operator is asked to approve the action.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from core.effect_reconciliation import EffectOutcomeUnknown, clear_in_flight_effect, set_in_flight_effect
 from core.runtime_execution_tools import execute_runtime_tool
 
+# A full local path outside the workspace: "/Users" on POSIX; on Windows a bare "/Users" is refused
+# earlier, by its spelling, as not a full local path, so use the drive-rooted folder instead.
+_OUTSIDE = "C:\\Users" if os.name == "nt" else "/Users"
 
 def _run(tmp_path: Path, cwd: str):
     workspace = tmp_path / "ws"
@@ -27,10 +31,10 @@ def _run(tmp_path: Path, cwd: str):
 
 
 def test_a_cwd_outside_the_workspace_is_refused_by_name(tmp_path: Path) -> None:
-    result = _run(tmp_path, "/Users")
+    result = _run(tmp_path, _OUTSIDE)
     assert result is not None and result.handled and not result.ok
     assert result.status == "cwd_outside_workspace", (result.status, result.response_text)
-    assert "/Users" in result.response_text and "workspace" in result.response_text.lower()
+    assert _OUTSIDE in result.response_text and "workspace" in result.response_text.lower()
     assert result.details.get("executed") is False
 
 
@@ -39,7 +43,7 @@ def test_the_refusal_stays_a_refusal_with_an_effect_claim_in_flight(tmp_path: Pa
     token = set_in_flight_effect({"tool_name": "sandbox.run_command", "logical_effect_id": "le-test", "effect_instance_id": "ei-test"})
     try:
         try:
-            result = _run(tmp_path, "/Users")
+            result = _run(tmp_path, _OUTSIDE)
         except EffectOutcomeUnknown as exc:  # pragma: no cover - the defect
             raise AssertionError(f"a refusal before dispatch was classified as an unknown outcome: {exc}")
     finally:
