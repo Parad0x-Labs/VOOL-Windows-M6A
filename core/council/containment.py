@@ -671,7 +671,10 @@ _IS_WINDOWS = os.name == "nt"
 #: Windows refuses these in a name, and ``:`` would name an alternate data stream.
 _WINDOWS_FORBIDDEN_NAME_CHARS = frozenset('<>:"|?*')
 _WINDOWS_DEVICE_NAMES = frozenset(
-    {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(10)), *(f"LPT{i}" for i in range(10))}
+    {
+        "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", "CLOCK$",
+        *(f"{port}{digit}" for port in ("COM", "LPT") for digit in (*"0123456789", "\u00b9", "\u00b2", "\u00b3")),
+    }
 )
 _WINDOWS_DRIVE = re.compile(r"[A-Za-z]:")
 
@@ -680,12 +683,14 @@ def _unfaithful_windows_name(arguments: Mapping[str, Any] | None) -> str:
     """The first path argument Windows would not store under the name the fence judged, or ``""``.
 
     Windows strips a trailing space or dot from a name, refuses ``<>:"|?*`` and control characters,
-    and opens a device for ``CON``, ``NUL``, ``COM1`` and the rest, with or without an extension.
+    and opens a device for ``CON``, ``NUL``, ``CONOUT$``, ``COM1``, ``COM¹`` and the rest, with or without an
+    extension.
     ``$(echo /tmp)`` splits into ``$(echo `` and ``tmp)``, so the jail check judged one name and the
     write met another (or an error). A name like that is refused here, contained, never repaired.
     """
     for raw in _path_arguments(arguments):
-        parts = re.split(r"[\\/]", str(raw).strip())
+        # Unstripped: a trailing space on the last name is one Windows drops, like any other.
+        parts = re.split(r"[\\/]", str(raw))
         for index, part in enumerate(parts):
             if part in ("", ".", "..", "~") or (index == 0 and _WINDOWS_DRIVE.fullmatch(part)):
                 continue
