@@ -898,6 +898,14 @@ def _trailing_path_run(prefix: str) -> str:
     return prefix[start:]
 
 
+def _is_drive_colon(prefix: str, boundary: re.Match[str]) -> bool:
+    """Whether a ``:`` boundary is the colon of a drive-rooted Windows path (``D:\\`` or ``D:/``):
+    one letter standing alone before it, and a path separator right after it."""
+    return (boundary.group(0).startswith(":")
+            and re.match(r"[\\/]", prefix[boundary.start() + 1:]) is not None
+            and re.search(r"(?<![\w.~/\\-])[A-Za-z]$", prefix[:boundary.start()]) is not None)
+
+
 def _claimed_file_names(claims: list[str]) -> set[str] | None:
     names: set[str] = set()
     for text in claims:
@@ -909,6 +917,9 @@ def _claimed_file_names(claims: list[str]) -> set[str] | None:
             prefix_start = max(0, match.start() - 240)
             prefix = text[prefix_start:match.start()]
             boundaries = list(re.finditer(rf"\b{_DELIVERABLE_VERB}\s+|\(\s*at\s+|[,;:]\s*|\b(?:and|into|as|to)\s+", prefix, re.I))
+            # "D:\\ws\\reports\\": a drive's colon begins a Windows path; it is not a prose boundary.
+            boundaries = [boundary for boundary in boundaries
+                          if not _is_drive_colon(prefix, boundary)]
             # Once a directory begins, words within its components are literal.
             # A later separator is prose only after an earlier complete filename,
             # or in the runtime's explicit parenthesized location annotation.
@@ -922,7 +933,7 @@ def _claimed_file_names(claims: list[str]) -> set[str] | None:
                 extra = prefix[boundaries[-1].end():]
                 # "Created file ~/Desktop/a.txt": the noun names what the path is, not part of it.
                 extra = re.sub(r"^(?:(?:the|a|an|your)\s+)?(?:(?:new\s+)?file\s+)?", "", extra, flags=re.I)
-                if re.fullmatch(r"[\w ~/.-]{0,240}", extra):
+                if re.fullmatch(r"[\w ~/.-]{0,240}", extra) or re.fullmatch(r"[A-Za-z]:[\\/][\w ~/.\\-]{0,237}", extra):
                     name = extra + name
                 elif "/" in extra or "\\" in extra:
                     return None  # A bounded parse cannot discard an unparsed directory.
@@ -960,11 +971,17 @@ def _file_claim_matches_output(claim: str, outputs: set[str], context: dict[str,
     root = str((context or {}).get("workspace_root") or (context or {}).get("workspace") or "")
     root = root.replace("\\", "/")
 
+    def absolute(path: str) -> bool:
+        # A drive-rooted spelling (D:/ws, from D:\ws) is absolute on Windows; posixpath alone
+        # would call it relative and never map a receipt's relative path under it.
+        return posixpath.isabs(path) or re.match(r"[A-Za-z]:/", path) is not None
+
     def identity(name: str) -> str:
         normalized = posixpath.normpath(name.replace("\\", "/"))
-        if posixpath.isabs(root) and not posixpath.isabs(normalized) and not normalized.startswith("~"):
+        if absolute(root) and not absolute(normalized) and not normalized.startswith("~"):
             normalized = posixpath.normpath(posixpath.join(root, normalized))
-        return normalized
+        # Windows paths compare without case, as the filesystem resolves them.
+        return normalized.casefold() if re.match(r"[A-Za-z]:/", normalized) else normalized
 
     expected = identity(claim)
     return any(expected == identity(name) for name in outputs)
