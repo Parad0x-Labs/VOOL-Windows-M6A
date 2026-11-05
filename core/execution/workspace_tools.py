@@ -500,6 +500,8 @@ def apply_unified_diff_workspace(
             errors.append(str(exc).strip())
     if not applied_with:
         patch_strip = _engine_strip(patch_text, every_name=True) if strip is not None else None
+        if patch_strip is not None and not _gnu_patch_reads_only_vools_headers(patch_text):
+            patch_strip = None
         patch_available = shutil.which("patch") if patch_strip is not None else None
         if patch_available:
             # `--fuzz=0` is load-bearing, not a style choice: GNU patch's default fuzz factor (2)
@@ -1153,6 +1155,56 @@ def _engine_strip(patch_text: str, *, every_name: bool = False) -> int | None:
     if not any(prefixed):
         return 0
     return None
+
+
+_GIT_EXTENDED_HEADERS = ("index ", "new file mode ", "deleted file mode ", "old mode ", "new mode ",
+                         "similarity index ", "dissimilarity index ")
+_MAIL_SIGNATURE_TAIL_RE = re.compile(r"^[0-9][0-9A-Za-z.+-]*$")
+
+
+def _gnu_patch_reads_only_vools_headers(patch_text: str) -> bool:
+    """Whether GNU patch, given this patch, can only read the headers VOOL read. GNU patch looks for a file
+    name in almost any line outside a hunk (a lone `---`, a context diff's `***`, an indented header), so
+    it runs only on a patch made of nothing else than: `diff --git` lines and git's extended headers, `---`
+    lines each directly followed by `+++`, hunks whose line counts match their header exactly, no-newline
+    markers, and a mail signature (`-- ` and a version) at the end."""
+    lines = str(patch_text or "").split("\n")
+    index = 0
+    have_file = False
+    while index < len(lines):
+        line = lines[index]
+        if line.startswith("diff --git ") or line.startswith(_GIT_EXTENDED_HEADERS):
+            index += 1
+        elif line.startswith("--- ") and index + 1 < len(lines) and lines[index + 1].startswith("+++ "):
+            have_file = True
+            index += 2
+        elif line.startswith("@@ ") and have_file:
+            match = _HUNK_HEADER_RE.match(line)
+            if not match:
+                return False
+            old_left = int(match.group("old_count") if match.group("old_count") is not None else 1)
+            new_left = int(match.group("new_count") if match.group("new_count") is not None else 1)
+            index += 1
+            while old_left or new_left:
+                if index >= len(lines):
+                    return False
+                body = lines[index]
+                if body.startswith(" ") and old_left and new_left:
+                    old_left, new_left = old_left - 1, new_left - 1
+                elif body.startswith("-") and old_left:
+                    old_left -= 1
+                elif body.startswith("+") and new_left:
+                    new_left -= 1
+                elif not body.startswith("\\"):
+                    return False
+                index += 1
+        elif line.startswith("\\"):
+            index += 1
+        elif line == "-- ":
+            return all(not tail or _MAIL_SIGNATURE_TAIL_RE.match(tail) for tail in lines[index + 1:])
+        else:
+            return False
+    return True
 
 
 def _extract_patch_paths(patch_text: str) -> list[str]:
