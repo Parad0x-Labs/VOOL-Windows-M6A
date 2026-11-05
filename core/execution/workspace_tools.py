@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -510,18 +511,25 @@ def apply_unified_diff_workspace(
             # failure this tool must not have. Fuzz=0 forces an exact context match at this,
             # the last-resort engine, so a bad match surfaces as a clean apply_failed instead of a
             # silent wrong-location write.
-            # `--unified` reads only unified sections (no context, normal or ed diff VOOL did not read), and
-            # `--no-backup-if-mismatch` / `--reject-file=-` keep it from leaving a `.orig` or `.rej` file beside
-            # one it patched: neither would be in the result or its rollback.
+            # `--unified` reads only unified sections (no context, normal or ed diff VOOL did not read). The
+            # `.orig` copy GNU patch keeps of a file it placed at an offset, and the `.rej` file of a failed
+            # hunk, go to a folder of VOOL's own outside the workspace (`-B`, `--reject-file`): beside the
+            # file neither would be in the result or its rollback. Not `--no-backup-if-mismatch`: with it, the
+            # GNU patch the hosted Windows runner finds (build unknown) left an offset-placed file unchanged
+            # (gauntlet run 41986664925, job 127109409348), while Git for Windows' GNU patch 2.7.6 applied it.
+            leftovers = Path(tempfile.mkdtemp(prefix="vool-patch-"))
             patch_cmd = [patch_available, f"-p{patch_strip}", "-d", str(workspace_root), "--unified", "--forward", "--batch",
-                         "--fuzz=0", "--no-backup-if-mismatch", "--reject-file=-", "--get=0"]
+                         "--fuzz=0", "-B", f"{leftovers}{os.sep}", f"--reject-file={leftovers / 'rejects'}", "--get=0"]
             # The patch's UTF-8 bytes, and a timeout not caught, as for `git apply` above.
             # Without the variables that change which name GNU patch takes (POSIXLY_CORRECT reads `Index:`)
             # or make it fetch files from version control; `--get=0` says the same.
             patch_env = {key: value for key, value in os.environ.items()
                          if key not in ("POSIXLY_CORRECT", "PATCH_GET", "PATCH_VERSION_CONTROL", "VERSION_CONTROL")}
-            patch_result = subprocess.run(patch_cmd, input=patch_text.encode("utf-8"), capture_output=True, timeout=60,
-                                          env=patch_env)
+            try:
+                patch_result = subprocess.run(patch_cmd, input=patch_text.encode("utf-8"), capture_output=True,
+                                              timeout=60, env=patch_env)
+            finally:
+                shutil.rmtree(leftovers, ignore_errors=True)
             if patch_result.returncode == 0:
                 applied_with = "patch"
             else:
