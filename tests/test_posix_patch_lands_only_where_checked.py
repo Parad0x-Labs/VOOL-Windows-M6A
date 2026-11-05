@@ -274,3 +274,17 @@ LONE_HEADER_CASES = {
 @pytest.mark.parametrize("patch", LONE_HEADER_CASES.values(), ids=LONE_HEADER_CASES.keys())
 def test_gnu_patch_writes_nothing_from_a_header_without_its_partner(workspace: Path, patch: str) -> None:
     _assert_lands_only_where_checked(*_apply(workspace, patch))
+
+
+# GNU patch also takes a `*** name` line (a context diff's header) as a file name, even told `--unified`.
+CONTEXT_NAME_CASES = {
+    "changes_a_file": (
+        "--- a/new.txt\n*** b/data/x.txt\n@@ -1,3 +1,3 @@\n a\n-b\n+P\n c\n--- /dev/null\n+++ b/n.txt\n@@ -0,0 +1 @@\n+x\n"
+    ),
+    "creates_a_file": "--- /dev/null\n*** b/data/evil\n@@ -0,0 +1 @@\n+x\n--- /dev/null\n+++ b/n.txt\n@@ -0,0 +1 @@\n+x\n",
+}
+
+
+@pytest.mark.parametrize("patch", CONTEXT_NAME_CASES.values(), ids=CONTEXT_NAME_CASES.keys())
+def test_gnu_patch_takes_no_name_from_a_context_diff_line(workspace: Path, patch: str) -> None:
+    _assert_lands_only_where_checked(*_apply(workspace, patch))
