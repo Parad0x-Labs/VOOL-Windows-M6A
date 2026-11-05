@@ -440,19 +440,36 @@ class UDPTransportServer:
 
         self.host = checked_research_listener_host(self.host)
         last_error: Exception | None = None
-        for _attempt in range(_EPHEMERAL_PAIR_RETRIES):
+        for attempt in range(_EPHEMERAL_PAIR_RETRIES):
+            # Which protocol picks its port alternates. Windows hands out ephemeral TCP ports in
+            # sequence, so attempts that always let TCP pick probe neighbouring UDP ports, and one
+            # held or excluded block of UDP ports (Hyper-V / WinNAT reserve them in blocks) refused
+            # all of them (T31 Windows suite 41918263493). Letting UDP pick on every other attempt
+            # leaves that block, and the mirror case for TCP, after one attempt.
+            udp_picks = attempt % 2 == 1
             stream_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock: socket.socket | None = None
             try:
                 apply_listen_socket_policy(stream_sock)
-                stream_sock.bind((self.host, 0))
-                stream_port = int(stream_sock.getsockname()[1])
-                if stream_port <= 1:
-                    raise OverflowError("ephemeral stream port cannot have an adjacent UDP port")
-                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                _configure_udp_socket_buffers(sock)
-                apply_udp_listen_socket_policy(sock)
-                sock.bind((self.host, stream_port - 1))
+                if udp_picks:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    _configure_udp_socket_buffers(sock)
+                    apply_udp_listen_socket_policy(sock)
+                    sock.bind((self.host, 0))
+                    udp_port = int(sock.getsockname()[1])
+                    if udp_port <= 0 or udp_port >= 65535:
+                        raise OverflowError("ephemeral UDP port cannot have an adjacent stream port")
+                    stream_sock.bind((self.host, udp_port + 1))
+                    stream_port = udp_port + 1
+                else:
+                    stream_sock.bind((self.host, 0))
+                    stream_port = int(stream_sock.getsockname()[1])
+                    if stream_port <= 1:
+                        raise OverflowError("ephemeral stream port cannot have an adjacent UDP port")
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    _configure_udp_socket_buffers(sock)
+                    apply_udp_listen_socket_policy(sock)
+                    sock.bind((self.host, stream_port - 1))
                 stream_server = StreamTransportServer(
                     host=self.host,
                     port=stream_port,
@@ -483,7 +500,10 @@ class UDPTransportServer:
             target_type="transport",
             details={"error": str(last_error or "adjacent port pair unavailable"), "mode": "ephemeral_required"},
         )
-        raise OSError(f"Could not allocate an adjacent UDP/stream port pair after {_EPHEMERAL_PAIR_RETRIES} attempts")
+        raise OSError(
+            f"Could not allocate an adjacent UDP/stream port pair after {_EPHEMERAL_PAIR_RETRIES} attempts"
+            f" (last refusal: {last_error})"
+        ) from last_error
 
     def stop(self) -> None:
         self._stop.set()
