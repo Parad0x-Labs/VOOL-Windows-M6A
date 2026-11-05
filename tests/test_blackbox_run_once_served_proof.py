@@ -80,6 +80,10 @@ def served(tmp_path: Path):
         env_extra={
             "VOOL_ALWAYS_ON_CATALOG": "1",
             "VOOL_WORKSPACE_ROOT": str(workspace),
+            # On Windows the write gate refuses a write (and a rollback) outside a folder flagged as
+            # disposable, so the proof flags its own throwaway workspace the way an operator would.
+            # Off Windows the gate is inactive.
+            "VOOL_WINDOWS_DISPOSABLE_WORKSPACES": str(workspace),
             "VOOL_BLACKBOX_DIR": str(store_dir),
             # This machine is cloud-only for model execution and a real Ollama listens on 11434.
             # EVERY default local endpoint is pointed at the stub so no lane -- the builder's own
