@@ -499,7 +499,8 @@ def apply_unified_diff_workspace(
         except Exception as exc:
             errors.append(str(exc).strip())
     if not applied_with:
-        patch_available = shutil.which("patch") if strip is not None else None
+        patch_strip = _engine_strip(patch_text, every_name=True) if strip is not None else None
+        patch_available = shutil.which("patch") if patch_strip is not None else None
         if patch_available:
             # `--fuzz=0` is load-bearing, not a style choice: GNU patch's default fuzz factor (2)
             # will drop mismatched context lines and search nearby for an approximate match, which
@@ -510,7 +511,7 @@ def apply_unified_diff_workspace(
             # `--unified` reads only unified sections (no context, normal or ed diff VOOL did not read), and
             # `--no-backup-if-mismatch` / `--reject-file=-` keep it from leaving a `.orig` or `.rej` file beside
             # one it patched: neither would be in the result or its rollback.
-            patch_cmd = [patch_available, f"-p{strip}", "-d", str(workspace_root), "--unified", "--forward", "--batch",
+            patch_cmd = [patch_available, f"-p{patch_strip}", "-d", str(workspace_root), "--unified", "--forward", "--batch",
                          "--fuzz=0", "--no-backup-if-mismatch", "--reject-file=-", "--get=0"]
             # The patch's UTF-8 bytes, and a timeout not caught, as for `git apply` above.
             # Without the variables that change which name GNU patch takes (POSIXLY_CORRECT reads `Index:`)
@@ -1122,11 +1123,15 @@ def _rename_or_copy_header(patch_text: str) -> str:
     return ""
 
 
-def _engine_strip(patch_text: str) -> int | None:
+def _engine_strip(patch_text: str, *, every_name: bool = False) -> int | None:
     """The `-p` git apply and GNU patch are given: 1 when every header name carries an `a/` or `b/` prefix,
     0 when none does, so both read each name as `_normalize_patch_path` does. None (VOOL's own engine only)
     when the prefixes are mixed, a header is not readable the same way by every engine, or a name holds
-    whitespace, a quote or a backslash, which the engines read their own way."""
+    whitespace, a quote or a backslash, which the engines read their own way.
+
+    git takes a `---` line as a header only when `+++` follows it, so for git only real headers count and a
+    removed `-- comment` line does not keep it from applying. GNU patch also takes a lone `---`/`+++` line,
+    or a pair a blank line parts, so for it (``every_name``) every such name counts."""
     if any(mark in patch_text for mark in _NOT_DIFF_LINE_BREAKS):
         # VOOL splits lines with `str.splitlines`, which also breaks at these; the engines break at "\n"
         # only, so they would read a longer name than the one VOOL checked.
@@ -1135,8 +1140,11 @@ def _engine_strip(patch_text: str) -> int | None:
         # GNU patch also reads a header indented by spaces, tabs or `X`, which VOOL does not read as one,
         # and, with POSIXLY_CORRECT set, the name an `Index:` line gives.
         return None
-    _names, _moved, readable, headers = _patch_header_names(patch_text)
-    named = [name for name in headers if name != "/dev/null"]
+    names, _moved, readable, headers = _patch_header_names(patch_text)
+    if every_name:
+        readable = readable and all(line[3:4] == " " and line[4:5] not in (" ", "\t")
+                                    for line in str(patch_text or "").splitlines() if _PATCH_HEADER_LINE_RE.match(line))
+    named = [name for name in (names if every_name else headers) if name != "/dev/null"]
     if not readable or not named or any(_ENGINE_UNSAFE_NAME_RE.search(name) for name in named):
         return None
     prefixed = [name.startswith(("a/", "b/")) for name in named]
