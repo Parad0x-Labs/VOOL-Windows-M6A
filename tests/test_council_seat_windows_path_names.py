@@ -48,6 +48,12 @@ def _write(operator_checkout, path: str):
         "CON/plan.txt",
         "nul.txt",
         "lpt1",
+        "CONOUT$",
+        "conin$.txt",
+        "CLOCK$/plan.txt",
+        "COM\u00b9",
+        "LPT\u00b3.txt",
+        "plan.txt ",
     ],
 )
 def test_a_name_windows_would_change_is_refused_and_contained(
