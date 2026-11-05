@@ -1,4 +1,4 @@
-"""On Windows the browser lane finds the Edge or Chrome installed in Program Files.
+"""On Windows the browser lane finds the Edge installed in Program Files, and only Edge.
 
 Off Windows it looks on PATH (Linux) or in /Applications (macOS). On Windows it looked on PATH for
 Linux command names, so a machine with Edge (every Windows install) answered `engine_missing`. It
@@ -50,9 +50,16 @@ def test_edge_in_program_files_is_found(windows: dict[str, Path]) -> None:
     assert engine.find_engine_binary() == str(exe)
 
 
-def test_chrome_in_program_files_is_found(windows: dict[str, Path]) -> None:
-    exe = _install(windows["x64"], "Google\\Chrome\\Application\\chrome.exe")
+def test_edge_wins_over_chrome_in_another_program_files_folder(windows: dict[str, Path]) -> None:
+    # As on the hosted runner: Chrome in Program Files, Edge in Program Files (x86).
+    _install(windows["x64"], "Google\\Chrome\\Application\\chrome.exe")
+    exe = _install(windows["x86"], "Microsoft\\Edge\\Application\\msedge.exe")
     assert engine.find_engine_binary() == str(exe)
+
+
+def test_chrome_alone_is_not_used_on_windows(windows: dict[str, Path]) -> None:
+    _install(windows["x64"], "Google\\Chrome\\Application\\chrome.exe")
+    assert engine.find_engine_binary() is None
 
 
 def test_with_nothing_installed_the_answer_is_none_not_path(windows: dict[str, Path]) -> None:
