@@ -7,6 +7,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from tests.platform_helpers import bash_executable, bash_path
+
 BUILD_SCRIPT = Path(__file__).resolve().parents[1] / "installer" / "bundle" / "build_macos_app.sh"
 
 
@@ -76,10 +78,10 @@ def test_self_contained_launcher_uses_its_baked_build_identity() -> None:
 
 def test_every_emitted_launcher_is_valid_shell() -> None:
     for name, body in _launcher_bodies().items():
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".sh", delete=False) as handle:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", newline="\n", suffix=".sh", delete=False) as handle:
             handle.write(body)
             path = handle.name
-        completed = subprocess.run(["bash", "-n", path], capture_output=True, text=True)
+        completed = subprocess.run([bash_executable(), "-n", bash_path(path)], capture_output=True, text=True)
         Path(path).unlink(missing_ok=True)
         assert completed.returncode == 0, f"{name}: {completed.stderr}"
 
