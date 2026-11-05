@@ -8,6 +8,7 @@ before it ran a single turn. A path with a backslash or a double quote must reac
 from __future__ import annotations
 
 import importlib.util
+import os
 from pathlib import Path
 
 import pytest
@@ -41,7 +42,12 @@ def _stub_tree(root: Path) -> Path:
     return root
 
 
-@pytest.mark.parametrize("name", [r"Users\Unicode", 'say "hi"', r"trailing\\"])
+# Windows refuses a double quote in a file name (WinError 123), so that case is POSIX-only; a single quote,
+# which repr() then wraps in double quotes, is legal on both and runs everywhere.
+_DOUBLE_QUOTE = pytest.param('say "hi"', marks=pytest.mark.skipif(os.name == "nt", reason="Windows names cannot hold a double quote"))
+
+
+@pytest.mark.parametrize("name", [r"Users\Unicode", _DOUBLE_QUOTE, "it's", r"trailing\\"])
 def test_the_driver_runs_in_a_tree_whose_path_needs_escaping(tmp_path, name) -> None:
     module = _differential()
     tree = _stub_tree(tmp_path / name)
