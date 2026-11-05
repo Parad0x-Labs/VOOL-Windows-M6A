@@ -38,7 +38,6 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import stat
 import tempfile
 import threading
 from dataclasses import asdict, dataclass, field
@@ -46,6 +45,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from core.owner_only import require_owner_only
 from core.plugin_package import DIGEST_SCHEMA, PackageError, approval_digest, capture_package
 
 STORE_FILENAME = "plugin_lifecycle.json"
@@ -185,8 +185,11 @@ def _write_store(rows: dict[str, Any]) -> None:
     handle, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".plugin_lifecycle-", suffix=".json")
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as fh:
+            # Owner-only before the store lands in it. On Windows mkstemp's file inherits the folder's
+            # ACL and chmod only flips the read-only bit; core/owner_only sets the protected one-ACE
+            # DACL and raises OwnerOnlyUnavailable (the temp file is removed, nothing goes live).
+            require_owner_only(tmp)
             json.dump(payload, fh, indent=2, sort_keys=True, default=str)
-        os.chmod(tmp, stat.S_IRUSR | stat.S_IWUSR)
         os.replace(tmp, path)
     except Exception:
         with contextlib.suppress(OSError):
