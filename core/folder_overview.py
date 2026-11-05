@@ -271,7 +271,7 @@ def _count_file_lines(path, *, remaining_bytes=None, deadline=None) -> _FileLine
             if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
                 return _FileLineRead(outcome="race")
             while True:
-                if deadline is not None and time.monotonic() > deadline:
+                if deadline is not None and time.monotonic() >= deadline:
                     return _FileLineRead(
                         outcome="time-budget", lines=lines, bytes_read=total_read
                     )
@@ -382,7 +382,7 @@ def _collect_exact_file_facts(
                         )
                         stopped = True
                         break
-                    if time.monotonic() > deadline:
+                    if time.monotonic() >= deadline:
                         termination_reason = (
                             f"time budget exceeded after {max_seconds:.0f}s"
                         )

@@ -425,6 +425,17 @@ def write_private(path: Path, text: str) -> None:
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            if config._WINDOWS:
+                # mkstemp's 0600 only clears the read-only bit on Windows: make the still-empty temp
+                # owner-only (protected one-ACE DACL) before any byte lands, or write nothing at all.
+                from core.owner_only import OwnerOnlyUnavailable, require_owner_only
+
+                try:
+                    require_owner_only(Path(tmp_name))
+                except OwnerOnlyUnavailable:
+                    raise ZcashWatchError(
+                        "data_dir_unsafe", "The Zcash data folder is not private to this user, so nothing was saved."
+                    ) from None
             handle.write(text)
         windows_sharing_retry.replace(tmp_name, path)
     except BaseException:

@@ -252,7 +252,7 @@ def test_the_per_file_ceiling_bounds_every_requested_and_accepted_byte(
 def test_a_file_exactly_at_the_per_file_ceiling_still_measures(tmp_path: Path, monkeypatch):
     """Exactly at ceiling + EOF is measurable; the +1 probe is what tells the difference."""
     exact = tmp_path / "exact.py"
-    exact.write_text(("x" * 7 + "\n") * 128, encoding="utf-8")  # exactly 1,024 bytes
+    exact.write_bytes(b"xxxxxxx\n" * 128)  # exactly 1,024 bytes (no CRLF translation on Windows)
     monkeypatch.setattr(folder_overview, "_MEASUREMENT_MAX_FILE_BYTES", 1_024)
     requested: list[int] = []
     returned: list[int] = []
@@ -316,10 +316,14 @@ def test_a_file_mutated_in_place_during_the_read_is_a_race(tmp_path: Path, monke
     victim = tmp_path / "victim.py"
     _write(victim, 3)
     real_read = os.read
+    # Each touch sets an mtime one second past the last one: Windows stamps a plain touch from a
+    # ~15.6 ms system clock, so a touch in the same tick as the walk's lstat left mtime unchanged.
+    mtime_ns = [victim.stat().st_mtime_ns]
 
     def touch_during_read(fd, size):
         chunk = real_read(fd, size)
-        victim.touch()
+        mtime_ns[0] += 1_000_000_000
+        os.utime(victim, ns=(mtime_ns[0], mtime_ns[0]))
         return chunk
 
     monkeypatch.setattr(folder_overview.os, "read", touch_during_read)

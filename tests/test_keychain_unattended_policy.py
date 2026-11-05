@@ -140,6 +140,13 @@ def _run_scratch_driver(tmp_path: Path, home: Path, spy_log: Path, *, grant: boo
         "VOOL_KEYRING_SPY_LOG": str(spy_log),
         "PYTHONPATH": os.pathsep.join([str(shim), str(REPO)]),
     }
+    if os.name == "nt":
+        # What every Windows shell carries: Python needs SYSTEMROOT to start (sockets, random), and
+        # Path.home() reads USERPROFILE, not HOME. No session pin is inherited through these.
+        env["USERPROFILE"] = str(home)
+        for name in ("SYSTEMROOT", "SystemDrive", "TEMP", "TMP"):
+            if os.environ.get(name):
+                env[name] = os.environ[name]
     if grant:
         env["VOOL_KEYCHAIN_ALLOWED"] = "1"
     done = subprocess.run([sys.executable, str(driver)], capture_output=True, text=True,

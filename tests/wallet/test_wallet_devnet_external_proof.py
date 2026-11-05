@@ -237,8 +237,15 @@ def test_prepare_then_selfcheck_across_two_processes(tmp_path):
     assert "FUND THIS ADDRESS" in prepared.stdout
 
     resume = json.loads((home / "resume.json").read_text())
-    assert oct(home.stat().st_mode & 0o777) == "0o700"
-    assert oct((home / "resume.json").stat().st_mode & 0o777) == "0o600"
+    if os.name == "nt":
+        # chmod only flips the read-only bit on Windows; owner-only is the protected one-ACE DACL.
+        from core.owner_only import verify_owner_only
+
+        assert verify_owner_only(home).ok
+        assert verify_owner_only(home / "resume.json").ok
+    else:
+        assert oct(home.stat().st_mode & 0o777) == "0o700"
+        assert oct((home / "resume.json").stat().st_mode & 0o777) == "0o600"
     for secret in (resume["payer_pin"], resume["key_passphrase"]):
         assert secret not in prepared.stdout and secret not in prepared.stderr, "a secret reached the console"
 

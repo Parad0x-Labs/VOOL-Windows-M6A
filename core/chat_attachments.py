@@ -393,7 +393,11 @@ def _bytes_path(attachment_id: str) -> Path:
 
 def _write_atomic(path: Path, data: bytes, *, mode: int = 0o600) -> None:
     tmp = path.with_name(path.name + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0), mode)
+    # O_BINARY (Windows only; 0 elsewhere), as _open_regular already reads: in text mode the write
+    # would turn every 0x0A of the attachment into 0x0D 0x0A.
+    fd = os.open(
+        tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0), mode
+    )
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(data)
