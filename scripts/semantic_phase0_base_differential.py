@@ -220,7 +220,9 @@ def _run_corpus(tree: Path, label: str, texts: list[str]) -> list[dict]:
             "PYTHONDONTWRITEBYTECODE": "1",
         }
         script = (
-            _DRIVER.replace("__TREE__", str(tree))
+            # The quoted placeholder becomes a Python literal, not text between quotes: a Windows
+            # tree (C:\Users\...) made `\U` an escape and the child died on a SyntaxError.
+            _DRIVER.replace('"__TREE__"', repr(str(tree)))
             .replace("__FIELDS__", repr(list(PUBLIC_FIELDS)))
             .replace("__TEXTS__", repr(list(texts)))
         )
