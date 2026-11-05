@@ -219,7 +219,9 @@ def test_the_checked_bytes_are_the_bytes_that_run(chain, tmp_path) -> None:
     devtool = _lane(chain).devtool
     devtool.run("get-info")
     copy = chain.root / "data" / "bin" / chain.sha256
-    assert copy.is_file() and stat.S_IMODE(copy.stat().st_mode) == 0o500
+    # chmod 0o500 on Windows only sets the read-only bit, which reads back as 0o444; the copy is still
+    # never writable. POSIX keeps the exact 0o500.
+    assert copy.is_file() and stat.S_IMODE(copy.stat().st_mode) == (0o444 if os.name == "nt" else 0o500)
     pinned = chain.sha256
     chain.script.write_text(evil)  # the configured path is swapped after the check
     devtool.run("get-info")
@@ -307,7 +309,12 @@ def test_concurrent_private_writes_never_collide(tmp_path) -> None:
     [t.start() for t in threads]
     [t.join() for t in threads]
     assert errors == [] and set(json.loads(target.read_text())) == {"writer", "i"}
-    assert [p.name for p in tmp_path.iterdir()] == ["state.json"] and stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert [p.name for p in tmp_path.iterdir()] == ["state.json"]
+    if os.name == "nt":
+        # On Windows owner-only is the protected one-ACE DACL; the mode bits only show the read-only flag.
+        assert verify_owner_only(target).ok
+    else:
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600
 
 
 def test_a_hung_tool_times_out(chain) -> None:
