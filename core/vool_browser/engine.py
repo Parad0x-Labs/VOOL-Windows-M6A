@@ -41,12 +41,12 @@ _MACOS_APP_CANDIDATES = (
     "/Applications/Brave Browser.app/Contents/MacOS/Google Chrome",
 )
 
-#: Below a Program Files folder: where the Edge and Chrome installers put the browser for every user.
-#: Edge first, since every Windows install has it. A per-user install (under the profile's AppData,
-#: which any program the user runs can replace) and PATH are not looked at.
+#: Below a Program Files folder: where the Edge installer puts the browser for every user. Edge only:
+#: every Windows install has it, and a Chrome found beside it (on the hosted runner, Steve job 48) was
+#: launched instead and reached Google's servers on its own. A per-user install (under the profile's
+#: AppData, which any program the user runs can replace) and PATH are not looked at.
 _WINDOWS_PROGRAM_FILES_CANDIDATES = (
     ("Microsoft", "Edge", "Application", "msedge.exe"),
-    ("Google", "Chrome", "Application", "chrome.exe"),
 )
 
 _LINUX_PATH_CANDIDATES = (
@@ -164,8 +164,8 @@ def find_engine_binary() -> str | None:
     if sys.platform == "win32":
         from core import windows_known_folders
 
-        for folder in windows_known_folders.program_files_folders():
-            for parts in _WINDOWS_PROGRAM_FILES_CANDIDATES:
+        for parts in _WINDOWS_PROGRAM_FILES_CANDIDATES:
+            for folder in windows_known_folders.program_files_folders():
                 candidate = os.path.join(folder, *parts)
                 if os.path.isfile(candidate):
                     return candidate
