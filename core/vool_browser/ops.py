@@ -409,8 +409,89 @@ def op_screenshot(handle: SessionHandle, view: dict[str, Any], arguments: dict[s
             "final_url": str(page.url or ""), "origin": origin_of(str(page.url or ""))}
 
 
+_DOWNLOAD_MAX_HOPS = 5
+_DOWNLOAD_CHUNK = 64 * 1024
+
+
+def _download_hop_refusal(handle: SessionHandle, url: str) -> tuple[str, str]:
+    """('', '') when the session may fetch `url` as a download, else (status, reason). The same rule
+    for the first URL and for every redirect hop: an http(s) URL that is not this runtime's own
+    service, on the session's own origin, the page's current origin or one granted `downloads`."""
+    reason = check_url_navigable(url)
+    if reason:
+        return "refused", reason
+    origin = origin_of(url)
+    allowed = {handle.primary_origin, origin_of(handle.current_url)} - {""}
+    if origin and origin not in allowed and not handle.grants.allows(origin, "downloads"):
+        return "cross_origin_refused", f"download from {origin} refused: that origin holds no downloads grant"
+    return "", ""
+
+
+def _fetch_bounded(context: Any, handle: SessionHandle, url: str, *, target: Path, max_bytes: int,
+                   timeout_seconds: int) -> str:
+    """Fetch `url` into `target`, never more than `max_bytes`, and return the URL that answered.
+
+    Not the browser's download machinery: Edge on Windows writes a browser-handled download into the
+    user's Downloads folder before Playwright moves it (Steve jobs 48g/48h), whatever download folder
+    it is told. The session's cookies ride the request; redirects are followed here, one hop at a
+    time, each judged by `_download_hop_refusal` before it is fetched; the body is read in chunks and
+    the fetch stops past `max_bytes`, whatever Content-Length says.
+    """
+    import urllib.error
+    import urllib.request
+    from urllib.parse import urljoin
+
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *_args: Any, **_kwargs: Any) -> None:
+            return None
+
+    opener = urllib.request.build_opener(_NoRedirect())
+    deadline = time.time() + timeout_seconds
+    current = url
+    for _ in range(_DOWNLOAD_MAX_HOPS + 1):
+        status, reason = _download_hop_refusal(handle, current)
+        if status:
+            raise OpFailed(status, reason)
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            raise OpTimeout(f"download of {url} exceeded {timeout_seconds}s")
+        cookies = "; ".join(f"{c['name']}={c['value']}" for c in context.cookies([current]))
+        request = urllib.request.Request(current, headers={"Cookie": cookies} if cookies else {})
+        try:
+            response = opener.open(request, timeout=remaining)
+        except urllib.error.HTTPError as exc:
+            location = str(exc.headers.get("Location") or "").strip() if exc.headers else ""
+            with contextlib.suppress(Exception):
+                exc.close()
+            if exc.code in (301, 302, 303, 307, 308) and location:
+                current = urljoin(current, location)
+                continue
+            raise OpFailed("download_failed", f"{current} answered HTTP {exc.code}") from exc
+        with response:
+            declared = str(response.headers.get("Content-Length") or "").strip()
+            if declared.isdigit() and int(declared) > max_bytes:
+                raise OpFailed(
+                    "download_exceeds_bound",
+                    f"download is {declared} bytes, over the {max_bytes}-byte max_bytes bound; nothing was kept")
+            written = 0
+            with open(target, "wb") as sink:
+                while True:
+                    if time.time() > deadline:
+                        raise OpTimeout(f"download of {url} exceeded {timeout_seconds}s")
+                    chunk = response.read(_DOWNLOAD_CHUNK)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > max_bytes:
+                        raise OpFailed(
+                            "download_exceeds_bound",
+                            f"download is over the {max_bytes}-byte max_bytes bound; nothing was kept")
+                    sink.write(chunk)
+        return current
+    raise OpFailed("redirect_limit", f"more than {_DOWNLOAD_MAX_HOPS} redirects from {url}")
+
+
 def op_download(handle: SessionHandle, view: dict[str, Any], arguments: dict[str, Any]) -> dict[str, Any]:
-    page: Any = view["page"]
     url = str(arguments.get("url") or "").strip()
     reason = check_url_navigable(url)
     if reason:
@@ -427,17 +508,14 @@ def op_download(handle: SessionHandle, view: dict[str, Any], arguments: dict[str
     target = handle.staging_dir / f"download-{int(time.time() * 1000)}.bin"
     started = time.time()
     try:
-        with page.expect_download(timeout=int(timeout_seconds * 1000)) as download_info:
-            # a navigation that turns into a download may abort; the event carries it
-            with contextlib.suppress(Exception):
-                page.goto(url, timeout=int(timeout_seconds * 1000), wait_until="load")
-        download = download_info.value
-        download.save_as(str(target))
-    except OpFailed:
+        _fetch_bounded(view["context"], handle, url, target=target, max_bytes=max_bytes,
+                       timeout_seconds=timeout_seconds)
+    except (OpFailed, OpTimeout):
+        target.unlink(missing_ok=True)
         raise
     except Exception as exc:
         target.unlink(missing_ok=True)
-        if "Timeout" in type(exc).__name__:
+        if "timed out" in str(exc).lower() or isinstance(exc, TimeoutError):
             raise OpTimeout(f"download of {url} exceeded {timeout_seconds}s") from exc
         raise OpFailed("download_failed", str(exc)[:300]) from exc
     size = target.stat().st_size if target.exists() else 0
