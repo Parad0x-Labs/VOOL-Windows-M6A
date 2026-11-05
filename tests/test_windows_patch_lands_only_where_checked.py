@@ -947,8 +947,8 @@ def test_off_windows_an_engine_stopped_at_its_time_limit_leaves_the_outcome_unkn
         workspace.mkdir()
         (workspace / "notes.txt").write_bytes(NOTES)
         patch = OFFSET_PATCH
-        # GNU patch places the section one line up and, told `--no-backup-if-mismatch`, leaves no `.orig`.
-        written = {"notes.txt": NOTES_EDITED}
+        # GNU patch keeps the file as it was beside it when it places a section somewhere else.
+        written = {"notes.txt": NOTES_EDITED, "notes.txt.orig": NOTES}
     chat = _Chat(workspace, mode)
     started, left = _engines_stopped_at_their_time_limit(monkeypatch, engine, workspace)
     arguments = {"patch": patch}
