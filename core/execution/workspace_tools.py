@@ -39,7 +39,8 @@ _SYMBOL_DEFINITION_TEMPLATES = (
 )
 _PATCH_HEADER_LINE_RE = re.compile(r"^(?:\+\+\+|---)[ \t]+(?P<path>.+)$")
 _ENGINE_UNSAFE_NAME_RE = re.compile(r'[\s"\\]')
-_INDENTED_HEADER_RE = re.compile(r"^[ \tX]+(?:---|\+\+\+|@@)[ \t]", re.MULTILINE)
+_INDENTED_HEADER_RE = re.compile(r"^[ \tX]+(?:---[ \t]|\+\+\+[ \t]|@@[ \t]|diff --git )|^[ \tX]*Index:", re.MULTILINE)
+_LINK_MODE_RE = re.compile(r"^(?:new file mode|new mode|old mode|deleted file mode) 120000\b|^index \S+ 120000\b")
 _HUNK_HEADER_RE = re.compile(
     r"^@@\s+\-(?P<old_start>\d+)(?:,(?P<old_count>\d+))?\s+\+(?P<new_start>\d+)(?:,(?P<new_count>\d+))?\s+@@"
 )
@@ -403,12 +404,13 @@ def apply_unified_diff_workspace(
     moved = _rename_or_copy_header(patch_text)
     if moved:
         # git apply and GNU patch both act on these lines, and the result would name only the files the
-        # hunks change, so a rollback could not undo the move: refused, as on Windows.
+        # hunks change, so a rollback could not undo the move; a link the patch makes would carry a later
+        # section's write wherever it points. Refused, as on Windows.
         return {
             "ok": False,
             "status": "invalid_arguments",
             "response_text": (
-                f"This patch carries `{moved}`. VOOL's patch tool does not rename or copy files; nothing was "
+                f"This patch carries `{moved}`. VOOL's patch tool does not rename or copy files or make symbolic links; nothing was "
                 "written. Make the change with `workspace.write_file` or `workspace.replace_in_file`, or move the file."
             ),
             "details": {"paths": touched_paths, "changed_paths": []},
@@ -509,9 +511,14 @@ def apply_unified_diff_workspace(
             # `--no-backup-if-mismatch` / `--reject-file=-` keep it from leaving a `.orig` or `.rej` file beside
             # one it patched: neither would be in the result or its rollback.
             patch_cmd = [patch_available, f"-p{strip}", "-d", str(workspace_root), "--unified", "--forward", "--batch",
-                         "--fuzz=0", "--no-backup-if-mismatch", "--reject-file=-"]
+                         "--fuzz=0", "--no-backup-if-mismatch", "--reject-file=-", "--get=0"]
             # The patch's UTF-8 bytes, and a timeout not caught, as for `git apply` above.
-            patch_result = subprocess.run(patch_cmd, input=patch_text.encode("utf-8"), capture_output=True, timeout=60)
+            # Without the variables that change which name GNU patch takes (POSIXLY_CORRECT reads `Index:`)
+            # or make it fetch files from version control; `--get=0` says the same.
+            patch_env = {key: value for key, value in os.environ.items()
+                         if key not in ("POSIXLY_CORRECT", "PATCH_GET", "PATCH_VERSION_CONTROL", "VERSION_CONTROL")}
+            patch_result = subprocess.run(patch_cmd, input=patch_text.encode("utf-8"), capture_output=True, timeout=60,
+                                          env=patch_env)
             if patch_result.returncode == 0:
                 applied_with = "patch"
             else:
@@ -1072,34 +1079,45 @@ def _git_header_names(line: str) -> tuple[str, str] | None:
     return same[0] if len(same) == 1 else None
 
 
-def _patch_header_names(patch_text: str) -> tuple[list[str], list[str], bool]:
+def _patch_header_names(patch_text: str) -> tuple[list[str], list[str], bool, list[str]]:
     """Every file name the patch engines can read from the patch, as written: the `---`/`+++` names (cut at
     a tab, `/dev/null` included), both names of each `diff --git` line, and, apart, each rename/copy name.
     The flag is False when a header could be read differently by git apply or GNU patch than by VOOL: a
-    `diff --git` line VOOL cannot split, or a `---`/`+++` line not followed by a single space."""
+    `diff --git` line VOOL cannot split, or a `---`/`+++` header not followed by a single space. The last
+    list holds only the names the engines take as headers: `diff --git` names and `---` lines directly
+    followed by a `+++` line. A lone `--- x` is a removed `-- x` line in a hunk; its name is still checked."""
     names: list[str] = []
     moved: list[str] = []
+    headers: list[str] = []
     readable = True
-    for line in str(patch_text or "").splitlines():
+    lines = str(patch_text or "").splitlines()
+    for index, line in enumerate(lines):
         match = _PATCH_HEADER_LINE_RE.match(line)
         if match:
-            names.append(_header_name(match.group("path")))
-            readable = readable and line[3:4] == " " and line[4:5] not in (" ", "\t")
+            name = _header_name(match.group("path"))
+            names.append(name)
+            paired = (line.startswith("---") and index + 1 < len(lines) and lines[index + 1].startswith("+++")) or (
+                line.startswith("+++") and index > 0 and lines[index - 1].startswith("---"))
+            if paired:
+                headers.append(name)
+                readable = readable and line[3:4] == " " and line[4:5] not in (" ", "\t")
         elif line.startswith("diff --git "):
             pair = _git_header_names(line)
             if pair is None:
                 readable = False
             else:
                 names.extend(pair)
+                headers.extend(pair)
         elif line.startswith(_RENAME_COPY_HEADERS):
             moved.append(_header_name(line.split(" ", 2)[2]))
-    return [name for name in names if name], [name for name in moved if name], readable
+    return ([name for name in names if name], [name for name in moved if name], readable,
+            [name for name in headers if name])
 
 
 def _rename_or_copy_header(patch_text: str) -> str:
-    """The first rename or copy header line in the patch, or ""."""
+    """The first header line that renames or copies a file, or makes one a symbolic link, or ""."""
     for line in str(patch_text or "").splitlines():
-        if line.startswith(_RENAME_COPY_HEADERS):
+        if line.startswith(_RENAME_COPY_HEADERS) or _LINK_MODE_RE.match(line):
             return line
     return ""
 
@@ -1114,10 +1132,11 @@ def _engine_strip(patch_text: str) -> int | None:
         # only, so they would read a longer name than the one VOOL checked.
         return None
     if _INDENTED_HEADER_RE.search(patch_text):
-        # GNU patch also reads a header indented by spaces, tabs or `X`, which VOOL does not read as one.
+        # GNU patch also reads a header indented by spaces, tabs or `X`, which VOOL does not read as one,
+        # and, with POSIXLY_CORRECT set, the name an `Index:` line gives.
         return None
-    names, _moved, readable = _patch_header_names(patch_text)
-    named = [name for name in names if name != "/dev/null"]
+    _names, _moved, readable, headers = _patch_header_names(patch_text)
+    named = [name for name in headers if name != "/dev/null"]
     if not readable or not named or any(_ENGINE_UNSAFE_NAME_RE.search(name) for name in named):
         return None
     prefixed = [name.startswith(("a/", "b/")) for name in named]
@@ -1131,7 +1150,7 @@ def _engine_strip(patch_text: str) -> int | None:
 def _extract_patch_paths(patch_text: str) -> list[str]:
     """Each workspace path the patch can change, as VOOL reads it: every header name with its `a/`/`b/`
     prefix dropped, and every rename/copy name, in order, once."""
-    names, moved, _readable = _patch_header_names(patch_text)
+    names, moved, _readable, _headers = _patch_header_names(patch_text)
     candidates: list[str] = []
     for clean in [_normalize_patch_path(name) for name in names if name != "/dev/null"] + moved:
         if clean and clean not in candidates:
