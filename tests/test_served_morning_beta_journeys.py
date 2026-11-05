@@ -217,6 +217,10 @@ def scaffold_served(tmp_path_factory):
         env_extra={
             "VOOL_ALWAYS_ON_CATALOG": "1",
             "VOOL_WORKSPACE_ROOT": str(workspace),
+            # On Windows the write gate refuses every write outside a folder the operator flagged as
+            # disposable, before any approval is asked, so the Manual-mode journey flags its own
+            # throwaway workspace the way an operator would. Off Windows the gate is inactive.
+            "VOOL_WINDOWS_DISPOSABLE_WORKSPACES": str(workspace),
             "OLLAMA_HOST": provider.base_url,
             "VOOL_OLLAMA_URL": provider.base_url,
             "VOOL_RAW_OLLAMA_API_URL": provider.base_url,
