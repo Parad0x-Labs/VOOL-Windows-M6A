@@ -100,7 +100,17 @@ def _windows_enroll(window: _CredentialWindow) -> tuple[int, dict[str, Any]]:
     with pytest.MonkeyPatch.context() as patch:
         patch.setitem(sys.modules, "winsdk", None)
         patch.setitem(sys.modules, "winrt", None)
-        patch.setattr(ctypes, "WinDLL", lambda name: window if name == "credui.dll" else None, raising=False)
+        # Only the credential window's library is replaced. Every other library loads as it really does: on Windows
+        # the enrolment also makes the node key folder owner-only (core/owner_only.py builds its kernel32/advapi32
+        # handles on first use), and a stub that answered those calls broke whichever leg first reached them.
+        real = getattr(ctypes, "WinDLL", None)
+
+        def win_dll(name: str, *args: Any, **kwargs: Any) -> Any:
+            if name == "credui.dll":
+                return window
+            return real(name, *args, **kwargs) if real is not None else None
+
+        patch.setattr(ctypes, "WinDLL", win_dll, raising=False)
         return _as_host("win32", lambda: _post("/api/contacts/credential/enroll", {"kind": "pin", "secret": protected_changes.SYNTHETIC_PIN}))
 
 
