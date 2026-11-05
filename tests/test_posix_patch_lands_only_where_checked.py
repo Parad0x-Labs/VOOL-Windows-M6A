@@ -318,3 +318,18 @@ def test_gnu_patch_is_not_started_when_a_variable_changes_what_it_reads_or_leave
     assert result["ok"] is False, (result["status"], result["response_text"])
     assert variable in result["response_text"]
     assert after == before
+
+
+@pytest.mark.parametrize("suffix", [".orig", ".rej"])
+def test_gnu_patch_is_not_started_when_the_patch_itself_names_a_backup_name(
+    workspace: Path, without_git: None, suffix: str
+) -> None:
+    # VOOL removes the `.orig`/`.rej` files a run made; one the patch creates is not GNU patch's to lose.
+    patch = (
+        "--- a/ok.txt\n+++ b/ok.txt\n@@ -5,1 +5,1 @@\n-b\n+B\n"
+        f"--- /dev/null\n+++ b/ok.txt{suffix}\n@@ -0,0 +1 @@\n+mine\n"
+    )
+    result, before, after = _apply(workspace, patch)
+    assert result["ok"] is False, (result["status"], result["response_text"])
+    assert f"ok.txt{suffix}" in result["response_text"]
+    assert after == before
