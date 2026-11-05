@@ -288,3 +288,33 @@ CONTEXT_NAME_CASES = {
 @pytest.mark.parametrize("patch", CONTEXT_NAME_CASES.values(), ids=CONTEXT_NAME_CASES.keys())
 def test_gnu_patch_takes_no_name_from_a_context_diff_line(workspace: Path, patch: str) -> None:
     _assert_lands_only_where_checked(*_apply(workspace, patch))
+
+
+# GNU patch keeps a `.orig` copy beside a file it placed at an offset and writes a `.rej` file beside one
+# it could not patch; VOOL removes the ones its run made, and only those.
+@pytest.mark.parametrize("taken", ["ok.txt.orig", "ok.txt.rej"])
+def test_gnu_patch_is_not_started_over_a_file_already_at_its_backup_name(
+    workspace: Path, without_git: None, taken: str
+) -> None:
+    (workspace / taken).write_bytes(b"the user's own file\n")
+    result, before, after = _apply(workspace, "--- a/ok.txt\n+++ b/ok.txt\n@@ -5,1 +5,1 @@\n-b\n+B\n")
+    assert result["ok"] is False, (result["status"], result["response_text"])
+    assert taken in result["response_text"]
+    assert after == before
+
+
+def test_gnu_patch_leaves_no_reject_file_beside_a_file_it_could_not_patch(workspace: Path, without_git: None) -> None:
+    result, before, after = _apply(workspace, "--- a/ok.txt\n+++ b/ok.txt\n@@ -5,1 +5,1 @@\n-nowhere\n+B\n")
+    assert result["ok"] is False, (result["status"], result["response_text"])
+    assert after == before
+
+
+@pytest.mark.parametrize("variable", ["SIMPLE_BACKUP_SUFFIX", "VERSION_CONTROL", "PATCH_VERSION_CONTROL", "PATCH_GET"])
+def test_gnu_patch_is_not_started_when_a_variable_changes_what_it_reads_or_leaves(
+    workspace: Path, without_git: None, monkeypatch: pytest.MonkeyPatch, variable: str
+) -> None:
+    monkeypatch.setenv(variable, {"SIMPLE_BACKUP_SUFFIX": ".keep", "PATCH_GET": "1"}.get(variable, "numbered"))
+    result, before, after = _apply(workspace, "--- a/ok.txt\n+++ b/ok.txt\n@@ -5,1 +5,1 @@\n-b\n+B\n")
+    assert result["ok"] is False, (result["status"], result["response_text"])
+    assert variable in result["response_text"]
+    assert after == before
