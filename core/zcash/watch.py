@@ -103,6 +103,15 @@ def sha256_file(path: Path) -> str:
 
 def _private_dir(path: Path) -> Path:
     """Create ``path`` owner-only, and refuse one that someone else owns or can write."""
+    if config._WINDOWS:
+        from core.owner_only import OwnerOnlyUnavailable, ensure_private_dir
+
+        try:
+            return ensure_private_dir(path)
+        except OwnerOnlyUnavailable:
+            raise ZcashWatchError("data_dir_unsafe", "The Zcash data folder is not private to this user, so nothing was run.") from None
+        except OSError:
+            raise ZcashWatchError("data_dir_unavailable", "The Zcash data folder could not be prepared, so nothing was run.") from None
     try:
         path.mkdir(parents=True, exist_ok=True)
         with contextlib.suppress(OSError):
@@ -118,6 +127,18 @@ def _private_dir(path: Path) -> Path:
 
 def _tighten(directory: Path) -> None:
     """Owner-only modes for what is already in the wallet folder (files made before the umask rule)."""
+    if config._WINDOWS:
+        # A folder's new DACL does not reach what is already inside it; secure each entry by handle.
+        from core.owner_only import make_owner_only
+
+        try:
+            entries = [entry for entry in directory.iterdir() if not entry.is_symlink()]
+        except OSError:
+            raise ZcashWatchError("data_dir_unavailable", "The Zcash data folder could not be prepared, so nothing was run.") from None
+        for entry in entries:
+            if not make_owner_only(entry, directory=entry.is_dir()).ok:
+                raise ZcashWatchError("data_dir_unsafe", "The Zcash data folder is not private to this user, so nothing was run.")
+        return
     with contextlib.suppress(OSError):
         for entry in directory.iterdir():
             want = 0o700 if entry.is_dir() and not entry.is_symlink() else 0o600
