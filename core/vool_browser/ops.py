@@ -441,7 +441,11 @@ def _fetch_bounded(context: Any, handle: SessionHandle, url: str, *, target: Pat
     caps it, as the browser download it replaces was capped. What VOOL holds to `max_bytes` is what it
     keeps: a response that names no length is refused (`download_unsized`), one that names more than
     the bound is refused before its body is read out of the driver, and a body longer than the bound
-    is refused whatever its length said. Nothing over the bound is ever written.
+    is refused whatever its length said. Nothing over the bound is ever written. Accepted residual:
+    until the timeout, the driver holds in memory whatever an allowed origin sends.
+
+    The request context shares the session's cookie store, so a Set-Cookie on a download response
+    lands in the session's jar, as it did for a browser download.
     """
     from urllib.parse import urljoin
 
