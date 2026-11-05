@@ -22,7 +22,9 @@ itself assertable: `complete`, `count`, `largest`, exclusions, and `termination_
 """
 from __future__ import annotations
 
+import contextlib
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -49,6 +51,27 @@ def _reversed_scandir(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(folder_overview.os, "scandir", fake)
 
 
+@contextlib.contextmanager
+def _sealed(path: Path):
+    """Make `path` a directory this process cannot list, then restore it.
+
+    POSIX: mode 000. Windows: chmod only toggles the read-only attribute, which directories
+    ignore, so a deny ACE for Everyone on "list folder" (RD) is what makes `os.scandir` refuse.
+    """
+    if os.name == "nt":
+        subprocess.run(["icacls", str(path), "/deny", "*S-1-1-0:(RD)"], check=True, capture_output=True)
+        try:
+            yield
+        finally:
+            subprocess.run(["icacls", str(path), "/remove:d", "*S-1-1-0"], check=True, capture_output=True)
+    else:
+        os.chmod(path, 0)
+        try:
+            yield
+        finally:
+            os.chmod(path, 0o755)
+
+
 # --------------------------------------------------------------------------------- 1. unscannable
 
 
@@ -57,12 +80,9 @@ def test_an_unscannable_directory_never_yields_an_exact_count(tmp_path: Path):
     sealed.mkdir()
     _write(sealed / "hidden.py", 3)
     _write(tmp_path / "visible.py", 2)
-    os.chmod(sealed, 0)
-    try:
+    with _sealed(sealed):
         measurement = measure_workspace_files(str(tmp_path), "py")
         reply = build_exact_file_facts(str(tmp_path), "py")
-    finally:
-        os.chmod(sealed, 0o755)
 
     assert measurement is not None
     assert measurement.complete is False, "a directory could not be opened; the count is not exact"
@@ -80,11 +100,8 @@ def test_an_unscannable_leaf_directory_is_named_not_swallowed(tmp_path: Path):
     deep = tmp_path / "vendor" / "locked"
     deep.mkdir(parents=True)
     _write(deep / "inside.py", 1)
-    os.chmod(deep, 0)
-    try:
+    with _sealed(deep):
         reply = build_exact_file_facts(str(tmp_path), "py")
-    finally:
-        os.chmod(deep, 0o755)
 
     assert reply is not None
     lowered = reply.lower()
