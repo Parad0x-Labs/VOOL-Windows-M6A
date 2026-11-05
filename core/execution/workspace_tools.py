@@ -39,6 +39,7 @@ _SYMBOL_DEFINITION_TEMPLATES = (
 )
 _PATCH_HEADER_LINE_RE = re.compile(r"^(?:\+\+\+|---)[ \t]+(?P<path>.+)$")
 _ENGINE_UNSAFE_NAME_RE = re.compile(r'[\s"\\]')
+_INDENTED_HEADER_RE = re.compile(r"^[ \tX]+(?:---|\+\+\+|@@)[ \t]", re.MULTILINE)
 _HUNK_HEADER_RE = re.compile(
     r"^@@\s+\-(?P<old_start>\d+)(?:,(?P<old_count>\d+))?\s+\+(?P<new_start>\d+)(?:,(?P<new_count>\d+))?\s+@@"
 )
@@ -1108,6 +1109,13 @@ def _engine_strip(patch_text: str) -> int | None:
     0 when none does, so both read each name as `_normalize_patch_path` does. None (VOOL's own engine only)
     when the prefixes are mixed, a header is not readable the same way by every engine, or a name holds
     whitespace, a quote or a backslash, which the engines read their own way."""
+    if any(mark in patch_text for mark in _NOT_DIFF_LINE_BREAKS):
+        # VOOL splits lines with `str.splitlines`, which also breaks at these; the engines break at "\n"
+        # only, so they would read a longer name than the one VOOL checked.
+        return None
+    if _INDENTED_HEADER_RE.search(patch_text):
+        # GNU patch also reads a header indented by spaces, tabs or `X`, which VOOL does not read as one.
+        return None
     names, _moved, readable = _patch_header_names(patch_text)
     named = [name for name in names if name != "/dev/null"]
     if not readable or not named or any(_ENGINE_UNSAFE_NAME_RE.search(name) for name in named):
