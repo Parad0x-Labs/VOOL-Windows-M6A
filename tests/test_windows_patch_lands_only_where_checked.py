@@ -855,10 +855,9 @@ def test_off_windows_a_rename_from_the_repository_top_into_a_workspace_that_is_n
     if head:
         assert _git(top, "status", "--porcelain", "--untracked-files=all") == ""
         assert _git(top, "rev-parse", "HEAD").strip() == head
-    # git is not run from a workspace that is not the top of its work tree: VOOL's own engine reads the
-    # patch's paths from the workspace, finds no such file there, and answers that the patch does not match.
-    assert execution.status == "stale_base", (execution.status, execution.response_text)
-    assert "context mismatch" in execution.details["errors"][0], execution.details.get("errors")
+    # Off Windows a rename is refused before any engine runs, as on Windows.
+    assert execution.status == "invalid_arguments", (execution.status, execution.response_text)
+    assert "rename from Documents/secret.txt" in execution.response_text, execution.response_text
     _assert_refused_without_a_record(execution, chat, PATCH, arguments)
 
 
@@ -948,8 +947,8 @@ def test_off_windows_an_engine_stopped_at_its_time_limit_leaves_the_outcome_unkn
         workspace.mkdir()
         (workspace / "notes.txt").write_bytes(NOTES)
         patch = OFFSET_PATCH
-        # GNU patch keeps the file as it was beside it when it places a section somewhere else.
-        written = {"notes.txt": NOTES_EDITED, "notes.txt.orig": NOTES}
+        # GNU patch places the section one line up and, told `--no-backup-if-mismatch`, leaves no `.orig`.
+        written = {"notes.txt": NOTES_EDITED}
     chat = _Chat(workspace, mode)
     started, left = _engines_stopped_at_their_time_limit(monkeypatch, engine, workspace)
     arguments = {"patch": patch}
