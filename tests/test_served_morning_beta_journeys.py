@@ -27,7 +27,9 @@ from urllib.error import HTTPError
 
 import pytest
 
+from core.windows_write_gate import ENV_VAR as WINDOWS_DISPOSABLE_WORKSPACES
 from tests._blackbox_served_rig import REPO_ROOT, SEED_MANIFEST, ScriptedProvider, ServedDaemon, run_in_home
+from tests._windows_disposable_tmp import running_on_windows
 
 MODEL = "qwen3-stub:2b"
 
@@ -221,6 +223,11 @@ def scaffold_served(tmp_path_factory):
             "VOOL_OLLAMA_URL": provider.base_url,
             "VOOL_RAW_OLLAMA_API_URL": provider.base_url,
             "VOOL_OLLAMA_CHAT_URL": f"{provider.base_url}/api/chat",
+            # The module's workspace comes from tmp_path_factory, which the per-test marking
+            # (tests/_windows_disposable_tmp.py) never lists, and the daemon starts before it runs.
+            # On Windows the write gate refuses every write outside a marked folder before any
+            # approval is offered, so this one workspace is marked here, as the per-test rule would.
+            **({WINDOWS_DISPOSABLE_WORKSPACES: str(workspace)} if running_on_windows() else {}),
         },
     )
     provider.__enter__()
