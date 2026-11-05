@@ -44,3 +44,22 @@ def test_a_folder_inside_home_outside_the_safe_folders_stays_refused_on_windows(
     result = _find_largest(home, str(home / ".ssh"))
     assert result.ok is False and result.status == "not_allowed", (result.status, result.response_text)
     assert "known_hosts" not in result.response_text
+
+
+@pytest.mark.parametrize("spelling", ["~", ".", "trailing-separator"])
+def test_other_spellings_of_the_home_folder_scan_the_home_folder_itself(home: Path, spelling: str) -> None:
+    drive = str(home) + "/" if spelling == "trailing-separator" else spelling
+    result = _find_largest(home, drive)
+    assert result.ok is True and result.status == "executed", (result.status, result.response_text)
+
+
+def test_a_share_path_stays_refused_before_anything_resolves_it(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from core import windows_path_policy
+
+    monkeypatch.setattr(windows_path_policy, "_IS_WINDOWS", True)
+    resolved: list[Path] = []
+    real_resolve = Path.resolve
+    monkeypatch.setattr(Path, "resolve", lambda self, *a, **k: resolved.append(self) or real_resolve(self, *a, **k))
+    result = _find_largest(home, "\\\\host\\share")
+    assert result.ok is False, (result.status, result.response_text)
+    assert not any("host" in str(p) for p in resolved)
