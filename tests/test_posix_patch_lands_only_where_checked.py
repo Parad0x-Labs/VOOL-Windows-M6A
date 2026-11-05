@@ -51,16 +51,18 @@ def off_windows(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture()
 def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    # Written as bytes: in text mode Windows would write each "\n" as "\r\n", which VOOL refuses to
+    # patch (a carriage return it could not keep), so no case here would reach an engine there.
     root = tmp_path.resolve() / "repo"
     root.mkdir()
     subprocess.run(["git", "init", "-q", str(root)], check=True)
     (root / "data").mkdir()
-    (root / "data" / "x.txt").write_text("a\nb\nc\n", encoding="utf-8")
+    (root / "data" / "x.txt").write_bytes(b"a\nb\nc\n")
     (root / "src").mkdir()
-    (root / "src" / "f.txt").write_text("one\n", encoding="utf-8")
-    (root / "f.txt").write_text("one\n", encoding="utf-8")
-    (root / "g.txt").write_text("g\n", encoding="utf-8")
-    (root / "ok.txt").write_text("a\nb\nc\n", encoding="utf-8")
+    (root / "src" / "f.txt").write_bytes(b"one\n")
+    (root / "f.txt").write_bytes(b"one\n")
+    (root / "g.txt").write_bytes(b"g\n")
+    (root / "ok.txt").write_bytes(b"a\nb\nc\n")
     monkeypatch.setattr(runtime_state_protection, "protected_state_roots", lambda: (root / "data",))
     return root
 
@@ -184,7 +186,7 @@ def test_a_copy_section_does_not_write_a_git_hook(
 ) -> None:
     if engines == "without_git":
         request.getfixturevalue("without_git")
-    (workspace / "h.sh").write_text("#!/bin/sh\ntouch HOOK_RAN\n", encoding="utf-8")
+    (workspace / "h.sh").write_bytes(b"#!/bin/sh\ntouch HOOK_RAN\n")
     hook = workspace / ".git" / "hooks" / "pre-commit"
     result, before, after = _apply(workspace, HOOK_COPY)
     assert not hook.exists(), (result["status"], result["response_text"])
@@ -249,7 +251,7 @@ def test_gnu_patch_does_not_take_an_index_line_name(
 
 # A removed `-- comment` line reads `--- comment` in the hunk; it is content, not a file header.
 def test_removing_a_line_that_starts_with_two_dashes_still_applies_with_git(workspace: Path) -> None:
-    (workspace / "q.sql").write_text("a\n-- drop table t;\nc\n", encoding="utf-8")
+    (workspace / "q.sql").write_bytes(b"a\n-- drop table t;\nc\n")
     result, before, after = _apply(workspace, "--- a/q.sql\n+++ b/q.sql\n@@ -1,3 +1,2 @@\n a\n--- drop table t;\n c\n")
     assert result["ok"] is True and result["details"]["engine"] == "git_apply", (result["status"], result["response_text"])
     assert after["q.sql"] == b"a\nc\n"
