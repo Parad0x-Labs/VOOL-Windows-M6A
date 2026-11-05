@@ -16,6 +16,10 @@ _unattended_preflight("pytest-conftest")
 # core.windows_quiet_subprocess.enable_quiet_subprocess(), which replaces this initializer
 # process-wide and keeps no reference to the original.
 _PRISTINE_POPEN_INIT = subprocess.Popen.__init__
+_STOCK_POPEN = subprocess.Popen
+# A session fixture below installs its own Popen subclass; this records that class's own
+# initializer, so undoing the quiet patch restores the subclass, not the stock one.
+_OWN_POPEN_INITS: dict[type, object] = {}
 
 import os
 import sys
@@ -340,9 +344,14 @@ def unpatched_subprocess_popen() -> None:
     under a sweep that collected an importer first (issue #23). Process-global patches
     must not survive across tests.
     """
-    if getattr(subprocess.Popen, "_vool_quiet_patched", False):
-        subprocess.Popen.__init__ = _PRISTINE_POPEN_INIT  # type: ignore[method-assign]
-        subprocess.Popen._vool_quiet_patched = False  # type: ignore[attr-defined]
+    # The patch lands on whichever class `subprocess.Popen` names when it runs: the stock class
+    # at collection time, or the session's fenced subclass later. Undo it only on the class that
+    # carries it, back to THAT class's own initializer. Writing the stock initializer onto the
+    # fenced subclass erased the Ollama fence for the rest of the session on Windows.
+    for cls in dict.fromkeys((_STOCK_POPEN, subprocess.Popen)):
+        if cls.__dict__.get("_vool_quiet_patched", False):
+            cls.__init__ = _OWN_POPEN_INITS.get(cls, _PRISTINE_POPEN_INIT)  # type: ignore[method-assign]
+            cls._vool_quiet_patched = False  # type: ignore[attr-defined]
 
 
 @pytest.fixture(autouse=True)
@@ -635,6 +644,7 @@ def fence_spawned_daemons_from_live_ollama():
                 kwargs["env"] = env
             super().__init__(args, *popen_args, **kwargs)
 
+    _OWN_POPEN_INITS[_FencedPopen] = _FencedPopen.__init__
     session_patch = pytest.MonkeyPatch()
     session_patch.setattr(subprocess, "Popen", _FencedPopen)
     try:
