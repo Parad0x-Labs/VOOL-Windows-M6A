@@ -181,7 +181,9 @@ def test_model_never_reads_objects_borrowed_from_outside_the_bound_folder(entry,
     target = secret["repo"] / ".git" / "objects"
     line = str(target) if entry == "absolute" else os.path.relpath(target, objects)
     (objects / "info").mkdir(parents=True, exist_ok=True)
-    (objects / "info" / "alternates").write_text(line + "\n", encoding="utf-8")
+    # Git reads alternates as LF lines and keeps a trailing CR as part of the path; write_text alone would
+    # write os.linesep, so on Windows the line ended "objects\r" and update-ref refused the borrowed object.
+    (objects / "info" / "alternates").write_text(line + "\n", encoding="utf-8", newline="\n")
     _git(bound, "update-ref", "refs/heads/borrowed", secret["second"])
 
     compared = _model_call(
