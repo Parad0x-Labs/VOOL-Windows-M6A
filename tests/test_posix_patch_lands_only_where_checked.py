@@ -190,3 +190,28 @@ def test_a_copy_section_does_not_write_a_git_hook(
     assert not hook.exists(), (result["status"], result["response_text"])
     assert result["ok"] is False, (result["status"], result["response_text"])
     assert after == before
+
+
+# Python's `str.splitlines` also breaks a line at these characters, and the engines do not: VOOL read a
+# shorter name than the one they create.
+@pytest.mark.parametrize("mark", ["\x0b", "\x0c", "\x1c", "\x85", " "])
+@pytest.mark.parametrize("engines", ["git_present", "without_git"])
+def test_a_name_with_a_character_python_splits_lines_at_creates_no_unchecked_file(
+    workspace: Path, request: pytest.FixtureRequest, engines: str, mark: str
+) -> None:
+    if engines == "without_git":
+        request.getfixturevalue("without_git")
+    patch = (
+        "--- a/f.txt\n+++ b/f.txt\n@@ -1 +1 @@\n-one\n+two\n"
+        f"--- /dev/null\n+++ b/new{mark}data.txt\n@@ -0,0 +1,2 @@\n+x\n+y\n"
+    )
+    _assert_lands_only_where_checked(*_apply(workspace, patch))
+
+
+# GNU patch also reads a section indented by a space (it says "Patch is indented 1 space"); VOOL did not.
+def test_gnu_patch_creates_no_file_from_an_indented_section(workspace: Path, without_git: None) -> None:
+    patch = (
+        "--- a/f.txt\n+++ b/f.txt\n@@ -1 +1 @@\n-one\n+two\n\n"
+        " --- /dev/null\n +++ b/new.sh\n @@ -0,0 +1,2 @@\n +x\n +y\n"
+    )
+    _assert_lands_only_where_checked(*_apply(workspace, patch))
