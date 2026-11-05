@@ -78,8 +78,15 @@ def test_mutation_ledger_is_owner_only_but_keeps_bytes_for_rollback(monkeypatch)
     records = [{"path": "x.env", "existed_before": True, "before_text": ENV_BODY, "after_text": "changed\n"}]
     artifacts._store_mutation_records("sess-perm", records)
     path = artifacts._mutation_log_path("sess-perm")
-    assert oct(os.stat(path).st_mode & 0o777) == "0o600"
-    assert oct(os.stat(path.parent).st_mode & 0o777) == "0o700"
+    if os.name == "nt":
+        # chmod only flips the read-only bit on Windows; owner-only is the protected one-ACE DACL.
+        from core.owner_only import verify_owner_only
+
+        assert verify_owner_only(path).ok
+        assert verify_owner_only(path.parent).ok
+    else:
+        assert oct(os.stat(path).st_mode & 0o777) == "0o600"
+        assert oct(os.stat(path.parent).st_mode & 0o777) == "0o700"
     # Rollback correctness: the bytes must come back exactly, or a restore corrupts the file.
     assert artifacts._load_mutation_records("sess-perm")[0]["before_text"] == ENV_BODY
 

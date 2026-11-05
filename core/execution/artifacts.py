@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from core import fs_links
+from core.owner_only import ensure_private_dir, require_owner_only
 from core.runtime_paths import data_path
 
 
@@ -825,6 +826,7 @@ def mark_workspace_mutation_promoted(
 # name gets a digest name; `~` never starts a portable name, so the two cannot collide. POSIX
 # keeps the readable key it always had.
 _WINDOWS_LEDGER_NAMES = os.name == "nt"
+_WINDOWS_OWNER_ONLY = os.name == "nt"
 _PORTABLE_LEDGER_KEY = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
 _WINDOWS_DEVICE_NAMES = frozenset(
     {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(10)), *(f"LPT{i}" for i in range(10))}
@@ -860,10 +862,31 @@ def _store_mutation_records(session_key: str, records: list[dict[str, Any]]) -> 
     # control is access, not content: owner-only (0600) on both the directory and the file, since a
     # rolled-back .env leaves real key material on disk by design.
     path = _mutation_log_path(session_key)
+    payload = json.dumps(records, indent=2, sort_keys=True)
+    if _WINDOWS_OWNER_ONLY:
+        # chmod only flips the read-only bit on Windows: owner-only is core/owner_only's protected
+        # one-ACE DACL, set on the folder (inherited by new ledgers) and on this file before the bytes
+        # land. OwnerOnlyUnavailable propagates: no rollback bytes are written readable by others.
+        # The new list goes to a fresh temp that replaces the ledger, so a refusal or a crash mid-write
+        # leaves the existing records (the user's only copy of before_text) as they were.
+        ensure_private_dir(path.parent)
+        tmp = path.with_name(path.name + ".tmp")
+        with contextlib.suppress(FileNotFoundError):
+            tmp.unlink()
+        descriptor = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                require_owner_only(tmp)
+                handle.write(payload)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                tmp.unlink()
+            raise
+        os.replace(tmp, path)
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     with contextlib.suppress(OSError):
         os.chmod(path.parent, 0o700)
-    payload = json.dumps(records, indent=2, sort_keys=True)
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
         handle.write(payload)
