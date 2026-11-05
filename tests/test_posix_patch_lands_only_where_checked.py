@@ -253,3 +253,24 @@ def test_removing_a_line_that_starts_with_two_dashes_still_applies_with_git(work
     result, before, after = _apply(workspace, "--- a/q.sql\n+++ b/q.sql\n@@ -1,3 +1,2 @@\n a\n--- drop table t;\n c\n")
     assert result["ok"] is True and result["details"]["engine"] == "git_apply", (result["status"], result["response_text"])
     assert after["q.sql"] == b"a\nc\n"
+
+
+# GNU patch also takes a `---` line with no `+++` after it, or one a blank line parts from its `+++`, as a
+# header, and strips it with the `-p` it was given.
+LONE_HEADER_CASES = {
+    "lone_old_name": (
+        "--- c/data/x.txt\n@@ -1,3 +1,3 @@\n a\n-b\n+P\n c\n--- /dev/null\n+++ b/new.txt\n@@ -0,0 +1 @@\n+n\n"
+    ),
+    "pair_parted_by_a_blank_line": (
+        "--- c/data/x.txt\n\n+++ c/data/x.txt\n@@ -1,3 +1,3 @@\n a\n-b\n+P\n c\n"
+        "--- /dev/null\n+++ b/new.txt\n@@ -0,0 +1 @@\n+n\n"
+    ),
+    "lone_prefixed_name_beside_plain_headers": (
+        "--- a/data/x.txt\n@@ -1,3 +1,3 @@\n a\n-b\n+P\n c\n--- /dev/null\n+++ new.txt\n@@ -0,0 +1 @@\n+n\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("patch", LONE_HEADER_CASES.values(), ids=LONE_HEADER_CASES.keys())
+def test_gnu_patch_writes_nothing_from_a_header_without_its_partner(workspace: Path, patch: str) -> None:
+    _assert_lands_only_where_checked(*_apply(workspace, patch))
