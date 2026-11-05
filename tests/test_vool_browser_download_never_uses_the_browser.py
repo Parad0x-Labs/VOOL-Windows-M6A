@@ -1,14 +1,15 @@
-"""A session download is fetched by VOOL, never handed to the browser's download machinery.
+"""A session download is fetched through the session's request context, never by the browser's download machinery.
 
 Edge on Windows writes a browser-handled download into the user's real Downloads folder before
 Playwright moves it, whatever download folder it is told (Steve jobs 48g and 48h: a 64 KiB `.tmp`
-beside the user's files). So `op_download` fetches the bytes itself with the session's cookies,
+beside the user's files). So `op_download` fetches the bytes itself through `context.request`,
 judges every redirect hop by the same origin and grant rule as the first URL, and stops reading
-past `max_bytes` whatever the server says its length is. The engine is launched with downloads
-refused, so a page cannot start one either.
+past `max_bytes`: one that names no length, names too much or sends more than it named is refused.
+The engine is launched with downloads refused, so a page cannot start one either.
 """
 from __future__ import annotations
 
+import http.client
 import sys
 import threading
 import types
@@ -60,14 +61,63 @@ def _redirect(location: str):
     return answer
 
 
+def test_a_same_origin_redirect_hop_is_fetched_by_vool_not_followed_by_the_driver(sites) -> None:
+    base, _, handle = sites
+    context = _Context()
+    _download(handle, base + "/same", context=context)
+    assert [call["url"] for call in context.request.calls] == [base + "/same", base + "/file"]
+
+
 class _NoBrowser:
     def __getattr__(self, name: str) -> Any:
         raise AssertionError(f"the browser page was used for a download ({name})")
 
 
+class _Response:
+    def __init__(self, status: int, headers: dict[str, str], body: bytes) -> None:
+        self.status, self.headers, self._body = status, headers, body
+
+    def body(self) -> bytes:
+        return self._body
+
+    def dispose(self) -> None:
+        return None
+
+
+class _Request:
+    """Stands in for Playwright's `context.request`: the session's cookie jar rides every call, and
+    `max_redirects=0` hands a redirect back instead of following it."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def get(self, url: str, **kwargs: Any) -> _Response:
+        import urllib.error
+        import urllib.request
+
+        self.calls.append({"url": url, **kwargs})
+        assert kwargs.get("max_redirects") == 0, "redirects must come back to VOOL, one hop at a time"
+
+        class _NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *_args: Any, **_kwargs: Any) -> None:
+                return None
+
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
+        request = urllib.request.Request(url, headers={"Cookie": "sid=session-cookie"})
+        try:
+            with opener.open(request, timeout=10) as response:
+                try:
+                    body = response.read()
+                except http.client.IncompleteRead as short:
+                    body = short.partial
+                return _Response(response.status, dict(response.headers), body)
+        except urllib.error.HTTPError as exc:
+            return _Response(exc.code, dict(exc.headers or {}), b"")
+
+
 class _Context:
-    def cookies(self, urls: list[str]) -> list[dict[str, str]]:
-        return [{"name": "sid", "value": "session-cookie"}]
+    def __init__(self) -> None:
+        self.request = _Request()
 
     def __getattr__(self, name: str) -> Any:
         raise AssertionError(f"the browser context was used for a download ({name})")
@@ -100,14 +150,16 @@ def sites(tmp_path: Path):
     other.shutdown()
 
 
-def _download(handle: Any, url: str, max_bytes: int = 200000) -> dict:
-    view = {"page": _NoBrowser(), "context": _Context()}
+def _download(handle: Any, url: str, max_bytes: int = 200000, context: _Context | None = None) -> dict:
+    view = {"page": _NoBrowser(), "context": context or _Context()}
     return ops.op_download(handle, view, {"url": url, "max_bytes": max_bytes})
 
 
-def test_a_download_is_fetched_with_the_session_cookies_and_no_browser_download(sites) -> None:
+def test_a_download_is_fetched_through_the_session_request_context_and_no_browser_download(sites) -> None:
     base, seen, handle = sites
-    receipt = _download(handle, base + "/file")
+    context = _Context()
+    receipt = _download(handle, base + "/file", context=context)
+    assert [call["url"] for call in context.request.calls] == [base + "/file"]
     assert receipt["bytes"] == len(BODY)
     assert Path(receipt["path"]).read_bytes() == BODY
     assert Path(receipt["path"]).parent == handle.staging_dir
@@ -127,12 +179,13 @@ def test_a_redirect_to_an_origin_without_a_grant_is_refused_and_leaves_nothing(s
     assert list(handle.staging_dir.iterdir()) == []
 
 
-@pytest.mark.parametrize("path", ["/unsized", "/declared-huge"])
-def test_a_body_past_max_bytes_is_refused_whatever_its_length_says_and_leaves_nothing(sites, path) -> None:
+@pytest.mark.parametrize(("path", "status"), [("/unsized", "download_unsized"),
+                                            ("/declared-huge", "download_exceeds_bound")])
+def test_a_body_whose_size_cannot_be_held_to_max_bytes_is_refused_and_leaves_nothing(sites, path, status) -> None:
     base, _, handle = sites
     with pytest.raises(OpFailed) as refused:
         _download(handle, base + path, max_bytes=1024 * 1024)
-    assert refused.value.status == "download_exceeds_bound"
+    assert refused.value.status == status
     assert "max_bytes" in refused.value.message
     assert list(handle.staging_dir.iterdir()) == []
 
