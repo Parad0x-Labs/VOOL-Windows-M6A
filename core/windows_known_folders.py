@@ -26,6 +26,8 @@ _FOLDER_IDS = {
     "Desktop": "{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}",
     "Documents": "{FDD39AD0-238F-46AF-ADB4-6C85480369C7}",
     "Downloads": "{374DE290-123F-4565-9164-39C4925E467B}",
+    "ProgramFiles": "{905E63B6-C1BF-494E-B29C-65B732D3D21A}",
+    "ProgramFilesX86": "{7C5A40EF-A0FB-4BFC-874A-C0F2E0B9FA8E}",
 }
 #: GetDriveTypeW answers for a drive on this machine: removable, fixed, RAM disk. DRIVE_REMOTE (4),
 #: CD-ROM, "unknown" and "no root directory" are not.
@@ -112,7 +114,7 @@ def _too_wide(reported: str, profile: str) -> bool:
 def safe_folder(name: str, home: Path) -> Path:
     """The user's `name` folder (Desktop, Documents or Downloads) for a machine lane rooted at `home`."""
     fallback = home / name
-    if not _IS_WINDOWS or name not in _FOLDER_IDS or name == "Profile":
+    if not _IS_WINDOWS or name not in ("Desktop", "Documents", "Downloads"):
         return fallback
     profile = _shell_known_folder("Profile")
     if not profile or not _same_folder(str(home), profile):
@@ -128,3 +130,20 @@ def safe_folder(name: str, home: Path) -> Path:
     if not _usable(resolved, profile) or _too_wide(resolved, real_profile):
         return fallback
     return Path(resolved)
+
+
+def program_files_folders() -> list[str]:
+    """The Program Files folders the shell reports (64-bit, then 32-bit), each once. A folder on a share,
+    a device or a network drive is never reported; off Windows there are none."""
+    if not _IS_WINDOWS:
+        return []
+    folders: list[str] = []
+    for name in ("ProgramFiles", "ProgramFilesX86"):
+        reported = _shell_known_folder(name)
+        if not reported or not _full_local_path(reported):
+            continue
+        if _drive_is_remote(ntpath.splitdrive(reported)[0]) is not False:
+            continue
+        if not any(_same_folder(reported, seen) for seen in folders):
+            folders.append(reported)
+    return folders
