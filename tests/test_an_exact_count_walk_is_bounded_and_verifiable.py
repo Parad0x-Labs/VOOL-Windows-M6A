@@ -316,10 +316,14 @@ def test_a_file_mutated_in_place_during_the_read_is_a_race(tmp_path: Path, monke
     victim = tmp_path / "victim.py"
     _write(victim, 3)
     real_read = os.read
+    # Each touch sets an mtime one second past the last one: Windows stamps a plain touch from a
+    # ~15.6 ms system clock, so a touch in the same tick as the walk's lstat left mtime unchanged.
+    mtime_ns = [victim.stat().st_mtime_ns]
 
     def touch_during_read(fd, size):
         chunk = real_read(fd, size)
-        victim.touch()
+        mtime_ns[0] += 1_000_000_000
+        os.utime(victim, ns=(mtime_ns[0], mtime_ns[0]))
         return chunk
 
     monkeypatch.setattr(folder_overview.os, "read", touch_during_read)
