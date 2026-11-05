@@ -200,6 +200,29 @@ print("@@JSON@@" + json.dumps(rows))
 '''
 
 
+def _corpus_env(home: str, *, windows: bool = os.name == "nt") -> dict[str, str]:
+    """The driver child's whole environment: its throwaway home and fixed settings, nothing of the caller's.
+
+    Windows will not load Winsock (and so not `import asyncio`) without SYSTEMROOT, which comes from the
+    system as for the Git probe, and Path.home() and tempfile read USERPROFILE, TEMP and TMP there, so
+    those name the throwaway home too.
+    """
+    env = {
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": home,
+        "VOOL_HOME": home,
+        "VOOL_CREDENTIAL_STORE": "vault",
+        "VOOL_KEY_STORAGE_MODE": "file",
+        "VOOL_KEY_PASSPHRASE": "differential",
+        "VOOL_REGISTER_INSTALLED_OLLAMA_MODELS": "0",
+        "VOOL_SKIP_TORCH_GPU_PROBE": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    if windows:
+        env.update({"SYSTEMROOT": _windows_directory(), "USERPROFILE": home, "TEMP": home, "TMP": home})
+    return env
+
+
 def _run_corpus(tree: Path, label: str, texts: list[str]) -> list[dict]:
     """Drive the whole corpus inside `tree`, in its own process and its own throwaway home.
 
@@ -209,17 +232,7 @@ def _run_corpus(tree: Path, label: str, texts: list[str]) -> list[dict]:
     the base.
     """
     with tempfile.TemporaryDirectory(prefix=f"vool_diff_home_{label}_") as home:
-        env = {
-            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
-            "HOME": home,
-            "VOOL_HOME": home,
-            "VOOL_CREDENTIAL_STORE": "vault",
-            "VOOL_KEY_STORAGE_MODE": "file",
-            "VOOL_KEY_PASSPHRASE": "differential",
-            "VOOL_REGISTER_INSTALLED_OLLAMA_MODELS": "0",
-            "VOOL_SKIP_TORCH_GPU_PROBE": "1",
-            "PYTHONDONTWRITEBYTECODE": "1",
-        }
+        env = _corpus_env(home)
         script = (
             # The quoted placeholder becomes a Python literal, not text between quotes: a Windows
             # tree (C:\Users\...) made `\U` an escape and the child died on a SyntaxError.
