@@ -20,9 +20,13 @@ the fake via ``ps``), so every synthetic attempt carries its provenance.
 """
 from __future__ import annotations
 
+import importlib.util
+import io
 import json
 import os
+import platform
 import subprocess
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +86,32 @@ sys.exit(0)
 """
 
 
+def _windows_launcher() -> bytes:
+    """distlib's console launcher, the stub pip puts in front of every console script on Windows."""
+    stub = "t64-arm.exe" if platform.machine().lower() in {"arm64", "aarch64"} else "t64.exe"
+    for module in ("distlib", "pip._vendor.distlib"):
+        try:
+            spec = importlib.util.find_spec(module)
+        except ModuleNotFoundError:
+            continue
+        for folder in (spec.submodule_search_locations or []) if spec else []:
+            candidate = Path(folder) / stub
+            if candidate.is_file():
+                return candidate.read_bytes()
+    raise RuntimeError(f"no distlib console launcher ({stub}) found, so no Windows fake can be built")
+
+
+def _windows_exe(python: str, script: str) -> bytes:
+    """A console exe that runs `script` with `python`, as pip builds console scripts: the launcher,
+    a #! line naming the interpreter, then a zip whose __main__.py is the script. The launcher runs
+    `python <this exe> args...`, so the script sees its own path as sys.argv[0]."""
+    interpreter = f'"{python}"' if " " in python else python
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("__main__.py", script)
+    return _windows_launcher() + b"#!" + interpreter.encode("utf-8") + b"\n" + archive.getvalue()
+
+
 def fake_bin_dir(
     root: Path,
     *,
@@ -105,6 +135,13 @@ def fake_bin_dir(
         target = bindir / name
         target.write_text(script, encoding="utf-8")
         target.chmod(0o755)
+        if os.name == "nt":
+            # Windows cannot start a #! script, so the fake is also a real console exe there
+            # (see `_windows_exe`): at the bare name and at name.exe, whichever the caller's
+            # CreateProcess resolves.
+            exe = _windows_exe(python, script)
+            target.write_bytes(exe)
+            (bindir / f"{name}.exe").write_bytes(exe)
 
     _write(FAKE_SECURITY, fails=FAKE_SECURITY in failing, stdout="")
     _write(FAKE_KEYRING, fails=FAKE_KEYRING in failing, stdout="")
