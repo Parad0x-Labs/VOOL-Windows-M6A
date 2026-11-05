@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import contextlib
 import fnmatch
 import hashlib
 import os
 import re
 import shutil
 import subprocess
-import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -503,6 +503,18 @@ def apply_unified_diff_workspace(
         patch_strip = _engine_strip(patch_text, every_name=True) if strip is not None else None
         if patch_strip is not None and not _gnu_patch_reads_only_vools_headers(patch_text):
             patch_strip = None
+        gnu_patch_env = _gnu_patch_env_set()
+        if patch_strip is not None and gnu_patch_env:
+            # These change which name GNU patch takes (POSIXLY_CORRECT reads `Index:`), make it fetch files
+            # from version control, or rename the `.orig` copy VOOL removes; VOOL does not start it then.
+            errors.append(f"GNU patch was not started because {gnu_patch_env} is set.")
+            patch_strip = None
+        taken = sorted(_gnu_patch_leftovers(snapshots, workspace_root=workspace_root)) if patch_strip is not None else []
+        if taken:
+            # GNU patch would write its own `.orig` or `.rej` over a file already at that name.
+            names = ", ".join(path.relative_to(workspace_root).as_posix() for path in taken)
+            errors.append(f"GNU patch was not started because {names} already exists and it would write over it.")
+            patch_strip = None
         patch_available = shutil.which("patch") if patch_strip is not None else None
         if patch_available:
             # `--fuzz=0` is load-bearing, not a style choice: GNU patch's default fuzz factor (2)
@@ -511,25 +523,17 @@ def apply_unified_diff_workspace(
             # failure this tool must not have. Fuzz=0 forces an exact context match at this,
             # the last-resort engine, so a bad match surfaces as a clean apply_failed instead of a
             # silent wrong-location write.
-            # `--unified` reads only unified sections (no context, normal or ed diff VOOL did not read). The
-            # `.orig` copy GNU patch keeps of a file it placed at an offset, and the `.rej` file of a failed
-            # hunk, go to a folder of VOOL's own outside the workspace (`-B`, `--reject-file`): beside the
-            # file neither would be in the result or its rollback. Not `--no-backup-if-mismatch`: with it, the
-            # GNU patch the hosted Windows runner finds (build unknown) left an offset-placed file unchanged
-            # (gauntlet run 41986664925, job 127109409348), while Git for Windows' GNU patch 2.7.6 applied it.
-            leftovers = Path(tempfile.mkdtemp(prefix="vool-patch-"))
-            patch_cmd = [patch_available, f"-p{patch_strip}", "-d", str(workspace_root), "--unified", "--forward", "--batch",
-                         "--fuzz=0", "-B", f"{leftovers}{os.sep}", f"--reject-file={leftovers / 'rejects'}", "--get=0"]
-            # The patch's UTF-8 bytes, and a timeout not caught, as for `git apply` above.
-            # Without the variables that change which name GNU patch takes (POSIXLY_CORRECT reads `Index:`)
-            # or make it fetch files from version control; `--get=0` says the same.
-            patch_env = {key: value for key, value in os.environ.items()
-                         if key not in ("POSIXLY_CORRECT", "PATCH_GET", "PATCH_VERSION_CONTROL", "VERSION_CONTROL")}
-            try:
-                patch_result = subprocess.run(patch_cmd, input=patch_text.encode("utf-8"), capture_output=True,
-                                              timeout=60, env=patch_env)
-            finally:
-                shutil.rmtree(leftovers, ignore_errors=True)
+            # The call is the one that has always run (proven on the hosted Windows runner, whose GNU patch is
+            # a build we cannot see). Not `--no-backup-if-mismatch` or `-B`/`--reject-file`: with either, that
+            # build left an offset-placed file unchanged (gauntlet runs 41986664925 and 41994038484), while Git
+            # for Windows' GNU patch 2.7.6 and 2.8.1 applied it. So the `.orig` copy GNU patch keeps of a file it
+            # placed at an offset, and the `.rej` file of a failed hunk, land beside the file, and VOOL removes
+            # the ones this run made once GNU patch has finished (below).
+            patch_cmd = [patch_available, f"-p{patch_strip}", "-d", str(workspace_root), "--forward", "--batch", "--fuzz=0"]
+            # The patch's UTF-8 bytes, and a timeout not caught, as for `git apply` above. A run stopped at its
+            # time limit leaves everything as it is: what it wrote is unknown, so nothing is removed.
+            patch_result = subprocess.run(patch_cmd, input=patch_text.encode("utf-8"), capture_output=True, timeout=60)
+            _remove_gnu_patch_leftovers(snapshots, workspace_root=workspace_root)
             if patch_result.returncode == 0:
                 applied_with = "patch"
             else:
@@ -1169,6 +1173,39 @@ _GIT_EXTENDED_HEADERS = ("index ", "new file mode ", "deleted file mode ", "old 
                          "similarity index ", "dissimilarity index ")
 _MAIL_SIGNATURE_TAIL_RE = re.compile(r"^[0-9][0-9A-Za-z.+-]*$")
 
+
+
+_GNU_PATCH_ENV = ("POSIXLY_CORRECT", "PATCH_GET", "PATCH_VERSION_CONTROL", "VERSION_CONTROL", "SIMPLE_BACKUP_SUFFIX")
+_GNU_PATCH_LEFTOVER_SUFFIXES = (".orig", ".rej")
+
+
+def _gnu_patch_env_set() -> str:
+    """The first variable set that changes what GNU patch reads or the names of the files it leaves."""
+    return next((name for name in _GNU_PATCH_ENV if os.environ.get(name) is not None), "")
+
+
+def _gnu_patch_leftover_paths(snapshots: list[dict[str, Any]], *, workspace_root: Path) -> list[Path]:
+    paths: list[Path] = []
+    for snapshot in snapshots:
+        target = resolve_workspace_path(snapshot["path"], workspace_root=workspace_root, write=True)
+        paths.extend(target.with_name(target.name + suffix) for suffix in _GNU_PATCH_LEFTOVER_SUFFIXES)
+    return paths
+
+
+def _gnu_patch_leftovers(snapshots: list[dict[str, Any]], *, workspace_root: Path) -> set[Path]:
+    """The `.orig` and `.rej` names beside the files a patch names that are already taken."""
+    return {path for path in _gnu_patch_leftover_paths(snapshots, workspace_root=workspace_root) if os.path.lexists(path)}
+
+
+def _remove_gnu_patch_leftovers(snapshots: list[dict[str, Any]], *, workspace_root: Path) -> None:
+    """Remove the `.orig` and `.rej` files this GNU patch run made beside the files it patched. GNU patch is
+    started only when none of those names is taken, so each one there now is this run's; a name that is
+    anything but a plain file is left alone."""
+    for path in _gnu_patch_leftover_paths(snapshots, workspace_root=workspace_root):
+        if path.is_symlink() or not path.is_file():
+            continue
+        with contextlib.suppress(OSError):  # Else left beside the file, as GNU patch always left it.
+            path.unlink()
 
 def _gnu_patch_reads_only_vools_headers(patch_text: str) -> bool:
     """Whether GNU patch, given this patch, can only read the headers VOOL read. GNU patch looks for a file
