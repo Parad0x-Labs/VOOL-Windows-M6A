@@ -63,7 +63,7 @@ def refuse_real_profile_target(candidate: str) -> str | None:
     """A refusal message when *candidate* names a real browser profile/keychain
     root (or anything under the operator's home that looks like one), else None."""
 
-    # Compared with `/` separators, so a Windows spelling (`C:\\Users\\me\\AppData\\...`) meets the markers.
+    # Compared with `/` separators, so a Windows spelling (`C:\Users\me\AppData\...`) meets the markers.
     text = str(candidate or "").strip().lower().replace("\\", "/")
     if not text:
         return "profile: empty profile target"
