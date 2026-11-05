@@ -12,6 +12,7 @@ permission-granting power (a skill's words cannot move the permission gate, and 
 """
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -95,7 +96,7 @@ def test_skill_injection_carries_provenance(skill_world) -> None:
     skill = offer.skill_guidance.skills[0]
     assert skill["name"] == "widget-report"
     assert skill["plugin_id"] == "pack"
-    assert skill["path"].endswith("skills/widget-report/SKILL.md")
+    assert Path(skill["path"]).as_posix().endswith("skills/widget-report/SKILL.md")
     assert skill["chars"] > 0
     # Provenance is stamped on the turn so the executed turn can be audited against its offer.
     stamped = context["_tool_offer"]
