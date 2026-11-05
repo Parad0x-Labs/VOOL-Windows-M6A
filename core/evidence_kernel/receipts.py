@@ -54,7 +54,9 @@ def _digest_key() -> bytes:
         path.parent.mkdir(parents=True, exist_ok=True)
         key = os.urandom(32)
         tmp = path.with_suffix(".tmp")
-        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        # O_BINARY (Windows only; 0 elsewhere): without it the key lands in text mode and every 0x0A
+        # byte gains a 0x0D, so a key holding a newline is stored as 33 bytes and replaced next read.
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
         try:
             if _WINDOWS_OWNER_ONLY:
                 # The 0o600 above only sets the read-only bit on Windows; make the still-empty file
