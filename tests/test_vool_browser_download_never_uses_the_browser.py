@@ -127,7 +127,7 @@ def test_a_redirect_to_an_origin_without_a_grant_is_refused_and_leaves_nothing(s
     assert list(handle.staging_dir.iterdir()) == []
 
 
-@pytest.mark.parametrize("path", ["/lying", "/unsized", "/declared-huge"])
+@pytest.mark.parametrize("path", ["/unsized", "/declared-huge"])
 def test_a_body_past_max_bytes_is_refused_whatever_its_length_says_and_leaves_nothing(sites, path) -> None:
     base, _, handle = sites
     with pytest.raises(OpFailed) as refused:
@@ -135,6 +135,12 @@ def test_a_body_past_max_bytes_is_refused_whatever_its_length_says_and_leaves_no
     assert refused.value.status == "download_exceeds_bound"
     assert "max_bytes" in refused.value.message
     assert list(handle.staging_dir.iterdir()) == []
+
+
+def test_a_body_longer_than_its_declared_length_is_read_only_to_that_length(sites) -> None:
+    base, _, handle = sites
+    receipt = _download(handle, base + "/lying", max_bytes=1024 * 1024)
+    assert receipt["bytes"] == 1000
 
 
 def test_the_engine_is_launched_with_downloads_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
