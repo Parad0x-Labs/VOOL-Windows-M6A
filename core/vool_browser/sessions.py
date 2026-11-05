@@ -107,6 +107,9 @@ class SessionHandle:
         self.dir = scratch_root() / "sessions" / f"{session}-{uuid.uuid4().hex[:8]}"
         self.profile_dir = self.dir / "profile"
         self.staging_dir = self.dir / "staging"
+        # Chromium's own download folder for this session. Without it the engine is left with its
+        # default, the user's real Downloads, which changed during a session download on Windows.
+        self.downloads_dir = self.dir / "downloads"
         self.receipts_path = self.dir / "receipts.jsonl"
         self.grants = GrantStore()
         self.op_budget = max(1, min(int(op_budget), 5000))
@@ -123,6 +126,8 @@ class SessionHandle:
 
         self.profile_dir.mkdir(parents=True, exist_ok=True)
         self.staging_dir.mkdir(parents=True, exist_ok=True)
+        self.downloads_dir.mkdir(parents=True, exist_ok=True)
+        _seed_download_folder(self.profile_dir, self.downloads_dir)
 
         self._queue: queue.Queue[tuple[Callable[[Any], Any], dict] | None] = queue.Queue()
         self._done = threading.Event()
@@ -159,6 +164,7 @@ class SessionHandle:
                     executable_path=self.engine_binary,
                     args=flags,
                     accept_downloads=True,
+                    downloads_path=str(self.downloads_dir),
                 )
                 page = context.new_page()
                 self._pid = self._engine_pid(str(self.profile_dir))
@@ -326,6 +332,25 @@ class SessionHandle:
         record = self.describe()
         record["engine_error"] = self._engine_error
         return record
+
+
+def _seed_download_folder(profile_dir: Path, downloads_dir: Path) -> None:
+    """Name `downloads_dir` as the fresh profile's download and save folder before the engine starts.
+
+    Playwright's downloads path applies only once the browser is up; Edge already creates a probe
+    `.tmp` file in its default folder, the user's real Downloads, at startup (Steve job 48g). The
+    profile is a new, disposable folder, so its Preferences file is VOOL's to write.
+    """
+    import json
+
+    folder = str(downloads_dir)
+    preferences = {
+        "download": {"default_directory": folder, "prompt_for_download": False, "directory_upgrade": True},
+        "savefile": {"default_directory": folder},
+    }
+    default = profile_dir / "Default"
+    default.mkdir(parents=True, exist_ok=True)
+    (default / "Preferences").write_text(json.dumps(preferences), encoding="utf-8")
 
 
 def _purge_profile(profile_dir: Path) -> None:
