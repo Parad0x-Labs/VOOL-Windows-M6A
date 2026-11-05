@@ -15,7 +15,7 @@ from urllib.request import urlopen
 from core.agent_runtime import fast_paths_utility as greetings
 from tests import _reader_served_rig as rig
 from tests import served_browser
-from tests._auxiliary_calls import is_search_expansion
+from tests._auxiliary_calls import is_answer_attempt, is_search_expansion
 
 # The greeting pool also includes "Hello!". Match the scripted provider's own
 # reply so a greeting cannot satisfy the wait before the queued turn executes.
@@ -261,9 +261,10 @@ def test_a_send_inside_the_post_turn_claim_window_is_still_run(tmp_path, monkeyp
                     raise
                 # The chat now holds the greeting turn, so the queued turn may first make its one
                 # search-expansion call (tests/_auxiliary_calls.py); the answer itself runs exactly once.
-                answers = [call for call in provider.calls if not is_search_expansion(call)]
+                # Identity probes and post-turn memory extraction are not answers and are not counted.
+                answers = [call for call in provider.calls if is_answer_attempt(call)]
                 assert len(answers) == 1, "the queued turn must run exactly once"
-                assert len(provider.calls) - len(answers) <= 1, "at most one search-expansion call per turn"
+                assert sum(map(is_search_expansion, provider.calls)) <= 1, "at most one search-expansion call per turn"
                 trace = page.evaluate("window.__queueTrace")
                 assert trace.count("claim") >= 2, f"the stranded item was never re-claimed: {trace}"
                 # The complete op is fire-and-forget at run release, so the drained-queue read
@@ -436,7 +437,9 @@ def test_a_pet_parked_on_send_or_approve_never_takes_their_click(tmp_path):
                         page.wait_for_function(
                             "text => [...document.querySelectorAll('.msg.assistant .msg-text')].at(-1).textContent.includes(text)",
                             arg=PROVIDER_REPLY_MARK, timeout=15000)
-                        assert len(provider.calls) == 1, (width, motion, len(provider.calls))
+                        answers = [call for call in provider.calls if is_answer_attempt(call)]
+                        assert len(answers) == 1, (width, motion, len(answers))
+                        assert not any(map(is_search_expansion, provider.calls)), (width, motion)
                         page.wait_for_function("view.run && view.run.released", timeout=5000)
 
                         # The pet is still dragged by its own body while it covers Send.
