@@ -1193,8 +1193,13 @@ def _gnu_patch_leftover_paths(snapshots: list[dict[str, Any]], *, workspace_root
 
 
 def _gnu_patch_leftovers(snapshots: list[dict[str, Any]], *, workspace_root: Path) -> set[Path]:
-    """The `.orig` and `.rej` names beside the files a patch names that are already taken."""
-    return {path for path in _gnu_patch_leftover_paths(snapshots, workspace_root=workspace_root) if os.path.lexists(path)}
+    """The `.orig` and `.rej` names beside the files a patch names that are already taken, on disk or by
+    the patch itself (a file it creates at such a name would be removed with GNU patch's own)."""
+    targets = {resolve_workspace_path(snapshot["path"], workspace_root=workspace_root, write=True) for snapshot in snapshots}
+    return {
+        path for path in _gnu_patch_leftover_paths(snapshots, workspace_root=workspace_root)
+        if path in targets or os.path.lexists(path)
+    }
 
 
 def _remove_gnu_patch_leftovers(snapshots: list[dict[str, Any]], *, workspace_root: Path) -> None:
