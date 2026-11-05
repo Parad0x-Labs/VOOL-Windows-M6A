@@ -215,3 +215,41 @@ def test_gnu_patch_creates_no_file_from_an_indented_section(workspace: Path, wit
         " --- /dev/null\n +++ b/new.sh\n @@ -0,0 +1,2 @@\n +x\n +y\n"
     )
     _assert_lands_only_where_checked(*_apply(workspace, patch))
+
+
+# A link the patch itself creates would carry a later section's writes wherever it points.
+def test_a_patch_that_creates_a_symbolic_link_is_refused_with_nothing_written(workspace: Path) -> None:
+    patch = (
+        "diff --git a/l b/l\nnew file mode 120000\n--- /dev/null\n+++ b/l\n@@ -0,0 +1 @@\n+data\n"
+        "\\ No newline at end of file\n"
+        "diff --git a/l/y.txt b/l/y.txt\nnew file mode 100644\n--- /dev/null\n+++ b/l/y.txt\n@@ -0,0 +1 @@\n+x\n"
+    )
+    result, before, after = _apply(workspace, patch)
+    assert result["ok"] is False and result["status"] == "invalid_arguments", (result["status"], result["response_text"])
+    assert after == before and not (workspace / "l").is_symlink()
+
+
+# GNU patch also reads an indented `diff --git` section, and with POSIXLY_CORRECT set it takes the name an
+# `Index:` line gives; VOOL reads neither.
+def test_gnu_patch_creates_no_file_from_an_indented_git_header(workspace: Path, without_git: None) -> None:
+    patch = (
+        "--- a/ok.txt\n+++ b/ok.txt\n@@ -5,1 +5,1 @@\n-b\n+B\n\n"
+        " diff --git a/data/evil b/data/evil\n new file mode 100644\n\ntrailing text\n"
+    )
+    _assert_lands_only_where_checked(*_apply(workspace, patch))
+
+
+def test_gnu_patch_does_not_take_an_index_line_name(
+    workspace: Path, without_git: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("POSIXLY_CORRECT", "1")
+    patch = "Index: data/x.txt\n--- nope.txt\n+++ nope.txt\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n\ntrailing text\n"
+    _assert_lands_only_where_checked(*_apply(workspace, patch))
+
+
+# A removed `-- comment` line reads `--- comment` in the hunk; it is content, not a file header.
+def test_removing_a_line_that_starts_with_two_dashes_still_applies_with_git(workspace: Path) -> None:
+    (workspace / "q.sql").write_text("a\n-- drop table t;\nc\n", encoding="utf-8")
+    result, before, after = _apply(workspace, "--- a/q.sql\n+++ b/q.sql\n@@ -1,3 +1,2 @@\n a\n--- drop table t;\n c\n")
+    assert result["ok"] is True and result["details"]["engine"] == "git_apply", (result["status"], result["response_text"])
+    assert after["q.sql"] == b"a\nc\n"
