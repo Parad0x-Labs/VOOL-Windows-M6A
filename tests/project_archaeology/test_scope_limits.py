@@ -42,6 +42,12 @@ from tests.project_archaeology.conftest import journal_count
 BYTE_CEILING = 262_144
 
 
+def _names(obj, path) -> bool:
+    """Whether the JSON of `obj` names `path`. JSON escapes a backslash, so a Windows path is
+    looked for in its escaped form; a raw `str(path) in json.dumps(obj)` never matches there."""
+    return json.dumps(str(path))[1:-1] in json.dumps(obj)
+
+
 def _assert_envelope(pa, env: dict) -> None:
     """Envelope discipline asserted throughout: honest, read-only, schema-tagged."""
     assert isinstance(env, dict)
@@ -143,8 +149,8 @@ def test_content_grant_extends_scope_and_finds_marker(corpus, tmp_path):
     assert env["scope"]["content_access"] is True
     assert env["scope"]["default_scope"] is False
     assert env["scope"]["grants"], "accepted grant must be disclosed"
-    assert any(str(outside) in json.dumps(g) for g in env["scope"]["grants"])
-    hits = [r for r in env["results"] if str(outside) in json.dumps(r)]
+    assert any(_names(g, outside) for g in env["scope"]["grants"])
+    hits = [r for r in env["results"] if _names(r, outside)]
     assert hits, "marker under a granted root must be found as a workspace item"
     assert any("GRANTED-MARKER-3311" in json.dumps(r) for r in hits)
     for r in hits:
@@ -168,7 +174,7 @@ def test_without_grant_outside_marker_is_never_found(corpus, tmp_path):
     )
     _assert_envelope(pa, env)
     assert "GRANTED-MARKER-3311" not in json.dumps(env["results"])
-    assert not any(str(outside) in json.dumps(r) for r in env["results"])
+    assert not any(_names(r, outside) for r in env["results"])
     assert not env["scope"]["grants"]
 
 
@@ -191,7 +197,7 @@ def test_ungranted_query_target_is_refused_and_never_read(corpus, tmp_path):
     )
     # nothing outside the scope was read
     assert "OUT-OF-SCOPE-PAYMENT-9911" not in json.dumps(env["results"])
-    assert not any(str(outside) in json.dumps(r) for r in env["results"])
+    assert not any(_names(r, outside) for r in env["results"])
 
 
 def test_metadata_grant_lists_paths_but_never_reads_content(corpus, tmp_path):
@@ -209,7 +215,7 @@ def test_metadata_grant_lists_paths_but_never_reads_content(corpus, tmp_path):
     )
     _assert_envelope(pa, env)
     assert env["scope"]["content_access"] is False, "metadata tier grants no content access"
-    listed = [r for r in env["results"] if str(target) in json.dumps(r)]
+    listed = [r for r in env["results"] if _names(r, target)]
     assert listed, "a metadata grant still lists the file (names are not content)"
     for r in listed:
         assert str(r.get("excerpt", "")) == "", "metadata tier must never read content"
