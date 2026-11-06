@@ -476,7 +476,12 @@ def apply_unified_diff_workspace(
         git_available = None
     if git_available:
         # Without `-p`, git drops the first folder of every name, `a/`/`b/` or not.
-        git_cmd = [git_available, *safe_git.hardening_args(), "-C", str(workspace_root), "apply",
+        # `core.autocrlf` (on by default in Git for Windows, and settable in any repository or user
+        # config) makes `git apply` write every line of a file it changes with CRLF, and `core.eol` (CRLF
+        # by default on Windows) does the same for a file the repository marks `text`. VOOL checked a
+        # file with LF endings and keeps every byte it does not change, so both are set for this command.
+        git_cmd = [git_available, *safe_git.hardening_args(), "-c", "core.autocrlf=false", "-c", "core.eol=lf",
+                   "-C", str(workspace_root), "apply",
                    f"-p{strip}", "--whitespace=nowarn", "--recount", "-"]
         # The engines read the patch's exact UTF-8 bytes: a text pipe would encode it in the locale's
         # encoding and, on Windows, write each newline as CRLF, so the engine would not read the patch
@@ -529,7 +534,12 @@ def apply_unified_diff_workspace(
             # for Windows' GNU patch 2.7.6 and 2.8.1 applied it. So the `.orig` copy GNU patch keeps of a file it
             # placed at an offset, and the `.rej` file of a failed hunk, land beside the file, and VOOL removes
             # the ones this run made once GNU patch has finished (below).
-            patch_cmd = [patch_available, f"-p{patch_strip}", "-d", str(workspace_root), "--forward", "--batch", "--fuzz=0"]
+            # `--binary`: a native Windows build of GNU patch reads and writes in text mode, so it would write
+            # each LF of a file it changes as CRLF, and rewrite a file whose only hunk it could not place (the
+            # hosted runner's build did both, suite 42131994644). On POSIX it changes nothing for VOOL's
+            # patches: it only turns off the reading of CRLF patch lines, and VOOL refuses those.
+            patch_cmd = [patch_available, f"-p{patch_strip}", "-d", str(workspace_root), "--forward", "--batch", "--fuzz=0",
+                         "--binary"]
             # The patch's UTF-8 bytes, and a timeout not caught, as for `git apply` above. A run stopped at its
             # time limit leaves everything as it is: what it wrote is unknown, so nothing is removed.
             patch_result = subprocess.run(patch_cmd, input=patch_text.encode("utf-8"), capture_output=True, timeout=60)
