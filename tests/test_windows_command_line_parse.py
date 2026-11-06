@@ -207,6 +207,26 @@ def test_the_sandbox_spawns_the_absolute_path_it_checked(windows, monkeypatch, t
     assert spawned[0][1:] == ["status"]
 
 
+def test_an_env_wrapped_program_is_refused_on_windows(windows, monkeypatch, tmp_path):
+    from sandbox.job_runner import JobRunner
+
+    env = _program(tmp_path / "Git" / "usr" / "bin", "env.EXE")
+    planted = _program(tmp_path / "workspace", "git.EXE")
+    monkeypatch.setenv("PATH", str(env.parent))
+    monkeypatch.setenv("PATHEXT", ".EXE")
+    spawned: list[list[str]] = []
+    monkeypatch.setattr(JobRunner, "run", lambda self, argv, *a, **k: spawned.append(list(argv)) or {})
+    # The runner's own check is under test, so the gate lets every line through.
+    from core.execution_gate import ExecutionGate
+
+    monkeypatch.setattr(ExecutionGate, "evaluate_command", lambda self, cmd, **k: {"decision": "allowed", "reason": ""})
+    for command in (f"env {planted} status", "env git status", "env FOO=1 git status"):
+        _runner, result = _run_in_sandbox(tmp_path, command)
+        assert result["status"] == "blocked_by_policy", (command, result)
+        assert "env is not used on Windows" in result["error"], (command, result)
+    assert spawned == []
+
+
 def test_the_gate_and_the_runner_read_the_same_argv(windows, monkeypatch):
     """A backslash before a quote: POSIX words would give the gate C:a"b, Windows gives C:\\a"b."""
     import shlex
