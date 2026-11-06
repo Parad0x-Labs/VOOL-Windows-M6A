@@ -13,7 +13,7 @@ from sandbox.job_runner import (
     JobRunner,
     KernelIsolationUnavailableError,
 )
-from sandbox.network_guard import command_uses_network, parse_command
+from sandbox.network_guard import command_uses_network, parse_command, require_windows_exe
 from sandbox.resource_limits import ExecutionPolicy
 
 
@@ -135,6 +135,12 @@ class SandboxRunner:
             return {"error": f"Command line refused: {exc}", "status": "blocked_by_policy"}
         if not argv:
             return {"error": "Empty command.", "status": "blocked_by_policy"}
+        try:
+            # On Windows the program that actually runs must be an .exe: a .cmd/.bat found through
+            # PATHEXT would run through cmd.exe, which re-reads the line. Off Windows, a no-op.
+            require_windows_exe(str(argv[0] or ""))
+        except ValueError as exc:
+            return {"error": f"Command line refused: {exc}", "status": "blocked_by_policy"}
         base_cmd = _base_command_name(str(argv[0] or ""))
         if base_cmd == "env":
             index = 1

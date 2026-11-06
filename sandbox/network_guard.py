@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import shlex
+import shutil
 import subprocess
 from pathlib import PurePath, PureWindowsPath
 
@@ -120,6 +121,26 @@ def parse_command(cmd: str) -> list[str]:
     if not _IS_WINDOWS:
         return shlex.split(cmd, posix=True)
     return _windows_argv(str(cmd or ""))
+
+
+def require_windows_exe(program: str, *, which=None) -> str:
+    """On Windows, the path of the program that would actually run, which must be a `.exe`.
+
+    A bare name is resolved the way Windows finds it (PATH and PATHEXT). A name that resolves to a
+    `.cmd` or `.bat` runs through cmd.exe, which re-reads the whole line, metacharacters inside quotes
+    included, so it is refused, as is a name that resolves to nothing. Off Windows, `program` is
+    returned unchanged."""
+    if not _IS_WINDOWS:
+        return program
+    resolved = (which or shutil.which)(program)
+    if not resolved:
+        raise CommandLineRefused(f"the program {program!r} was not found")
+    if PureWindowsPath(str(resolved)).suffix.lower() != ".exe":
+        raise CommandLineRefused(
+            f"the program {program!r} runs as {resolved!r}, which is not an .exe; "
+            "a .cmd or .bat would run through cmd.exe"
+        )
+    return str(resolved)
 
 
 def join_command(argv: list[str]) -> str:
