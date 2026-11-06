@@ -304,19 +304,25 @@ _PRESENTATION_SHAPE_RES: tuple[tuple[str, re.Pattern[str]], ...] = (
 
 # Structural acceptance for a delivered answer, per format. Lenient by design:
 # these detect the requested SHAPE, never its quality, and never mutate text.
-# Whitespace runs are owned by exactly ONE greedy token per branch: the newline
-# boundaries are `(?:[^\S\n]*\n)+` (one newline per iteration, so a blank-line run
-# cannot be re-split O(k) ways) and the leading indent stops at the table's own
-# line. The old `\s*\n\s*` / `^\s*` forms re-extended the same whitespace run
-# once per decomposition, which a delivered answer of header row + k blank lines
-# + one unclosed pipe row turned into O(k^2) match work (alerts 121-127 family).
+# Whitespace runs are owned by exactly ONE greedy token per branch: a newline
+# boundary is `[^\S\n]*\n\s*` (the row's trailing spaces, its newline, then one
+# `\s*` that owns the whole rest of the run, so a blank-line run cannot be
+# re-split O(k) ways) and the leading indent stops at the table's own line. The
+# boundary is a single-character repeat on purpose: the earlier
+# `(?:[^\S\n]*\n)+` group was linear in steps but saved a backtrack frame per
+# newline (about 150 bytes each, 1.7 MB for 12,000 blank lines), and on Windows
+# that per-call allocation made x8 input cost x22-x28 time. Same language: both
+# accept any whitespace run holding at least one newline. The old `\s*\n\s*` /
+# `^\s*` forms re-extended the same whitespace run once per decomposition,
+# which a delivered answer of header row + k blank lines + one unclosed pipe row
+# turned into O(k^2) match work (alerts 121-127 family).
 # The only behavior change is the match START when a table follows blank lines:
 # it now starts at the table's first pipe line instead of the earlier blank line
 # (``^`` still supplies the line anchor; the one consumer reads only the boolean
 # from .search, so the found-table answer never differs).
 _MARKDOWN_TABLE_RE = re.compile(
-    r"^[^\S\n]*\|[^\n]+\|(?:[^\S\n]*\n)+[^\S\n]*\|[\s:|-]+\|"
-    r"(?:(?:[^\S\n]*\n)+[^\S\n]*\|[^\n]+\|)*",
+    r"^[^\S\n]*\|[^\n]+\|[^\S\n]*\n\s*\|[\s:|-]+\|"
+    r"(?:[^\S\n]*\n\s*\|[^\n]+\|)*",
     re.MULTILINE,
 )
 _DATE_LINE_RE = re.compile(
