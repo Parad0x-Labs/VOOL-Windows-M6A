@@ -274,10 +274,13 @@ def test_searching_never_sends_a_turn_or_calls_anything(page_ctx) -> None:
     # did on Windows run 41670907215). Only these exact GETs are excused; anything else still fails.
     # The sidebar's activity refresh is the third timed poll (every 5000 ms, refreshSidebarActivity
     # in core/vool_chat_page.py); it landed in this window on Windows run 41969949799.
+    # The notification centre's feed is the fourth (every 3000 ms, pollCentre in
+    # core/notification_fragment.py); it landed in this window on Windows run 42258170566.
     page_polls = {
         ("GET", "http://vool.test/api/wallet/status"),
         ("GET", "http://vool.test/api/update/status"),
         ("GET", "http://vool.test/api/runtime/sessions?summary=1"),
+        ("GET", "http://vool.test/api/notifications?after=0&limit=200"),
     }
     new_requests = [(m, u) for m, u in seen[before:] if (m, u) not in page_polls]
     assert new_requests == [], f"searching issued requests: {new_requests}"
