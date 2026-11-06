@@ -227,6 +227,28 @@ def test_an_env_wrapped_program_is_refused_on_windows(windows, monkeypatch, tmp_
     assert spawned == []
 
 
+@pytest.mark.parametrize(
+    "command",
+    ["find . -exec git status ;", "find . -execdir x.exe {} +", "find . -ok x.exe {} ;", "rg --pre=x.exe foo", "rg --pre x.exe foo", "rg --hostname-bin=x.exe foo"],
+)
+def test_a_whitelisted_tool_that_would_start_another_program_is_refused_on_windows(windows, monkeypatch, tmp_path, command):
+    from core.execution_gate import ExecutionGate
+    from sandbox.job_runner import JobRunner
+
+    bin_dir = tmp_path / "bin"
+    _program(bin_dir, "find.EXE")
+    _program(bin_dir, "rg.EXE")
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.setenv("PATHEXT", ".EXE")
+    spawned: list[list[str]] = []
+    monkeypatch.setattr(JobRunner, "run", lambda self, argv, *a, **k: spawned.append(list(argv)) or {})
+    monkeypatch.setattr(ExecutionGate, "evaluate_command", lambda self, cmd, **k: {"decision": "allowed", "reason": ""})
+    _runner, result = _run_in_sandbox(tmp_path, command)
+    assert result["status"] == "blocked_by_policy", result
+    assert "starts another program" in result["error"], result
+    assert spawned == []
+
+
 def test_the_gate_and_the_runner_read_the_same_argv(windows, monkeypatch):
     """A backslash before a quote: POSIX words would give the gate C:a"b, Windows gives C:\\a"b."""
     import shlex
