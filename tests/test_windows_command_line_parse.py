@@ -9,6 +9,8 @@ These tests drive the Windows rules on any host through network_guard._IS_WINDOW
 """
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from sandbox import network_guard
@@ -28,10 +30,9 @@ def test_an_unquoted_windows_interpreter_path_keeps_its_separators(windows):
     ]
 
 
-def test_the_whitelist_sees_the_interpreter_by_its_case_folded_name_without_exe(windows, monkeypatch):
+def test_the_whitelist_sees_the_interpreter_by_its_case_folded_name_without_exe(windows):
     from sandbox import sandbox_runner
 
-    monkeypatch.setattr(sandbox_runner.os, "name", "nt")
     argv = parse_command(r'"C:\Program Files\Python312\PYTHON.EXE" -c "print(1)"')
     assert argv[0] == r"C:\Program Files\Python312\PYTHON.EXE"
     assert sandbox_runner._base_command_name(argv[0]) == "python"
@@ -111,24 +112,53 @@ def test_off_windows_commands_are_still_shell_words(monkeypatch):
     assert join_command(["a b", "c"]) == "'a b' c"
 
 
-def test_a_bare_name_that_resolves_to_a_cmd_or_bat_is_refused(windows):
+def _program(folder, name: str):
+    # Named in PATHEXT's case: Windows matches extensions case-blind, a POSIX test host does not.
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / name
+    target.write_bytes(b"MZ")
+    return target
+
+
+def test_a_bare_name_that_resolves_to_a_cmd_or_bat_is_refused(windows, tmp_path):
     from sandbox.network_guard import require_windows_exe
 
-    for resolved in (r"C:\Program Files\nodejs\npm.CMD", r"C:\tools\x.bat"):
+    bin_dir = tmp_path / "bin"
+    _program(bin_dir, "npm.CMD")
+    _program(bin_dir, "x.BAT")
+    for name in ("npm", "x"):
         with pytest.raises(CommandLineRefused, match=r"not an \.exe"):
-            require_windows_exe("npm", which=lambda _name, r=resolved: r)
+            require_windows_exe(name, path=str(bin_dir), pathext=".COM;.EXE;.BAT;.CMD")
     with pytest.raises(CommandLineRefused, match="was not found"):
-        require_windows_exe("nothing-here", which=lambda _name: None)
+        require_windows_exe("nothing-here", path=str(bin_dir), pathext=".EXE")
 
 
-def test_a_bare_name_that_resolves_to_an_exe_is_allowed(windows):
+def test_a_bare_name_that_resolves_to_an_exe_is_allowed_as_its_absolute_path(windows, tmp_path):
     from sandbox.network_guard import require_windows_exe
 
-    git = r"C:\Program Files\Git\cmd\git.EXE"
-    assert require_windows_exe("git", which=lambda _name: git) == git
+    git = _program(tmp_path / "Git" / "cmd", "git.EXE")
+    assert require_windows_exe("git", path=str(git.parent), pathext=".EXE") == str(git)
 
 
-def test_the_sandbox_refuses_a_program_that_would_run_through_cmd(windows, monkeypatch, tmp_path):
+def test_a_program_planted_in_the_current_folder_or_workspace_is_never_chosen(windows, tmp_path, monkeypatch):
+    from sandbox.network_guard import require_windows_exe
+
+    workspace = tmp_path / "workspace"
+    _program(workspace, "git.EXE")
+    real = _program(tmp_path / "Git" / "cmd", "git.EXE")
+    monkeypatch.chdir(workspace)
+    # The current folder is never searched, and a PATH entry inside it (relative or absolute) is skipped.
+    search = os.pathsep.join([".", str(workspace), str(real.parent)])
+    assert require_windows_exe("git", refuse_under=(str(workspace),), path=search, pathext=".EXE") == str(real)
+    # With nothing else on PATH, the planted copy is refused, not run.
+    with pytest.raises(CommandLineRefused):
+        require_windows_exe("git", refuse_under=(str(workspace),), path=str(workspace), pathext=".EXE")
+    # An absolute path into the workspace is refused too.
+    with pytest.raises(CommandLineRefused, match="inside the workspace"):
+        require_windows_exe(str(workspace / "git.EXE"), refuse_under=(str(workspace),))
+
+
+def _run_in_sandbox(tmp_path, command: str):
     from core.execution_gate import (
         ExecutionGate,
         reset_request_autonomy_override,
@@ -137,15 +167,44 @@ def test_the_sandbox_refuses_a_program_that_would_run_through_cmd(windows, monke
     from core.remote_fetch_policy import remote_fetch_policy_scope
     from sandbox.sandbox_runner import SandboxRunner
 
-    monkeypatch.setattr(network_guard.shutil, "which", lambda name: rf"C:\shims\{name}.cmd")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(exist_ok=True)
     token = set_request_autonomy_override("auto")
     try:
         with remote_fetch_policy_scope({"surface": "openclaw"}):
-            result = SandboxRunner(ExecutionGate(), str(tmp_path)).run_command("git status", cwd=str(tmp_path))
+            runner = SandboxRunner(ExecutionGate(), str(workspace))
+            return runner, runner.run_command(command, cwd=str(workspace))
     finally:
         reset_request_autonomy_override(token)
+
+
+def test_the_sandbox_refuses_a_program_that_would_run_through_cmd(windows, monkeypatch, tmp_path):
+    shims = tmp_path / "shims"
+    _program(shims, "git.CMD")
+    monkeypatch.setenv("PATH", str(shims))
+    monkeypatch.setenv("PATHEXT", ".EXE;.CMD")
+    _runner, result = _run_in_sandbox(tmp_path, "git status")
     assert result["status"] == "blocked_by_policy", result
     assert "not an .exe" in result["error"], result
+
+
+def test_the_sandbox_spawns_the_absolute_path_it_checked(windows, monkeypatch, tmp_path):
+    from sandbox.job_runner import JobRunner
+
+    real = _program(tmp_path / "Git" / "cmd", "git.EXE")
+    monkeypatch.setenv("PATH", str(real.parent))
+    monkeypatch.setenv("PATHEXT", ".EXE")
+    spawned: list[list[str]] = []
+
+    def fake_run(self, argv, *args, **kwargs):
+        spawned.append(list(argv))
+        return {"status": "success", "stdout": "", "stderr": "", "returncode": 0}
+
+    monkeypatch.setattr(JobRunner, "run", fake_run)
+    _runner, result = _run_in_sandbox(tmp_path, "git status")
+    assert spawned, f"the command never reached the job runner: {result}"
+    assert spawned[0][0] == str(real)
+    assert spawned[0][1:] == ["status"]
 
 
 def test_the_gate_and_the_runner_read_the_same_argv(windows, monkeypatch):
