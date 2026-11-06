@@ -11,7 +11,8 @@ import hashlib
 
 import pytest
 
-from tests.test_chat_documents_ui import LONG_PASTE, _open, browser  # noqa: F401  (browser is a fixture)
+# `browser` is the module fixture the documents suite launches; importing it shares it here.
+from tests.test_chat_documents_ui import LONG_PASTE, _open, browser
 
 ATT_ID = "att_" + "7" * 32
 
@@ -55,7 +56,7 @@ def _history_with_a_document(server, chat_id: str, *, content: str) -> None:
 
 @pytest.mark.parametrize("viewport", [{"width": 1280, "height": 860}, {"width": 375, "height": 812}], ids=["desktop", "phone"])
 @pytest.mark.parametrize("content", ["summarise this log", "x"], ids=["words", "one_letter"])
-def test_no_chip_control_is_under_the_action_row(browser, viewport, content) -> None:  # noqa: F811
+def test_no_chip_control_is_under_the_action_row(browser, viewport, content) -> None:
     context, page, server, errors = _open(browser, viewport=viewport)
     try:
         chat_id = page.evaluate("displayedChat")
