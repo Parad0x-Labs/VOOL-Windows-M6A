@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import os
+import re
 import shlex
-from pathlib import PurePath
+import subprocess
+from pathlib import PurePath, PureWindowsPath
 
 _NETWORK_BINARIES = {
     "curl",
@@ -93,8 +96,172 @@ def command_uses_network(argv: list[str]) -> bool:
     return "http://" in joined or "https://" in joined
 
 
+#: Patched by tests to drive the Windows rules on any platform; read at call time.
+_IS_WINDOWS: bool = os.name == "nt"
+
+#: Characters cmd.exe gives a meaning outside double quotes. No command is run through a shell, but a
+#: command line that relies on one of them is not one VOOL can read the way the user meant, so it is
+#: refused rather than guessed at.
+_CMD_METACHARACTERS = frozenset('&|<>^()%!')
+_DRIVE_ABSOLUTE_RE = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+class CommandLineRefused(ValueError):
+    """A command line this platform's rules refuse to split. A ValueError, like shlex's own."""
+
+
 def parse_command(cmd: str) -> list[str]:
-    return shlex.split(cmd, posix=True)
+    """Split a command line into argv by the rules of the platform that will run it.
+
+    POSIX: shell words (`shlex`, posix mode). Windows: the CommandLineToArgvW rules, so a backslash
+    is a path separator and not an escape. There, a cmd.exe metacharacter outside double quotes, a
+    line break, or an argv[0] that names a path but is not an absolute `.exe` raises
+    `CommandLineRefused`."""
+    if not _IS_WINDOWS:
+        return shlex.split(cmd, posix=True)
+    return _windows_argv(str(cmd or ""))
+
+
+def require_windows_exe(
+    program: str,
+    *,
+    refuse_under: tuple[str, ...] = (),
+    path: str | None = None,
+    pathext: str | None = None,
+) -> str:
+    """On Windows, the absolute path of the program that would run, which must be a `.exe`.
+
+    Spawn the path this returns, never the bare name, so Windows cannot search again. A bare name is
+    looked up on PATH with PATHEXT, but never in the current folder: Windows would search it first,
+    so a `git.exe` planted in the workspace would otherwise run as the whitelisted `git`. A result
+    inside the current folder or any `refuse_under` root (the workspace) is refused for the same
+    reason. A name that resolves to a `.cmd` or `.bat` is refused, because cmd.exe re-reads the whole
+    line, metacharacters inside quotes included, and so is a name that resolves to nothing. Off
+    Windows, `program` is returned unchanged."""
+    if not _IS_WINDOWS:
+        return program
+    blocked = [_real(root) for root in (os.getcwd(), *refuse_under) if str(root or "").strip()]
+    resolved = _search_windows_program(program, blocked, path=path, pathext=pathext)
+    if not resolved:
+        raise CommandLineRefused(f"the program {program!r} was not found outside the workspace")
+    if any(_inside(_real(resolved), root) for root in blocked):
+        raise CommandLineRefused(f"the program {program!r} resolves inside the workspace ({resolved!r})")
+    if PureWindowsPath(resolved).suffix.lower() != ".exe":
+        raise CommandLineRefused(
+            f"the program {program!r} runs as {resolved!r}, which is not an .exe; "
+            "a .cmd or .bat would run through cmd.exe"
+        )
+    return resolved
+
+
+def _real(value: str) -> str:
+    return os.path.normcase(os.path.realpath(str(value)))
+
+
+def _inside(candidate: str, root: str) -> bool:
+    try:
+        return os.path.commonpath([candidate, root]) == root
+    except ValueError:  # different drives
+        return False
+
+
+def _search_windows_program(program: str, blocked: list[str], *, path: str | None, pathext: str | None) -> str:
+    if any(sep in program for sep in ("\\", "/", ":")):
+        # parse_command already required an absolute X:\...\*.exe for a path-shaped program.
+        return program if os.path.isfile(program) else ""
+    exts = [ext for ext in (pathext if pathext is not None else os.environ.get("PATHEXT", ".EXE")).split(";") if ext]
+    has_ext = any(program.lower().endswith(ext.lower()) for ext in exts)
+    names = [program] if has_ext else [program + ext for ext in exts]
+    for folder in (path if path is not None else os.environ.get("PATH", "")).split(os.pathsep):
+        folder = folder.strip().strip('"')
+        if not folder or not os.path.isabs(folder):
+            continue  # a relative PATH entry is the current folder by another name
+        if any(_inside(_real(folder), root) for root in blocked):
+            continue
+        for name in names:
+            candidate = os.path.join(folder, name)
+            if os.path.isfile(candidate):
+                return os.path.abspath(candidate)
+    return ""
+
+
+def join_command(argv: list[str]) -> str:
+    """The inverse of `parse_command` on this platform: `parse_command(join_command(a)) == a`."""
+    if not _IS_WINDOWS:
+        return shlex.join(argv)
+    return subprocess.list2cmdline([str(arg) for arg in argv])
+
+
+def _windows_argv(line: str) -> list[str]:
+    if "\r" in line or "\n" in line:
+        raise CommandLineRefused("a Windows command line cannot span lines")
+    argv: list[str] = []
+    i, n = 0, len(line)
+    while i < n and line[i] in " \t":
+        i += 1
+    if i >= n:
+        return []
+    # argv[0]: no backslash processing; a double quote only opens and closes a quoted span.
+    first: list[str] = []
+    quoted = False
+    while i < n and (quoted or line[i] not in " \t"):
+        ch = line[i]
+        if ch == '"':
+            quoted = not quoted
+        else:
+            if not quoted and ch in _CMD_METACHARACTERS:
+                raise CommandLineRefused(f"{ch!r} outside double quotes is a cmd.exe metacharacter")
+            first.append(ch)
+        i += 1
+    if quoted:
+        raise CommandLineRefused("unbalanced double quote in the program name")
+    argv.append("".join(first))
+    # The remaining arguments: 2n backslashes before a quote give n and toggle quoting; 2n+1 give n
+    # and a literal quote; backslashes before anything else are literal. "" inside quotes is a quote.
+    while True:
+        while i < n and line[i] in " \t":
+            i += 1
+        if i >= n:
+            break
+        arg: list[str] = []
+        quoted = False
+        while i < n and (quoted or line[i] not in " \t"):
+            ch = line[i]
+            if ch == "\\":
+                start = i
+                while i < n and line[i] == "\\":
+                    i += 1
+                count = i - start
+                if i < n and line[i] == '"':
+                    arg.append("\\" * (count // 2))
+                    if count % 2:
+                        arg.append('"')
+                        i += 1
+                    continue
+                arg.append("\\" * count)
+                continue
+            if ch == '"':
+                if quoted and i + 1 < n and line[i + 1] == '"':
+                    arg.append('"')
+                    i += 2
+                    continue
+                quoted = not quoted
+                i += 1
+                continue
+            if not quoted and ch in _CMD_METACHARACTERS:
+                raise CommandLineRefused(f"{ch!r} outside double quotes is a cmd.exe metacharacter")
+            arg.append(ch)
+            i += 1
+        if quoted:
+            raise CommandLineRefused("unbalanced double quote")
+        argv.append("".join(arg))
+    program = argv[0]
+    if any(sep in program for sep in ("\\", "/", ":")):
+        if not _DRIVE_ABSOLUTE_RE.match(program) or PureWindowsPath(program).suffix.lower() != ".exe":
+            raise CommandLineRefused(
+                f"the program {program!r} names a path, so it must be an absolute path to an .exe"
+            )
+    return argv
 
 
 # Global options that sit BEFORE the subcommand and take a value argument.

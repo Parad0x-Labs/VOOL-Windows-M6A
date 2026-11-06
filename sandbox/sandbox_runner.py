@@ -4,24 +4,44 @@ import contextlib
 import os
 import subprocess
 import threading
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from core.execution_gate import ExecutionGate
 from core.liquefy_bridge import execution_payload_within_size_limit
+from sandbox import network_guard
 from sandbox.job_runner import (
     HardLinkedWritableRootError,
     JobRunner,
     KernelIsolationUnavailableError,
 )
-from sandbox.network_guard import command_uses_network, parse_command
+from sandbox.network_guard import command_uses_network, parse_command, require_windows_exe
 from sandbox.resource_limits import ExecutionPolicy
 
 
 def _base_command_name(raw: str) -> str:
-    name = Path(str(raw or "")).name.lower()
-    if os.name == "nt" and name.endswith(".exe"):
+    # The command-line rules' own platform flag, so the name is read the way the line was split.
+    if network_guard._IS_WINDOWS:
+        name = PureWindowsPath(str(raw or "")).name.lower()
+    else:
+        name = Path(str(raw or "")).name.lower()
+    if network_guard._IS_WINDOWS and name.endswith(".exe"):
         return name[:-4]
     return name
+
+
+_FIND_LAUNCHING_PRIMARIES = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
+_RG_LAUNCHING_OPTIONS = ("--pre", "--hostname-bin")
+
+
+def _windows_launched_program(base_cmd: str, args: list[str]) -> str:
+    """The option through which a whitelisted tool would start another program, or ""."""
+    for arg in args:
+        token = str(arg or "")
+        if base_cmd == "find" and token in _FIND_LAUNCHING_PRIMARIES:
+            return token
+        if base_cmd == "rg" and token.split("=", 1)[0] in _RG_LAUNCHING_OPTIONS:
+            return token.split("=", 1)[0]
+    return ""
 
 
 def _network_isolation_mode_from_env() -> str:
@@ -127,10 +147,47 @@ class SandboxRunner:
 
         # Step 2: Validate whitelist
         allowed = False
-        argv = parse_command(cmd)
+        try:
+            argv = parse_command(cmd)
+        except ValueError as exc:
+            # Unbalanced quotes, or a command line this platform's rules refuse (on Windows: a cmd.exe
+            # metacharacter outside quotes, or a program path that is not an absolute .exe).
+            return {"error": f"Command line refused: {exc}", "status": "blocked_by_policy"}
         if not argv:
             return {"error": "Empty command.", "status": "blocked_by_policy"}
+        try:
+            # On Windows the program that actually runs must be an .exe outside the workspace: a .cmd
+            # or .bat found through PATHEXT would run through cmd.exe, which re-reads the line, and a
+            # program planted in the workspace would run as the whitelisted name. The checked
+            # absolute path is what is spawned, so Windows cannot search again. Off Windows, a no-op.
+            program = require_windows_exe(
+                str(argv[0] or ""), refuse_under=(str(self.workspace), str(target_cwd))
+            )
+        except ValueError as exc:
+            return {"error": f"Command line refused: {exc}", "status": "blocked_by_policy"}
+        argv = [program, *argv[1:]]
         base_cmd = _base_command_name(str(argv[0] or ""))
+        if base_cmd == "env" and network_guard._IS_WINDOWS:
+            # The wrapped program would be found by env.exe's own search, which never passes through
+            # the checks above (outside the workspace, an .exe, spawned by its checked path).
+            return {
+                "error": "Command line refused: env is not used on Windows; run the program directly",
+                "status": "blocked_by_policy",
+            }
+        launched = _windows_launched_program(base_cmd, argv[1:]) if network_guard._IS_WINDOWS else ""
+        if launched:
+            # find -exec/-ok and rg --pre/--hostname-bin start another program by their own search,
+            # which never passes through the checks above.
+            return {
+                "error": f"Command line refused: {base_cmd} {launched} starts another program, "
+                "which is not allowed on Windows",
+                "status": "blocked_by_policy",
+            }
+        if base_cmd == "sed" and network_guard._IS_WINDOWS:
+            # GNU sed's e command and s///e flag run a shell, and w/r touch files by name, all outside
+            # the checks above. --sandbox makes sed refuse them while -i keeps working; a sed that
+            # does not know the flag fails, which is fail closed.
+            argv = [argv[0], "--sandbox", *argv[1:]]
         if base_cmd == "env":
             index = 1
             while index < len(argv):
