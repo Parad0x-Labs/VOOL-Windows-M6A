@@ -127,7 +127,12 @@ class SandboxRunner:
 
         # Step 2: Validate whitelist
         allowed = False
-        argv = parse_command(cmd)
+        try:
+            argv = parse_command(cmd)
+        except ValueError as exc:
+            # Unbalanced quotes, or a command line this platform's rules refuse (on Windows: a cmd.exe
+            # metacharacter outside quotes, or a program path that is not an absolute .exe).
+            return {"error": f"Command line refused: {exc}", "status": "blocked_by_policy"}
         if not argv:
             return {"error": "Empty command.", "status": "blocked_by_policy"}
         base_cmd = _base_command_name(str(argv[0] or ""))

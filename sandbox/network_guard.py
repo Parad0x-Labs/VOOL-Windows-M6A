@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import os
+import re
 import shlex
-from pathlib import PurePath
+import subprocess
+from pathlib import PurePath, PureWindowsPath
 
 _NETWORK_BINARIES = {
     "curl",
@@ -93,8 +96,109 @@ def command_uses_network(argv: list[str]) -> bool:
     return "http://" in joined or "https://" in joined
 
 
+#: Patched by tests to drive the Windows rules on any platform; read at call time.
+_IS_WINDOWS: bool = os.name == "nt"
+
+#: Characters cmd.exe gives a meaning outside double quotes. No command is run through a shell, but a
+#: command line that relies on one of them is not one VOOL can read the way the user meant, so it is
+#: refused rather than guessed at.
+_CMD_METACHARACTERS = frozenset('&|<>^()%!')
+_DRIVE_ABSOLUTE_RE = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+class CommandLineRefused(ValueError):
+    """A command line this platform's rules refuse to split. A ValueError, like shlex's own."""
+
+
 def parse_command(cmd: str) -> list[str]:
-    return shlex.split(cmd, posix=True)
+    """Split a command line into argv by the rules of the platform that will run it.
+
+    POSIX: shell words (`shlex`, posix mode). Windows: the CommandLineToArgvW rules, so a backslash
+    is a path separator and not an escape. There, a cmd.exe metacharacter outside double quotes, a
+    line break, or an argv[0] that names a path but is not an absolute `.exe` raises
+    `CommandLineRefused`."""
+    if not _IS_WINDOWS:
+        return shlex.split(cmd, posix=True)
+    return _windows_argv(str(cmd or ""))
+
+
+def join_command(argv: list[str]) -> str:
+    """The inverse of `parse_command` on this platform: `parse_command(join_command(a)) == a`."""
+    if not _IS_WINDOWS:
+        return shlex.join(argv)
+    return subprocess.list2cmdline([str(arg) for arg in argv])
+
+
+def _windows_argv(line: str) -> list[str]:
+    if "\r" in line or "\n" in line:
+        raise CommandLineRefused("a Windows command line cannot span lines")
+    argv: list[str] = []
+    i, n = 0, len(line)
+    while i < n and line[i] in " \t":
+        i += 1
+    if i >= n:
+        return []
+    # argv[0]: no backslash processing; a double quote only opens and closes a quoted span.
+    first: list[str] = []
+    quoted = False
+    while i < n and (quoted or line[i] not in " \t"):
+        ch = line[i]
+        if ch == '"':
+            quoted = not quoted
+        else:
+            if not quoted and ch in _CMD_METACHARACTERS:
+                raise CommandLineRefused(f"{ch!r} outside double quotes is a cmd.exe metacharacter")
+            first.append(ch)
+        i += 1
+    if quoted:
+        raise CommandLineRefused("unbalanced double quote in the program name")
+    argv.append("".join(first))
+    # The remaining arguments: 2n backslashes before a quote give n and toggle quoting; 2n+1 give n
+    # and a literal quote; backslashes before anything else are literal. "" inside quotes is a quote.
+    while True:
+        while i < n and line[i] in " \t":
+            i += 1
+        if i >= n:
+            break
+        arg: list[str] = []
+        quoted = False
+        while i < n and (quoted or line[i] not in " \t"):
+            ch = line[i]
+            if ch == "\\":
+                start = i
+                while i < n and line[i] == "\\":
+                    i += 1
+                count = i - start
+                if i < n and line[i] == '"':
+                    arg.append("\\" * (count // 2))
+                    if count % 2:
+                        arg.append('"')
+                        i += 1
+                    continue
+                arg.append("\\" * count)
+                continue
+            if ch == '"':
+                if quoted and i + 1 < n and line[i + 1] == '"':
+                    arg.append('"')
+                    i += 2
+                    continue
+                quoted = not quoted
+                i += 1
+                continue
+            if not quoted and ch in _CMD_METACHARACTERS:
+                raise CommandLineRefused(f"{ch!r} outside double quotes is a cmd.exe metacharacter")
+            arg.append(ch)
+            i += 1
+        if quoted:
+            raise CommandLineRefused("unbalanced double quote")
+        argv.append("".join(arg))
+    program = argv[0]
+    if any(sep in program for sep in ("\\", "/", ":")):
+        if not _DRIVE_ABSOLUTE_RE.match(program) or PureWindowsPath(program).suffix.lower() != ".exe":
+            raise CommandLineRefused(
+                f"the program {program!r} names a path, so it must be an absolute path to an .exe"
+            )
+    return argv
 
 
 # Global options that sit BEFORE the subcommand and take a value argument.

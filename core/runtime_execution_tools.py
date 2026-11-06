@@ -7831,7 +7831,10 @@ def _run_command(
 def _trusted_local_network_mode(command: str, *, arguments: dict[str, Any]) -> str | None:
     if not bool(arguments.get("_trusted_local_only", False)):
         return None
-    argv = parse_command(command)
+    try:
+        argv = parse_command(command)
+    except ValueError:
+        return None  # an unreadable command line earns no trusted mode
     if not argv:
         return None
     base = Path(str(argv[0] or "")).name.lower()
