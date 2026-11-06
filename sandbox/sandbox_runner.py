@@ -152,6 +152,13 @@ class SandboxRunner:
             return {"error": f"Command line refused: {exc}", "status": "blocked_by_policy"}
         argv = [program, *argv[1:]]
         base_cmd = _base_command_name(str(argv[0] or ""))
+        if base_cmd == "env" and network_guard._IS_WINDOWS:
+            # The wrapped program would be found by env.exe's own search, which never passes through
+            # the checks above (outside the workspace, an .exe, spawned by its checked path).
+            return {
+                "error": "Command line refused: env is not used on Windows; run the program directly",
+                "status": "blocked_by_policy",
+            }
         if base_cmd == "env":
             index = 1
             while index < len(argv):
