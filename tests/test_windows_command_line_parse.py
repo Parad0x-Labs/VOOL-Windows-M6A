@@ -256,6 +256,8 @@ def test_sed_runs_with_sandbox_on_windows_so_its_e_command_is_refused(windows, m
     from core.execution_gate import ExecutionGate
     from sandbox.job_runner import JobRunner
 
+    # Found before PATH is pointed at the stand-in below, which is not a runnable program.
+    real_sed = shutil.which("sed")
     sed = _program(tmp_path / "Git" / "usr" / "bin", "sed.EXE")
     monkeypatch.setenv("PATH", str(sed.parent))
     monkeypatch.setenv("PATHEXT", ".EXE")
@@ -265,7 +267,6 @@ def test_sed_runs_with_sandbox_on_windows_so_its_e_command_is_refused(windows, m
     _run_in_sandbox(tmp_path, '"sed" "s/x/y/e" notes.txt')
     assert spawned == [[str(sed), "--sandbox", "s/x/y/e", "notes.txt"]]
     # What that argv does with a real GNU sed: the e flag is refused and nothing is run.
-    real_sed = shutil.which("sed")
     if real_sed:
         marker = tmp_path / "ran"
         proc = subprocess.run(
@@ -273,6 +274,33 @@ def test_sed_runs_with_sandbox_on_windows_so_its_e_command_is_refused(windows, m
         )
         assert proc.returncode != 0, proc
         assert not marker.exists()
+
+
+@pytest.mark.parametrize(
+    ("line", "argv"),
+    [
+        ("sed -n '1,5p' file.txt", ["sed", "-n", "1,5p", "file.txt"]),
+        ("find . -name '*.py'", ["find", ".", "-name", "*.py"]),
+        ("tool 'a & b' 'x|y'", ["tool", "a & b", "x|y"]),
+        (r"'C:\Program Files\x\p.exe' -V", [r"C:\Program Files\x\p.exe", "-V"]),
+        ("""tool "it's" 'say "hi"'""", ["tool", "it's", 'say "hi"']),
+        (r"tool 'a\b'", ["tool", r"a\b"]),
+    ],
+)
+def test_a_single_quoted_span_is_literal_on_windows(windows, line, argv):
+    assert parse_command(line) == argv
+
+
+def test_an_unbalanced_single_quote_is_refused(windows):
+    with pytest.raises(CommandLineRefused, match="single quote"):
+        parse_command("tool don't")
+
+
+def test_shell_words_joined_by_shlex_read_back_the_same_on_windows(windows):
+    import shlex
+
+    argv = [r"C:\hostedtoolcache\windows\Python\3.12.10\x64\python.exe", "-m", "pytest", "-k", "a or b's"]
+    assert parse_command(shlex.join(argv)) == argv
 
 
 def test_the_gate_and_the_runner_read_the_same_argv(windows, monkeypatch):
