@@ -114,7 +114,7 @@ def parse_command(cmd: str) -> list[str]:
     """Split a command line into argv by the rules of the platform that will run it.
 
     POSIX: shell words (`shlex`, posix mode). Windows: the CommandLineToArgvW rules, so a backslash
-    is a path separator and not an escape. There, a cmd.exe metacharacter outside double quotes, a
+    is a path separator and not an escape, plus literal '...' spans outside double quotes. There, a cmd.exe metacharacter outside double quotes, a
     line break, or an argv[0] that names a path but is not an absolute `.exe` raises
     `CommandLineRefused`."""
     if not _IS_WINDOWS:
@@ -192,6 +192,18 @@ def join_command(argv: list[str]) -> str:
     return subprocess.list2cmdline([str(arg) for arg in argv])
 
 
+def _single_quoted_span(line: str, i: int) -> tuple[str, int]:
+    """The literal text of a '...' span opening at `i`, and the index after its closing quote.
+
+    Not a CommandLineToArgvW rule: VOOL spawns the argv list it parsed (re-quoted by list2cmdline),
+    so it can read the POSIX single-quote form that commands are commonly written in (and that
+    shlex.join produces) without any program seeing a different argument. Nothing inside is special."""
+    close = line.find("'", i + 1)
+    if close < 0:
+        raise CommandLineRefused("unbalanced single quote")
+    return line[i + 1 : close], close + 1
+
+
 def _windows_argv(line: str) -> list[str]:
     if "\r" in line or "\n" in line:
         raise CommandLineRefused("a Windows command line cannot span lines")
@@ -206,6 +218,10 @@ def _windows_argv(line: str) -> list[str]:
     quoted = False
     while i < n and (quoted or line[i] not in " \t"):
         ch = line[i]
+        if ch == "'" and not quoted:
+            span, i = _single_quoted_span(line, i)
+            first.append(span)
+            continue
         if ch == '"':
             quoted = not quoted
         else:
@@ -239,6 +255,10 @@ def _windows_argv(line: str) -> list[str]:
                         i += 1
                     continue
                 arg.append("\\" * count)
+                continue
+            if ch == "'" and not quoted:
+                span, i = _single_quoted_span(line, i)
+                arg.append(span)
                 continue
             if ch == '"':
                 if quoted and i + 1 < n and line[i + 1] == '"':
