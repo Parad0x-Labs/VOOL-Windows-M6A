@@ -29,6 +29,21 @@ def _base_command_name(raw: str) -> str:
     return name
 
 
+_FIND_LAUNCHING_PRIMARIES = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
+_RG_LAUNCHING_OPTIONS = ("--pre", "--hostname-bin")
+
+
+def _windows_launched_program(base_cmd: str, args: list[str]) -> str:
+    """The option through which a whitelisted tool would start another program, or ""."""
+    for arg in args:
+        token = str(arg or "")
+        if base_cmd == "find" and token in _FIND_LAUNCHING_PRIMARIES:
+            return token
+        if base_cmd == "rg" and token.split("=", 1)[0] in _RG_LAUNCHING_OPTIONS:
+            return token.split("=", 1)[0]
+    return ""
+
+
 def _network_isolation_mode_from_env() -> str:
     raw = str(os.environ.get("VOOL_SANDBOX_NETWORK_MODE") or "").strip().lower()
     if raw in {"os_enforced", "heuristic_only"}:
@@ -157,6 +172,15 @@ class SandboxRunner:
             # the checks above (outside the workspace, an .exe, spawned by its checked path).
             return {
                 "error": "Command line refused: env is not used on Windows; run the program directly",
+                "status": "blocked_by_policy",
+            }
+        launched = _windows_launched_program(base_cmd, argv[1:]) if network_guard._IS_WINDOWS else ""
+        if launched:
+            # find -exec/-ok and rg --pre/--hostname-bin start another program by their own search,
+            # which never passes through the checks above.
+            return {
+                "error": f"Command line refused: {base_cmd} {launched} starts another program, "
+                "which is not allowed on Windows",
                 "status": "blocked_by_policy",
             }
         if base_cmd == "env":
