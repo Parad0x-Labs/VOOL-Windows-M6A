@@ -249,6 +249,32 @@ def test_a_whitelisted_tool_that_would_start_another_program_is_refused_on_windo
     assert spawned == []
 
 
+def test_sed_runs_with_sandbox_on_windows_so_its_e_command_is_refused(windows, monkeypatch, tmp_path):
+    import shutil
+    import subprocess
+
+    from core.execution_gate import ExecutionGate
+    from sandbox.job_runner import JobRunner
+
+    sed = _program(tmp_path / "Git" / "usr" / "bin", "sed.EXE")
+    monkeypatch.setenv("PATH", str(sed.parent))
+    monkeypatch.setenv("PATHEXT", ".EXE")
+    spawned: list[list[str]] = []
+    monkeypatch.setattr(JobRunner, "run", lambda self, argv, *a, **k: spawned.append(list(argv)) or {"status": "success"})
+    monkeypatch.setattr(ExecutionGate, "evaluate_command", lambda self, cmd, **k: {"decision": "allowed", "reason": ""})
+    _run_in_sandbox(tmp_path, '"sed" "s/x/y/e" notes.txt')
+    assert spawned == [[str(sed), "--sandbox", "s/x/y/e", "notes.txt"]]
+    # What that argv does with a real GNU sed: the e flag is refused and nothing is run.
+    real_sed = shutil.which("sed")
+    if real_sed:
+        marker = tmp_path / "ran"
+        proc = subprocess.run(
+            [real_sed, "--sandbox", f"s/x/touch {marker}/e"], input="x\n", capture_output=True, text=True
+        )
+        assert proc.returncode != 0, proc
+        assert not marker.exists()
+
+
 def test_the_gate_and_the_runner_read_the_same_argv(windows, monkeypatch):
     """A backslash before a quote: POSIX words would give the gate C:a"b, Windows gives C:\\a"b."""
     import shlex
