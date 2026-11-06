@@ -1,4 +1,4 @@
-"""Windows: retry a replace or unlink that a sharing violation refuses for a moment.
+"""Windows: retry a replace, unlink or read that a sharing violation refuses for a moment.
 
 On Windows `os.replace` and `os.unlink` fail with PermissionError (WinError 5 or 32) while another
 process holds the target open without delete sharing: a reader of the same store, an antivirus scan or
@@ -19,24 +19,36 @@ _DELAYS: tuple[float, ...] = (0.005, 0.01, 0.02, 0.04, 0.08, 0.1, 0.1, 0.1, 0.1,
 
 def replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
     """`os.replace`, retried on Windows while a sharing violation refuses it."""
-    _retried(os.replace, src, dst)
+    retried(os.replace, src, dst)
 
 
 def unlink(path: str | os.PathLike[str], *, missing_ok: bool = False) -> None:
     """`os.unlink`, retried on Windows while a sharing violation refuses it."""
     try:
-        _retried(os.unlink, path)
+        retried(os.unlink, path)
     except FileNotFoundError:
         if not missing_ok:
             raise
 
 
-def _retried(call, *args) -> None:
+def read_text(path: str | os.PathLike[str], *, encoding: str = "utf-8") -> str:
+    """Read a whole text file, retried on Windows while a sharing violation refuses the open.
+
+    A reader can be refused for a moment while another writer's `os.replace` swaps the file in."""
+
+    def _read(target):
+        with open(target, encoding=encoding) as fh:
+            return fh.read()
+
+    return retried(_read, path)
+
+
+def retried(call, *args):
+    """Run `call(*args)`, retried on Windows while a sharing violation refuses it."""
     if _IS_WINDOWS:
         for delay in _DELAYS:
             try:
-                call(*args)
-                return
+                return call(*args)
             except PermissionError:
                 time.sleep(delay)
-    call(*args)
+    return call(*args)
