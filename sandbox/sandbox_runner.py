@@ -183,6 +183,11 @@ class SandboxRunner:
                 "which is not allowed on Windows",
                 "status": "blocked_by_policy",
             }
+        if base_cmd == "sed" and network_guard._IS_WINDOWS:
+            # GNU sed's e command and s///e flag run a shell, and w/r touch files by name, all outside
+            # the checks above. --sandbox makes sed refuse them while -i keeps working; a sed that
+            # does not know the flag fails, which is fail closed.
+            argv = [argv[0], "--sandbox", *argv[1:]]
         if base_cmd == "env":
             index = 1
             while index < len(argv):
