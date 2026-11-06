@@ -4,10 +4,11 @@ import contextlib
 import os
 import subprocess
 import threading
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from core.execution_gate import ExecutionGate
 from core.liquefy_bridge import execution_payload_within_size_limit
+from sandbox import network_guard
 from sandbox.job_runner import (
     HardLinkedWritableRootError,
     JobRunner,
@@ -18,8 +19,12 @@ from sandbox.resource_limits import ExecutionPolicy
 
 
 def _base_command_name(raw: str) -> str:
-    name = Path(str(raw or "")).name.lower()
-    if os.name == "nt" and name.endswith(".exe"):
+    # The command-line rules' own platform flag, so the name is read the way the line was split.
+    if network_guard._IS_WINDOWS:
+        name = PureWindowsPath(str(raw or "")).name.lower()
+    else:
+        name = Path(str(raw or "")).name.lower()
+    if network_guard._IS_WINDOWS and name.endswith(".exe"):
         return name[:-4]
     return name
 
@@ -136,11 +141,16 @@ class SandboxRunner:
         if not argv:
             return {"error": "Empty command.", "status": "blocked_by_policy"}
         try:
-            # On Windows the program that actually runs must be an .exe: a .cmd/.bat found through
-            # PATHEXT would run through cmd.exe, which re-reads the line. Off Windows, a no-op.
-            require_windows_exe(str(argv[0] or ""))
+            # On Windows the program that actually runs must be an .exe outside the workspace: a .cmd
+            # or .bat found through PATHEXT would run through cmd.exe, which re-reads the line, and a
+            # program planted in the workspace would run as the whitelisted name. The checked
+            # absolute path is what is spawned, so Windows cannot search again. Off Windows, a no-op.
+            program = require_windows_exe(
+                str(argv[0] or ""), refuse_under=(str(self.workspace), str(target_cwd))
+            )
         except ValueError as exc:
             return {"error": f"Command line refused: {exc}", "status": "blocked_by_policy"}
+        argv = [program, *argv[1:]]
         base_cmd = _base_command_name(str(argv[0] or ""))
         if base_cmd == "env":
             index = 1

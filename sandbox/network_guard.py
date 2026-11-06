@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import re
 import shlex
-import shutil
 import subprocess
 from pathlib import PurePath, PureWindowsPath
 
@@ -123,24 +122,67 @@ def parse_command(cmd: str) -> list[str]:
     return _windows_argv(str(cmd or ""))
 
 
-def require_windows_exe(program: str, *, which=None) -> str:
-    """On Windows, the path of the program that would actually run, which must be a `.exe`.
+def require_windows_exe(
+    program: str,
+    *,
+    refuse_under: tuple[str, ...] = (),
+    path: str | None = None,
+    pathext: str | None = None,
+) -> str:
+    """On Windows, the absolute path of the program that would run, which must be a `.exe`.
 
-    A bare name is resolved the way Windows finds it (PATH and PATHEXT). A name that resolves to a
-    `.cmd` or `.bat` runs through cmd.exe, which re-reads the whole line, metacharacters inside quotes
-    included, so it is refused, as is a name that resolves to nothing. Off Windows, `program` is
-    returned unchanged."""
+    Spawn the path this returns, never the bare name, so Windows cannot search again. A bare name is
+    looked up on PATH with PATHEXT, but never in the current folder: Windows would search it first,
+    so a `git.exe` planted in the workspace would otherwise run as the whitelisted `git`. A result
+    inside the current folder or any `refuse_under` root (the workspace) is refused for the same
+    reason. A name that resolves to a `.cmd` or `.bat` is refused, because cmd.exe re-reads the whole
+    line, metacharacters inside quotes included, and so is a name that resolves to nothing. Off
+    Windows, `program` is returned unchanged."""
     if not _IS_WINDOWS:
         return program
-    resolved = (which or shutil.which)(program)
+    blocked = [_real(root) for root in (os.getcwd(), *refuse_under) if str(root or "").strip()]
+    resolved = _search_windows_program(program, blocked, path=path, pathext=pathext)
     if not resolved:
-        raise CommandLineRefused(f"the program {program!r} was not found")
-    if PureWindowsPath(str(resolved)).suffix.lower() != ".exe":
+        raise CommandLineRefused(f"the program {program!r} was not found outside the workspace")
+    if any(_inside(_real(resolved), root) for root in blocked):
+        raise CommandLineRefused(f"the program {program!r} resolves inside the workspace ({resolved!r})")
+    if PureWindowsPath(resolved).suffix.lower() != ".exe":
         raise CommandLineRefused(
             f"the program {program!r} runs as {resolved!r}, which is not an .exe; "
             "a .cmd or .bat would run through cmd.exe"
         )
-    return str(resolved)
+    return resolved
+
+
+def _real(value: str) -> str:
+    return os.path.normcase(os.path.realpath(str(value)))
+
+
+def _inside(candidate: str, root: str) -> bool:
+    try:
+        return os.path.commonpath([candidate, root]) == root
+    except ValueError:  # different drives
+        return False
+
+
+def _search_windows_program(program: str, blocked: list[str], *, path: str | None, pathext: str | None) -> str:
+    if any(sep in program for sep in ("\\", "/", ":")):
+        # parse_command already required an absolute X:\...\*.exe for a path-shaped program.
+        return program if os.path.isfile(program) else ""
+    exts = [ext for ext in (pathext if pathext is not None else os.environ.get("PATHEXT", ".EXE")).split(";") if ext]
+    has_ext = any(program.lower().endswith(ext.lower()) for ext in exts)
+    names = [program] if has_ext else [program + ext for ext in exts]
+    for folder in (path if path is not None else os.environ.get("PATH", "")).split(os.pathsep):
+        folder = folder.strip().strip('"')
+        if not folder or not os.path.isabs(folder):
+            continue  # a relative PATH entry is the current folder by another name
+        if any(_inside(_real(folder), root) for root in blocked):
+            continue
+        for name in names:
+            candidate = os.path.join(folder, name)
+            if os.path.isfile(candidate):
+                return os.path.abspath(candidate)
+    return ""
 
 
 def join_command(argv: list[str]) -> str:
