@@ -71,14 +71,20 @@ public static class Sids
     /// <summary>The capability SID a write root's grants go to.</summary>
     public static string RootCapability(string root) => CapabilitySid(Identity.RootCapabilityName(root));
 
+    /// <summary>The capability SID a job read root's read grant goes to.</summary>
+    public static string ReadCapability(string root) => CapabilitySid(Identity.ReadCapabilityName(root));
+
     /// <summary>
-    /// The capabilities a job's token carries: only this job's write roots, plus internetClient when
-    /// the policy grants network. Nothing else, so the job can never use another job's grants.
+    /// The capabilities a job's token carries: only this job's write roots and job read roots, plus
+    /// internetClient when the policy grants network. Nothing else, so the job can never use another
+    /// job's grants (shared read roots go to the package SID, which every job holds).
     /// </summary>
     public static IReadOnlyList<string> CapabilitiesFor(Policy policy)
     {
         var sids = new List<string>();
         foreach (var name in policy.WriteRoots.Select(Identity.RootCapabilityName).Distinct(StringComparer.Ordinal))
+            sids.Add(CapabilitySid(name));
+        foreach (var name in policy.JobReadRoots.Select(Identity.ReadCapabilityName).Distinct(StringComparer.Ordinal))
             sids.Add(CapabilitySid(name));
         if (policy.Network) sids.Add(InternetClientSid);
         return sids;

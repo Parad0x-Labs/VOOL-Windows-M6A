@@ -30,6 +30,7 @@ _KEYS = (
     "schema",
     "write_roots",
     "read_roots",
+    "job_read_roots",
     "deny_write_paths",
     "deny_all_paths",
     "deny_write_git",
@@ -96,7 +97,12 @@ class WindowsConfinementPolicy:
     write_roots: tuple[str, ...]
     temp_dir: str
     status_path: str
+    #: Shared read roots (the interpreter and its base): granted to the package SID, so every
+    #: confined job can read them. Never a workspace or anything a user put there.
     read_roots: tuple[str, ...] = ()
+    #: This job's own read roots (its workspace, the policy's read roots): each one is granted to its
+    #: own read capability, which only a job whose policy names that root carries.
+    job_read_roots: tuple[str, ...] = ()
     deny_write_paths: tuple[str, ...] = ()
     deny_all_paths: tuple[str, ...] = ()
     deny_write_git: bool = True
@@ -112,6 +118,8 @@ class WindowsConfinementPolicy:
         roots = [_check_path(p, "write_roots entry") for p in self.write_roots]
         for p in self.read_roots:
             _check_path(p, "read_roots entry")
+        for p in self.job_read_roots:
+            _check_path(p, "job_read_roots entry")
         for p in self.deny_write_paths:
             _check_path(p, "deny_write_paths entry")
         for p in self.deny_all_paths:
@@ -137,6 +145,7 @@ class WindowsConfinementPolicy:
                 "schema": SCHEMA,
                 "write_roots": list(self.write_roots),
                 "read_roots": list(self.read_roots),
+                "job_read_roots": list(self.job_read_roots),
                 "deny_write_paths": list(self.deny_write_paths),
                 "deny_all_paths": list(self.deny_all_paths),
                 "deny_write_git": self.deny_write_git,
@@ -166,7 +175,7 @@ class WindowsConfinementPolicy:
         missing = [key for key in ("write_roots", "temp_dir", "status_path") if key not in data]
         if missing:
             raise PolicyError(f"missing policy keys: {missing}")
-        for key in ("write_roots", "read_roots", "deny_write_paths", "deny_all_paths"):
+        for key in ("write_roots", "read_roots", "job_read_roots", "deny_write_paths", "deny_all_paths"):
             value = data.get(key, [])
             if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
                 raise PolicyError(f"{key} must be a list of strings")
@@ -175,6 +184,7 @@ class WindowsConfinementPolicy:
             temp_dir=data["temp_dir"],
             status_path=data["status_path"],
             read_roots=tuple(data.get("read_roots", [])),
+            job_read_roots=tuple(data.get("job_read_roots", [])),
             deny_write_paths=tuple(data.get("deny_write_paths", [])),
             deny_all_paths=tuple(data.get("deny_all_paths", [])),
             deny_write_git=data.get("deny_write_git", True),

@@ -1,8 +1,9 @@
 # Windows job confinement (VoolConfine)
 
-Status: **interface only** (chunk 0 of the phased plan). Nothing here confines anything yet: the
-Python side reports the backend unavailable, so every confined job on Windows is still refused
-(`KernelIsolationUnavailableError`), exactly as before this document existed.
+Status: **phase 1 wired** (chunks 0-4 and 6). Python and pytest jobs run confined through the pinned
+launcher; every other program, and any layout the ACL model can't express, is still refused
+(`KernelIsolationUnavailableError`). The attack pack (`tests/test_windows_confinement_attacks.py`)
+runs against the published, pinned launcher on Windows CI.
 
 ## 1. Where it plugs in
 
@@ -48,7 +49,9 @@ proven to work. `None` means the caller refuses the job. Nothing ever runs unwra
   - **Grant lifetime (phase 1).** Grants stay on a workspace after its jobs end; the caller grants once
     per policy shape per VOOL process, and every run form re-verifies. Revoke runs when VOOL drops a
     workspace (and `includeShared` only when no other granted workspace names the same read roots).
-    A leftover grant gives nothing to anyone but a confined job of that root.
+    A leftover grant gives nothing to anyone but a confined job of that root: write grants and job
+    read grants each go to a capability only a job naming that root carries. Only the shared
+    `read_roots` (the interpreter and its base) are readable by every confined job.
   - Grant never "heals" a layout that appeared after the root was granted: if a write root already
     holds its capability's grant and a repository layout under it lacks the deny, grant refuses
     (125, `repo_appeared`) and leaves it for the operator. Only a first grant protects existing repositories.
@@ -124,7 +127,16 @@ Status file fields:
 - **Profile.** One fixed AppContainer profile named `VOOL.Confine.v1`, registered before any launch
   (an unregistered profile fails to launch, winerror 2, measured on Steve). Its package SID is shared
   by every job, so it only ever receives READ grants.
-- **Read grants (package SID).** Read and execute on `read_roots`.
+- **Shared read grants (package SID).** Read and execute on `read_roots`: the interpreter and its
+  base only, which every job may read.
+- **Job read grants (one capability per job read root).** Read and execute on each `job_read_roots`
+  entry (the workspace, the policy's own read roots) for the capability `vool.read.<sha256>` of
+  that root. A job's token carries only its own, so job B can never read workspace A, even though
+  A's grant stays on disk (Mac parity: the Seatbelt profile allows reads of this job's roots only).
+- **Shared profile storage.** Every job runs as the one profile, so it shares that profile's
+  `%LOCALAPPDATA%\Packages\VOOL.Confine.v1\AC` folder (its `Temp` included) and its AppContainer
+  registry hive with every other job, across workspaces. Nothing may rely on them, and nothing
+  secret may be put there; one profile per workspace is a later option.
 - **Protection is the ABSENCE of an allow, never a deny.** Measured in windows-broker run 41902677009
   (and on Steve, probe v7: `git commit` succeeded inside the box under a package-SID deny): no deny
   ACE for an AppContainer SID (package or capability) stopped access that one of the token's
@@ -169,7 +181,8 @@ every writable root**, and deletes both after the job.
 {
   "schema": "vool.windows_confinement.v1",
   "write_roots": ["C:\\work\\repo"],
-  "read_roots": ["C:\\Python312", "C:\\work\\repo\\.venv"],
+  "read_roots": ["C:\\Python312"],
+  "job_read_roots": ["C:\\work\\repo", "C:\\work\\repo\\.venv"],
   "deny_write_paths": ["C:\\work\\repo\\vendor-code", "C:\\work\\repo\\.venv"],
   "deny_all_paths": ["C:\\Users\\me\\.vool_runtime", "C:\\Users\\me\\.ssh"],
   "deny_write_git": true,
@@ -198,11 +211,16 @@ Rules, all enforced by the launcher (126 if broken):
 - **Fresh status (chunk 3).** The caller creates a new, empty status folder per job and refuses to
   launch if a status file already exists there, so an earlier job's status can never be read as this one's.
 - **`write_roots`.** Non-empty. Read and write for the container.
-- **`read_roots`.** Read and execute only. A read root inside a write root is still writable through
-  the write root's grant; to make it read-only (a workspace `.venv`), also list it in `deny_write_paths`.
+- **`read_roots`.** Shared: read and execute for every confined job (the package SID). Only for the
+  interpreter and its base, never for anything a user put there.
+- **`job_read_roots`.** Read and execute for this job only (a per-root read capability). A read root
+  inside a write root is still writable through the write root's grant; to make it read-only (a
+  workspace `.venv`), also list it in `deny_write_paths`.
 - **`deny_write_paths`.** Explicitly denied write, beating any inherited grant (code roots).
 - **`deny_all_paths`.** Denied read AND write, like the Mac's secret and state denies (VOOL runtime state, credentials).
-- **`deny_write_git`.** When true, every `.git` directory under a write root is denied write.
+- **`deny_write_git`.** When true, every `.git` directory under a write root is denied write. A bare
+  repository shape whose `HEAD`, `objects` or `refs` is a junction or symlink is never protected
+  (git follows the link; no ACE on a link binds its target), so it refuses the run (125) or the result (123).
   Nested `.git` directories created during the job are caught by the post-job scan on the Python side.
 - **`network`.** Default false. Only true adds the `internetClient` capability. Loopback is never granted.
 - **Limits.** `max_seconds`, `memory_mb` and `max_processes` are positive integers.

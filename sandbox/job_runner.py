@@ -837,14 +837,19 @@ class JobRunner:
                         "Windows confinement's launcher record does not match its exit code "
                         f"(record {status.exit_code}, exit {result.returncode}); the result is not trusted."
                     )
-            if status.limit == "memory" and result.returncode == 0:
-                # A Windows job memory limit fails the allocation instead of ending the process,
-                # so a child that catches the error can still exit 0. The job went over its
-                # memory limit: it did not succeed, as a cgroup OOM kill would show on Linux.
+            if status.limit in ("memory", "processes") and result.returncode == 0:
+                # A Windows job limit fails the allocation or the process start instead of ending
+                # the process, so a child that catches the error can still exit 0. The job went
+                # over its limit: it did not succeed, as a cgroup OOM kill would show on Linux.
+                what = (
+                    "its memory limit and was stopped from allocating more"
+                    if status.limit == "memory"
+                    else "its process limit and was stopped from starting more"
+                )
                 return ExecutionResult(
                     returncode=1,
                     stdout=result.stdout,
-                    stderr=result.stderr + "\nThe job went over its memory limit and was stopped from allocating more.\n",
+                    stderr=result.stderr + f"\nThe job went over {what}.\n",
                 )
         return result
 
@@ -1204,15 +1209,22 @@ class JobRunner:
 
         write_roots = tuple(dict.fromkeys(Path(root).resolve() for root in allowed_roots))
         workspace = Path(self.policy.workspace_root).resolve()
-        read_roots = tuple(
+        # Shared: only the interpreter and its base, readable by every confined job. The workspace
+        # and the policy's read roots are this job's own: each gets a read capability only a job
+        # naming it carries, so a grant left on disk never lets another workspace's job read it
+        # (the Mac profile likewise allows reads of this job's roots only).
+        shared_read_roots = tuple(
+            dict.fromkeys(Path(root) for root in windows_confinement.interpreter_read_roots())
+        )
+        job_read_roots = tuple(
             dict.fromkeys(
                 [
                     *(Path(root).resolve() for root in self.policy.read_roots),
-                    *(Path(root) for root in windows_confinement.interpreter_read_roots()),
                     workspace,
                 ]
             )
         )
+        read_roots = (*shared_read_roots, *job_read_roots)
         try:
             from core.runtime_state_protection import (
                 code_write_exemptions,
@@ -1248,7 +1260,8 @@ class JobRunner:
         try:
             policy = windows_confinement.WindowsConfinementPolicy(
                 write_roots=tuple(_windows_path_text(root) for root in write_roots),
-                read_roots=tuple(_windows_path_text(root) for root in read_roots),
+                read_roots=tuple(_windows_path_text(root) for root in shared_read_roots),
+                job_read_roots=tuple(_windows_path_text(root) for root in job_read_roots),
                 # A read root inside a write root would stay writable through the root's grant
                 # (a workspace .venv), so it is denied writes as well.
                 deny_write_paths=tuple(

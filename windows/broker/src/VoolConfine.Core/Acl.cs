@@ -6,23 +6,31 @@ namespace VoolConfine.Core;
 
 /// <summary>
 /// The SIDs one policy's ACEs are for (docs/WINDOWS_CONFINEMENT.md section 2, "Identity"):
-/// the profile's package SID (read grants, and every deny), and one capability SID per write root
-/// (that root's read-write grant, and every deny under that root). RootCapabilities is keyed by the
-/// write root exactly as the policy spells it.
+/// the profile's package SID (shared read grants, and every deny), one capability SID per write root
+/// (that root's read-write grant, and every deny under that root), and one capability SID per job
+/// read root (that root's read grant, and every deny under it). RootCapabilities is keyed by the
+/// write root and ReadCapabilities by the job read root, exactly as the policy spells them.
 /// </summary>
-public sealed record ConfinementSids(SecurityIdentifier Package, IReadOnlyDictionary<string, SecurityIdentifier> RootCapabilities)
+public sealed record ConfinementSids(SecurityIdentifier Package, IReadOnlyDictionary<string, SecurityIdentifier> RootCapabilities,
+    IReadOnlyDictionary<string, SecurityIdentifier>? ReadCapabilities = null)
 {
     /// <summary>
     /// The SIDs for a policy from the launcher's own derivation (VoolConfine.Core.Sids:
-    /// <c>ConfinementSids.For(policy, Sids.Package(), Sids.RootCapability)</c>), so they are derived once, in one place.
+    /// <c>ConfinementSids.For(policy, Sids.Package(), Sids.RootCapability, Sids.ReadCapability)</c>), so they are derived once, in one place.
     /// </summary>
-    public static ConfinementSids For(Policy policy, string packageSid, Func<string, string> rootCapabilitySid) =>
+    public static ConfinementSids For(Policy policy, string packageSid, Func<string, string> rootCapabilitySid,
+        Func<string, string> readCapabilitySid) =>
         new(new SecurityIdentifier(packageSid),
-            policy.WriteRoots.Distinct(StringComparer.Ordinal).ToDictionary(root => root, root => new SecurityIdentifier(rootCapabilitySid(root)), StringComparer.Ordinal));
+            policy.WriteRoots.Distinct(StringComparer.Ordinal).ToDictionary(root => root, root => new SecurityIdentifier(rootCapabilitySid(root)), StringComparer.Ordinal),
+            policy.JobReadRoots.Distinct(StringComparer.Ordinal).ToDictionary(root => root, root => new SecurityIdentifier(readCapabilitySid(root)), StringComparer.Ordinal));
 
     public SecurityIdentifier CapabilityFor(string root) =>
         RootCapabilities.TryGetValue(root, out var sid) ? sid
         : throw new AclException("sid_missing", $"No capability SID was given for write root {root}.");
+
+    public SecurityIdentifier ReadCapabilityFor(string root) =>
+        ReadCapabilities is not null && ReadCapabilities.TryGetValue(root, out var sid) ? sid
+        : throw new AclException("sid_missing", $"No capability SID was given for job read root {root}.");
 }
 
 /// <summary>What a grant or revoke did. Skipped objects carry no grant, so a job gets no access to them.</summary>
@@ -41,7 +49,11 @@ public sealed record AclReport(
 /// - Write root: an explicit ALLOW <see cref="AclRules.ReadWriteMask"/> (OI|CI) for that root's
 ///   capability SID; every object already under it gets the same ACE marked inherited, appended
 ///   last so every deny already there still wins.
-/// - Read root: the same with <see cref="AclRules.ReadExecuteMask"/> for the package SID.
+/// - Read root (shared: the interpreter and its base): the same with <see cref="AclRules.ReadExecuteMask"/>
+///   for the package SID, which every job holds.
+/// - Job read root (the workspace, the job's own read roots): the same with
+///   <see cref="AclRules.ReadExecuteMask"/> for that root's read capability, which only a job whose
+///   policy names the root carries. So a grant left on disk gives nothing to another workspace's job.
 /// - Every repository layout under a write root (see <see cref="RepoScan"/>), and everything inside
 ///   it: the root's capability gets READ AND EXECUTE ONLY (no write allow for any of the job's SIDs
 ///   is left there), plus an explicit DENY <see cref="AclRules.DenyWriteMask"/> for the package SID
@@ -111,6 +123,12 @@ public static class Acl
             foreach (var root in policy.ReadRoots)
                 WalkGrant(Normalize(root), Mode.Read, sids.Package, [sids.Package], ContainingCapabilities(policy, sids, root),
                     false, denies.ById, counts, denyOnly: DenyKind.None);
+            foreach (var root in policy.JobReadRoots)
+            {
+                var capability = sids.ReadCapabilityFor(root);
+                WalkGrant(Normalize(root), Mode.Read, capability, [sids.Package, capability], ContainingCapabilities(policy, sids, root),
+                    false, denies.ById, counts, denyOnly: DenyKind.None);
+            }
         }
         finally { denies.Dispose(); }
         var repositories = Verify(policy, sids);
@@ -326,6 +344,21 @@ public static class Acl
             if (writer is not null)
                 throw new AclException("foreign_writer", $"Read root {root} lets an AppContainer SID ({writer.Value}) write it.");
         }
+        foreach (var policyRoot in policy.JobReadRoots)
+        {
+            var root = Normalize(policyRoot);
+            var capability = sids.ReadCapabilityFor(policyRoot);
+            var acl = ReadRootAcl(root);
+            if (!AclRules.HasExplicitAllow(acl, capability, AclRules.ReadExecuteMask, directory: true))
+                throw new AclException("grant_missing", $"Job read root {root} does not hold its read grant (run grant).");
+            if ((AclRules.AllowedBits(acl, capability) & AclRules.WriteOrGenericWriteBits) != 0)
+                throw new AclException("grant_widened", $"Job read root {root} lets its read capability write it.");
+            if ((AclRules.AllowedBits(acl, sids.Package) & AclRules.WriteOrGenericWriteBits) != 0)
+                throw new AclException("package_can_write", $"Job read root {root} lets every confined job write it.");
+            var writer = AclRules.ForeignWriter(acl, ContainingCapabilities(policy, sids, policyRoot));
+            if (writer is not null)
+                throw new AclException("foreign_writer", $"Job read root {root} lets an AppContainer SID ({writer.Value}) write it.");
+        }
         CheckDenyTargets(policy, sids);
         if (policy.DenyWriteGit)
         {
@@ -387,6 +420,10 @@ public static class Acl
     private static SecurityIdentifier[] ContainingCapabilities(Policy policy, ConfinementSids sids, string path) =>
         policy.WriteRoots.Where(root => Inside(path, root)).Select(sids.CapabilityFor).ToArray();
 
+    /// <summary>The read capabilities of the job read roots that path lies in (their read grant reaches it).</summary>
+    private static SecurityIdentifier[] ContainingReadCapabilities(Policy policy, ConfinementSids sids, string path) =>
+        policy.JobReadRoots.Where(root => Inside(path, root)).Select(sids.ReadCapabilityFor).ToArray();
+
     private static RawAcl ReadRootAcl(string root)
     {
         using var handle = AclNative.OpenRoot(root, writeDac: false);
@@ -417,7 +454,8 @@ public static class Acl
                         throw new AclException("foreign_access", $"Denied path {path} gives {every.Value} the access it must deny.");
                 }
                 // The package SID, and the capability of every write root whose grant reaches it.
-                var reaching = ContainingCapabilities(policy, sids, path).Prepend(sids.Package).ToArray();
+                var reaching = ContainingCapabilities(policy, sids, path).Concat(ContainingReadCapabilities(policy, sids, path))
+                    .Prepend(sids.Package).ToArray();
                 foreach (var sid in reaching)
                     if (!AclRules.HasExplicitDeny(acl, sid, mask, directory))
                         throw new AclException("deny_missing", $"Denied path {path} does not carry its deny ACE for {sid.Value} (run grant).");
@@ -433,6 +471,7 @@ public static class Acl
 
     /// <summary>
     /// Removes every ACE of the policy's capability SIDs and of the package SID from each write root
+    /// and everything under it, and every ACE of each job read root's read capability from that root
     /// and everything under it. With includeShared, also the package SID's ACEs on the read roots
     /// and on deny paths outside the roots: those are shared by every policy that names them, so
     /// revoke them only when no other workspace is still granted (re-run grant for the others).
@@ -443,6 +482,8 @@ public static class Acl
         var counts = new Counts();
         foreach (var root in policy.WriteRoots)
             WalkRevoke(Normalize(root), [sids.CapabilityFor(root), sids.Package], counts);
+        foreach (var root in policy.JobReadRoots)
+            WalkRevoke(Normalize(root), [sids.ReadCapabilityFor(root)], counts);
         if (includeShared)
         {
             foreach (var root in policy.ReadRoots) WalkRevoke(Normalize(root), [sids.Package], counts);
@@ -595,7 +636,7 @@ public static class Acl
     }
 
     private static bool UnderAnyRoot(Policy policy, string path) =>
-        policy.WriteRoots.Concat(policy.ReadRoots).Any(root => Inside(path, root));
+        policy.WriteRoots.Concat(policy.ReadRoots).Concat(policy.JobReadRoots).Any(root => Inside(path, root));
 
     /// <summary>
     /// The root the policy names is a folder, reached with no link on the way (its final path is the
@@ -625,7 +666,7 @@ public static class Acl
     /// </summary>
     private static SafeFileHandle? TryOpenDenyTarget(Policy policy, string path, bool writeDac = false)
     {
-        foreach (var root in policy.WriteRoots.Concat(policy.ReadRoots))
+        foreach (var root in policy.WriteRoots.Concat(policy.ReadRoots).Concat(policy.JobReadRoots))
             if (Inside(root, path)) throw new AclException("root_inside_denied", $"Root {Normalize(root)} lies inside denied path {path}.");
         try
         {

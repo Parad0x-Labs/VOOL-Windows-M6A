@@ -15,6 +15,9 @@ public enum RepoKind
     GitLink,
     /// <summary>A folder holding HEAD, objects and refs: git treats it as a bare repository with no .git name at all.</summary>
     BareRepository,
+    /// <summary>A bare repository shape where HEAD, objects or refs is a junction, symlink or other
+    /// reparse point. git follows the link; no ACE on a link binds what it points to, so it is never protected.</summary>
+    BareRepositoryLink,
 }
 
 /// <summary>One repository layout under a write root, and whether it carries the confinement's deny-write ACE.</summary>
@@ -39,26 +42,43 @@ public static class RepoScan
         string.Equals(name.TrimEnd('.', ' '), ".git", StringComparison.OrdinalIgnoreCase)
         || string.Equals(shortName, "GIT~1", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>git's own test for a bare repository folder: a HEAD file, an objects folder and a refs folder.</summary>
-    internal static bool IsBareShape(IReadOnlyList<AclNative.Entry> entries)
+    /// <summary>
+    /// git's own test for a bare repository folder: a HEAD file, an objects folder and a refs folder.
+    /// git checks them with access(), which follows links, so a reparse point named HEAD, objects or
+    /// refs counts too (whatever it claims to be).
+    /// </summary>
+    internal static bool IsBareShape(IReadOnlyList<AclNative.Entry> entries) => BareShape(entries) is not null;
+
+    /// <summary>Null when entries are not a bare repository shape; otherwise whether a part of it is a reparse point.</summary>
+    internal static bool? BareShape(IReadOnlyList<AclNative.Entry> entries)
     {
-        bool head = false, objects = false, refs = false;
+        bool head = false, objects = false, refs = false, linked = false;
         foreach (var entry in entries)
         {
-            if (entry.IsReparsePoint) continue;
-            if (!entry.IsDirectory && string.Equals(entry.Name, "HEAD", StringComparison.OrdinalIgnoreCase)) head = true;
-            else if (entry.IsDirectory && string.Equals(entry.Name, "objects", StringComparison.OrdinalIgnoreCase)) objects = true;
-            else if (entry.IsDirectory && string.Equals(entry.Name, "refs", StringComparison.OrdinalIgnoreCase)) refs = true;
+            var isHead = string.Equals(entry.Name, "HEAD", StringComparison.OrdinalIgnoreCase);
+            var isObjects = string.Equals(entry.Name, "objects", StringComparison.OrdinalIgnoreCase);
+            var isRefs = string.Equals(entry.Name, "refs", StringComparison.OrdinalIgnoreCase);
+            if (!isHead && !isObjects && !isRefs) continue;
+            // HEAD is a file and objects and refs are folders, unless the entry is a link (any kind counts).
+            if (!entry.IsReparsePoint && entry.IsDirectory == isHead) continue;
+            if (isHead) head = true;
+            else if (isObjects) objects = true;
+            else refs = true;
+            if (entry.IsReparsePoint) linked = true;
         }
-        return head && objects && refs;
+        return head && objects && refs ? linked : null;
     }
+
+    private static RepoEntry Bare(SafeFileHandle handle, string path, bool linked, IReadOnlyList<SecurityIdentifier> denySids) =>
+        linked ? new RepoEntry(path, RepoKind.BareRepositoryLink, false)
+        : new RepoEntry(path, RepoKind.BareRepository, IsProtected(handle, path, true, denySids));
 
     /// <summary>
     /// Every repository layout under root, each marked protected when its DACL holds an explicit
     /// deny ACE for each of denySids (the package SID and the root's capability) covering every write
     /// right (and, on a folder, inherited by files and folders made inside it), AND no allow ACE gives
     /// any of denySids, ALL APPLICATION PACKAGES or ALL RESTRICTED APP PACKAGES a write right.
-    /// A link named .git is never protected.
+    /// A link named .git, and a bare shape with a linked part, is never protected.
     /// Any failure to open or list a folder throws: an unlisted folder could hide a repository.
     /// </summary>
     public static IReadOnlyList<RepoEntry> Scan(string root, IReadOnlyList<SecurityIdentifier> denySids)
@@ -68,8 +88,8 @@ public static class RepoScan
         if ((AclNative.GetAttributes(rootHandle, root) & AclNative.FileAttributeReparsePoint) != 0)
             throw new AclException("reparse_point", $"Root {root} is a reparse point.");
         var rootEntries = AclNative.List(rootHandle, root);
-        if (IsBareShape(rootEntries))
-            found.Add(new RepoEntry(root, RepoKind.BareRepository, IsProtected(rootHandle, root, true, denySids)));
+        if (BareShape(rootEntries) is bool rootLinked)
+            found.Add(Bare(rootHandle, root, rootLinked, denySids));
         else
             Walk(rootHandle, root, rootEntries, denySids, found);
         return found;
@@ -107,9 +127,9 @@ public static class RepoScan
                 List<AclNative.Entry> entries;
                 try { entries = AclNative.List(child, path); }
                 catch { child.Dispose(); throw; }
-                if (IsBareShape(entries))
+                if (BareShape(entries) is bool linked)
                 {
-                    try { found.Add(new RepoEntry(path, RepoKind.BareRepository, IsProtected(child, path, true, denySids))); }
+                    try { found.Add(Bare(child, path, linked, denySids)); }
                     finally { child.Dispose(); }
                     continue;
                 }

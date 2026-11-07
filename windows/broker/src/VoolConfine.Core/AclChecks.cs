@@ -19,7 +19,7 @@ public sealed class AclChecks : IConfinementChecks
     public static Acl.HostPaths Host(string packageSid) =>
         new(Acl.Normalize(AppContext.BaseDirectory), Path.Combine(Sids.FolderPath(packageSid), "Temp"));
 
-    static ConfinementSids For(Policy policy, string packageSid) => ConfinementSids.For(policy, packageSid, Sids.RootCapability);
+    static ConfinementSids For(Policy policy, string packageSid) => ConfinementSids.For(policy, packageSid, Sids.RootCapability, Sids.ReadCapability);
 
     public void VerifyAcls(Policy policy, string packageSid) => Checked(() =>
     {
