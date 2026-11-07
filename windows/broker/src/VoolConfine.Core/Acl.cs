@@ -90,6 +90,18 @@ public static class Acl
         var denies = OpenDenyTargets(policy);
         try
         {
+            // A deny path under no root: the deny on the object and, since it only narrows, on
+            // everything already inside it (a child could carry its own grant to some AppContainer).
+            // Done first, before any root gets its grant, so a deny path that must be refused
+            // (foreign_access) leaves no root granted.
+            foreach (var (path, handle, kind, directory) in denies.Outside)
+            {
+                if (directory)
+                    WalkGrant(path, Mode.Read, allowSid: null, [sids.Package], [], false, denies.ById, counts, denyOnly: kind);
+                else
+                    Apply(handle, path, directory, isRoot: true, Mode.Read, allowSid: null, [sids.Package], foreignAllowed: null,
+                        new Context(true, false, kind), counts, linkCount: 1);
+            }
             foreach (var root in policy.WriteRoots)
             {
                 var capability = sids.CapabilityFor(root);
@@ -99,16 +111,6 @@ public static class Acl
             foreach (var root in policy.ReadRoots)
                 WalkGrant(Normalize(root), Mode.Read, sids.Package, [sids.Package], ContainingCapabilities(policy, sids, root),
                     false, denies.ById, counts, denyOnly: DenyKind.None);
-            // A deny path under no root: the deny on the object and, since it only narrows, on
-            // everything already inside it (a child could carry its own grant to some AppContainer).
-            foreach (var (path, handle, kind, directory) in denies.Outside)
-            {
-                if (directory)
-                    WalkGrant(path, Mode.Read, allowSid: null, [sids.Package], [], false, denies.ById, counts, denyOnly: kind);
-                else
-                    Apply(handle, path, directory, isRoot: true, Mode.Read, allowSid: null, [sids.Package], foreignAllowed: null,
-                        new Context(true, false, kind), counts, linkCount: 1);
-            }
         }
         finally { denies.Dispose(); }
         var repositories = Verify(policy, sids);
