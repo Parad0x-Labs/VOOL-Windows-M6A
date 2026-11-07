@@ -456,13 +456,15 @@ public class LauncherRunTests
     // ---- the checks seam and resolved paths ----
 
     [Fact]
-    public void The_shipped_launcher_refuses_every_run_until_the_acl_verify_exists()
+    public void The_shipped_launcher_refuses_a_run_on_roots_it_never_granted()
     {
+        // The sandbox's own icacls grant is not the grant form's: no repository markers, no host
+        // folders checked closed. The shipped checks (AclChecks) refuse it before the child starts.
         using var box = new ConfineSandbox();
         var marker = Path.Combine(box.Work, "ran.txt");
         var result = Launch(box, [Cmd, "/c", $"echo ran> {marker}"], host: Host.Real);
         AssertRefused(result, ExitCodes.SetupFailed);
-        Assert.Contains("chunk 2", result.Status!.Value.GetProperty("error").GetString());
+        Assert.Contains("(run grant)", result.Status!.Value.GetProperty("error").GetString());
         Assert.False(File.Exists(marker), "the child ran");
     }
 
