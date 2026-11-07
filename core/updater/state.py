@@ -21,7 +21,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-
 #: Bounded retry for a Windows sharing violation on the final rename (about one second in all).
 RENAME_ATTEMPTS = 20
 RENAME_RETRY_SECONDS = 0.05
