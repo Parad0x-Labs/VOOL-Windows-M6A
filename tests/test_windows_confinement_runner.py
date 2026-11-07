@@ -574,7 +574,7 @@ def test_a_read_root_inside_a_write_root_is_denied_writes(windows, tmp_path) -> 
         ExecutionPolicy(workspace_root=tmp_path / "ws", writable_roots=(tmp_path / "ws",), read_roots=(venv,))
     )
     policy = json.loads(Path(runner._with_network_isolation(["python", "-c", "0"])[2]).read_text())
-    assert str(venv) in policy["read_roots"] and str(venv) in policy["deny_write_paths"]
+    assert str(venv) in policy["job_read_roots"] and str(venv) in policy["deny_write_paths"]
     assert str((tmp_path / "ws").resolve()) not in policy["deny_write_paths"], "the workspace itself stays writable"
 
 
