@@ -868,3 +868,40 @@ def test_windows_payload_builder_refuses_a_dirty_or_unpinned_stage(tmp_path, mon
     unpinned = make_bundle(tmp_path / "unpinned", version="0.7.2", marker="new", commit="")
     with pytest.raises(ValueError, match="commit"):
         builder.build_payload(unpinned, tmp_path / "out2", platform="windows-x64", version="0.7.2")
+
+
+# --------------------------------------------------------------------------- #
+# Status writes while the app polls them (VM e2e run 2: 235 status.json.*.tmp left behind)
+# --------------------------------------------------------------------------- #
+
+def _sharing_violation_then_ok(real_replace, failures):
+    calls = {"n": 0}
+
+    def replace(src, dst):
+        calls["n"] += 1
+        if calls["n"] <= failures:
+            raise PermissionError(32, "The process cannot access the file because it is being used by another process")
+        return real_replace(src, dst)
+
+    return replace
+
+
+def test_status_write_survives_a_reader_holding_the_file_open(tmp_path, monkeypatch):
+    from core.updater import state
+    from core.updater.status import UpdatePhase
+
+    monkeypatch.setattr(state, "RENAME_RETRY_SECONDS", 0.0, raising=False)
+    monkeypatch.setattr(state.os, "replace", _sharing_violation_then_ok(os.replace, failures=2))
+    StatusStore(tmp_path / "status.json").publish(UpdatePhase.CHECKING)
+    assert json.loads((tmp_path / "status.json").read_text(encoding="utf-8"))["phase"] == "checking"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["status.json"]
+
+
+def test_a_status_write_that_cannot_land_leaves_no_temporary_file(tmp_path, monkeypatch):
+    from core.updater import state
+
+    monkeypatch.setattr(state, "RENAME_RETRY_SECONDS", 0.0, raising=False)
+    monkeypatch.setattr(state.os, "replace", _sharing_violation_then_ok(os.replace, failures=10_000))
+    with pytest.raises(PermissionError):
+        state._atomic_write_json(tmp_path / "status.json", {"phase": "checking"})
+    assert list(tmp_path.iterdir()) == []
