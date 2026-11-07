@@ -362,3 +362,67 @@ def test_off_windows_the_setup_folder_step_is_unchanged(tmp_path, monkeypatch) -
     monkeypatch.setattr(project_store, "list_projects", lambda: [{"root": str(picked), "exists": True}])
     assert setup_progress.folder_done() is True
     assert setup_progress.folder_unmarked() is False
+
+
+# --- 🔐 review round 1 -----------------------------------------------------------------------------
+
+
+def test_without_a_junction_check_every_folder_is_refused(home, tmp_path, monkeypatch) -> None:
+    # Before Python 3.12 os.path has no isjunction: an unchecked junction must refuse, not pass.
+    scratch = _folder(tmp_path, "scratch")
+    monkeypatch.delattr(os.path, "isjunction", raising=False)
+    assert store.refusal_reason(str(scratch))
+    with pytest.raises(store.MarkRefused):
+        store.mark(str(scratch))
+
+
+def test_on_windows_any_reparse_point_on_the_way_is_refused(home, tmp_path, monkeypatch) -> None:
+    # A mount point or another reparse type is no symlink and no junction, but still redirects.
+    mounted = _folder(tmp_path, "mounted")
+    inner = _folder(mounted, "inner")
+    monkeypatch.setattr(store, "_IS_NT", True)
+    monkeypatch.setattr(store, "_reparse_attribute",
+                        lambda path: os.path.normcase(str(path)) == os.path.normcase(str(mounted)))
+    assert "mounted" in store.refusal_reason(str(inner))
+    monkeypatch.setattr(store, "_reparse_attribute", lambda path: False)
+    assert store.refusal_reason(str(inner)) == ""
+
+
+def test_an_unmark_shrinks_the_running_broker_list_under_another_spelling_of_home(home, tmp_path, monkeypatch) -> None:
+    from core.windows_broker import session
+
+    listed = _folder(tmp_path, "from-list")
+    entry = store.mark(str(listed))
+    _restart()
+    linked_home = tmp_path / "home-link"
+    linked_home.symlink_to(home, target_is_directory=True)
+    store.start_folders(str(linked_home) + os.sep + "." + os.sep)   # the broker start, spelled its way
+    monkeypatch.setattr(session, "wired", lambda: True)
+    monkeypatch.setattr(session, "checked_folders", lambda: [os.path.normcase(os.path.realpath(listed))])
+    assert windows_write_gate.flagged_roots() == [os.path.normcase(os.path.realpath(listed))]
+
+    store.unmark(entry["id"])
+    assert windows_write_gate.flagged_roots() == []
+
+
+def test_temp_inside_vool_home_lifts_nothing(home, tmp_path, monkeypatch) -> None:
+    temp = _folder(home, "tmp")
+    monkeypatch.setattr(store.tempfile, "gettempdir", lambda: str(temp))
+    assert store.refusal_reason(str(_folder(temp, "job-52")))
+
+
+def test_temp_inside_a_credential_folder_lifts_nothing(home, tmp_path, monkeypatch) -> None:
+    temp = _folder(tmp_path / "profile", ".ssh") / "tmp"
+    temp.mkdir()
+    monkeypatch.setattr(store.tempfile, "gettempdir", lambda: str(temp))
+    assert store.refusal_reason(str(_folder(temp, "job-52")))
+
+
+def test_the_temp_root_comes_from_the_system_not_from_the_raw_variable(home, tmp_path, monkeypatch) -> None:
+    real_temp = _folder(tmp_path, "system-temp")
+    monkeypatch.setattr(store.tempfile, "gettempdir", lambda: str(real_temp))
+    decoy = _folder(tmp_path, "decoy")
+    monkeypatch.setenv("TEMP", str(decoy))
+    monkeypatch.setenv("TMP", str(decoy))
+    assert store.refusal_reason(str(decoy)) == ""          # not treated as the temp root
+    assert store.refusal_reason(str(real_temp))
