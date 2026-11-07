@@ -83,4 +83,12 @@ def test_the_wording_change_deletes_nothing_more() -> None:
     code = _text().split("[Code]", 1)[1]
     for forbidden in ("DelTree", "DeleteFile", "RemoveDir"):
         assert forbidden not in code, f"uninstall code gained a delete: {forbidden}"
-    assert _section("UninstallDelete") == ['Type: filesandordirs; Name: "{app}\\app"']
+    # {app}\app's never-installed bytecode, plus the signed updater's own staging folder, previous-
+    # version backups and lock, all inside the program folder (core/updater/windows.py). Nothing in
+    # {localappdata}\VOOL, and nothing else.
+    assert _section("UninstallDelete") == [
+        'Type: filesandordirs; Name: "{app}\\app"',
+        'Type: filesandordirs; Name: "{app}\\.vool-update"',
+        'Type: filesandordirs; Name: "{app}\\update_backups"',
+        'Type: files; Name: "{app}\\.vool_updating.lock"',
+    ]
