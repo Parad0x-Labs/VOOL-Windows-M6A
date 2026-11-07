@@ -837,7 +837,7 @@ def recover_interrupted_update(
     status = status_store or StatusStore(paths.status_file)
     results: list[RecoveryResult] = []
     platform_key = platform or platform_registry.platform_key()
-    installer = platform_registry.installer_for(platform_key)
+    default_installer = platform_registry.installer_for(platform_key)
 
     tx_root = paths.transactions
     for tx_dir in sorted(tx_root.iterdir()) if tx_root.is_dir() else []:
@@ -852,6 +852,12 @@ def recover_interrupted_update(
             continue
         decided = journal.payload_of(Step.DECIDED)
         target_version = str(decided.get("target_version") or "")
+        # The journal records the platform it was decided for. Only this host's own installer may
+        # ever touch the app, so a transaction journaled for ANOTHER platform (the journal is user
+        # data) gets no installer: a healthy one can still be finalized, which changes nothing on
+        # disk, but nothing is restored and the rollback fails closed.
+        tx_platform = platform or str(decided.get("platform") or "") or platform_key
+        installer = default_installer if tx_platform == platform_key else None
 
         swap_payload = journal.payload_of(Step.SWAPPED) or journal.payload_of(Step.SWAP_PLANNED)
         prior_payload = swap_payload.get("prior_path") or ""
@@ -902,7 +908,7 @@ def recover_interrupted_update(
                     raise RuntimeError("the new app could not be stopped for recovery")
             if swapped:
                 if installer is None:
-                    raise RuntimeError(f"no recovery installer for {platform_key}")
+                    raise RuntimeError(f"no recovery installer for {tx_platform}")
                 if prior is None or not prior.exists():
                     raise RuntimeError("the prior app backup is unavailable")
                 restore = installer.restore_prior(app_path, prior, txid=txid)
