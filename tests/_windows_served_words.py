@@ -7,8 +7,9 @@ from the page served on a Mac by that host's words and nothing else.
 from __future__ import annotations
 
 #: Settings > Models & Providers: the local-models card on every host but macOS.
-MAC_CARD = "mkCard('local', 'This Mac', 'Local models answer without a network.', 'View local models', true)"
-NEUTRAL_CARD = "mkCard('local', 'This computer', 'Local models answer without a network.', 'View local models', true)"
+#: The card's ready flag and state line come from /api/models/local (clean-VM job 52: it said "ready" with no model).
+MAC_CARD = "mkCard('local', 'This Mac', reads.local.ready"
+NEUTRAL_CARD = "mkCard('local', 'This computer', reads.local.ready"
 
 #: (Mac text, Windows text) for the chat page's file actions on Windows: show the folder, never open the file.
 FILE_ACTION_WORDS: tuple[tuple[str, str], ...] = (
