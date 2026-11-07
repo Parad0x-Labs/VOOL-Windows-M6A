@@ -2865,7 +2865,7 @@ async function mpReads() {
     // Unknown (the read failed) is not ready.
     local: localR && Array.isArray(localR.models) ? {
       any: localR.models.length > 0,
-      ready: localR.models.some((m) => m.registered && m.certification_state === 'verified'),
+      ready: localR.models.some((m) => m && m.registered && m.certification_state === 'verified'),
     } : { any: false, ready: false },
     pin: pinR && pinR.ok ? pinR : null,
     disc: discR && discR.ok !== false ? discR : null,
