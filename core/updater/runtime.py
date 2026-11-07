@@ -180,14 +180,16 @@ class UpdateSubsystem:
             self.feed.has_target and (Path(self.feed.app_path) / "install_receipt.json").is_file()
         ):
             reason = UnavailableReason.RAW_CHECKOUT
-        elif self.platform.startswith("windows-") and not (
-            self.feed.has_target and _windows_bundle(Path(self.feed.app_path))
-        ):
-            reason = UnavailableReason.NOT_INSTALLED_BUNDLE
         elif not trust.is_configured:
             reason = UnavailableReason.NO_TRUSTED_PUBLISHER
         elif not self.feed.has_feed:
             reason = UnavailableReason.NO_FEED
+        elif self.platform.startswith("windows-") and not (
+            self.feed.has_target and _windows_bundle(Path(self.feed.app_path))
+        ):
+            # After the key and feed checks, which name what the build itself lacks; this one
+            # names how this copy was installed.
+            reason = UnavailableReason.NOT_INSTALLED_BUNDLE
         else:
             reason = None
         self.unavailable_reason = reason
