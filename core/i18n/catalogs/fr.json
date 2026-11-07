@@ -717,6 +717,11 @@
     "mode.review_edits_description": "VOOL peut inspecter et préparer des diffs de modification. Chaque lot de modifications clairement identifié doit être approuvé avant d'être appliqué.",
     "model.js.auto": "VOOL Auto",
     "model.js.local_only": "VOOL Auto Local uniquement",
+    "models.download.button": "Télécharger {model} ({size} Go) depuis le registre d’Ollama",
+    "models.download.progress": "Téléchargement de {model}… {percent} %",
+    "models.download.cancel": "Annuler le téléchargement",
+    "models.download.failed": "Téléchargement arrêté : {reason}",
+    "models.download.done": "{model} est téléchargé et prêt.",
     "msg.copy": "Copier",
     "msg.copy_rich": "Copier enrichi",
     "msg.copy_rich_title": "Copie avec mise en forme (HTML assaini + texte brut — l'application réceptrice décide du rendu)",
@@ -1899,7 +1904,7 @@
     "fault.wallet_payment_channel_off.action": "Activez un canal de paiement dans les réglages Crypto seulement si vous voulez que des paiements passent par lui ; le plafond et votre approbation s'appliquent sur chaque canal.",
     "fault.wallet_x402_sdk_unavailable.message": "Cette version ne peut pas payer les offres x402 sur Base via le x402 Foundation SDK : l'extra optionnel x402 n'est pas installé sur cette machine. Rien n'a été signé ni envoyé. Toutes les autres fonctions du portefeuille marchent sans lui ; une fois installé, réessayez."
   },
-  "source_catalog_sha256": "2eaed113ad8b12a9418943a28ad3e94475eb96655506c6a1a5fcaf86ed94dc9a",
+  "source_catalog_sha256": "54e72d10493f816529ee35b551f43bd00077ade7552b629c0ab79b9ce53f30d2",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

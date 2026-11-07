@@ -448,6 +448,8 @@ function controlThinking(host, step) {
 function controlCloudDefault(host, cloud) {
   const box = el('div', 'cloud-default'); box.id = 'cloudDefault';
   box.appendChild(el('p', null, T('setup.thinking.no_local', 'No local model is running on this computer, so “On my Mac” cannot answer yet.')));
+  // Download one here: the click is the consent for that one pull (core/local_model_pull.py).
+  if (window.VoolModelDownload) window.VoolModelDownload.mount(box, { onDone: () => refresh() });
   const candidates = Array.isArray(cloud.candidates) ? cloud.candidates : [];
   if (!candidates.length) {
     box.appendChild(el('p', 'hint', T('setup.thinking.no_cloud', 'Add a cloud key with “Online, with a key”, or start a local model.')));
@@ -750,7 +752,10 @@ def render_vool_setup_html(*, build_commit: str = "", ui_locale: str = "en") -> 
 
     tag = catalog_for(ui_locale).locale
     direction = (get_locale(tag) or get_locale("en")).direction
+    from core.model_download_fragment import render_model_download_fragment
+
     page = (_SETUP_HTML + _host_setup_script()).replace("__VOOL_PALETTE_CSS__", DARK_PALETTE_CSS)
+    page = page.replace("</body>", render_model_download_fragment() + "\n</body>", 1)
     return (
         page.replace("__SETUP_STEPS__", json.dumps(setup_steps_model(ui_locale), separators=(",", ":"), ensure_ascii=False))
         .replace("__SETUP_COPY__", json.dumps(_localized_copy(ui_locale), separators=(",", ":"), ensure_ascii=False))

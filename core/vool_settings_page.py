@@ -3301,7 +3301,9 @@ function widgetLocalModels(stack) {
     if (data.apple_silicon_notice) body.appendChild(el('div', 'state failed', T('settings.local_models.apple_silicon_notice', data.apple_silicon_notice)));
     const models = data.models || [];
     if (!models.length) {
-      body.appendChild(el('div', 'empty', 'No text models found in your local Ollama. Install one (e.g. `ollama pull qwen3:8b`) and it will appear here.'));
+      body.appendChild(el('div', 'empty', 'No text models found in your local Ollama yet. Download one below and it appears here.'));
+      // The click is the consent for that one download (core/local_model_pull.py, job 52 D2).
+      if (window.VoolModelDownload) window.VoolModelDownload.mount(body, { onDone: (name) => draw('Downloaded ' + name + '. Run the certification to see if it may author answers.') });
       return;
     }
     const certLabel = (s) => s === 'verified' ? 'certified author' : (s === 'degraded' || s === 'incompatible' || s === 'stale') ? 'probe ' + s : s === 'probing' ? 'probing…' : 'not certified';
@@ -4934,6 +4936,7 @@ def render_vool_settings_html(*, build_commit: str = "", ui_locale: str = "en") 
     catalog = json.dumps(language_catalog(), separators=(",", ":"), ensure_ascii=False)
     from core.addon_store_fragment import render_addon_store_fragment
     from core.calendar_settings_fragment import render_calendar_settings_fragment
+    from core.model_download_fragment import render_model_download_fragment
     from core.notification_settings_fragment import render_notification_settings_fragment
     from core.provider_key_guide import provider_key_guide
     from core.settings_extras_fragment import render_settings_extras_fragment
@@ -4943,7 +4946,7 @@ def render_vool_settings_html(*, build_commit: str = "", ui_locale: str = "en") 
     # here: each fragment renders itself into the host its group provides
     page = (_SETTINGS_HTML + _SETTINGS_JS + _SETTINGS_JS2).replace("__VOOL_PALETTE_CSS__", DARK_PALETTE_CSS).replace(
         "</body>", render_addon_store_fragment() + "\n" + render_wallet_fragment() + "\n" + render_settings_extras_fragment() + "\n" + render_calendar_settings_fragment()
-        + "\n" + render_notification_settings_fragment() + "\n</body>", 1
+        + "\n" + render_notification_settings_fragment() + "\n" + render_model_download_fragment() + "\n</body>", 1
     )
     tag, direction, bootstrap = _ui_locale_head(ui_locale)
     return (

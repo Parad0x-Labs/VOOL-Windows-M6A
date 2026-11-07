@@ -1233,6 +1233,13 @@
       "registry_command_id": "",
       "surface": "http"
     },
+    "http:GET:/api/models/local/pull": {
+      "classification": "EXTERNAL_TRANSPORT_ONLY",
+      "name": "GET /api/models/local/pull",
+      "note": "model registry read feed (local model download state; loopback only)",
+      "registry_command_id": "",
+      "surface": "http"
+    },
     "http:GET:/api/money/contract": {
       "classification": "EXTERNAL_TRANSPORT_ONLY",
       "name": "GET /api/money/contract",
@@ -2304,6 +2311,20 @@
       "registry_command_id": "",
       "surface": "http"
     },
+    "http:POST:/api/models/local/pull": {
+      "classification": "EXTERNAL_TRANSPORT_ONLY",
+      "name": "POST /api/models/local/pull",
+      "note": "model registry operator action (download a model named in the plan; onboarding guards)",
+      "registry_command_id": "",
+      "surface": "http"
+    },
+    "http:POST:/api/models/local/pull/cancel": {
+      "classification": "EXTERNAL_TRANSPORT_ONLY",
+      "name": "POST /api/models/local/pull/cancel",
+      "note": "model registry operator action (cancel the running download; onboarding guards)",
+      "registry_command_id": "",
+      "surface": "http"
+    },
     "http:POST:/api/models/local/register": {
       "classification": "EXTERNAL_TRANSPORT_ONLY",
       "name": "POST /api/models/local/register",
@@ -3063,7 +3084,7 @@
   },
   "totals": {
     "DEAD": 0,
-    "EXTERNAL_TRANSPORT_ONLY": 298,
+    "EXTERNAL_TRANSPORT_ONLY": 301,
     "GENERATED_ADAPTER": 130,
     "LEGACY_UNMIGRATED": 0,
     "REGISTRY_OWNED": 8
