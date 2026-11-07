@@ -225,6 +225,8 @@ footer { display:flex; align-items:center; gap:10px; padding:14px 20px; border-t
 footer .grow { flex:1 1 auto; }
 #live { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
 @media (max-width: 560px) { h2 { font-size:23px; } .mock { height:200px; } main { padding:16px 12px; } }
+/* A short window (1024x768 less the taskbar): the example shrinks so the real choices stay in view. */
+@media (max-height: 760px) { .mock { height:150px; } }
 </style>
 </head>
 <body>
@@ -407,6 +409,15 @@ function render() {
   $('#backBtn').disabled = view.index === 0;
   $('#skipBtn').hidden = !!step.done;
   document.body.dataset.step = step.id;
+  focusPane();
+}
+
+// Only #pane scrolls (the body is a fixed-height column), so Page Down / arrows reach the choices
+// below the example only while focus is inside it. Hand it focus unless a control already has it.
+function focusPane() {
+  const active = document.activeElement;
+  if (active && active !== document.body && active !== document.documentElement) return;
+  $('#pane').focus({ preventScroll: true });
 }
 
 /* ------------------------------------------------------------------ the real controls */
