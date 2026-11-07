@@ -480,7 +480,7 @@ public class LauncherRunTests
         {
             var inside = Path.Combine(box.Work, "ran.txt");
             var hook = Path.Combine(repository, "hooks-planted.txt");
-            var result = Launch(box, [Cmd, "/c", $"echo ran> \"{inside}\"& echo x> \"{hook}\"& exit 0"], host: Host.Real);
+            var result = Launch(box, [Cmd, "/c", $"echo ran> {inside}& echo x> {hook}& exit 0"], host: Host.Real);
             AssertStartedAndFinished(result, 0);
             Assert.True(File.Exists(inside), $"the child could not write its own root: {result.Stderr}");
             Assert.False(File.Exists(hook), "the child wrote inside a .git under its root");
