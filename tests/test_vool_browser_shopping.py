@@ -237,7 +237,7 @@ def _assert_no_card_digits(path: Path) -> None:
     timestamp, 1794041110.92, failed CI once), so "4111" is looked for in every string
     and key, and the full number in any grouping is looked for anywhere, numbers included.
     """
-    raw = path.read_text()
+    raw = path.read_text(encoding="utf-8")
     assert not _TEST_PAN.search(raw), f"card number stored in {path.name}"
     try:
         parts = list(_json_text_parts(json.loads(raw)))
