@@ -43,8 +43,15 @@ def _get(base: str, path: str) -> dict:
 @pytest.fixture(scope="module")
 def served(tmp_path_factory):
     home = tmp_path_factory.mktemp("setup-served") / "home"
+    # On Windows a picked folder ticks Setup only inside a folder marked disposable (clean-VM job 52,
+    # bug 4); the developer's variable marks this one for the daemon's whole life. Other hosts ignore it.
+    marked = tmp_path_factory.mktemp("setup-served-marked")
     with rig.CapturingProvider(default="ok") as provider:
-        daemon = rig.ServedDaemon(home, provider=provider, env_extra={"PLAYWRIGHT_BROWSERS_PATH": os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "")})
+        daemon = rig.ServedDaemon(home, provider=provider, env_extra={
+            "PLAYWRIGHT_BROWSERS_PATH": os.environ.get("PLAYWRIGHT_BROWSERS_PATH", ""),
+            "VOOL_WINDOWS_DISPOSABLE_WORKSPACES": str(marked),
+        })
+        daemon.marked_folder = marked
         try:
             daemon.start(timeout=180)
         except RuntimeError as exc:
@@ -173,7 +180,7 @@ def test_settings_entry_ticks_a_step_configured_in_settings_and_vanishes_when_ev
     assert page.locator("#setupSteps [data-step='name']").get_attribute("data-done") == "true"
 
     # Finish the remaining two through their real doors; the entry must disappear, not tick to 4.
-    folder = tmp_path / "Docs"
+    folder = daemon.marked_folder / "Docs"
     folder.mkdir()
     status, body = _post(daemon.base_url, "/api/projects", {"name": "Docs", "root": str(folder)})
     assert status == 200 and body.get("project"), body
