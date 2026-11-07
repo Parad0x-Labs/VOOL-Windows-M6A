@@ -174,7 +174,7 @@ public static class Launcher
 
         // The trampoline could not start the program: nothing ran, so the record must not say it did.
         if (!timedOut && code == TrampolineNotStarted)
-            throw new SetupException("the program could not be started inside the box (see the trampoline's stderr line)");
+            throw new SetupException("CreateProcess of the program failed inside the box; VoolConfineStart's stderr line gives the Windows error");
 
         var exitCode = timedOut ? ExitCodes.Timeout : unchecked((int)code);
         var limit = timedOut ? "time" : job.LimitHit;

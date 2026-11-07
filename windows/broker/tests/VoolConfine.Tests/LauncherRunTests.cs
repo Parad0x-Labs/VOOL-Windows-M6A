@@ -181,7 +181,19 @@ public class LauncherRunTests
                     using var client = await listener.AcceptTcpClientAsync(token);
                     Interlocked.Increment(ref accepted);
                     var stream = client.GetStream();
-                    await stream.WriteAsync("HTTP/1.0 200 OK\r\nContent-Length: 0\r\n\r\n"u8.ToArray(), token);
+                    // Read the whole request first: closing with it unread sends a reset, and the
+                    // control's curl then fails with 56 (run 42358953341) instead of exiting 0.
+                    var request = new List<byte>();
+                    var buffer = new byte[4096];
+                    while (request.Count < 65536)
+                    {
+                        var read = await stream.ReadAsync(buffer, token);
+                        if (read == 0) break;
+                        request.AddRange(buffer.AsSpan(0, read));
+                        if (request.Count >= 4 && request[^4] == '\r' && request[^3] == '\n' && request[^2] == '\r' && request[^1] == '\n') break;
+                    }
+                    await stream.WriteAsync("HTTP/1.0 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"u8.ToArray(), token);
+                    client.Client.Shutdown(SocketShutdown.Send);
                 }
             }, token);
             // Positive control: the same request unconfined does reach the listener.
