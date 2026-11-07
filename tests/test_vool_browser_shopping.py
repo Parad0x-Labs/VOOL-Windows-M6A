@@ -22,7 +22,6 @@ The money laws under test:
 from __future__ import annotations
 
 import json
-import re
 import urllib.request
 from pathlib import Path
 
@@ -213,40 +212,6 @@ def test_checkout_uses_only_a_confirmed_profile(browser_world) -> None:
         assert "op@example.net" not in json.dumps(receipt)
 
 
-# The whole test card number in any grouping (plain, spaced, dashed, dotted ...), wherever it sits.
-_TEST_PAN = re.compile(r"4111\D?1111\D?1111\D?1111")
-
-
-def _json_text_parts(value):
-    """Every string value and every key in a JSON document; numbers are not text."""
-    if isinstance(value, str):
-        yield value
-    elif isinstance(value, dict):
-        for key, item in value.items():
-            yield str(key)
-            yield from _json_text_parts(item)
-    elif isinstance(value, list):
-        for item in value:
-            yield from _json_text_parts(item)
-
-
-def _assert_no_card_digits(path: Path) -> None:
-    """No part of the test card number may be stored, masked or truncated forms included.
-
-    A bare "4111" substring check over the raw file also hit ordinary numbers (a saved
-    timestamp, 1794041110.92, failed CI once), so "4111" is looked for in every string
-    and key, and the full number in any grouping is looked for anywhere, numbers included.
-    """
-    raw = path.read_text()
-    assert not _TEST_PAN.search(raw), f"card number stored in {path.name}"
-    try:
-        parts = list(_json_text_parts(json.loads(raw)))
-    except ValueError:
-        parts = [raw]
-    leaked = [part for part in parts if "4111" in part]
-    assert not leaked, f"card digits stored in {path.name}: {leaked[:3]}"
-
-
 def test_card_data_is_refused_structurally(browser_world) -> None:
     with JourneyWorld() as world:
         _seed_merchant(world)
@@ -262,7 +227,7 @@ def test_card_data_is_refused_structurally(browser_world) -> None:
         assert not sneaky.ok, "card data was accepted into the profile store"
         profiles = list((browser_world / "browser-scratch").rglob("*.json"))
         for path in profiles:
-            _assert_no_card_digits(path)
+            assert "4111" not in path.read_text()
 
         typed = _run(f"{PLUGIN}.type", {
             "session": "s1", "selector": "input[name=card_number]",
