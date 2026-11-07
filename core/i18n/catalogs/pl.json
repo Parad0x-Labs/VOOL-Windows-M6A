@@ -717,6 +717,11 @@
     "mode.review_edits_description": "VOOL może przeglądać i przygotowywać diffy edycji. Każda wyraźnie oznaczona partia edycji musi zostać zatwierdzona przed zastosowaniem.",
     "model.js.auto": "VOOL Auto",
     "model.js.local_only": "VOOL Auto Local Only",
+    "models.download.button": "Pobierz {model} ({size} GB) z rejestru Ollama",
+    "models.download.progress": "Pobieranie {model}… {percent}%",
+    "models.download.cancel": "Anuluj pobieranie",
+    "models.download.failed": "Pobieranie zatrzymane: {reason}",
+    "models.download.done": "{model} jest pobrany i gotowy.",
     "msg.copy": "Kopiuj",
     "msg.copy_rich": "Kopiuj z formatowaniem",
     "msg.copy_rich_title": "Kopiuj z formatowaniem (odkażony HTML + zwykły tekst — o sposobie wyświetlenia decyduje aplikacja docelowa)",
@@ -1899,7 +1904,7 @@
     "fault.wallet_payment_channel_off.action": "Włącz kanał płatności w ustawieniach Krypto tylko wtedy, gdy chcesz, by płatności przez niego szły; limit i twoja zgoda obowiązują na każdym kanale.",
     "fault.wallet_x402_sdk_unavailable.message": "Ta wersja nie potrafi opłacać ofert x402 w sieci Base przez x402 Foundation SDK: na tym komputerze nie ma opcjonalnego dodatku x402. Nic nie podpisano ani nie wysłano. Każda inna funkcja portfela działa bez niego; po zainstalowaniu spróbuj ponownie."
   },
-  "source_catalog_sha256": "2eaed113ad8b12a9418943a28ad3e94475eb96655506c6a1a5fcaf86ed94dc9a",
+  "source_catalog_sha256": "54e72d10493f816529ee35b551f43bd00077ade7552b629c0ab79b9ce53f30d2",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

@@ -717,6 +717,11 @@
     "mode.review_edits_description": "VOOL darf Bearbeitungs-Diffs einsehen und vorbereiten. Jeder klar gekennzeichnete Bearbeitungsstapel muss genehmigt werden, bevor er angewendet wird.",
     "model.js.auto": "VOOL Auto",
     "model.js.local_only": "VOOL Auto Nur lokal",
+    "models.download.button": "{model} ({size} GB) aus der Ollama-Registry herunterladen",
+    "models.download.progress": "{model} wird heruntergeladen… {percent} %",
+    "models.download.cancel": "Download abbrechen",
+    "models.download.failed": "Download angehalten: {reason}",
+    "models.download.done": "{model} ist heruntergeladen und bereit.",
     "msg.copy": "Kopieren",
     "msg.copy_rich": "Formatiert kopieren",
     "msg.copy_rich_title": "Mit Formatierung kopieren (bereinigtes HTML + Klartext — die empfangende App entscheidet, wie sie es darstellt)",
@@ -1899,7 +1904,7 @@
     "fault.wallet_payment_channel_off.action": "Schalte einen Zahlungskanal in den Krypto-Einstellungen nur ein, wenn Zahlungen darüber laufen sollen; die Obergrenze und deine Freigabe gelten auf jedem Kanal.",
     "fault.wallet_x402_sdk_unavailable.message": "Dieser Build kann keine x402-Angebote auf Base über das x402 Foundation SDK bezahlen: Die optionale Erweiterung x402 ist auf diesem Rechner nicht installiert. Es wurde nichts signiert oder gesendet. Jede andere Wallet-Funktion läuft ohne sie; nach der Installation versuche es erneut."
   },
-  "source_catalog_sha256": "2eaed113ad8b12a9418943a28ad3e94475eb96655506c6a1a5fcaf86ed94dc9a",
+  "source_catalog_sha256": "54e72d10493f816529ee35b551f43bd00077ade7552b629c0ab79b9ce53f30d2",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
