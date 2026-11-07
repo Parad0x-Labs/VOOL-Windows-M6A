@@ -1219,6 +1219,8 @@
     "sidebar.report_title": "报告问题 — 生成一份由您逐字节批准的净化本地草稿",
     "sidebar.settings": "⚙ 设置",
     "sidebar.settings_title": "设置",
+    "sidebar.quit": "退出 VOOL",
+    "sidebar.quit_title": "退出 VOOL 并停止其后台服务",
     "sidebar.skills": "▵ 技能",
     "sidebar.skills_title": "技能 — VOOL 如何使用那些能力",
     "skills.from_plugin_title": "来自插件:{plugin}",
@@ -1897,7 +1899,7 @@
     "fault.wallet_payment_channel_off.action": "只有在希望通过某个支付通道付款时，才在加密设置中打开它；上限和你的批准在每个通道上都适用。",
     "fault.wallet_x402_sdk_unavailable.message": "此构建无法通过 x402 Foundation SDK 支付 Base 上的 x402 报价：这台机器上没有安装可选的 x402 扩展。没有签名或发送任何内容。钱包的其他所有功能没有它也能工作；安装之后请重试。"
   },
-  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
+  "source_catalog_sha256": "2eaed113ad8b12a9418943a28ad3e94475eb96655506c6a1a5fcaf86ed94dc9a",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

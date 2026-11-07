@@ -99,6 +99,7 @@ register('files', 'Generated files\\…', function(){ var p = pageActions(); if 
 register('contacts', 'Contacts\\…', function(){ var p = pageActions(); if (p && p.openContacts) p.openContacts(); });
 register('insert-contact', 'Insert a saved contact\\…', function(){ if (window.VoolContacts) window.VoolContacts.chooseIntoComposer({}); });
 register('focus-composer', 'Focus composer', function(){ var p = pageActions(); if (p) p.focusComposer(); });
+register('quit', 'Quit VOOL', function(){ var p = pageActions(); if (p && p.quitApp) p.quitApp(); });
 register('companion-lab', 'Companion: Character Lab\\…', function(){ var c = companion(); if (c && c.openCharacterLab) c.openCharacterLab(); });
 register('companion-dock', 'Companion: dock in corner', function(){ var c = companion(); if (c && c.dock) c.dock(); });
 register('companion-hide', 'Companion: hide', function(){ var c = companion(); if (c && c.hide) c.hide(); });
@@ -335,7 +336,12 @@ function anyLegacySurfaceOpen(){
     if (el && !el.hidden) return true;
   }
   if (document.querySelector('.pop.open')) return true;
-  if (document.querySelector('.vool-ninja-menu, .vool-ninja-pop, .vool-character-lab')) return true;
+  // The companion mounts its pop, menu and character lab on boot and keeps them hidden with
+  // display:none, so PRESENCE is not "open": only a shown one owns this Esc.
+  var companion = document.querySelectorAll('.vool-ninja-menu, .vool-ninja-pop, .vool-character-lab');
+  for (var j = 0; j < companion.length; j++) {
+    if (companion[j].style.display !== 'none') return true;
+  }
   return false;
 }
 document.addEventListener('keydown', function(ev){

@@ -1219,6 +1219,8 @@
     "sidebar.report_title": "문제 보고 — 당신이 바이트 단위로 승인하는 정화된 로컬 초안을 만듭니다",
     "sidebar.settings": "⚙ 설정",
     "sidebar.settings_title": "설정",
+    "sidebar.quit": "VOOL 종료",
+    "sidebar.quit_title": "VOOL을 종료하고 백그라운드 서비스를 중지합니다",
     "sidebar.skills": "▵ 스킬",
     "sidebar.skills_title": "스킬 — VOOL이 그 능력을 쓰는 방법",
     "skills.from_plugin_title": "플러그인 제공: {plugin}",
@@ -1897,7 +1899,7 @@
     "fault.wallet_payment_channel_off.action": "그 채널로 결제하려는 경우에만 암호화폐 설정에서 결제 채널을 켜세요; 한도와 사용자 승인은 모든 채널에 적용됩니다.",
     "fault.wallet_x402_sdk_unavailable.message": "이 빌드는 x402 Foundation SDK를 통해 Base의 x402 제안을 결제할 수 없습니다: 선택적 x402 추가 요소가 이 기기에 설치되지 않았습니다. 서명되거나 보내진 것은 없습니다. 지갑의 다른 모든 기능은 없이도 작동합니다; 설치한 뒤 다시 시도하세요."
   },
-  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
+  "source_catalog_sha256": "2eaed113ad8b12a9418943a28ad3e94475eb96655506c6a1a5fcaf86ed94dc9a",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

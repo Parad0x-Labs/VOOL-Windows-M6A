@@ -1219,6 +1219,8 @@
     "sidebar.report_title": "Relatar um problema — monta um rascunho local higienizado que você aprova byte a byte",
     "sidebar.settings": "⚙ Configurações",
     "sidebar.settings_title": "Configurações",
+    "sidebar.quit": "Sair do VOOL",
+    "sidebar.quit_title": "Sair do VOOL e parar seus serviços em segundo plano",
     "sidebar.skills": "Skills",
     "sidebar.skills_title": "Habilidades — como o VOOL usa esses poderes",
     "skills.from_plugin_title": "Do plugin: {plugin}",
@@ -1897,7 +1899,7 @@
     "fault.wallet_payment_channel_off.action": "Ligue um canal de pagamento nos ajustes de Cripto só se quiser que pagamentos passem por ele; o teto e a sua aprovação valem em todos os canais.",
     "fault.wallet_x402_sdk_unavailable.message": "Esta versão não consegue pagar ofertas x402 na Base pelo x402 Foundation SDK: o extra opcional x402 não está instalado nesta máquina. Nada foi assinado ou enviado. Toda outra função da carteira funciona sem ele; com ele instalado, tente de novo."
   },
-  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
+  "source_catalog_sha256": "2eaed113ad8b12a9418943a28ad3e94475eb96655506c6a1a5fcaf86ed94dc9a",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

@@ -1219,6 +1219,8 @@
     "sidebar.report_title": "الإبلاغ عن مشكلة — يبني مسودة محلية منقّاة توافق عليها بايتًا بايت",
     "sidebar.settings": "⚙ الإعدادات",
     "sidebar.settings_title": "الإعدادات",
+    "sidebar.quit": "إنهاء VOOL",
+    "sidebar.quit_title": "إنهاء VOOL وإيقاف خدماته في الخلفية",
     "sidebar.skills": "▵ المهارات",
     "sidebar.skills_title": "المهارات — كيف يستخدم VOOL تلك القدرات",
     "skills.from_plugin_title": "من إضافة: {plugin}",
@@ -1897,7 +1899,7 @@
     "fault.wallet_payment_channel_off.action": "شغّل قناة دفع في إعدادات العملات المشفرة فقط إن أردت أن تتم الدفعات عبرها؛ الحد الأقصى وموافقتك يسريان على كل قناة.",
     "fault.wallet_x402_sdk_unavailable.message": "لا يستطيع هذا الإصدار دفع عروض x402 على Base عبر x402 Foundation SDK: الإضافة الاختيارية x402 غير مثبتة على هذه الآلة. لم يوقَّع أو يُرسل شيء. كل وظائف المحفظة الأخرى تعمل بدونها؛ بعد تثبيتها أعد المحاولة."
   },
-  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
+  "source_catalog_sha256": "2eaed113ad8b12a9418943a28ad3e94475eb96655506c6a1a5fcaf86ed94dc9a",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

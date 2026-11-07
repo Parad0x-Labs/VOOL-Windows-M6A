@@ -1576,6 +1576,8 @@
     "sidebar.report_title": "Report a problem — builds a sanitized local draft you approve byte-for-byte",
     "sidebar.settings": "⚙ Settings",
     "sidebar.settings_title": "Settings",
+    "sidebar.quit": "Quit VOOL",
+    "sidebar.quit_title": "Quit VOOL and stop its background services",
     "sidebar.skills": "▵ Skills",
     "sidebar.skills_title": "Skills — how VOOL uses those powers",
     "skills.from_plugin_title": "From plugin: {plugin}",

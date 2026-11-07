@@ -818,6 +818,30 @@ class _WindowApi:
         except Exception as exc:
             return {"ok": False, "error": type(exc).__name__}
 
+    def quit_app(self, _payload: object = None) -> dict:
+        """Quit VOOL: stop everything the bundle supervisor owns, then close this window.
+
+        Closing the window alone leaves the supervisor, the API and Ollama running on purpose (the
+        next launch reopens fast), so a real exit needs the supervisor's own stop signal -- the same
+        ``<home>/run/stop`` file ``bundle_supervisor --stop`` and Stop_VOOL write. When the signal
+        cannot be written the window stays open: closing it then would only hide VOOL again.
+        """
+        from core.runtime_paths import native_runtime_home
+
+        try:
+            run_dir = native_runtime_home() / "run"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (run_dir / "stop").write_text("stop\n", encoding="utf-8")
+        except OSError as exc:
+            _log(f"quit refused: stop signal not written ({exc!r})")
+            return {"ok": False, "error": "VOOL could not signal its background services to stop."}
+        _log("quit requested: supervisor stop signal written")
+        window = self._window
+        if window is not None:
+            with contextlib.suppress(Exception):
+                window.destroy()
+        return {"ok": True}
+
     def pick_folder(self) -> dict:
         """Open a native folder dialog. Returns {ok:True, path} or {ok:False, cancelled|error}."""
         try:

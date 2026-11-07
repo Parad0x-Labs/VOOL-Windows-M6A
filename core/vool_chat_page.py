@@ -1119,6 +1119,7 @@ body:not(.panel-open) #xpanel { display:none; }
         <button id="filesBtn" type="button" class="side-foot-btn" title="Files &mdash; everything VOOL generated, across all chats" data-i18n="sidebar.files" data-i18n-title="sidebar.files_title">&#128193; Files</button>
         <button id="contactsBtn" type="button" class="side-foot-btn" title="Contacts &mdash; the people and services you saved" data-i18n="sidebar.contacts" data-i18n-title="sidebar.contacts_title">&#128100; Contacts</button>
         <button id="settingsBtn" type="button" class="side-foot-btn" title="Settings" data-i18n="sidebar.settings" data-i18n-title="sidebar.settings_title">&#9881; Settings</button>
+        <button id="quitBtn" type="button" class="side-foot-btn" hidden title="Quit VOOL and stop its background services" data-i18n="sidebar.quit" data-i18n-title="sidebar.quit_title">Quit VOOL</button>
         <div class="home-support"><button id="reportBtn" type="button" class="side-foot-btn" title="Report a problem &mdash; builds a sanitized local draft you approve byte-for-byte" data-i18n="sidebar.report" data-i18n-title="sidebar.report_title">Report a problem</button></div>
       </div>
     </details>
@@ -11696,6 +11697,7 @@ if (sbOpenRestored) sbOpenRestored.addEventListener('click', async () => {
 
 if (settingsOverlay) {
   const sBtn = document.getElementById('settingsBtn'); if (sBtn) sBtn.addEventListener('click', openSettings);
+  const qBtn = document.getElementById('quitBtn'); if (qBtn) qBtn.addEventListener('click', () => quitApp());
   const sClose = document.getElementById('settingsClose'); if (sClose) sClose.addEventListener('click', closeSettings);
   const prefsSave = document.getElementById('setPrefsSave'); if (prefsSave) prefsSave.addEventListener('click', savePrefs);
   const humor = document.getElementById('setHumor'); const humorVal = document.getElementById('setHumorVal');
@@ -12293,6 +12295,22 @@ document.addEventListener('visibilitychange', () => {
 // actions, so a monolith refactor breaks HERE, visibly, instead of inside a fragment. Stop goes
 // through the displayed run's own Stop control -- the exact code path a user's click takes
 // (server-first cancel by turn_id, then stream abort) -- never a second cancel implementation.
+// Quit exists only in the native window: the bridge stops the background services, then closes
+// the window. A browser tab has no such bridge, so the button stays hidden there.
+function quitApp() {
+  const api = window.pywebview && window.pywebview.api;
+  if (!api || !api.quit_app) { toast('Quit is available in the VOOL app window.'); return; }
+  Promise.resolve(window.pywebview.api.quit_app()).then((res) => {
+    if (!res || !res.ok) toast((res && res.error) || 'VOOL could not quit.');
+  }).catch(() => toast('VOOL could not quit.'));
+}
+function revealQuit() {
+  const btn = document.getElementById('quitBtn');
+  const api = window.pywebview && window.pywebview.api;
+  if (btn && api && api.quit_app) btn.hidden = false;
+}
+revealQuit();
+window.addEventListener('pywebviewready', revealQuit);
 window.VoolPageActions = Object.freeze({
   newChat: () => newChat(),
   togglePanel: () => togglePanel(),
@@ -12307,6 +12325,7 @@ window.VoolPageActions = Object.freeze({
   openPlugins: () => { if (typeof openPlugins === 'function') openPlugins(); },
   openSkills: () => { if (typeof openSkills === 'function') openSkills(); },
   openFiles: () => { if (typeof openFiles === 'function') openFiles(); },
+  quitApp: () => quitApp(),
   focusComposer: () => { if (inputEl) inputEl.focus(); },
   toast: (text) => toast(String(text == null ? '' : text)),
   displayedChat: () => displayedChat,

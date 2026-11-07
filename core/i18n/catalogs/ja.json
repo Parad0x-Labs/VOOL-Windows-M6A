@@ -1219,6 +1219,8 @@
     "sidebar.report_title": "問題を報告 — あなたがバイト単位で承認する、サニタイズ済みのローカル下書きを作成します",
     "sidebar.settings": "⚙ 設定",
     "sidebar.settings_title": "設定",
+    "sidebar.quit": "VOOL を終了",
+    "sidebar.quit_title": "VOOL を終了し、バックグラウンドサービスを停止します",
     "sidebar.skills": "▵ スキル",
     "sidebar.skills_title": "スキル — VOOLがその力を使う方法",
     "skills.from_plugin_title": "プラグインから:{plugin}",
@@ -1897,7 +1899,7 @@
     "fault.wallet_payment_channel_off.action": "支払いチャネルは、そのチャネルで支払いたい場合にだけ暗号設定でオンにしてください。上限とあなたの承認はどのチャネルでも適用されます。",
     "fault.wallet_x402_sdk_unavailable.message": "このビルドはx402 Foundation SDKを通じてBase上のx402オファーを支払えません：オプションのx402拡張がこのマシンにインストールされていません。署名も送信もされていません。他のウォレット機能はそれなしで動作します。導入後にもう一度お試しください。"
   },
-  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
+  "source_catalog_sha256": "2eaed113ad8b12a9418943a28ad3e94475eb96655506c6a1a5fcaf86ed94dc9a",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
