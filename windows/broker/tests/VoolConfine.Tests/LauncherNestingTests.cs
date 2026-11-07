@@ -94,6 +94,14 @@ public class LauncherNestingTests
         # cmd.exe itself, starting cmd.exe by its full path, and the code it gives back.
         & "$env:SystemRoot\System32\cmd.exe" /c "$env:SystemRoot\System32\cmd.exe /c exit 7" 2>&1 | Out-Null
         $out += "CMD-NESTED=$LASTEXITCODE"
+        # Does Windows rewrite TEMP again when a process inside the box passes its own environment?
+        # (The launcher's own TEMP is replaced by AC\Temp, run 41902285066.) A trampoline that sets
+        # TEMP only works if the answer is no.
+        $psi = New-Object Diagnostics.ProcessStartInfo $app, '/c echo %TEMP%'
+        $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true
+        $psi.EnvironmentVariables['TEMP'] = 'C:\vool-temp-probe'
+        try { $p = [Diagnostics.Process]::Start($psi); $t = $p.StandardOutput.ReadToEnd().Trim(); $p.WaitForExit(); $out += "NESTED-TEMP=$t" }
+        catch { $out += "NESTED-TEMP=ERR $($_.Exception.Message)" }
         $set = $k::SetCurrentDirectoryW($here)
         $out += "SETCWD=$set"
         foreach ($inherit in $false, $true) {
