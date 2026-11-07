@@ -34,6 +34,14 @@ if mode == 'unarmed-failure':
             raise OSError('new lease cannot be persisted')
         return original_open(path, *args, **kwargs)
     authority.Path.open = deny_lease
+    # Windows opens a new lease with the builtin open() and a share-delete opener, not
+    # Path.open: refuse that route too, or the fault never reaches the lease there.
+    import builtins
+    def deny_lease_builtin(file, mode='r', *args, **kwargs):
+        if os.path.basename(os.fspath(file)).startswith('lease-') and 'x' in mode:
+            raise OSError('new lease cannot be persisted')
+        return builtins.open(file, mode, *args, **kwargs)
+    authority.open = deny_lease_builtin
     try:
         authority.begin(chat, 'MINT84', home)
     except RuntimeError:

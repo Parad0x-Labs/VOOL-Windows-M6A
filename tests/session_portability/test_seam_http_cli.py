@@ -205,8 +205,10 @@ def test_import_route_lands_a_bundle_in_this_home(app, seeded, tmp_path):
     assert len(turns) == 2
 
 
-def test_import_route_refuses_a_missing_file_with_a_typed_error(app, seeded):
-    status, body = _post(app, IMPORT, {"path": "/nonexistent/bundle.voolsession"})
+def test_import_route_refuses_a_missing_file_with_a_typed_error(app, seeded, tmp_path):
+    # A missing file at a native absolute path. "/nonexistent/..." has no drive on Windows, so the import
+    # refuses its spelling first, by design (BUNDLE_PATH_NOT_LOCAL, core/session_portability/bundle.py).
+    status, body = _post(app, IMPORT, {"path": str(tmp_path / "nonexistent" / "bundle.voolsession")})
     assert status == 200
     assert body.get("ok") is False
     assert body.get("code") == "BUNDLE_PATH_MISSING"

@@ -304,8 +304,18 @@ class ExecutionGate:
                     {"decision": "blocked", "reason": "Command contains blocked destructive markers."},
                     mode=mode,
                 )
+        # The same split the sandbox runner uses (sandbox.network_guard.parse_command), so the gate
+        # classifies exactly the argv that would run: POSIX shell words, or the Windows rules there.
+        from sandbox.network_guard import CommandLineRefused, parse_command
+
         try:
-            argv = shlex.split(text, posix=True)
+            argv = parse_command(text)
+        except CommandLineRefused as exc:
+            return _receipted(
+                DECISION_DENIED,
+                {"decision": "blocked", "reason": f"Command line refused: {exc}"},
+                mode=mode,
+            )
         except ValueError:
             return _receipted(
                 DECISION_DENIED,

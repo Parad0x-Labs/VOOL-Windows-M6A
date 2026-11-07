@@ -140,6 +140,13 @@ def _run_scratch_driver(tmp_path: Path, home: Path, spy_log: Path, *, grant: boo
         "VOOL_KEYRING_SPY_LOG": str(spy_log),
         "PYTHONPATH": os.pathsep.join([str(shim), str(REPO)]),
     }
+    if os.name == "nt":
+        # What every Windows shell carries: Python needs SYSTEMROOT to start (sockets, random), and
+        # Path.home() reads USERPROFILE, not HOME. No session pin is inherited through these.
+        env["USERPROFILE"] = str(home)
+        for name in ("SYSTEMROOT", "SystemDrive", "TEMP", "TMP"):
+            if os.environ.get(name):
+                env[name] = os.environ[name]
     if grant:
         env["VOOL_KEYCHAIN_ALLOWED"] = "1"
     done = subprocess.run([sys.executable, str(driver)], capture_output=True, text=True,
@@ -196,9 +203,16 @@ def test_scratch_signing_key_falls_back_to_protected_storage_not_plaintext(tmp_p
     assert (key_dir / "node_signing_key.b64").exists() is False, "no plaintext seed may be written"
     assert not list(key_dir.glob("node_signing_key.keyring.json")), "no keyring record without grant"
     passphrase_file = key_dir / "key_storage.passphrase"
-    assert passphrase_file.exists() and passphrase_file.stat().st_mode & 0o777 == 0o600, (
-        "the local protection secret must exist with 0600 permissions"
-    )
+    assert passphrase_file.exists(), "the local protection secret must exist"
+    if os.name == "nt":
+        # chmod only flips the read-only bit on Windows; owner-only is the protected one-ACE DACL.
+        from core.owner_only import verify_owner_only
+
+        assert verify_owner_only(passphrase_file).ok, "the local protection secret must be owner-only"
+    else:
+        assert passphrase_file.stat().st_mode & 0o777 == 0o600, (
+            "the local protection secret must exist with 0600 permissions"
+        )
 
 
 # ------------------------------------------------------------------------------------------

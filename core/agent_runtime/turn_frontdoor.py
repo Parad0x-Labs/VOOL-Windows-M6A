@@ -406,16 +406,17 @@ _ARBITRATE_ON_AMBIGUITY = "ambiguity"
 _ARBITRATE_ON_NEAR_MISS = "near_miss"
 
 
-def _non_local_typed_path(text: str, *lanes: str, network_only: bool = False) -> tuple[str, str]:
+def _non_local_typed_path(text: str, *lanes: str, network_only: bool = False) -> tuple[str, str, str]:
     """On Windows, the first path in the user's own words that one of the named message lanes would
     look up and that names a share, a device or no full local folder (only a share or a device, with
     ``network_only``), with its kind; ("", "") otherwise, and always off Windows. Read with the lanes'
     own parsers, in the order given: "skill" (an import's package), "write" (the write-root lane's
-    destination) and "pdf" (the PDF lane's file). Nothing is looked up."""
+    destination) and "pdf" (the PDF lane's file), with the lane that found it ("", "", "")
+    otherwise. Nothing is looked up."""
     from core import windows_path_policy
 
     if not windows_path_policy.active():
-        return "", ""
+        return "", "", ""
     from core.agent_runtime.fast_paths_pdf import non_local_pdf
     from core.agent_runtime.fast_paths_skill import non_local_package
     from core.agent_runtime.write_root_honesty import non_local_write_target
@@ -428,13 +429,13 @@ def _non_local_typed_path(text: str, *lanes: str, network_only: bool = False) ->
     for lane in lanes:
         path, kind = finders[lane](text)
         if kind:
-            return path, kind
-    return "", ""
+            return path, kind, lane
+    return "", "", ""
 
 
 def _non_local_path_turn(
     agent: Any,
-    typed: tuple[str, str],
+    typed: tuple[str, str, str],
     *,
     session_id: str,
     user_input: str,
@@ -442,7 +443,7 @@ def _non_local_path_turn(
 ) -> dict[str, Any] | None:
     """The answer to a turn whose typed path `_non_local_typed_path` found, naming it as typed; None
     when it found none."""
-    path, kind = typed
+    path, kind, lane = typed
     if not kind:
         return None
     from core import windows_path_policy
@@ -451,7 +452,10 @@ def _non_local_path_turn(
         "result": agent._fast_path_result(
             session_id=session_id,
             user_input=user_input,
-            response=windows_path_policy.refusal_text(path, kind),
+            # A refused write destination says nothing was written: that is what the user asked for.
+            response=windows_path_policy.refusal_text(
+                path, kind, nothing="written" if lane == "write" else "opened"
+            ),
             confidence=0.95,
             source_context=source_context,
             reason="non_local_path_refused",

@@ -54,7 +54,11 @@ class TestExactRollback:
         assert restored["ok"], restored
 
         assert target.read_bytes() == b"before-bytes"
-        assert (os.stat(target).st_mode & 0o777) == 0o640, "mode must return exactly"
+        # The mode returns to what the file had before the turn. POSIX stores all of 0o640; Windows
+        # keeps only the read-only bit, so there the before state is the mode Windows reported.
+        if os.name != "nt":
+            assert (before_stat.st_mode & 0o777) == 0o640
+        assert (os.stat(target).st_mode & 0o777) == (before_stat.st_mode & 0o777), "mode must return exactly"
         assert os.stat(target).st_mtime_ns == before_stat.st_mtime_ns, "mtime must return exactly"
 
     def test_created_files_and_their_directories_are_removed(self, workspace, store_dir):

@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import hmac as hmac_mod
 import json
+import os
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -25,6 +26,7 @@ from core.mode_permission_policy import (
     reset_mode_permission_state,
     set_active_mode,
 )
+from core.owner_only import verify_owner_only
 from core.runtime_paths import configure_runtime_home
 from core.web.api import mobile_companion_api as mca
 from core.web.api.mobile_companion_api import (
@@ -811,7 +813,12 @@ class TestStore:
     def test_state_file_is_owner_only(self, runtime):
         _pair(runtime)
         state = mca._state_dir() / "state.json"
-        assert oct(state.stat().st_mode & 0o777) == "0o600"
+        if os.name == "nt":
+            # chmod only flips the read-only bit on Windows; owner-only is the protected one-ACE DACL.
+            report = verify_owner_only(state)
+            assert report.ok, report.reason
+        else:
+            assert oct(state.stat().st_mode & 0o777) == "0o600"
 
     def test_service_constructor_rehydrates_revoked_and_active(self, runtime):
         claim_a = _body(_pair(runtime)[0])

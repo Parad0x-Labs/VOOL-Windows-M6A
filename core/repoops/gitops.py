@@ -213,7 +213,7 @@ class GitRunner:
             return outside
         try:
             keys = _destination_program_keys(git_dir, timeout=self.timeout)
-            hooks = safe_git.active_hooks(git_dir, timeout=self.timeout)
+            hooks = safe_git.active_hooks(git_dir, timeout=self.timeout, git_dir=True)
             update = subprocess.run(
                 ["git", "--git-dir", str(git_dir), "config", "--get", "receive.denycurrentbranch"],
                 capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=self.timeout, env=safe_git.safe_env(),
