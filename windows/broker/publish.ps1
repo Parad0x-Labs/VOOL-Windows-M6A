@@ -66,8 +66,18 @@ if (Test-Path -LiteralPath $PinPath) { Remove-Item -LiteralPath $PinPath -Force 
 $confineArgs = @("publish", $confineProject) + $runtimeArgs + @("-p:StartupHookSupport=false", "-o", $confineDir)
 & $Dotnet @confineArgs
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish of VoolConfine failed with exit code $LASTEXITCODE" }
+# The trampoline the launcher starts inside the box (VoolConfineStart.exe), self-contained into the
+# same folder, so it runs from the same pinned runtime and the pin covers it too. Published after
+# VoolConfine, whose build copied a framework-dependent copy, so these files replace that copy.
+$startProject = Join-Path $PSScriptRoot "src\VoolConfineStart\VoolConfineStart.csproj"
+$startArgs = @("publish", $startProject) + $runtimeArgs + @("-p:StartupHookSupport=false", "-o", $confineDir)
+& $Dotnet @startArgs
+if ($LASTEXITCODE -ne 0) { throw "dotnet publish of VoolConfineStart failed with exit code $LASTEXITCODE" }
+$startConfig = Get-Content -Raw -LiteralPath (Join-Path $confineDir "VoolConfineStart.runtimeconfig.json") | ConvertFrom-Json
+if (-not $startConfig.runtimeOptions.includedFrameworks) { throw "VoolConfineStart in $confineDir is not self-contained" }
 $confineExe = Join-Path $confineDir "VoolConfine.exe"
 if (-not (Test-Path -LiteralPath $confineExe -PathType Leaf)) { throw "publish produced no VoolConfine.exe in $confineDir" }
+if (-not (Test-Path -LiteralPath (Join-Path $confineDir "VoolConfineStart.exe") -PathType Leaf)) { throw "publish produced no VoolConfineStart.exe in $confineDir" }
 if (-not (Test-Path -LiteralPath (Join-Path $confineDir "coreclr.dll") -PathType Leaf)) {
   throw "VoolConfine publish in $confineDir is not self-contained (no coreclr.dll)"
 }
@@ -87,6 +97,7 @@ foreach ($file in $files) {
   $pinned[$relative] = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 if (-not $pinned.Contains("VoolConfine.exe")) { throw "the VoolConfine pin does not list VoolConfine.exe" }
+if (-not $pinned.Contains("VoolConfineStart.exe")) { throw "the VoolConfine pin does not list VoolConfineStart.exe" }
 $pin = [ordered]@{ schema = "vool.windows_confinement.pin.v1"; files = $pinned }
 $pinParent = Split-Path -Parent $pinFull
 if (-not (Test-Path -LiteralPath $pinParent)) { New-Item -ItemType Directory -Force $pinParent | Out-Null }

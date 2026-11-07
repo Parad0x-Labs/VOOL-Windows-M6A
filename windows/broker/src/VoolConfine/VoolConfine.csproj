@@ -1,5 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><OutputType>Exe</OutputType><RootNamespace>VoolConfine</RootNamespace></PropertyGroup>
+  <PropertyGroup><OutputType>Exe</OutputType><RootNamespace>VoolConfine</RootNamespace>
+    <!-- The trampoline is referenced only so a build puts it beside this program. publish.ps1
+         publishes it self-contained into the same folder afterwards, so a self-contained
+         VoolConfine may reference it (NETSDK1150 would refuse the framework-dependent build). -->
+    <ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
+  </PropertyGroup>
   <ItemGroup><ProjectReference Include="..\VoolConfine.Core\VoolConfine.Core.csproj" />
     <!-- VoolConfineStart.exe is copied beside this program; the launcher starts it in the box. -->
     <ProjectReference Include="..\VoolConfineStart\VoolConfineStart.csproj" />
