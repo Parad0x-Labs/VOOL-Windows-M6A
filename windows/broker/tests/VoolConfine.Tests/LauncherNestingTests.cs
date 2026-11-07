@@ -55,16 +55,20 @@ public class LauncherNestingTests
         [DllImport("kernel32.dll")] public static extern uint WaitForSingleObject(IntPtr h, uint ms);
         [DllImport("kernel32.dll")] public static extern bool GetExitCodeProcess(IntPtr h, out uint code);
         [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] public static extern bool SetCurrentDirectoryW(string dir);
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] public static extern void GetStartupInfoW(byte[] si);
         '@
         $k = Add-Type -MemberDefinition $sig -Name K -Namespace VoolConfineNest -PassThru
         $app = "$env:SystemRoot\System32\cmd.exe"
         $here = [Environment]::CurrentDirectory
         $out = @("CWD=$here", "TEMP=$env:TEMP")
-        function Try-Create($label, $dir, $inherit) {
+        function Try-Create($label, $dir, $inherit, $flags = 0, $own = $false) {
           $si = New-Object byte[] 104; $si[0] = 104
+          # $own: this process's own STARTUPINFO, as cmd.exe passes it (STARTF_USESTDHANDLES and the
+          # stdio handles the launcher gave it).
+          if ($own) { $k::GetStartupInfoW($si) }
           $pi = New-Object byte[] 24
           $cmd = New-Object System.Text.StringBuilder 'cmd.exe /c exit 7'
-          $ok = $k::CreateProcessW($app, $cmd, [IntPtr]::Zero, [IntPtr]::Zero, $inherit, 0, [IntPtr]::Zero, $dir, $si, $pi)
+          $ok = $k::CreateProcessW($app, $cmd, [IntPtr]::Zero, [IntPtr]::Zero, $inherit, $flags, [IntPtr]::Zero, $dir, $si, $pi)
           $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
           if (-not $ok) { return "$label=ERR$err" }
           $h = [IntPtr][BitConverter]::ToInt64($pi, 0)
@@ -76,6 +80,18 @@ public class LauncherNestingTests
           $out += Try-Create "null/inherit=$inherit" ([NullString]::Value) $inherit
           $out += Try-Create "here/inherit=$inherit" $here $inherit
         }
+        # What cmd.exe does differently from the rows above, one choice at a time.
+        $out += Try-Create "own-si/inherit=False" ([NullString]::Value) $false 0 $true
+        $out += Try-Create "own-si/inherit=True" ([NullString]::Value) $true 0 $true
+        $out += Try-Create "unicode-env/inherit=True" ([NullString]::Value) $true 0x400
+        $out += Try-Create "no-window/inherit=True" ([NullString]::Value) $true 0x08000000
+        $out += Try-Create "new-console/inherit=True" ([NullString]::Value) $true 0x10
+        $out += Try-Create "detached/inherit=True" ([NullString]::Value) $true 0x8
+        $si0 = New-Object byte[] 104; $k::GetStartupInfoW($si0)
+        $out += "OWNSI_FLAGS=0x{0:X}" -f [BitConverter]::ToUInt32($si0, 60)
+        # cmd.exe itself, starting cmd.exe by its full path, and the code it gives back.
+        & "$env:SystemRoot\System32\cmd.exe" /c "$env:SystemRoot\System32\cmd.exe /c exit 7" 2>&1 | Out-Null
+        $out += "CMD-NESTED=$LASTEXITCODE"
         $set = $k::SetCurrentDirectoryW($here)
         $out += "SETCWD=$set"
         foreach ($inherit in $false, $true) {
@@ -90,6 +106,9 @@ public class LauncherNestingTests
         using var box = new ConfineSandbox();
         var result = Launch(box, PowerShellArgs(Matrix.Replace("WORKROOT", box.Work)));
         Assert.True(Started(result), result.Stderr);
-        Assert.True(result.Stdout.Contains("null/inherit=False=OK7"), $"exit {result.ExitCode}; {result.Stdout}; err: {result.Stderr}");
+        // Every row must create the process: a test runner or a build starts its children the way
+        // cmd.exe does (its own STARTUPINFO, handles inherited), not only the plainest way.
+        var rows = result.Stdout.Split("; ").Where(row => row.Contains("=ERR") || row.StartsWith("CMD-NESTED=") && row != "CMD-NESTED=7").ToList();
+        Assert.True(result.Stdout.Contains("MATRIX ") && rows.Count == 0, $"exit {result.ExitCode}; {result.Stdout}; err: {result.Stderr}");
     }
 }
