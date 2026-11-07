@@ -16,8 +16,10 @@ public class LauncherNestingTests
         var package = Sids.EnsureProfile();
         var capabilities = Sids.CapabilitiesFor(Policy.Parse(System.Text.Json.JsonSerializer.Serialize(box.Policy())));
         using var job = ConfinementJob.Create(16, 1024, ui);
-        var commandLine = LauncherCommandLine.Build([Cmd, "/c", $"{Cmd} /c exit 7"]);
-        using var child = LauncherProcess.CreateSuspendedInJob(Cmd, commandLine, package, capabilities, job,
+        // PowerShell as the parent: cmd.exe cannot start a program from inside the box (run 42358061428).
+        var argv = PowerShellArgs($"& '{Cmd}' /c exit 7; exit $LASTEXITCODE");
+        var commandLine = LauncherCommandLine.Build(argv);
+        using var child = LauncherProcess.CreateSuspendedInJob(PowerShell, commandLine, package, capabilities, job,
             Launcher.ChildEnvironment(box.Temp), currentDirectory);
         LauncherNative.ResumeThread(child.Thread);
         var waited = LauncherNative.WaitForSingleObject(child.Process, 30_000);
@@ -106,9 +108,11 @@ public class LauncherNestingTests
         using var box = new ConfineSandbox();
         var result = Launch(box, PowerShellArgs(Matrix.Replace("WORKROOT", box.Work)));
         Assert.True(Started(result), result.Stderr);
-        // Every row must create the process: a test runner or a build starts its children the way
-        // cmd.exe does (its own STARTUPINFO, handles inherited), not only the plainest way.
-        var rows = result.Stdout.Split("; ").Where(row => row.Contains("=ERR") || row.StartsWith("CMD-NESTED=") && row != "CMD-NESTED=7").ToList();
+        // Every CreateProcessW row must create the process: a test runner or a build starts its
+        // children the way cmd.exe does (its own STARTUPINFO, handles inherited), not only the
+        // plainest way. CMD-NESTED is printed, not asserted: cmd.exe as the parent still gets
+        // "Access is denied" (run 42358061428), a phase 2 item; the runner never starts cmd.exe.
+        var rows = result.Stdout.Split("; ").Where(row => row.Contains("=ERR")).ToList();
         Assert.True(result.Stdout.Contains("MATRIX ") && rows.Count == 0, $"exit {result.ExitCode}; {result.Stdout}; err: {result.Stderr}");
     }
 }

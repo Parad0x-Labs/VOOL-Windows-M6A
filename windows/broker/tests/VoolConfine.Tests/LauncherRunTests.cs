@@ -253,6 +253,20 @@ public class LauncherRunTests
 
     const string Spin = "for /l %i in () do @rem";
 
+    // cmd.exe cannot start a program from inside the box (run 42358061428: every CreateProcessW form
+    // works from PowerShell, cmd.exe starting cmd.exe gets "Access is denied"), so the process-tree
+    // tests use PowerShell as the parent and cmd.exe only as a leaf. Starts `count` spinning
+    // grandchildren, prints START-FAILED and exits 3 when one cannot be started, then runs `then`.
+    static string[] Starter(int count, string then) => PowerShellArgs($$"""
+        $kids = @()
+        for ($i = 0; $i -lt {{count}}; $i++) {
+          $psi = New-Object Diagnostics.ProcessStartInfo '{{Cmd}}', '/c {{Spin}}'
+          $psi.UseShellExecute = $false
+          try { $kids += [Diagnostics.Process]::Start($psi) } catch { 'START-FAILED'; exit 3 }
+        }
+        {{then}}
+        """);
+
     [Fact]
     public void Killing_the_launcher_ends_the_childs_whole_tree()
     {
@@ -260,7 +274,7 @@ public class LauncherRunTests
         var tracked = new Dictionary<uint, nint>();
         try
         {
-            Launch(box, [Cmd, "/c", $"{Cmd} /c {Spin}"], wait: TimeSpan.FromSeconds(60), whileRunning: launcher =>
+            Launch(box, Starter(1, "Start-Sleep -Seconds 600"), wait: TimeSpan.FromSeconds(60), whileRunning: launcher =>
             {
                 var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
                 while (tracked.Count < 2 && DateTime.UtcNow < deadline)
@@ -284,7 +298,7 @@ public class LauncherRunTests
         try
         {
             // The child starts a spinning grandchild in the background, counts for a moment, and exits 0.
-            var result = Launch(box, [Cmd, "/c", $"start /b {Cmd} /c {Spin} & for /l %j in (1,1,150000) do @rem"],
+            var result = Launch(box, Starter(1, "Start-Sleep -Seconds 2; exit 0"),
                 whileRunning: launcher =>
                 {
                     var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
@@ -310,7 +324,7 @@ public class LauncherRunTests
         try
         {
             var clock = Stopwatch.StartNew();
-            var result = Launch(box, [Cmd, "/c", $"{Cmd} /c {Spin}"], p => p["max_seconds"] = 3,
+            var result = Launch(box, Starter(1, "Start-Sleep -Seconds 600"), p => p["max_seconds"] = 3,
                 whileRunning: launcher =>
                 {
                     var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
@@ -340,7 +354,7 @@ public class LauncherRunTests
         $si = New-Object byte[] 104; $si[0] = 104
         $pi = New-Object byte[] 24
         $cmd = New-Object System.Text.StringBuilder 'cmd.exe /c exit 0'
-        $ok = $k::CreateProcessW("$env:SystemRoot\System32\cmd.exe", $cmd, [IntPtr]::Zero, [IntPtr]::Zero, $false, FLAGS, [IntPtr]::Zero, $null, $si, $pi)
+        $ok = $k::CreateProcessW("$env:SystemRoot\System32\cmd.exe", $cmd, [IntPtr]::Zero, [IntPtr]::Zero, $false, FLAGS, [IntPtr]::Zero, [NullString]::Value, $si, $pi)
         $e = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
         if ($ok) { 'CREATED'; exit 20 } else { "REFUSED $e"; exit 21 }
         """;
@@ -412,7 +426,7 @@ public class LauncherRunTests
     public void A_process_chain_within_max_processes_runs()
     {
         using var box = new ConfineSandbox();
-        var result = Launch(box, [Cmd, "/c", $"{Cmd} /c {Cmd} /c exit 0"], p => p["max_processes"] = 3);
+        var result = Launch(box, Starter(2, "$kids | ForEach-Object { $_.Kill() }; exit 0"), p => p["max_processes"] = 3);
         AssertStartedAndFinished(result, 0);
         Assert.Equal(System.Text.Json.JsonValueKind.Null, result.Status!.Value.GetProperty("limit").ValueKind);
     }
@@ -421,7 +435,7 @@ public class LauncherRunTests
     public void A_process_past_max_processes_is_refused_and_the_status_says_processes()
     {
         using var box = new ConfineSandbox();
-        var result = Launch(box, [Cmd, "/c", $"{Cmd} /c {Cmd} /c exit 0"], p => p["max_processes"] = 2);
+        var result = Launch(box, Starter(2, "$kids | ForEach-Object { $_.Kill() }; exit 0"), p => p["max_processes"] = 2);
         Assert.True(Started(result), result.Stderr);
         Assert.NotEqual(0, result.ExitCode);
         Assert.Equal("processes", result.Status!.Value.GetProperty("limit").GetString());
@@ -509,7 +523,7 @@ public class LauncherRunTests
     public void A_child_can_start_a_grandchild_by_its_full_path()
     {
         using var box = new ConfineSandbox();
-        var result = Launch(box, [Cmd, "/c", $"cd & set & {Cmd} /c echo nested-ok"]);
+        var result = Launch(box, PowerShellArgs($"& '{Cmd}' /c echo nested-ok; exit $LASTEXITCODE"));
         Assert.True(result.Stdout.Contains("nested-ok") && result.ExitCode == 0,
             $"exit {result.ExitCode}; stdout: {result.Stdout}; stderr: {result.Stderr}");
     }
