@@ -458,9 +458,10 @@ public class LauncherRunTests
     [Fact]
     public void The_shipped_launcher_refuses_a_run_on_roots_it_never_granted()
     {
-        // The sandbox's own icacls grant is not the grant form's: no repository markers, no host
-        // folders checked closed. The shipped checks (AclChecks) refuse it before the child starts.
-        using var box = new ConfineSandbox();
+        // No grant at all on the write root. (The sandbox's default icacls grant is the very ACE
+        // the grant form writes, so Verify rightly accepts it once the host folders are granted.)
+        // The shipped checks (AclChecks) refuse it before the child starts.
+        using var box = new ConfineSandbox(grantWork: false);
         var marker = Path.Combine(box.Work, "ran.txt");
         var result = Launch(box, [Cmd, "/c", $"echo ran> {marker}"], host: Host.Real);
         AssertRefused(result, ExitCodes.SetupFailed);
