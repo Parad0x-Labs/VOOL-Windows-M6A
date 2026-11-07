@@ -587,7 +587,7 @@ def _settings_groups() -> list[dict]:
                     widget="extras_memory",
                     help=(
                         "A second store, separate from the profile items above: facts VOOL confirmed "
-                        "during chats (core/memory/entries.py), each shown with the scope it was stored "
+                        "during chats, each shown with the scope it was stored "
                         "under and where it came from. Forget removes exactly that record and its "
                         "mirror line; nothing else is touched. Reads are governed per chat, so what is "
                         "listed is what those chats may still see."
@@ -600,8 +600,7 @@ def _settings_groups() -> list[dict]:
                     kind="note",
                     help=(
                         "Neither is a setting any more. Both were moved out of the preferences "
-                        "file into this memory (core/user_preferences.py: "
-                        "migrate_legacy_profile_fields), because VOOL learns them from "
+                        "file into this memory, because VOOL learns them from "
                         "conversation and keeps them across chats. They appear in the list above "
                         "with everything else it remembers, and they are changed the same way — by "
                         "telling VOOL, or by editing the item. A second field here would be a "

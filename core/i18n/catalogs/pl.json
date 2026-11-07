@@ -1069,7 +1069,7 @@
     "settings.row.idle_research_assist.effect": "Działa natychmiast.",
     "settings.row.idle_research_assist.help": "Pozwól VOOL dalej badać otwarte pytanie, gdy nie piszesz.",
     "settings.row.idle_research_assist.label": "Badaj podczas bezczynności",
-    "settings.row.learned_facts.help": "Drugi magazyn, osobny od elementów profilu wyżej: fakty potwierdzone przez VOOL w czatach (core/memory/entries.py), każdy pokazany z zasięgiem, pod którym go zapisano, i skąd przyszedł. Zapomnij usuwa dokładnie ten zapis i jego lustrzaną linijkę; nic innego nie jest ruszane. Odczyty rządzą się per czat, więc to, co na liście, to to, co tamte czaty jeszcze mogą widzieć.",
+    "settings.row.learned_facts.help": "Drugi magazyn, osobny od elementów profilu wyżej: fakty potwierdzone przez VOOL w czatach, każdy pokazany z zasięgiem, pod którym go zapisano, i skąd przyszedł. Zapomnij usuwa dokładnie ten zapis i jego lustrzaną linijkę; nic innego nie jest ruszane. Odczyty rządzą się per czat, więc to, co na liście, to to, co tamte czaty jeszcze mogą widzieć.",
     "settings.row.learned_facts.label": "Fakty, których VOOL nauczył się w rozmowach",
     "settings.row.local_models.effect": "Działa natychmiast.",
     "settings.row.local_models.help": "Modele zainstalowane w Ollama na tej maszynie. Rejestracja dodaje pasmo, do którego VOOL może kierować; certyfikacja uruchamia zapieczętowaną sondę narzędzia, która rozstrzyga, czy może pisać ostateczne odpowiedzi. Nic nie jest pobierane i nikt nie jest kontaktowany — czytane jest tylko Twoje lokalne Ollama.",
@@ -1113,7 +1113,7 @@
     "settings.row.ram_reserve_pct.effect": "Działa natychmiast.",
     "settings.row.ram_reserve_pct.help": "Wymuszane na żywo przez namiestnika zasobów: ciężkie lokalne zadanie nie zabierze tego udziału pamięci. Większa rezerwa znaczy, że VOOL używa mniej. To twardy limit, nie rada.",
     "settings.row.ram_reserve_pct.label": "RAM zostawiony dla Ciebie",
-    "settings.row.remembered_identity_note.help": "Żadne z nich nie jest już ustawieniem. Oba przeniesiono z pliku preferencji do tej pamięci (core/user_preferences.py: migrate_legacy_profile_fields), bo VOOL uczy się ich z rozmowy i nosi przez czaty. Pojawiają się na liście wyżej ze wszystkim innym, co pamięta, i zmienia się je tak samo — mówiąc VOOL albo edytując element. Drugie pole byłoby drugim pisarzem dla wartości, której ma już dość pisarzy.",
+    "settings.row.remembered_identity_note.help": "Żadne z nich nie jest już ustawieniem. Oba przeniesiono z pliku preferencji do tej pamięci, bo VOOL uczy się ich z rozmowy i nosi przez czaty. Pojawiają się na liście wyżej ze wszystkim innym, co pamięta, i zmienia się je tak samo — mówiąc VOOL albo edytując element. Drugie pole byłoby drugim pisarzem dla wartości, której ma już dość pisarzy.",
     "settings.row.remembered_identity_note.label": "Twoje imię i Twój podpis e-mail",
     "settings.row.session_export.help": "Plik .voolsession niesie tury jednej rozmowy, pokwitowania i odniesienia do dowodów, podpisane kluczem tej maszyny. Szyfrowanie jest zalecane dla każdego pakietu opuszczającego ten komputer; niezaszyfrowany eksport wymaga najpierw uznania ostrzeżenia. Rozumowanie wewnętrzne modelu nie jest częścią pakietu, a podgląd mówi dokładnie, co zostanie zapisane, zanim cokolwiek będzie.",
     "settings.row.session_export.label": "Wyeksportuj rozmowę",
@@ -1918,7 +1918,7 @@
     "fault.wallet_payment_channel_off.action": "Włącz kanał płatności w ustawieniach Krypto tylko wtedy, gdy chcesz, by płatności przez niego szły; limit i twoja zgoda obowiązują na każdym kanale.",
     "fault.wallet_x402_sdk_unavailable.message": "Ta wersja nie potrafi opłacać ofert x402 w sieci Base przez x402 Foundation SDK: na tym komputerze nie ma opcjonalnego dodatku x402. Nic nie podpisano ani nie wysłano. Każda inna funkcja portfela działa bez niego; po zainstalowaniu spróbuj ponownie."
   },
-  "source_catalog_sha256": "58ba6b6d48c46aa908d294fbc816e8c83c8a58839da0756ef13843ddbea8467d",
+  "source_catalog_sha256": "6b453a1710dc06461a3885df9f48775b3c2abc0e9ae820ef9be5f2e3c15845c9",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

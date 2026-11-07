@@ -221,14 +221,23 @@ def snapshot(locale: str = "en") -> dict[str, Any]:
     itself — done/skipped/failed — never depends on the locale.
     """
     from core.i18n.catalog import catalog_for
+    from core.i18n.host_text import host_key
     from core.user_preferences import load_preferences
 
     catalog = catalog_for(locale) if locale and locale != "en" else None
 
     def present(spec_id: str, field: str, english: str) -> str:
-        if not english or catalog is None:
+        if not english:
             return english
-        return catalog.text(f"setup.step.{spec_id}.{field}")
+        key = f"setup.step.{spec_id}.{field}"
+        # A Windows host asks for the ``.windows`` sibling where the English names a Mac ("On my
+        # Mac", "stays on this Mac"), in every locale including English; a Mac keeps its text.
+        windows_key = host_key(key)
+        if windows_key != key:
+            return (catalog or catalog_for("en")).text(windows_key)
+        if catalog is None:
+            return english
+        return catalog.text(key)
 
     autonomy_mode = ""
     try:

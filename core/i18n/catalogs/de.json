@@ -1069,7 +1069,7 @@
     "settings.row.idle_research_assist.effect": "Wirkt sofort.",
     "settings.row.idle_research_assist.help": "VOOL darf eine offene Frage weiter untersuchen, während du nicht schreibst.",
     "settings.row.idle_research_assist.label": "Im Leerlauf recherchieren",
-    "settings.row.learned_facts.help": "Ein zweiter Speicher, getrennt von den Profileinträgen oben: Fakten, die VOOL in Chats bestätigt hat (core/memory/entries.py), jeder mit dem Geltungsbereich, unter dem er gespeichert wurde, und woher er kam. Vergessen entfernt genau diesen Datensatz und seine Spiegelzeile; nichts anderes wird berührt. Lesezugriffe gelten je Chat — was gelistet ist, ist das, was diese Chats noch sehen dürfen.",
+    "settings.row.learned_facts.help": "Ein zweiter Speicher, getrennt von den Profileinträgen oben: Fakten, die VOOL in Chats bestätigt hat, jeder mit dem Geltungsbereich, unter dem er gespeichert wurde, und woher er kam. Vergessen entfernt genau diesen Datensatz und seine Spiegelzeile; nichts anderes wird berührt. Lesezugriffe gelten je Chat — was gelistet ist, ist das, was diese Chats noch sehen dürfen.",
     "settings.row.learned_facts.label": "Fakten, die VOOL im Gespräch gelernt hat",
     "settings.row.local_models.effect": "Wirkt sofort.",
     "settings.row.local_models.help": "Modelle, die in Ollama auf dieser Maschine installiert sind. Eine Registrierung fügt eine Spalte hinzu, an die VOOL routen kann; eine Zertifizierung führt die versiegelte Werkzeugsonde aus, die entscheidet, ob es endgültige Antworten schreiben darf. Nichts wird heruntergeladen, niemand wird kontaktiert — gelesen wird nur dein lokales Ollama.",
@@ -1113,7 +1113,7 @@
     "settings.row.ram_reserve_pct.effect": "Wirkt sofort.",
     "settings.row.ram_reserve_pct.help": "Live erzwungen durch den Ressourcenwächter: eine schwere lokale Aufgabe bekommt diesen Speicheranteil nicht. Eine größere Reserve heißt, VOOL nutzt weniger. Das ist eine harte Grenze, kein Rat.",
     "settings.row.ram_reserve_pct.label": "Für dich freigehaltener RAM",
-    "settings.row.remembered_identity_note.help": "Keines von beidem ist mehr eine Einstellung. Beides wurde aus der Einstellungsdatei in dieses Gedächtnis verschoben (core/user_preferences.py: migrate_legacy_profile_fields), weil VOOL es aus dem Gespräch lernt und über Chats hinweg behält. Es erscheint in der Liste oben mit allem anderen, was es erinnert, und wird genauso geändert — indem man VOOL etwas sagt oder den Eintrag bearbeitet. Ein zweites Feld hier wäre ein zweiter Schreiber für einen Wert, der schon genug Schreiber hat.",
+    "settings.row.remembered_identity_note.help": "Keines von beidem ist mehr eine Einstellung. Beides wurde aus der Einstellungsdatei in dieses Gedächtnis verschoben, weil VOOL es aus dem Gespräch lernt und über Chats hinweg behält. Es erscheint in der Liste oben mit allem anderen, was es erinnert, und wird genauso geändert — indem man VOOL etwas sagt oder den Eintrag bearbeitet. Ein zweites Feld hier wäre ein zweiter Schreiber für einen Wert, der schon genug Schreiber hat.",
     "settings.row.remembered_identity_note.label": "Dein Name und deine E-Mail-Signatur",
     "settings.row.session_export.help": "Eine .voolsession-Datei trägt die Züge eines Gesprächs, seine Belege und Nachweisverweise, signiert mit dem Schlüssel dieser Maschine. Verschlüsselung wird für jedes Bündel empfohlen, das diesen Rechner verlässt; ein unverschlüsselter Export verlangt zuerst das Bestätigen der Warnung. Modell-internes Reasoning ist kein Teil eines Bündels, und die Vorschau sagt genau, was geschrieben wird, bevor etwas geschrieben wird.",
     "settings.row.session_export.label": "Gespräch exportieren",
@@ -1918,7 +1918,7 @@
     "fault.wallet_payment_channel_off.action": "Schalte einen Zahlungskanal in den Krypto-Einstellungen nur ein, wenn Zahlungen darüber laufen sollen; die Obergrenze und deine Freigabe gelten auf jedem Kanal.",
     "fault.wallet_x402_sdk_unavailable.message": "Dieser Build kann keine x402-Angebote auf Base über das x402 Foundation SDK bezahlen: Die optionale Erweiterung x402 ist auf diesem Rechner nicht installiert. Es wurde nichts signiert oder gesendet. Jede andere Wallet-Funktion läuft ohne sie; nach der Installation versuche es erneut."
   },
-  "source_catalog_sha256": "58ba6b6d48c46aa908d294fbc816e8c83c8a58839da0756ef13843ddbea8467d",
+  "source_catalog_sha256": "6b453a1710dc06461a3885df9f48775b3c2abc0e9ae820ef9be5f2e3c15845c9",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

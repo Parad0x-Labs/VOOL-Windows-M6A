@@ -1069,7 +1069,7 @@
     "settings.row.idle_research_assist.effect": "S'applique immédiatement.",
     "settings.row.idle_research_assist.help": "Autoriser VOOL à poursuivre une recherche sur une question en suspens lorsque vous n’écrivez pas.",
     "settings.row.idle_research_assist.label": "Rechercher pendant les périodes d’inactivité",
-    "settings.row.learned_facts.help": "Un second magasin, distinct des éléments de profil ci-dessus : des faits confirmés par VOOL pendant les chats (core/memory/entries.py), chacun montré avec la portée sous laquelle il fut stocké et d'où il vient. Oublier supprime exactement cet enregistrement et sa ligne miroir ; rien d'autre n'est touché. Les lectures obéissent par chat, donc ce qui est listé est ce que ces chats peuvent encore voir.",
+    "settings.row.learned_facts.help": "Un second magasin, distinct des éléments de profil ci-dessus : des faits confirmés par VOOL pendant les chats, chacun montré avec la portée sous laquelle il fut stocké et d'où il vient. Oublier supprime exactement cet enregistrement et sa ligne miroir ; rien d'autre n'est touché. Les lectures obéissent par chat, donc ce qui est listé est ce que ces chats peuvent encore voir.",
     "settings.row.learned_facts.label": "Faits appris par VOOL en conversation",
     "settings.row.local_models.effect": "S'applique immédiatement.",
     "settings.row.local_models.help": "Modèles installés dans Ollama sur cette machine. En enregistrer un ajoute une voie vers laquelle VOOL peut router ; le certifier lance la sonde d'outils scellée qui décide s'il peut écrire les réponses finales. Rien n'est téléchargé et personne n'est contacté — cela ne lit que votre Ollama local.",
@@ -1113,7 +1113,7 @@
     "settings.row.ram_reserve_pct.effect": "S'applique immédiatement.",
     "settings.row.ram_reserve_pct.help": "Imposé en direct par le gouverneur de ressources : une tâche locale lourde ne prendra pas cette part de mémoire. Une réserve plus grande signifie que VOOL utilise moins. C'est une limite dure, pas un conseil.",
     "settings.row.ram_reserve_pct.label": "RAM gardée libre pour vous",
-    "settings.row.remembered_identity_note.help": "Plus aucun des deux n'est un réglage. Tous deux ont été déplacés du fichier de préférences vers cette mémoire (core/user_preferences.py : migrate_legacy_profile_fields), parce que VOOL les apprend en conversation et les garde entre chats. Ils apparaissent dans la liste ci-dessus avec tout ce qu'il retient, et se changent pareillement — en le disant à VOOL, ou en éditant l'élément. Un second champ ici serait un second écrivain pour une valeur qui en a déjà assez.",
+    "settings.row.remembered_identity_note.help": "Plus aucun des deux n'est un réglage. Tous deux ont été déplacés du fichier de préférences vers cette mémoire, parce que VOOL les apprend en conversation et les garde entre chats. Ils apparaissent dans la liste ci-dessus avec tout ce qu'il retient, et se changent pareillement — en le disant à VOOL, ou en éditant l'élément. Un second champ ici serait un second écrivain pour une valeur qui en a déjà assez.",
     "settings.row.remembered_identity_note.label": "Votre nom, et votre signature e-mail",
     "settings.row.session_export.help": "Un fichier .voolsession porte les tours d'une conversation, ses reçus et références de preuves, signés par la clé de cette machine. Le chiffrement est recommandé pour tout paquet quittant cet ordinateur ; un export non chiffré exige d'abord la reconnaissance de l'avertissement. Le raisonnement interne du modèle ne fait pas partie d'un paquet, et l'aperçu dit exactement ce qui sera écrit avant que quoi que ce soit le soit.",
     "settings.row.session_export.label": "Exporter un chat",
@@ -1918,7 +1918,7 @@
     "fault.wallet_payment_channel_off.action": "Activez un canal de paiement dans les réglages Crypto seulement si vous voulez que des paiements passent par lui ; le plafond et votre approbation s'appliquent sur chaque canal.",
     "fault.wallet_x402_sdk_unavailable.message": "Cette version ne peut pas payer les offres x402 sur Base via le x402 Foundation SDK : l'extra optionnel x402 n'est pas installé sur cette machine. Rien n'a été signé ni envoyé. Toutes les autres fonctions du portefeuille marchent sans lui ; une fois installé, réessayez."
   },
-  "source_catalog_sha256": "58ba6b6d48c46aa908d294fbc816e8c83c8a58839da0756ef13843ddbea8467d",
+  "source_catalog_sha256": "6b453a1710dc06461a3885df9f48775b3c2abc0e9ae820ef9be5f2e3c15845c9",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

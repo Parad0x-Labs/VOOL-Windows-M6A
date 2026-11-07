@@ -1069,7 +1069,7 @@
     "settings.row.idle_research_assist.effect": "Áp dụng ngay.",
     "settings.row.idle_research_assist.help": "Cho phép VOOL tiếp tục nghiên cứu câu hỏi đang mở khi bạn không gõ.",
     "settings.row.idle_research_assist.label": "Nghiên cứu khi rảnh",
-    "settings.row.learned_facts.help": "Một kho thứ hai, tách với các mục hồ sơ ở trên: những sự thật VOOL xác nhận trong trò chuyện (core/memory/entries.py), mỗi cái hiện với phạm vi nó được lưu và từ đâu đến. Quên xóa đúng bản ghi đó và dòng phản chiếu của nó; không động vào gì khác. Việc đọc điều chỉnh theo từng trò chuyện, nên những gì liệt kê là những gì các trò chuyện đó còn được thấy.",
+    "settings.row.learned_facts.help": "Một kho thứ hai, tách với các mục hồ sơ ở trên: những sự thật VOOL xác nhận trong trò chuyện, mỗi cái hiện với phạm vi nó được lưu và từ đâu đến. Quên xóa đúng bản ghi đó và dòng phản chiếu của nó; không động vào gì khác. Việc đọc điều chỉnh theo từng trò chuyện, nên những gì liệt kê là những gì các trò chuyện đó còn được thấy.",
     "settings.row.learned_facts.label": "Sự thật VOOL học được trong hội thoại",
     "settings.row.local_models.effect": "Áp dụng ngay.",
     "settings.row.local_models.help": "Các mô hình cài trong Ollama trên máy này. Đăng ký một cái thêm một làn VOOL có thể định tuyến tới; chứng nhận một cái chạy đầu dò công cụ niêm phong quyết định nó có được viết câu trả lời cuối hay không. Không tải gì và không liên lạc ai — chỉ đọc Ollama cục bộ của bạn.",
@@ -1113,7 +1113,7 @@
     "settings.row.ram_reserve_pct.effect": "Áp dụng ngay.",
     "settings.row.ram_reserve_pct.help": "Được bộ quản trị tài nguyên áp đặt trực tiếp: một tác vụ cục bộ nặng sẽ không lấy phần bộ nhớ này. Dự trữ lớn hơn nghĩa là VOOL dùng ít hơn. Đây là giới hạn cứng, không phải lời khuyên.",
     "settings.row.ram_reserve_pct.label": "RAM dành cho bạn",
-    "settings.row.remembered_identity_note.help": "Không cái nào còn là cài đặt. Cả hai đã được chuyển khỏi tệp tuỳ chọn vào bộ nhớ này (core/user_preferences.py: migrate_legacy_profile_fields), vì VOOL học chúng từ hội thoại và giữ qua các trò chuyện. Chúng xuất hiện trong danh sách trên cùng với mọi thứ khác nó nhớ, và được đổi theo cùng cách — nói với VOOL, hoặc sửa mục đó. Một trường thứ hai ở đây sẽ là người viết thứ hai cho một giá trị đã thừa người viết.",
+    "settings.row.remembered_identity_note.help": "Không cái nào còn là cài đặt. Cả hai đã được chuyển khỏi tệp tuỳ chọn vào bộ nhớ này, vì VOOL học chúng từ hội thoại và giữ qua các trò chuyện. Chúng xuất hiện trong danh sách trên cùng với mọi thứ khác nó nhớ, và được đổi theo cùng cách — nói với VOOL, hoặc sửa mục đó. Một trường thứ hai ở đây sẽ là người viết thứ hai cho một giá trị đã thừa người viết.",
     "settings.row.remembered_identity_note.label": "Tên bạn và chữ ký thư của bạn",
     "settings.row.session_export.help": "Tệp .voolsession mang các lượt của một hội thoại, biên lai và tham chiếu bằng chứng, được ký bằng khóa của máy này. Khuyến nghị mã hóa cho mọi gói rời máy tính này; xuất không mã hóa cần xác nhận cảnh báo trước. Suy luận nội bộ của mô hình không thuộc gói, và bản xem trước nêu chính xác những gì sẽ được ghi trước khi bất cứ gì được ghi.",
     "settings.row.session_export.label": "Xuất một cuộc trò chuyện",
@@ -1918,7 +1918,7 @@
     "fault.wallet_payment_channel_off.action": "Chỉ bật một kênh thanh toán trong cài đặt Tiền điện tử nếu bạn muốn thanh toán qua kênh đó; trần chi tiêu và sự chấp thuận của bạn áp dụng trên mọi kênh.",
     "fault.wallet_x402_sdk_unavailable.message": "Bản dựng này không trả được các đề nghị x402 trên Base qua x402 Foundation SDK: phần bổ sung tùy chọn x402 chưa cài trên máy này. Chưa ký hay gửi gì. Mọi chức năng ví khác chạy không cần nó; sau khi cài, thử lại."
   },
-  "source_catalog_sha256": "58ba6b6d48c46aa908d294fbc816e8c83c8a58839da0756ef13843ddbea8467d",
+  "source_catalog_sha256": "6b453a1710dc06461a3885df9f48775b3c2abc0e9ae820ef9be5f2e3c15845c9",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

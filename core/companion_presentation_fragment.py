@@ -794,13 +794,23 @@ function vnAvoidCritical(c) {
 
 function vnCriticalRects() {
   const out = [];
-  for (let i = 0; i < VN_CRITICAL_SELECTORS.length; i++) {
-    const el = document.querySelector(VN_CRITICAL_SELECTORS[i]);
-    if (!el || typeof el.getBoundingClientRect !== "function") continue;
+  const keep = function (el) {
+    if (!el || typeof el.getBoundingClientRect !== "function") return;
     const r = el.getBoundingClientRect();
-    if (!r || !r.width || !r.height) continue;
+    if (!r || !r.width || !r.height) return;
     out.push(r);
+  };
+  // The first match, then EVERY later match: the log keeps one Stop per task card, and the first
+  // one in the page is an old, finished card's (zero-size) button -- the live Stop is a later one.
+  for (let i = 0; i < VN_CRITICAL_SELECTORS.length; i++) {
+    const first = document.querySelector(VN_CRITICAL_SELECTORS[i]);
+    keep(first);
+    const found = document.querySelectorAll(VN_CRITICAL_SELECTORS[i]);
+    for (let j = 0; j < found.length; j++) if (found[j] !== first) keep(found[j]);
   }
+  // The reply being read: only the latest one, so the pet still has somewhere to sit in a long log.
+  const replies = document.querySelectorAll("#log .msg.assistant");
+  if (replies.length) keep(replies[replies.length - 1]);
   return out;
 }
 function vnResolveDrop(x, y) {

@@ -225,6 +225,8 @@ footer { display:flex; align-items:center; gap:10px; padding:14px 20px; border-t
 footer .grow { flex:1 1 auto; }
 #live { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
 @media (max-width: 560px) { h2 { font-size:23px; } .mock { height:200px; } main { padding:16px 12px; } }
+/* A short window (1024x768 less the taskbar): the example shrinks so the real choices stay in view. */
+@media (max-height: 760px) { .mock { height:150px; } }
 </style>
 </head>
 <body>
@@ -410,6 +412,15 @@ function render() {
   $('#backBtn').disabled = view.index === 0;
   $('#skipBtn').hidden = !!step.done;
   document.body.dataset.step = step.id;
+  focusPane();
+}
+
+// Only #pane scrolls (the body is a fixed-height column), so Page Down / arrows reach the choices
+// below the example only while focus is inside it. Hand it focus unless a control already has it.
+function focusPane() {
+  const active = document.activeElement;
+  if (active && active !== document.body && active !== document.documentElement) return;
+  $('#pane').focus({ preventScroll: true });
 }
 
 /* ------------------------------------------------------------------ the real controls */
@@ -724,6 +735,10 @@ _WINDOWS_SCRIPT_WORDS: tuple[tuple[str, str], ...] = (
      "T('setup.thinking.online_sub.windows', 'Smarter answers. You paste a key from a company you pay; it is kept only on this computer.')"),
     ("T('setup.status.saved_thinking', 'Saved: VOOL thinks on this Mac.')",
      "T('setup.status.saved_thinking.windows', 'Saved: VOOL thinks on this computer.')"),
+    ("T('setup.thinking.no_local', 'No local model is running on this computer, so “On my Mac” cannot answer yet.')",
+     "T('setup.thinking.no_local', 'No local model is running on this computer, so “On this computer” cannot answer yet.')"),
+    # The animated example's label is plain markup, not a T() lookup.
+    ("<div class=\"mk-choice on\"><b>On my Mac</b>", "<div class=\"mk-choice on\"><b>On this computer</b>"),
     ("T('setup.folder.placeholder', 'Type the folder’s full path, e.g. /Users/you/Documents')",
      "T('setup.folder.placeholder.windows', 'Type the folder’s full path, e.g. C:\\\\Users\\\\you\\\\Documents')"),
 )

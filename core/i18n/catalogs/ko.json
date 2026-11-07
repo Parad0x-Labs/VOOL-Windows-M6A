@@ -1069,7 +1069,7 @@
     "settings.row.idle_research_assist.effect": "즉시 적용됩니다.",
     "settings.row.idle_research_assist.help": "입력하지 않는 동안 VOOL이 미해결 질문을 계속 조사하도록 허용합니다.",
     "settings.row.idle_research_assist.label": "유휴 시간에 조사하기",
-    "settings.row.learned_facts.help": "위 프로필 항목과는 별개의 두 번째 저장소: VOOL이 채팅에서 확인한 사실들 (core/memory/entries.py). 각각은 저장된 범위와 출처와 함께 표시됩니다. 잊기는 정확히 그 기록과 그 거울 줄만 지우고, 다른 것은 건드리지 않습니다. 읽기는 채팅별로 다스려지므로, 목록에 있는 것이 그 채팅들이 아직 볼 수 있는 것입니다.",
+    "settings.row.learned_facts.help": "위 프로필 항목과는 별개의 두 번째 저장소: VOOL이 채팅에서 확인한 사실들. 각각은 저장된 범위와 출처와 함께 표시됩니다. 잊기는 정확히 그 기록과 그 거울 줄만 지우고, 다른 것은 건드리지 않습니다. 읽기는 채팅별로 다스려지므로, 목록에 있는 것이 그 채팅들이 아직 볼 수 있는 것입니다.",
     "settings.row.learned_facts.label": "대화에서 VOOL이 배운 사실",
     "settings.row.local_models.effect": "즉시 적용됩니다.",
     "settings.row.local_models.help": "이 기기의 Ollama에 설치된 모델들. 하나를 등록하면 VOOL이 경로 지정할 수 있는 차선이 추가되고, 인증하면 최종 답변을 쓸 수 있는지 결정하는 봉인된 도구 탐침이 실행됩니다. 아무 것도 내려받지 않고 누구에게도 연락하지 않습니다 — 당신의 로컬 Ollama만 읽습니다.",
@@ -1113,7 +1113,7 @@
     "settings.row.ram_reserve_pct.effect": "즉시 적용됩니다.",
     "settings.row.ram_reserve_pct.help": "자원 관리자가 실시간으로 강제합니다: 무거운 로컬 작업은 이 메모리 몫을 가져가지 못합니다. 예약이 크면 VOOL이 덜 씁니다. 충고가 아니라 단단한 한도입니다.",
     "settings.row.ram_reserve_pct.label": "당신을 위해 비워둔 RAM",
-    "settings.row.remembered_identity_note.help": "둘 다 더는 설정이 아닙니다. VOOL이 대화에서 배우고 채팅 사이에 담고 있기 때문에, 둘 다 기본 설정 파일에서 이 기억으로 옮겨졌습니다 (core/user_preferences.py: migrate_legacy_profile_fields). 위 목록에 다른 기억들과 함께 나타나고, 같은 방식으로 바뀝니다 — VOOL에게 말하거나, 항목을 편집해서. 여기 두 번째 칸은 이미 쓰는 이가 충분한 값에 두 번째 쓰는 이가 될 것입니다.",
+    "settings.row.remembered_identity_note.help": "둘 다 더는 설정이 아닙니다. VOOL이 대화에서 배우고 채팅 사이에 담고 있기 때문에, 둘 다 기본 설정 파일에서 이 기억으로 옮겨졌습니다. 위 목록에 다른 기억들과 함께 나타나고, 같은 방식으로 바뀝니다 — VOOL에게 말하거나, 항목을 편집해서. 여기 두 번째 칸은 이미 쓰는 이가 충분한 값에 두 번째 쓰는 이가 될 것입니다.",
     "settings.row.remembered_identity_note.label": "당신의 이름과 이메일 서명",
     "settings.row.session_export.help": ".voolsession 파일은 대화 하나의 턴, 영수증, 증거 참조를 이 기기의 키로 서명해 담습니다. 이 컴퓨터를 떠나는 꾸러미에는 암호화를 권합니다; 암호화 없는 내보내기는 먼저 경고를 인정해야 합니다. 모델 내부 추론은 꾸러미에 들어가지 않고, 미리보기는 무엇이 쓰일지 그것이 쓰이기 전에 정확히 말합니다.",
     "settings.row.session_export.label": "채팅 내보내기",
@@ -1918,7 +1918,7 @@
     "fault.wallet_payment_channel_off.action": "그 채널로 결제하려는 경우에만 암호화폐 설정에서 결제 채널을 켜세요; 한도와 사용자 승인은 모든 채널에 적용됩니다.",
     "fault.wallet_x402_sdk_unavailable.message": "이 빌드는 x402 Foundation SDK를 통해 Base의 x402 제안을 결제할 수 없습니다: 선택적 x402 추가 요소가 이 기기에 설치되지 않았습니다. 서명되거나 보내진 것은 없습니다. 지갑의 다른 모든 기능은 없이도 작동합니다; 설치한 뒤 다시 시도하세요."
   },
-  "source_catalog_sha256": "58ba6b6d48c46aa908d294fbc816e8c83c8a58839da0756ef13843ddbea8467d",
+  "source_catalog_sha256": "6b453a1710dc06461a3885df9f48775b3c2abc0e9ae820ef9be5f2e3c15845c9",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
