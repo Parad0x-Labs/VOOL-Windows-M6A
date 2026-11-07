@@ -924,8 +924,9 @@ def parse_turn_ir(
         # A leading greeting ("Hello, what can you do?", "Hi! Why is the sky blue?") is a
         # salutation, not a request: as its own clause no head set claims it, and the composer had
         # to report "Could not be answered: Hello" beside a real answer (clean-VM job 52). It is
-        # kept as the turn's preamble. A greeting alone is still the whole turn.
-        if len(spans) > 1 and _is_bare_greeting(source[spans[0][0]:spans[0][1]]):
+        # kept as the turn's preamble. A greeting alone is still the whole turn. Only the batch and
+        # marker branches above set a preamble, so it is still empty here and nothing is overwritten.
+        if len(spans) > 1 and not preamble and _is_bare_greeting(source[spans[0][0]:spans[0][1]]):
             preamble_start, preamble_end = spans[0]
             preamble = source[preamble_start:preamble_end]
             spans = spans[1:]
