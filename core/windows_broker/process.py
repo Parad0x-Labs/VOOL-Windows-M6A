@@ -290,6 +290,19 @@ def start_for_api(
     # and a refusal shows in the log, rather than being filtered out here first. The list uses
     # the Windows path separator (os.pathsep there), as core/windows_write_gate.py reads it.
     flagged = [part.strip() for part in env.get(_FLAGGED_ENV, "").split(";") if part.strip()]
+    if environ is None:
+        # The owner's own list (core/windows_disposable_store.py), as it is now: this start is the
+        # one that fixes it for the broker's lifetime. It only adds candidates the broker still checks.
+        from core import windows_disposable_store
+
+        try:
+            owned = windows_disposable_store.start_folders(vool_home)
+        except Exception as exc:
+            logger.warning("the owner's disposable folder list adds nothing: %s", type(exc).__name__)
+            owned = []
+        flagged.extend(part for part in owned if part not in flagged)
+    # The whole list the broker is handed, so a folder marked outside the VOOL window is visible.
+    logger.info("Windows broker flagged folders at start: %s", flagged)
     host = BrokerHost(executable, flagged, journal_dir)
     # From here the gate takes its flagged folders from this broker only (section 4, one list):
     # none while it starts, and none if it never runs. Only for the process's own environment, the

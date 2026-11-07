@@ -363,6 +363,19 @@ def _settings_groups() -> list[dict]:
                     keywords="manual auto bypass mode approval per chat composer",
                 ),
                 _row(
+                    id="disposable_folders",
+                    label="Folders VOOL may change (Windows)",
+                    kind="custom",
+                    widget="disposable_folders",
+                    read={"url": "/api/windows/disposable-folders"},
+                    help=(
+                        "On Windows VOOL changes files only inside folders you mark as disposable. "
+                        "Mark only a folder whose contents you can lose. A new mark is used after "
+                        "VOOL restarts; removing one takes effect at once."
+                    ),
+                    keywords="windows folder disposable workspace write change files mark allow",
+                ),
+                _row(
                     id="privacy_disclosure",
                     label="Privacy & data, as it stands",
                     kind="custom",
@@ -1548,6 +1561,7 @@ function renderWidget(row, host) {
   if (w === 'advanced_links') return widgetAdvancedLinks(stack);
   if (w === 'extras_memory') return widgetExtras(stack, 'memory');
   if (w === 'extras_privacy') return widgetExtras(stack, 'privacy');
+  if (w === 'disposable_folders') return widgetDisposableFolders(stack);
   if (w === 'extras_toolbelt') return widgetExtras(stack, 'toolbelt');
   if (w === 'bundle_export') return widgetBundleExport(stack);
   if (w === 'bundle_import') return widgetBundleImport(stack);
@@ -1793,6 +1807,54 @@ function removeSetupGroup() {
   for (let k = ALL_ROWS.length - 1; k >= 0; k--) if (ALL_ROWS[k].group === 'setup') ALL_ROWS.splice(k, 1);
   if (state.group === 'setup') state.group = MODEL.length ? MODEL[0].id : '';
 }
+/* --- Windows disposable folders (core/windows_disposable_store.py). The list is a plain read; only
+   the native window bridge can mark (OS folder picker + OS confirm) or unmark (by id), so a browser
+   tab shows the list and no buttons. */
+const DISPOSABLE_URL = '/api/windows/disposable-folders';
+function widgetDisposableFolders(stack) {
+  const src = state.sources[DISPOSABLE_URL];
+  const err = state.sourceErr[DISPOSABLE_URL];
+  if (err) { stack.appendChild(el('div', 'empty', tfmt('settings.widget.unavailable', 'Unavailable — {error}', { error: err }))); return; }
+  if (!src) { stack.appendChild(el('div', 'empty', T('settings.widget.loading', 'Loading…'))); return; }
+  if (!src.windows) { stack.appendChild(el('div', 'subtle', T('settings.disposable.not_windows', 'Only Windows needs this. On this computer VOOL already works in the folders described above.'))); return; }
+  const api = window.pywebview && window.pywebview.api;
+  const native = !!(api && api.mark_disposable_folder);
+  const status = el('div', 'state idle'); status.setAttribute('role', 'status');
+  const redraw = async () => { await readSource(DISPOSABLE_URL); stack.textContent = ''; widgetDisposableFolders(stack); };
+  const folders = src.folders || [];
+  if (src.problem) stack.appendChild(el('div', 'state failed', T('settings.disposable.untrusted', 'The saved folder list could not be trusted, so no marked folder is used.')));
+  if (!folders.length) stack.appendChild(el('div', 'empty', T('settings.disposable.none', 'No folder is marked yet.')));
+  folders.forEach((f) => {
+    const line = el('div', 'inline');
+    line.appendChild(el('span', null, String(f.path || '')));
+    if (f.refused) line.appendChild(el('span', 'subtle', String(f.refused)));
+    else if (f.pending_restart) line.appendChild(el('span', 'subtle', T('settings.disposable.pending', 'Restart VOOL to use this folder.')));
+    if (native) {
+      const off = el('button', 'btn', T('settings.disposable.unmark', 'Unmark'));
+      off.type = 'button';
+      off.addEventListener('click', async () => {
+        const res = await window.pywebview.api.unmark_disposable_folder(String(f.id || ''));
+        if (res && res.ok) await redraw(); else { status.className = 'state failed'; status.textContent = (res && (res.refused || res.error)) || ''; }
+      });
+      line.appendChild(off);
+    }
+    stack.appendChild(line);
+  });
+  if (native) {
+    const add = el('button', 'btn', T('settings.disposable.mark', 'Mark a folder…'));
+    add.type = 'button';
+    add.addEventListener('click', async () => {
+      const res = await window.pywebview.api.mark_disposable_folder();
+      if (res && res.ok) await redraw();
+      else if (res && !res.cancelled) { status.className = 'state failed'; status.textContent = res.refused || res.error || ''; }
+    });
+    stack.appendChild(add);
+  } else {
+    stack.appendChild(el('div', 'subtle', T('settings.disposable.app_only', 'Open Settings in the VOOL app window to mark a folder.')));
+  }
+  stack.appendChild(status);
+}
+
 function widgetSetupProgress(stack) {
   const src = state.sources[SETUP_STATE_URL];
   const err = state.sourceErr[SETUP_STATE_URL];

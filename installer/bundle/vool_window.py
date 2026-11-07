@@ -818,6 +818,69 @@ class _WindowApi:
         except Exception as exc:
             return {"ok": False, "error": type(exc).__name__}
 
+    def _confirm_natively(self, title: str, message: str) -> bool:
+        """An OS dialog, never HTML: page script can call the bridge but cannot click this. On
+        Windows a MessageBoxW with Cancel as the default button; elsewhere the GUI backend's own."""
+        if os.name == "nt":
+            mb_okcancel, mb_iconwarning, mb_defbutton2, mb_setforeground, idok = 0x1, 0x30, 0x100, 0x10000, 1
+            flags = mb_okcancel | mb_iconwarning | mb_defbutton2 | mb_setforeground
+            return int(ctypes.windll.user32.MessageBoxW(None, message, title, flags)) == idok
+        window = self._window
+        return bool(window is not None and window.create_confirmation_dialog(title, message))
+
+    def mark_disposable_folder(self, _payload: object = None) -> dict:
+        """Mark a folder VOOL may change on Windows (core/windows_disposable_store.py).
+
+        Takes nothing from the page: the folder comes from the OS folder picker, the consent from an
+        OS confirm dialog that names the folder as it really is (links and junctions followed), and
+        only then is it written to the owner-only list. Takes effect at VOOL's next start."""
+        try:
+            window = self._window
+            if window is None:
+                return {"ok": False, "error": "no_window"}
+            import webview
+
+            from core import windows_disposable_store as store
+
+            result = window.create_file_dialog(webview.FOLDER_DIALOG)
+            if not result:
+                return {"ok": False, "cancelled": True}
+            picked = str(result[0] if isinstance(result, (list, tuple)) else result)
+            reason = store.refusal_reason(picked, extra_sealed=(str(Path(__file__).resolve().parent),))
+            if reason:
+                return {"ok": False, "refused": f"This folder can't be marked: {reason}."}
+            real = os.path.realpath(picked)
+            message = (
+                f"VOOL will be able to create, change and delete files in:\n\n{real}\n\n"
+                "Only mark a folder whose contents you can lose."
+            )
+            if store.in_sync_root(real):
+                message += "\n\nThis folder syncs to the cloud: deletions here also sync to the cloud."
+            message += "\n\nRestart VOOL afterwards to use it."
+            if not self._confirm_natively("Mark this folder as disposable?", message):
+                return {"ok": False, "cancelled": True}
+            entry = store.mark(real, extra_sealed=(str(Path(__file__).resolve().parent),))
+            _log("disposable folder marked through the window")
+            return {"ok": True, "id": entry["id"], "pending_restart": True}
+        except Exception as exc:  # never surface a raw failure to the page
+            reason = getattr(exc, "reason", "")
+            _log(f"mark_disposable_folder failed ({type(exc).__name__})")
+            return {"ok": False, "refused": reason} if reason else {"ok": False, "error": type(exc).__name__}
+
+    def unmark_disposable_folder(self, folder_id: object = None) -> dict:
+        """Remove one marked folder, by the id the read-only list gave (never a path). Shrinks at once."""
+        if not isinstance(folder_id, str) or not 0 < len(folder_id) <= 64:
+            return {"ok": False, "error": "bad_id"}
+        try:
+            from core import windows_disposable_store as store
+
+            removed = store.unmark(folder_id)
+            _log("disposable folder unmarked through the window" if removed else "unmark: no such folder")
+            return {"ok": bool(removed)} if removed else {"ok": False, "error": "not_found"}
+        except Exception as exc:
+            reason = getattr(exc, "reason", "")
+            return {"ok": False, "refused": reason} if reason else {"ok": False, "error": type(exc).__name__}
+
     def pick_folder(self) -> dict:
         """Open a native folder dialog. Returns {ok:True, path} or {ok:False, cancelled|error}."""
         try:

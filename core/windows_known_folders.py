@@ -28,6 +28,15 @@ _FOLDER_IDS = {
     "Downloads": "{374DE290-123F-4565-9164-39C4925E467B}",
     "ProgramFiles": "{905E63B6-C1BF-494E-B29C-65B732D3D21A}",
     "ProgramFilesX86": "{7C5A40EF-A0FB-4BFC-874A-C0F2E0B9FA8E}",
+    # Read by core/windows_disposable_store.py, which refuses to mark these (or what holds them).
+    "Pictures": "{33E28130-4E1E-4676-835A-98395C3BC3BB}",
+    "Music": "{4BD8D571-6D19-48D3-BE97-422220080E43}",
+    "Videos": "{18989B1D-99B5-455B-841C-AB7C74E4DDFC}",
+    "OneDrive": "{A52BBA46-E9E1-435F-B3D9-28DAA648C0F6}",
+    "LocalAppData": "{F1B32785-6FBA-4FCF-9D55-7B8E7F157091}",
+    "RoamingAppData": "{3EB685DB-65F9-4CF6-A03A-E3EF65729F3D}",
+    "ProgramData": "{62AB5D82-FDC1-4DC3-A9DD-070D1D495D97}",
+    "Windows": "{F38BF404-1D43-42F2-9305-67DE0B28FC23}",
 }
 #: GetDriveTypeW answers for a drive on this machine: removable, fixed, RAM disk. DRIVE_REMOTE (4),
 #: CD-ROM, "unknown" and "no root directory" are not.
@@ -147,3 +156,15 @@ def program_files_folders() -> list[str]:
         if not any(_same_folder(reported, seen) for seen in folders):
             folders.append(reported)
     return folders
+
+
+def known_folder(name: str) -> str | None:
+    """The folder the shell reports for `name` (one of `_FOLDER_IDS`) as a full local path, or None
+    off Windows or when the shell cannot answer. Redirected folders (OneDrive backup, known-folder
+    move) are reported where they really are, which an environment variable would miss."""
+    if not _IS_WINDOWS or name not in _FOLDER_IDS:
+        return None
+    reported = _shell_known_folder(name)
+    if not reported or not _full_local_path(reported):
+        return None
+    return reported
