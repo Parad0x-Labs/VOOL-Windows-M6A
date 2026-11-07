@@ -31,6 +31,7 @@ import json
 import logging
 import ntpath
 import os
+import stat
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -51,6 +52,9 @@ _KNOWN_SEALED = ("LocalAppData", "RoamingAppData", "ProgramData", "Windows",
 
 #: The file's entries as they were when this process first took them (the start list), per file.
 _START: dict[str, list[str]] = {}
+#: Patched by tests to drive the Windows reparse-point check on any platform.
+_IS_NT = os.name == "nt"
+_FILE_ATTRIBUTE_REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 
 
 class MarkRefused(ValueError):
@@ -102,21 +106,57 @@ def _real(value: str) -> str:
     return os.path.realpath(value)
 
 
+def _reparse_attribute(path: str) -> bool:
+    """Whether ``path`` itself (not followed) carries FILE_ATTRIBUTE_REPARSE_POINT; True when that
+    cannot be read, so an unreadable component is refused."""
+    try:
+        return bool(getattr(os.lstat(path), "st_file_attributes", _FILE_ATTRIBUTE_REPARSE_POINT)
+                    & _FILE_ATTRIBUTE_REPARSE_POINT)
+    except OSError:
+        return True
+
+
 def _link_on_the_way(path: str) -> str:
-    """The first component of ``path`` that is a link or junction, or ''. ``realpath`` would follow
-    one silently, so a junction anywhere on the way is refused rather than judged by its target."""
+    """The first component of ``path`` that is, or may be, a link, junction or other reparse point,
+    or ''. ``realpath`` would follow one silently, so anything redirecting on the way is refused
+    rather than judged by its target. Fails closed: without ``os.path.isjunction`` (Python before
+    3.12) no component can be cleared, and on Windows every component's own reparse attribute is
+    read too, which also catches mount points and other reparse types."""
+    isjunction = getattr(os.path, "isjunction", None)
     drive, rest = ntpath.splitdrive(path)
     current = drive + "\\" if drive else os.sep
     for part in [p for p in rest.replace("/", "\\").split("\\") if p]:
         current = os.path.join(current, part)
-        if os.path.islink(current) or getattr(os.path, "isjunction", lambda _p: False)(current):
+        if isjunction is None or os.path.islink(current) or isjunction(current):
+            return current
+        if _IS_NT and _reparse_attribute(current):
             return current
     return ""
 
 
+def _with_real(folders: list[str]) -> list[str]:
+    out: list[str] = []
+    for folder in folders:
+        out.append(folder)
+        with contextlib.suppress(OSError, ValueError):
+            out.append(_real(folder))
+    return out
+
+
+def appdata_family() -> list[str]:
+    """LocalAppData, RoamingAppData and Profile\\AppData: the only sealed folders a temp subfolder
+    may sit inside (the system temp folder normally lives in LocalAppData)."""
+    family = [found for found in (_known("LocalAppData"), _known("RoamingAppData")) if found]
+    profile = _known("Profile")
+    if profile:
+        family.append(ntpath.join(profile, "AppData"))
+    return _with_real(family)
+
+
 def protected_folders(extra: tuple[str, ...] = ()) -> tuple[list[str], list[str], list[str]]:
     """(sealed, exact, temp_roots): folders nothing may be marked at/under/above, folders that may
-    only hold a marked folder, and the temp roots (a folder strictly inside one is allowed)."""
+    only hold a marked folder, and the system temp root (``tempfile.gettempdir``, Windows'
+    GetTempPath; a folder strictly inside it may lift the AppData family only)."""
     sealed: list[str] = []
     exact: list[str] = []
     profile = _known("Profile")
@@ -137,13 +177,8 @@ def protected_folders(extra: tuple[str, ...] = ()) -> tuple[list[str], list[str]
         if drive:
             sealed.append(drive + "\\$Recycle.Bin")
     sealed.extend(str(p) for p in extra if p)
-    temp_roots = [t for t in {tempfile.gettempdir(), os.environ.get("TEMP", ""), os.environ.get("TMP", "")} if t]
-    out_sealed: list[str] = []
-    for folder in sealed:
-        out_sealed.append(folder)
-        with contextlib.suppress(OSError, ValueError):
-            out_sealed.append(_real(folder))
-    return out_sealed, exact, temp_roots
+    temp_roots = _with_real([tempfile.gettempdir()])
+    return _with_real(sealed), exact, temp_roots
 
 
 def refusal_reason(path: str, *, extra_sealed: tuple[str, ...] = ()) -> str:
@@ -174,12 +209,16 @@ def refusal_reason(path: str, *, extra_sealed: tuple[str, ...] = ()) -> str:
     for temp in temp_roots:
         if _holds(real, temp):
             return "it is or holds the temporary-files folder"
-    # A folder strictly inside a temp root is allowed even though %TEMP% itself lives in AppData.
+    # A folder strictly inside the temp root is allowed even though %TEMP% itself lives in
+    # AppData -- but that lifts ONLY the AppData family, never VOOL home, the app, a caller's
+    # sealed folder or a credential folder, wherever TEMP points.
     temp_of = [t for t in temp_roots if _at_or_under(real, t)]
+    liftable = {_norm(f) for f in appdata_family()} if temp_of else set()
     for folder in sealed:
         if _holds(real, folder):
             return f"it is or holds {folder}"
-        if _at_or_under(real, folder) and not any(_holds(folder, t) for t in temp_of):
+        lifted = _norm(folder) in liftable and any(_holds(folder, t) for t in temp_of)
+        if _at_or_under(real, folder) and not lifted:
             return f"it is inside {folder}"
     for folder in exact:
         if _holds(real, folder):
@@ -226,7 +265,7 @@ def load(home: str | os.PathLike[str] | None = None) -> dict[str, Any]:
     entries, problem = _read(path)
     if problem:
         logger.warning("disposable folder list %s adds nothing: %s", path, problem)
-    started = {_norm(p) for p in _START.get(str(path), [])}
+    started = {_norm(p) for p in _START.get(_start_key(home), [])}
     shown = []
     for entry in entries:
         reason = refusal_reason(entry["path"])
@@ -248,9 +287,18 @@ def live_folders(home: str | os.PathLike[str] | None = None) -> list[str]:
     return [e["path"] for e in entries if not refusal_reason(e["path"])]
 
 
+def _start_key(home: str | os.PathLike[str] | None) -> str:
+    """One key per real file, however VOOL home is spelled (case, separators, a linked home)."""
+    path = store_path(home)
+    try:
+        return os.path.normcase(os.path.realpath(path))
+    except (OSError, ValueError):
+        return os.path.normcase(os.path.abspath(path))
+
+
 def start_folders(home: str | os.PathLike[str] | None = None) -> list[str]:
     """The file's entries as they were at this process's start, shrunk by any unmark since."""
-    key = str(store_path(home))
+    key = _start_key(home)
     if key not in _START:
         _START[key] = live_folders(home)
         if _START[key]:
@@ -261,7 +309,7 @@ def start_folders(home: str | os.PathLike[str] | None = None) -> list[str]:
 
 def unmarked_since_start(home: str | os.PathLike[str] | None = None) -> set[str]:
     """Start entries (normalised, resolved) the live file no longer keeps: they stop counting now."""
-    key = str(store_path(home))
+    key = _start_key(home)
     live = {_norm(p) for p in live_folders(home)}
     gone: set[str] = set()
     for folder in _START.get(key, []):
