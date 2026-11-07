@@ -134,14 +134,23 @@ def test_a_junction_inside_the_workspace_does_not_open_the_folder_it_points_at(w
 
 def test_the_job_cannot_make_its_own_link_out_of_the_workspace(ws: Path, outside: Path) -> None:
     body = """
-    import subprocess
+    import _winapi, subprocess
     made = []
-    for kind, args in (("hardlink", ["/H"]), ("symlink", []), ("junction", ["/J"])):
+    for kind, args in (("hardlink", ["/H"]), ("symlink", [])):
         name = "l_" + kind
-        target = P["file"] if kind != "junction" else P["dir"]
-        subprocess.run(["cmd", "/c", "mklink", *args, name, target], capture_output=True)
+        subprocess.run(["cmd", "/c", "mklink", *args, name, P["file"]], capture_output=True)
         if os.path.lexists(name):
             made.append(name)
+    # The junction is made from Python (cmd can't start a child inside the box), so this row
+    # tests a junction that exists. A refusal to make it at all is the kernel's own block.
+    try:
+        _winapi.CreateJunction(P["dir"], "l_junction")
+    except OSError as exc:
+        print("JUNCTION-REFUSED:" + str(exc)[:120], flush=True)
+    else:
+        if not os.path.lexists("l_junction"):
+            raise SystemExit(print("NO-JUNCTION", flush=True) or 3)  # not caught as a block
+        made.append("l_junction")
     for name in made:
         path = name if os.path.isfile(name) else os.path.join(name, "secret.txt")
         try:
@@ -152,6 +161,7 @@ def test_the_job_cannot_make_its_own_link_out_of_the_workspace(ws: Path, outside
     raise PermissionError("no link reached the outside file")
     """
     result = _run(ws, body, {"file": str(outside / "secret.txt"), "dir": str(outside)})
+    assert "NO-JUNCTION" not in result.stdout, "CreateJunction returned but no junction exists"
     _assert_ran_and_blocked(result)
     _unchanged(outside)
 
@@ -165,6 +175,23 @@ def test_one_jobs_workspace_is_never_writable_by_another_job(tmp_path: Path) -> 
     result = _run(b, 'open(P["path"], "w").write("pwned by b")', {"path": str(a / "mine.txt")})
     _assert_ran_and_blocked(result)
     assert (a / "mine.txt").read_text() == "a"
+
+
+def test_a_job_cannot_read_another_jobs_workspace(tmp_path: Path) -> None:
+    # Job A's workspace, and a read root A was given, keep their grants on disk after A ends. Job B
+    # (another workspace) must read neither, as on the Mac.
+    a, b, ref = tmp_path / "a", tmp_path / "b", tmp_path / "ref"
+    for folder in (a, b, ref):
+        folder.mkdir()
+    (a / ".env").write_text("A-SECRET", encoding="utf-8")
+    (ref / "notes.txt").write_text("REF-SECRET", encoding="utf-8")
+    first = _run(a, 'print("SAW:" + open(".env").read() + open(P["ref"]).read())', {"ref": str(ref / "notes.txt")},
+                 read_roots=(ref,))
+    assert "SAW:A-SECRETREF-SECRET" in first.stdout, f"job A could not read its own roots: {first.stderr[-400:]}"
+    for target in (a / ".env", ref / "notes.txt"):
+        result = _run(b, 'print("LEAK:" + open(P["path"]).read())', {"path": str(target)})
+        _assert_ran_and_blocked(result)
+        assert "SECRET" not in result.stdout
 
 
 # ---- repository metadata ----------------------------------------------------------------------
@@ -217,6 +244,58 @@ def test_a_repository_planted_by_a_job_that_then_hangs_is_still_refused(ws: Path
     with pytest.raises((KernelIsolationUnavailableError, NestedGitMetadataError)):
         _run(ws, 'open("after.txt", "w").write("x")')
     assert not (ws / "after.txt").exists()
+
+
+def test_a_bare_repository_made_of_junctions_is_refused(ws: Path) -> None:
+    # git takes HEAD + objects + refs as a bare repository and follows links to them; no ACE on a
+    # junction binds its target, so this layout can never be protected and must be refused.
+    body = """
+    import _winapi
+    for sub in ("o", "r", "evil"):
+        os.makedirs(sub, exist_ok=True)
+    open(os.path.join("evil", "HEAD"), "w").write("ref: refs/heads/main\\n")
+    _winapi.CreateJunction(os.path.abspath("o"), os.path.join("evil", "objects"))
+    _winapi.CreateJunction(os.path.abspath("r"), os.path.join("evil", "refs"))
+    open(os.path.join("evil", "config"), "w").write("[core]\\n\\tbare = true\\n\\tfsmonitor = calc.exe\\n")
+    raise PermissionError("planted; the result must be refused")
+    """
+    _refused_for_the_repository(ws, body, {})
+    for name in ("objects", "refs"):
+        attributes = os.lstat(ws / "evil" / name).st_file_attributes
+        assert attributes & 0x400, f"evil\\{name} is not a junction, so this row tested nothing"
+    # The next job on this workspace is refused too: the launcher's own scan sees the layout.
+    from sandbox.job_runner import KernelIsolationUnavailableError, NestedGitMetadataError
+
+    with pytest.raises((KernelIsolationUnavailableError, NestedGitMetadataError)):
+        _run(ws, 'open("after.txt", "w").write("x")')
+    assert not (ws / "after.txt").exists()
+
+
+def test_the_job_cannot_open_a_git_folder_with_write_dac(ws: Path) -> None:
+    # The user owns .git; an owner's implied rights must not reach the AppContainer check.
+    (ws / ".git" / "hooks").mkdir(parents=True)
+    (ws / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    body = """
+    import ctypes
+    from ctypes import wintypes
+    k = ctypes.WinDLL("kernel32", use_last_error=True)
+    k.CreateFileW.restype = wintypes.HANDLE
+    k.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                              wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    invalid = wintypes.HANDLE(-1).value
+    opened = []
+    for name, flags in ((".git", 0x02000000), (os.path.join(".git", "HEAD"), 0)):
+        for right in (0x00040000, 0x00080000):  # WRITE_DAC, WRITE_OWNER
+            handle = k.CreateFileW(os.path.abspath(name), right, 7, None, 3, flags, None)
+            if handle not in (None, 0, invalid):
+                k.CloseHandle(handle)
+                opened.append((name, hex(right)))
+    if opened:
+        raise SystemExit(print("ESCAPED", opened) or 0)
+    raise PermissionError("WRITE_DAC and WRITE_OWNER refused")
+    """
+    result = _run(ws, body)
+    _assert_ran_and_blocked(result)
 
 
 # ---- reads -------------------------------------------------------------------------------------
