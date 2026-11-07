@@ -1,4 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType><RootNamespace>VoolConfine</RootNamespace></PropertyGroup>
-  <ItemGroup><ProjectReference Include="..\VoolConfine.Core\VoolConfine.Core.csproj" /></ItemGroup>
+  <ItemGroup><ProjectReference Include="..\VoolConfine.Core\VoolConfine.Core.csproj" />
+    <!-- VoolConfineStart.exe is copied beside this program; the launcher starts it in the box. -->
+    <ProjectReference Include="..\VoolConfineStart\VoolConfineStart.csproj" />
+  </ItemGroup>
 </Project>

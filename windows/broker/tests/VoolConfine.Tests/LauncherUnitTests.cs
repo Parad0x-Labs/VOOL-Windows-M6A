@@ -90,6 +90,16 @@ public class LauncherUnitTests
     }
 
     [Fact]
+    public void The_trampoline_gets_the_program_its_command_line_and_temp_dir()
+    {
+        var environment = Launcher.TrampolineEnvironment(@"C:\tools\node.exe", "\"C:\\tools\\node.exe\" a \"b c\"", @"C:\work\repo\.sandbox-tmp");
+        Assert.Equal(@"C:\tools\node.exe", environment["VOOL_CONFINE_PROGRAM"]);
+        Assert.Equal("\"C:\\tools\\node.exe\" a \"b c\"", environment["VOOL_CONFINE_COMMAND_LINE"]);
+        Assert.Equal(@"C:\work\repo\.sandbox-tmp", environment["VOOL_CONFINE_TEMP"]);
+        Assert.Equal(@"C:\work\repo\.sandbox-tmp", environment["TEMP"]);
+    }
+
+    [Fact]
     public void The_job_reads_back_with_kill_on_close_and_no_breakaway()
     {
         using var job = ConfinementJob.Create(maxProcesses: 7, memoryMb: 300);

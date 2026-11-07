@@ -47,6 +47,15 @@ public static class Launcher
     /// <summary>How long the launcher waits for the kernel to report the job empty after ending it.</summary>
     static readonly TimeSpan KillWait = TimeSpan.FromSeconds(10);
 
+    /// <summary>The trampoline the launcher starts in the box (docs/WINDOWS_CONFINEMENT.md, "Environment").</summary>
+    internal const string TrampolineName = "VoolConfineStart.exe";
+
+    /// <summary>
+    /// The trampoline's exit code when it could not start the program. Kept in step with
+    /// src/VoolConfineStart/Program.cs. A child exiting with it on purpose only gets its run refused.
+    /// </summary>
+    internal const uint TrampolineNotStarted = 0xE5C00125;
+
     public static int Run(Policy policy, IReadOnlyList<string> argv, IConfinementChecks checks, TextWriter stderr)
     {
         ArgumentNullException.ThrowIfNull(checks);
@@ -109,12 +118,15 @@ public static class Launcher
         CheckTempDir(policy.TempDir);
         var packageSid = Sids.EnsureProfile();
         var capabilities = Sids.CapabilitiesFor(policy);
-        var environment = ChildEnvironment(policy.TempDir);
+        var trampoline = Trampoline();
+        var environment = TrampolineEnvironment(program, commandLine, policy.TempDir);
         checks.VerifyAcls(policy, packageSid);
         var scan = checks.StartRepositoryScan(policy);
 
-        using var job = ConfinementJob.Create(policy.MaxProcesses, policy.MemoryMb);
-        using var child = LauncherProcess.CreateSuspendedInJob(program, commandLine, packageSid, capabilities, job, environment);
+        // The trampoline is one process of the job, so the limit leaves max_processes for the tree.
+        using var job = ConfinementJob.Create(checked(policy.MaxProcesses + 1), policy.MemoryMb);
+        using var child = LauncherProcess.CreateSuspendedInJob(trampoline, LauncherCommandLine.Build([trampoline]),
+            packageSid, capabilities, job, environment);
         try
         {
             if (!LauncherNative.IsProcessInJob(child.Process, job.Handle, out var inJob))
@@ -159,6 +171,10 @@ public static class Launcher
         if (!job.KillAll(timedOut ? (uint)ExitCodes.Timeout : 1u, KillWait))
             throw new SetupException($"the job still had processes {KillWait.TotalSeconds:0}s after it was ended; the run is refused");
         job.Drain(TimeSpan.FromSeconds(1));
+
+        // The trampoline could not start the program: nothing ran, so the record must not say it did.
+        if (!timedOut && code == TrampolineNotStarted)
+            throw new SetupException("the program could not be started inside the box (see the trampoline's stderr line)");
 
         var exitCode = timedOut ? ExitCodes.Timeout : unchecked((int)code);
         var limit = timedOut ? "time" : job.LimitHit;
@@ -271,6 +287,39 @@ public static class Launcher
             environment[(string)entry.Key] = (string?)entry.Value ?? "";
         environment["TEMP"] = tempDir;
         environment["TMP"] = tempDir;
+        return environment;
+    }
+
+    /// <summary>
+    /// VoolConfineStart.exe beside the launcher's own files. Missing, or a link, is a setup failure:
+    /// without it TEMP would be the shared AC\Temp.
+    /// </summary>
+    static string Trampoline()
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, TrampolineName);
+        FileAttributes attributes;
+        try { attributes = File.GetAttributes(path); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            throw new SetupException($"{TrampolineName} is not beside the launcher: {e.Message}");
+        }
+        if (attributes.HasFlag(FileAttributes.Directory) || attributes.HasFlag(FileAttributes.ReparsePoint))
+            throw new SetupException($"{TrampolineName} is not a plain file: {path}");
+        return path;
+    }
+
+    /// <summary>
+    /// The child environment plus the three variables the trampoline reads and drops: the program,
+    /// its command line (passed through verbatim) and temp_dir.
+    /// </summary>
+    internal static IReadOnlyDictionary<string, string> TrampolineEnvironment(string program, string commandLine, string tempDir)
+    {
+        var environment = new Dictionary<string, string>(ChildEnvironment(tempDir), StringComparer.OrdinalIgnoreCase)
+        {
+            ["VOOL_CONFINE_PROGRAM"] = program,
+            ["VOOL_CONFINE_COMMAND_LINE"] = commandLine,
+            ["VOOL_CONFINE_TEMP"] = tempDir,
+        };
         return environment;
     }
 

@@ -68,11 +68,18 @@ proven to work. `None` means the caller refuses the job. Nothing ever runs unwra
 - Environment: the launcher's own (the caller builds it), with `TEMP`/`TMP` set to the policy's
   `temp_dir`, inside a write root (the caller uses its workspace `.sandbox-tmp`). Windows rewrites
   TEMP/TMP of an AppContainer process to the profile's shared `AC\Temp` whatever the env block says
-  (measured, windows-broker run 41902285066). So the launcher starts a pinned trampoline,
-  `VoolConfineStart.exe`, from the same confine folder. It sets TEMP/TMP to `temp_dir`, starts
-  the program with its command line passed through verbatim, in the same job, and exits with its
-  code. The confine folder gets a read grant for the package SID, and `AC\Temp` is denied write for
-  the package SID, so anything still landing there fails instead of sharing one folder across jobs.
+  (measured, windows-broker run 41902285066), but keeps the TEMP a process inside the box passes
+  on (run 42358953341). So the launcher starts a pinned trampoline, `VoolConfineStart.exe`, from
+  its own folder, with the program, its command line and `temp_dir` in `VOOL_CONFINE_PROGRAM`,
+  `VOOL_CONFINE_COMMAND_LINE` and `VOOL_CONFINE_TEMP`. The trampoline drops those three, sets
+  TEMP/TMP to `temp_dir`, starts the program with its command line passed through verbatim, in
+  the same job, with only the standard handles, and exits with its code. It counts as one process
+  of the job, so the active-process limit is `max_processes + 1`. When it cannot start the
+  program it exits 0xE5C00125, and the launcher refuses the run with 125 and a status file that
+  says `child_started: false`. A missing trampoline, or one that is a link, is 125 too. The
+  confine folder gets a read-and-execute grant for the package SID. `AC\Temp` is not made
+  unwritable: deny ACEs for AppContainer SIDs do not bind (measured), so that folder stays shared
+  by every job and nothing may rely on it.
 
 ### Exit codes
 

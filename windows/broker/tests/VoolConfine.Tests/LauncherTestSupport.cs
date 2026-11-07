@@ -120,6 +120,26 @@ internal static class LauncherTestSupport
     /// <summary>The test host: the same launcher code with the checks named by its first argument.</summary>
     internal static string TestHostExe() => Built("tests", "VoolConfine.TestHost");
 
+    static readonly HashSet<string> TrampolineFolders = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The box starts VoolConfineStart.exe from the launcher's folder, so the package SID needs read
+    /// and execute there (in production chunk 2 grants it on the confine folder). A build without the
+    /// trampoline beside the launcher fails the test.
+    /// </summary>
+    static void LetTheBoxRunTheTrampoline(string launcher)
+    {
+        var folder = Path.GetDirectoryName(launcher)!;
+        Assert.True(File.Exists(Path.Combine(folder, Launcher.TrampolineName)), $"not built beside {launcher}: {Launcher.TrampolineName}");
+        lock (TrampolineFolders)
+        {
+            if (TrampolineFolders.Contains(folder)) return;
+            var (code, output) = RunPlain(Path.Combine(System32, "icacls.exe"), [folder, "/grant", $"*{Sids.EnsureProfile()}:(OI)(CI)RX"]);
+            Assert.True(code == 0, $"icacls grant failed ({code}): {output}");
+            TrampolineFolders.Add(folder);
+        }
+    }
+
     /// <summary>PowerShell's -EncodedCommand form, so no quoting layer touches the script.</summary>
     internal static string[] PowerShellArgs(string script) =>
         [PowerShell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand",
@@ -133,7 +153,9 @@ internal static class LauncherTestSupport
 
     internal static ProcessStartInfo StartInfo(string policyPath, IReadOnlyList<string> argv, Host host = Host.Pass)
     {
-        var start = new ProcessStartInfo(host == Host.Real ? RealLauncherExe() : TestHostExe())
+        var launcher = host == Host.Real ? RealLauncherExe() : TestHostExe();
+        LetTheBoxRunTheTrampoline(launcher);
+        var start = new ProcessStartInfo(launcher)
         {
             UseShellExecute = false,
             RedirectStandardOutput = true,
