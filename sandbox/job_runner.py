@@ -1067,17 +1067,17 @@ class JobRunner:
     def _kernel_network_isolation_prefix(
         self, argv: list[str], allowed_roots: tuple[Path, ...]
     ) -> list[str] | None:
+        # Windows: AppContainer + Job Object through the pinned VoolConfine launcher, and only
+        # that. A Windows host never falls through to the Linux or macOS backends.
+        if _is_windows_platform():
+            return self._windows_confine_prefix(argv, allowed_roots)
         # Prefer hardened Linux isolation backends when present.
         isolated = self._linux_bwrap_prefix(argv, allowed_roots)
         if isolated is not None:
             return isolated
         # Network-only wrappers cannot enforce the filesystem contract.
         # macOS: real kernel-enforced network denial via Seatbelt (sandbox-exec).
-        isolated = self._macos_sandbox_exec_prefix(argv, allowed_roots)
-        if isolated is not None:
-            return isolated
-        # Windows: AppContainer + Job Object through the pinned VoolConfine launcher.
-        return self._windows_confine_prefix(argv, allowed_roots)
+        return self._macos_sandbox_exec_prefix(argv, allowed_roots)
 
     def _filesystem_only_isolation_prefix(
         self, argv: list[str], allowed_roots: tuple[Path, ...]
@@ -1087,15 +1087,15 @@ class JobRunner:
         `unshare -n` and firejail's `--net=none` only ever express network isolation, so they
         offer nothing here -- only bwrap (`--ro-bind / /` plus selective `--bind`) and macOS
         Seatbelt can express "confine writes, permit network" independently. `None` means neither
-        backend exists on this host; the caller refuses the command.
+        backend exists on this host; the caller refuses the command. A Windows host uses the
+        VoolConfine launcher only.
         """
+        if _is_windows_platform():
+            return self._windows_confine_prefix(argv, allowed_roots, deny_network=False)
         isolated = self._linux_bwrap_prefix(argv, allowed_roots, deny_network=False)
         if isolated is not None:
             return isolated
-        isolated = self._macos_sandbox_exec_prefix(argv, allowed_roots, deny_network=False)
-        if isolated is not None:
-            return isolated
-        return self._windows_confine_prefix(argv, allowed_roots, deny_network=False)
+        return self._macos_sandbox_exec_prefix(argv, allowed_roots, deny_network=False)
 
     def _windows_confine_prefix(
         self, argv: list[str], allowed_roots: tuple[Path, ...], *, deny_network: bool = True
