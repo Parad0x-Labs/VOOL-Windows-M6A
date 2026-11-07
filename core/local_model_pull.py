@@ -192,7 +192,7 @@ def _run(job: dict[str, Any]) -> None:
         progress.update(status="cancelled", detail="download cancelled")
         _audit(model, size_gb, "cancelled")
     except Exception as exc:
-        progress.update(status="failed", detail=str(exc))
+        progress.update(status="failed", detail=str(exc)[:200])
         _audit(model, size_gb, "failed", str(exc))
     finally:
         # Free the slot before announcing the end, so whoever waits on it can start the next pull.
