@@ -39,7 +39,7 @@ PrivilegesRequired=lowest
 RestartApplications=no
 CloseApplications=no
 SetupIconFile={#SourcePath}\..\assets\vool.ico
-UninstallDisplayIcon={app}\ollama\ollama.exe
+UninstallDisplayIcon={app}\vool.ico
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"
@@ -61,6 +61,9 @@ Source: "{#Stage}\vool-open.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Stage}\vool.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Stage}\vool_window.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Stage}\vool_protocol_handler.py"; DestDir: "{app}"; Flags: ignoreversion
+; The shortcuts' icon. IconFilename is read on the USER's PC, so it must name an installed file:
+; {#SourcePath} is expanded at compile time and names a folder on the build machine.
+Source: "{#SourcePath}\..\assets\vool.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Registry]
 ; User-facing VOOL deep link. HKCU matches PrivilegesRequired=lowest and never requires admin.
@@ -72,9 +75,9 @@ Root: HKCU; Subkey: "Software\Classes\vool\shell\open\command"; ValueType: strin
 [Icons]
 ; Launch via wscript so the VBS runs windowless (no console flash) with no dependency on the
 ; .vbs file association -- a .vbs cannot be executed directly (CreateProcess fails, code 193).
-Name: "{group}\VOOL"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\vool.vbs"""; IconFilename: "{#SourcePath}\..\assets\vool.ico"; WorkingDir: "{app}"
+Name: "{group}\VOOL"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\vool.vbs"""; IconFilename: "{app}\vool.ico"; WorkingDir: "{app}"
 Name: "{group}\Uninstall VOOL"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\VOOL"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\vool.vbs"""; IconFilename: "{#SourcePath}\..\assets\vool.ico"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autodesktop}\VOOL"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\vool.vbs"""; IconFilename: "{app}\vool.ico"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
 Filename: "{sys}\wscript.exe"; Parameters: """{app}\vool.vbs"""; Description: "Launch VOOL now"; Flags: nowait postinstall skipifsilent
@@ -82,6 +85,12 @@ Filename: "{sys}\wscript.exe"; Parameters: """{app}\vool.vbs"""; Description: "L
 ; No [UninstallDelete] for the data dir: uninstall removes ONLY the program files. The user's
 ; models, wallet, keys, memory and receipts in {localappdata}\VOOL are preserved (a reinstall
 ; reuses them, no multi-GB re-download and no lost wallet). A full reset stays a manual choice.
+
+[Messages]
+; Uninstall removes the program only (see above), so it must not promise to remove "all of its
+; components". The post-uninstall note in [Code] names the real kept folder.
+ConfirmUninstall=Remove the %1 program from this PC?%n%nYour models, chats, settings and logs are kept, so a reinstall picks them up again. The next message says where they are.
+UninstalledAll=The %1 program was removed. Your models, chats, settings and logs were kept.
 
 [UninstallDelete]
 ; Program files only. The bundle ships no bytecode, so the app writes __pycache__ under {app}\app
@@ -130,4 +139,15 @@ function InitializeUninstall(): Boolean;
 begin
   StopNulla();
   Result := True;
+end;
+
+{ Name the kept data folder, expanded for this user. Wording only: nothing here deletes anything,
+  and a silent uninstall (/SILENT, /VERYSILENT) is never stopped by a message box. }
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if (CurUninstallStep = usPostUninstall) and (not UninstallSilent()) then
+    MsgBox('Your VOOL models, chats, settings and logs were kept in:' + #13#10 +
+      ExpandConstant('{localappdata}\VOOL') + #13#10#13#10 +
+      'Reinstalling VOOL uses them again. If you no longer need them, delete that folder yourself.',
+      mbInformation, MB_OK);
 end;
