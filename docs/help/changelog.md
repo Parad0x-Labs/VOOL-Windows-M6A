@@ -16,7 +16,7 @@ The first Windows download, `VOOL-Setup.exe`, for Windows 10 22H2 and Windows 11
 * **Windows limits.** VOOL runs Python and pytest in its Windows sandbox. It refuses git, npm,
   node, ruff and pip, and does not start plugins or MCP servers or read PDF or 7z files. Use
   WSL2/Linux for those. The full list is on the
-  [v0.7.1-beta release](https://github.com/Parad0x-Labs/vool/releases/tag/v0.7.1-beta).
+  [Windows v0.7.1-beta release](https://github.com/Parad0x-Labs/VOOL-Windows-M6A/releases/tag/v0.7.1-beta).
 
 ## 0.7.0-beta — 2026-10-13
 
