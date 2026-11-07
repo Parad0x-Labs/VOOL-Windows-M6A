@@ -731,8 +731,6 @@ class JobRunner:
         scans the write roots before the job and again after it, on EVERY outcome: timeout,
         cancel, refusal and exception included. A new layout refuses the result.
         """
-        from sandbox import windows_confinement
-
         roots = tuple(dict.fromkeys(Path(root).resolve() for root in allowed_roots))
         layouts_before, complete = _repository_layouts(roots)
         if not complete:
@@ -750,7 +748,7 @@ class JobRunner:
             planted = sorted(layouts_after - layouts_before)
             if planted or not complete:
                 where = planted[0] if planted else "the writable roots (scan cap reached)"
-                raise NestedGitMetadataError(  # noqa: B012
+                raise NestedGitMetadataError(
                     f"the job created git metadata at '{where}'. Git would run hooks and config from "
                     "it outside the sandbox, so this result is refused. Nothing was removed."
                 )

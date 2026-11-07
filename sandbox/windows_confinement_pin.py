@@ -26,6 +26,7 @@ copy; the confined child cannot reach the program folder at all (it is outside e
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -176,10 +177,8 @@ class _Held:
 
     def close(self) -> None:
         for fd, _, _ in self.fds.values():
-            try:
+            with contextlib.suppress(OSError):
                 os.close(fd)
-            except OSError:
-                pass
         self.fds = {}
 
 
@@ -209,10 +208,8 @@ def _verify(folder: Path, pin: dict[str, str], listed: dict[str, Path], hold: bo
     finally:
         if not ok or not hold:
             for fd, _, _ in fds.values():
-                try:
+                with contextlib.suppress(OSError):
                     os.close(fd)
-                except OSError:
-                    pass
 
 
 def _still_the_held_files(held: _Held, pin: dict[str, str], listed: dict[str, Path]) -> bool:
@@ -236,11 +233,14 @@ def verified_launcher(project_root: Path) -> Path | None:
 
     The first location whose VoolConfine.exe exists is the only one checked: a tampered install
     never falls back to some other copy."""
-    for folder, pin_path in launcher_locations(project_root):
-        if os.path.lexists(folder / LAUNCHER_NAME):
-            break
-    else:
+    found = next(
+        ((folder, pin_path) for folder, pin_path in launcher_locations(project_root)
+         if os.path.lexists(folder / LAUNCHER_NAME)),
+        None,
+    )
+    if found is None:
         return None
+    folder, pin_path = found
     key = os.path.normcase(os.path.abspath(folder))
     hold = os.name == "nt"
     with _lock:
