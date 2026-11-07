@@ -993,6 +993,7 @@ class _WindowApi:
             if self._companion_window is None:
                 from core.companion_world_fragment import render_desktop_companion_html
 
+                focus_owner = pet_native.foreground_window()
                 created = webview_module.create_window(
                     "VOOL Companion",
                     html=render_desktop_companion_html(clean),
@@ -1002,7 +1003,7 @@ class _WindowApi:
                 if created is None:
                     raise RuntimeError("native companion window was not created")
                 self._companion_window = created
-                self._pet = pet_native.PetWindowController(created)
+                self._pet = pet_native.controller_for(created, focus_owner)
                 # Persist the pet's position the moment a drag settles, not only on hide/return:
                 # one drag must hold through blur/focus and restart. The controller marshals this
                 # off the main thread; see PetWindowController._report_settled.

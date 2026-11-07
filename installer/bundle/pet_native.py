@@ -764,8 +764,42 @@ class PetWindowController:
         return self._tracker.stats() if self._tracker is not None else {"running": False, "ticks": 0}
 
 
+def foreground_window() -> int:
+    """The window that has the keyboard right now (Windows only; 0 elsewhere or on failure).
+
+    Read by the host BEFORE it creates the pet: pywebview shows and hides a transparent window
+    while creating it, and Windows then hands the keyboard to whatever window is next in line
+    (measured on Windows 11: another app's window), so the owner must be known beforehand.
+    """
+    if sys.platform != "win32":
+        return 0
+    with contextlib.suppress(Exception):
+        from installer.bundle.pet_native_windows import win32
+
+        return win32().foreground()
+    return 0
+
+
+def controller_for(pywebview_window, focus_owner: int = 0):
+    """The pet controller for this window's backend.
+
+    A WinForms window (pywebview's Windows backend; its form is ``window.native`` and exists once
+    ``create_window`` returns) gets the Win32 controller in ``pet_native_windows``. Everything else
+    gets ``PetWindowController``, exactly as before.
+    """
+    if sys.platform == "win32" and getattr(getattr(pywebview_window, "native", None), "Handle", None) is not None:
+        from installer.bundle.pet_native_windows import WindowsPetWindowController
+
+        return WindowsPetWindowController(pywebview_window, focus_owner)
+    return PetWindowController(pywebview_window)
+
+
 def cursor_position() -> dict | None:
     """Place a newly detached pet at the actual desktop cursor, not DOM coordinates."""
+    if sys.platform == "win32":
+        from installer.bundle.pet_native_windows import cursor_position as windows_cursor_position
+
+        return windows_cursor_position()
     if sys.platform != "darwin":
         return None
 
