@@ -188,7 +188,7 @@ Copy-Item (Join-Path $PSScriptRoot "vool_protocol_handler.py") (Join-Path $Stage
 $manifest = [ordered]@{
   schema = "vool.bundle_manifest.v1"
   app_version = $appVersion
-  source_commit = [string]$buildSource.commit
+  source_commit = [string]$buildSource.commit_full
   source_dirty_state = [bool]$buildSource.dirty_state
   selected_model = $Model
   model_store = "%LOCALAPPDATA%\VOOL\models"
