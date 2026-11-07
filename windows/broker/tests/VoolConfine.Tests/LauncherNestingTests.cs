@@ -120,7 +120,9 @@ public class LauncherNestingTests
         // children the way cmd.exe does (its own STARTUPINFO, handles inherited), not only the
         // plainest way. CMD-NESTED is printed, not asserted: cmd.exe as the parent still gets
         // "Access is denied" (run 42358061428), a phase 2 item; the runner never starts cmd.exe.
-        var rows = result.Stdout.Split("; ").Where(row => row.Contains("=ERR")).ToList();
+        // NESTED-TEMP must be the TEMP the parent passed: the trampoline depends on it.
+        var rows = result.Stdout.Split("; ").Where(row => row.Contains("=ERR")
+            || row.StartsWith("NESTED-TEMP=") && row.Trim() != @"NESTED-TEMP=C:\vool-temp-probe").ToList();
         Assert.True(result.Stdout.Contains("MATRIX ") && rows.Count == 0, $"exit {result.ExitCode}; {result.Stdout}; err: {result.Stderr}");
     }
 }
