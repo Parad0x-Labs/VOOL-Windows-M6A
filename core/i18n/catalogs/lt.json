@@ -1064,7 +1064,7 @@
     "settings.row.idle_research_assist.effect": "Taikoma iškart.",
     "settings.row.idle_research_assist.help": "Leisti VOOL toliau tirti atvirą klausimą, kol nerašote.",
     "settings.row.idle_research_assist.label": "Tyrinėti neveiklos metu",
-    "settings.row.learned_facts.help": "Antroji saugykla, atskira nuo profilio įrašų aukščiau: faktai, kuriuos VOOL patvirtino pokalbiuose (core/memory/entries.py), kiekvienas rodomas su apimtimi, kuria buvo įrašytas, ir iš kur atėjo. Užmiršti pašalina būtent tą įrašą ir jo veidrodinę eilutę; niekas kita nepaliečiama. Skaitymai valdomi pokalbiams, tad kas sąraše, tai tie pokalbiai dar gali matyti.",
+    "settings.row.learned_facts.help": "Antroji saugykla, atskira nuo profilio įrašų aukščiau: faktai, kuriuos VOOL patvirtino pokalbiuose, kiekvienas rodomas su apimtimi, kuria buvo įrašytas, ir iš kur atėjo. Užmiršti pašalina būtent tą įrašą ir jo veidrodinę eilutę; niekas kita nepaliečiama. Skaitymai valdomi pokalbiams, tad kas sąraše, tai tie pokalbiai dar gali matyti.",
     "settings.row.learned_facts.label": "Faktai, kuriuos VOOL išmoko pokalbiuose",
     "settings.row.local_models.effect": "Taikoma iškart.",
     "settings.row.local_models.help": "Modeliai, įdiegti Ollama šiame kompiuteryje. Vieno registravimas prideda eismo juostą, į kurią VOOL gai nukreipti; sertifikavimas paleidžia užantspauduotą įrankio zondą, kuris sprendžia, ar jis gali rašyti galutinius atsakymus. Nieko neparsiunčiama ir niekas nekontaktuojama — skaitoma tik jūsų vietinė Ollama.",
@@ -1098,7 +1098,7 @@
     "settings.row.ram_reserve_pct.effect": "Taikoma iškart.",
     "settings.row.ram_reserve_pct.help": "Ribojama gyvai išteklių valdytojo: sunki vietinė užduotis nepaims šios atminties dalies. Didesnis rezervas reiškia, kad VOOL naudoja mažiau. Tai kieta riba, o ne patarimas.",
     "settings.row.ram_reserve_pct.label": "RAM, paliekama jums",
-    "settings.row.remembered_identity_note.help": "Nė vienas iš jų nebėra nustatymas. Abu buvo iškelti iš nuostatų failo į šią atmintį (core/user_preferences.py: migrate_legacy_profile_fields), nes VOOL juos išmoksta iš pokalbio ir laiko per pokalbius. Jie atsiranda sąraše aukščiau su visa kita, ką jis prisimena, ir keičiami taip pat — pasakant VOOL arba redaguojant įrašą. Antras laukas čia būtų antras rašytojas reikšmei, kurių ir taip per daug.",
+    "settings.row.remembered_identity_note.help": "Nė vienas iš jų nebėra nustatymas. Abu buvo iškelti iš nuostatų failo į šią atmintį, nes VOOL juos išmoksta iš pokalbio ir laiko per pokalbius. Jie atsiranda sąraše aukščiau su visa kita, ką jis prisimena, ir keičiami taip pat — pasakant VOOL arba redaguojant įrašą. Antras laukas čia būtų antras rašytojas reikšmei, kurių ir taip per daug.",
     "settings.row.remembered_identity_note.label": "Jūsų vardas ir jūsų el. pašto parašas",
     "settings.row.session_export.help": "Failas .voolsession neša vieno pokalbio ėjimus, kvitus ir įrodymų nuorodas, pasirašytus šio kompiuterio rakto. Šifravimas rekomenduojamas kiekvienam ryšuliui, paliekančiam šį kompiuterį; nešifruotam eksportui pirmiausia reikia patvirtinti įspėjimą. Modelio vidinis samprotavimas ryšulio dalis nėra, o peržiūra tiksliai pasako, kas bus įrašyta, dar iki bet ko.",
     "settings.row.session_export.label": "Eksportuoti pokalbį",
@@ -1897,7 +1897,7 @@
     "fault.wallet_payment_channel_off.action": "Įjunkite mokėjimo kanalą Kripto nustatymuose tik jei norite, kad mokėjimai eitų per jį; riba ir jūsų patvirtinimas galioja kiekviename kanale.",
     "fault.wallet_x402_sdk_unavailable.message": "Ši versija negali apmokėti x402 pasiūlymų Base tinkle per x402 Foundation SDK: šiame kompiuteryje neįdiegtas pasirenkamas papildinys x402. Niekas nebuvo pasirašyta ar išsiųsta. Visos kitos piniginės funkcijos veikia ir be jo; jį įdiegę bandykite dar kartą."
   },
-  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
+  "source_catalog_sha256": "a18aab42724c059da9866c33084aa9f52a4eb40eff881cbb5c75cecf419a542d",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

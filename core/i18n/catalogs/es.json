@@ -1064,7 +1064,7 @@
     "settings.row.idle_research_assist.effect": "Se aplica de inmediato.",
     "settings.row.idle_research_assist.help": "Permitir que VOOL siga investigando una pregunta pendiente mientras no escribes.",
     "settings.row.idle_research_assist.label": "Investigar durante la inactividad",
-    "settings.row.learned_facts.help": "Un segundo almacén, separado de los elementos de perfil de arriba: datos que VOOL confirmó durante chats (core/memory/entries.py), cada uno mostrado con el alcance bajo el que se guardó y de dónde vino. Olvidar elimina exactamente ese registro y su línea espejo; nada más se toca. Las lecturas se rigen por chat, así que lo listado es lo que esos chats aún pueden ver.",
+    "settings.row.learned_facts.help": "Un segundo almacén, separado de los elementos de perfil de arriba: datos que VOOL confirmó durante chats, cada uno mostrado con el alcance bajo el que se guardó y de dónde vino. Olvidar elimina exactamente ese registro y su línea espejo; nada más se toca. Las lecturas se rigen por chat, así que lo listado es lo que esos chats aún pueden ver.",
     "settings.row.learned_facts.label": "Datos que VOOL aprendió en conversaciones",
     "settings.row.local_models.effect": "Se aplica de inmediato.",
     "settings.row.local_models.help": "Modelos instalados en Ollama en esta máquina. Registrar uno añade un carril al que VOOL puede enrutar; certificarlo ejecuta la sonda sellada de herramientas que decide si puede escribir respuestas finales. No se descarga nada ni se contacta a nadie — solo lee tu Ollama local.",
@@ -1098,7 +1098,7 @@
     "settings.row.ram_reserve_pct.effect": "Se aplica de inmediato.",
     "settings.row.ram_reserve_pct.help": "Impuesto en vivo por el gobernador de recursos: una tarea local pesada no tomará esta parte de la memoria. Una reserva mayor significa que VOOL usa menos. Es un límite duro, no un consejo.",
     "settings.row.ram_reserve_pct.label": "RAM reservada para ti",
-    "settings.row.remembered_identity_note.help": "Ninguno es ya un ajuste. Ambos se trasladaron del archivo de preferencias a esta memoria (core/user_preferences.py: migrate_legacy_profile_fields), porque VOOL los aprende de la conversación y los conserva entre chats. Aparecen en la lista de arriba con todo lo demás que recuerda, y se cambian igual — diciéndoselo a VOOL o editando el elemento. Un segundo campo aquí sería un segundo escritor para un valor que ya tiene suficientes.",
+    "settings.row.remembered_identity_note.help": "Ninguno es ya un ajuste. Ambos se trasladaron del archivo de preferencias a esta memoria, porque VOOL los aprende de la conversación y los conserva entre chats. Aparecen en la lista de arriba con todo lo demás que recuerda, y se cambian igual — diciéndoselo a VOOL o editando el elemento. Un segundo campo aquí sería un segundo escritor para un valor que ya tiene suficientes.",
     "settings.row.remembered_identity_note.label": "Tu nombre y tu firma de correo",
     "settings.row.session_export.help": "Un archivo .voolsession lleva los turnos de una conversación, sus recibos y referencias de evidencia, firmados por la clave de esta máquina. Se recomienda cifrado para cualquier paquete que salga de esta computadora; una exportación sin cifrar requiere reconocer antes el aviso. El razonamiento interno del modelo no forma parte del paquete, y la vista previa dice exactamente qué se escribirá antes de escribir nada.",
     "settings.row.session_export.label": "Exportar un chat",
@@ -1897,7 +1897,7 @@
     "fault.wallet_payment_channel_off.action": "Activa un canal de pago en los ajustes de Cripto solo si quieres que los pagos pasen por él; el tope y tu aprobación se aplican en todos los canales.",
     "fault.wallet_x402_sdk_unavailable.message": "Esta compilación no puede pagar ofertas x402 en Base mediante el x402 Foundation SDK: el extra opcional x402 no está instalado en esta máquina. No se firmó ni envió nada. Todo lo demás de la cartera funciona sin él; instálalo y reintenta."
   },
-  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
+  "source_catalog_sha256": "a18aab42724c059da9866c33084aa9f52a4eb40eff881cbb5c75cecf419a542d",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

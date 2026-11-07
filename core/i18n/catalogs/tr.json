@@ -1064,7 +1064,7 @@
     "settings.row.idle_research_assist.effect": "Hemen geçerli.",
     "settings.row.idle_research_assist.help": "Siz yazmıyorken VOOL açık bir soruyu araştırmaya devam edebilsin.",
     "settings.row.idle_research_assist.label": "Boştayken araştır",
-    "settings.row.learned_facts.help": "Yukarıdaki profil maddelerinden ayrı ikinci bir depo: VOOL'un sohbetlerde doğruladığı bilgiler (core/memory/entries.py), her biri saklandığı kapsam ve nereden geldiğiyle gösterilir. Unut tam olarak o kaydı ve onun ayna satırını kaldırır; başka hiçbir şeye dokunulmaz. Okumalar sohbet başına yürütülür; listelenen, o sohbetlerin hâlâ görebilecekleridir.",
+    "settings.row.learned_facts.help": "Yukarıdaki profil maddelerinden ayrı ikinci bir depo: VOOL'un sohbetlerde doğruladığı bilgiler, her biri saklandığı kapsam ve nereden geldiğiyle gösterilir. Unut tam olarak o kaydı ve onun ayna satırını kaldırır; başka hiçbir şeye dokunulmaz. Okumalar sohbet başına yürütülür; listelenen, o sohbetlerin hâlâ görebilecekleridir.",
     "settings.row.learned_facts.label": "VOOL'un konuşmalarda öğrendiği bilgiler",
     "settings.row.local_models.effect": "Hemen geçerli.",
     "settings.row.local_models.help": "Bu makinedeki Ollama'ya kurulu modeller. Birini kaydetmek, VOOL'un yönlendirebileceği bir şerit ekler; sertifikalamak, son yanıtları yazıp yazamayacağına karar veren mühürlü araç yoklamasını çalıştırır. Hiçbir şey indirilmez, kimseyle bağlantı kurulmaz — yalnızca sizin yerel Ollamanız okunur.",
@@ -1098,7 +1098,7 @@
     "settings.row.ram_reserve_pct.effect": "Hemen geçerli.",
     "settings.row.ram_reserve_pct.help": "Kaynak yöneticisi tarafından canlı uygulanır: ağır bir yerel görev belleğin bu payını almaz. Daha büyük ayırma, VOOL'un daha az kullanması demektir. Bu katı bir sınırdır, öğüt değil.",
     "settings.row.ram_reserve_pct.label": "Size ayrılan RAM",
-    "settings.row.remembered_identity_note.help": "İkisi de artık bir ayar değil. İkisi de tercihler dosyasından bu belleğe taşındı (core/user_preferences.py: migrate_legacy_profile_fields), çünkü VOOL onları konuşmadan öğrenir ve sohbetler arasında taşır. Yukarıdaki listede, hatırladığı her şeyin yanında görünürler ve aynı yolla değişirler — VOOL'a söyleyerek veya maddeyi düzenleyerek. Burada ikinci bir alan, yeterince yazarı olan bir değer için ikinci yazar olurdu.",
+    "settings.row.remembered_identity_note.help": "İkisi de artık bir ayar değil. İkisi de tercihler dosyasından bu belleğe taşındı, çünkü VOOL onları konuşmadan öğrenir ve sohbetler arasında taşır. Yukarıdaki listede, hatırladığı her şeyin yanında görünürler ve aynı yolla değişirler — VOOL'a söyleyerek veya maddeyi düzenleyerek. Burada ikinci bir alan, yeterince yazarı olan bir değer için ikinci yazar olurdu.",
     "settings.row.remembered_identity_note.label": "Adınız ve e-posta imzanız",
     "settings.row.session_export.help": "Bir .voolsession dosyası, bir konuşmanın turlarını, makbuzlarını ve kanıt başvurularını taşır; bu makinenin anahtarıyla imzalıdır. Bu bilgisayardan çıkacak her paket için şifreleme önerilir; şifresiz bir dışa aktarma önce uyarının onaylanmasını gerektirir. Modelin iç akıl yürütmesi paketin parçası değildir ve önizleme, yazılacak şeyi yazılmadan önce tam olarak söyler.",
     "settings.row.session_export.label": "Sohbeti dışa aktar",
@@ -1897,7 +1897,7 @@
     "fault.wallet_payment_channel_off.action": "Bir ödeme kanalını Kripto ayarlarında yalnızca ödemelerin onun üzerinden yapılmasını istiyorsanız açın; tavan ve sizin onayınız her kanalda geçerlidir.",
     "fault.wallet_x402_sdk_unavailable.message": "Bu yapı x402 Foundation SDK üzerinden Base'deki x402 tekliflerini ödeyemez: isteğe bağlı x402 eki bu makinede kurulu değil. Hiçbir şey imzalanmadı veya gönderilmedi. Cüzdanın diğer her işlevi onsuz çalışır; kurulunca tekrar deneyin."
   },
-  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
+  "source_catalog_sha256": "a18aab42724c059da9866c33084aa9f52a4eb40eff881cbb5c75cecf419a542d",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

@@ -1064,7 +1064,7 @@
     "settings.row.idle_research_assist.effect": "即時に適用されます。",
     "settings.row.idle_research_assist.help": "入力していない間、VOOLが未解決の質問の調査を続けることを許可します。",
     "settings.row.idle_research_assist.label": "待機中に調査する",
-    "settings.row.learned_facts.help": "上のプロファイル項目とは別の第2の保存場所：VOOLがチャットの中で確認した事実（core/memory/entries.py）。各々に保存時の範囲と由来が表示されます。忘れるはその記録とミラー行だけを消し、他には触れません。読み取りはチャットごとに制御されるため、一覧にあるのはそれらのチャットがまだ見られるものです。",
+    "settings.row.learned_facts.help": "上のプロファイル項目とは別の第2の保存場所：VOOLがチャットの中で確認した事実。各々に保存時の範囲と由来が表示されます。忘れるはその記録とミラー行だけを消し、他には触れません。読み取りはチャットごとに制御されるため、一覧にあるのはそれらのチャットがまだ見られるものです。",
     "settings.row.learned_facts.label": "会話でVOOLが学んだ事実",
     "settings.row.local_models.effect": "即時に適用されます。",
     "settings.row.local_models.help": "このマシンのOllamaにインストールされたモデル。登録するとVOOLがルーティングできるレーンが追加され、認証すると、最終回答を書けるかを決める封印されたツールプローブが走ります。何もダウンロードされず、誰にも接続しません — あなたのローカルOllamaだけを読みます。",
@@ -1098,7 +1098,7 @@
     "settings.row.ram_reserve_pct.effect": "即時に適用されます。",
     "settings.row.ram_reserve_pct.help": "リソースガバナーがライブで強制します：重いローカルタスクはこのメモリ配分を取れません。確保が大きいほどVOOLの使用は減ります。これは助言ではなく硬い上限です。",
     "settings.row.ram_reserve_pct.label": "あなたのために確保するRAM",
-    "settings.row.remembered_identity_note.help": "どちらももう設定ではありません。VOOLが会話から学び、チャットをまたいで保持するため、設定ファイルからこのメモリーへ移されました（core/user_preferences.py: migrate_legacy_profile_fields）。上の一覧に他の記憶と並んで現れ、同じ方法で変更できます — VOOLに伝えるか、項目を編集するか。ここに第2の欄があれば、すでに書き手が十分いる値に、さらに書き手を増やすことになります。",
+    "settings.row.remembered_identity_note.help": "どちらももう設定ではありません。VOOLが会話から学び、チャットをまたいで保持するため、設定ファイルからこのメモリーへ移されました。上の一覧に他の記憶と並んで現れ、同じ方法で変更できます — VOOLに伝えるか、項目を編集するか。ここに第2の欄があれば、すでに書き手が十分いる値に、さらに書き手を増やすことになります。",
     "settings.row.remembered_identity_note.label": "あなたの名前とメール署名",
     "settings.row.session_export.help": ".voolsession ファイルは1つの会話のターン、レシート、証拠参照を、このマシンの鍵で署名して運びます。このコンピュータを離れるバンドルには暗号化を推奨します。暗号化しない書き出しには事前の警告承認が必要です。モデル内部の推論はバンドルに含まれず、プレビューが書き込まれる内容を正確に示してから実行されます。",
     "settings.row.session_export.label": "チャットを書き出す",
@@ -1897,7 +1897,7 @@
     "fault.wallet_payment_channel_off.action": "支払いチャネルは、そのチャネルで支払いたい場合にだけ暗号設定でオンにしてください。上限とあなたの承認はどのチャネルでも適用されます。",
     "fault.wallet_x402_sdk_unavailable.message": "このビルドはx402 Foundation SDKを通じてBase上のx402オファーを支払えません：オプションのx402拡張がこのマシンにインストールされていません。署名も送信もされていません。他のウォレット機能はそれなしで動作します。導入後にもう一度お試しください。"
   },
-  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
+  "source_catalog_sha256": "a18aab42724c059da9866c33084aa9f52a4eb40eff881cbb5c75cecf419a542d",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
