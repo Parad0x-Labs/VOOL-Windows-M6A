@@ -406,6 +406,18 @@ def non_local_write_target(text: str, *, network_only: bool = False) -> tuple[st
     return "", ""
 
 
+def _as_on_disk(root: Path | str) -> str:
+    """A writable root as the owner knows it. The gate compares folders case-folded (``c:\\users\\...``);
+    on Windows the final path of the folder carries its real spelling (``C:\\Users\\...``). Other
+    hosts show the root unchanged (a Mac would otherwise say ``/private/var`` for ``/var``)."""
+    if os.name != "nt":
+        return str(root)
+    try:
+        return os.path.realpath(root)
+    except (OSError, ValueError):
+        return str(root)
+
+
 def unreachable_write_response(path: str, *, source_context: dict[str, object] | None) -> str:
     """The honest answer: name the path we were given, the roots we have, and the write we skipped."""
     roots = allowed_write_roots(source_context)
@@ -419,7 +431,7 @@ def unreachable_write_response(path: str, *, source_context: dict[str, object] |
                 "Privacy & Permissions → Folders VOOL may change, then restart VOOL. Nothing was "
                 "written on this turn."
             )
-        listed = ", ".join(f"`{root}`" for root in roots)
+        listed = ", ".join(f"`{_as_on_disk(root)}`" for root in roots)
         return (
             f"I can't write to `{path}` -- that path is outside every folder this build can write to, "
             f"and I'm not going to put the file somewhere else and report it as done. On Windows I can "

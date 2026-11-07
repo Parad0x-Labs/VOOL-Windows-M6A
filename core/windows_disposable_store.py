@@ -319,7 +319,7 @@ def start_folders(home: str | os.PathLike[str] | None = None) -> list[str]:
     if key not in _START:
         _START[key] = live_folders(home)
         if _START[key]:
-            logger.info("disposable folders from %s at start: %s", key, _START[key])
+            logger.info("disposable folders from %s at start: %s", key, "; ".join(_START[key]))
     live = {_norm(p) for p in live_folders(home)}
     return [p for p in _START[key] if _norm(p) in live]
 
