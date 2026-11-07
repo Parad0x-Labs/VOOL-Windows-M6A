@@ -307,6 +307,8 @@ _EXTERNAL: dict[str, str] = {
     "http:GET:/api/notifications/preferences": "notifications lane read feed (preferences)",
     "http:GET:/api/notifications/native/status": "notifications lane read feed (native helper status)",
     # Windows broker lane (Phase C C5): the owner-local report the "Check and clear" banner reads.
+    "http:GET:/api/memory/standing-instructions": "memory lane read feed (active standing instructions; loopback, read-only)",
+    "http:GET:/api/windows/disposable-folders": "windows write-gate read feed (disposable folders; loopback, read-only)",
     "http:GET:/api/windows/broker/status": "windows broker lane read feed (journal and flagged-folder report)",
     "http:POST:/api/notifications/action": "notifications lane operator action (inbox row action)",
     "http:POST:/api/notifications/read": "notifications lane operator action (inbox mark-read)",
@@ -342,6 +344,9 @@ _EXTERNAL: dict[str, str] = {
     "http:GET:/api/addons": "add-on lane read feed (bundled and installed catalogue)",
     "http:POST:/api/addons": "add-on lane operator surface family (review/install/risk acceptance, Eyebrow key and scan consent; its own loopback and approval gates)",
     "http:POST:/api/models/local/register": "model registry operator action (local model registration)",
+    "http:GET:/api/models/local/pull": "model registry read feed (local model download state; loopback only)",
+    "http:POST:/api/models/local/pull": "model registry operator action (download a model named in the plan; onboarding guards)",
+    "http:POST:/api/models/local/pull/cancel": "model registry operator action (cancel the running download; onboarding guards)",
     "http:POST:/api/plugins/rescan": "plugin catalog operator action (rescan)",
     "http:GET:/api/intake/quarantine/list": "intake lane read feed (quarantine list)",
     "http:GET:/api/bug-report/destination": "bug-report lane read feed (destination state)",

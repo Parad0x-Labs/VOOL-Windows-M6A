@@ -1163,6 +1163,13 @@
       "registry_command_id": "",
       "surface": "http"
     },
+    "http:GET:/api/memory/standing-instructions": {
+      "classification": "EXTERNAL_TRANSPORT_ONLY",
+      "name": "GET /api/memory/standing-instructions",
+      "note": "memory lane read feed (active standing instructions; loopback, read-only)",
+      "registry_command_id": "",
+      "surface": "http"
+    },
     "http:GET:/api/mobile/devices": {
       "classification": "EXTERNAL_TRANSPORT_ONLY",
       "name": "GET /api/mobile/devices",
@@ -1230,6 +1237,13 @@
       "classification": "EXTERNAL_TRANSPORT_ONLY",
       "name": "GET /api/models/local",
       "note": "model registry read feed (local models)",
+      "registry_command_id": "",
+      "surface": "http"
+    },
+    "http:GET:/api/models/local/pull": {
+      "classification": "EXTERNAL_TRANSPORT_ONLY",
+      "name": "GET /api/models/local/pull",
+      "note": "model registry read feed (local model download state; loopback only)",
       "registry_command_id": "",
       "surface": "http"
     },
@@ -1587,6 +1601,13 @@
       "classification": "EXTERNAL_TRANSPORT_ONLY",
       "name": "GET /api/windows/broker/status",
       "note": "windows broker lane read feed (journal and flagged-folder report)",
+      "registry_command_id": "",
+      "surface": "http"
+    },
+    "http:GET:/api/windows/disposable-folders": {
+      "classification": "EXTERNAL_TRANSPORT_ONLY",
+      "name": "GET /api/windows/disposable-folders",
+      "note": "windows write-gate read feed (disposable folders; loopback, read-only)",
       "registry_command_id": "",
       "surface": "http"
     },
@@ -2301,6 +2322,20 @@
       "classification": "EXTERNAL_TRANSPORT_ONLY",
       "name": "POST /api/model-tool-certification/run",
       "note": "certification lane",
+      "registry_command_id": "",
+      "surface": "http"
+    },
+    "http:POST:/api/models/local/pull": {
+      "classification": "EXTERNAL_TRANSPORT_ONLY",
+      "name": "POST /api/models/local/pull",
+      "note": "model registry operator action (download a model named in the plan; onboarding guards)",
+      "registry_command_id": "",
+      "surface": "http"
+    },
+    "http:POST:/api/models/local/pull/cancel": {
+      "classification": "EXTERNAL_TRANSPORT_ONLY",
+      "name": "POST /api/models/local/pull/cancel",
+      "note": "model registry operator action (cancel the running download; onboarding guards)",
       "registry_command_id": "",
       "surface": "http"
     },
@@ -3063,7 +3098,7 @@
   },
   "totals": {
     "DEAD": 0,
-    "EXTERNAL_TRANSPORT_ONLY": 298,
+    "EXTERNAL_TRANSPORT_ONLY": 303,
     "GENERATED_ADAPTER": 130,
     "LEGACY_UNMIGRATED": 0,
     "REGISTRY_OWNED": 8
