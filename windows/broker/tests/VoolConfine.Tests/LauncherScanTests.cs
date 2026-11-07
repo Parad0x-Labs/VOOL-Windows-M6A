@@ -75,13 +75,17 @@ public class LauncherScanTests
     }
 
     [Fact]
-    public void The_real_exe_refuses_the_scan_until_chunk_2_lands()
+    public void The_real_exe_scan_finds_a_repository_without_the_deny()
     {
+        // The shipped scan (AclChecks): a .git that never got the grant form's deny is unprotected.
         using var box = new ConfineSandbox();
         AssertStartedAndFinished(Launch(box, [Cmd, "/c", "exit 0"]), 0);
-        var before = File.ReadAllText(box.StatusPath);
+        Directory.CreateDirectory(Path.Combine(box.Work, "planted", ".git"));
         var (code, output) = Scan(box, Host.Real);
-        Assert.True(code == ExitCodes.SetupFailed, $"scan exit {code}: {output}");
-        Assert.Equal(before, File.ReadAllText(box.StatusPath));
+        Assert.True(code == ExitCodes.NewRepository, $"scan exit {code}: {output}");
+        var status = Status(box);
+        Assert.True(status.GetProperty("repositories_scanned").GetBoolean());
+        Assert.Contains(status.GetProperty("new_repositories").EnumerateArray(),
+            entry => (entry.GetString() ?? "").Contains("planted", StringComparison.OrdinalIgnoreCase));
     }
 }
