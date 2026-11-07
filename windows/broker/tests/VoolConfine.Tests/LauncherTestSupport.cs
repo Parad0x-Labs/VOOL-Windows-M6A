@@ -114,7 +114,7 @@ internal static class LauncherTestSupport
         return exe;
     }
 
-    /// <summary>The shipped launcher, VoolConfine.exe (PendingChecks until chunk 2 lands).</summary>
+    /// <summary>The shipped launcher, VoolConfine.exe, with the shipped checks (AclChecks).</summary>
     internal static string RealLauncherExe() => Built("src", "VoolConfine");
 
     /// <summary>The test host: the same launcher code with the checks named by its first argument.</summary>

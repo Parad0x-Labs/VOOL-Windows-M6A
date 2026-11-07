@@ -467,6 +467,34 @@ public class LauncherRunTests
     }
 
     [Fact]
+    public void Grant_run_and_revoke_through_the_shipped_launcher()
+    {
+        using var box = new ConfineSandbox(grantWork: false);
+        var repository = Path.Combine(box.Work, "repo", ".git");
+        Directory.CreateDirectory(repository);
+        File.WriteAllText(Path.Combine(repository, "HEAD"), "ref: refs/heads/main\n");
+        var policyPath = WritePolicy(box, box.Policy(null));
+        var (granted, grantOutput) = RunPlain(RealLauncherExe(), ["grant", "--policy", policyPath]);
+        Assert.True(granted == 0, $"grant exit {granted}: {grantOutput}");
+        try
+        {
+            var inside = Path.Combine(box.Work, "ran.txt");
+            var hook = Path.Combine(repository, "hooks-planted.txt");
+            var result = Launch(box, [Cmd, "/c", $"echo ran> \"{inside}\"& echo x> \"{hook}\"& exit 0"], host: Host.Real);
+            AssertStartedAndFinished(result, 0);
+            Assert.True(File.Exists(inside), $"the child could not write its own root: {result.Stderr}");
+            Assert.False(File.Exists(hook), "the child wrote inside a .git under its root");
+        }
+        finally
+        {
+            var (revoked, revokeOutput) = RunPlain(RealLauncherExe(), ["revoke", "--policy", policyPath]);
+            Assert.True(revoked == 0, $"revoke exit {revoked}: {revokeOutput}");
+        }
+        var after = Launch(box, [Cmd, "/c", "exit 0"], host: Host.Real);
+        AssertRefused(after, ExitCodes.SetupFailed);
+    }
+
+    [Fact]
     public void A_missed_acl_verify_is_125_and_the_child_never_starts()
     {
         using var box = new ConfineSandbox();

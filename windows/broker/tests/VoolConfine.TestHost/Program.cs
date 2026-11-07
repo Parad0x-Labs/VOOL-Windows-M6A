@@ -2,7 +2,7 @@ using VoolConfine.Core;
 
 // Test-only host for VoolConfine.Tests: the same LauncherCli and Launcher as VoolConfine.exe, with the
 // chunk 2 checks swapped for ones the test picks with the first argument. It is not built by
-// publish.ps1 and is never shipped. VoolConfine.exe itself keeps PendingChecks until chunk 2 lands.
+// publish.ps1 and is never shipped. VoolConfine.exe itself uses AclChecks.
 //   pass         ACLs count as verified; the scan reports a .git that appears directly in a write root,
 //                and the scan form reports every .git directly in a write root as unprotected
 //   fail-verify  the ACL verify misses, so the run must be 125 with no child
