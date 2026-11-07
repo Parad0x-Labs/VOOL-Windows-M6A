@@ -1043,18 +1043,20 @@ class JobRunner:
     def _no_kernel_isolation_message(self) -> str:
         base = (
             "OS-level filesystem confinement and network isolation are required but unavailable "
-            "(expected bwrap on Linux; sandbox-exec on macOS). "
+            "(expected bwrap on Linux, sandbox-exec on macOS, the pinned VoolConfine launcher on Windows). "
             "A backend may be installed and still unusable: containers and CI runners commonly "
             "ship util-linux but deny the namespace syscall, so each backend is probed for whether "
             "it actually runs, not merely for whether it is on PATH."
         )
         if _is_windows_platform():
-            # Native Windows has no kernel network-namespace backend, so a
-            # no-network job fails closed here. Name the two real options so the
-            # operator can make an informed choice instead of guessing.
+            # Windows confines only through the pinned VoolConfine launcher (AppContainer + Job
+            # Object). Reaching here means it is missing, fails its pin or failed its probe, so the
+            # job fails closed. Name the two real options instead of leaving the operator guessing.
             return (
-                f"{base} Windows has no kernel confinement backend, so executable tools cannot "
-                "run here at all: run VOOL under WSL2/Linux so bwrap provides "
+                f"{base} On Windows that is the pinned VoolConfine launcher ({{app}}\\broker\\confine, "
+                "or windows\\broker\\publish\\confine in a checkout, checked against its pin); it is "
+                "missing, does not match its pin, or failed its probe, so no executable tool runs here. "
+                "Reinstall VOOL to restore it, or run VOOL under WSL2/Linux so bwrap provides "
                 "kernel-enforced confinement. There is deliberately no override — the only thing "
                 "an override could buy is running the job with no boundary while still calling "
                 "it sandboxed."
