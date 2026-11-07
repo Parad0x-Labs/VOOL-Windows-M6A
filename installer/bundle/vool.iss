@@ -89,8 +89,8 @@ Filename: "{sys}\wscript.exe"; Parameters: """{app}\vool.vbs"""; Description: "L
 [Messages]
 ; Uninstall removes the program only (see above), so it must not promise to remove "all of its
 ; components". The post-uninstall note in [Code] names the real kept folder.
-ConfirmUninstall=Remove the %1 program from this PC?%n%nYour models, chats, settings and logs are kept, so a reinstall picks them up again. The next message says where they are.
-UninstalledAll=The %1 program was removed. Your models, chats, settings and logs were kept.
+ConfirmUninstall=Remove the %1 program from this PC?%n%nYour models, chats, settings, logs, wallet and keys are kept, so a reinstall picks them up again. The next message says where they are.
+UninstalledAll=The %1 program was removed. Your models, chats, settings, logs, wallet and keys were kept.
 
 [UninstallDelete]
 ; Program files only. The bundle ships no bytecode, so the app writes __pycache__ under {app}\app
@@ -146,8 +146,9 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if (CurUninstallStep = usPostUninstall) and (not UninstallSilent()) then
-    MsgBox('Your VOOL models, chats, settings and logs were kept in:' + #13#10 +
+    MsgBox('Your VOOL models, chats, settings, logs, wallet and keys were kept in:' + #13#10 +
       ExpandConstant('{localappdata}\VOOL') + #13#10#13#10 +
-      'Reinstalling VOOL uses them again. If you no longer need them, delete that folder yourself.',
+      'Reinstalling VOOL uses them again. The folder also holds your wallet and keys: back them up first, ' +
+      'or deleting the folder loses them for good. If you no longer need any of it, delete that folder yourself.',
       mbInformation, MB_OK);
 end;
