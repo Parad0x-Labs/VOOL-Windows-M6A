@@ -426,3 +426,55 @@ def test_the_temp_root_comes_from_the_system_not_from_the_raw_variable(home, tmp
     monkeypatch.setenv("TMP", str(decoy))
     assert store.refusal_reason(str(decoy)) == ""          # not treated as the temp root
     assert store.refusal_reason(str(real_temp))
+
+
+# --- 🔐 review round 2: OneDrive placeholders are cloud reparse points ----------------------------
+
+
+def _reparse_stat(tag=None, attributes=0x400):
+    import types
+
+    fields = {"st_file_attributes": attributes}
+    if tag is not None:
+        fields["st_reparse_tag"] = tag
+    return types.SimpleNamespace(**fields)
+
+
+@pytest.mark.parametrize(
+    ("label", "stat_result", "refused"),
+    [
+        ("cloud", _reparse_stat(0x9000001A), False),          # IO_REPARSE_TAG_CLOUD
+        ("cloud_3", _reparse_stat(0x9000301A), False),        # IO_REPARSE_TAG_CLOUD_3
+        ("cloud_f", _reparse_stat(0x9000F01A), False),        # IO_REPARSE_TAG_CLOUD_F
+        ("mount_point", _reparse_stat(0xA0000003), True),     # name surrogate
+        ("symlink", _reparse_stat(0xA000000C), True),         # name surrogate
+        ("other", _reparse_stat(0x80000014), True),
+        ("tag_unreadable", _reparse_stat(None), True),
+        ("no_attributes", type("S", (), {})(), True),
+        ("plain", _reparse_stat(None, attributes=0x10), False),
+    ],
+)
+def test_only_a_cloud_sync_reparse_point_is_passed_on_the_way(home, tmp_path, monkeypatch, label, stat_result, refused) -> None:
+    synced = _folder(tmp_path, "OneDrive-ish")
+    inner = _folder(synced, "scratch")
+    monkeypatch.setattr(store, "_IS_NT", True)
+    real_lstat = os.lstat
+
+    def _lstat(path):
+        return stat_result if os.path.normcase(str(path)) == os.path.normcase(str(synced)) else _reparse_stat(None, 0x10)
+
+    monkeypatch.setattr(store, "_lstat", _lstat)
+    assert bool(store.refusal_reason(str(inner))) is refused, label
+    assert os.lstat is real_lstat
+
+
+def test_an_unreadable_component_is_refused(home, tmp_path, monkeypatch) -> None:
+    inner = _folder(tmp_path, "gone") / "x"
+    inner.mkdir()
+    monkeypatch.setattr(store, "_IS_NT", True)
+
+    def _lstat(path):
+        raise PermissionError(5, "denied")
+
+    monkeypatch.setattr(store, "_lstat", _lstat)
+    assert store.refusal_reason(str(inner))
