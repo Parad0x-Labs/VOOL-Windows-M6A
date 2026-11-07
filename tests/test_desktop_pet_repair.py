@@ -394,12 +394,13 @@ def test_pet_presentation_controls_carry_no_task_authority() -> None:
     # the frozen base, recorded and repaired here, not a new authority), and the same save for a
     # file the assistant built in this chat (the server supplies its bytes; nothing is overwritten),
     # and Quit VOOL, which only writes the supervisor's own stop signal and closes this window
-    # (clean-VM job 52).
+    # (clean-VM job 52), and marking or unmarking a disposable folder, whose folder comes from the OS
+    # picker and whose consent comes from a native confirm dialog, never from the page.
     assert exposed == {
         "attach_companion", "close_settings", "close_setup", "companion_overhead", "detach_companion",
-        "hide_companion", "open_companion_appearance", "open_settings", "open_setup", "pet_yield_rect",
-        "pick_folder", "quit_app", "reset_companion_position", "save_answer_pdf", "save_chat_export",
-        "save_deliverable", "set_window", "sync_companion",
+        "hide_companion", "mark_disposable_folder", "open_companion_appearance", "open_settings",
+        "open_setup", "pet_yield_rect", "pick_folder", "quit_app", "reset_companion_position", "save_answer_pdf", "save_chat_export",
+        "save_deliverable", "set_window", "sync_companion", "unmark_disposable_folder",
     }
 
 
