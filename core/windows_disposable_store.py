@@ -106,14 +106,31 @@ def _real(value: str) -> str:
     return os.path.realpath(value)
 
 
+#: IO_REPARSE_TAG_CLOUD and CLOUD_1..CLOUD_F (OneDrive Files-On-Demand placeholders) share this
+#: value once the 4-bit CLOUD_n field is masked out.
+_CLOUD_TAG, _CLOUD_TAG_MASK = 0x9000001A, 0xFFFF0FFF
+#: Patched by tests: the stat of one component, never followed.
+_lstat = os.lstat
+
+
 def _reparse_attribute(path: str) -> bool:
-    """Whether ``path`` itself (not followed) carries FILE_ATTRIBUTE_REPARSE_POINT; True when that
-    cannot be read, so an unreadable component is refused."""
+    """Whether ``path`` itself (not followed) is a reparse point that must be refused. Only a
+    cloud-sync placeholder passes (its tag readable and a CLOUD tag); missing attributes, an
+    unreadable tag, any other tag (mount points and symlinks are name surrogates) and an
+    unreadable component are refused."""
     try:
-        return bool(getattr(os.lstat(path), "st_file_attributes", _FILE_ATTRIBUTE_REPARSE_POINT)
-                    & _FILE_ATTRIBUTE_REPARSE_POINT)
+        result = _lstat(path)
     except OSError:
         return True
+    attributes = getattr(result, "st_file_attributes", None)
+    if not isinstance(attributes, int):
+        return True
+    if not attributes & _FILE_ATTRIBUTE_REPARSE_POINT:
+        return False
+    tag = getattr(result, "st_reparse_tag", None)
+    if not isinstance(tag, int):
+        return True
+    return (tag & _CLOUD_TAG_MASK) != _CLOUD_TAG
 
 
 def _link_on_the_way(path: str) -> str:
