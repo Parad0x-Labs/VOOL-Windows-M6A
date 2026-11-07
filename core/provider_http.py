@@ -30,6 +30,10 @@ _MAX_BODY = 64 * 1024 * 1024
 _MAX_FRAME = 128 * 1024
 
 
+class TransferCancelled(exceptions.RequestException):
+    """The caller's cancel check fired mid-transfer; the worker (and so the connection) is gone."""
+
+
 def is_loopback_url(url):
     try:
         parsed = urllib.parse.urlparse(str(url))
@@ -167,6 +171,12 @@ def urlopen(request, *, timeout):
 
 
 class _Transfer:
+    # Set by _request after construction, never serialized: the check stays in this process and
+    # is polled while waiting. Killing the worker on cancel closes its socket, which is how a
+    # provider such as Ollama learns to stop generating -- the only signal a blocking
+    # non-streaming call can give it.
+    cancel_check = None
+
     def __init__(self, method, url, options):
         timeout = options.get("timeout", 30.0)
         budget = timeout[-1] if isinstance(timeout, (tuple, list)) else timeout
@@ -241,6 +251,9 @@ class _Transfer:
             remaining = self.deadline - time.monotonic()
             if self.expired.is_set() or remaining <= 0:
                 raise exceptions.Timeout("provider transfer exceeded its wall-clock deadline")
+            if self.cancel_check is not None and self._cancelled():
+                self.close()
+                raise TransferCancelled("provider transfer cancelled by its caller")
             try:
                 frame = self.frames.get(timeout=min(remaining, 0.05))
             except queue.Empty:
@@ -260,6 +273,12 @@ class _Transfer:
                     raise exceptions.Timeout("provider transfer exceeded its wall-clock deadline")
                 raise exceptions.ConnectionError("provider HTTP worker exited before completing its response")
             return frame
+
+    def _cancelled(self):
+        try:
+            return bool(self.cancel_check())
+        except Exception:
+            return False
 
     def close(self):
         self.stopped.set()
@@ -324,12 +343,14 @@ class _Response(_requests.Response):
 
 def _request(method, url, **options):
     streaming = bool(options.pop("stream", False))
+    cancel_check = options.pop("cancel_check", None)
     endpoint = _loopback_endpoint(url)
     probe = str(method).upper() == "GET" and not any(options.get(k) for k in ("data", "json", "files"))
     if probe and _recently_refused(endpoint):
         raise exceptions.ConnectionError("provider HTTP worker failed: " + _refusal_message(endpoint))
     owner = _Transfer(method, url, options)
     owner.endpoint = endpoint
+    owner.cancel_check = cancel_check
     try:
         header = owner.receive()
         if header.get("type") != "response":

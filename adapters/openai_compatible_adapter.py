@@ -739,15 +739,28 @@ class OpenAICompatibleAdapter(ModelAdapter):
         # for a model that is busy with somebody else's turn. Measured at N=24 concurrent without
         # this: 7 of 24 died on `Read timed out (read timeout=59.99)` having never been generated
         # for. See core/local_model_admission.py.
+        # A cancellable call (every chat turn the router runs) hands its cancel check to the
+        # transfer: Stop then kills the HTTP worker mid-POST, the closed connection makes Ollama
+        # stop generating, and the slot is released here instead of when the answer would have
+        # finished (clean-VM job 52: RUN stayed lit and the next reply queued ~6 min). The sealed
+        # body is unchanged; only who may end the wait is.
+        cancel_options = {"cancel_check": request.is_cancelled} if request.cancel_check is not None else {}
         with local_model_slot(provider_id=self.manifest.provider_id):
             timeout_seconds = effective_timeout_seconds(request, timeout_seconds)
             body = permit.consume()
-            response = requests.post(
-                f"{base_url}/api/chat",
-                json=body,
-                headers=headers,
-                timeout=_request_timeout(timeout_seconds),
-            )
+            try:
+                response = requests.post(
+                    f"{base_url}/api/chat",
+                    json=body,
+                    headers=headers,
+                    timeout=_request_timeout(timeout_seconds),
+                    **cancel_options,
+                )
+            except requests.TransferCancelled:
+                # The router's check also fires on an expired provider deadline; that stays the
+                # deadline error it always was, and only a real Stop reads as a cancellation.
+                effective_timeout_seconds(request, 0.001)
+                raise RuntimeError("model_call_cancelled") from None
             _assert_response_timely(request, response)
             _raise_for_status_with_cause(response)
         if request.is_cancelled():
