@@ -255,16 +255,19 @@ def test_the_real_user_profile_is_neither_listable_nor_the_jobs_home(ws: Path) -
     # Tool config and credentials (.npmrc, pip.ini, .cargo\credentials.toml, .git-credentials) live
     # under the real profile. The job must not see it, and its own profile variables must point
     # into its workspace, so a tool that reads USERPROFILE/APPDATA never lands on real files.
+    # Each must be INSIDE the job's workspace: a prefix check against the real profile proves
+    # nothing when the workspace itself lives under the profile (CI's %TEMP%, a user's Documents).
     real = os.environ["USERPROFILE"]
     body = """
     import os
+    inside = os.path.normcase(os.path.abspath(P["ws"])) + os.sep
     for name in ("USERPROFILE", "APPDATA", "LOCALAPPDATA"):
         value = os.environ.get(name, "")
-        if value and os.path.normcase(value).startswith(os.path.normcase(P["real"])):
-            print("REALHOME:" + name, flush=True)
+        if not os.path.normcase(os.path.abspath(value or os.sep)).startswith(inside):
+            print("REALHOME:" + name + "=" + value, flush=True)
     os.listdir(P["real"])
     """
-    result = _run(ws, body, {"real": real})
+    result = _run(ws, body, {"real": real, "ws": str(ws)})
     _assert_ran_and_blocked(result)
     assert "REALHOME:" not in result.stdout
 
