@@ -137,12 +137,7 @@ def windows(monkeypatch, tmp_path):
     yield monkeypatch
     jr.reset_isolation_backend_probe_cache()
     # `_with_network_isolation` called without `run` leaves its staging folder registered.
-    import shutil
-
-    with jr._WINDOWS_STAGED_LOCK:
-        for stage in jr._WINDOWS_STAGED.values():
-            shutil.rmtree(stage, ignore_errors=True)
-        jr._WINDOWS_STAGED.clear()
+    jr._forget_staged_at_exit()
 
 
 def _use_launcher(monkeypatch, launcher: Path | None, *, probe: bool = True) -> list[int]:
