@@ -4764,8 +4764,8 @@ def _resolve_find_largest_root(requested_drive: str) -> tuple[str | None, str]:
 
     Reuses `_resolve_machine_directory` -- the exact contract `list_directory`/`read_file`
     already enforce -- for anything Desktop/Downloads/Documents-shaped, tilde forms included.
-    Also accepts the WHOLE home directory (macOS/Linux) or a bare drive letter (`C:\\`, `D:\\`
-    on Windows) as explicitly nameable targets: unlike the read/list/write lanes, aggregate
+    Also accepts the WHOLE home directory, and on Windows a bare drive letter (`C:\\`, `D:\\`),
+    as explicitly nameable targets: unlike the read/list/write lanes, aggregate
     disk-usage measurement has always legitimately needed that broader view, and it is exactly
     what this tool's own pre-existing default (no `drive` argument at all) already scans --
     naming it explicitly is not a new grant, it is the same grant this tool always had, merely
@@ -4778,6 +4778,16 @@ def _resolve_find_largest_root(requested_drive: str) -> tuple[str | None, str]:
         bare_drive = raw.rstrip("\\/")
         if len(bare_drive) == 2 and bare_drive[1] == ":" and bare_drive[0].isalpha():
             return raw, ""
+        # The whole home folder too: with no `drive` the tool scans the whole system drive, which holds
+        # it. Placed as the safe-folder lane places a path, so a share or device path is refused before
+        # anything resolves it.
+        try:
+            if anchor_machine_path(raw) == _machine_home().resolve():
+                return str(_machine_home()), ""
+        except ValueError as exc:
+            return None, str(exc)
+        except OSError:
+            pass
     else:
         try:
             if Path(raw).expanduser().resolve() == _machine_home().resolve():
@@ -7821,7 +7831,10 @@ def _run_command(
 def _trusted_local_network_mode(command: str, *, arguments: dict[str, Any]) -> str | None:
     if not bool(arguments.get("_trusted_local_only", False)):
         return None
-    argv = parse_command(command)
+    try:
+        argv = parse_command(command)
+    except ValueError:
+        return None  # an unreadable command line earns no trusted mode
     if not argv:
         return None
     base = Path(str(argv[0] or "")).name.lower()

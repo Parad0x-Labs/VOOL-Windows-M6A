@@ -15,12 +15,24 @@ from urllib.request import urlopen
 from core.agent_runtime import fast_paths_utility as greetings
 from tests import _reader_served_rig as rig
 from tests import served_browser
-from tests._auxiliary_calls import is_search_expansion
+from tests._auxiliary_calls import is_answer_attempt, is_search_expansion
 
 # The greeting pool also includes "Hello!". Match the scripted provider's own
 # reply so a greeting cannot satisfy the wait before the queued turn executes.
 PROVIDER_REPLY = "Hello! How can I help you today?"
 PROVIDER_REPLY_MARK = "How can I help you today?"
+
+
+def _daemon_env(provider) -> dict[str, str]:
+    """The daemon's install profile, with its RAW native Ollama endpoint on the scripted provider as well.
+
+    The rig points OLLAMA_HOST and VOOL_OLLAMA_URL at the stub, but VOOL_RAW_OLLAMA_API_URL ranks first
+    (core/ollama_endpoint.py) and the suite's spawn fence sets it to a dead port (tests/conftest.py). Every turn's
+    embedding-model probe and post-turn memory extraction then dialled 127.0.0.1:9, and on Windows a refused loopback
+    connect costs about 2 s each: Steve job 42c measured a 17-19 s turn against the 15 s answer waits below. With the
+    endpoint on the stub those requests are answered at once; the counts below take answer attempts only.
+    """
+    return {"VOOL_INSTALL_PROFILE": "hybrid-fallback", "VOOL_RAW_OLLAMA_API_URL": provider.base_url}
 
 
 def _production_greeting_prefixes(phrase: str, monkeypatch) -> tuple[str, ...]:
@@ -70,7 +82,7 @@ def test_cold_page_with_history_delivers_hi_and_survives_reload(tmp_path, monkey
         monkeypatch.setattr(rig.sys, "executable", str(app.parent / "python/bin/python3"))
     with rig.CapturingProvider(default=PROVIDER_REPLY) as provider:
         daemon = rig.ServedDaemon(tmp_path / "home", provider=provider,
-                                  env_extra={"VOOL_INSTALL_PROFILE": "hybrid-fallback"})
+                                  env_extra=_daemon_env(provider))
         try:
             daemon.start(timeout=60)
             _seed_history(daemon.home)
@@ -202,7 +214,7 @@ def test_a_send_inside_the_post_turn_claim_window_is_still_run(tmp_path, monkeyp
         monkeypatch.setattr(rig.sys, "executable", str(app.parent / "python/bin/python3"))
     with rig.CapturingProvider(default=PROVIDER_REPLY) as provider:
         daemon = rig.ServedDaemon(tmp_path / "home", provider=provider,
-                                  env_extra={"VOOL_INSTALL_PROFILE": "hybrid-fallback"})
+                                  env_extra=_daemon_env(provider))
         try:
             daemon.start(timeout=60)
             certification = daemon.certify(timeout=30)
@@ -261,9 +273,10 @@ def test_a_send_inside_the_post_turn_claim_window_is_still_run(tmp_path, monkeyp
                     raise
                 # The chat now holds the greeting turn, so the queued turn may first make its one
                 # search-expansion call (tests/_auxiliary_calls.py); the answer itself runs exactly once.
-                answers = [call for call in provider.calls if not is_search_expansion(call)]
+                # Identity probes and post-turn memory extraction are not answers and are not counted.
+                answers = [call for call in provider.calls if is_answer_attempt(call)]
                 assert len(answers) == 1, "the queued turn must run exactly once"
-                assert len(provider.calls) - len(answers) <= 1, "at most one search-expansion call per turn"
+                assert sum(map(is_search_expansion, provider.calls)) <= 1, "at most one search-expansion call per turn"
                 trace = page.evaluate("window.__queueTrace")
                 assert trace.count("claim") >= 2, f"the stranded item was never re-claimed: {trace}"
                 # The complete op is fire-and-forget at run release, so the drained-queue read
@@ -403,7 +416,7 @@ def test_a_pet_parked_on_send_or_approve_never_takes_their_click(tmp_path):
     still dragged by its own body. Phone and desktop widths, with and without reduced motion."""
     with rig.CapturingProvider(default=PROVIDER_REPLY) as provider:
         daemon = rig.ServedDaemon(tmp_path / "home", provider=provider,
-                                  env_extra={"VOOL_INSTALL_PROFILE": "hybrid-fallback"})
+                                  env_extra=_daemon_env(provider))
         try:
             daemon.start(timeout=60)
             certification = daemon.certify(timeout=30)
@@ -436,7 +449,9 @@ def test_a_pet_parked_on_send_or_approve_never_takes_their_click(tmp_path):
                         page.wait_for_function(
                             "text => [...document.querySelectorAll('.msg.assistant .msg-text')].at(-1).textContent.includes(text)",
                             arg=PROVIDER_REPLY_MARK, timeout=15000)
-                        assert len(provider.calls) == 1, (width, motion, len(provider.calls))
+                        answers = [call for call in provider.calls if is_answer_attempt(call)]
+                        assert len(answers) == 1, (width, motion, len(answers))
+                        assert not any(map(is_search_expansion, provider.calls)), (width, motion)
                         page.wait_for_function("view.run && view.run.released", timeout=5000)
 
                         # The pet is still dragged by its own body while it covers Send.
@@ -537,7 +552,7 @@ def test_controls_the_pet_covers_in_part_keep_every_visible_part(tmp_path):
     under the resting pet. Phone and desktop widths, with and without reduced motion."""
     with rig.CapturingProvider(default=PROVIDER_REPLY) as provider:
         daemon = rig.ServedDaemon(tmp_path / "home", provider=provider,
-                                  env_extra={"VOOL_INSTALL_PROFILE": "hybrid-fallback"})
+                                  env_extra=_daemon_env(provider))
         try:
             daemon.start(timeout=60)
             manager, browser = served_browser.launch_chromium()
@@ -646,7 +661,7 @@ def test_controls_past_the_probe_budget_keep_their_clicks_under_the_pet(tmp_path
     dragged by its own body. Desktop width, and phone width with reduced motion."""
     with rig.CapturingProvider(default=PROVIDER_REPLY) as provider:
         daemon = rig.ServedDaemon(tmp_path / "home", provider=provider,
-                                  env_extra={"VOOL_INSTALL_PROFILE": "hybrid-fallback"})
+                                  env_extra=_daemon_env(provider))
         try:
             daemon.start(timeout=60)
             manager, browser = served_browser.launch_chromium()

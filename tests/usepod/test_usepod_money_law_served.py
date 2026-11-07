@@ -375,6 +375,7 @@ def test_a_crashed_claimant_reconciles_to_unknown_after_restart(served) -> None:
     # A fresh grant for this control (the previous test's grant was revoked).
     _mint_grant(daemon, served.fingerprint)
     service.faults["delay_seconds"] = 20
+    dispatched_before = len(service.requests_to(INFERENCE_PATHS["openai"]))
     session_id = _session(f"money-crash-{uuid.uuid4()}")
     result: dict = {}
 
@@ -386,7 +387,15 @@ def test_a_crashed_claimant_reconciles_to_unknown_after_restart(served) -> None:
 
     worker = threading.Thread(target=run)
     worker.start()
-    time.sleep(6.0)   # past reserve + claim, mid provider wait
+    # Kill only once the claimed call has reached the provider (the stub records a request
+    # before it sleeps), so the crash lands mid provider wait. A fixed sleep killed a slow
+    # Windows turn before it reserved anything; that grant then stayed unspent and let the next
+    # test's race dispatch twice, once under each grant.
+    deadline = time.monotonic() + 120.0
+    while len(service.requests_to(INFERENCE_PATHS["openai"])) == dispatched_before:
+        assert time.monotonic() < deadline, "the crash control's call never reached the provider"
+        assert worker.is_alive(), f"the crash control's turn ended before dispatch: {result}"
+        time.sleep(0.2)
     daemon.kill()
     worker.join(timeout=30.0)
     service.faults.pop("delay_seconds", None)

@@ -138,7 +138,7 @@ def test_the_conductor_sweep_agrees_with_the_live_data_sweep_on_the_verdict(inte
     claims about its own concurrency, so it is asserted rather than assumed.
 
     Agreement is asserted on the VERDICT and on the overlapping pairs -- the two things anything
-    downstream consumes. `max_concurrent` is deliberately excluded; see the test below for why.
+    downstream consumes. `max_concurrent` is deliberately excluded; the test below pins it separately.
     """
     from core.agent_runtime.live_data_runner import concurrency_report as live_data_report
 
@@ -150,22 +150,15 @@ def test_the_conductor_sweep_agrees_with_the_live_data_sweep_on_the_verdict(inte
     assert ours.timed_node_count == live.timed_subtask_count
 
 
-def test_the_live_data_sweep_counts_a_handoff_as_overlap_and_the_conductor_does_not() -> None:
-    """A real inconsistency in the existing lane, pinned rather than inherited.
+def test_the_live_data_sweep_and_the_conductor_agree_a_handoff_is_not_overlap() -> None:
+    """Both sweeps read an interval as half-open, as `overlaps()` already does.
 
-    `live_data_runner.concurrency_report` sorts a start BEFORE an end at an identical instant
-    (`key=lambda item: (item[0], -item[1])`, commented "a start at the same instant as an end
-    counts as overlap"), while the `SubtaskOutcome.overlaps()` it uses for the pair list is
-    half-open. So a strict handoff -- node B starting exactly as node A finishes -- reports
-    `max_concurrent == 2` with an EMPTY pair list: the same report disagreeing with itself.
-
-    It is latent today, because `proves_concurrency` requires both halves and the pair list is
-    correct, so no false concurrency claim can currently escape. It is not latent for anything that
-    reads `max_concurrent` on its own, which is exactly what a UI badge or a receipt column would
-    do. The conductor sorts ends first and stays self-consistent.
-
-    This test exists so the divergence is a recorded decision rather than a surprise, and so it
-    turns red if either side changes.
+    `live_data_runner.concurrency_report` used to sort a start BEFORE an end at an identical instant,
+    so a strict handoff (node B starting exactly as node A finishes) reported `max_concurrent == 2`
+    with an EMPTY pair list. This test pinned that divergence so it would turn red if either side
+    changed. It changed on purpose: on Windows the monotonic clock steps about every 15.6 ms, so the
+    sequential sabotage run's handoffs land on identical instants and read as concurrency
+    (T34 suite 41969949799, test_live_data_concurrency). Ends now sort first in both sweeps.
     """
     from core.agent_runtime.live_data_runner import concurrency_report as live_data_report
 
@@ -174,8 +167,7 @@ def test_the_live_data_sweep_counts_a_handoff_as_overlap_and_the_conductor_does_
     live = live_data_report(_as_live_data_outcomes(handoff))
 
     assert ours.max_concurrent == 1
-    assert live.max_concurrent == 2
-    # Both agree nothing actually overlapped, which is why neither claims concurrency.
+    assert live.max_concurrent == 1
     assert ours.overlapping_pairs == () == live.overlapping_pairs
     assert ours.proves_concurrency is False and live.proves_concurrency is False
 

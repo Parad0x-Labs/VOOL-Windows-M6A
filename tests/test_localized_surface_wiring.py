@@ -208,8 +208,12 @@ def test_chats_filter_lanes_and_companion_labels_ride_keys() -> None:
     ):
         assert key in ENGLISH.keys, key
 
+    from core.generated_files import host_is_windows
+
     extras = render_composer_extras_fragment()
-    assert "extrasT('chats.filter_placeholder', 'Search chats" in extras
+    # On Windows the hint says Ctrl+F and rides the key's Windows sibling (test_windows_catalog_wording).
+    placeholder_key = "chats.filter_placeholder.windows" if host_is_windows() else "chats.filter_placeholder"
+    assert f"extrasT('{placeholder_key}', 'Search chats" in extras
     assert "extrasT('chats.filter_aria', 'Search chats')" in extras
     # the ⌘F shortcut token is part of the key's source, so locales keep it byte-exact
     assert ENGLISH.text("chats.filter_placeholder").endswith("⌘F")

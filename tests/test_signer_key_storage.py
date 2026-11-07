@@ -3,10 +3,12 @@ from __future__ import annotations
 import base64
 import importlib
 import json
+import os
 import threading
 import time
 
 import network.signer as signer_mod
+from core.owner_only import verify_owner_only
 
 
 def test_concurrent_first_use_creates_one_process_keypair(monkeypatch, tmp_path) -> None:
@@ -302,7 +304,12 @@ def test_auto_falls_back_to_protected_encrypted_file_without_keyring_or_passphra
     assert signer_mod._KEY_RECORD_PATH.exists()
     assert signer_mod._LEGACY_PRIV_KEY_PATH.exists() is False, "no plaintext seed"
     machine = signer_mod._ACCOUNT_FILE_PROTECTION_PATH
-    assert machine.exists() and machine.stat().st_mode & 0o777 == 0o600
+    if os.name == "nt":
+        # chmod only flips the read-only bit on Windows; owner-only is the protected one-ACE DACL.
+        report = verify_owner_only(machine)
+        assert machine.exists() and report.ok, report.reason
+    else:
+        assert machine.exists() and machine.stat().st_mode & 0o777 == 0o600
 
 
 def test_keyring_verify_failure_keeps_legacy_and_raises(monkeypatch, tmp_path) -> None:

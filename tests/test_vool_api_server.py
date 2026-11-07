@@ -523,6 +523,10 @@ class VoolAPIServerModelMetadataTests(unittest.TestCase):
 
     def test_dispatch_post_preserves_inbound_source_context_and_nested_workspace(self) -> None:
         runtime = RuntimeServices(display_name="VOOL")
+        # On Windows a drive-less "/tmp/..." is root-relative, which the chat door refuses by design
+        # (windows_path_policy); use a full local path there. POSIX keeps the literal it always used.
+        scratch = tempfile.gettempdir() if os.name == "nt" else "/tmp"
+        nested = os.path.join(scratch, "nested-workspace")
         seen_contexts: list[dict[str, Any]] = []
 
         def fake_run_agent(
@@ -542,14 +546,14 @@ class VoolAPIServerModelMetadataTests(unittest.TestCase):
                     "source_context": {
                         "surface": "openclaw",
                         "platform": "openclaw",
-                        "workspace": "/tmp/nested-workspace",
+                        "workspace": nested,
                         "subject": "openclaw integration",
                     },
                 },
                 headers={"content-type": "application/json"},
                 runtime=runtime,
                 model_name="vool",
-                workspace_root_provider=lambda: "/tmp/default-workspace",
+                workspace_root_provider=lambda: os.path.join(scratch, "default-workspace"),
             )
 
         self.assertEqual(response.status, 200)
@@ -557,8 +561,8 @@ class VoolAPIServerModelMetadataTests(unittest.TestCase):
         source_context = seen_contexts[0]
         self.assertEqual(source_context["surface"], "openclaw")
         self.assertEqual(source_context["platform"], "openclaw")
-        self.assertEqual(source_context["workspace"], "/tmp/nested-workspace")
-        self.assertEqual(source_context["workspace_root"], "/tmp/nested-workspace")
+        self.assertEqual(source_context["workspace"], nested)
+        self.assertEqual(source_context["workspace_root"], nested)
         self.assertEqual(source_context["workspace_binding"], "explicit")
         self.assertEqual(source_context["subject"], "openclaw integration")
 

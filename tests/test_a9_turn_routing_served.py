@@ -41,6 +41,7 @@ ORIGINAL_QUESTION = "Explain in two sentences how a Bloom filter can report a fa
 
 
 def _lan_ip() -> str:
+    import ipaddress
     import subprocess as sp
 
     for interface in ("en0", "en1", "en2", "en3"):
@@ -49,7 +50,15 @@ def _lan_ip() -> str:
         except Exception:
             continue
         candidate = out.stdout.strip()
-        if candidate and not candidate.startswith("127."):
+        # Only macOS answers `ipconfig getifaddr`. Windows also has an `ipconfig`, which answers it with
+        # "Error: unrecognized or incomplete command line." and that text became the stub's base_url
+        # (T34 suite 41969949799, "seed failed"). Only a real IPv4 address counts, as on Linux, which has
+        # no `ipconfig` at all.
+        try:
+            address = ipaddress.IPv4Address(candidate)
+        except ValueError:
+            continue
+        if out.returncode == 0 and not address.is_loopback:
             return candidate
     return ""
 

@@ -14,6 +14,8 @@ from pathlib import Path
 
 from nacl.signing import SigningKey
 
+from core.owner_only import require_owner_only
+
 KEY_KIND = "vool-device-link-ed25519-v0"
 
 
@@ -30,8 +32,16 @@ def save(signing_key: SigningKey, path: Path) -> None:
         "public_hex": signing_key.verify_key.encode().hex(),
     }
     tmp = path.with_suffix(".tmp")
+    # Owner-only while still empty, so the contents are never on disk readable by others. On Windows
+    # chmod only flips the read-only bit; core/owner_only sets the protected one-ACE DACL and raises
+    # OwnerOnlyUnavailable (nothing is written) when it cannot.
+    tmp.write_text("", encoding="utf-8")
+    try:
+        require_owner_only(tmp)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
     tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    os.chmod(tmp, 0o600)
     os.replace(tmp, path)
 
 

@@ -526,13 +526,20 @@ def test_served_browser_bootstrap_uses_the_bundled_chromium_with_a_fresh_profile
 
     driver = tmp_path / "served_probe.py"
     source = """
-import subprocess, sys
+import os, subprocess, sys
 sys.path.insert(0, {repo!r})
 from tests.served_browser import launch_chromium
 manager, browser = launch_chromium()
 # While the browser is open, find its live process: the chromium-family binary from the
-# playwright cache carrying a fresh --user-data-dir.
-out = subprocess.run(["/bin/ps", "ax", "-o", "command="], capture_output=True, text=True)
+# playwright cache carrying a fresh --user-data-dir. Windows has no ps: its process table's
+# command lines come from CIM, through the system's own PowerShell by full path.
+if os.name == "nt":
+    shell = os.path.join(os.environ["SystemRoot"], "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+    listing = [shell, "-NoProfile", "-NonInteractive", "-Command",
+               "Get-CimInstance Win32_Process | ForEach-Object {{ $_.CommandLine }}"]
+else:
+    listing = ["/bin/ps", "ax", "-o", "command="]
+out = subprocess.run(listing, capture_output=True, text=True)
 hits = [
     line.strip()
     for line in (out.stdout or "").splitlines()
@@ -550,8 +557,13 @@ manager.stop()
     argv = line.removeprefix("LAUNCH_ARGV=")
     assert "ms-playwright" in argv, f"bootstrap must use the bundled chromium: {argv}"
     assert "--user-data-dir=" in argv, f"bootstrap must launch a fresh isolated profile: {argv}"
-    profile = next(p for p in argv.split() if p.startswith("--user-data-dir=")).split("=", 1)[1]
+    # A Windows command line may quote the switch whole ("--user-data-dir=C:\\...").
+    profile = next(p.strip('"') for p in argv.split() if p.strip('"').startswith("--user-data-dir=")).split("=", 1)[1]
     assert "Application Support/Google/Chrome" not in profile, "never the signed-in profile"
+    # The signed-in profiles' Windows homes, in either separator.
+    spelled = profile.replace("\\", "/").lower()
+    for signed_in in ("appdata/local/google/chrome", "appdata/local/microsoft/edge", "appdata/local/chromium"):
+        assert signed_in not in spelled, f"never the signed-in profile: {profile}"
     assert probe.credential_calls(log) == []
 
 

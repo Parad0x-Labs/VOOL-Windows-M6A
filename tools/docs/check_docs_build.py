@@ -48,7 +48,8 @@ def main(root, base="/docs"):
         return 2
     os.chdir(root)
 
-    files = sorted(glob.glob("**/index.html", recursive=True))
+    # glob spells paths with os.sep (lt\\index.html on Windows); the checks below compare with "/".
+    files = sorted(path.replace(os.sep, "/") for path in glob.glob("**/index.html", recursive=True))
     if not files:
         print("no pages found in %s" % root)
         return 2
@@ -112,7 +113,7 @@ def main(root, base="/docs"):
 
     # One search index per language: the root one covers English, and each
     # <lang>/search.json covers that language's own pages.
-    indexes = sorted(glob.glob("search.json") + glob.glob("*/search.json"))
+    indexes = sorted(path.replace(os.sep, "/") for path in glob.glob("search.json") + glob.glob("*/search.json"))
     if not indexes:
         fails.append("no search.json found")
     counted = 0

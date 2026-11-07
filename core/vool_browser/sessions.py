@@ -158,7 +158,9 @@ class SessionHandle:
                     headless=self.headless,
                     executable_path=self.engine_binary,
                     args=flags,
-                    accept_downloads=True,
+                    # Downloads are VOOL's (ops._fetch_bounded), never the engine's: Edge on Windows
+                    # writes a browser-handled download into the user's Downloads folder first.
+                    accept_downloads=False,
                 )
                 page = context.new_page()
                 self._pid = self._engine_pid(str(self.profile_dir))

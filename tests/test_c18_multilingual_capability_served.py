@@ -128,8 +128,8 @@ def served(tmp_path: Path):
     workspace = tmp_path / "repo"
     store_dir = tmp_path / "blackbox-store"
     workspace.mkdir()
-    (workspace / "calc.py").write_text(BUGGY, encoding="utf-8")
-    (workspace / "test_calc.py").write_text(TEST, encoding="utf-8")
+    (workspace / "calc.py").write_text(BUGGY, encoding="utf-8", newline="\n")
+    (workspace / "test_calc.py").write_text(TEST, encoding="utf-8", newline="\n")
     _git(workspace, "init", "-q")
     _git(workspace, "add", ".")
     _git(workspace, "commit", "-q", "-m", "seed")

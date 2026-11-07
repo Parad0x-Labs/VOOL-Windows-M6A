@@ -246,7 +246,8 @@ def test_a_loaded_plugins_scratch_dir_stays_inside_the_scratch_root(tmp_path: Pa
     plugin = plugin_tools.load_manifest(_pack_manifest(tmp_path, name="vool-jira"))
     scratch = plugin_tools.plugin_scratch_dir(plugin.plugin_id)
     assert scratch == tmp_path / "scratch" / "vool-jira"
-    assert str(scratch.resolve()).startswith(str((tmp_path / "scratch").resolve()) + "/")
+    root = (tmp_path / "scratch").resolve()
+    assert scratch.resolve() != root and scratch.resolve().is_relative_to(root)
 
 
 def test_a_pack_registers_atomically(tmp_path: Path) -> None:
