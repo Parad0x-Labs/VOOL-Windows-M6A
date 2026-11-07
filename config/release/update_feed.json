@@ -6,5 +6,11 @@
   "health_url": "http://127.0.0.1:11435/healthz",
   "helper_script": "",
   "check_interval_seconds": 86400,
-  "_comment": "Beta updates use this repository’s normal Latest GitHub release and a pinned public publisher key. Empty pins fail closed. The Mac launcher supplies its live bundle/helper/health paths; installed Linux discovers its receipt. Publisher-verified ad-hoc Mac bundles require both Ed25519 signatures, SHA-256 and deep strict codesign; a certificate-signed running app still requires Gatekeeper acceptance. See docs/RELEASE_KEY_CEREMONY.md."
+  "platforms": {
+    "windows-x64": {
+      "manifest_url": "https://github.com/Parad0x-Labs/VOOL-Windows-M6A/releases/latest/download/manifest.json",
+      "allow_publisher_verified_adhoc": false
+    }
+  },
+  "_comment": "Beta updates use this repository’s normal Latest GitHub release and a pinned public publisher key. Empty pins fail closed. The Mac launcher supplies its live bundle/helper/health paths; installed Linux discovers its receipt. Publisher-verified ad-hoc Mac bundles require both Ed25519 signatures, SHA-256 and deep strict codesign; a certificate-signed running app still requires Gatekeeper acceptance. See docs/RELEASE_KEY_CEREMONY.md. The Windows edition reads its own signed feed (platforms.windows-x64); its installed bundle is found from the running program folder (core/updater/windows.py)."
 }

@@ -58,10 +58,36 @@ def prune_finished_workers(data_dir: Path) -> None:
                 continue
         elif not UpdateJournal(paths.transaction_dir(job.name)).is_terminal():
             continue
-        for name in ("code", "python"):
+        for name in ("code", "app", "python"):
             directory = job / name
             if directory.is_dir() and not directory.is_symlink():
                 shutil.rmtree(directory)
+
+
+#: The code trees a detached worker runs from (a frozen copy, outside the replacement target).
+FROZEN_CODE_TREES = ("core", "installer", "storage", "network", "config")
+
+
+def _is_windows() -> bool:
+    """Indirection so tests can take the Windows branch without patching os.name."""
+    return os.name == "nt"
+
+
+def _process_command_line(pid: int) -> str:
+    """The whole command line of ``pid``, or "" when it cannot be read."""
+    if _is_windows():
+        try:
+            import psutil
+
+            return subprocess.list2cmdline(psutil.Process(pid).cmdline())
+        except Exception:
+            return ""
+    # `-ww` asks for the whole command line (macOS ps and Linux procps both take it):
+    # without it ps may cut `args=` to the terminal width, and a live worker whose plan
+    # path sits past that width would read as dead.
+    command = subprocess.run(["ps", "-ww", "-p", str(pid), "-o", "args="],
+                             capture_output=True, text=True, check=False)
+    return command.stdout if command.returncode == 0 else ""
 
 
 def worker_alive(data_dir: Path) -> bool:
@@ -72,13 +98,8 @@ def worker_alive(data_dir: Path) -> bool:
     marker = str(lease.get("plan") or "")
     if pid <= 1 or not marker or _pid_has_exited(pid):
         return False
-    # A stale/reused pid is insufficient. It must still run this exact plan. `-ww` asks for
-    # the whole command line (macOS ps and Linux procps both take it): without it ps may cut
-    # `args=` to the terminal width, and a live worker whose plan path sits past that width
-    # would read as dead.
-    command = subprocess.run(["ps", "-ww", "-p", str(pid), "-o", "args="],
-                             capture_output=True, text=True, check=False)
-    return command.returncode == 0 and marker in command.stdout
+    # A stale/reused pid is insufficient. It must still run this exact plan.
+    return marker in _process_command_line(pid)
 
 
 def start_worker(subsystem, offer, txid: str, *, recovery: bool = False, rollback: dict | None = None,
@@ -96,12 +117,17 @@ def start_worker(subsystem, offer, txid: str, *, recovery: bool = False, rollbac
     os.chmod(root, 0o700)
     code = root / "code"
     source = Path(__file__).resolve().parents[2]
-    for name in ("core", "installer", "storage", "network", "config"):
+    windows = str(subsystem.platform).startswith("windows-")
+    # On Windows the bundle supervisor builds the frozen code and interpreter itself from the
+    # program folder when it starts the worker (core.updater.windows.consume_worker_request).
+    for name in () if windows else FROZEN_CODE_TREES:
         shutil.copytree(source / name, code / name, symlinks=True,
                         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     executable = Path(sys.executable).resolve()
     app = Path(subsystem.feed.app_path).resolve()
-    if executable.is_relative_to(app):
+    if executable.is_relative_to(app) and not windows:
+        # The worker must not run from the folder it replaces: Windows refuses to rename a
+        # directory while a process holds its interpreter open.
         runtime = app / "Contents/Resources/python"
         if not executable.is_relative_to(runtime):
             raise ValueError("bundled updater interpreter is outside the shipped runtime")
@@ -127,6 +153,11 @@ def start_worker(subsystem, offer, txid: str, *, recovery: bool = False, rollbac
     env = dict(os.environ, PYTHONPATH=str(code), PYTHONDONTWRITEBYTECODE="1",
                VOOL_HOME=str(subsystem.data_dir.resolve().parent))
     log = root / "worker.log"
+    if windows:
+        # The press arrives in the API, inside the bundle supervisor's kill-on-close job and
+        # under its process tree, both of which the swap must stop. The supervisor itself is
+        # outside the job: it starts the worker from the frozen copy named by this request.
+        return request_supervisor_start(paths.root, txid, plan)
     prefix = _systemd_scope_prefix(txid)
     with log.open("ab") as output:
         process = subprocess.Popen([*prefix, str(executable), "-m", "core.updater.worker", str(plan)],
@@ -141,13 +172,81 @@ def start_worker(subsystem, offer, txid: str, *, recovery: bool = False, rollbac
     return process
 
 
+WINDOWS_WORKER_APP_ENV = "VOOL_UPDATE_WORKER_APP"
+
+
+class SupervisorStartedWorker:
+    """Popen-shaped handle for a worker the bundle supervisor started (Windows)."""
+
+    def __init__(self, pid: int):
+        self.pid = int(pid)
+
+    def poll(self):
+        from core.process_liveness import pid_alive
+
+        return None if pid_alive(self.pid) else 0
+
+    def wait(self, timeout: float | None = None) -> int:
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while self.poll() is None:
+            if deadline is not None and time.monotonic() > deadline:
+                raise subprocess.TimeoutExpired("vool-update-worker", timeout)
+            time.sleep(0.2)
+        return 0
+
+
+def request_supervisor_start(updater_root: Path, txid: str, plan: Path, *, clock=time.monotonic,
+                             sleeper=time.sleep, timeout: float = 180.0) -> SupervisorStartedWorker:
+    """Ask the bundle supervisor to start this transaction's worker; wait for its lease.
+
+    The request names only the transaction. The supervisor copies the interpreter and code
+    from the program folder itself (core.updater.windows.consume_worker_request), which takes
+    a while for the interpreter, hence the long bound. No answer in time fails closed with
+    nothing installed.
+    """
+    from core.updater.windows import WORKER_REQUEST_NAME
+
+    request = updater_root.resolve().parent.parent / "run" / WORKER_REQUEST_NAME
+    request.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write_json(request, {"txid": txid})
+    deadline = clock() + timeout
+    while clock() < deadline:
+        lease = _read_json(updater_root / "worker.json") or {}
+        if (lease.get("txid") == txid and lease.get("launcher") == "supervisor"
+                and Path(str(lease.get("plan") or "")).resolve() == plan.resolve() and int(lease.get("pid") or 0) > 1):
+            return SupervisorStartedWorker(int(lease["pid"]))
+        sleeper(0.05)
+    request.unlink(missing_ok=True)
+    raise RuntimeError("the VOOL supervisor did not start the updater in time; nothing was installed")
+
+
+def plan_trust(params: dict, *, env=None):
+    """The publisher keys a detached worker verifies with.
+
+    The plan lives in the user-writable VOOL home. On Windows, where the worker runs outside the
+    supervisor's job, neither its keys nor its target are trusted: keys come from this frozen
+    code copy (which the supervisor built from the program folder), and the plan's target must
+    be the program folder the supervisor serves.
+    """
+    from core.updater.runtime import UpdateSubsystem
+    from core.updater.trust import TrustedPublishers
+
+    if not str(params.get("platform") or "").startswith("windows-"):
+        return TrustedPublishers(params["keys"])
+    environ = os.environ if env is None else env
+    served = str(environ.get(WINDOWS_WORKER_APP_ENV) or "")
+    target = str((params.get("feed") or {}).get("app_path") or "")
+    if not served or not target or os.path.normcase(os.path.abspath(served)) != os.path.normcase(os.path.abspath(target)):
+        raise ValueError("the update plan does not name the program folder this worker was started for")
+    return UpdateSubsystem._load_trust()
+
+
 def main() -> int:
     from core.updater.decision import decide_update
     from core.updater.feed import FeedConfig
     from core.updater.manifest import parse_and_verify_manifest
     from core.updater.runtime import UpdateSubsystem
     from core.updater.status import UpdateFault, UpdatePhase
-    from core.updater.trust import TrustedPublishers
 
     if sys.argv[1] == "--recover-startup":
         subsystem = UpdateSubsystem()
@@ -162,8 +261,9 @@ def main() -> int:
 
     plan = Path(sys.argv[1])
     params = json.loads(plan.read_text(encoding="utf-8"))
+    trust = plan_trust(params)
     subsystem = UpdateSubsystem(feed=FeedConfig(**params["feed"]),
-                                trust=TrustedPublishers(params["keys"]),
+                                trust=trust,
                                 data_dir=Path(params["data_dir"]),
                                 installed_version=params["installed_version"], platform=params["platform"],
                                 notarization_waiver_reason=params["notarization_waiver_reason"],

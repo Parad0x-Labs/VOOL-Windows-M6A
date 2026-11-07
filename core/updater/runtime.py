@@ -59,6 +59,7 @@ class UnavailableReason(str, Enum):
     NO_TRUSTED_PUBLISHER = "no_trusted_publisher"
     NO_FEED = "no_feed_configured"
     RAW_CHECKOUT = "raw_source_checkout"
+    NOT_INSTALLED_BUNDLE = "not_installed_windows_bundle"
 
     @property
     def plain(self) -> str:
@@ -70,6 +71,9 @@ class UnavailableReason(str, Enum):
             ),
             UnavailableReason.NO_FEED: "no release feed address is configured",
             UnavailableReason.RAW_CHECKOUT: "this source checkout has no install receipt; update with git pull",
+            UnavailableReason.NOT_INSTALLED_BUNDLE: (
+                "this copy of VOOL was not installed with VOOL-Setup.exe, so it cannot update itself"
+            ),
         }[self]
 
 
@@ -91,6 +95,12 @@ def _installed_version() -> str:
         return installed_version()
     except Exception:  # pragma: no cover - app_version is dependency-free in practice
         return "0.0.0"
+
+
+def _windows_bundle(path: Path) -> bool:
+    from core.updater.windows import looks_like_installed_bundle
+
+    return looks_like_installed_bundle(path)
 
 
 def _active_data_dir() -> Path:
@@ -126,6 +136,12 @@ class UpdateSubsystem:
             source_root = Path(__file__).resolve().parents[2]
             if self.platform.startswith("linux-") and (source_root / "install_receipt.json").is_file():
                 self.feed = replace(self.feed, app_path=str(source_root))
+            elif self.platform.startswith("windows-"):
+                from core.updater.windows import looks_like_installed_bundle
+
+                # Installed layout: {app}\app\core\updater\runtime.py; {app} holds the bundle.
+                if source_root.name.casefold() == "app" and looks_like_installed_bundle(source_root.parent):
+                    self.feed = replace(self.feed, app_path=str(source_root.parent))
             elif self.platform.startswith("macos-"):
                 for ancestor in source_root.parents:
                     if ancestor.suffix == ".app" and source_root.is_relative_to(ancestor / "Contents/Resources"):
@@ -164,6 +180,10 @@ class UpdateSubsystem:
             self.feed.has_target and (Path(self.feed.app_path) / "install_receipt.json").is_file()
         ):
             reason = UnavailableReason.RAW_CHECKOUT
+        elif self.platform.startswith("windows-") and not (
+            self.feed.has_target and _windows_bundle(Path(self.feed.app_path))
+        ):
+            reason = UnavailableReason.NOT_INSTALLED_BUNDLE
         elif not trust.is_configured:
             reason = UnavailableReason.NO_TRUSTED_PUBLISHER
         elif not self.feed.has_feed:
@@ -312,6 +332,12 @@ class UpdateSubsystem:
         return worker_alive(self.data_dir)
 
     def _make_helper(self) -> ExternalHelper:
+        if self.platform.startswith("windows-"):
+            from core.updater.windows import WindowsProcessHelper
+
+            return WindowsProcessHelper(app_path=Path(self.feed.app_path),
+                                        vool_home=self.data_dir.resolve().parent,
+                                        pid_file=self.data_dir / "vool_api.pid")
         if self.platform.startswith("linux-"):
             from core.updater.linux import LinuxProcessHelper
 

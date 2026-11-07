@@ -88,6 +88,11 @@ Filename: "{sys}\wscript.exe"; Parameters: """{app}\vool.vbs"""; Description: "L
 ; as it imports modules; those files were never installed, and without this every package folder
 ; (and the install folder itself) stayed behind after uninstall.
 Type: filesandordirs; Name: "{app}\app"
+; The signed updater keeps its staging folder and previous-version backups inside the program
+; folder (core/updater/windows.py). They are program files too, never user data.
+Type: filesandordirs; Name: "{app}\.vool-update"
+Type: filesandordirs; Name: "{app}\update_backups"
+Type: files; Name: "{app}\.vool_updating.lock"
 
 [Code]
 procedure StopNulla();

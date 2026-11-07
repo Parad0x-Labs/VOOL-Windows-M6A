@@ -198,12 +198,22 @@ class MacOSBundleInstaller:
 __all__ = ["ExternalScriptHelper", "MacOSBundleInstaller", "MacProcessHelper"]
 
 
+def _is_windows() -> bool:
+    """Indirection so tests can take the Windows branch without patching os.name."""
+    return os.name == "nt"
+
+
 def _pid_has_exited(pid: int) -> bool:
     """A pid is gone when the kernel no longer lists it OR it is a zombie (state Z):
     the parent may not have reaped it yet, but it is not running. Mirrors the bash
     helper's own wait logic so both sides agree."""
     if pid <= 0:
         return True
+    if _is_windows():
+        # os.kill(pid, 0) is TerminateProcess on Windows, never a probe.
+        from core.process_liveness import pid_alive
+
+        return not pid_alive(pid)
     try:
         os.kill(pid, 0)
     except (ProcessLookupError, PermissionError):
