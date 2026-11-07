@@ -1405,6 +1405,10 @@
     "vx.memory.forget_title": "Olvidar exactamente esta entrada",
     "vx.memory.not_removed": "no se eliminó",
     "vx.memory.reading": "Leyendo la memoria…",
+    "vx.memory.rules_title": "Reglas que VOOL sigue en cada chat",
+    "vx.memory.rules_empty": "No hay reglas guardadas. Una regla que des en el chat, como «responde siempre con viñetas», aparece aquí.",
+    "vx.memory.rules_hint": "Para quitar una regla, pídele a VOOL en un chat que deje de hacerlo.",
+    "vx.memory.rules_unreadable": "No se pudieron leer las reglas guardadas.",
     "vx.memory.title": "Memoria",
     "vx.memory.unreadable": "No se pudo leer la memoria.",
     "vx.palette.toolbelt": "Cinturón de herramientas — capacidades instaladas…",
@@ -1897,7 +1901,7 @@
     "fault.wallet_payment_channel_off.action": "Activa un canal de pago en los ajustes de Cripto solo si quieres que los pagos pasen por él; el tope y tu aprobación se aplican en todos los canales.",
     "fault.wallet_x402_sdk_unavailable.message": "Esta compilación no puede pagar ofertas x402 en Base mediante el x402 Foundation SDK: el extra opcional x402 no está instalado en esta máquina. No se firmó ni envió nada. Todo lo demás de la cartera funciona sin él; instálalo y reintenta."
   },
-  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
+  "source_catalog_sha256": "aec25650f4de18eb33aa6cc76239d09afbbd81cc57c595af840f3eaaadbcfddf",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

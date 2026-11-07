@@ -2147,6 +2147,18 @@ def dispatch_get(
         _us_status, payload = _cr_forward("update.status", {})
         return apply_runtime_headers(json_response(_us_status, payload), runtime)
 
+    if normalized_path == "/api/memory/standing-instructions":
+        # The rules VOOL follows in every chat of a workspace (core/standing_instructions.py), listed read-only on
+        # the Memory page so the owner can see what was saved. Owner-local, like the memory listing. Removal stays
+        # the chat take-back ("stop answering in bullet points"); this route writes nothing.
+        if not is_loopback_host(client_host):
+            return apply_runtime_headers(json_response(403, {"ok": False, "error": "owner_local_required"}), runtime)
+        from core.standing_instructions import list_active
+
+        rows = [{"id": item.instruction_id, "text": item.text, "workspace": item.workspace,
+                 "created_at": item.created_at} for item in list_active()]
+        return apply_runtime_headers(json_response(200, {"ok": True, "instructions": rows}), runtime)
+
     if normalized_path == "/api/memory/entries":
         # What the runtime remembers, as data the operator can inspect and prune. Owner-local:
         # memory is the operator's accumulated context. Values only — never secrets (the store's

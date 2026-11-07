@@ -1405,6 +1405,10 @@
     "vx.memory.forget_title": "Quên đúng dữ kiện này",
     "vx.memory.not_removed": "chưa bị xóa",
     "vx.memory.reading": "Đang đọc bộ nhớ…",
+    "vx.memory.rules_title": "Quy tắc VOOL tuân theo trong mọi cuộc trò chuyện",
+    "vx.memory.rules_empty": "Chưa lưu quy tắc nào. Quy tắc bạn đưa ra trong trò chuyện, như “luôn trả lời bằng gạch đầu dòng”, sẽ hiện ở đây.",
+    "vx.memory.rules_hint": "Để bỏ một quy tắc, hãy bảo VOOL ngừng làm điều đó trong một cuộc trò chuyện.",
+    "vx.memory.rules_unreadable": "Không thể đọc các quy tắc đã lưu.",
     "vx.memory.title": "Bộ nhớ",
     "vx.memory.unreadable": "Không đọc được bộ nhớ.",
     "vx.palette.toolbelt": "Dây đựng công cụ — năng lực đã cài…",
@@ -1897,7 +1901,7 @@
     "fault.wallet_payment_channel_off.action": "Chỉ bật một kênh thanh toán trong cài đặt Tiền điện tử nếu bạn muốn thanh toán qua kênh đó; trần chi tiêu và sự chấp thuận của bạn áp dụng trên mọi kênh.",
     "fault.wallet_x402_sdk_unavailable.message": "Bản dựng này không trả được các đề nghị x402 trên Base qua x402 Foundation SDK: phần bổ sung tùy chọn x402 chưa cài trên máy này. Chưa ký hay gửi gì. Mọi chức năng ví khác chạy không cần nó; sau khi cài, thử lại."
   },
-  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
+  "source_catalog_sha256": "aec25650f4de18eb33aa6cc76239d09afbbd81cc57c595af840f3eaaadbcfddf",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

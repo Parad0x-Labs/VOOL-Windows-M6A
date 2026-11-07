@@ -1405,6 +1405,10 @@
     "vx.memory.forget_title": "Užmiršti būtent šį įrašą",
     "vx.memory.not_removed": "nepašalinta",
     "vx.memory.reading": "Skaitoma atmintis…",
+    "vx.memory.rules_title": "Taisyklės, kurių VOOL laikosi kiekviename pokalbyje",
+    "vx.memory.rules_empty": "Išsaugotų taisyklių nėra. Pokalbyje duota taisyklė, pvz., „visada atsakyk punktais“, atsiras čia.",
+    "vx.memory.rules_hint": "Norėdami pašalinti taisyklę, pokalbyje paprašykite VOOL to nebedaryti.",
+    "vx.memory.rules_unreadable": "Išsaugotų taisyklių nepavyko perskaityti.",
     "vx.memory.title": "Atmintis",
     "vx.memory.unreadable": "Atminties nepavyko perskaityti.",
     "vx.palette.toolbelt": "Įrankių juosta — įdiegtos galimybės…",
@@ -1897,7 +1901,7 @@
     "fault.wallet_payment_channel_off.action": "Įjunkite mokėjimo kanalą Kripto nustatymuose tik jei norite, kad mokėjimai eitų per jį; riba ir jūsų patvirtinimas galioja kiekviename kanale.",
     "fault.wallet_x402_sdk_unavailable.message": "Ši versija negali apmokėti x402 pasiūlymų Base tinkle per x402 Foundation SDK: šiame kompiuteryje neįdiegtas pasirenkamas papildinys x402. Niekas nebuvo pasirašyta ar išsiųsta. Visos kitos piniginės funkcijos veikia ir be jo; jį įdiegę bandykite dar kartą."
   },
-  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
+  "source_catalog_sha256": "aec25650f4de18eb33aa6cc76239d09afbbd81cc57c595af840f3eaaadbcfddf",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
