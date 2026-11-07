@@ -719,6 +719,10 @@ _WINDOWS_SCRIPT_WORDS: tuple[tuple[str, str], ...] = (
      "T('setup.thinking.online_sub.windows', 'Smarter answers. You paste a key from a company you pay; it is kept only on this computer.')"),
     ("T('setup.status.saved_thinking', 'Saved: VOOL thinks on this Mac.')",
      "T('setup.status.saved_thinking.windows', 'Saved: VOOL thinks on this computer.')"),
+    ("T('setup.thinking.no_local', 'No local model is running on this computer, so “On my Mac” cannot answer yet.')",
+     "T('setup.thinking.no_local', 'No local model is running on this computer, so “On this computer” cannot answer yet.')"),
+    # The animated example's label is plain markup, not a T() lookup.
+    ("<div class=\"mk-choice on\"><b>On my Mac</b>", "<div class=\"mk-choice on\"><b>On this computer</b>"),
     ("T('setup.folder.placeholder', 'Type the folder’s full path, e.g. /Users/you/Documents')",
      "T('setup.folder.placeholder.windows', 'Type the folder’s full path, e.g. C:\\\\Users\\\\you\\\\Documents')"),
 )
