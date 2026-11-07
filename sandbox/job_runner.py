@@ -837,6 +837,15 @@ class JobRunner:
                         "Windows confinement's launcher record does not match its exit code "
                         f"(record {status.exit_code}, exit {result.returncode}); the result is not trusted."
                     )
+            if status.limit == "memory" and result.returncode == 0:
+                # A Windows job memory limit fails the allocation instead of ending the process,
+                # so a child that catches the error can still exit 0. The job went over its
+                # memory limit: it did not succeed, as a cgroup OOM kill would show on Linux.
+                return ExecutionResult(
+                    returncode=1,
+                    stdout=result.stdout,
+                    stderr=result.stderr + "\nThe job went over its memory limit and was stopped from allocating more.\n",
+                )
         return result
 
     def _run_wrapped(

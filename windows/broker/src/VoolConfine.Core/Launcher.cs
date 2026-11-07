@@ -320,8 +320,19 @@ public static class Launcher
             ["VOOL_CONFINE_COMMAND_LINE"] = commandLine,
             ["VOOL_CONFINE_TEMP"] = tempDir,
         };
+        // Windows also points an AppContainer process's profile variables at the real profile
+        // (windows-broker run 42362758893, attack pack), whatever the env block says. The caller's
+        // values ride along and the trampoline puts them back.
+        foreach (var name in RestoredProfileVariables)
+            if (environment.TryGetValue(name, out var value) && value.Length > 0)
+                environment[RestorePrefix + name] = value;
         return environment;
     }
+
+    /// <summary>The profile variables the trampoline restores. Kept in step with src/VoolConfineStart/Program.cs.</summary>
+    internal static readonly string[] RestoredProfileVariables = ["USERPROFILE", "APPDATA", "LOCALAPPDATA"];
+
+    internal const string RestorePrefix = "VOOL_CONFINE_SET_";
 
     static void TryNotStarted(LauncherStatus status, string reason, TextWriter stderr)
     {

@@ -16,6 +16,10 @@ const string ProgramVar = "VOOL_CONFINE_PROGRAM";
 const string CommandLineVar = "VOOL_CONFINE_COMMAND_LINE";
 const string TempVar = "VOOL_CONFINE_TEMP";
 const int NotStarted = unchecked((int)0xE5C00125);
+// Windows also rewrites these for an AppContainer process; the launcher passes the caller's values
+// as VOOL_CONFINE_SET_<name> (kept in step with Launcher.RestoredProfileVariables).
+const string RestorePrefix = "VOOL_CONFINE_SET_";
+string[] RestoredProfileVariables = ["USERPROFILE", "APPDATA", "LOCALAPPDATA"];
 
 var program = Environment.GetEnvironmentVariable(ProgramVar);
 var commandLine = Environment.GetEnvironmentVariable(CommandLineVar);
@@ -28,13 +32,23 @@ if (string.IsNullOrEmpty(program) || string.IsNullOrEmpty(commandLine) || string
 }
 
 var environment = new SortedDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+var restored = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
 {
     var name = (string)entry.Key;
     if (name.Equals(ProgramVar, StringComparison.OrdinalIgnoreCase) || name.Equals(CommandLineVar, StringComparison.OrdinalIgnoreCase)
         || name.Equals(TempVar, StringComparison.OrdinalIgnoreCase)) continue;
+    if (name.StartsWith(RestorePrefix, StringComparison.OrdinalIgnoreCase))
+    {
+        // Only the profile variables Windows rewrites (Launcher.RestoredProfileVariables); any other is dropped.
+        var target = name[RestorePrefix.Length..];
+        if (RestoredProfileVariables.Contains(target, StringComparer.OrdinalIgnoreCase))
+            restored[target] = (string?)entry.Value ?? "";
+        continue;
+    }
     environment[name] = (string?)entry.Value ?? "";
 }
+foreach (var (name, value) in restored) environment[name] = value;
 environment["TEMP"] = temp;
 environment["TMP"] = temp;
 var block = new StringBuilder();

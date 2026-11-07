@@ -97,6 +97,11 @@ public class LauncherUnitTests
         Assert.Equal("\"C:\\tools\\node.exe\" a \"b c\"", environment["VOOL_CONFINE_COMMAND_LINE"]);
         Assert.Equal(@"C:\work\repo\.sandbox-tmp", environment["VOOL_CONFINE_TEMP"]);
         Assert.Equal(@"C:\work\repo\.sandbox-tmp", environment["TEMP"]);
+        foreach (var name in Launcher.RestoredProfileVariables)
+        {
+            var value = Environment.GetEnvironmentVariable(name);
+            if (!string.IsNullOrEmpty(value)) Assert.Equal(value, environment[Launcher.RestorePrefix + name]);
+        }
     }
 
     [Fact]
