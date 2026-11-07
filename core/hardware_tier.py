@@ -27,8 +27,11 @@ import os
 import platform
 import re
 import subprocess
+import sys
+import threading
+import time
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 @dataclass(frozen=True)
@@ -113,7 +116,84 @@ MPS_TIERS: list[QwenTier] = [
 ]
 
 
+#: How long one machine probe answers every caller. A Windows probe runs nvidia-smi and a PowerShell CIM
+#: query (seconds each), and one chat turn asks a dozen callers for it (Steve job 42c: 3.5 s of a ~17 s turn).
+#: Short on purpose: free VRAM moves when a model loads, so a probe is shared within a turn, not across minutes.
+MACHINE_PROBE_TTL_S = 10.0
+_PROBE_SETTINGS = ("VOOL_SKIP_TORCH_GPU_PROBE", "VOOL_ALLOW_LEGACY_CUDA")
+_PROBE_LOCK = threading.Lock()
+_PROBE_SHARED: tuple[tuple[object, ...], float, MachineProbe] | None = None
+
+
+def _probe_clock() -> float:
+    return time.monotonic()
+
+
+#: The probe cache's own machinery: not probe inputs (replacing them changes no measurement).
+_PROBE_MACHINERY = frozenset({"probe_machine", "forget_machine_probe", "_probe_inputs", "_same_inputs", "_probe_clock"})
+
+
+def _probe_inputs() -> tuple[object, ...]:
+    """What a probe was taken with: every function of this module, the outside seams it calls, its settings.
+
+    A shared probe is reused only while these are unchanged, so a replaced detector or helper (any function
+    here, including one added later: the list is not hand-picked) or a changed setting such as
+    ``VOOL_SKIP_TORCH_GPU_PROBE`` is always measured afresh rather than answered from the window.
+    """
+    import types
+
+    from core import process_liveness
+
+    module = vars(sys.modules[__name__])
+    code = tuple(
+        (name, module[name])
+        for name in sorted(module)
+        if name not in _PROBE_MACHINERY and isinstance(module[name], types.FunctionType)
+    )
+    psutil = sys.modules.get("psutil")
+    seams = (
+        subprocess.run, platform.system, platform.machine, os.cpu_count, process_liveness.system_powershell,
+        getattr(psutil, "virtual_memory", None), sys.modules.get("torch"),
+    )
+    return code + seams + tuple(os.environ.get(name) for name in _PROBE_SETTINGS)
+
+
+def _same_inputs(kept: tuple[object, ...], now: tuple[object, ...]) -> bool:
+    # The kept tuple holds the objects themselves, so none can be freed and its address reused by a
+    # replacement: identity is a sound test. Names and settings are strings (or None) and compare by value.
+    def same(a: object, b: object) -> bool:
+        if isinstance(a, tuple) and isinstance(b, tuple):
+            return len(a) == len(b) and all(same(x, y) for x, y in zip(a, b, strict=True))
+        return a is b or (isinstance(a, str | None) and a == b)
+
+    return same(kept, now)
+
+
+def forget_machine_probe() -> None:
+    """Drop the shared probe, so the next caller measures the machine again."""
+    global _PROBE_SHARED
+    with _PROBE_LOCK:
+        _PROBE_SHARED = None
+
+
 def probe_machine() -> MachineProbe:
+    """This machine's hardware, measured at most once per ``MACHINE_PROBE_TTL_S`` for the same probe inputs.
+
+    Concurrent callers wait for the one probe in flight instead of each starting their own. Every caller
+    gets its own copy. A probe that raises is not kept.
+    """
+    global _PROBE_SHARED
+    with _PROBE_LOCK:
+        inputs = _probe_inputs()
+        shared = _PROBE_SHARED
+        if shared is not None and _same_inputs(shared[0], inputs) and _probe_clock() - shared[1] <= MACHINE_PROBE_TTL_S:
+            return replace(shared[2])
+        probe = _measure_machine()
+        _PROBE_SHARED = (inputs, _probe_clock(), probe)
+        return replace(probe)
+
+
+def _measure_machine() -> MachineProbe:
     cpu_cores = os.cpu_count() or 2
     ram_gb = _detect_ram_gb()
     gpu_devices = detect_gpu_devices()

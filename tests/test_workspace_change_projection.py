@@ -421,8 +421,8 @@ def test_valid_stored_hash_must_match_available_content(change_runtime: Path) ->
 
 def test_multi_file_patch_stays_one_group_with_truthful_states(change_runtime: Path) -> None:
     session_id = "change-multi-patch"
-    (change_runtime / "existing.txt").write_text("old one\nkeep\n", encoding="utf-8")
-    (change_runtime / "removed.txt").write_text("gone\n", encoding="utf-8")
+    (change_runtime / "existing.txt").write_text("old one\nkeep\n", encoding="utf-8", newline="\n")
+    (change_runtime / "removed.txt").write_text("gone\n", encoding="utf-8", newline="\n")
     patch = """--- a/existing.txt
 +++ b/existing.txt
 @@ -1,2 +1,3 @@

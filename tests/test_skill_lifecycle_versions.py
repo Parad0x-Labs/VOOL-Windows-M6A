@@ -71,7 +71,7 @@ def _history(plugin_root: Path) -> dict:
 
 def _stage(tmp_path: Path, text: str, name: str = "draft") -> Path:
     staged = tmp_path / f"{name}.md"
-    staged.write_text(text, encoding="utf-8")
+    staged.write_text(text, encoding="utf-8", newline="\n")
     return staged
 
 

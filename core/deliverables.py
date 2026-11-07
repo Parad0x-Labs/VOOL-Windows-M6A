@@ -1016,7 +1016,10 @@ def _bytes_path(deliverable_id: str) -> Path:
 
 def _write_private(path: Path, data: bytes) -> None:
     pending = path.with_name(path.name + f".{os.getpid()}.{secrets.token_hex(4)}.tmp")
-    fd = os.open(pending, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    # O_BINARY (Windows only; 0 elsewhere): a text-mode descriptor turns every 0x0A into 0x0D 0x0A,
+    # even through os.fdopen(fd, "wb").
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    fd = os.open(pending, flags, 0o600)
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(data)
@@ -1029,7 +1032,8 @@ def _write_private(path: Path, data: bytes) -> None:
 
 
 def _read_regular(path: Path) -> bytes:
-    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    # O_BINARY as above: a text-mode read folds 0x0D 0x0A into 0x0A and stops at the first 0x1A.
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
     with os.fdopen(fd, "rb") as handle:
         info = os.fstat(handle.fileno())
         if not (info.st_mode & 0o170000 == 0o100000):

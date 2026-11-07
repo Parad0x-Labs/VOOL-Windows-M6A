@@ -83,7 +83,13 @@ def test_no_ledger_carries_a_plain_sha256_of_user_text(tmp_path, monkeypatch):
     assert not (plain & found), "a ledger carries a plain SHA-256 of user text"
     assert "k1:" in ledgers
     key = profile / "data" / "receipts_v2" / ".digest_key"
-    assert stat.S_IMODE(os.stat(key).st_mode) == 0o600
+    if os.name == "nt":
+        # chmod only flips the read-only bit on Windows; owner-only is the protected one-ACE DACL.
+        from core.owner_only import verify_owner_only
+
+        assert verify_owner_only(key).ok
+    else:
+        assert stat.S_IMODE(os.stat(key).st_mode) == 0o600
 
 
 def test_the_same_text_digests_differently_on_another_install(tmp_path, monkeypatch):

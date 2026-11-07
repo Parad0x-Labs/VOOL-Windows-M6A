@@ -381,7 +381,9 @@ def concurrency_report(outcomes: list[SubtaskOutcome]) -> ConcurrencyReport:
     for outcome in timed:
         events.append((outcome.started_at, 1, outcome.subtask.subtask_id))
         events.append((outcome.completed_at, -1, outcome.subtask.subtask_id))
-    events.sort(key=lambda item: (item[0], -item[1]))  # a start at the same instant as an end counts as overlap
+    # Ends sort before starts at the same instant (-1 < 1), so a handoff at an identical timestamp is not
+    # overlap: the half-open [started_at, completed_at) of `overlaps()`, and the conductor's own sweep.
+    events.sort()
 
     running = 0
     max_concurrent = 0

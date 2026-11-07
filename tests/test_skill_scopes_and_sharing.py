@@ -67,7 +67,7 @@ def _bind(chat: str, project: str = "") -> dict[str, str]:
 def _install_scoped(keys: dict[str, str], scope: str, text: str = SKILL_TEXT, slug: str = "meeting-actions") -> dict:
     staged_root = skill_tools._scoped_dirs(scope, keys)[0] / slug
     staged_root.mkdir(parents=True, exist_ok=True)
-    (staged_root / "SKILL.md").write_text(text, encoding="utf-8")
+    (staged_root / "SKILL.md").write_text(text, encoding="utf-8", newline="\n")
     result = skill_tools.install_skill(slug, scope=scope, keys=keys, overwrite=True)
     assert result["status"] == "ok", result
     return result

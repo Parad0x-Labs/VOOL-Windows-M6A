@@ -219,22 +219,23 @@ def classify_url(value: Any) -> str:
     return classify(body if body.startswith("/") else "/" + body)
 
 
-def refusal_text(value: Any, kind: str) -> str:
+def refusal_text(value: Any, kind: str, *, nothing: str = "opened") -> str:
     """The sentence a refusal gives, naming `value` as it was written.
 
     The sentence is relayed inside markdown, so the value loses its backticks and line breaks and is
-    cut to 120 characters.
+    cut to 120 characters. `nothing` names what did not happen: "opened" for a read, "written" when
+    the refused path was where the user asked VOOL to write.
     """
     text = _text(value)
     shown = _LINE_BREAK_RE.sub(" ", (str(value) if text is None else text).replace("`", ""))[:120]
     if kind in NETWORK_KINDS:
         return (
             f"`{shown}` is a network or device path. On Windows, VOOL only opens files on a local drive "
-            "(like C:\\Users\\you\\file.txt) or inside the current folder, so nothing was opened."
+            f"(like C:\\Users\\you\\file.txt) or inside the current folder, so nothing was {nothing}."
         )
     return (
         f"`{shown}` is not a full local path. On Windows, use a drive letter and folder "
-        "(like C:\\Users\\you\\file.txt) or a path inside the current folder. Nothing was opened."
+        f"(like C:\\Users\\you\\file.txt) or a path inside the current folder. Nothing was {nothing}."
     )
 
 

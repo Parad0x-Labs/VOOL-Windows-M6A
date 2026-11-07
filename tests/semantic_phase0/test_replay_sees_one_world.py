@@ -121,10 +121,12 @@ def test_the_pin_still_reports_the_real_shape_of_the_machine() -> None:
         assert row["free_gb"] >= 0, row
     # The reading is frozen, but it is still a reading of THIS machine: the real root filesystem
     # has to be among the drives reported, and its size has to match what the OS says.
+    # The root is "/" on POSIX and the system drive (C:\ as the probe spells drives) on Windows.
+    system_root = os.environ.get("SystemDrive", "C:") + "\\" if os.name == "nt" else "/"
     mounts = {str(row["mount"]) for row in rows}
-    assert "/" in mounts, mounts
-    root = next(row for row in rows if str(row["mount"]) == "/")
-    actual_total_gb = round(shutil.disk_usage("/").total / (1024**3), 1)
+    assert system_root in mounts, mounts
+    root = next(row for row in rows if str(row["mount"]) == system_root)
+    actual_total_gb = round(shutil.disk_usage(system_root).total / (1024**3), 1)
     assert abs(float(root["total_gb"]) - actual_total_gb) < 1.0, (root, actual_total_gb)
 
 

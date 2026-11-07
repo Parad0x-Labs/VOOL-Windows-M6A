@@ -71,7 +71,7 @@ Nothing goes online on a fresh install until you turn it on. Release notes: [CHA
 | **macOS / Apple Silicon** | App download (`macos-arm64` DMG) or the source installer; macOS CI coverage. |
 | **macOS / Intel** | Separate app download (`macos-x86_64` DMG) or the source installer. Local models run on the CPU and may be too slow to certify or answer in time, so use a cloud model there for now; see [Intel Macs](docs/getting-started/install.md#intel-macs). |
 | **Linux** | Self-contained x86_64 tarball, tested on Ubuntu 22.04 and 24.04, or the source installer; Linux test shards cover the source installer. |
-| **Windows** | Experimental desktop path from source; PowerShell installer and Windows gauntlet coverage. No Windows download in this release. Use WSL2/Linux for jobs requiring a Linux kernel sandbox. |
+| **Windows** | Experimental desktop path from source; PowerShell installer and Windows gauntlet coverage. No Windows download in this release. On Windows, VOOL can't yet run code tools (tests, git, npm, Python scripts) for you in its sandbox, and it doesn't start plugins or MCP servers or open files that need an external decoder. It refuses all of these rather than run them unprotected. This refusal does not affect chat with local or cloud models, or workspace edits. Use WSL2/Linux for jobs requiring a Linux kernel sandbox. |
 
 For model choices, system requirements, checksums, and troubleshooting, see the [install guide](docs/INSTALL.md) and [Windows capability matrix](docs/WINDOWS_CAPABILITY_MATRIX.md).
 
@@ -153,6 +153,10 @@ python -m core.honesty_receipt verify-last
 ```
 
 A signature verifies the signed record's integrity; it is not a guarantee that every model answer is correct.
+
+## Planned
+
+- A native Windows sandbox for code tools (AppContainer + Job Object).
 
 ## Explore further
 

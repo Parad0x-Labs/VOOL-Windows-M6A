@@ -18,6 +18,7 @@ import pytest
 
 from installer import release_sign
 from installer.release_sign import Refused
+from tests.platform_helpers import bash_executable, bash_path
 
 REPO = Path(__file__).resolve().parents[1]
 SIGN_MACOS = REPO / "installer" / "bundle" / "sign_macos_release.sh"
@@ -176,7 +177,7 @@ def test_a_directory_cannot_be_sealed_twice(release_key, release_dir) -> None:
 def test_macos_release_signing_refuses_off_macos() -> None:
     if platform.system() == "Darwin":
         pytest.skip("this pins the non-macOS refusal")
-    done = subprocess.run(["bash", str(SIGN_MACOS), "--preflight"], capture_output=True, text=True, timeout=60)
+    done = subprocess.run([bash_executable(), bash_path(SIGN_MACOS), "--preflight"], capture_output=True, text=True, timeout=60)
     assert done.returncode != 0
     assert "RELEASE SIGNING REFUSED" in done.stderr and "need macOS" in done.stderr
 

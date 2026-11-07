@@ -440,19 +440,39 @@ class UDPTransportServer:
 
         self.host = checked_research_listener_host(self.host)
         last_error: Exception | None = None
-        for _attempt in range(_EPHEMERAL_PAIR_RETRIES):
+        # Every refused pair, "udp/stream:reason", so a failure names the ports it tried: a block
+        # that refuses them all (an excluded range, a held block) is then visible in the error.
+        refused_pairs: list[str] = []
+        for attempt in range(_EPHEMERAL_PAIR_RETRIES):
+            # Which protocol picks its port alternates. Windows hands out ephemeral TCP ports in
+            # sequence, so attempts that always let TCP pick probe neighbouring UDP ports, and one
+            # held or excluded block of UDP ports (Hyper-V / WinNAT reserve them in blocks) refused
+            # all of them (T31 Windows suite 41918263493). Letting UDP pick on every other attempt
+            # leaves that block, and the mirror case for TCP, after one attempt.
+            udp_picks = attempt % 2 == 1
             stream_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock: socket.socket | None = None
+            pair: list[int | None] = [None, None]
             try:
                 apply_listen_socket_policy(stream_sock)
-                stream_sock.bind((self.host, 0))
-                stream_port = int(stream_sock.getsockname()[1])
-                if stream_port <= 1:
-                    raise OverflowError("ephemeral stream port cannot have an adjacent UDP port")
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 _configure_udp_socket_buffers(sock)
                 apply_udp_listen_socket_policy(sock)
-                sock.bind((self.host, stream_port - 1))
+                if udp_picks:
+                    sock.bind((self.host, 0))
+                    udp_port = int(sock.getsockname()[1])
+                    pair[:] = [udp_port, udp_port + 1]
+                    if udp_port <= 0 or udp_port >= 65535:
+                        raise OverflowError("ephemeral UDP port cannot have an adjacent stream port")
+                    stream_sock.bind((self.host, udp_port + 1))
+                    stream_port = udp_port + 1
+                else:
+                    stream_sock.bind((self.host, 0))
+                    stream_port = int(stream_sock.getsockname()[1])
+                    pair[:] = [stream_port - 1, stream_port]
+                    if stream_port <= 1:
+                        raise OverflowError("ephemeral stream port cannot have an adjacent UDP port")
+                    sock.bind((self.host, stream_port - 1))
                 stream_server = StreamTransportServer(
                     host=self.host,
                     port=stream_port,
@@ -466,6 +486,8 @@ class UDPTransportServer:
                     sock.close()
                 stream_sock.close()
                 last_error = exc
+                reason = getattr(exc, "winerror", None) or getattr(exc, "errno", None) or type(exc).__name__
+                refused_pairs.append(f"{pair[0] or '?'}/{pair[1] or '?'}:{reason}")
                 if isinstance(exc, OSError) and not (
                     _is_bind_conflict(exc) or isinstance(exc, PermissionError)
                 ):
@@ -481,9 +503,16 @@ class UDPTransportServer:
             "stream_transport_start_failed",
             target_id=f"{self.host}:ephemeral",
             target_type="transport",
-            details={"error": str(last_error or "adjacent port pair unavailable"), "mode": "ephemeral_required"},
+            details={
+                "error": str(last_error or "adjacent port pair unavailable"),
+                "mode": "ephemeral_required",
+                "refused_pairs": list(refused_pairs),
+            },
         )
-        raise OSError(f"Could not allocate an adjacent UDP/stream port pair after {_EPHEMERAL_PAIR_RETRIES} attempts")
+        raise OSError(
+            f"Could not allocate an adjacent UDP/stream port pair after {_EPHEMERAL_PAIR_RETRIES} attempts"
+            f" (last refusal: {last_error}; refused udp/stream pairs: {', '.join(refused_pairs) or 'none'})"
+        ) from last_error
 
     def stop(self) -> None:
         self._stop.set()

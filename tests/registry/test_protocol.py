@@ -1,4 +1,5 @@
 import copy
+import os
 
 import pytest
 
@@ -24,7 +25,10 @@ def test_transport_recreates_all_bytes_modes_and_empty_directories(tmp_path):
     artifact = materialize(raw, output)
     assert capture_package(output).digest == capture_package(root).digest == artifact["native_digest"]
     assert (output / "empty").is_dir()
-    assert (output / "tool.py").stat().st_mode & 0o111 == 0o111
+    if os.name != "nt":
+        # Windows files carry no executable bit: there the digest equality above is the whole proof
+        # (Windows captures executable=0 on both sides, see the "mode" mutation below).
+        assert (output / "tool.py").stat().st_mode & 0o111 == 0o111
 
 
 @pytest.mark.parametrize("mutation", ["bytes", "mode", "path", "duplicate", "directory"])

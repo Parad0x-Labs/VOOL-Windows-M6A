@@ -356,7 +356,14 @@ class ShebangAndRelativePathFullLifecycleTests(unittest.TestCase):
             # External chmod -- rollback must restore this exact mode later, not whatever the
             # next write happens to leave behind.
             os.chmod(target, 0o755)
-            self.assertEqual(target.stat().st_mode & 0o7777, 0o755)
+            if os.name == "nt":
+                # Windows keeps only the read-only flag, so chmod 0o755 leaves a writable 0o666
+                # file. The lifecycle still has to hand back exactly the mode the file had.
+                chmod_mode = target.stat().st_mode & 0o7777
+                self.assertEqual(chmod_mode, 0o666)
+            else:
+                chmod_mode = 0o755
+            self.assertEqual(target.stat().st_mode & 0o7777, chmod_mode)
 
             content_v2 = '#!/bin/sh\necho "modified-version"\n'
             modified = execute_runtime_tool(
@@ -378,7 +385,7 @@ class ShebangAndRelativePathFullLifecycleTests(unittest.TestCase):
             self.assertIsNotNone(rolled_back)
             self.assertTrue(rolled_back.ok, rolled_back.response_text)
             self.assertEqual(target.read_text(encoding="utf-8"), content_v1)
-            self.assertEqual(target.stat().st_mode & 0o7777, 0o755)
+            self.assertEqual(target.stat().st_mode & 0o7777, chmod_mode)
 
             # Ledger evidence: the rolled-back record exists, is marked rolled back, and carries
             # the mode this rollback had to restore.
@@ -388,7 +395,7 @@ class ShebangAndRelativePathFullLifecycleTests(unittest.TestCase):
             self.assertTrue(matching, "expected a mutation record for this workspace")
             last_record = matching[-1]
             self.assertIsNotNone(last_record.get("rolled_back_at"))
-            self.assertEqual(last_record["changes"][0].get("before_mode"), 0o755)
+            self.assertEqual(last_record["changes"][0].get("before_mode"), chmod_mode)
 
             # Touched no other file in the workspace.
             self.assertEqual(

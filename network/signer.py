@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
+from core.owner_only import ensure_private_dir, require_owner_only
 from core.runtime_paths import data_path
 
 try:
@@ -67,7 +68,18 @@ class KeyStorageMetadata:
     path: Path
 
 
+# On Windows chmod only flips the read-only bit, so key material is made owner-only through
+# core/owner_only (a protected one-ACE DACL). There it fails closed: OwnerOnlyUnavailable is raised
+# rather than leave a seed, record or protection secret readable under the parent's inherited ACL.
+_WINDOWS = os.name == "nt"
+
+
 def _ensure_dir() -> None:
+    if _WINDOWS:
+        # Folders created owner-only hand that ACE down, so files written inside are born private.
+        ensure_private_dir(_KEY_DIR)
+        ensure_private_dir(_KEY_ARCHIVE_DIR)
+        return
     _KEY_DIR.mkdir(parents=True, exist_ok=True)
     _KEY_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
     _chmod_safe(_KEY_DIR, 0o700)
@@ -75,6 +87,9 @@ def _ensure_dir() -> None:
 
 
 def _chmod_safe(path: Path, mode: int) -> None:
+    if _WINDOWS:
+        require_owner_only(path, directory=path.is_dir())
+        return
     try:
         if os.name == "posix":
             path.chmod(mode)
@@ -83,6 +98,9 @@ def _chmod_safe(path: Path, mode: int) -> None:
 
 
 def _enforce_private_key_permissions(path: Path) -> None:
+    if _WINDOWS:
+        require_owner_only(path)
+        return
     if os.name != "posix":
         return
     try:
@@ -387,7 +405,10 @@ def _account_file_passphrase() -> str:
     import secrets
 
     value = secrets.token_urlsafe(48)
-    _ACCOUNT_FILE_PROTECTION_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if _WINDOWS:
+        _ensure_dir()
+    else:
+        _ACCOUNT_FILE_PROTECTION_PATH.parent.mkdir(parents=True, exist_ok=True)
     _ACCOUNT_FILE_PROTECTION_PATH.write_text(value, encoding="utf-8")
     _chmod_safe(_ACCOUNT_FILE_PROTECTION_PATH, 0o600)
     return value
