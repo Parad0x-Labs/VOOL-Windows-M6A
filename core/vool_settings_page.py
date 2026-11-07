@@ -2915,12 +2915,19 @@ function mpOpenRow(rowId, part) {
   location.hash = '#models/' + rowId + (part ? '/' + part : '');
 }
 async function mpReads() {
-  const [pinR, discR, limitsR] = await Promise.all([
+  const [pinR, discR, limitsR, localR] = await Promise.all([
     getJSON('/api/cloud/model').catch(() => null),
     getJSON(USEPOD_DISCOVERY_URL).catch(() => null),
     getJSON('/api/cloud/spend-limits').catch(() => null),
+    getJSON('/api/models/local').catch(() => null),
   ]);
   return {
+    // Whether a local model can answer HERE: registered and certified, the same bar chat uses.
+    // Unknown (the read failed) is not ready.
+    local: localR && Array.isArray(localR.models) ? {
+      any: localR.models.length > 0,
+      ready: localR.models.some((m) => m && m.registered && m.certification_state === 'verified'),
+    } : { any: false, ready: false },
     pin: pinR && pinR.ok ? pinR : null,
     disc: discR && discR.ok !== false ? discR : null,
     spendLimits: limitsR && limitsR.limits ? limitsR : null,
@@ -3092,7 +3099,10 @@ function widgetModelsOverview(stack) {
       card.appendChild(btn);
       return card;
     };
-    cards.appendChild(mkCard('local', '__LOCAL_MACHINE_NAME__', 'Local models answer without a network.', 'View local models', true));
+    cards.appendChild(mkCard('local', '__LOCAL_MACHINE_NAME__', reads.local.ready
+      ? 'Local models answer without a network.'
+      : (reads.local.any ? 'A local model is installed but not ready to answer yet.' : 'No local model yet. Download or install one to answer here.'),
+      'View local models', reads.local.ready));
     // A pending or allowed-but-unconfirmed consent is a RESUME state, not a fresh setup: the
     // card sends the operator to the detail with the saved approval, never through guided again
     // (a second proposal would duplicate the consent identity).

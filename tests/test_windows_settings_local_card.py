@@ -8,6 +8,7 @@ other host, including one this code does not recognise.
 """
 from __future__ import annotations
 
+import json
 import re
 import sys
 from urllib.parse import unquote
@@ -61,11 +62,12 @@ def test_a_host_that_is_not_a_mac_gets_this_computer_and_nothing_else_changes(mo
     assert "__LOCAL_MACHINE_NAME__" not in mac_page
 
 
-def _overview_cards(page: str) -> dict:
+def _overview_cards(page: str, local_models: list | None = None) -> dict:
     """Run the served page's own Models & Providers overview and read back the cards it draws.
 
     Every read the overview makes is refused (404), the state a fresh or offline runtime gives it,
-    so the card text comes from the served script alone.
+    so the card text comes from the served script alone. ``local_models``, when given, is what
+    /api/models/local answers instead.
     """
     scripts = "\n".join(re.findall(r"<script[^>]*>(.*?)</script>", page, re.DOTALL))
     source = "\n".join([
@@ -77,7 +79,12 @@ def _overview_cards(page: str) -> dict:
     ])
     result = run_node(DOM + r"""
 const reads = [];
-globalThis.fetch = async (url) => { reads.push(url); return { ok: false, status: 404, json: async () => ({ error: 'not found' }) }; };
+const localModels = """ + json.dumps(local_models) + r""";
+globalThis.fetch = async (url) => {
+  reads.push(url);
+  if (url === '/api/models/local' && localModels !== null) return { ok: true, status: 200, json: async () => ({ models: localModels }) };
+  return { ok: false, status: 404, json: async () => ({ error: 'not found' }) };
+};
 """ + source + r"""
 const stack = el('div', 'stack');
 widgetModelsOverview(stack);
@@ -103,7 +110,25 @@ def test_the_local_card_the_operator_sees_is_named_for_the_host(monkeypatch) -> 
     windows = _overview_cards(_served_settings(monkeypatch, "win32"))
     mac = _overview_cards(_served_settings(monkeypatch, "darwin"))
 
-    assert windows["titles"] == ["This computer · ready", "UsePod", "OpenRouter"]
-    assert windows["local"] == ["This computer · ready", "Local models answer without a network.", "View local models"]
-    assert mac["titles"] == ["This Mac · ready", "UsePod", "OpenRouter"]
-    assert mac["local"] == ["This Mac · ready", "Local models answer without a network.", "View local models"]
+    # Every read refused: nothing says a local model can answer, so the card is not "ready"
+    # (clean-VM job 52: it said ready while chat said no local model was running).
+    no_model = "No local model yet. Download or install one to answer here."
+    assert windows["titles"] == ["This computer", "UsePod", "OpenRouter"]
+    assert windows["local"] == ["This computer", no_model, "View local models"]
+    assert mac["titles"] == ["This Mac", "UsePod", "OpenRouter"]
+    assert mac["local"] == ["This Mac", no_model, "View local models"]
+
+
+def test_the_local_card_is_ready_only_with_a_registered_certified_model(monkeypatch) -> None:
+    page = _served_settings(monkeypatch, "win32")
+    ready = _overview_cards(page, [{"registered": True, "certification_state": "verified"}])
+    pending = _overview_cards(page, [{"registered": True, "certification_state": "pending"}])
+    unregistered = _overview_cards(page, [{"registered": False, "certification_state": "verified"}])
+    empty = _overview_cards(page, [])
+
+    assert ready["local"] == ["This computer · ready", "Local models answer without a network.", "View local models"]
+    installed = "A local model is installed but not ready to answer yet."
+    assert pending["local"] == ["This computer", installed, "View local models"]
+    assert unregistered["local"] == ["This computer", installed, "View local models"]
+    assert empty["local"] == ["This computer", "No local model yet. Download or install one to answer here.",
+                              "View local models"]
