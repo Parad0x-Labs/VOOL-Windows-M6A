@@ -99,6 +99,7 @@ register('files', 'Generated files\\…', function(){ var p = pageActions(); if 
 register('contacts', 'Contacts\\…', function(){ var p = pageActions(); if (p && p.openContacts) p.openContacts(); });
 register('insert-contact', 'Insert a saved contact\\…', function(){ if (window.VoolContacts) window.VoolContacts.chooseIntoComposer({}); });
 register('focus-composer', 'Focus composer', function(){ var p = pageActions(); if (p) p.focusComposer(); });
+register('quit', 'Quit VOOL', function(){ var p = pageActions(); if (p && p.quitApp) p.quitApp(); });
 register('companion-lab', 'Companion: Character Lab\\…', function(){ var c = companion(); if (c && c.openCharacterLab) c.openCharacterLab(); });
 register('companion-dock', 'Companion: dock in corner', function(){ var c = companion(); if (c && c.dock) c.dock(); });
 register('companion-hide', 'Companion: hide', function(){ var c = companion(); if (c && c.hide) c.hide(); });
