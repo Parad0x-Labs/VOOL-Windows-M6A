@@ -62,7 +62,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force .verification-logs | Out-Null
-          python -c "import subprocess, sys; from pathlib import Path; from ops.draft_affected_tests import collected_files, macos_job_files; mac = macos_job_files(Path('.github/workflows/ci.yml').read_text(encoding='utf-8')); files = [f for f in collected_files(Path('.')) if f not in mac]; Path('.verification-logs/windows-collected.txt').write_text(''.join(f + chr(10) for f in files), encoding='utf-8'); print(f'collected {len(files)} test files')"
+          python -c "import subprocess, sys; from pathlib import Path; from ops.draft_affected_tests import collected_files, macos_job_files; mac = macos_job_files(Path('.github/workflows/ci.yml').read_text(encoding='utf-8')); files = [f for f in collected_files(Path('.')) if f not in mac and f != 'tests/test_windows_confinement_attacks.py']; Path('.verification-logs/windows-collected.txt').write_text(''.join(f + chr(10) for f in files), encoding='utf-8'); print(f'collected {len(files)} test files')"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python ops/shard_resolver.py --shard "${{ matrix.shard }}" --shards 20 --files .verification-logs/windows-collected.txt --weights ops/shard_weights.json --platform linux --output ".verification-logs/windows-shard-${{ matrix.shard }}-files.txt"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -80,5 +80,49 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: windows-full-suite-utf8-${{ inputs.utf8_mode || '1' }}-shard-${{ matrix.shard }}
+          path: .verification-logs/
+          include-hidden-files: true
+
+  # The confinement attack pack needs the published, pinned VoolConfine launcher; without it every
+  # confined job is refused and every attack row fails (refused is not a pass). The shards run
+  # without a launcher, as the suite always has, so the pack runs here on its own, the way
+  # windows-broker.yml runs it, and a skipped row fails the job.
+  confinement-attacks:
+    name: confinement attack pack (utf8=${{ inputs.utf8_mode || '1' }})
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      PYTHONUTF8: ${{ inputs.utf8_mode || '1' }}
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 10.0.402
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install verification dependencies
+        shell: pwsh
+        run: |
+          python -m pip install -e ".[dev]" -c .github/ci-constraints.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Confinement attack pack against the published, pinned launcher
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force .verification-logs | Out-Null
+          & ./windows/broker/publish.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'publish.ps1 failed' }
+          python -m pytest tests/test_windows_confinement_attacks.py -q -rs -p no:cacheprovider --junitxml=".verification-logs/windows-confinement-attacks.xml"
+          if ($LASTEXITCODE -ne 0) { throw 'the confinement attack pack failed' }
+          [xml]$report = Get-Content ".verification-logs/windows-confinement-attacks.xml"
+          $skipped = ($report.testsuites.testsuite | Measure-Object -Property skipped -Sum).Sum
+          if ($skipped -ne 0) { throw "$skipped confinement attack test(s) skipped on Windows" }
+      - name: Upload attack pack log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-full-suite-utf8-${{ inputs.utf8_mode || '1' }}-confinement-attacks
           path: .verification-logs/
           include-hidden-files: true
