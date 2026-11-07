@@ -302,7 +302,8 @@ def start_for_api(
             owned = []
         flagged.extend(part for part in owned if part not in flagged)
     # The whole list the broker is handed, so a folder marked outside the VOOL window is visible.
-    logger.info("Windows broker flagged folders at start: %s", flagged)
+    # Joined, not a list's repr, which would double every backslash of a Windows path in the log.
+    logger.info("Windows broker flagged folders at start: %s", "; ".join(flagged) or "(none)")
     host = BrokerHost(executable, flagged, journal_dir)
     # From here the gate takes its flagged folders from this broker only (section 4, one list):
     # none while it starts, and none if it never runs. Only for the process's own environment, the

@@ -17,6 +17,7 @@ from __future__ import annotations
 import sys
 
 from core.i18n.catalog import catalog_for, clear_catalog_cache
+from core.i18n.host_text import host_key
 from core.setup_progress import snapshot
 from core.vool_chat_page import render_vool_chat_html
 from core.vool_settings_page import render_vool_settings_html
@@ -34,16 +35,24 @@ def test_setup_snapshot_localizes_step_presentation_per_locale() -> None:
     # The projection never depends on the locale: same steps, same shape.
     assert [s["id"] for s in en["steps"]] == [s["id"] for s in lt["steps"]]
     assert {k for s in en["steps"] for k in s} == {k for s in lt["steps"] for k in s}
-    # The English authority is the source of truth for en.
+    # The English authority is the source of truth for en, except where a Windows host asks for the
+    # `.windows` sibling of English that names a Mac ("On my Mac" -> "On this computer").
+    def english(step_id: str, field: str, text: str) -> str:
+        key = f"setup.step.{step_id}.{field}"
+        return ENGLISH.text(host_key(key)) if text and host_key(key) != key else text
+
     for step in en["steps"]:
         spec = next(s for s in __import__("core.setup_progress", fromlist=["STEPS"]).STEPS if s.id == step["id"])
-        assert step["title"] == spec.title and step["sentence"] == spec.sentence and step["later"] == spec.later
+        assert step["title"] == english(spec.id, "title", spec.title)
+        assert step["sentence"] == english(spec.id, "sentence", spec.sentence)
+        assert step["later"] == english(spec.id, "later", spec.later)
     # A translated locale either localizes the presentation or falls back to the
     # English visibly — it must never invent a third text.
     for step in lt["steps"]:
         spec = next(s for s in __import__("core.setup_progress", fromlist=["STEPS"]).STEPS if s.id == step["id"])
-        catalog_step = catalog_for("lt").text(f"setup.step.{step['id']}.title")
-        expected = catalog_step if catalog_step and catalog_step != f"setup.step.{step['id']}.title" else spec.title
+        key = host_key(f"setup.step.{step['id']}.title")
+        catalog_step = catalog_for("lt").text(key)
+        expected = catalog_step if catalog_step and catalog_step != key else english(spec.id, "title", spec.title)
         assert step["title"] == expected
 
 

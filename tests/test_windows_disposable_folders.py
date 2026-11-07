@@ -15,14 +15,19 @@ refused (bug 4). Owner decision 2026-11-07, 🔐 review conditions:
 - chat names only folders it can really write; Setup ticks a folder only once it is marked.
 
 The Windows decisions are driven on Linux through the modules' `_IS_WINDOWS` flags, as the gate's
-other tests do; owner-only is the POSIX mode check there (core/owner_only.py).
+other tests do; owner-only is the POSIX mode check there (core/owner_only.py). On a Windows runner it
+is the file's ACL, which chmod never changes, so there a list is made untrustworthy the Windows way:
+an extra ACL entry for Everyone, which the owner-only check reads as a foreign entry.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
+import ntpath
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -56,6 +61,36 @@ def _restart() -> None:
     store._reset_for_tests()
 
 
+def _assert_owner_only(path: Path, posix_mode: int) -> None:
+    if os.name == "nt":
+        from core.owner_only import verify_owner_only
+
+        report = verify_owner_only(path)
+        assert report.ok, report.reason
+    else:
+        assert (path.stat().st_mode & 0o777) == posix_mode
+
+
+def _open_to_others(path: Path, posix_mode: int) -> None:
+    """Make ``path`` readable by others: chmod on POSIX, an Everyone ACL entry on Windows."""
+    if os.name != "nt":
+        path.chmod(posix_mode)
+        return
+    icacls = ntpath.join(os.environ["SystemRoot"], "System32", "icacls.exe")
+    # "(R)" with no inheritance flags: only this path's own DACL changes, so damaging the folder
+    # never pushes an entry down onto the list file and the folder check is proven on its own.
+    rights = "(R)"
+    # *S-1-1-0 is Everyone; removed again by _close_to_others so pytest can clean the folder.
+    subprocess.run([icacls, str(path), "/grant", f"*S-1-1-0:{rights}"], capture_output=True, check=True)
+
+
+def _close_to_others(path: Path) -> None:
+    if os.name == "nt":
+        icacls = ntpath.join(os.environ["SystemRoot"], "System32", "icacls.exe")
+        with contextlib.suppress(OSError, subprocess.CalledProcessError):
+            subprocess.run([icacls, str(path), "/remove:g", "*S-1-1-0"], capture_output=True, check=True)
+
+
 # --- the store -------------------------------------------------------------------------------
 
 
@@ -67,8 +102,8 @@ def test_a_mark_is_written_owner_only_and_counts_from_the_next_start(home, tmp_p
 
     target = store.store_path()
     assert target.parent == home / "config"
-    assert (target.stat().st_mode & 0o777) == 0o600
-    assert (target.parent.stat().st_mode & 0o777) == 0o700
+    _assert_owner_only(target, 0o600)
+    _assert_owner_only(target.parent, 0o700)
     assert json.loads(target.read_text(encoding="utf-8"))["schema"] == store.SCHEMA
     assert windows_write_gate.flagged_roots() == []          # an add waits for the restart
     assert store.load()["folders"][0]["pending_restart"] is True
@@ -96,19 +131,23 @@ def test_a_list_that_cannot_be_trusted_adds_nothing(home, tmp_path, damage) -> N
     store.mark(str(scratch))
     target = store.store_path()
     if damage == "world_readable":
-        target.chmod(0o644)
+        _open_to_others(target, 0o644)
     elif damage == "corrupt":
         target.write_text("{not json", encoding="utf-8")
     elif damage == "unknown_schema":
         target.write_text(json.dumps({"schema": "other", "folders": [{"path": str(scratch)}]}), encoding="utf-8")
     else:
-        target.parent.chmod(0o755)
+        _open_to_others(target.parent, 0o755)
     _restart()
 
-    assert windows_write_gate.flagged_roots() == []
-    assert store.load()["problem"]
-    with pytest.raises(store.MarkRefused):
-        store.mark(str(_folder(tmp_path, "other")))
+    try:
+        assert windows_write_gate.flagged_roots() == []
+        assert store.load()["problem"]
+        with pytest.raises(store.MarkRefused):
+            store.mark(str(_folder(tmp_path, "other")))
+    finally:
+        _close_to_others(target)
+        _close_to_others(target.parent)
 
 
 def test_a_list_that_turns_untrustworthy_after_start_stops_counting(home, tmp_path) -> None:
@@ -117,8 +156,11 @@ def test_a_list_that_turns_untrustworthy_after_start_stops_counting(home, tmp_pa
     _restart()
     assert windows_write_gate.flagged_roots()
 
-    store.store_path().chmod(0o644)
-    assert windows_write_gate.flagged_roots() == []
+    _open_to_others(store.store_path(), 0o644)
+    try:
+        assert windows_write_gate.flagged_roots() == []
+    finally:
+        _close_to_others(store.store_path())
 
 
 def test_the_variable_still_counts_beside_the_list(home, tmp_path, monkeypatch) -> None:

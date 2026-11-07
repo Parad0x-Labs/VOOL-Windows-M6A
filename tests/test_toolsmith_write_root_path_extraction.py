@@ -88,12 +88,32 @@ def test_relative_paths_produce_no_rooted_candidates() -> None:
 
 def test_absolute_and_tilde_paths_still_behave_exactly_as_before(tmp_path) -> None:
     """The fix must not weaken the original gate: a genuinely rooted, unreachable absolute path
-    is still caught, and a genuinely rooted, reachable `~` path is still let through."""
+    is still caught, and a genuinely rooted, reachable `~` path is still let through.
+
+    On Windows `~/Desktop` is reachable only once it is marked disposable (clean-VM job 52, bug 3),
+    and nothing is marked here, so there it is named as unreachable instead."""
+    from core import windows_write_gate
+
     sc = _sc(str(tmp_path))
     assert unreachable_write_target("create /tmp/vool_d23_probe_evil.txt with hello", source_context=sc) == (
         "/tmp/vool_d23_probe_evil.txt"
     )
-    assert unreachable_write_target("create ~/Desktop/legit.txt with hello", source_context=sc) == ""
+    desktop = "~/Desktop/legit.txt" if windows_write_gate.active() else ""
+    assert unreachable_write_target("create ~/Desktop/legit.txt with hello", source_context=sc) == desktop
+
+
+def test_on_windows_an_unmarked_desktop_is_named_not_let_through(tmp_path, monkeypatch) -> None:
+    """The Windows half of the test above, driven on any host through the gate's `_IS_WINDOWS` flag."""
+    from core import windows_disposable_store, windows_write_gate
+
+    monkeypatch.setattr(windows_write_gate, "_IS_WINDOWS", True)
+    monkeypatch.delenv(windows_write_gate.ENV_VAR, raising=False)
+    monkeypatch.setattr(windows_disposable_store, "start_folders", lambda *a, **k: [])
+    monkeypatch.setattr(windows_disposable_store, "live_folders", lambda *a, **k: [])
+    sc = _sc(str(tmp_path))
+    assert unreachable_write_target("create ~/Desktop/legit.txt with hello", source_context=sc) == (
+        "~/Desktop/legit.txt"
+    )
 
 
 # --------------------------------------------------------------------------------------
