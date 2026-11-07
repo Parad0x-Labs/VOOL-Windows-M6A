@@ -852,6 +852,13 @@ def _unmarked_spans(text: str, quoted: tuple[bool, ...]) -> tuple[tuple[int, int
     return tuple(spans)
 
 
+def _is_bare_greeting(clause: str) -> bool:
+    """Whether a clause is only a greeting phrase (the smalltalk lane's own list)."""
+    from core.agent_runtime.fast_paths_utility import _GREETING_PHRASES
+
+    return clause.lower().strip(" \t\r\n?!.,") in _GREETING_PHRASES
+
+
 def parse_turn_ir(
     user_text: str,
     *,
@@ -913,7 +920,16 @@ def parse_turn_ir(
             if request_start < request_end:
                 raw_clauses.append((start, end, request_start, request_end, marker.label))
     else:
-        for start, end in _unmarked_spans(source, quoted):
+        spans = list(_unmarked_spans(source, quoted))
+        # A leading greeting ("Hello, what can you do?", "Hi! Why is the sky blue?") is a
+        # salutation, not a request: as its own clause no head set claims it, and the composer had
+        # to report "Could not be answered: Hello" beside a real answer (clean-VM job 52). It is
+        # kept as the turn's preamble. A greeting alone is still the whole turn.
+        if len(spans) > 1 and _is_bare_greeting(source[spans[0][0]:spans[0][1]]):
+            preamble_start, preamble_end = spans[0]
+            preamble = source[preamble_start:preamble_end]
+            spans = spans[1:]
+        for start, end in spans:
             raw_clauses.append((start, end, start, end, None))
 
     clauses: list[TurnClause] = []

@@ -498,9 +498,19 @@ def smalltalk_fast_path(agent: Any, normalized_input: str, *, source_surface: st
     # — a SHORT friendly answer, not the full capability manifest (that's `help`), and never the
     # slow model.
     if re.search(r"\bwhat can (?:we|you|i|u)\b", phrase) or phrase in {"what now", "now what", "what next"}:
+        # Only promise local answers when a local model can really give one: on a fresh install
+        # with no model the next turn is refused, and this line was the first thing it said.
+        from core.local_model_presence import local_model_running
+
+        answers = (
+            "- answer questions and keep our context, locally and free on your machine\n"
+            if local_model_running()
+            else "- answer questions once a model is set up: no local model is on this computer yet "
+            "(add one in Settings > Models, or connect a cloud model)\n"
+        )
         return (
             "Plenty. The short version:\n"
-            "- answer questions and keep our context, locally and free on your machine\n"
+            + answers +
             "- read, search, and edit files in your workspace, and run bounded commands\n"
             "- look things up on the web and turn pages into summaries\n"
             "- bring your own cloud key for bigger models when you want (`cloud on`), off by default\n"
