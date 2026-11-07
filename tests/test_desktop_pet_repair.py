@@ -392,11 +392,13 @@ def test_pet_presentation_controls_carry_no_task_authority() -> None:
     # presentation, and the two answer-export saves whose destination must be picked in a native
     # dialog (they were added to the bridge after this pin was written -- a pre-existing drift on
     # the frozen base, recorded and repaired here, not a new authority), and the same save for a
-    # file the assistant built in this chat (the server supplies its bytes; nothing is overwritten).
+    # file the assistant built in this chat (the server supplies its bytes; nothing is overwritten),
+    # and Quit VOOL, which only writes the supervisor's own stop signal and closes this window
+    # (clean-VM job 52).
     assert exposed == {
         "attach_companion", "close_settings", "close_setup", "companion_overhead", "detach_companion",
         "hide_companion", "open_companion_appearance", "open_settings", "open_setup", "pet_yield_rect",
-        "pick_folder", "reset_companion_position", "save_answer_pdf", "save_chat_export",
+        "pick_folder", "quit_app", "reset_companion_position", "save_answer_pdf", "save_chat_export",
         "save_deliverable", "set_window", "sync_companion",
     }
 
