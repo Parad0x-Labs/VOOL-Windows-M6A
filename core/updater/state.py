@@ -22,14 +22,34 @@ from pathlib import Path
 from typing import Any
 
 
+#: Bounded retry for a Windows sharing violation on the final rename (about one second in all).
+RENAME_ATTEMPTS = 20
+RENAME_RETRY_SECONDS = 0.05
+
+
 def _atomic_write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     # The tmp name must be unique per write: the boot check thread and a press can
     # publish status CONCURRENTLY, and a shared ".tmp" name made one writer's
     # os.replace consume the other's file (FileNotFoundError, measured in test).
     tmp = path.with_suffix(f"{path.suffix}.{os.getpid()}.{time.time_ns()}.tmp")
-    tmp.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        tmp.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        # Windows refuses to replace a file another process has open (a sharing violation,
+        # PermissionError) — the UI polling status.json is exactly that reader. The reader holds
+        # it for milliseconds, so retry briefly; POSIX never raises this here.
+        for attempt in range(RENAME_ATTEMPTS):
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError:
+                if attempt == RENAME_ATTEMPTS - 1:
+                    raise
+                time.sleep(RENAME_RETRY_SECONDS)
+    finally:
+        # A write that did not land must not leave its temporary file behind.
+        with contextlib.suppress(OSError):
+            tmp.unlink()
 
 
 def _read_json(path: Path) -> Any | None:
