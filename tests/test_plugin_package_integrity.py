@@ -85,10 +85,13 @@ def test_identity_covers_paths_empty_directories_and_executable_bits(inventory):
     assert capture_package(pack).digest != original
     directory.rmdir()
     handler = pack / "bin/run"
-    handler.chmod(0o644)
-    assert capture_package(pack).digest != original
-    handler.chmod(0o755)
-    assert capture_package(pack).digest == original
+    if os.name != "nt":
+        # Windows has no executable bit (chmod only toggles read-only), so the identity cannot and
+        # need not cover it there; the empty-directory and path legs still run on every OS.
+        handler.chmod(0o644)
+        assert capture_package(pack).digest != original
+        handler.chmod(0o755)
+        assert capture_package(pack).digest == original
     handler.rename(pack / "bin/renamed")
     assert capture_package(pack).digest != original
 

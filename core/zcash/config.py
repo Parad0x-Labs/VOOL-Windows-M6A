@@ -115,7 +115,17 @@ def data_dir() -> Path:
     return _owner_only(data_root() / network())
 
 
+# On Windows chmod only flips the read-only bit: there the folders are made owner-only through
+# core/owner_only (a protected one-ACE DACL that files created inside inherit), and an
+# OwnerOnlyUnavailable propagates instead of leaving wallet or invoice data under an inherited ACL.
+_WINDOWS = os.name == "nt"
+
+
 def _owner_only(path: Path) -> Path:
+    if _WINDOWS:
+        from core.owner_only import ensure_private_dir
+
+        return ensure_private_dir(path)
     path.mkdir(parents=True, exist_ok=True)
     with contextlib.suppress(OSError):
         os.chmod(path, 0o700)

@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import re
-import shlex
 import shutil
 import sys
 from typing import Any
 
-from sandbox.network_guard import parse_command
+from sandbox.network_guard import join_command, parse_command
 
 from .artifacts import build_command_artifact, build_failure_artifact, truncate_text
 
@@ -60,16 +59,19 @@ def validation_command(intent: str, arguments: dict[str, Any]) -> str:
 
 
 def runtime_validation_command(command: str) -> str:
-    argv = parse_command(command)
+    try:
+        argv = parse_command(command)
+    except ValueError:
+        return str(command or "").strip()  # left as typed; the sandbox refuses it with the reason
     if not argv:
         return str(command or "").strip()
     base = str(argv[0] or "").strip().lower()
     if base in {"pytest", "ruff"}:
-        return shlex.join([sys.executable, "-m", base, *argv[1:]])
+        return join_command([sys.executable, "-m", base, *argv[1:]])
     if base in {"python", "python3"} and len(argv) >= 3 and argv[1] == "-m":
         module = str(argv[2] or "").strip().lower()
         if module in {"pytest", "ruff"}:
-            return shlex.join([sys.executable, "-m", module, *argv[3:]])
+            return join_command([sys.executable, "-m", module, *argv[3:]])
     return str(command or "").strip()
 
 

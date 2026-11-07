@@ -26,6 +26,7 @@ import uuid
 from unittest import mock
 
 import core.tool_intent_executor as tie
+from core import windows_write_gate
 from core.effect_reconciliation import (
     UNKNOWN_OUTCOME_MODE,
     UNKNOWN_OUTCOME_STATUS,
@@ -95,6 +96,13 @@ class FallThroughReservationGap(unittest.TestCase):
         )
         self.addCleanup(revoke_internal_authority, self._authority)
         self.addCleanup(self._teardown)
+        # These cases measure A6 reservation across the lanes, so the lanes are faked and the Windows
+        # write gate, which refuses operator.cleanup_temp_files always and operator.move_path without its
+        # path arguments before any reservation, is left out here; its refusals have their own tests
+        # (tests/test_windows_write_gate.py). On POSIX the gate is already inactive.
+        gate = mock.patch.object(windows_write_gate, "_IS_WINDOWS", False)
+        gate.start()
+        self.addCleanup(gate.stop)
 
     def _teardown(self) -> None:
         self._tmp.cleanup()

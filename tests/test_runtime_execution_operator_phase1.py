@@ -281,13 +281,21 @@ class RuntimeExecutionOperatorPhase1Tests(unittest.TestCase):
             self.assertEqual(validation_command("workspace.run_formatter", {"apply": True}), "ruff format .")
 
     def test_runtime_validation_command_uses_current_interpreter_for_pytest_and_ruff(self) -> None:
+        # Joined by the rules of the platform that will split it again (shell words on POSIX,
+        # list2cmdline on Windows), so the interpreter path survives the round trip.
+        from sandbox.network_guard import join_command, parse_command
+
         self.assertEqual(
             runtime_validation_command("python3 -m pytest -q test_sample.py"),
-            shlex.join([sys.executable, "-m", "pytest", "-q", "test_sample.py"]),
+            join_command([sys.executable, "-m", "pytest", "-q", "test_sample.py"]),
         )
         self.assertEqual(
             runtime_validation_command("ruff check ."),
-            shlex.join([sys.executable, "-m", "ruff", "check", "."]),
+            join_command([sys.executable, "-m", "ruff", "check", "."]),
+        )
+        self.assertEqual(
+            parse_command(runtime_validation_command("ruff check .")),
+            [sys.executable, "-m", "ruff", "check", "."],
         )
 
     def test_runtime_tool_can_execute_coder_task_envelope(self) -> None:

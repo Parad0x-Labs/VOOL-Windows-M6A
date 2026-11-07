@@ -626,12 +626,13 @@ body.answer-pending footer { position: relative; z-index: 35; }
 .att-chip .att-x, .att-chip .att-retry { flex:0 0 auto; border:none; background:transparent; color:var(--muted); cursor:pointer; font:inherit; font-size:12px; padding:0 3px; border-radius:6px; }
 .att-chip .att-retry { color:var(--accent); font-weight:700; }
 .att-chip .att-x:hover, .att-chip .att-retry:hover { color:var(--ink); background:var(--bg); }
-/* The bubble's hover actions (Copy) float 6px inside its right edge and are wider than the 34px
-   padding reserved for them, so the first row of chips ends 20px early: a document chip's Preview
-   button was measured underneath the Copy button, unclickable. User bubbles keep the single Copy
-   button this reservation was measured for -- the PB05 copy variants (raw Markdown vs plain text
-   vs rich) live on assistant bubbles, which carry no chips. */
-.msg-att { display:flex; flex-wrap:wrap; gap:6px; margin:0 20px 6px 0; }
+/* The bubble's hover actions (Copy, Pin) float 6px inside its top-right corner, wider than the 34px
+   padding reserved for them, and catch the pointer even while transparent. A fixed reservation to
+   their left stopped fitting once Pin joined Copy: a document chip's Preview button sat under Pin,
+   unclickable (Windows full suite 42198603815), and the row's width also changes with "Pinned", the
+   page's language and the system font. So the chips start below the action row instead: 18px below
+   the bubble's own top padding clears its 6px offset and the buttons' height. */
+.msg-att { display:flex; flex-wrap:wrap; gap:6px; margin:18px 0 6px 0; }
 .msg-att .att-chip { cursor:default; }
 .msg-att .att-chip[data-outcome="omitted"], .msg-att .att-chip[data-outcome="ignored"] { border-style:dashed; }
 /* A pasted DOCUMENT chip: the same chip with a wider ceiling, a Preview toggle and an expandable

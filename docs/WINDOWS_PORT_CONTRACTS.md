@@ -245,6 +245,14 @@ tests/test_a6_resolution_surface.py::test_user_resolution_releases_the_block.
    executable named by `VOOL_BROWSER_ENGINE`; sessions.py:_own_engine:139 launches it via Playwright with
    `accept_downloads=True` and no Windows check. UNVERIFIED: whether nebula, Playwright or a Chromium
    binary is present in the Windows bundle.
+   **Accepted, Edge's own startup traffic (Jesse, 5 Nov 2026).** On Windows the vool-browser lane
+   launches only the Edge under Program Files. Even with `--disable-background-networking`, every
+   launch reaches Microsoft, Bing and Akamai hosts on :443 within about a second of starting (Steve
+   jobs 48d-48f: 393 connections to 62 IPs over 48 launches, e.g. 13.107.6.158 = bingforbusiness.com,
+   184.30.150.x = Akamai; job 48i: 216 over 26 launches). VOOL does not route, read or add to this
+   traffic. It is the vendor's own browser traffic, and it is accepted as such rather than blocked.
+   VOOL's own Python and node processes stayed on 127.0.0.1 in the same runs. Whether any of these
+   connections start before the first navigation was not measured.
 9. **VERIFIED, and the inventory was incomplete.** project_archaeology was fixed in 95f3a51. Raw
    `git` without safe_git remains in core/repoops/identity.py:25, bootstrap.py:53, localgit.py:102,
    local_lifecycle.py:75, and also repoops/archaeology.py (imports identity). None of these is

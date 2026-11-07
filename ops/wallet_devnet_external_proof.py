@@ -148,15 +148,39 @@ def _mode_of(path: Path) -> str:
     return oct(stat.S_IMODE(path.stat().st_mode))
 
 
+# On Windows chmod only flips the read-only bit, so owner-only is core/owner_only's protected one-ACE
+# DACL. core/owner_only imports nothing from the runtime, so it is safe before _bootstrap.
+_WINDOWS = sys.platform == "win32"
+
+
+def _is_private(path: Path, posix_mode: str) -> bool:
+    if _WINDOWS:
+        from core.owner_only import verify_owner_only
+
+        return verify_owner_only(path).ok
+    return _mode_of(path) == posix_mode
+
+
 def _write_private(path: Path, payload: dict[str, Any]) -> None:
     """Write JSON so the bytes are never world- or group-readable, not even between open and chmod."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with contextlib.suppress(FileNotFoundError):
         path.unlink()
     handle = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(handle, "w", encoding="utf-8") as stream:
-        json.dump(payload, stream, indent=2, sort_keys=True)
-    os.chmod(path, 0o600)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            if _WINDOWS:
+                # Owner-only before any secret lands; OwnerOnlyUnavailable stops the run instead.
+                from core.owner_only import require_owner_only
+
+                require_owner_only(path)
+            json.dump(payload, stream, indent=2, sort_keys=True)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            path.unlink()
+        raise
+    if not _WINDOWS:
+        os.chmod(path, 0o600)
 
 
 def _read_resume(home: Path) -> dict[str, Any]:
@@ -170,8 +194,13 @@ def _bootstrap(home: Path, resume: dict[str, Any] | None, *, rpc_url: str = "") 
     """Point the whole runtime at the isolated home BEFORE any core/network module is imported."""
     global RPC_URL
     RPC_URL = str(rpc_url or (resume or {}).get("rpc") or DEVNET_RPC)
-    home.mkdir(parents=True, exist_ok=True)
-    os.chmod(home, 0o700)
+    if _WINDOWS:
+        from core.owner_only import ensure_private_dir
+
+        ensure_private_dir(home)  # files written inside inherit owner-only; raises when unavailable
+    else:
+        home.mkdir(parents=True, exist_ok=True)
+        os.chmod(home, 0o700)
     os.environ["VOOL_HOME"] = str(home)
     os.environ["VOOL_WALLET_TESTNET_RPC_URL"] = RPC_URL
     os.environ["VOOL_KEY_STORAGE_MODE"] = "file"
@@ -1011,7 +1040,7 @@ def cmd_selfcheck(args: argparse.Namespace) -> int:
         "home_mode": _mode_of(home), "resume_mode": _mode_of(home / RESUME_FILENAME),
         "devnet_only": _assert_devnet_only(),
     }
-    record["ok"] = bool(record["pin_verifies_after_restart"] and record["wrong_pin_rejected"] and record["signature_length"] == 64 and record["home_mode"] == "0o700" and record["resume_mode"] == "0o600")
+    record["ok"] = bool(record["pin_verifies_after_restart"] and record["wrong_pin_rejected"] and record["signature_length"] == 64 and _is_private(home, "0o700") and _is_private(home / RESUME_FILENAME, "0o600"))
     _emit(args.out, record)
     return 0 if record["ok"] else 5
 

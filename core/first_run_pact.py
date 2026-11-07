@@ -31,6 +31,7 @@ import threading
 import time
 from typing import Any
 
+from core import windows_sharing_retry
 from core.runtime_paths import active_data_dir
 
 SCHEMA_NAME = "vool.first_run_pact"
@@ -148,6 +149,14 @@ def _utcnow() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+def _busy_fault(exc: OSError) -> PactFault:
+    return PactFault(
+        FAULT_LOCK_UNAVAILABLE,
+        "the first-run state file is busy in another process; retry in a moment",
+        http_status=409,
+    )
+
+
 def _atomic_write(data: dict[str, Any]) -> None:
     """The repo's canonical atomic pattern; the pact file is the pattern's exemplar."""
     _path().parent.mkdir(parents=True, exist_ok=True)
@@ -158,7 +167,13 @@ def _atomic_write(data: dict[str, Any]) -> None:
             fh.write(payload)
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(tmp_name, _path())
+        try:
+            # os.replace through the shared Windows sharing-violation retry.
+            windows_sharing_retry.retried(os.replace, tmp_name, _path())
+        except PermissionError as exc:
+            if windows_sharing_retry._IS_WINDOWS:
+                raise _busy_fault(exc) from exc
+            raise
         try:
             # Make the rename itself durable: fsync the containing directory where the
             # platform supports an openable directory fd.
@@ -218,10 +233,19 @@ def _quarantine_corrupt() -> None:
 
 def _read_state() -> dict[str, Any] | None:
     try:
-        raw = _path().read_text(encoding="utf-8")
-        data = json.loads(raw)
+        raw = windows_sharing_retry.read_text(_path(), encoding="utf-8")
     except FileNotFoundError:
         return None
+    except OSError as exc:
+        if windows_sharing_retry._IS_WINDOWS:
+            # Can't read is not corrupt: never quarantine or reseed a pact that could not be
+            # opened. A reset tour would look like consent state changing.
+            raise _busy_fault(exc) from exc
+        return None
+    except Exception:
+        return None
+    try:
+        data = json.loads(raw)
     except Exception:
         return None
     if not isinstance(data, dict):

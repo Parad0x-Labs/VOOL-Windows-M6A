@@ -278,9 +278,19 @@ def test_the_corpus_is_a_pinned_artifact_the_candidate_does_not_compute() -> Non
     import subprocess
 
     root = Path(_SCRIPT).resolve().parents[1]
-    raw = subprocess.check_output(
-        ["/usr/bin/git", "-C", str(root), "show", module.FROZEN_CORPUS_SOURCE_SHA]
+    # The same fixed install paths the loader trusts (never PATH); Windows has no /usr/bin/git.
+    git = next(
+        path
+        for path in (
+            "/usr/bin/git",
+            "/bin/git",
+            "/usr/local/bin/git",
+            r"C:\Program Files\Git\cmd\git.exe",
+            r"C:\Program Files\Git\bin\git.exe",
+        )
+        if Path(path).is_file()
     )
+    raw = subprocess.check_output([git, "-C", str(root), "show", module.FROZEN_CORPUS_SOURCE_SHA])
     payload = json.loads(raw)
     turns = [str(t) for t in payload["turns"]]
     digest = hashlib.sha256(chr(0).join(turns).encode("utf-8")).hexdigest()

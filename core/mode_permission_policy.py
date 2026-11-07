@@ -1193,7 +1193,14 @@ def _workspace_root_confined(workspace_root: str) -> str:
         resolved = Path(root).expanduser().resolve()
     except (OSError, RuntimeError):
         return "the workspace root could not be resolved"
-    if str(resolved) in {"/", str(Path.home().resolve())}:
+    # A root is its own parent: "/" on POSIX, and every drive or share root on Windows, where
+    # "/" itself resolves to the current drive's root (for example D:\), never to "/". The home
+    # comparison folds case where the filesystem does (os.path.normcase is identity on POSIX).
+    try:
+        home = os.path.normcase(str(Path.home().resolve()))
+    except (OSError, RuntimeError):
+        return "the home directory could not be resolved"
+    if resolved.parent == resolved or os.path.normcase(str(resolved)) == home:
         return "the filesystem root and the home directory cannot be standing workspaces"
     for guarded in protected:
         try:

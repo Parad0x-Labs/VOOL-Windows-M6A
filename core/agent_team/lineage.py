@@ -165,7 +165,10 @@ class LineageTracker:
 
         table: dict[int, tuple[psutil.Process, ProcId, int]] = {}
         children: dict[int, list[int]] = {}
-        for proc in psutil.process_iter(attrs=("pid", "ppid", "create_time", "uids")):
+        # ``uids`` exists only on POSIX psutil; asking for it on Windows makes process_iter raise
+        # ValueError for the whole pass. Windows has no uid, and the owner filter below is off there.
+        attrs = ("pid", "ppid", "create_time", "uids") if self._uid is not None else ("pid", "ppid", "create_time")
+        for proc in psutil.process_iter(attrs=attrs):
             info = proc.info
             try:
                 pid, ppid, ct = int(info["pid"]), int(info.get("ppid") or 0), float(info["create_time"] or 0)

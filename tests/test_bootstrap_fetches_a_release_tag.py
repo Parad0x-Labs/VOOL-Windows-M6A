@@ -27,7 +27,7 @@ def _run_shell_bootstrap(tmp_path: Path, *args: str, env_ref: str | None = None)
     source = tmp_path / "source"
     (source / "installer").mkdir(parents=True)
     launcher = source / "Install_And_Run_VOOL.sh"
-    launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    launcher.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8", newline="\n")
     launcher.chmod(0o755)
     archive = tmp_path / "served.tar.gz"
     with tarfile.open(archive, "w:gz") as tar:
@@ -45,6 +45,7 @@ def _run_shell_bootstrap(tmp_path: Path, *args: str, env_ref: str | None = None)
         f'if [[ -n "$out" ]]; then cp "{bash_path(archive)}" "$out"; fi\n'
         "exit 0\n",
         encoding="utf-8",
+        newline="\n",  # Windows text mode would end the shebang in \r, and env cannot find "bash\r"
     )
     fake_curl.chmod(0o755)
     install_dir = tmp_path / "install"
@@ -53,8 +54,14 @@ def _run_shell_bootstrap(tmp_path: Path, *args: str, env_ref: str | None = None)
     env.pop("VOOL_GITHUB_REF", None)
     if env_ref is not None:
         env["VOOL_GITHUB_REF"] = env_ref
+    command = bash_script_args(PROJECT_ROOT / "installer" / "bootstrap_vool.sh", *args, "--dir", str(install_dir))
+    if os.name == "nt":
+        # Git Bash's login profile puts /mingw64/bin, which holds the real curl, ahead of the inherited PATH,
+        # so the recorder is put back in front after the profile has run, then the script runs as before.
+        env["VOOL_TEST_FAKE_BIN"] = bash_path(bindir)
+        command = [command[0], "-l", "-c", 'export PATH="$VOOL_TEST_FAKE_BIN:$PATH"; exec bash "$0" "$@"', *command[2:]]
     subprocess.run(
-        bash_script_args(PROJECT_ROOT / "installer" / "bootstrap_vool.sh", *args, "--dir", str(install_dir)),
+        command,
         check=True, cwd=PROJECT_ROOT, env=env, capture_output=True, text=True,
     )
     downloads = [line for line in calls.read_text(encoding="utf-8").splitlines() if "/archive/" in line]

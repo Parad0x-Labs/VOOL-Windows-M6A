@@ -21,6 +21,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
+from core.owner_only import verify_owner_only
 from core.zcash import matcher
 from core.zcash.invoices import InvoiceError, InvoiceStore, format_zec, parse_amount, payment_uri
 from core.zcash.service import ZcashLane
@@ -218,7 +219,9 @@ def test_the_checked_bytes_are_the_bytes_that_run(chain, tmp_path) -> None:
     devtool = _lane(chain).devtool
     devtool.run("get-info")
     copy = chain.root / "data" / "bin" / chain.sha256
-    assert copy.is_file() and stat.S_IMODE(copy.stat().st_mode) == 0o500
+    # chmod 0o500 on Windows only sets the read-only bit, which reads back as 0o444; the copy is still
+    # never writable. POSIX keeps the exact 0o500.
+    assert copy.is_file() and stat.S_IMODE(copy.stat().st_mode) == (0o444 if os.name == "nt" else 0o500)
     pinned = chain.sha256
     chain.script.write_text(evil)  # the configured path is swapped after the check
     devtool.run("get-info")
@@ -306,7 +309,12 @@ def test_concurrent_private_writes_never_collide(tmp_path) -> None:
     [t.start() for t in threads]
     [t.join() for t in threads]
     assert errors == [] and set(json.loads(target.read_text())) == {"writer", "i"}
-    assert [p.name for p in tmp_path.iterdir()] == ["state.json"] and stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert [p.name for p in tmp_path.iterdir()] == ["state.json"]
+    if os.name == "nt":
+        # On Windows owner-only is the protected one-ACE DACL; the mode bits only show the read-only flag.
+        assert verify_owner_only(target).ok
+    else:
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600
 
 
 def test_a_hung_tool_times_out(chain) -> None:
@@ -337,7 +345,11 @@ def test_setup_keeps_the_key_in_the_credential_store_and_derives_a_shielded_addr
     assert out["address"] == ADDRESS
     assert keys.load_viewing_key("test").encoded == UFVK_TEST
     assert chain.subcommands() == ["init-fvk", "list-addresses"]
-    assert stat.S_IMODE(os.stat(chain.wallet).st_mode) == 0o700
+    if os.name == "nt":
+        # chmod only flips the read-only bit on Windows; owner-only is the protected one-ACE DACL.
+        assert verify_owner_only(chain.wallet).ok
+    else:
+        assert stat.S_IMODE(os.stat(chain.wallet).st_mode) == 0o700
 
 
 def test_the_viewing_key_reaches_the_tool_on_stdin_never_in_its_arguments(chain) -> None:
@@ -371,10 +383,16 @@ def test_every_file_holding_wallet_or_invoice_data_is_owner_only(chain) -> None:
         os.umask(old)
     data = chain.root / "data"
     for folder in (data, data / "test", chain.wallet, data / "bin"):
-        assert stat.S_IMODE(os.stat(folder).st_mode) == 0o700, folder
+        if os.name == "nt":
+            assert verify_owner_only(folder).ok, folder
+        else:
+            assert stat.S_IMODE(os.stat(folder).st_mode) == 0o700, folder
     for path in (chain.wallet / "data.sqlite", chain.wallet / "watch_state.json", chain.wallet / "receiving_address.txt",
                  data / "test" / "invoices.sqlite"):
-        assert stat.S_IMODE(os.stat(path).st_mode) == 0o600, path
+        if os.name == "nt":
+            assert verify_owner_only(path).ok, path
+        else:
+            assert stat.S_IMODE(os.stat(path).st_mode) == 0o600, path
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX owner and mode bits")
