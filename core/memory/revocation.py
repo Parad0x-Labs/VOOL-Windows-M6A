@@ -160,6 +160,14 @@ def _replace_file(source: Path, target: Path) -> None:
     if not _WINDOWS:
         os.replace(source, target)
         return
+    # A reader holding the ledger open refuses the move for a moment (a sharing violation): the
+    # same bounded retry as the rest of the memory store (core/windows_sharing_retry.py).
+    from core import windows_sharing_retry
+
+    windows_sharing_retry.retried(_move_file_replace, source, target)
+
+
+def _move_file_replace(source: Path, target: Path) -> None:
     import ctypes
     from ctypes import wintypes
 

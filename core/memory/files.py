@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from core import windows_sharing_retry
 from core.memory.revocation import fenced_writer
 from core.runtime_paths import data_path, project_path
 
@@ -113,7 +114,7 @@ def _ensure_memory_sections(text: str) -> str:
 @fenced_writer(store_home=lambda values: _store_home(values.get("path")))
 def append_jsonl(path: Path, payload: dict[str, object]) -> None:
     with _JSONL_LOCK:
-        with path.open("a", encoding="utf-8") as handle:
+        with _open_append(path) as handle:
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
@@ -148,9 +149,21 @@ def append_sequenced_jsonl(
             ),
             "event_sequence": sequence,
         }
-        with path.open("a", encoding="utf-8") as handle:
+        with _open_append(path) as handle:
             handle.write(json.dumps(event, ensure_ascii=False) + "\n")
         return event
+
+
+# On Windows a store file is refused for a moment while another reader holds it open or a replace
+# swaps it in (a sharing violation). Those handles close within moments, so the memory store's
+# replaces, reads and appends go through the bounded retry in core/windows_sharing_retry.py; off
+# Windows a refusal is raised at once, as before.
+def _read_replacing_errors(path: Path) -> str:
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def _open_append(path: Path):
+    return windows_sharing_retry.retried(lambda target: target.open("a", encoding="utf-8"), path)
 
 
 def _load_jsonl(path: Path) -> list[dict[str, object]]:
@@ -158,10 +171,7 @@ def _load_jsonl(path: Path) -> list[dict[str, object]]:
         if not path.exists():
             return []
         rows: list[dict[str, object]] = []
-        for line in path.read_text(
-            encoding="utf-8",
-            errors="replace",
-        ).splitlines():
+        for line in windows_sharing_retry.retried(_read_replacing_errors, path).splitlines():
             if not line.strip():
                 continue
             try:
@@ -219,7 +229,7 @@ def _write_text_atomic_raw(path: Path, text: str) -> None:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp, path)
+        windows_sharing_retry.replace(tmp, path)
     except BaseException:
         with contextlib.suppress(OSError):
             tmp.unlink(missing_ok=True)
