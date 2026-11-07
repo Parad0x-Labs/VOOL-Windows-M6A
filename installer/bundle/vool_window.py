@@ -626,6 +626,49 @@ def _install_settings_shortcut(attempts: int = 40, delay_s: float = 0.25) -> Non
         AppHelper.callLater(delay_s, _retry, attempts - 1)
 
 
+_WORK_AREA_MARGIN = 16
+
+
+def _work_area() -> tuple[int, int, int, int] | None:
+    """The primary screen's work area (left, top, right, bottom) on Windows, taskbar excluded.
+
+    None anywhere else, or when Windows will not say: the caller then keeps its default size, so a
+    Mac or Linux window opens exactly as before."""
+    if sys.platform != "win32":
+        return None
+    try:
+        from ctypes import wintypes
+
+        rect = wintypes.RECT()
+        spi_getworkarea = 0x0030
+        if not ctypes.windll.user32.SystemParametersInfoW(spi_getworkarea, 0, ctypes.byref(rect), 0):
+            return None
+        return (int(rect.left), int(rect.top), int(rect.right), int(rect.bottom))
+    except Exception:
+        return None
+
+
+def _fit_to_work_area(width: int, height: int, min_size: tuple[int, int],
+                      work: tuple[int, int, int, int] | None) -> dict:
+    """create_window size arguments that fit ``work`` and centre in it (clean-VM job 52: a 1220x860
+    window opened partly off a 1024x768 screen). A window that already fits keeps its size; an
+    unknown work area changes nothing."""
+    if work is None:
+        return {"width": width, "height": height, "min_size": min_size}
+    left, top, right, bottom = work
+    room_w = max(1, right - left - 2 * _WORK_AREA_MARGIN)
+    room_h = max(1, bottom - top - 2 * _WORK_AREA_MARGIN)
+    fit_w, fit_h = min(width, room_w), min(height, room_h)
+    fit_min = (min(min_size[0], fit_w), min(min_size[1], fit_h))
+    return {
+        "width": fit_w,
+        "height": fit_h,
+        "min_size": fit_min,
+        "x": left + (right - left - fit_w) // 2,
+        "y": top + (bottom - top - fit_h) // 2,
+    }
+
+
 def _focus_window(window: object) -> None:
     """Raise an existing pywebview window. On macOS ``show()`` already does
     makeKeyAndOrderFront_ + activateIgnoringOtherApps_, which IS focus; restore() covers a
@@ -715,9 +758,7 @@ class _WindowApi:
                 "VOOL Settings",
                 url,
                 js_api=self,
-                width=1000,
-                height=720,
-                min_size=(560, 420),
+                **_fit_to_work_area(1000, 720, (560, 420), _work_area()),
             )
             if created is None:
                 raise RuntimeError("native settings window was not created")
@@ -787,9 +828,7 @@ class _WindowApi:
                 "VOOL Setup",
                 url,
                 js_api=self,
-                width=920,
-                height=740,
-                min_size=(560, 480),
+                **_fit_to_work_area(920, 740, (560, 480), _work_area()),
             )
             if created is None:
                 raise RuntimeError("native setup window was not created")
@@ -1689,7 +1728,9 @@ def main() -> int:
         api = _WindowApi()
         _claim_macos_app_name()          # so the menu bar / Cmd-Tab say VOOL, not VOOL/Python
         _install_native_frame_authority()
-        window = webview.create_window("VOOL", URL, js_api=api, width=1220, height=860, min_size=(900, 640))
+        window = webview.create_window(
+            "VOOL", URL, js_api=api, **_fit_to_work_area(1220, 860, (900, 640), _work_area()),
+        )
         if window is None:
             raise RuntimeError("pywebview returned no native window")
         api.set_window(window, webview)
