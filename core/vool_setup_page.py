@@ -238,6 +238,7 @@ footer .grow { flex:1 1 auto; }
     <ol class="dots" id="dots" aria-label="Setup progress" data-i18n-aria-label="setup.progress_aria"></ol>
     <h2 id="stepTitle"></h2>
     <p class="sentence" id="stepSentence"></p>
+    <p class="sentence" id="stepNote" role="note" hidden></p>
     <div class="mock" id="mock" aria-hidden="true"></div>
     <div class="example-bar">
       <span class="caption" id="caption"></span>
@@ -398,6 +399,8 @@ function render() {
   });
   $('#stepTitle').textContent = step.title;
   $('#stepSentence').textContent = step.sentence;
+  const note = $('#stepNote');
+  if (note) { note.textContent = step.note || ''; note.hidden = !step.note; }
   $('#caption').textContent = CAPTIONS[step.id] || '';
   renderMock(step.id);
   renderControl(step);

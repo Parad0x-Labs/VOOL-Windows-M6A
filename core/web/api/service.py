@@ -985,6 +985,16 @@ def dispatch_get(
         from core.windows_write_gate import broker_report
 
         return apply_runtime_headers(json_response(200, broker_report(), headers={"Cache-Control": "no-store"}), runtime)
+    if normalized_path == "/api/windows/disposable-folders":
+        # Read only. The owner's marked folders and whether each counts yet; only the native window
+        # bridge can change the list (core/windows_disposable_store.py), never an HTTP route.
+        if not is_loopback_host(client_host):
+            return apply_runtime_headers(json_response(403, {"ok": False, "error": "owner_local_required"}), runtime)
+        from core import windows_disposable_store, windows_write_gate
+
+        view = windows_disposable_store.load() if windows_write_gate.active() else {"ok": True, "folders": [], "problem": ""}
+        view["windows"] = windows_write_gate.active()
+        return apply_runtime_headers(json_response(200, view, headers={"Cache-Control": "no-store"}), runtime)
     if normalized_path == "/api/notifications/native/status":
         if not is_loopback_host(client_host):
             return apply_runtime_headers(json_response(403, {"ok": False, "error": "owner_local_required"}), runtime)

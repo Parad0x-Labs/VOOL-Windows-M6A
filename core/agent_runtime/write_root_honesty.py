@@ -19,6 +19,7 @@ verb must come BEFORE the path and close to it, which is how a person names a de
 from __future__ import annotations
 
 import contextlib
+import os
 import re
 from collections.abc import Iterator
 from pathlib import Path
@@ -170,7 +171,34 @@ def allowed_write_roots(source_context: dict[str, object] | None) -> list[Path]:
             roots.append(windows_known_folders.safe_folder(name, home).resolve())
         except Exception:
             continue
-    return roots
+    return _windows_writable(roots)
+
+
+def _windows_writable(roots: list[Path]) -> list[Path]:
+    """On Windows only folders marked disposable can be written (core/windows_write_gate.py), so the
+    roots are cut to where they overlap a marked folder: a marked folder inside a root, or a root
+    inside a marked folder. Clean-VM job 52 was offered `~/Desktop` and `~/Downloads`, which the gate
+    then refused because neither was marked. Off Windows the roots stay as they are."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return roots
+    try:
+        flagged = [Path(root) for root in windows_write_gate.flagged_roots()]
+    except Exception:
+        return []
+    writable: list[Path] = []
+
+    def _under(child: Path, parent: Path) -> bool:
+        c, p = os.path.normcase(str(child)), os.path.normcase(str(parent)).rstrip("\\/")
+        return c == p or c.startswith(p + "\\") or c.startswith(p + "/")
+
+    for root in roots:
+        for marked in flagged:
+            overlap = marked if _under(marked, root) else root if _under(root, marked) else None
+            if overlap is not None and all(os.path.normcase(str(overlap)) != os.path.normcase(str(w)) for w in writable):
+                writable.append(overlap)
+    return writable
 
 
 def typed_path_kind(text: str, start: int, candidate: str) -> str:
@@ -381,6 +409,23 @@ def non_local_write_target(text: str, *, network_only: bool = False) -> tuple[st
 def unreachable_write_response(path: str, *, source_context: dict[str, object] | None) -> str:
     """The honest answer: name the path we were given, the roots we have, and the write we skipped."""
     roots = allowed_write_roots(source_context)
+    from core import windows_write_gate
+
+    if windows_write_gate.active():
+        if not roots:
+            return (
+                f"I can't write to `{path}`. On Windows I only change files inside folders you mark as "
+                "disposable, and no folder I can write to is marked yet. Mark one in Settings → "
+                "Privacy & Permissions → Folders VOOL may change, then restart VOOL. Nothing was "
+                "written on this turn."
+            )
+        listed = ", ".join(f"`{root}`" for root in roots)
+        return (
+            f"I can't write to `{path}` -- that path is outside every folder this build can write to, "
+            f"and I'm not going to put the file somewhere else and report it as done. On Windows I can "
+            f"write only under {listed}. Give me a path under one of those and I'll create it there. "
+            "Nothing was written on this turn."
+        )
     workspace = str(roots[0]) if roots else ""
     where = f"the workspace (`{workspace}`)" if workspace else "the active workspace"
     return (

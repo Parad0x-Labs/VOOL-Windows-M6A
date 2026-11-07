@@ -108,8 +108,29 @@ def flagged_roots(environ: dict[str, str] | None = None) -> list[str]:
         from core.windows_broker.session import checked_folders, wired
 
         if wired():
-            return [os.path.normcase(path) for path in checked_folders()]
-    raw = (os.environ if environ is None else environ).get(ENV_VAR, "")
+            folders = [os.path.normcase(path) for path in checked_folders()]
+            # An owner unmark shrinks at once, even though the broker's list is fixed at its start.
+            gone = _unmarked_since_start()
+            if gone:
+                kept = set(_env_roots(os.environ))
+                from core.windows_disposable_store import normalised
+
+                folders = [path for path in folders
+                           if path in kept or ("*" not in gone and normalised(path) not in gone)]
+            return folders
+    roots = _env_roots(os.environ if environ is None else environ)
+    if environ is None and _IS_WINDOWS:
+        # The owner's own list (core/windows_disposable_store.py): its entries as they were at this
+        # process's start, shrunk by any unmark since, each through the same root checks.
+        for part in _store_start_folders():
+            root = _windows_root(part)
+            if root is not None and root not in roots:
+                roots.append(root)
+    return roots
+
+
+def _env_roots(environ) -> list[str]:
+    raw = environ.get(ENV_VAR, "")
     roots = []
     for part in raw.split(os.pathsep):
         part = part.strip()
@@ -122,6 +143,27 @@ def flagged_roots(environ: dict[str, str] | None = None) -> list[str]:
         elif os.path.isabs(part) and os.path.isdir(part):
             roots.append(os.path.normcase(os.path.realpath(part)))
     return roots
+
+
+def _store_start_folders() -> list[str]:
+    """The owner-marked folders that count in this process; none on any doubt about the file."""
+    from core import windows_disposable_store
+
+    try:
+        return windows_disposable_store.start_folders()
+    except Exception as exc:
+        logger.warning("the owner's disposable folder list adds nothing: %s", type(exc).__name__)
+        return []
+
+
+def _unmarked_since_start() -> set[str]:
+    from core import windows_disposable_store
+
+    try:
+        return windows_disposable_store.unmarked_since_start()
+    except Exception as exc:  # an unreadable file means none of its entries count
+        logger.warning("the owner's disposable folder list cannot be read: %s", type(exc).__name__)
+        return {"*"}
 
 
 def broker_report() -> dict[str, Any]:

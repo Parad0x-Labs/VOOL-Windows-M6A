@@ -168,6 +168,18 @@ with approval ingress; it starts only after **both Job 6 and Job 7 have merged**
   `FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT`, without `FILE_SHARE_DELETE`, and
   keeps those handles for its lifetime. Each entry is checked against the rules below. A change
   to the variable needs a VOOL restart.
+- **The owner's own list (clean-VM job 52, owner decision 2026-11-07).** The API also passes the
+  folders the owner marked from the VOOL window, read at the same start from
+  `<VOOL home>/config/disposable_workspaces.json` (core/windows_disposable_store.py). Only the native
+  window bridge writes that file, after the OS folder picker and an OS confirm dialog naming the
+  resolved folder; it is owner-only and read only when `verify_owner_only` passes, and a file that is
+  not adds nothing. Its entries only add candidates: each still meets the rules below and the gate's
+  `_windows_root`, and a folder that is, holds or sits inside a system, credential or app-state
+  folder is never marked. A new mark needs a VOOL restart; an unmark shrinks the gate's list at once.
+  The API logs the whole list it hands the broker at start.
+  **Confinement requirement:** the disposable list must be outside every confined process's write
+  set. Until confinement B ships, code VOOL runs as the user can write this file just as it can
+  `setx` the variable: the same exposure as the variable, not a new one.
 
   Rules for flagged folders, as built. G is core/windows_write_gate.py (read at `1c26068`, line numbers at `9a15d6a`)
   (`flagged_roots`:101, `_inside`:117); J6 is Job 6's design, whose resolver feeds Step 3; C is the

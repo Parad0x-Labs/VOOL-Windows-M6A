@@ -67,6 +67,12 @@ STEPS: tuple[StepSpec, ...] = (
 
 _SPEC_BY_ID = {spec.id: spec for spec in STEPS}
 
+#: The folder step on Windows when a folder is picked but not marked disposable (clean-VM job 52).
+_FOLDER_UNMARKED = (
+    "Picked. On Windows VOOL can change files there only after you mark it as disposable "
+    "in Settings, then restart VOOL."
+)
+
 
 # --- the predicates: one per step, each reading its owning authority ------------------------
 
@@ -109,13 +115,52 @@ def thinking_done() -> bool:
     return cloud_key_present()
 
 
-def folder_done() -> bool:
+def _picked_folders() -> list[str]:
     from core import project_store
 
-    if any(bool(p.get("exists")) for p in project_store.list_projects()):
-        return True
+    folders = [str(p.get("root") or "") for p in project_store.list_projects() if p.get("exists")]
     override = str(os.environ.get("VOOL_WORKSPACE_ROOT") or "").strip()
-    return bool(override) and os.path.isdir(os.path.expanduser(override))
+    if override and os.path.isdir(os.path.expanduser(override)):
+        folders.append(os.path.expanduser(override))
+    return [folder for folder in folders if folder]
+
+
+def _windows_writable(folder: str) -> bool:
+    """On Windows a picked folder is only usable once it lies inside a folder marked disposable
+    (core/windows_write_gate.py); clean-VM job 52 saw this step ticked for a folder chat refused."""
+    from core import windows_write_gate
+
+    try:
+        real = os.path.normcase(os.path.realpath(folder))
+        roots = windows_write_gate.flagged_roots()
+    except Exception:
+        return False
+    for root in roots:
+        try:
+            if os.path.commonpath([real, root]) == root:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def folder_unmarked() -> bool:
+    """A folder is picked but, on Windows, none of the picked folders is marked disposable yet."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return False
+    picked = _picked_folders()
+    return bool(picked) and not any(_windows_writable(folder) for folder in picked)
+
+
+def folder_done() -> bool:
+    from core import windows_write_gate
+
+    picked = _picked_folders()
+    if not windows_write_gate.active():
+        return bool(picked)
+    return any(_windows_writable(folder) for folder in picked)
 
 
 def permissions_done() -> bool:
@@ -212,6 +257,14 @@ def snapshot(locale: str = "en") -> dict[str, Any]:
         }
         if failed:
             entry["check_failed"] = failed
+        if spec.id == "folder" and not done and not failed:
+            try:
+                unmarked = folder_unmarked()
+            except Exception:
+                unmarked = False
+            if unmarked:
+                entry["note"] = (catalog.text(f"setup.step.{spec.id}.unmarked") if catalog is not None
+                                 else _FOLDER_UNMARKED)
         steps.append(entry)
 
     done_count = sum(1 for s in steps if s["done"])
