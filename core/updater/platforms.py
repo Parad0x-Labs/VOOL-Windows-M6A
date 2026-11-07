@@ -2,8 +2,9 @@
 
 The manifest, decision, download, migration, journal, health and rollback machinery is
 platform-neutral and shared by every OS. What is NOT shared is the actual installer:
-verifying and swapping an app on disk is platform work. macOS arm64/Intel bundles and installer-source Linux x64 have real installers.
-Windows and Linux arm64 remain unavailable until their own installer journey is
+verifying and swapping an app on disk is platform work. macOS arm64/Intel bundles,
+installer-source Linux x64 and the installed Windows x64 bundle (core/updater/windows.py)
+have real installers. Linux arm64 remains unavailable until its own installer journey is
 implemented and tested. Artifact selection always requires the exact OS/architecture.
 """
 from __future__ import annotations
@@ -99,8 +100,8 @@ def _lazy_macos():
     return MacOSBundleInstaller
 
 
-#: The registry itself. Mac bundles and installed Linux x64 sources are supported; adding windows-x64 here
-#: requires an actual PlatformInstaller implementation, not a placeholder.
+#: The registry itself: Mac bundles, installed Linux x64 sources and the installed Windows x64 bundle.
+#: A new key requires an actual PlatformInstaller implementation, not a placeholder.
 _BUILDERS: dict[str, type] = {}
 
 
@@ -112,6 +113,10 @@ def _default_registry() -> dict[str, type]:
     if "macos-arm64" not in _BUILDERS:
         register_installer("macos-arm64", _lazy_macos())
         register_installer("macos-x64", _lazy_macos())
+    if "windows-x64" not in _BUILDERS:
+        from core.updater.windows import WindowsBundleInstaller
+
+        register_installer("windows-x64", WindowsBundleInstaller)
     if "linux-x64" not in _BUILDERS:
         from core.updater.linux import LinuxSourceInstaller
 

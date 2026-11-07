@@ -98,6 +98,14 @@ class ExternalHelper(Protocol):
     def relaunch(self, app_path: Path) -> bool: ...
 
 
+def staging_dir_for(app_path: Path, txid: str, installer=None) -> Path:
+    """Where a payload is unpacked: the installer's own staging root when it names one
+    (Windows keeps it inside the program folder), else beside the app (macOS, Linux)."""
+    root = getattr(installer, "staging_root", None)
+    base = Path(root(Path(app_path))) if callable(root) else Path(app_path).parent
+    return base / f".vool-stage-{txid}"
+
+
 @dataclass
 class InProcessHelper:
     """Test/plain embedding: callables instead of a real external process."""
@@ -277,7 +285,7 @@ class UpdateFlow:
     def _abort(self, detail: str, fault: UpdateFault = UpdateFault.UNEXPECTED) -> FlowResult:
         if self._txid and (self._journal is None or not self._journal.has(Step.SWAPPED)):
             with contextlib.suppress(OSError):
-                shutil.rmtree(self.app_path.parent / f".vool-stage-{self._txid}")
+                shutil.rmtree(staging_dir_for(self.app_path, self._txid, self.installer))
         self.coordinator.resume_new_work()
         self._step(Step.ABORTED, {"detail": detail})
         self._publish(UpdatePhase.FAILED, detail=detail, fault=fault)
@@ -354,7 +362,7 @@ class UpdateFlow:
             # Keep the nonterminal journal so startup recovery can retry.
             return FlowResult(False, self._journal.last_step() or Step.CREATED,
                               detail=incomplete, txid=self._txid, prior_path=prior)
-        staged_bundle = self.app_path.parent / f".vool-stage-{self._txid}"
+        staged_bundle = staging_dir_for(self.app_path, self._txid, self.installer)
         with contextlib.suppress(Exception):
             if staged_bundle.exists():
                 shutil.rmtree(staged_bundle)
@@ -560,7 +568,7 @@ class UpdateFlow:
     ) -> FlowResult:
         # 4) Preflight: extract + platform bundle verification.
         self._publish(UpdatePhase.PREPARING)
-        staged_bundle = self.app_path.parent / f".vool-stage-{self._txid}"
+        staged_bundle = staging_dir_for(self.app_path, self._txid, self.installer)
         try:
             if staged_bundle.exists():
                 shutil.rmtree(staged_bundle)
@@ -581,6 +589,15 @@ class UpdateFlow:
                     raise ValueError("the Mac payload does not match the signed build commit")
             except (OSError, ValueError) as exc:
                 return self._abort(f"incompatible Mac payload: {exc}", fault=UpdateFault.VERIFICATION_FAILED)
+        if self.platform.startswith("windows-"):
+            from core.updater.windows import payload_identity_problem
+
+            problem = payload_identity_problem(bundle_dir, version=manifest.version,
+                                               build_commit=manifest.build_commit)
+            if problem:
+                with contextlib.suppress(Exception):
+                    shutil.rmtree(staged_bundle, ignore_errors=True)
+                return self._abort(f"incompatible Windows payload: {problem}", fault=UpdateFault.VERIFICATION_FAILED)
         require_notarization = None
         waiver = ""
         trust_policy = "platform-default"
@@ -678,7 +695,12 @@ class UpdateFlow:
                 return self._abort("the app did not stop in time; nothing was changed", fault=UpdateFault.INSTALL_FAILED)
             self._step(Step.APP_STOPPED)
 
-            # 9) Atomic swap (prior kept).
+            # 9) Atomic swap (prior kept). An installer that names its prior location
+            # (Windows swaps entry by entry) journals it first, so a crash in the middle
+            # of the swap is recovered from that backup instead of read as "not started".
+            planned_prior = getattr(self.installer, "prior_path", None)
+            if callable(planned_prior):
+                self._step(Step.SWAP_PLANNED, {"prior_path": str(planned_prior(self.app_path, self._txid))})
             swap = self.installer.atomic_swap(bundle_dir, self.app_path, txid=self._txid)
             if not swap.ok:
                 if swap.prior_path is not None and swap.prior_path.exists():
@@ -836,7 +858,7 @@ def recover_interrupted_update(
         prior = Path(prior_payload) if prior_payload else None
         swapped = journal.has(Step.SWAPPED) or (prior is not None and prior.exists())
         if not swapped and not journal.has(Step.MIGRATED):
-            staged_bundle = app_path.parent / f".vool-stage-{txid}"
+            staged_bundle = staging_dir_for(app_path, txid, installer)
             with contextlib.suppress(Exception):
                 if staged_bundle.exists():
                     shutil.rmtree(staged_bundle)
@@ -852,7 +874,10 @@ def recover_interrupted_update(
         # Swap had happened: verify the new version actually works, against the
         # exact identity the transaction pinned when it was decided.
         expected_identity = str(decided.get("expected_identity") or target_version)
-        health = health_probe(timeout=30.0, expected_version=expected_identity) if swapped else None
+        complete = getattr(installer, "swap_complete", None)
+        partial = swapped and prior is not None and prior.exists() and callable(complete) and not complete(prior)
+        # A swap that stopped between two entries is never finalized, however healthy it looks.
+        health = health_probe(timeout=30.0, expected_version=expected_identity) if swapped and not partial else None
         if health is not None and health.ok:
             from core.updater.rollback import code_digest
 

@@ -59,6 +59,7 @@ def test_live_worker_whose_plan_sits_past_the_width_cut_is_alive(tmp_path, monke
     assert command.index(str(plan)) > _FakePs.WIDTH, "the marker must sit past the cut"
     _lease(tmp_path, plan)
     monkeypatch.setattr(worker_module, "_pid_has_exited", lambda pid: False)
+    monkeypatch.setattr(worker_module, "_is_windows", lambda: False)
     monkeypatch.setattr(worker_module.subprocess, "run", _FakePs({_PID: command}))
     assert worker_alive(tmp_path) is True
 
@@ -68,5 +69,6 @@ def test_reused_pid_running_a_different_plan_is_not_alive(tmp_path, monkeypatch)
     other_plan = tmp_path / "update_v2" / "workers" / ("tx" + "ffffffffffffffff" * 4) / "plan.json"
     _lease(tmp_path, plan)
     monkeypatch.setattr(worker_module, "_pid_has_exited", lambda pid: False)
+    monkeypatch.setattr(worker_module, "_is_windows", lambda: False)
     monkeypatch.setattr(worker_module.subprocess, "run", _FakePs({_PID: _worker_command(other_plan)}))
     assert worker_alive(tmp_path) is False

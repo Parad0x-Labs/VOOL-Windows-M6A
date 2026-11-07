@@ -64,6 +64,10 @@ def expected_prior(subsystem, txid: str) -> Path:
     target = Path(subsystem.feed.app_path)
     if subsystem.platform.startswith('linux-'):
         return target / 'update_backups' / ('signed-' + txid)
+    if subsystem.platform.startswith('windows-'):
+        from core.updater.windows import WindowsBundleInstaller
+
+        return WindowsBundleInstaller.prior_path(target, txid)
     return target.parent / f'.{target.name}.prior-{txid}'
 
 
@@ -121,7 +125,7 @@ def _installer(subsystem):
 
 
 def _finish(subsystem, path: Path, state: dict) -> dict:
-    if subsystem.platform.startswith('linux-'):
+    if subsystem.platform.startswith(('linux-', 'windows-')):
         (Path(subsystem.feed.app_path) / '.vool_updating.lock').unlink(missing_ok=True)
     _save(path, state, 'completed')
     subsystem.status.publish(UpdatePhase.ROLLED_BACK, previous_version=state['candidate']['version'],
@@ -179,8 +183,10 @@ def run_manual_rollback(subsystem, candidate: dict, txid: str) -> dict:
         ):
             raise ValueError('the previous-version backup failed its integrity check')
         installer = _installer(subsystem)
+        windows = subsystem.platform.startswith('windows-')
         stage = root / 'previous-code' if subsystem.platform.startswith('linux-') else (
-            Path(subsystem.feed.app_path).parent / f'.{Path(subsystem.feed.app_path).name}.rollback-{txid}-stage')
+            installer.staging_root(Path(subsystem.feed.app_path)) / f'rollback-{txid}' if windows else (
+            Path(subsystem.feed.app_path).parent / f'.{Path(subsystem.feed.app_path).name}.rollback-{txid}-stage'))
         state['stage'] = str(stage)
         if subsystem.platform.startswith('linux-'):
             from installer.self_update import compute_preserve_names, rollback_swap
@@ -193,6 +199,21 @@ def run_manual_rollback(subsystem, candidate: dict, txid: str) -> dict:
             backup_copy = root / 'prior-copy'
             shutil.copytree(prior, backup_copy, symlinks=True)
             rollback_swap(stage, backup_copy)
+        elif windows:
+            from core.updater.windows import MANAGED_ENTRIES
+
+            # The retained backup holds the previous entries plus its swap journal; stage a
+            # COPY of the entries only, so the backup itself stays intact.
+            stage.mkdir(parents=True, exist_ok=False)
+            for name in MANAGED_ENTRIES:
+                source = prior / name
+                if source.is_dir():
+                    shutil.copytree(source, stage / name, symlinks=True)
+                else:
+                    shutil.copy2(source, stage / name)
+            verified = installer.verify_bundle(stage)
+            if not verified.ok:
+                raise ValueError(verified.detail)
         else:
             shutil.copytree(prior, stage, symlinks=True)
             required = installer.running_requires_notarization(Path(subsystem.feed.app_path))

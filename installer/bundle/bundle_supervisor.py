@@ -911,6 +911,24 @@ class BundleSupervisor:
         # Measured from the last measured instant, so the bookkeeping since then is measured too.
         self._absorb_pause(0.0, "while writing the state file")
 
+    def _consume_update_worker_request(self) -> None:
+        """Start the signed updater's worker when the API asks (core.updater.windows).
+
+        This supervisor is outside its kill-on-close job; a worker started here is not assigned
+        to it and does not descend from the API, so it outlives the stop the swap needs.
+        """
+        if not _is_windows_platform():
+            return
+        try:
+            from core.updater.windows import consume_worker_request
+
+            pid = consume_worker_request(self.home, self.root)
+        except Exception as exc:
+            self._log(f"update worker request failed: {type(exc).__name__}: {exc}")
+            return
+        if pid:
+            self._log(f"update worker started: pid {pid}")
+
     def run(self, *, once: bool = False) -> int:
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -930,6 +948,7 @@ class BundleSupervisor:
                 self._ensure_api()
                 self._reap_window()
                 self._consume_window_reopen()
+                self._consume_update_worker_request()
                 self._ensure_window()
                 self._write_state()
                 if once:

@@ -56,12 +56,21 @@ class FeedConfig:
         return bool(self.app_path.strip())
 
 
+#: Keys a per-platform block in update_feed.json may replace for that platform only.
+_PLATFORM_KEYS = frozenset({"manifest_url", "channel", "health_url", "allow_publisher_verified_adhoc", "auto_check"})
+
+
 def load_feed_config(
     *,
     config_path: Path | str | None = None,
     env: dict[str, str] | None = None,
+    platform: str | None = None,
 ) -> FeedConfig:
-    """Defaults < shipped config file < environment. Never raises."""
+    """Defaults < shipped config file < its block for this platform < environment. Never raises.
+
+    ``"platforms": {"windows-x64": {"manifest_url": ...}}`` lets one shipped file point each
+    edition at its own signed release feed (the Windows edition publishes separately).
+    """
     source = os.environ if env is None else dict(env)
     if str(source.get("VOOL_UPDATE_DISABLED") or "").strip() in ("1", "true", "yes"):
         return FeedConfig(source="disabled-by-env")
@@ -76,6 +85,15 @@ def load_feed_config(
             data = loaded
     except (OSError, ValueError):
         data = {}
+    blocks = data.get("platforms")
+    if isinstance(blocks, dict):
+        if platform is None:
+            from core.updater.platforms import platform_key
+
+            platform = platform_key()
+        block = blocks.get(platform)
+        if isinstance(block, dict):
+            data = {**data, **{key: value for key, value in block.items() if key in _PLATFORM_KEYS}}
 
     def pick(key: str, env_name: str, default: str) -> str:
         override = str(source.get(env_name) or "").strip()
