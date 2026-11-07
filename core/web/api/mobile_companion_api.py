@@ -81,6 +81,7 @@ from typing import Any, Optional
 
 from core.device_link import identity as device_identity
 from core.device_link import protocol as device_protocol
+from core.owner_only import require_owner_only
 from core.request_trust import is_loopback_host
 
 # ---------------------------------------------------------------------------
@@ -204,8 +205,16 @@ class CompanionStore:
 
     def _save(self) -> None:
         tmp = self._state_path.with_suffix(".tmp")
+        # Owner-only while still empty, so the contents are never on disk readable by others. On Windows
+        # chmod only flips the read-only bit; core/owner_only sets the protected one-ACE DACL and raises
+        # OwnerOnlyUnavailable (nothing is written) when it cannot.
+        tmp.write_text("")
+        try:
+            require_owner_only(tmp)
+        except OSError:
+            tmp.unlink(missing_ok=True)
+            raise
         tmp.write_text(json.dumps(self._data, indent=2))
-        os.chmod(tmp, 0o600)
         os.replace(tmp, self._state_path)
 
     # -- devices ----------------------------------------------------------

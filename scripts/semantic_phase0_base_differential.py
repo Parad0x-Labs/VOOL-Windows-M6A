@@ -81,6 +81,7 @@ if __name__ == "__main__" and not _bootstrap_sys.flags.isolated:
 import _hashlib
 import argparse
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -199,6 +200,29 @@ print("@@JSON@@" + json.dumps(rows))
 '''
 
 
+def _corpus_env(home: str, *, windows: bool = os.name == "nt") -> dict[str, str]:
+    """The driver child's whole environment: its throwaway home and fixed settings, nothing of the caller's.
+
+    Windows will not load Winsock (and so not `import asyncio`) without SYSTEMROOT, which comes from the
+    system as for the Git probe, and Path.home() and tempfile read USERPROFILE, TEMP and TMP there, so
+    those name the throwaway home too.
+    """
+    env = {
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "HOME": home,
+        "VOOL_HOME": home,
+        "VOOL_CREDENTIAL_STORE": "vault",
+        "VOOL_KEY_STORAGE_MODE": "file",
+        "VOOL_KEY_PASSPHRASE": "differential",
+        "VOOL_REGISTER_INSTALLED_OLLAMA_MODELS": "0",
+        "VOOL_SKIP_TORCH_GPU_PROBE": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    if windows:
+        env.update({"SYSTEMROOT": _windows_directory(), "USERPROFILE": home, "TEMP": home, "TMP": home})
+    return env
+
+
 def _run_corpus(tree: Path, label: str, texts: list[str]) -> list[dict]:
     """Drive the whole corpus inside `tree`, in its own process and its own throwaway home.
 
@@ -208,19 +232,11 @@ def _run_corpus(tree: Path, label: str, texts: list[str]) -> list[dict]:
     the base.
     """
     with tempfile.TemporaryDirectory(prefix=f"vool_diff_home_{label}_") as home:
-        env = {
-            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
-            "HOME": home,
-            "VOOL_HOME": home,
-            "VOOL_CREDENTIAL_STORE": "vault",
-            "VOOL_KEY_STORAGE_MODE": "file",
-            "VOOL_KEY_PASSPHRASE": "differential",
-            "VOOL_REGISTER_INSTALLED_OLLAMA_MODELS": "0",
-            "VOOL_SKIP_TORCH_GPU_PROBE": "1",
-            "PYTHONDONTWRITEBYTECODE": "1",
-        }
+        env = _corpus_env(home)
         script = (
-            _DRIVER.replace("__TREE__", str(tree))
+            # The quoted placeholder becomes a Python literal, not text between quotes: a Windows
+            # tree (C:\Users\...) made `\U` an escape and the child died on a SyntaxError.
+            _DRIVER.replace('"__TREE__"', repr(str(tree)))
             .replace("__FIELDS__", repr(list(PUBLIC_FIELDS)))
             .replace("__TEXTS__", repr(list(texts)))
         )
@@ -259,6 +275,21 @@ FROZEN_CORPUS_SOURCE_SHA = "c606c81b7b7b95abea94731c361037473df109a6"
 FROZEN_CORPUS_OBJECT = "ops/semantic_phase0_frozen_corpus.json"
 
 
+_IS_WINDOWS = os.name == "nt"
+
+
+def _windows_directory() -> str:
+    """The Windows directory as the system reports it (GetWindowsDirectoryW), else C:\\Windows."""
+    try:
+        import ctypes
+
+        buffer = ctypes.create_unicode_buffer(260)
+        length = ctypes.windll.kernel32.GetWindowsDirectoryW(buffer, len(buffer))
+    except (AttributeError, OSError):
+        return r"C:\Windows"
+    return buffer.value if 0 < length < len(buffer) else r"C:\Windows"
+
+
 class CorpusIntegrityError(RuntimeError):
     """The turn universe is not the one this proof is defined over."""
 
@@ -266,18 +297,26 @@ class CorpusIntegrityError(RuntimeError):
 def load_frozen_corpus(controller_tree: Path) -> tuple[list[str], str]:
     """Load the universe from an immutable git object in the trusted controller repository."""
     root = Path(controller_tree).resolve()
-    git = next(
-        (path for path in (Path("/usr/bin/git"), Path("/bin/git"), Path("/usr/local/bin/git")) if path.is_file()),
-        None,
+    # Fixed install paths, never a PATH lookup (the same anchors tests/_source_guard.py trusts).
+    # Windows has none of the POSIX ones, so the loader refused every run there.
+    candidates = (
+        (Path(r"C:\Program Files\Git\cmd\git.exe"), Path(r"C:\Program Files\Git\bin\git.exe"))
+        if _IS_WINDOWS
+        else (Path("/usr/bin/git"), Path("/bin/git"), Path("/usr/local/bin/git"))
     )
+    git = next((path for path in candidates if path.is_file()), None)
     if git is None:
         raise CorpusIntegrityError("trusted git executable is unavailable")
+    env = {"PATH": "/usr/bin:/bin:/usr/local/bin", "LC_ALL": "C"}
+    if _IS_WINDOWS:
+        # Windows will not start a process without SYSTEMROOT; it comes from the system, not the caller's env.
+        env = {"PATH": str(git.parent), "LC_ALL": "C", "SYSTEMROOT": _windows_directory()}
     completed = subprocess.run(
         # A bare blob id: content-addressed, resolved from the object database of the trusted
         # controller repository regardless of which commit carries it. Never a worktree path.
         [str(git), "-C", str(root), "show", FROZEN_CORPUS_SOURCE_SHA],
         cwd="/",
-        env={"PATH": "/usr/bin:/bin:/usr/local/bin", "LC_ALL": "C"},
+        env=env,
         capture_output=True,
         check=False,
     )

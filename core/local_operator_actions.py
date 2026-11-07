@@ -52,19 +52,47 @@ def list_operator_tools() -> list[dict[str, Any]]:
     return operator_registry.list_operator_tools()
 
 
-def windows_write_refusal(intent: OperatorActionIntent) -> str | None:
+def windows_write_refusal(intent: OperatorActionIntent, *, session_id: str | None = None) -> str | None:
     """The Windows write gate's reason to refuse this operator action, or None.
 
     Applied by `dispatch_operator_action`, and asked by the tool executor before the permission
     decision and the A6 reservation, so nobody approves an operator move Windows will refuse.
+
+    With `session_id`, a move is judged on the paths the move handler will act on: when the session
+    holds a pending move (the one `intent.action_id` names, else its latest), the handler answers from
+    that preview's stored source and folder and never from this turn's text, so those are gated. An
+    approval ("approve move <id>") names no path of its own and was refused for that alone.
     """
     if intent.kind not in {"cleanup_temp_files", "move_path"}:
         return None
     from core import windows_write_gate
 
-    gated = ("operator.move_path", {"source_path": intent.target_path, "destination_path": intent.destination_path}) \
-        if intent.kind == "move_path" else ("operator.cleanup_temp_files", {"target_path": intent.target_path})
-    return windows_write_gate.refusal(gated[0], gated[1], None)
+    if intent.kind == "move_path":
+        arguments = {"source_path": intent.target_path, "destination_path": intent.destination_path}
+        if session_id and windows_write_gate.may_refuse("operator.move_path"):
+            try:
+                pending = _load_pending_action(session_id=session_id, action_kind="move_path", action_id=intent.action_id)
+            except Exception:  # an unreadable store: judge this turn's own paths, as before
+                pending = None
+            if pending is not None:
+                try:
+                    scope = json.loads(str(pending.get("scope_json") or "{}"))
+                except ValueError:
+                    scope = {}
+                if not isinstance(scope, dict):
+                    scope = {}
+                # The handler makes `destination_dir` and moves the source onto `destination_path`, so
+                # both are gated. A stored preview missing any of the three is refused, never let through.
+                source = str(scope.get("source_path") or "")
+                for destination in (scope.get("destination_dir"), scope.get("destination_path")):
+                    reason = windows_write_gate.refusal(
+                        "operator.move_path", {"source_path": source, "destination_path": str(destination or "")}, None
+                    )
+                    if reason:
+                        return reason
+                return None
+        return windows_write_gate.refusal("operator.move_path", arguments, None)
+    return windows_write_gate.refusal("operator.cleanup_temp_files", {"target_path": intent.target_path}, None)
 
 
 def dispatch_operator_action(
@@ -104,7 +132,7 @@ def dispatch_operator_action(
         return _handle_inspect_services(intent, task_id=task_id, session_id=session_id)
     if intent.kind == "inspect_disk_usage":
         return _handle_inspect_disk_usage(intent, task_id=task_id, session_id=session_id)
-    windows_refusal = windows_write_refusal(intent)
+    windows_refusal = windows_write_refusal(intent, session_id=session_id)
     if windows_refusal:
         from core import windows_write_gate
 

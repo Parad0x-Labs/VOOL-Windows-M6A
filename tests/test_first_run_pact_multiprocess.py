@@ -399,7 +399,7 @@ def test_a_stale_carrier_across_processes_gets_typed_stale_revision_provider():
 
 LOCK_DRIVER = textwrap.dedent(
     """
-    import fcntl, json, sys
+    import json, os, sys
     from pathlib import Path
 
     sys.path.insert(0, {repo!r})
@@ -410,7 +410,16 @@ LOCK_DRIVER = textwrap.dedent(
     from core import first_run as provider
 
     holder = open(lock_path, "w")
-    fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
+    if os.name == "nt":
+        # Windows has no fcntl: hold byte 0 the way a Windows publication lock takes it.
+        import msvcrt
+        holder.write("1")
+        holder.flush()
+        holder.seek(0)
+        msvcrt.locking(holder.fileno(), msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(holder.fileno(), fcntl.LOCK_EX)
     try:
         if target == "pact":
             first_run_pact.advance("naming")

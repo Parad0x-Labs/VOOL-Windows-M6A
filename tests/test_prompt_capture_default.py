@@ -28,6 +28,7 @@ import threading
 import pytest
 
 from core import prompt_debug
+from core.owner_only import verify_owner_only
 from core.prompt_debug import dump_outbound_prompt, prompt_debug_enabled
 
 
@@ -50,6 +51,14 @@ def capture_home(tmp_path, monkeypatch):
         yield tmp_path / "logs" / "prompt_debug.jsonl"
     finally:
         configure_runtime_home(previous)
+
+
+def _private(path, posix_mode: int) -> bool:
+    """Owner-only: the POSIX mode on POSIX; on Windows, where modes only toggle the read-only bit,
+    the owner-only ACL core.owner_only sets and reads back."""
+    if os.name == "nt":
+        return verify_owner_only(path).ok
+    return stat.S_IMODE(os.stat(path).st_mode) == posix_mode
 
 
 def _payload(text: str = "hello", *, messages: int = 1) -> dict:
@@ -152,8 +161,8 @@ def test_the_capture_file_and_its_directory_stay_owner_only(capture_home):
     """A capture holds whatever the user pasted into chat, so nobody else on the box may read it."""
     dump_outbound_prompt(_payload())
 
-    assert stat.S_IMODE(capture_home.stat().st_mode) == 0o600
-    assert stat.S_IMODE(capture_home.parent.stat().st_mode) == 0o700
+    assert _private(capture_home, 0o600)
+    assert _private(capture_home.parent, 0o700)
 
 
 def _write_past_the_rotation_budget(count: int = 40) -> int:
@@ -205,25 +214,25 @@ def test_the_capture_file_is_owner_only_after_every_single_call_including_the_ro
         before = len(_rows(capture_home)) if capture_home.exists() else 0
         dump_outbound_prompt(_payload(big, messages=20), extra={"n": index})
         rotated = rotated or len(_rows(capture_home)) <= before
-        assert stat.S_IMODE(capture_home.stat().st_mode) == 0o600, f"call {index} left the capture readable"
+        assert _private(capture_home, 0o600), f"call {index} left the capture readable"
 
     assert rotated, "no rotation happened in this run, so the mode was never at risk"
 
 
 def test_the_replacement_file_is_owner_only_before_it_ever_goes_live(capture_home, monkeypatch):
     """The rotation temp file holds the same prompts; it must not sit at the umask default mid-copy."""
-    seen: list[int] = []
+    seen: list[bool] = []
     real_replace = os.replace
 
     def watched_replace(src, dst, *args, **kwargs):
-        seen.append(stat.S_IMODE(os.stat(src).st_mode))
+        seen.append(_private(src, 0o600))
         return real_replace(src, dst, *args, **kwargs)
 
     monkeypatch.setattr(prompt_debug.os, "replace", watched_replace)
     _write_past_the_rotation_budget(40)
 
     assert seen, "rotation never ran, so nothing was measured"
-    assert set(seen) == {0o600}, f"a rotation temp file went live at {[oct(mode) for mode in seen]}"
+    assert all(seen), f"a rotation temp file went live while readable by others: {seen}"
 
 
 def test_two_lanes_capturing_at_once_do_not_write_over_each_other(capture_home, monkeypatch):

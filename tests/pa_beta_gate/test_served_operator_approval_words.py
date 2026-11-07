@@ -26,6 +26,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import re
+import tempfile
 import uuid
 from pathlib import Path
 from unittest import mock
@@ -37,6 +38,17 @@ from tests.pa_beta_gate.test_served_calendar_notes_workflows import served_env
 from tests.test_turn_attempt_chain import _SOURCE_CONTEXT, _Harness
 
 pytestmark = [pytest.mark.pa_beta]
+
+@pytest.fixture(autouse=True)
+def _system_temp_is_tmp_path(tmp_path, monkeypatch):
+    """The operator moves files only under home or the system temp dir; make that temp dir tmp_path.
+
+    The moved file lives in tmp_path. Linux pytest puts tmp_path under the system temp dir, but the
+    Windows suite runs with --basetemp under RUNNER_TEMP, outside TEMP, so every move was refused as
+    out of scope before the approval wording under test was ever read.
+    """
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+
 
 _MUTATING = ("make new paragraph", "set name of theNote", "delete theNote")
 _MARKERS = ["approve", "go ahead", "do it", "proceed", "yes", "fuck it", "clean all", "delete all", "remove all"]

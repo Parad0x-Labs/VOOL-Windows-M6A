@@ -26,6 +26,11 @@ _FORBIDDEN_PROFILE_MARKERS = (
     ".mozilla",
     ".config/google-chrome",
     ".config/chromium",
+    "appdata/local/google/chrome",
+    "appdata/local/chromium",
+    "appdata/local/microsoft/edge",
+    "appdata/local/bravesoftware",
+    "appdata/roaming/mozilla",
     "safari",
 )
 
@@ -34,6 +39,14 @@ _MACOS_APP_CANDIDATES = (
     "/Applications/Chromium.app/Contents/MacOS/Chromium",
     "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
     "/Applications/Brave Browser.app/Contents/MacOS/Google Chrome",
+)
+
+#: Below a Program Files folder: where the Edge installer puts the browser for every user. Edge only:
+#: every Windows install has it, and a Chrome found beside it (on the hosted runner, Steve job 48) was
+#: launched instead and reached Google's servers on its own. A per-user install (under the profile's
+#: AppData, which any program the user runs can replace) and PATH are not looked at.
+_WINDOWS_PROGRAM_FILES_CANDIDATES = (
+    ("Microsoft", "Edge", "Application", "msedge.exe"),
 )
 
 _LINUX_PATH_CANDIDATES = (
@@ -50,14 +63,15 @@ def refuse_real_profile_target(candidate: str) -> str | None:
     """A refusal message when *candidate* names a real browser profile/keychain
     root (or anything under the operator's home that looks like one), else None."""
 
-    text = str(candidate or "").strip().lower()
+    # Compared with `/` separators, so a Windows spelling (`C:\Users\me\AppData\...`) meets the markers.
+    text = str(candidate or "").strip().lower().replace("\\", "/")
     if not text:
         return "profile: empty profile target"
     try:
-        home = str(Path.home().resolve()).lower()
+        home = str(Path.home().resolve()).lower().replace("\\", "/").rstrip("/")
     except (OSError, RuntimeError):
         home = ""
-    expanded = os.path.expanduser(str(candidate)).strip().lower()
+    expanded = os.path.expanduser(str(candidate)).strip().lower().replace("\\", "/")
     if home and expanded.rstrip("/") == home:
         return (
             "profile: refusing the operator's home directory as a profile target; "
@@ -146,6 +160,15 @@ def find_engine_binary() -> str | None:
     if override:
         if os.path.isfile(override) and os.access(override, os.X_OK):
             return override
+        return None
+    if sys.platform == "win32":
+        from core import windows_known_folders
+
+        for parts in _WINDOWS_PROGRAM_FILES_CANDIDATES:
+            for folder in windows_known_folders.program_files_folders():
+                candidate = os.path.join(folder, *parts)
+                if os.path.isfile(candidate):
+                    return candidate
         return None
     if sys.platform == "darwin":
         for candidate in _MACOS_APP_CANDIDATES:

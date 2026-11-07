@@ -45,13 +45,14 @@ into chat.
 """
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from core.owner_only import ensure_private_dir, require_owner_only
 
 _ENV_FLAG = "VOOL_DEBUG_PROMPT"
 _TRUTHY = {"1", "true", "yes", "on"}
@@ -78,10 +79,10 @@ def prompt_debug_enabled() -> bool:
 def _log_path() -> Path:
     from core.runtime_paths import active_data_dir
 
-    directory = Path(active_data_dir()).parent / "logs"
-    directory.mkdir(parents=True, exist_ok=True)
-    with contextlib.suppress(OSError):
-        os.chmod(directory, 0o700)
+    # Owner-only, or nothing is captured: ensure_private_dir raises when the folder cannot be made
+    # private, and the caller's except then drops the capture. On Windows a chmod only toggles the
+    # read-only bit, so the folder gets an owner-only ACL that files created in it inherit.
+    directory = ensure_private_dir(Path(active_data_dir()).parent / "logs")
     return directory / "prompt_debug.jsonl"
 
 
@@ -140,8 +141,8 @@ def dump_outbound_prompt(
             # replaces the inode, so chmod-then-rotate left the live file at the umask default
             # (0644 here) from the rotating call until whenever the next model call happened to land
             # -- a file of raw prompts, readable by every account on the box, for an unbounded window.
-            with contextlib.suppress(OSError):
-                os.chmod(path, 0o600)
+            # require_owner_only is 0600 on POSIX and the owner-only ACL on Windows, read back.
+            require_owner_only(path)
     except Exception:
         return  # debugging must never break a turn
 
@@ -179,8 +180,7 @@ def _maybe_rotate(path: Path) -> None:
         # so it is tightened BEFORE it exists under any other name -- otherwise half the capture sits
         # world-readable next to the real file for the duration of the copy, and `os.replace` then
         # carries that mode onto the live path.
-        with contextlib.suppress(OSError):
-            os.chmod(tmp, 0o600)
+        require_owner_only(tmp)
         os.replace(tmp, path)
     except Exception:
         pass  # debugging must never break a turn
