@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -258,11 +259,234 @@ def launcher_path(project_root: Path) -> Path | None:
     return verified_launcher(project_root)
 
 
-def probe(project_root: Path) -> bool:
-    """Whether the backend demonstrably confines a no-op job on this host. Stub: always False.
+#: The probe's confined no-op. It must write inside its workspace, and it must FAIL to write
+#: outside it and to reach loopback, or the backend is not confining anything and is unusable.
+_PROBE_CHILD = (
+    "import os, socket, sys\n"
+    "ws, outside, port = sys.argv[1], sys.argv[2], int(sys.argv[3])\n"
+    "with open(os.path.join(ws, 'probe-ok'), 'w') as f: f.write('ok')\n"
+    "try:\n"
+    "    with open(os.path.join(outside, 'escaped'), 'w') as f: f.write('x')\n"
+    "    sys.exit(3)\n"
+    "except OSError: pass\n"
+    "try:\n"
+    "    socket.create_connection(('127.0.0.1', port), timeout=3).close()\n"
+    "    sys.exit(4)\n"
+    "except OSError: pass\n"
+    "sys.exit(0)\n"
+)
 
-    The real probe must RUN a confined child and check its result; finding the file is not proof."""
-    return False
+
+def interpreter_read_roots() -> tuple[str, ...]:
+    """The folders the running interpreter must read to start: its venv and its base install."""
+    import os
+    import sys
+
+    roots: list[str] = []
+    for candidate in (sys.prefix, sys.base_prefix, os.path.dirname(sys.executable or "")):
+        text = str(candidate or "").strip()
+        if text:
+            resolved = str(Path(text).resolve())
+            if resolved not in roots:
+                roots.append(resolved)
+    return tuple(roots)
+
+
+def _no_window_flags() -> int:
+    import subprocess
+
+    return int(getattr(subprocess, "CREATE_NO_WINDOW", 0)) | int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+
+
+#: Variables the .NET host reads to load extra code (profilers, startup hooks, host overrides).
+#: The pin proves the launcher's files, not what these would make it load, so every launch drops them.
+_LOADER_ENV_PREFIXES = ("CORECLR_", "COR_", "COMPLUS_", "DOTNET_", "COREHOST_")
+
+
+def launcher_environment(env: dict[str, str] | None = None) -> dict[str, str]:
+    """*env* (default: this process's) without any variable that makes the .NET host load code."""
+    import os
+
+    source = os.environ if env is None else env
+    return {key: value for key, value in source.items() if not key.upper().startswith(_LOADER_ENV_PREFIXES)}
+
+
+_VOOL_JOB = None
+_VOOL_JOB_LOCK = threading.Lock()
+
+
+def _vool_job():
+    """VOOL's own kill-on-close job for its launchers, created once and held for this process's life,
+    so no launcher outlives VOOL (and holds the program folder open through an upgrade). None off
+    Windows. Failing to create it raises, and the caller refuses the launch."""
+    import os
+
+    global _VOOL_JOB
+    if os.name != "nt":
+        return None
+    with _VOOL_JOB_LOCK:
+        if _VOOL_JOB is None:
+            from core.windows_job import new_kill_on_close_job
+
+            _VOOL_JOB = new_kill_on_close_job()
+        return _VOOL_JOB
+
+
+def launcher_creationflags() -> int:
+    """No console, its own process group, and on Windows SUSPENDED until `adopt_launcher` runs."""
+    import os
+
+    flags = _no_window_flags()
+    if os.name == "nt":
+        from core.windows_job import CREATE_SUSPENDED
+
+        flags |= CREATE_SUSPENDED
+    return flags
+
+
+def adopt_launcher(pid: int) -> None:
+    """Put a launcher started with `launcher_creationflags` in VOOL's job, then let it run.
+
+    Raises when it can't, and the caller kills the launcher (still suspended, so it ran nothing)."""
+    import os
+
+    job = _vool_job()
+    if job is not None:
+        job.assign(pid)
+    if os.name == "nt":
+        if job is None:  # pragma: no cover - _vool_job raises rather than return None on Windows
+            raise OSError("VOOL's launcher job is unavailable")
+        from core.windows_job import resume_suspended
+
+        resume_suspended(pid)
+
+
+def _run_launcher(argv: list[str], *, timeout: float) -> int:
+    """Run one launcher invocation in VOOL's job with the scrubbed environment; its exit code."""
+    import subprocess
+
+    process = subprocess.Popen(
+        argv,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        shell=False,
+        env=launcher_environment(),
+        creationflags=launcher_creationflags(),
+    )
+    try:
+        adopt_launcher(process.pid)
+        process.communicate(timeout=timeout)
+    except BaseException:
+        process.kill()
+        process.communicate()
+        raise
+    return int(process.returncode)
+
+
+def launcher_form(launcher: Path | str, form: str, policy_path: Path, *, timeout: float = 300) -> bool:
+    """Run the launcher's unconfined `grant` or `revoke` form for a policy. True only on exit 0.
+
+    The run form only VERIFIES ACLs, and a miss there is 125, so a caller grants first. `grant`
+    and `revoke` are run by VOOL, never by a job, and an error, a timeout or any other exit code
+    counts as not done."""
+    import subprocess
+
+    if form not in ("grant", "revoke"):
+        raise ValueError(f"unknown launcher form {form!r}")
+    try:
+        return _run_launcher([str(launcher), form, "--policy", str(policy_path)], timeout=timeout) == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def launcher_scan(launcher: Path | str, policy_path: Path, *, timeout: float = 300) -> int | None:
+    """Run the launcher's unconfined `scan` form: the repository scan alone, no child. It rewrites the
+    status file's `new_repositories` and `repositories_scanned`. Its exit code (0 none, 123 found,
+    125 unfinished), or None when it could not run or didn't finish in time."""
+    import subprocess
+
+    try:
+        return _run_launcher([str(launcher), "scan", "--policy", str(policy_path)], timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def probe(project_root: Path) -> bool:
+    """Whether the backend demonstrably confines a no-op job on this host.
+
+    Finding the launcher is not proof, so this grants a fresh probe-only workspace, RUNS a confined
+    child in it, then revokes the grant. It accepts the backend only when all of these hold:
+    - the launcher's status file says the child started and exited 0;
+    - the child's write inside the workspace landed;
+    - its write outside the workspace and its loopback connect were both refused;
+    - the grant and the revoke both exited 0.
+    Anything else, including an exception, means unavailable."""
+    import shutil
+    import socket
+    import sys
+    import tempfile
+
+    launcher = launcher_path(project_root)
+    if launcher is None:
+        return False
+    stage = workspace = None
+    listener = None
+    granted_policy: Path | None = None
+    revoked = True
+    try:
+        stage = Path(tempfile.mkdtemp(prefix="vool-confine-probe-")).resolve()
+        workspace = Path(tempfile.mkdtemp(prefix="vool-confine-probe-ws-")).resolve()
+        temp_dir = workspace / ".sandbox-tmp"
+        temp_dir.mkdir()
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        port = listener.getsockname()[1]
+        policy = WindowsConfinementPolicy(
+            write_roots=(str(workspace),),
+            read_roots=interpreter_read_roots(),
+            temp_dir=str(temp_dir),
+            status_path=str(stage / "status.json"),
+            max_seconds=30,
+        )
+        argv = confinement_prefix(
+            [str(Path(sys.executable).resolve()), "-I", "-c", _PROBE_CHILD, str(workspace), str(stage), str(port)],
+            policy,
+            project_root=project_root,
+            policy_path=stage / "policy.json",
+        )
+        if argv is None:
+            return False
+        revoked = False
+        granted_policy = stage / "policy.json"
+        if not launcher_form(argv[0], "grant", granted_policy, timeout=60):
+            return False
+        returncode = _run_launcher(argv, timeout=60)
+        status = read_status(stage / "status.json")
+        revoked = launcher_form(argv[0], "revoke", granted_policy, timeout=60)
+        granted_policy = None
+        return (
+            revoked
+            and returncode == 0
+            and status is not None
+            and status.child_started
+            and not status.timed_out
+            and not status.new_repositories
+            and status.exit_code == 0
+            and (workspace / "probe-ok").is_file()
+            and not (stage / "escaped").exists()
+        )
+    except Exception:
+        return False
+    finally:
+        if granted_policy is not None and not revoked:
+            launcher_form(launcher, "revoke", granted_policy, timeout=60)
+        if listener is not None:
+            listener.close()
+        for folder in (stage, workspace):
+            if folder is not None:
+                shutil.rmtree(folder, ignore_errors=True)
 
 
 def confinement_prefix(
@@ -270,6 +494,28 @@ def confinement_prefix(
 ) -> list[str] | None:
     """The argv that runs `argv` confined by `policy`, or None when the backend is unavailable.
 
-    None makes the caller refuse the job. Stub: always None."""
+    None makes the caller refuse the job. This writes `policy` to `policy_path`. That path must sit
+    outside every write root, so the confined child can never rewrite the rules it runs under. A
+    status file already at `status_path` is refused too: an earlier run's record must never be read
+    as this one's. On Windows argv[0] must be an absolute `.exe`; the launcher refuses anything else
+    (a `.cmd` or `.bat` would run through cmd.exe's own quoting) with 126."""
+    import os
+
     policy.validate()
-    return None
+    launcher = launcher_path(project_root)
+    if launcher is None or not argv or not os.path.isabs(str(argv[0])):
+        return None
+    if os.name == "nt" and not str(argv[0]).lower().endswith(".exe"):
+        return None
+    policy_text = str(policy_path)
+    if any(_inside(policy_text, root) for root in policy.write_roots):
+        return None
+    if any(_inside(policy.status_path, root) for root in policy.write_roots):
+        return None
+    if os.path.lexists(policy.status_path):
+        return None
+    try:
+        policy_path.write_text(policy.to_json(), encoding="utf-8")
+    except OSError:
+        return None
+    return [str(launcher), "--policy", policy_text, "--", *[str(item) for item in argv]]
