@@ -1163,6 +1163,13 @@
       "registry_command_id": "",
       "surface": "http"
     },
+    "http:GET:/api/memory/standing-instructions": {
+      "classification": "EXTERNAL_TRANSPORT_ONLY",
+      "name": "GET /api/memory/standing-instructions",
+      "note": "memory lane read feed (active standing instructions; loopback, read-only)",
+      "registry_command_id": "",
+      "surface": "http"
+    },
     "http:GET:/api/mobile/devices": {
       "classification": "EXTERNAL_TRANSPORT_ONLY",
       "name": "GET /api/mobile/devices",
@@ -1594,6 +1601,13 @@
       "classification": "EXTERNAL_TRANSPORT_ONLY",
       "name": "GET /api/windows/broker/status",
       "note": "windows broker lane read feed (journal and flagged-folder report)",
+      "registry_command_id": "",
+      "surface": "http"
+    },
+    "http:GET:/api/windows/disposable-folders": {
+      "classification": "EXTERNAL_TRANSPORT_ONLY",
+      "name": "GET /api/windows/disposable-folders",
+      "note": "windows write-gate read feed (disposable folders; loopback, read-only)",
       "registry_command_id": "",
       "surface": "http"
     },
@@ -3084,7 +3098,7 @@
   },
   "totals": {
     "DEAD": 0,
-    "EXTERNAL_TRANSPORT_ONLY": 301,
+    "EXTERNAL_TRANSPORT_ONLY": 303,
     "GENERATED_ADAPTER": 130,
     "LEGACY_UNMIGRATED": 0,
     "REGISTRY_OWNED": 8
