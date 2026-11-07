@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import atexit
 import contextlib
+import json
 import os
 import shutil
 import signal
@@ -69,6 +71,84 @@ class KernelIsolationUnavailableError(ValueError):
     """
 
 
+class NestedGitMetadataError(ValueError):
+    """A confined Windows job created a repository layout under a writable root.
+
+    The Windows launcher denies writes only to `.git` folders that existed when the job started.
+    It can't deny a name that doesn't exist yet, so a job could `git init` a nested repository and
+    plant a hook or a `core.fsmonitor` command for git to run later outside the sandbox. (The
+    Mac's Seatbelt profile denies the path pattern itself.) The launcher scans the roots before
+    and after the job and reports new layouts in its status record, exiting 123. The runner
+    refuses that result. The layout is left where it is, for the operator to inspect.
+    """
+
+
+#: Phase 1 of Windows confinement runs Python and pytest only (jobs/broker/confinement-B/PLAN.md).
+#: Every other program (git, npm/node, cargo, cmd, PowerShell…) is refused until its toolchain is
+#: proven inside the AppContainer. A tool that half-works under confinement must never be reported
+#: as a confined run.
+_WINDOWS_PYTHON_NAMES = frozenset({"python", "python3", "py"})
+_WINDOWS_PYTEST_NAMES = frozenset({"pytest", "py.test"})
+
+#: Policy and status files the Windows launcher was handed, keyed by the policy path in the argv,
+#: so that `run` can read the status back and delete the staging folder. Only the Windows branch
+#: of `_with_network_isolation` adds entries.
+_WINDOWS_STAGED: dict[str, tuple[Path, str]] = {}
+_WINDOWS_STAGED_LOCK = threading.Lock()
+
+#: Grants the launcher's `grant` form already applied in this process, keyed by everything in a
+#: policy that shapes ACLs. They are not revoked when a job ends or when VOOL exits: a workspace
+#: root keeps its per-root capability grant (which only a confined job holding that root's
+#: capability can use) until `VoolConfine.exe revoke` is run for it. Grant lifetime and cleanup
+#: belong to the ACL chunk. The run form verifies them on every job, so a grant that was removed
+#: since is a 125 there, never a silent pass, and that key is then forgotten so the next job grants
+#: again.
+_WINDOWS_GRANTED: set[str] = set()
+
+
+def _repository_layouts(roots: tuple[Path, ...]) -> tuple[set[str], bool]:
+    """Every repository layout under *roots*, and whether the walk finished inside the scan cap.
+
+    A layout is any `.git` entry, folder or file (a `gitdir:` redirect), in any case and with
+    the trailing dots or spaces Win32 strips. A bare repository counts too: a folder holding a
+    `HEAD` file next to `objects` and `refs` folders. An unfinished walk proves nothing, so the
+    caller refuses."""
+    found: set[str] = set()
+    seen = 0
+    for root in roots:
+        for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+            seen += len(dirnames) + len(filenames)
+            if seen > _HARDLINK_SCAN_FILE_LIMIT:
+                return found, False
+            for name in (*dirnames, *filenames):
+                if name.lower().rstrip(". ") == ".git":
+                    found.add(os.path.normcase(os.path.join(dirpath, name)))
+            lowered_dirs = {name.lower() for name in dirnames}
+            if {"objects", "refs"} <= lowered_dirs and any(name.lower() == "head" for name in filenames):
+                found.add(os.path.normcase(dirpath))
+    return found, True
+
+
+def _forget_staged_at_exit() -> None:
+    """Remove staging folders that were built but never run (a caller that only wanted the argv)."""
+    with _WINDOWS_STAGED_LOCK:
+        for stage, _key in _WINDOWS_STAGED.values():
+            shutil.rmtree(stage, ignore_errors=True)
+        _WINDOWS_STAGED.clear()
+
+
+atexit.register(_forget_staged_at_exit)
+
+
+def _windows_path_text(path: Path | str) -> str:
+    """A path as the Windows launcher's policy names it: absolute and resolved."""
+    return str(Path(path).resolve())
+
+
+def _windows_project_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
 # Whether a backend actually works on this host, keyed by backend name. A backend being INSTALLED
 # and a backend being PERMITTED are different questions, and only the second one matters:
 # `unshare` ships in util-linux on every mainstream distro, so `shutil.which` finds it inside
@@ -80,6 +160,7 @@ _BACKEND_USABLE: dict[str, bool] = {}
 def reset_isolation_backend_probe_cache() -> None:
     """Forget probe results. For tests that fake a backend's availability."""
     _BACKEND_USABLE.clear()
+    _WINDOWS_GRANTED.clear()
 
 
 def _backend_usable(name: str, probe_argv: list[str]) -> bool:
@@ -562,6 +643,20 @@ class JobRunner:
                 "PYTHONDONTWRITEBYTECODE": "1",
             }
         )
+        if _is_windows_platform():
+            # A Windows child needs SYSTEMROOT to start at all: without it Python dies in
+            # `_Py_HashRandomization_Init` because it can't load the system crypto provider.
+            # WINDIR and PATHEXT are the same kind of system fact, not operator secrets. The
+            # per-user folders are pointed into the sandbox home, like HOME on POSIX.
+            for key in ("SYSTEMROOT", "WINDIR", "PATHEXT"):
+                value = str(source.get(key) or "").strip()
+                if value:
+                    env[key] = value
+            roaming, local = home / "AppData" / "Roaming", home / "AppData" / "Local"
+            for path in (roaming, local):
+                with contextlib.suppress(OSError):
+                    path.mkdir(parents=True, exist_ok=True)
+            env.update({"USERPROFILE": str(home), "APPDATA": str(roaming), "LOCALAPPDATA": str(local)})
         return env
 
     #: Returned when the operator cancelled the job. Distinct from 124 (timed out) so a
@@ -602,8 +697,176 @@ class JobRunner:
                 "confinement that was not verified."
             )
         argv = self._with_network_isolation(argv, allowed_roots)
+        with _WINDOWS_STAGED_LOCK:
+            staged = _WINDOWS_STAGED.pop(argv[2], None) if len(argv) > 3 and argv[1] == "--policy" else None
+        if staged is None:
+            return self._run_wrapped(argv, cwd_path, cancel_event)
+        stage, grant_key = staged
+        try:
+            return self._run_windows_confined(argv, cwd_path, cancel_event, stage, grant_key, allowed_roots)
+        finally:
+            shutil.rmtree(stage, ignore_errors=True)
 
+    def _run_windows_confined(
+        self,
+        argv: list[str],
+        cwd_path: Path,
+        cancel_event: threading.Event | None,
+        stage: Path,
+        grant_key: str,
+        allowed_roots: tuple[Path, ...],
+    ) -> ExecutionResult:
+        """Run the VoolConfine-wrapped job, then trust nothing the launcher did not record.
+
+        The child shares the launcher's exit code space and stderr, so a 125 or a
+        `VOOLCONFINE-REFUSED:` line could be the child's own. The status file sits outside every
+        writable root, where the child can't write, and it alone says whether the child ran.
+        No record, or `child_started: false`, means the job never ran confined: it is refused
+        (`KernelIsolationUnavailableError`), never reported as a command failure. A repository
+        layout the job created (exit 123, or `new_repositories` in the record) refuses the result
+        whatever else happened (`NestedGitMetadataError`).
+
+        The launcher's own repository scan runs only when the job ends by itself. A timeout or a
+        cancel kills the launcher first, and a crashed launcher never scans. So the runner also
+        scans the write roots before the job and again after it, on EVERY outcome: timeout,
+        cancel, refusal and exception included. A new layout refuses the result.
+        """
+        roots = tuple(dict.fromkeys(Path(root).resolve() for root in allowed_roots))
+        layouts_before, complete = _repository_layouts(roots)
+        if not complete:
+            raise HardLinkedWritableRootError(
+                f"the writable roots hold more than {_HARDLINK_SCAN_FILE_LIMIT} entries, so they "
+                "could not be checked for repository layouts. Refusing rather than reporting a "
+                "confinement that was not verified."
+            )
+        try:
+            return self._run_windows_launcher(argv, cwd_path, cancel_event, stage, grant_key)
+        finally:
+            # Deliberately raises from `finally`: a planted repository outranks whatever the run
+            # returned or raised, including a timeout or a cancel.
+            layouts_after, complete = _repository_layouts(roots)
+            planted = sorted(layouts_after - layouts_before)
+            if planted or not complete:
+                where = planted[0] if planted else "the writable roots (scan cap reached)"
+                raise NestedGitMetadataError(
+                    f"the job created git metadata at '{where}'. Git would run hooks and config from "
+                    "it outside the sandbox, so this result is refused. Nothing was removed."
+                )
+
+    def _run_windows_launcher(
+        self,
+        argv: list[str],
+        cwd_path: Path,
+        cancel_event: threading.Event | None,
+        stage: Path,
+        grant_key: str,
+    ) -> ExecutionResult:
+        from sandbox import windows_confinement
+
+        def adopt(process: subprocess.Popen) -> None:
+            try:
+                windows_confinement.adopt_launcher(process.pid)
+            except Exception as exc:
+                raise KernelIsolationUnavailableError(
+                    f"the Windows confinement launcher could not be put in VOOL's own job ({exc}), "
+                    "so it was stopped before it ran anything."
+                ) from None
+
+        outcome: dict[str, str] = {}
+        result = self._run_wrapped(
+            argv,
+            cwd_path,
+            cancel_event,
+            creationflags=windows_confinement.launcher_creationflags(),
+            outcome=outcome,
+            env_filter=windows_confinement.launcher_environment,
+            after_spawn=adopt,
+        )
+        # The cancel and timeout outcomes are the runner's own: it killed the launcher, so the
+        # job object closed and the tree is gone, whatever the status file says.
+        operator_outcome = outcome.get("kind") in {"cancelled", "timed_out"}
+        status = windows_confinement.read_status(stage / "status.json")
+        child_never_ran = status is not None and not status.child_started
+        if not child_never_ran and (status is None or not status.repositories_scanned):
+            # The launcher never finished its own repository scan: the runner killed it (timeout,
+            # cancel), or it died. An empty `new_repositories` then proves nothing, so the scan
+            # form runs before anything is trusted or returned, even a timeout or a cancel. (A
+            # missing record counts as "may have run": the launcher writes child_started only
+            # after the resume, so a crash in between leaves no record of a child that ran.)
+            scan_rc = windows_confinement.launcher_scan(argv[0], Path(argv[2]))
+            rescanned = windows_confinement.read_status(stage / "status.json")
+            if scan_rc == windows_confinement.EXIT_NEW_REPOSITORY or (
+                rescanned is not None and rescanned.new_repositories
+            ):
+                where = rescanned.new_repositories[0] if rescanned and rescanned.new_repositories else "a write root"
+                raise NestedGitMetadataError(
+                    f"the job created git metadata at '{where}'. Git would run hooks and config "
+                    "from it outside the sandbox, so this result is refused. Nothing was removed."
+                )
+            if scan_rc != 0 or rescanned is None or not rescanned.repositories_scanned:
+                raise KernelIsolationUnavailableError(
+                    "Windows confinement could not finish the repository scan after this job "
+                    f"(scan exit {scan_rc}), so its result is refused: a repository it planted "
+                    "could not be ruled out."
+                )
+        if status is not None and status.new_repositories:
+            raise NestedGitMetadataError(
+                f"the job created git metadata at '{status.new_repositories[0]}'. Git would run "
+                "hooks and config from it outside the sandbox, so this result is refused. "
+                "Nothing was removed."
+            )
+        if result.returncode == windows_confinement.EXIT_NEW_REPOSITORY and not operator_outcome:
+            raise NestedGitMetadataError(
+                "the launcher exited 123 (a repository layout appeared under a writable root), so "
+                "this result is refused, whatever the job itself returned. Nothing was removed."
+            )
+        if not operator_outcome:
+            if status is None or not status.child_started:
+                with _WINDOWS_STAGED_LOCK:
+                    _WINDOWS_GRANTED.discard(grant_key)  # a verify miss: grant again next time
+                reason = (status.error if status is not None else None) or "no launcher status record"
+                raise KernelIsolationUnavailableError(
+                    "Windows confinement could not be set up, so the job never ran "
+                    f"(launcher exit {result.returncode}: {reason})."
+                )
+            if status.exit_code is None or status.exit_code != result.returncode:
+                if not (status.timed_out and result.returncode == windows_confinement.EXIT_TIMEOUT):
+                    raise KernelIsolationUnavailableError(
+                        "Windows confinement's launcher record does not match its exit code "
+                        f"(record {status.exit_code}, exit {result.returncode}); the result is not trusted."
+                    )
+            if status.limit in ("memory", "processes") and result.returncode == 0:
+                # A Windows job limit fails the allocation or the process start instead of ending
+                # the process, so a child that catches the error can still exit 0. The job went
+                # over its limit: it did not succeed, as a cgroup OOM kill would show on Linux.
+                what = (
+                    "its memory limit and was stopped from allocating more"
+                    if status.limit == "memory"
+                    else "its process limit and was stopped from starting more"
+                )
+                return ExecutionResult(
+                    returncode=1,
+                    stdout=result.stdout,
+                    stderr=result.stderr + f"\nThe job went over {what}.\n",
+                )
+        return result
+
+    def _run_wrapped(
+        self,
+        argv: list[str],
+        cwd_path: Path,
+        cancel_event: threading.Event | None,
+        *,
+        creationflags: int = 0,
+        outcome: dict[str, str] | None = None,
+        env_filter=None,
+        after_spawn=None,
+    ) -> ExecutionResult:
+        if outcome is None:
+            outcome = {}
         env = self._child_environment(cwd_path)
+        if env_filter is not None:
+            env = env_filter(env)
         # `start_new_session=True` puts the child in its OWN process group, which is what makes
         # the whole tree killable. `subprocess.run(timeout=…)` kills the direct child and reaps
         # it; anything that child spawned keeps running, reparented to init, with the caller
@@ -618,6 +881,7 @@ class JobRunner:
             shell=False,
             env=env,
             start_new_session=True,
+            creationflags=creationflags,
         )
         # The group id IS the child's pid (start_new_session), captured at creation: the child
         # may be reaped by the time any teardown runs, and the tracked value is the identifier
@@ -641,11 +905,14 @@ class JobRunner:
             _terminate_process_group(process, pgid=pgid)
 
         try:
+            if after_spawn is not None:
+                after_spawn(process)
             stdout, stderr = self._wait(process, cancel_event)
         except _JobCancelledError:
             # The operator withdrew the job. Same teardown as a timeout — the whole process
             # group, children and grandchildren — and a distinct code so the receipt can say
             # "cancelled" rather than "failed".
+            outcome["kind"] = "cancelled"
             teardown()
             partial_out, partial_err = "", ""
             with contextlib.suppress(Exception):
@@ -657,6 +924,7 @@ class JobRunner:
                 stderr=_truncate(f"{partial_err}\n{note}".strip(), self.policy.max_output_kb),
             )
         except subprocess.TimeoutExpired as exc:
+            outcome["kind"] = "timed_out"
             teardown()
             partial_stdout = _decode_partial(exc.stdout)
             partial_stderr = _decode_partial(exc.stderr)
@@ -805,7 +1073,11 @@ class JobRunner:
             return isolated
         # Network-only wrappers cannot enforce the filesystem contract.
         # macOS: real kernel-enforced network denial via Seatbelt (sandbox-exec).
-        return self._macos_sandbox_exec_prefix(argv, allowed_roots)
+        isolated = self._macos_sandbox_exec_prefix(argv, allowed_roots)
+        if isolated is not None:
+            return isolated
+        # Windows: AppContainer + Job Object through the pinned VoolConfine launcher.
+        return self._windows_confine_prefix(argv, allowed_roots)
 
     def _filesystem_only_isolation_prefix(
         self, argv: list[str], allowed_roots: tuple[Path, ...]
@@ -820,7 +1092,207 @@ class JobRunner:
         isolated = self._linux_bwrap_prefix(argv, allowed_roots, deny_network=False)
         if isolated is not None:
             return isolated
-        return self._macos_sandbox_exec_prefix(argv, allowed_roots, deny_network=False)
+        isolated = self._macos_sandbox_exec_prefix(argv, allowed_roots, deny_network=False)
+        if isolated is not None:
+            return isolated
+        return self._windows_confine_prefix(argv, allowed_roots, deny_network=False)
+
+    def _windows_confine_prefix(
+        self, argv: list[str], allowed_roots: tuple[Path, ...], *, deny_network: bool = True
+    ) -> list[str] | None:
+        """`[VoolConfine.exe, --policy, <json>, --, *argv]`, or None when the backend is unproven.
+
+        docs/WINDOWS_CONFINEMENT.md is the contract. `None` makes `_with_network_isolation`
+        refuse with its unchanged base message. A program phase 1 does not support is refused
+        here with its own message, because "this host cannot confine" would send the operator
+        looking for the wrong fix.
+        """
+        if not _is_windows_platform():
+            return None
+        from sandbox import windows_confinement
+
+        project_root = _windows_project_root()
+        launcher = windows_confinement.launcher_path(project_root)
+        if launcher is None:
+            return None
+        probe_key = f"voolconfine:{launcher}"
+        usable = _BACKEND_USABLE.get(probe_key)
+        if usable is None:
+            usable = bool(windows_confinement.probe(project_root))
+            _BACKEND_USABLE[probe_key] = usable
+        if not usable:
+            return None
+        program = self._windows_phase1_argv(argv)
+        policy, stage = self._windows_policy(allowed_roots, deny_network=deny_network)
+        if policy is None or stage is None:
+            return None
+        policy_path = stage / "policy.json"
+        try:
+            prefix = windows_confinement.confinement_prefix(
+                program, policy, project_root=project_root, policy_path=policy_path
+            )
+        except ValueError:
+            prefix = None
+        if prefix is None:
+            shutil.rmtree(stage, ignore_errors=True)
+            return None
+        # The run form only verifies ACLs. VOOL grants them first, unconfined, with the same
+        # policy. A grant that doesn't exit 0 refuses the job.
+        grant_key = json.dumps(
+            {
+                key: value
+                for key, value in json.loads(policy.to_json()).items()
+                if key in {"write_roots", "read_roots", "deny_write_paths", "deny_all_paths", "deny_write_git"}
+            },
+            sort_keys=True,
+        )
+        with _WINDOWS_STAGED_LOCK:
+            granted = grant_key in _WINDOWS_GRANTED
+        if not granted:
+            if not windows_confinement.launcher_form(prefix[0], "grant", policy_path):
+                shutil.rmtree(stage, ignore_errors=True)
+                raise KernelIsolationUnavailableError(
+                    "Windows confinement could not grant this job's folders (the launcher's grant "
+                    "step failed), so the job was not run."
+                )
+            with _WINDOWS_STAGED_LOCK:
+                _WINDOWS_GRANTED.add(grant_key)
+        with _WINDOWS_STAGED_LOCK:
+            _WINDOWS_STAGED[prefix[2]] = (stage, grant_key)
+        return prefix
+
+    @staticmethod
+    def _windows_phase1_argv(argv: list[str]) -> list[str]:
+        """The job's argv with its program pinned to the interpreter running VOOL, or a refusal.
+
+        `python`/`python3`/`py` and `pytest` become this interpreter (`pytest` as `-m pytest`).
+        On Windows a bare `python3` resolves to the Microsoft Store alias stub, and the
+        launcher never searches PATH anyway. An absolute program is accepted only when it IS
+        this interpreter or its base. Nothing else runs in phase 1.
+        """
+        interpreter = Path(sys.executable).resolve()
+        accepted = {os.path.normcase(str(interpreter))}
+        base = getattr(sys, "_base_executable", "") or ""
+        if base:
+            accepted.add(os.path.normcase(str(Path(base).resolve())))
+        program = str(argv[0]) if argv else ""
+        name = Path(program.replace("\\", "/")).name.lower()
+        stem = name[:-4] if name.endswith(".exe") else name
+        rest = [str(item) for item in argv[1:]]
+        if "/" not in program and "\\" not in program:  # a bare name, not a path (any case)
+            if stem in _WINDOWS_PYTHON_NAMES:
+                return [str(interpreter), *rest]
+            if stem in _WINDOWS_PYTEST_NAMES:
+                return [str(interpreter), "-m", "pytest", *rest]
+        elif Path(program).is_absolute() and os.path.normcase(str(Path(program).resolve())) in accepted:
+            return [str(Path(program).resolve()), *rest]
+        raise KernelIsolationUnavailableError(
+            f"Windows confinement runs Python and pytest jobs only for now; '{program}' is refused "
+            "until its toolchain is proven inside the confinement (git, npm, node, cargo, cmd and "
+            "PowerShell included). It was not run."
+        )
+
+    def _windows_policy(self, allowed_roots: tuple[Path, ...], *, deny_network: bool):
+        """The launcher policy for this job and the staging folder that holds its files.
+
+        The staging folder is a fresh `mkdtemp` that must sit outside every writable root, so
+        the child can't rewrite its own rules or forge the launcher's status record. A layout
+        the Windows ACL model can't express the way the Mac profile does is refused
+        (None, None), never approximated:
+        - a write root inside VOOL's code without the Mac's exemption, where an explicit allow ACE
+          would beat the inherited deny;
+        - a read or write root that contains VOOL's state or a credential folder.
+        """
+        from sandbox import windows_confinement
+
+        write_roots = tuple(dict.fromkeys(Path(root).resolve() for root in allowed_roots))
+        workspace = Path(self.policy.workspace_root).resolve()
+        # Shared: only the interpreter and its base, readable by every confined job. The workspace
+        # and the policy's read roots are this job's own: each gets a read capability only a job
+        # naming it carries, so a grant left on disk never lets another workspace's job read it
+        # (the Mac profile likewise allows reads of this job's roots only).
+        shared_read_roots = tuple(
+            dict.fromkeys(Path(root) for root in windows_confinement.interpreter_read_roots())
+        )
+        job_read_roots = tuple(
+            dict.fromkeys(
+                [
+                    *(Path(root).resolve() for root in self.policy.read_roots),
+                    workspace,
+                ]
+            )
+        )
+        read_roots = (*shared_read_roots, *job_read_roots)
+        try:
+            from core.runtime_state_protection import (
+                code_write_exemptions,
+                protected_code_roots,
+                protected_state_roots,
+            )
+
+            state = tuple(Path(p).resolve() for p in protected_state_roots())
+            code = tuple(Path(p).resolve() for p in protected_code_roots())
+            exempt = tuple(Path(p).resolve() for p in code_write_exemptions())
+        except Exception:
+            return None, None  # the protected set is unknown: fail closed
+
+        def within(path: Path, root: Path) -> bool:
+            return path == root or root in path.parents
+
+        for root in write_roots:
+            if any(within(root, c) for c in code) and not any(within(root, e) for e in exempt):
+                return None, None
+        sensitive = (*state, *(Path(p).resolve() for p in _sensitive_read_deny_roots()))
+        for root in (*write_roots, *read_roots):
+            if any(within(secret, root) for secret in sensitive):
+                return None, None
+            if any(within(root, protected) for protected in state):
+                return None, None  # VOOL's state is no-read, so no root may sit inside it
+        stage = Path(tempfile.mkdtemp(prefix="vool-confine-")).resolve()
+        if any(within(stage, root) for root in write_roots):
+            shutil.rmtree(stage, ignore_errors=True)
+            return None, None
+        temp_dir = workspace / ".sandbox-tmp"
+        with contextlib.suppress(OSError):
+            temp_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            policy = windows_confinement.WindowsConfinementPolicy(
+                write_roots=tuple(_windows_path_text(root) for root in write_roots),
+                read_roots=tuple(_windows_path_text(root) for root in shared_read_roots),
+                job_read_roots=tuple(_windows_path_text(root) for root in job_read_roots),
+                # A read root inside a write root would stay writable through the root's grant
+                # (a workspace .venv), so it is denied writes as well.
+                deny_write_paths=tuple(
+                    dict.fromkeys(
+                        _windows_path_text(root)
+                        for root in (
+                            *code,
+                            *(
+                                r for r in read_roots
+                                if r not in write_roots and any(within(r, w) for w in write_roots)
+                            ),
+                        )
+                    )
+                ),
+                # Like the Mac's secret and state denies: no read, no write. Only folders that
+                # exist are named; a job can't create one, because nothing outside its write roots
+                # is granted to it.
+                deny_all_paths=tuple(
+                    dict.fromkeys(_windows_path_text(root) for root in sensitive if Path(root).exists())
+                ),
+                deny_write_git=True,
+                network=not deny_network,
+                # A backstop only: the runner's own clock ends the job first and kills the launcher.
+                max_seconds=int(self.policy.max_seconds) + 5,
+                memory_mb=int(self.policy.max_memory_mb),
+                temp_dir=_windows_path_text(temp_dir),
+                status_path=_windows_path_text(stage / "status.json"),
+            )
+            policy.validate()
+        except ValueError:
+            shutil.rmtree(stage, ignore_errors=True)
+            return None, None
+        return policy, stage
 
     def _macos_sandbox_exec_prefix(
         self, argv: list[str], allowed_roots: tuple[Path, ...], *, deny_network: bool = True

@@ -9,6 +9,8 @@ Layout produced:
   <Stage>\app\           VOOL source (apps, core, adapters, config)
   <Stage>\ollama\        ollama.exe + lib\ollama\ runner support files
   <Stage>\broker\        the Windows broker, self-contained (windows\broker\publish.ps1)
+  <Stage>\broker\confine\  the job launcher VoolConfine, self-contained, in its own pinned folder
+  <Stage>\config\        confine-pin.json, the launcher folder's pin (installed as {app}\config)
   <Stage>\models\        Ollama model store (populated only with -IncludeModel)
   <Stage>\VOOL.cmd      launcher
 
@@ -170,10 +172,25 @@ Copy-Item $ollamaSupportSource (Join-Path $Stage "ollama\lib\ollama") -Recurse -
 # with VOOL (core\windows_broker\process.py); nothing is routed through it yet.
 $brokerDir = Join-Path $Stage "broker"
 if (Test-Path $brokerDir) { Remove-Item $brokerDir -Recurse -Force }
-& (Join-Path $RepoRoot "windows\broker\publish.ps1") -Output $brokerDir -Dotnet $Dotnet -Source $BrokerPackages
+# The same publish ships the job launcher in broker\confine and writes its pin (every file there with
+# its SHA-256) to config\confine-pin.json; sandbox\windows_confinement_pin.py refuses the launcher
+# unless the folder holds exactly those files. A stale pin is removed first, so a failed publish
+# can never leave an old pin describing new files.
+$confinePin = Join-Path $Stage "config\confine-pin.json"
+if (Test-Path -LiteralPath $confinePin) { Remove-Item -LiteralPath $confinePin -Force }
+& (Join-Path $RepoRoot "windows\broker\publish.ps1") -Output $brokerDir -Dotnet $Dotnet -Source $BrokerPackages -PinPath $confinePin
 if (-not (Test-Path -LiteralPath (Join-Path $brokerDir "VoolBroker.exe") -PathType Leaf)) {
   throw "Broker publish produced no VoolBroker.exe in $brokerDir"
 }
+if (-not (Test-Path -LiteralPath (Join-Path $brokerDir "confine\VoolConfine.exe") -PathType Leaf)) {
+  throw "Broker publish produced no confine\VoolConfine.exe in $brokerDir"
+}
+if (-not (Test-Path -LiteralPath $confinePin -PathType Leaf)) {
+  throw "Broker publish wrote no VoolConfine pin at $confinePin"
+}
+# The staged copy must pass the same check the installed app runs, so a bad pin fails the build.
+& $py -I -c "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); from sandbox.windows_confinement_pin import verified_launcher; sys.exit(0 if verified_launcher(Path(sys.argv[1])) == Path(sys.argv[2]) else 1)" $appDir (Join-Path $brokerDir "confine\VoolConfine.exe")
+if ($LASTEXITCODE -ne 0) { throw "The staged VoolConfine folder does not match its pin $confinePin" }
 New-Item -ItemType Directory -Force (Join-Path $Stage "models") | Out-Null
 Copy-Item (Join-Path $PSScriptRoot "vool-launch.cmd") (Join-Path $Stage "VOOL.cmd") -Force
 Copy-Item (Join-Path $PSScriptRoot "vool.vbs") (Join-Path $Stage "vool.vbs") -Force

@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Test-only: the launcher's own code with checks the tests choose. Never published or shipped. -->
+  <PropertyGroup><OutputType>Exe</OutputType><IsPackable>false</IsPackable><RootNamespace>VoolConfine.TestHost</RootNamespace></PropertyGroup>
+  <ItemGroup><ProjectReference Include="..\..\src\VoolConfine.Core\VoolConfine.Core.csproj" />
+    <!-- VoolConfineStart.exe is copied beside this program; the launcher starts it in the box. -->
+    <ProjectReference Include="..\..\src\VoolConfineStart\VoolConfineStart.csproj" />
+  </ItemGroup>
+</Project>

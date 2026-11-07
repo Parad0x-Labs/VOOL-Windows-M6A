@@ -1,0 +1,353 @@
+using System.Collections;
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+
+[assembly: InternalsVisibleTo("VoolConfine.Tests")]
+
+namespace VoolConfine.Core;
+
+/// <summary>Confinement could not be set up; the child never started (exit 125).</summary>
+public sealed class SetupException(string message) : Exception(message);
+
+/// <summary>
+/// The filesystem checks the run form makes around the child (chunk 2, Acl*.cs and RepoScan*.cs):
+/// verify the grants and deny ACEs before the child starts (a miss throws SetupException, so 125),
+/// and the repository scan whose second half runs after the job ended.
+/// </summary>
+public interface IConfinementChecks
+{
+    /// <summary>Throws <see cref="SetupException"/> when the policy's grants or deny ACEs are not in place.</summary>
+    void VerifyAcls(Policy policy, string packageSid);
+
+    /// <summary>Records the repository layouts under the write roots before the child starts.</summary>
+    IRepositoryScan StartRepositoryScan(Policy policy);
+
+    /// <summary>
+    /// The scan form on its own (no child): every repository layout under a write root that lacks
+    /// the deny. Throws when the scan can't finish.
+    /// </summary>
+    IReadOnlyList<string> UnprotectedRepositories(Policy policy);
+}
+
+/// <summary>The second half of the repository scan, after the job has ended.</summary>
+public interface IRepositoryScan
+{
+    /// <summary>Repository layouts (a .git, or a bare repository) that appeared under a write root.</summary>
+    IReadOnlyList<string> NewRepositories();
+}
+
+/// <summary>
+/// Runs one child confined (docs/WINDOWS_CONFINEMENT.md section 2). Every path that does not end
+/// with the child started inside the AppContainer and the job returns 125 or 126, and the status
+/// file then says child_started false (or is absent). Nothing ever runs unconfined.
+/// </summary>
+public static class Launcher
+{
+    /// <summary>How long the launcher waits for the kernel to report the job empty after ending it.</summary>
+    static readonly TimeSpan KillWait = TimeSpan.FromSeconds(10);
+
+    /// <summary>The trampoline the launcher starts in the box (docs/WINDOWS_CONFINEMENT.md, "Environment").</summary>
+    internal const string TrampolineName = "VoolConfineStart.exe";
+
+    /// <summary>
+    /// The trampoline's exit code when it could not start the program. Kept in step with
+    /// src/VoolConfineStart/Program.cs. A child exiting with it on purpose only gets its run refused.
+    /// </summary>
+    internal const uint TrampolineNotStarted = 0xE5C00125;
+
+    public static int Run(Policy policy, IReadOnlyList<string> argv, IConfinementChecks checks, TextWriter stderr)
+    {
+        ArgumentNullException.ThrowIfNull(checks);
+        var status = new LauncherStatus(policy.StatusPath);
+        try
+        {
+            // Before the first write to it, so a link can't carry the status file anywhere else.
+            CheckResolved(Path.GetDirectoryName(policy.StatusPath) ?? policy.StatusPath, "status folder");
+        }
+        catch (PolicyException e)
+        {
+            return Refuse(stderr, ExitCodes.PolicyInvalid, e.Message);
+        }
+
+        string commandLine;
+        try
+        {
+            commandLine = LauncherCommandLine.Build(argv);
+        }
+        catch (PolicyException e)
+        {
+            TryNotStarted(status, e.Message, stderr);
+            return Refuse(stderr, ExitCodes.PolicyInvalid, e.Message);
+        }
+
+        try
+        {
+            // First, so a stale record can never be read as this run's.
+            status.NotStarted("starting");
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return Refuse(stderr, ExitCodes.SetupFailed, $"status file unwritable: {e.Message}");
+        }
+
+        try
+        {
+            return RunConfined(policy, argv[0], commandLine, checks, status, stderr);
+        }
+        catch (PolicyException e)
+        {
+            // A path that does not resolve on disk to its own spelling (section 3): nothing started.
+            TryNotStarted(status, e.Message, stderr);
+            return Refuse(stderr, ExitCodes.PolicyInvalid, e.Message);
+        }
+        catch (Exception e)
+        {
+            // SetupException or anything unexpected: the child is not running (the job, if it was
+            // made, is closed by the using block below, which ends its tree).
+            var reason = e is SetupException ? e.Message : $"{e.GetType().Name}: {e.Message}";
+            TryNotStarted(status, reason, stderr);
+            return Refuse(stderr, ExitCodes.SetupFailed, reason);
+        }
+    }
+
+    static int RunConfined(Policy policy, string program, string commandLine, IConfinementChecks checks,
+        LauncherStatus status, TextWriter stderr)
+    {
+        foreach (var root in policy.WriteRoots) CheckResolved(root, "write root");
+        CheckTempDir(policy.TempDir);
+        var packageSid = Sids.EnsureProfile();
+        var capabilities = Sids.CapabilitiesFor(policy);
+        var trampoline = Trampoline();
+        var environment = TrampolineEnvironment(program, commandLine, policy.TempDir);
+        checks.VerifyAcls(policy, packageSid);
+        var scan = checks.StartRepositoryScan(policy);
+
+        // The trampoline is one process of the job, so the limit leaves max_processes for the tree.
+        using var job = ConfinementJob.Create(checked(policy.MaxProcesses + 1), policy.MemoryMb);
+        using var child = LauncherProcess.CreateSuspendedInJob(trampoline, LauncherCommandLine.Build([trampoline]),
+            packageSid, capabilities, job, environment);
+        try
+        {
+            if (!LauncherNative.IsProcessInJob(child.Process, job.Handle, out var inJob))
+                throw new SetupException($"IsProcessInJob failed: {LastError()}");
+            if (!inJob) throw new SetupException("the child is not in the job");
+            if (LauncherNative.ResumeThread(child.Thread) == uint.MaxValue)
+                throw new SetupException($"ResumeThread failed: {LastError()}");
+        }
+        catch
+        {
+            LauncherNative.TerminateProcess(child.Process, ExitCodes.SetupFailed);
+            throw;
+        }
+
+        // Only now, after the suspended create inside the job and the resume, does the record say started.
+        try
+        {
+            status.Started();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            job.KillAll(ExitCodes.SetupFailed, KillWait);
+            throw new SetupException($"status file unwritable after start; the job was ended: {e.Message}");
+        }
+
+        var timedOut = !WaitForExit(child.Process, TimeSpan.FromSeconds(policy.MaxSeconds));
+        uint code;
+        if (timedOut)
+        {
+            code = ExitCodes.Timeout;
+        }
+        else if (!LauncherNative.GetExitCodeProcess(child.Process, out code))
+        {
+            job.KillAll(ExitCodes.SetupFailed, KillWait);
+            throw new SetupException($"GetExitCodeProcess failed: {LastError()}");
+        }
+
+        // The main child is gone (or out of time). Whatever it left running in the job goes too,
+        // so no grandchild outlives the run.
+        // A job that will not empty can't be scanned or reported as finished: refuse the run (the
+        // job handle closes on the way out, which ends whatever is left).
+        if (!job.KillAll(timedOut ? (uint)ExitCodes.Timeout : 1u, KillWait))
+            throw new SetupException($"the job still had processes {KillWait.TotalSeconds:0}s after it was ended; the run is refused");
+        job.Drain(TimeSpan.FromSeconds(1));
+
+        // The trampoline could not start the program: nothing ran, so the record must not say it did.
+        if (!timedOut && code == TrampolineNotStarted)
+            throw new SetupException("CreateProcess of the program failed inside the box; VoolConfineStart's stderr line gives the Windows error");
+
+        var exitCode = timedOut ? ExitCodes.Timeout : unchecked((int)code);
+        var limit = timedOut ? "time" : job.LimitHit;
+        // After the whole tree is gone, so nothing can add a repository behind the scan.
+        var newRepositories = scan.NewRepositories();
+        if (newRepositories.Count > 0)
+        {
+            status.Finished(exitCode, timedOut, limit, newRepositories);
+            stderr.WriteLine($"{ExitCodes.RefusedMarker} a repository appeared under a write root: {string.Join(", ", newRepositories)}");
+            return ExitCodes.NewRepository;
+        }
+        status.Finished(exitCode, timedOut, limit, newRepositories);
+        return exitCode;
+    }
+
+    /// <summary>
+    /// The scan form (docs/WINDOWS_CONFINEMENT.md section 2): unconfined, no child. Rewrites the status
+    /// file's new_repositories and repositories_scanned and keeps the rest of the record. 0 when no
+    /// unprotected layout exists, 123 when one does, 125 when the scan or the rewrite can't finish
+    /// (the file is then left as it was, so it never claims a scan that did not complete).
+    /// </summary>
+    public static int Scan(Policy policy, IConfinementChecks checks, TextWriter stderr)
+    {
+        ArgumentNullException.ThrowIfNull(checks);
+        var status = new LauncherStatus(policy.StatusPath);
+        IReadOnlyList<string> unprotected;
+        try
+        {
+            CheckResolved(Path.GetDirectoryName(policy.StatusPath) ?? policy.StatusPath, "status folder");
+            foreach (var root in policy.WriteRoots) CheckResolved(root, "write root");
+            unprotected = checks.UnprotectedRepositories(policy);
+        }
+        catch (Exception e)
+        {
+            var reason = e is SetupException or PolicyException ? e.Message : $"{e.GetType().Name}: {e.Message}";
+            return Refuse(stderr, ExitCodes.SetupFailed, $"the repository scan could not finish: {reason}");
+        }
+        try
+        {
+            status.Scanned(unprotected);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or SetupException)
+        {
+            return Refuse(stderr, ExitCodes.SetupFailed, $"status file not rewritten after the scan: {e.Message}");
+        }
+        if (unprotected.Count == 0) return 0;
+        stderr.WriteLine($"{ExitCodes.RefusedMarker} a repository layout under a write root lacks the deny: {string.Join(", ", unprotected)}");
+        return ExitCodes.NewRepository;
+    }
+
+    /// <summary>Waits for the child, true when it exited within the time. Long limits are waited in slices.</summary>
+    static bool WaitForExit(nint process, TimeSpan limit)
+    {
+        var deadline = DateTime.UtcNow + limit;
+        while (true)
+        {
+            var remaining = deadline - DateTime.UtcNow;
+            if (remaining <= TimeSpan.Zero) return LauncherNative.WaitForSingleObject(process, 0) == LauncherNative.WaitObject0;
+            var slice = (uint)Math.Min(remaining.TotalMilliseconds + 1, 60_000);
+            var result = LauncherNative.WaitForSingleObject(process, slice);
+            if (result == LauncherNative.WaitObject0) return true;
+            if (result != LauncherNative.WaitTimeout) throw new SetupException($"WaitForSingleObject failed: {LastError()}");
+        }
+    }
+
+    /// <summary>
+    /// docs/WINDOWS_CONFINEMENT.md section 3, "Resolved on disk": the folder, opened (links followed),
+    /// must have exactly the final path it was given, case-insensitively. A junction, a symlink, a
+    /// short name or a missing folder anywhere on the way is a PolicyException (126).
+    /// </summary>
+    internal static void CheckResolved(string folder, string what)
+    {
+        using var handle = LauncherNative.CreateFileW(folder, LauncherNative.FileReadAttributes, LauncherNative.FileShareAll, 0,
+            LauncherNative.OpenExisting, LauncherNative.FileFlagBackupSemantics, 0);
+        if (handle.IsInvalid) throw new PolicyException($"the {what} could not be opened: {folder}: {LastError()}");
+        var buffer = new System.Text.StringBuilder(32768);
+        var length = LauncherNative.GetFinalPathNameByHandleW(handle, buffer, (uint)buffer.Capacity, 0);
+        if (length == 0 || length >= buffer.Capacity)
+            throw new PolicyException($"the {what}'s final path could not be read: {folder}: {LastError()}");
+        var final = buffer.ToString();
+        const string Prefix = @"\\?\";
+        if (!final.StartsWith(Prefix, StringComparison.Ordinal) || final.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
+            throw new PolicyException($"the {what} resolves to {final}, not a drive-letter path: {folder}");
+        final = final[Prefix.Length..];
+        if (!string.Equals(final.TrimEnd('\\'), folder.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))
+            throw new PolicyException($"the {what} {folder} resolves to {final}; give the resolved path");
+    }
+
+    /// <summary>
+    /// The temp folder must already exist as a real folder. The launcher never creates it: it runs as
+    /// the user, and a link a previous job planted there could point a create outside the roots.
+    /// </summary>
+    static void CheckTempDir(string tempDir)
+    {
+        FileAttributes attributes;
+        try { attributes = File.GetAttributes(tempDir); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            throw new SetupException($"temp_dir is not usable: {e.Message}");
+        }
+        if (!attributes.HasFlag(FileAttributes.Directory)) throw new SetupException("temp_dir is not a folder");
+        if (attributes.HasFlag(FileAttributes.ReparsePoint)) throw new SetupException("temp_dir is a link or junction");
+    }
+
+    /// <summary>The launcher's own environment with TEMP and TMP set to temp_dir.</summary>
+    internal static IReadOnlyDictionary<string, string> ChildEnvironment(string tempDir)
+    {
+        var environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
+            environment[(string)entry.Key] = (string?)entry.Value ?? "";
+        environment["TEMP"] = tempDir;
+        environment["TMP"] = tempDir;
+        return environment;
+    }
+
+    /// <summary>
+    /// VoolConfineStart.exe beside the launcher's own files. Missing, or a link, is a setup failure:
+    /// without it TEMP would be the shared AC\Temp.
+    /// </summary>
+    static string Trampoline()
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, TrampolineName);
+        FileAttributes attributes;
+        try { attributes = File.GetAttributes(path); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            throw new SetupException($"{TrampolineName} is not beside the launcher: {e.Message}");
+        }
+        if (attributes.HasFlag(FileAttributes.Directory) || attributes.HasFlag(FileAttributes.ReparsePoint))
+            throw new SetupException($"{TrampolineName} is not a plain file: {path}");
+        return path;
+    }
+
+    /// <summary>
+    /// The child environment plus the three variables the trampoline reads and drops: the program,
+    /// its command line (passed through verbatim) and temp_dir.
+    /// </summary>
+    internal static IReadOnlyDictionary<string, string> TrampolineEnvironment(string program, string commandLine, string tempDir)
+    {
+        var environment = new Dictionary<string, string>(ChildEnvironment(tempDir), StringComparer.OrdinalIgnoreCase)
+        {
+            ["VOOL_CONFINE_PROGRAM"] = program,
+            ["VOOL_CONFINE_COMMAND_LINE"] = commandLine,
+            ["VOOL_CONFINE_TEMP"] = tempDir,
+        };
+        // Windows also points an AppContainer process's profile variables at the real profile
+        // (windows-broker run 42362758893, attack pack), whatever the env block says. The caller's
+        // values ride along and the trampoline puts them back.
+        foreach (var name in RestoredProfileVariables)
+            if (environment.TryGetValue(name, out var value) && value.Length > 0)
+                environment[RestorePrefix + name] = value;
+        return environment;
+    }
+
+    /// <summary>The profile variables the trampoline restores. Kept in step with src/VoolConfineStart/Program.cs.</summary>
+    internal static readonly string[] RestoredProfileVariables = ["USERPROFILE", "APPDATA", "LOCALAPPDATA"];
+
+    internal const string RestorePrefix = "VOOL_CONFINE_SET_";
+
+    static void TryNotStarted(LauncherStatus status, string reason, TextWriter stderr)
+    {
+        try { status.NotStarted(reason); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            stderr.WriteLine($"{ExitCodes.RefusedMarker} status file unwritable: {e.Message}");
+        }
+    }
+
+    static int Refuse(TextWriter stderr, int code, string reason)
+    {
+        stderr.WriteLine($"{ExitCodes.RefusedMarker} {reason}");
+        return code;
+    }
+
+    static string LastError() => new Win32Exception(Marshal.GetLastWin32Error()).Message;
+}

@@ -53,6 +53,10 @@ Source: "{#Stage}\models\*"; DestDir: "{localappdata}\VOOL\models"; Flags: recur
 Source: "{#Stage}\ollama\*"; DestDir: "{app}\ollama"; Flags: recursesubdirs createallsubdirs ignoreversion
 ; The Windows broker, self-contained (windows\broker\publish.ps1). The API starts it with VOOL.
 Source: "{#Stage}\broker\*"; DestDir: "{app}\broker"; Flags: recursesubdirs createallsubdirs ignoreversion
+; The pin of the job launcher's folder {app}\broker\confine (every file there with its SHA-256).
+; sandbox\windows_confinement_pin.py refuses the launcher unless the folder matches it exactly. No
+; skipifsourcedoesntexist: a build without a pin must fail here, not ship a launcher VOOL refuses.
+Source: "{#Stage}\config\confine-pin.json"; DestDir: "{app}\config"; Flags: ignoreversion
 Source: "{#Stage}\python\*"; DestDir: "{app}\python"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "{#Stage}\bundle_manifest.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Stage}\bundle_supervisor.py"; DestDir: "{app}"; Flags: ignoreversion
@@ -64,6 +68,12 @@ Source: "{#Stage}\vool_protocol_handler.py"; DestDir: "{app}"; Flags: ignorevers
 ; The shortcuts' icon. IconFilename is read on the USER's PC, so it must name an installed file:
 ; {#SourcePath} is expanded at compile time and names a folder on the build machine.
 Source: "{#SourcePath}\..\assets\vool.ico"; DestDir: "{app}"; Flags: ignoreversion
+
+[InstallDelete]
+; The launcher folder must hold exactly the pinned files, so an upgrade clears it before copying:
+; a file an older build shipped and this one dropped would otherwise stay behind as an unlisted
+; file, and VOOL would refuse the launcher. Program files only; nothing of the user's lives there.
+Type: filesandordirs; Name: "{app}\broker\confine"
 
 [Registry]
 ; User-facing VOOL deep link. HKCU matches PrivilegesRequired=lowest and never requires admin.

@@ -10,6 +10,10 @@ Checks (each recorded PASS/FAIL in dist\install-smoke\report.json; the first har
 the run, and logs are always kept):
   build      Ollama release hash-verified; bundle staged; installer compiled
   install    a FOREIGN listener on 11435 survives install; non-elevated per-user install dir
+             the job launcher {app}\broker\confine matches its pin {app}\config\confine-pin.json,
+             checked by the INSTALLED python and sandbox code (tools\confine_pin_check.py), with
+             negative controls on a copy: planted DLL, changed byte, missing file, missing pin,
+             swapped folder, and (Windows) a held file that can't be written or renamed
   launch     /healthz 200; the 11435 listener is VOOL's own python under the install dir, owned
              by the installing user; the window host is still alive after the settle period
   slices     tools/installed_slices.py against the installed API: health and version identity,
@@ -47,6 +51,7 @@ $ReportDir = Join-Path $RepoRoot "dist\install-smoke"
 New-Item -ItemType Directory -Force $Work, $ReportDir | Out-Null
 # A slices.json left by an earlier run on this checkout must not read as this run's result.
 Remove-Item -LiteralPath (Join-Path $ReportDir "slices.json") -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $ReportDir "confine-pin.json") -Force -ErrorAction SilentlyContinue
 $Checks = [System.Collections.Generic.List[object]]::new()
 $InstallRoot = Join-Path $env:LOCALAPPDATA "Programs\VOOL"
 $DataRoot = Join-Path $env:LOCALAPPDATA "VOOL"
@@ -190,6 +195,17 @@ try {
         }
         $logText = Get-Content -Raw -LiteralPath $installLog
         Require "install" "not_elevated_by_setup" ($logText -match "(?im)Administrative install mode:\s*No") "Inno log: non-administrative install mode"
+        # The job launcher ships in its own pinned folder. The installed python runs the installed pin
+        # check, so this proves what the installed app would accept; the controls run on a copy.
+        $installedPython = Join-Path $InstallRoot "python\python.exe"
+        $pinWork = Join-Path $Work "confine-pin"
+        New-Item -ItemType Directory -Force $pinWork | Out-Null
+        $ErrorActionPreference = "Continue"
+        & $installedPython -I (Join-Path $RepoRoot "tools\confine_pin_check.py") --app-root (Join-Path $InstallRoot "app") --work $pinWork --out (Join-Path $ReportDir "confine-pin.json") 2>&1 |
+            Out-File (Join-Path $ReportDir "confine-pin.log")
+        $pinExit = $LASTEXITCODE
+        $ErrorActionPreference = "Stop"
+        Require "install" "confine_launcher_pinned" ($pinExit -eq 0) "exit=$pinExit; see confine-pin.json"
         Stop-Process -Id $Foreign.Id -Force
         Start-Sleep -Seconds 2
         $Foreign = $null
@@ -254,6 +270,7 @@ try {
         while ((Get-Date) -lt $deadline -and (Test-Path (Join-Path $InstallRoot "app"))) { Start-Sleep -Seconds 2 }
         Require "uninstall" "foreign_listener_survived" ([bool](Get-Process -Id $Foreign.Id -ErrorAction SilentlyContinue)) "pid=$($Foreign.Id)"
         Require "uninstall" "program_files_removed" (-not (Test-Path (Join-Path $InstallRoot "app"))) $InstallRoot
+        Require "uninstall" "confine_launcher_removed" (-not (Test-Path (Join-Path $InstallRoot "broker\confine")) -and -not (Test-Path (Join-Path $InstallRoot "config\confine-pin.json"))) "$InstallRoot\broker\confine"
         $left = @(Get-VoolProcesses)
         Require "uninstall" "no_vool_process_left" ($left.Count -eq 0) (($left | ForEach-Object { "$($_.ProcessId):$($_.Name)" }) -join ",")
         Add-Check "uninstall" "user_data_preserved" (Test-Path $DataRoot) $DataRoot
@@ -271,6 +288,12 @@ try {
     if (Test-Path "$DataRoot\data\logs") { Copy-Item -Recurse -Force "$DataRoot\data\logs" (Join-Path $ReportDir "vool-runtime-logs") -ErrorAction SilentlyContinue }
     # A slices.json that does not parse must not cost the report itself: it is kept as its own file.
     $slicesReport = $null
+    $confinePinReport = $null
+    try {
+        if (Test-Path (Join-Path $ReportDir "confine-pin.json")) { $confinePinReport = Get-Content -Raw (Join-Path $ReportDir "confine-pin.json") | ConvertFrom-Json }
+    } catch {
+        $confinePinReport = "unreadable: $($_.Exception.Message)"
+    }
     try {
         if (Test-Path (Join-Path $ReportDir "slices.json")) { $slicesReport = Get-Content -Raw (Join-Path $ReportDir "slices.json") | ConvertFrom-Json }
     } catch {
@@ -287,6 +310,7 @@ try {
         limits = @("runner account, not a separate standard user", "process/HTTP lifecycle only; no visible-desktop or local-model proof")
         checks = $Checks
         slices = $slicesReport
+        confine_pin = $confinePinReport
     }
     $report | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8 (Join-Path $ReportDir "report.json")
     Remove-Item -Recurse -Force $Work -ErrorAction SilentlyContinue

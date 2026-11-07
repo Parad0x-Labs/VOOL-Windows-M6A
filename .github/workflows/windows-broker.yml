@@ -158,3 +158,17 @@ jobs:
           [xml]$report = Get-Content "$env:RUNNER_TEMP/pytest-broker.xml"
           $skipped = ($report.testsuites.testsuite | Measure-Object -Property skipped -Sum).Sum
           if ($skipped -ne 0) { throw "$skipped broker client test(s) skipped on Windows" }
+
+      - name: Confinement attack pack against the published, pinned launcher
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # The Windows confinement backend runs only the pinned folder publish.ps1 writes
+          # (windows\broker\publish\confine and confine-pin.json); without it every job is refused,
+          # and a refused job fails every attack test (refused is not a pass).
+          & ./windows/broker/publish.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'publish.ps1 failed' }
+          python -m pytest tests/test_windows_confinement_attacks.py -q -rs -p no:cacheprovider --junitxml="$env:RUNNER_TEMP/pytest-attacks.xml"
+          if ($LASTEXITCODE -ne 0) { throw 'the confinement attack pack failed' }
+          [xml]$report = Get-Content "$env:RUNNER_TEMP/pytest-attacks.xml"
+          $skipped = ($report.testsuites.testsuite | Measure-Object -Property skipped -Sum).Sum
+          if ($skipped -ne 0) { throw "$skipped confinement attack test(s) skipped on Windows" }

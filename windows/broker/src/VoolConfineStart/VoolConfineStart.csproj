@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The trampoline VoolConfine.exe starts inside the box (docs/WINDOWS_CONFINEMENT.md, TEMP). No references: it must load nothing but itself and the runtime. -->
+  <PropertyGroup><OutputType>Exe</OutputType><RootNamespace>VoolConfineStart</RootNamespace><AllowUnsafeBlocks>false</AllowUnsafeBlocks></PropertyGroup>
+</Project>
