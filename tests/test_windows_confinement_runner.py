@@ -338,7 +338,7 @@ def test_a_status_record_that_contradicts_the_exit_code_is_refused(windows, tmp_
 @pytest.mark.parametrize("mode", ["newrepo", "newrepo-status-only", "exit123"])
 def test_a_new_repository_the_launcher_reports_refuses_the_result(windows, tmp_path, private_tmp, mode) -> None:
     _use_launcher(windows, _fake_launcher(tmp_path / "bin", mode))
-    with pytest.raises(jr.NestedGitMetadataError, match="git metadata|123"):
+    with pytest.raises(jr.NestedGitMetadataError, match=r"git metadata|123"):
         _runner(tmp_path).run(["python", "-c", "print('done')"])
     assert _staging_folders(private_tmp) == set()
 
@@ -573,7 +573,7 @@ def test_a_read_root_inside_a_write_root_is_denied_writes(windows, tmp_path) -> 
     runner = jr.JobRunner(
         ExecutionPolicy(workspace_root=tmp_path / "ws", writable_roots=(tmp_path / "ws",), read_roots=(venv,))
     )
-    policy = json.loads(Path(runner._with_network_isolation(["python", "-c", "0"])[2]).read_text())
+    policy = json.loads(Path(runner._with_network_isolation(["python", "-c", "0"])[2]).read_text(encoding="utf-8"))
     assert str(venv) in policy["job_read_roots"] and str(venv) in policy["deny_write_paths"]
     assert str((tmp_path / "ws").resolve()) not in policy["deny_write_paths"], "the workspace itself stays writable"
 
