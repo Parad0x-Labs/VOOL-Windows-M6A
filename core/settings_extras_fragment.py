@@ -77,8 +77,27 @@ function esc(text){
 
 // ---- memory section ------------------------------------------------------------------------
 var memSec = null;
+function renderRules(){
+  var rules = memSec && memSec.querySelector('.vs-rule-list');
+  if (!rules) return;
+  fetch('/api/memory/standing-instructions').then(function(r){ return r.json(); }).then(function(j){
+    var rows = (j && j.ok && j.instructions) || [];
+    if (!rows.length) {
+      rules.innerHTML = '<div class="vs-empty">' + XT('vx.memory.rules_empty', 'No rules saved. A rule you give in chat, like \u201calways answer in bullet points\u201d, appears here.') + '</div>';
+      return;
+    }
+    rules.innerHTML = rows.map(function(row){
+      return '<div class="vs-mem-item" data-vs-rule="' + esc(row.id) + '">' +
+        '<span class="vs-tag">' + esc(String(row.workspace || '').split(':')[0] || 'rule') + '</span>' +
+        '<span>' + esc(row.text) + '</span></div>';
+    }).join('');
+  }).catch(function(){
+    rules.innerHTML = '<div class="vs-empty">' + XT('vx.memory.rules_unreadable', 'Saved rules could not be read.') + '</div>';
+  });
+}
 function renderMemory(){
   if (!memSec) return;
+  renderRules();
   var list = memSec.querySelector('.vs-mem-list');
   list.innerHTML = '<div class="vs-empty">' + XT('vx.memory.reading', 'Reading memory\\u2026') + '</div>';
   fetch('/api/memory/entries?limit=50').then(function(r){ return r.json(); }).then(function(j){
@@ -184,7 +203,9 @@ function section(which){
   var node = document.createElement('div');
   if (which === 'memory') {
     node.className = 'vs-sec'; node.id = 'vsMemorySec';
-    node.innerHTML = '<h4>' + XT('vx.memory.title', 'Memory') + '</h4><div class="vs-mem-list"></div>';
+    node.innerHTML = '<h4>' + XT('vx.memory.title', 'Memory') + '</h4><div class="vs-mem-list"></div>' +
+      '<h4>' + XT('vx.memory.rules_title', 'Rules VOOL follows in every chat') + '</h4><div class="vs-rule-list"></div>' +
+      '<div class="vs-empty">' + XT('vx.memory.rules_hint', 'To remove a rule, tell VOOL in a chat to stop doing it.') + '</div>';
   } else if (which === 'privacy') {
     node.className = 'vs-sec vs-privacy'; node.id = 'vsPrivacySec';
     node.innerHTML = '<h4>' + XT('vx.privacy.title', 'Privacy &amp; data') + '</h4>' +

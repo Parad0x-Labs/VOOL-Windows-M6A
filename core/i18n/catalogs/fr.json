@@ -1412,6 +1412,10 @@
     "vx.memory.forget_title": "Oublier exactement cette entrée",
     "vx.memory.not_removed": "non supprimé",
     "vx.memory.reading": "Lecture de la mémoire…",
+    "vx.memory.rules_title": "Règles que VOOL suit dans chaque chat",
+    "vx.memory.rules_empty": "Aucune règle enregistrée. Une règle donnée dans le chat, comme « réponds toujours en liste à puces », apparaît ici.",
+    "vx.memory.rules_hint": "Pour retirer une règle, demande à VOOL dans un chat d’arrêter.",
+    "vx.memory.rules_unreadable": "Les règles enregistrées n’ont pas pu être lues.",
     "vx.memory.title": "Mémoire",
     "vx.memory.unreadable": "La mémoire n’a pas pu être lue.",
     "vx.palette.toolbelt": "Ceinture à outils — capacités installées…",
@@ -1904,7 +1908,7 @@
     "fault.wallet_payment_channel_off.action": "Activez un canal de paiement dans les réglages Crypto seulement si vous voulez que des paiements passent par lui ; le plafond et votre approbation s'appliquent sur chaque canal.",
     "fault.wallet_x402_sdk_unavailable.message": "Cette version ne peut pas payer les offres x402 sur Base via le x402 Foundation SDK : l'extra optionnel x402 n'est pas installé sur cette machine. Rien n'a été signé ni envoyé. Toutes les autres fonctions du portefeuille marchent sans lui ; une fois installé, réessayez."
   },
-  "source_catalog_sha256": "54e72d10493f816529ee35b551f43bd00077ade7552b629c0ab79b9ce53f30d2",
+  "source_catalog_sha256": "6a1f75ac9468f1cca6eac98ca01010c65cf3b79b45941f8433736526adf75d0d",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

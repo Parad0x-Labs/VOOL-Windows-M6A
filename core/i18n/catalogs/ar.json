@@ -1412,6 +1412,10 @@
     "vx.memory.forget_title": "انسَ هذا المدخل بالضبط",
     "vx.memory.not_removed": "لم يُزَل",
     "vx.memory.reading": "جارٍ قراءة الذاكرة…",
+    "vx.memory.rules_title": "قواعد يتبعها VOOL في كل محادثة",
+    "vx.memory.rules_empty": "لا توجد قواعد محفوظة. تظهر هنا أي قاعدة تعطيها في المحادثة، مثل «أجب دائمًا بنقاط».",
+    "vx.memory.rules_hint": "لإزالة قاعدة، اطلب من VOOL في محادثة أن يتوقف عنها.",
+    "vx.memory.rules_unreadable": "تعذّرت قراءة القواعد المحفوظة.",
     "vx.memory.title": "الذاكرة",
     "vx.memory.unreadable": "تعذّرت قراءة الذاكرة.",
     "vx.palette.toolbelt": "حزام الأدوات — القدرات المثبَّتة…",
@@ -1904,7 +1908,7 @@
     "fault.wallet_payment_channel_off.action": "شغّل قناة دفع في إعدادات العملات المشفرة فقط إن أردت أن تتم الدفعات عبرها؛ الحد الأقصى وموافقتك يسريان على كل قناة.",
     "fault.wallet_x402_sdk_unavailable.message": "لا يستطيع هذا الإصدار دفع عروض x402 على Base عبر x402 Foundation SDK: الإضافة الاختيارية x402 غير مثبتة على هذه الآلة. لم يوقَّع أو يُرسل شيء. كل وظائف المحفظة الأخرى تعمل بدونها؛ بعد تثبيتها أعد المحاولة."
   },
-  "source_catalog_sha256": "54e72d10493f816529ee35b551f43bd00077ade7552b629c0ab79b9ce53f30d2",
+  "source_catalog_sha256": "6a1f75ac9468f1cca6eac98ca01010c65cf3b79b45941f8433736526adf75d0d",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

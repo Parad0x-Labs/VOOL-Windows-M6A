@@ -1412,6 +1412,10 @@
     "vx.memory.forget_title": "Забути саме цей запис",
     "vx.memory.not_removed": "не видалено",
     "vx.memory.reading": "Читаю пам'ять…",
+    "vx.memory.rules_title": "Правила, яких VOOL дотримується в кожному чаті",
+    "vx.memory.rules_empty": "Збережених правил немає. Правило з чату, наприклад «завжди відповідай списком», з’явиться тут.",
+    "vx.memory.rules_hint": "Щоб прибрати правило, попросіть VOOL у чаті більше так не робити.",
+    "vx.memory.rules_unreadable": "Не вдалося прочитати збережені правила.",
     "vx.memory.title": "Пам'ять",
     "vx.memory.unreadable": "Не вдалося прочитати пам'ять.",
     "vx.palette.toolbelt": "Пояс інструментів — установлені можливості…",
@@ -1904,7 +1908,7 @@
     "fault.wallet_payment_channel_off.action": "Вмикайте платіжний канал у налаштуваннях Крипто, лише якщо хочете платити через нього; ліміт і ваше схвалення діють на кожному каналі.",
     "fault.wallet_x402_sdk_unavailable.message": "Ця збірка не вміє оплачувати пропозиції x402 у мережі Base через x402 Foundation SDK: необов'язковий додаток x402 не встановлено на цій машині. Нічого не підписано і не надіслано. Усі інші функції гаманця працюють без нього; після встановлення повторіть."
   },
-  "source_catalog_sha256": "54e72d10493f816529ee35b551f43bd00077ade7552b629c0ab79b9ce53f30d2",
+  "source_catalog_sha256": "6a1f75ac9468f1cca6eac98ca01010c65cf3b79b45941f8433736526adf75d0d",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

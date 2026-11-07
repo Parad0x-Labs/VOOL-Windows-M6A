@@ -1412,6 +1412,10 @@
     "vx.memory.forget_title": "केवल यही प्रविष्टि भुलाएँ",
     "vx.memory.not_removed": "हटाया नहीं गया",
     "vx.memory.reading": "स्मृति पढ़ी जा रही है…",
+    "vx.memory.rules_title": "नियम जिनका VOOL हर चैट में पालन करता है",
+    "vx.memory.rules_empty": "कोई नियम सहेजा नहीं गया। चैट में दिया गया नियम, जैसे “हमेशा बुलेट पॉइंट में जवाब दो”, यहाँ दिखता है।",
+    "vx.memory.rules_hint": "कोई नियम हटाने के लिए, चैट में VOOL से उसे बंद करने को कहें।",
+    "vx.memory.rules_unreadable": "सहेजे गए नियम पढ़े नहीं जा सके।",
     "vx.memory.title": "स्मृति",
     "vx.memory.unreadable": "स्मृति नहीं पढ़ी जा सकी।",
     "vx.palette.toolbelt": "टूलबेल्ट — जुड़ी क्षमताएँ…",
@@ -1904,7 +1908,7 @@
     "fault.wallet_payment_channel_off.action": "क्रिप्टो सेटिंग्स में भुगतान चैनल तभी चालू करें जब आप उसके ज़रिए भुगतान चाहते हों; सीमा और आपकी मंज़ूरी हर चैनल पर लागू होती है।",
     "fault.wallet_x402_sdk_unavailable.message": "यह बिल्ड x402 Foundation SDK के ज़रिए Base पर x402 ऑफ़र का भुगतान नहीं कर सकता: वैकल्पिक x402 ऐड-ऑन इस मशीन पर नहीं है। कुछ हस्ताक्षरित या भेजा नहीं गया। वॉलेट की बाकी हर सुविधा इसके बिना चलती है; इसे लगाने पर दोबारा कोशिश करें।"
   },
-  "source_catalog_sha256": "54e72d10493f816529ee35b551f43bd00077ade7552b629c0ab79b9ce53f30d2",
+  "source_catalog_sha256": "6a1f75ac9468f1cca6eac98ca01010c65cf3b79b45941f8433736526adf75d0d",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

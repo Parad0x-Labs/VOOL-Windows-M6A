@@ -1412,6 +1412,10 @@
     "vx.memory.forget_title": "Zapomnij dokładnie ten wpis",
     "vx.memory.not_removed": "nie usunięto",
     "vx.memory.reading": "Czytam pamięć…",
+    "vx.memory.rules_title": "Zasady, których VOOL przestrzega w każdym czacie",
+    "vx.memory.rules_empty": "Brak zapisanych zasad. Zasada podana w czacie, np. „zawsze odpowiadaj w punktach”, pojawi się tutaj.",
+    "vx.memory.rules_hint": "Aby usunąć zasadę, powiedz VOOL w czacie, żeby przestał tak robić.",
+    "vx.memory.rules_unreadable": "Nie udało się odczytać zapisanych zasad.",
     "vx.memory.title": "Pamięć",
     "vx.memory.unreadable": "Nie udało się odczytać pamięci.",
     "vx.palette.toolbelt": "Pas narzędzi — zainstalowane możliwości…",
@@ -1904,7 +1908,7 @@
     "fault.wallet_payment_channel_off.action": "Włącz kanał płatności w ustawieniach Krypto tylko wtedy, gdy chcesz, by płatności przez niego szły; limit i twoja zgoda obowiązują na każdym kanale.",
     "fault.wallet_x402_sdk_unavailable.message": "Ta wersja nie potrafi opłacać ofert x402 w sieci Base przez x402 Foundation SDK: na tym komputerze nie ma opcjonalnego dodatku x402. Nic nie podpisano ani nie wysłano. Każda inna funkcja portfela działa bez niego; po zainstalowaniu spróbuj ponownie."
   },
-  "source_catalog_sha256": "54e72d10493f816529ee35b551f43bd00077ade7552b629c0ab79b9ce53f30d2",
+  "source_catalog_sha256": "6a1f75ac9468f1cca6eac98ca01010c65cf3b79b45941f8433736526adf75d0d",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

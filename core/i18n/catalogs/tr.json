@@ -1412,6 +1412,10 @@
     "vx.memory.forget_title": "Tam olarak bu kaydı unut",
     "vx.memory.not_removed": "kaldırılmadı",
     "vx.memory.reading": "Hafıza okunuyor…",
+    "vx.memory.rules_title": "VOOL'un her sohbette uyduğu kurallar",
+    "vx.memory.rules_empty": "Kayıtlı kural yok. Sohbette verdiğiniz bir kural, örneğin “her zaman madde işaretleriyle yanıtla”, burada görünür.",
+    "vx.memory.rules_hint": "Bir kuralı kaldırmak için sohbette VOOL'a bunu bırakmasını söyleyin.",
+    "vx.memory.rules_unreadable": "Kayıtlı kurallar okunamadı.",
     "vx.memory.title": "Hafıza",
     "vx.memory.unreadable": "Hafıza okunamadı.",
     "vx.palette.toolbelt": "Araç kemeri — kurulu yetenekler…",
@@ -1904,7 +1908,7 @@
     "fault.wallet_payment_channel_off.action": "Bir ödeme kanalını Kripto ayarlarında yalnızca ödemelerin onun üzerinden yapılmasını istiyorsanız açın; tavan ve sizin onayınız her kanalda geçerlidir.",
     "fault.wallet_x402_sdk_unavailable.message": "Bu yapı x402 Foundation SDK üzerinden Base'deki x402 tekliflerini ödeyemez: isteğe bağlı x402 eki bu makinede kurulu değil. Hiçbir şey imzalanmadı veya gönderilmedi. Cüzdanın diğer her işlevi onsuz çalışır; kurulunca tekrar deneyin."
   },
-  "source_catalog_sha256": "54e72d10493f816529ee35b551f43bd00077ade7552b629c0ab79b9ce53f30d2",
+  "source_catalog_sha256": "6a1f75ac9468f1cca6eac98ca01010c65cf3b79b45941f8433736526adf75d0d",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

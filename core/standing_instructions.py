@@ -265,6 +265,19 @@ def list_instructions(principal: str, workspace: str) -> list[Instruction]:
     ]
 
 
+def list_active() -> list[Instruction]:
+    """Every active instruction in the store, oldest first: what the Memory page shows the owner (read-only).
+    Only owner-authored turns ever save one (`observe_turn`), so the whole store is the owner's."""
+    with _LOCK:
+        rows = _load()
+    return [
+        Instruction(str(r["id"]), str(r["principal"]), str(r["workspace"]), str(r["text"]), tuple(r.get("topic") or ()),
+                    float(r.get("created_at") or 0.0), str(r.get("session_id") or ""))
+        for r in rows
+        if r.get("status") == "active" and r.get("id") and r.get("text")
+    ]
+
+
 def _add(principal: str, workspace: str, text: str, session_id: str) -> Instruction | None:
     clean = " ".join(str(text or "").split())[:MAX_CHARS]
     if not clean:
@@ -542,6 +555,58 @@ def _order_names_the_format(sentence: str) -> bool:
                                           or not _about_presentation(opener))
 
 
+# An order for one literal reply ("Reply with the single word OK.", "Answer with yes or no.", "Reply with just the
+# number.") names the reply to give now, not how answers should look: its object after "with" is the literal
+# itself. "Reply with short answers" or "Answer with bullet points" name a setting and stay rules. A standing word
+# ("Always reply with the single word OK.") still makes it a rule the owner asked for by name (`_is_standing`).
+_LITERAL_REPLY_VERBS = frozenset(["reply", "answer", "respond", "return", "say"])
+_LITERAL_QUALIFIERS = frozenset(["just", "only", "exactly", "simply"])
+_LITERAL_UNITS = frozenset(["word", "letter", "number", "digit", "character"])
+_LITERAL_VALUES = frozenset(["yes", "no", "true", "false", "ok", "okay"])
+
+
+def _literal_reply(sentence: str) -> bool:
+    words = re.findall(r"[A-Za-z0-9][A-Za-z0-9'\-]*", _main_clause(sentence))
+    lowered = [word.lower() for word in words]
+    if lowered[:1] == ["please"]:
+        words, lowered = words[1:], lowered[1:]
+    if not lowered or lowered[0] not in _LITERAL_REPLY_VERBS:
+        return False
+    rest_at = 1
+    while rest_at < len(lowered) and lowered[rest_at] in {"to", "me", "us"}:
+        rest_at += 1
+    if rest_at >= len(lowered) or lowered[rest_at] != "with":
+        return False
+    after = list(zip(words[rest_at + 1:], lowered[rest_at + 1:], strict=True))
+    qualified = any(low in _LITERAL_QUALIFIERS for _word, low in after)
+    rest = [(word, low) for word, low in after if low not in _LITERAL_QUALIFIERS]
+    if not rest:
+        return False
+    plain = [low for _word, low in rest]
+    # "yes or no", "true or false", "OK"
+    if all(low in _LITERAL_VALUES or low == "or" for low in plain):
+        return True
+    # "the single word OK", "one word", "just the number" -- unless what follows names answers ("one word answers")
+    index = 0
+    if plain[index] in {"the", "a", "one"}:
+        index += 1
+    if index < len(plain) and plain[index] in {"single", "one"}:
+        index += 1
+    if index < len(plain) and plain[index] in _LITERAL_UNITS:
+        tail = rest[index + 1:]
+        if not tail:
+            return True
+        return len(tail) == 1 and not (_about_presentation(tail[0][1]) or _facets(tail[0][1]))
+    # One bare token is the literal reply only when it reads as one ("exactly done", "OK", "42"), never when it
+    # names how answers look ("Answer with JSON", "Reply with emojis") or is an ordinary noun ("with examples").
+    if len(rest) == 1:
+        word, low = rest[0]
+        if _about_presentation(low) or _facets(low):
+            return False
+        return qualified or word.isupper() or word.isdigit()
+    return False
+
+
 def _plain_kind(sentence: str) -> str:
     """"workflow" / "plain" for a rule said without trigger words, "context" for a reason about the owner, else ""."""
     s = sentence.strip()
@@ -549,6 +614,8 @@ def _plain_kind(sentence: str) -> str:
         return ""
     verb_and_object = [word for word in _main_clause(s).split() if word.lower() not in {"me", "us"}][:2]
     if any(_NAMED_THING_RE.search(word) for word in verb_and_object):
+        return ""
+    if _literal_reply(s):
         return ""
     s = " ".join(_NAMED_THING_RE.sub(" ", s).split())
     if _addressed_to_vool(s) and not _SPECIFIC_OBJECT_RE.search(s) and not _TASK_QUANTITY_RE.search(s):

@@ -1412,6 +1412,10 @@
     "vx.memory.forget_title": "Забыть ровно эту запись",
     "vx.memory.not_removed": "не удалено",
     "vx.memory.reading": "Чтение памяти…",
+    "vx.memory.rules_title": "Правила, которым VOOL следует в каждом чате",
+    "vx.memory.rules_empty": "Сохранённых правил нет. Правило из чата, например «всегда отвечай списком», появится здесь.",
+    "vx.memory.rules_hint": "Чтобы убрать правило, попросите VOOL в чате перестать так делать.",
+    "vx.memory.rules_unreadable": "Не удалось прочитать сохранённые правила.",
     "vx.memory.title": "Память",
     "vx.memory.unreadable": "Не удалось прочитать память.",
     "vx.palette.toolbelt": "Пояс инструментов — установленные возможности…",
@@ -1904,7 +1908,7 @@
     "fault.wallet_payment_channel_off.action": "Включайте платёжный канал в настройках Крипто, только если хотите платить через него; лимит и ваше одобрение действуют на каждом канале.",
     "fault.wallet_x402_sdk_unavailable.message": "Эта сборка не умеет оплачивать предложения x402 в сети Base через x402 Foundation SDK: необязательное дополнение x402 не установлено на этой машине. Ничего не подписано и не отправлено. Все прочие функции кошелька работают без него; после установки повторите."
   },
-  "source_catalog_sha256": "54e72d10493f816529ee35b551f43bd00077ade7552b629c0ab79b9ce53f30d2",
+  "source_catalog_sha256": "6a1f75ac9468f1cca6eac98ca01010c65cf3b79b45941f8433736526adf75d0d",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

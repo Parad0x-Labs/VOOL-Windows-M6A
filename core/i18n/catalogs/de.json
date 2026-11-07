@@ -1412,6 +1412,10 @@
     "vx.memory.forget_title": "Genau diesen Eintrag vergessen",
     "vx.memory.not_removed": "nicht entfernt",
     "vx.memory.reading": "Erinnerung wird gelesen…",
+    "vx.memory.rules_title": "Regeln, die VOOL in jedem Chat befolgt",
+    "vx.memory.rules_empty": "Keine Regeln gespeichert. Eine Regel, die du im Chat gibst, etwa „antworte immer in Stichpunkten“, erscheint hier.",
+    "vx.memory.rules_hint": "Um eine Regel zu entfernen, sag VOOL in einem Chat, dass es damit aufhören soll.",
+    "vx.memory.rules_unreadable": "Gespeicherte Regeln konnten nicht gelesen werden.",
     "vx.memory.title": "Erinnerung",
     "vx.memory.unreadable": "Erinnerung konnte nicht gelesen werden.",
     "vx.palette.toolbelt": "Werkzeuggürtel — installierte Fähigkeiten…",
@@ -1904,7 +1908,7 @@
     "fault.wallet_payment_channel_off.action": "Schalte einen Zahlungskanal in den Krypto-Einstellungen nur ein, wenn Zahlungen darüber laufen sollen; die Obergrenze und deine Freigabe gelten auf jedem Kanal.",
     "fault.wallet_x402_sdk_unavailable.message": "Dieser Build kann keine x402-Angebote auf Base über das x402 Foundation SDK bezahlen: Die optionale Erweiterung x402 ist auf diesem Rechner nicht installiert. Es wurde nichts signiert oder gesendet. Jede andere Wallet-Funktion läuft ohne sie; nach der Installation versuche es erneut."
   },
-  "source_catalog_sha256": "54e72d10493f816529ee35b551f43bd00077ade7552b629c0ab79b9ce53f30d2",
+  "source_catalog_sha256": "6a1f75ac9468f1cca6eac98ca01010c65cf3b79b45941f8433736526adf75d0d",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

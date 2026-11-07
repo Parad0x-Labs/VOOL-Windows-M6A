@@ -1412,6 +1412,10 @@
     "vx.memory.forget_title": "שכחו בדיוק את הרשומה הזאת",
     "vx.memory.not_removed": "לא הוסר",
     "vx.memory.reading": "קורא זיכרון…",
+    "vx.memory.rules_title": "כללים ש-VOOL פועל לפיהם בכל צ׳אט",
+    "vx.memory.rules_empty": "אין כללים שמורים. כלל שתיתן בצ׳אט, כמו „תמיד ענה בנקודות”, יופיע כאן.",
+    "vx.memory.rules_hint": "כדי להסיר כלל, אמור ל-VOOL בצ׳אט להפסיק.",
+    "vx.memory.rules_unreadable": "לא ניתן היה לקרוא את הכללים השמורים.",
     "vx.memory.title": "זיכרון",
     "vx.memory.unreadable": "לא ניתן היה לקרוא את הזיכרון.",
     "vx.palette.toolbelt": "חגורת הכלים — יכולות מותקנות…",
@@ -1904,7 +1908,7 @@
     "fault.wallet_payment_channel_off.action": "הפעילו ערוץ תשלום בהגדרות הקריפטו רק אם אתם רוצים שתשלומים יעברו דרכו; התקרה והאישור שלכם חלים על כל ערוץ.",
     "fault.wallet_x402_sdk_unavailable.message": "גרסה זו אינה יכולה לשלם הצעות x402 ב-Base דרך x402 Foundation SDK: התוספת האופציונלית x402 אינה מותקנת במכונה זו. לא נחתם ולא נשלח דבר. כל שאר פונקציות הארנק עובדות בלעדיה; לאחר התקנתה נסו שוב."
   },
-  "source_catalog_sha256": "54e72d10493f816529ee35b551f43bd00077ade7552b629c0ab79b9ce53f30d2",
+  "source_catalog_sha256": "6a1f75ac9468f1cca6eac98ca01010c65cf3b79b45941f8433736526adf75d0d",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
