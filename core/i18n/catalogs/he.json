@@ -717,6 +717,11 @@
     "mode.review_edits_description": "VOOL רשאי לבחון ולהכין הפרשי עריכה. כל אצוות עריכה מזוהה בבירור חייבת אישור לפני החלתה.",
     "model.js.auto": "VOOL Auto",
     "model.js.local_only": "VOOL Auto מקומי בלבד",
+    "models.download.button": "הורדת {model} ‏({size} GB) מהמאגר של Ollama",
+    "models.download.progress": "מוריד את {model}… {percent}%",
+    "models.download.cancel": "ביטול ההורדה",
+    "models.download.failed": "ההורדה נעצרה: {reason}",
+    "models.download.done": "{model} הורד ומוכן.",
     "msg.copy": "העתקה",
     "msg.copy_rich": "העתקה עשירה",
     "msg.copy_rich_title": "העתקה עם עיצוב (HTML מטוהר + טקסט פשוט — האפליקציה המקבלת מחליטה איך להציג זאת)",
@@ -1897,7 +1902,7 @@
     "fault.wallet_payment_channel_off.action": "הפעילו ערוץ תשלום בהגדרות הקריפטו רק אם אתם רוצים שתשלומים יעברו דרכו; התקרה והאישור שלכם חלים על כל ערוץ.",
     "fault.wallet_x402_sdk_unavailable.message": "גרסה זו אינה יכולה לשלם הצעות x402 ב-Base דרך x402 Foundation SDK: התוספת האופציונלית x402 אינה מותקנת במכונה זו. לא נחתם ולא נשלח דבר. כל שאר פונקציות הארנק עובדות בלעדיה; לאחר התקנתה נסו שוב."
   },
-  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
+  "source_catalog_sha256": "74db2e0090bf7c91c3c98164d336a742b83859ad7fc193f09ba269e6eec8bf9a",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

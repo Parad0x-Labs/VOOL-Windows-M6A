@@ -717,6 +717,11 @@
     "mode.review_edits_description": "VOOL संपादन डिफ़ देख और तैयार कर सकता है। लागू होने से पहले प्रत्येक स्पष्ट रूप से पहचानी गई संपादन श्रृंखला की स्वीकृति ज़रूरी है।",
     "model.js.auto": "VOOL Auto",
     "model.js.local_only": "VOOL Auto केवल लोकल",
+    "models.download.button": "Ollama की रजिस्ट्री से {model} ({size} GB) डाउनलोड करें",
+    "models.download.progress": "{model} डाउनलोड हो रहा है… {percent}%",
+    "models.download.cancel": "डाउनलोड रद्द करें",
+    "models.download.failed": "डाउनलोड रुक गया: {reason}",
+    "models.download.done": "{model} डाउनलोड हो गया है और तैयार है।",
     "msg.copy": "कॉपी करें",
     "msg.copy_rich": "रिच कॉपी करें",
     "msg.copy_rich_title": "फ़ॉर्मेटिंग सहित कॉपी करें (साफ़ किया गया HTML + सादा टेक्स्ट — प्राप्त करने वाला ऐप तय करता है कि इसे कैसे दिखाना है)",
@@ -1897,7 +1902,7 @@
     "fault.wallet_payment_channel_off.action": "क्रिप्टो सेटिंग्स में भुगतान चैनल तभी चालू करें जब आप उसके ज़रिए भुगतान चाहते हों; सीमा और आपकी मंज़ूरी हर चैनल पर लागू होती है।",
     "fault.wallet_x402_sdk_unavailable.message": "यह बिल्ड x402 Foundation SDK के ज़रिए Base पर x402 ऑफ़र का भुगतान नहीं कर सकता: वैकल्पिक x402 ऐड-ऑन इस मशीन पर नहीं है। कुछ हस्ताक्षरित या भेजा नहीं गया। वॉलेट की बाकी हर सुविधा इसके बिना चलती है; इसे लगाने पर दोबारा कोशिश करें।"
   },
-  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
+  "source_catalog_sha256": "74db2e0090bf7c91c3c98164d336a742b83859ad7fc193f09ba269e6eec8bf9a",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

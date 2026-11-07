@@ -717,6 +717,11 @@
     "mode.review_edits_description": "VOOL은 편집 diff를 조사하고 준비할 수 있습니다. 적용 전에 명확히 식별된 각 편집 묶음을 승인해야 합니다.",
     "model.js.auto": "VOOL Auto",
     "model.js.local_only": "VOOL Auto Local Only",
+    "models.download.button": "Ollama 레지스트리에서 {model}({size} GB) 다운로드",
+    "models.download.progress": "{model} 다운로드 중… {percent}%",
+    "models.download.cancel": "다운로드 취소",
+    "models.download.failed": "다운로드 중단됨: {reason}",
+    "models.download.done": "{model} 다운로드가 끝나 사용할 수 있습니다.",
     "msg.copy": "복사",
     "msg.copy_rich": "리치 복사",
     "msg.copy_rich_title": "서식 포함 복사(정화된 HTML + 일반 텍스트 — 받는 앱이 렌더링 방식을 정합니다)",
@@ -1897,7 +1902,7 @@
     "fault.wallet_payment_channel_off.action": "그 채널로 결제하려는 경우에만 암호화폐 설정에서 결제 채널을 켜세요; 한도와 사용자 승인은 모든 채널에 적용됩니다.",
     "fault.wallet_x402_sdk_unavailable.message": "이 빌드는 x402 Foundation SDK를 통해 Base의 x402 제안을 결제할 수 없습니다: 선택적 x402 추가 요소가 이 기기에 설치되지 않았습니다. 서명되거나 보내진 것은 없습니다. 지갑의 다른 모든 기능은 없이도 작동합니다; 설치한 뒤 다시 시도하세요."
   },
-  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
+  "source_catalog_sha256": "74db2e0090bf7c91c3c98164d336a742b83859ad7fc193f09ba269e6eec8bf9a",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

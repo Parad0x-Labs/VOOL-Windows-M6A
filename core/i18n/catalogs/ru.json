@@ -717,6 +717,11 @@
     "mode.review_edits_description": "VOOL может просматривать и готовить diff-ы правок. Каждый чётко обозначенный пакет правок должен быть одобрен до применения.",
     "model.js.auto": "VOOL Auto",
     "model.js.local_only": "VOOL Auto Local Only",
+    "models.download.button": "Скачать {model} ({size} ГБ) из реестра Ollama",
+    "models.download.progress": "Скачивание {model}… {percent}%",
+    "models.download.cancel": "Отменить загрузку",
+    "models.download.failed": "Загрузка остановлена: {reason}",
+    "models.download.done": "{model} скачана и готова.",
     "msg.copy": "Копировать",
     "msg.copy_rich": "Копировать с форматированием",
     "msg.copy_rich_title": "Копировать с форматированием (очищенный HTML + простой текст — как это отобразить, решает принимающее приложение)",
@@ -1897,7 +1902,7 @@
     "fault.wallet_payment_channel_off.action": "Включайте платёжный канал в настройках Крипто, только если хотите платить через него; лимит и ваше одобрение действуют на каждом канале.",
     "fault.wallet_x402_sdk_unavailable.message": "Эта сборка не умеет оплачивать предложения x402 в сети Base через x402 Foundation SDK: необязательное дополнение x402 не установлено на этой машине. Ничего не подписано и не отправлено. Все прочие функции кошелька работают без него; после установки повторите."
   },
-  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
+  "source_catalog_sha256": "74db2e0090bf7c91c3c98164d336a742b83859ad7fc193f09ba269e6eec8bf9a",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

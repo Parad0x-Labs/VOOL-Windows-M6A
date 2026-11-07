@@ -717,6 +717,11 @@
     "mode.review_edits_description": "يجوز لـ VOOL فحص فروق التعديل وتجهيزها. يجب الموافقة على كل دفعة تعديلات محددة بوضوح قبل تطبيقها.",
     "model.js.auto": "VOOL Auto",
     "model.js.local_only": "VOOL Auto محلي فقط",
+    "models.download.button": "تنزيل {model} ‏({size} GB) من سجل Ollama",
+    "models.download.progress": "جارٍ تنزيل {model}… {percent}%",
+    "models.download.cancel": "إلغاء التنزيل",
+    "models.download.failed": "توقف التنزيل: {reason}",
+    "models.download.done": "تم تنزيل {model} وهو جاهز.",
     "msg.copy": "نسخ",
     "msg.copy_rich": "نسخ منسّقًا",
     "msg.copy_rich_title": "نسخ بالتنسيق (HTML منقّى + نص عادي — التطبيق المستقبِل يقرر كيف يعرضه)",
@@ -1897,7 +1902,7 @@
     "fault.wallet_payment_channel_off.action": "شغّل قناة دفع في إعدادات العملات المشفرة فقط إن أردت أن تتم الدفعات عبرها؛ الحد الأقصى وموافقتك يسريان على كل قناة.",
     "fault.wallet_x402_sdk_unavailable.message": "لا يستطيع هذا الإصدار دفع عروض x402 على Base عبر x402 Foundation SDK: الإضافة الاختيارية x402 غير مثبتة على هذه الآلة. لم يوقَّع أو يُرسل شيء. كل وظائف المحفظة الأخرى تعمل بدونها؛ بعد تثبيتها أعد المحاولة."
   },
-  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
+  "source_catalog_sha256": "74db2e0090bf7c91c3c98164d336a742b83859ad7fc193f09ba269e6eec8bf9a",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

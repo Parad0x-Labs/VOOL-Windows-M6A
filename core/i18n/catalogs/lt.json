@@ -717,6 +717,11 @@
     "mode.review_edits_description": "VOOL gali apžiūrėti ir paruošti redagavimų skirtumus. Kiekviena aiškai identifikuota redagavimų grupė turi būti patvirtinta prieš taikant.",
     "model.js.auto": "VOOL Auto",
     "model.js.local_only": "VOOL Auto Local Only",
+    "models.download.button": "Atsisiųsti {model} ({size} GB) iš Ollama registro",
+    "models.download.progress": "Atsisiunčiama {model}… {percent} %",
+    "models.download.cancel": "Atšaukti atsisiuntimą",
+    "models.download.failed": "Atsisiuntimas sustabdytas: {reason}",
+    "models.download.done": "{model} atsisiųstas ir paruoštas.",
     "msg.copy": "Kopijuoti",
     "msg.copy_rich": "Kopijuoti praturtintai",
     "msg.copy_rich_title": "Kopijuoti su formatavimu (išvalytas HTML + paprastas tekstas — atvaizdavimo būdą nusprendžia gaunanti programa)",
@@ -1897,7 +1902,7 @@
     "fault.wallet_payment_channel_off.action": "Įjunkite mokėjimo kanalą Kripto nustatymuose tik jei norite, kad mokėjimai eitų per jį; riba ir jūsų patvirtinimas galioja kiekviename kanale.",
     "fault.wallet_x402_sdk_unavailable.message": "Ši versija negali apmokėti x402 pasiūlymų Base tinkle per x402 Foundation SDK: šiame kompiuteryje neįdiegtas pasirenkamas papildinys x402. Niekas nebuvo pasirašyta ar išsiųsta. Visos kitos piniginės funkcijos veikia ir be jo; jį įdiegę bandykite dar kartą."
   },
-  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
+  "source_catalog_sha256": "74db2e0090bf7c91c3c98164d336a742b83859ad7fc193f09ba269e6eec8bf9a",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

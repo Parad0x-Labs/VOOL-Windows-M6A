@@ -547,12 +547,23 @@ def ollama_model_installed(model_tag: str, *, env: dict[str, str] | None = None)
     return wanted in installed
 
 
-def _stream_ollama_pull(model_tag: str, *, progress: ModelPullProgress) -> None:
+class ModelPullCancelled(Exception):
+    """The user cancelled a pull: the stream was closed, so Ollama stops downloading."""
+
+
+def _stream_ollama_pull(
+    model_tag: str,
+    *,
+    progress: ModelPullProgress,
+    cancelled: Callable[[], bool] | None = None,
+) -> None:
     """Pull over Ollama's HTTP API, reporting real progress.
 
     HTTP rather than `ollama pull`: the CLI's output is the only progress signal and this process
     has no console to stream it to, so it was captured and discarded. The per-read timeout bounds a
     STALLED download without capping the total, so a slow large pull is never killed mid-way.
+    ``cancelled`` is asked after every progress line; when it answers True the response is closed
+    (leaving the ``with``), which is how a client tells Ollama to stop the pull.
     """
     body = json.dumps({"model": model_tag, "stream": True}).encode("utf-8")
     request = urllib.request.Request(
@@ -565,6 +576,8 @@ def _stream_ollama_pull(model_tag: str, *, progress: ModelPullProgress) -> None:
 
     with urlopen(request, timeout=_OLLAMA_PULL_READ_TIMEOUT_SECONDS) as response:
         for raw_line in response:
+            if cancelled is not None and cancelled():
+                raise ModelPullCancelled(model_tag)
             line = raw_line.decode("utf-8", errors="replace").strip()
             if not line:
                 continue

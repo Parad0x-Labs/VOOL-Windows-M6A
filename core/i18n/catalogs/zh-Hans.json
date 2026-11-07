@@ -717,6 +717,11 @@
     "mode.review_edits_description": "VOOL 可以查看并准备编辑差异。每个清晰标识的编辑批次都必须先获得批准才会应用。",
     "model.js.auto": "VOOL Auto",
     "model.js.local_only": "VOOL Auto Local Only",
+    "models.download.button": "从 Ollama 的仓库下载 {model}（{size} GB）",
+    "models.download.progress": "正在下载 {model}… {percent}%",
+    "models.download.cancel": "取消下载",
+    "models.download.failed": "下载已停止：{reason}",
+    "models.download.done": "{model} 已下载完成，可以使用。",
     "msg.copy": "复制",
     "msg.copy_rich": "复制富文本",
     "msg.copy_rich_title": "带格式复制(净化后的 HTML + 纯文本 — 由接收应用决定呈现方式)",
@@ -1897,7 +1902,7 @@
     "fault.wallet_payment_channel_off.action": "只有在希望通过某个支付通道付款时，才在加密设置中打开它；上限和你的批准在每个通道上都适用。",
     "fault.wallet_x402_sdk_unavailable.message": "此构建无法通过 x402 Foundation SDK 支付 Base 上的 x402 报价：这台机器上没有安装可选的 x402 扩展。没有签名或发送任何内容。钱包的其他所有功能没有它也能工作；安装之后请重试。"
   },
-  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
+  "source_catalog_sha256": "74db2e0090bf7c91c3c98164d336a742b83859ad7fc193f09ba269e6eec8bf9a",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

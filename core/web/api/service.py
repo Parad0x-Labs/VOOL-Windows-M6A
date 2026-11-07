@@ -2014,6 +2014,20 @@ def dispatch_get(
             return apply_runtime_headers(json_response(404, {"error": "model provider not found"}), runtime)
         return apply_runtime_headers(json_response(200, certification_status(manifest)), runtime)
 
+    if normalized_path == "/api/models/local/pull":
+        # What the Download buttons offer (the machine-sized plan, exactly) and the running or last
+        # user pull. Local session only, like the listing beside it. core/local_model_pull.py.
+        if not is_loopback_host(client_host):
+            return apply_runtime_headers(json_response(403, {"ok": False, "error": "owner_local_required"}), runtime)
+        from core import local_model_pull
+
+        try:
+            view = local_model_pull.offered()
+        except Exception as exc:
+            view = {"models": [], "error": safe_error_text(exc), "source": local_model_pull.SOURCE}
+        view["pull"] = local_model_pull.status()
+        return apply_runtime_headers(json_response(200, view), runtime)
+
     if normalized_path == "/api/models/local":
         # The read side of the local-model door: what Ollama actually has installed on this
         # machine, which of those lanes are registered here, and each lane's tool-certification
@@ -4345,6 +4359,26 @@ def _dispatch_post_inner(
                 runtime,
             )
         return apply_runtime_headers(json_response(200, result), runtime)
+
+    if normalized_path in {"/api/models/local/pull", "/api/models/local/pull/cancel"}:
+        # The click IS the consent for that one pull (owner decision 2026-11-07, design D2): the
+        # local-session guard of the other state doors, then core/local_model_pull.py decides.
+        from core.web.api.onboarding_endpoints import _guards as _pull_guards
+
+        guarded = _pull_guards(runtime, headers, client_host, body)
+        if guarded is not None:
+            return guarded
+        from core import local_model_pull
+
+        allowed = {"model"} if normalized_path.endswith("/pull") else set()
+        unknown = set(body.keys()) - allowed
+        if unknown:
+            return apply_runtime_headers(json_response(400, {"error": f"unknown fields: {sorted(unknown)}"}), runtime)
+        if normalized_path.endswith("/cancel"):
+            status_code, payload = local_model_pull.cancel()
+        else:
+            status_code, payload = local_model_pull.start(body.get("model"), runtime=runtime)
+        return apply_runtime_headers(json_response(status_code, payload), runtime)
 
     if normalized_path == "/api/models/local/register":
         # The write side of the local-model door: register ONE installed Ollama model as a lane

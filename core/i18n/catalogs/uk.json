@@ -717,6 +717,11 @@
     "mode.review_edits_description": "VOOL може оглядати та готувати diff-и змін. Кожен чітко позначений пакет редагувань має бути схвалений до застосування.",
     "model.js.auto": "VOOL Auto",
     "model.js.local_only": "VOOL Auto Local Only",
+    "models.download.button": "Завантажити {model} ({size} ГБ) з реєстру Ollama",
+    "models.download.progress": "Завантаження {model}… {percent}%",
+    "models.download.cancel": "Скасувати завантаження",
+    "models.download.failed": "Завантаження зупинено: {reason}",
+    "models.download.done": "{model} завантажено й готово.",
     "msg.copy": "Копіювати",
     "msg.copy_rich": "Копіювати з форматуванням",
     "msg.copy_rich_title": "Копіювати з форматуванням (очищений HTML + звичайний текст — як відображати, вирішує програма-одержувач)",
@@ -1897,7 +1902,7 @@
     "fault.wallet_payment_channel_off.action": "Вмикайте платіжний канал у налаштуваннях Крипто, лише якщо хочете платити через нього; ліміт і ваше схвалення діють на кожному каналі.",
     "fault.wallet_x402_sdk_unavailable.message": "Ця збірка не вміє оплачувати пропозиції x402 у мережі Base через x402 Foundation SDK: необов'язковий додаток x402 не встановлено на цій машині. Нічого не підписано і не надіслано. Усі інші функції гаманця працюють без нього; після встановлення повторіть."
   },
-  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
+  "source_catalog_sha256": "74db2e0090bf7c91c3c98164d336a742b83859ad7fc193f09ba269e6eec8bf9a",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

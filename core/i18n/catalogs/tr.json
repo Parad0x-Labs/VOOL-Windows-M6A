@@ -717,6 +717,11 @@
     "mode.review_edits_description": "VOOL düzenleme farklarını inceleyip hazırlayabilir. Uygulanmadan önce her açıkça tanımlanmış düzenleme grubu onaylanmalıdır.",
     "model.js.auto": "VOOL Auto",
     "model.js.local_only": "VOOL Auto Yalnızca Yerel",
+    "models.download.button": "{model} modelini ({size} GB) Ollama kayıt deposundan indir",
+    "models.download.progress": "{model} indiriliyor… %{percent}",
+    "models.download.cancel": "İndirmeyi iptal et",
+    "models.download.failed": "İndirme durdu: {reason}",
+    "models.download.done": "{model} indirildi ve hazır.",
     "msg.copy": "Kopyala",
     "msg.copy_rich": "Zengin kopyala",
     "msg.copy_rich_title": "Biçimlendirmesiyle kopyala (temizlenmiş HTML + düz metin — nasıl görüneceğine alan uygulama karar verir)",
@@ -1897,7 +1902,7 @@
     "fault.wallet_payment_channel_off.action": "Bir ödeme kanalını Kripto ayarlarında yalnızca ödemelerin onun üzerinden yapılmasını istiyorsanız açın; tavan ve sizin onayınız her kanalda geçerlidir.",
     "fault.wallet_x402_sdk_unavailable.message": "Bu yapı x402 Foundation SDK üzerinden Base'deki x402 tekliflerini ödeyemez: isteğe bağlı x402 eki bu makinede kurulu değil. Hiçbir şey imzalanmadı veya gönderilmedi. Cüzdanın diğer her işlevi onsuz çalışır; kurulunca tekrar deneyin."
   },
-  "source_catalog_sha256": "e933b0fd024113b0ed59e2c008ba77ec2687bb690d8f28a7fdab9f1700664119",
+  "source_catalog_sha256": "74db2e0090bf7c91c3c98164d336a742b83859ad7fc193f09ba269e6eec8bf9a",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
