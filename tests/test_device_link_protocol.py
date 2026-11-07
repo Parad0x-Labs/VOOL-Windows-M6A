@@ -8,6 +8,7 @@ and the OPERATOR GATE itself: nothing in this package opens a network surface.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -29,6 +30,7 @@ from core.device_link import (
     verify_grant_self_signature,
 )
 from core.device_link import ctl as devicectl
+from core.owner_only import verify_owner_only
 
 
 def _key(tmp_path):
@@ -175,7 +177,12 @@ def test_identity_roundtrip_and_fingerprint_stability(tmp_path):
     key = load_or_create(key_path)
     again = load_or_create(key_path)
     assert public_hex(key) == public_hex(again)
-    assert (tmp_path / "keys" / "k.json").stat().st_mode & 0o777 == 0o600
+    if os.name == "nt":
+        # chmod only flips the read-only bit on Windows; owner-only is the protected one-ACE DACL.
+        report = verify_owner_only(tmp_path / "keys" / "k.json")
+        assert report.ok, report.reason
+    else:
+        assert (tmp_path / "keys" / "k.json").stat().st_mode & 0o777 == 0o600
 
 
 # -- the operator CLI ----------------------------------------------------------------------

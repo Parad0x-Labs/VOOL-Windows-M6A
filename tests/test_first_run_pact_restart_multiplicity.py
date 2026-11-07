@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -41,16 +43,32 @@ def test_sigkill_between_writes_never_leaves_a_half_written_file(pact_rig):
                 errors.append(exc)
                 return
 
+    def observe() -> bytes:
+        # On Windows, opening the file while a writer's os.replace swaps it in can fail
+        # with a sharing violation for a moment. That is the platform, not a torn write:
+        # retry it briefly there. Anywhere else a PermissionError is still a failure.
+        for attempt in range(50):
+            try:
+                return pact_file.read_bytes()
+            except PermissionError:
+                if os.name != "nt" or attempt == 49:
+                    raise
+                time.sleep(0.01)
+        raise AssertionError("unreachable")
+
     threads = [threading.Thread(target=storm, daemon=True) for _ in range(3)]
     for thread in threads:
         thread.start()
-    for _ in range(25):
-        raw = pact_file.read_bytes()
-        if raw.strip():
-            json.loads(raw)  # every observed instant is a parseable, complete document
-    stop.set()
-    for thread in threads:
-        thread.join(timeout=5)
+    try:
+        for _ in range(25):
+            raw = observe()
+            if raw.strip():
+                json.loads(raw)  # every observed instant is a parseable, complete document
+    finally:
+        # A failure above must not leave the storm writing into the next test's pact home.
+        stop.set()
+        for thread in threads:
+            thread.join(timeout=5)
     assert not errors
     json.loads(pact_file.read_text())
 

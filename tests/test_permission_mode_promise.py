@@ -93,8 +93,13 @@ class TestHandsOffAsksBeforeActing:
             verdict = ExecutionGate.evaluate_command(cmd)
             assert verdict["decision"] == "blocked", (cmd, verdict)
         # Redirection is not in the compound-syntax block list; it must at least
-        # reach the approval gate (write side effect, unknown target policy).
-        assert ExecutionGate.evaluate_command("echo hi > /etc/passwd")["decision"] == "advice_only"
+        # reach the approval gate (write side effect, unknown target policy). On Windows a `>`
+        # outside quotes is a cmd.exe metacharacter, so the command line itself is refused: stricter
+        # than asking, and the runner would refuse it after any approval anyway.
+        from sandbox import network_guard
+
+        expected = "blocked" if network_guard._IS_WINDOWS else "advice_only"
+        assert ExecutionGate.evaluate_command("echo hi > /etc/passwd")["decision"] == expected
 
 
 class TestReadOnlyLaneStillWorks:

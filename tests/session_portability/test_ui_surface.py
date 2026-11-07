@@ -9,12 +9,17 @@ download route confined to the home's session_bundles directory.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 
 import pytest
 
 from core import runtime_paths
 from tests.session_portability import support
 from tests.session_portability.support import SESSION
+
+# Windows has no /tmp: there "/tmp/..." is refused as not a full local path before the bundle is read.
+_SCRATCH = tempfile.gettempdir() if os.name == "nt" else "/tmp"
 
 UPLOAD = "/api/session/bundle/upload"
 PREVIEW_IMPORT = "/api/session/bundle/inspect-import"
@@ -136,7 +141,7 @@ def test_preview_refuses_tampered_file_before_import(app):
     payload = json.loads(members["bundle.json"])
     payload["turns"][0]["assistant"] += " (edited)"
     members["bundle.json"] = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    tampered = "/tmp/sb-tampered-{}.voolsession".format(__import__("uuid").uuid4().hex)
+    tampered = os.path.join(_SCRATCH, "sb-tampered-{}.voolsession".format(__import__("uuid").uuid4().hex))
     with zipfile.ZipFile(tampered, "w") as zf:
         for name, data in members.items():
             zf.writestr(name, data)
@@ -207,7 +212,7 @@ def test_import_route_accepts_confirm_untrusted(app):
         "signature": base64.b64encode(foreign.sign(manifest)).decode(),
     }
     members["signature.json"] = json.dumps(sig, sort_keys=True).encode()
-    foreign_path = "/tmp/sb-foreign-{}.voolsession".format(__import__("uuid").uuid4().hex)
+    foreign_path = os.path.join(_SCRATCH, "sb-foreign-{}.voolsession".format(__import__("uuid").uuid4().hex))
     with zipfile.ZipFile(foreign_path, "w") as zf:
         for name, data in members.items():
             zf.writestr(name, data)

@@ -50,6 +50,16 @@ from core.runtime_execution_tools import execute_runtime_tool
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _mode_as_set(path: Path, posix_mode: int) -> int:
+    """The mode a chmod left: `posix_mode` on POSIX; on Windows the read-only bit is all chmod sets,
+    so the observed mode (0o666 or 0o444) is what the recorder captures and a rollback restores."""
+    if os.name != "nt":
+        return posix_mode
+    observed = os.stat(path).st_mode & 0o7777
+    assert observed in (0o666, 0o444), oct(observed)
+    return observed
+
+
 def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -247,13 +257,15 @@ class TestCoverage:
         raw = b"\x00\xff\xfe binary \x80\x81 not utf-8 \n\r\n"
         (workspace / "blob.bin").write_bytes(raw)
         os.chmod(workspace / "blob.bin", 0o640)
+        # Windows chmod only sets or clears the read-only bit (0o640 reads back 0o666): pin what it read.
+        mode_set = _mode_as_set(workspace / "blob.bin", 0o640)
         result = _write(workspace, "blob.bin", "text now\n")
         assert result.ok
         (effect,) = _effects_for(_entries(store_dir), _turn_of(result)).values()
         before = effect["intended"]["before"]
         assert before["exists"] and before["kind"] == "file"
         assert before["sha256"] == _sha(raw)
-        assert before["mode"] == 0o640
+        assert before["mode"] == mode_set
         # 2026-09-02 amendment: the blob ref is the OPAQUE keyed address, never the raw digest,
         # and the bytes behind it are SEALED -- readable only through the keyed store.
         assert before["blob"] != _sha(raw)
@@ -263,7 +275,7 @@ class TestCoverage:
         assert effect["intended"]["operation"] == "write"
 
     def test_replace_patch_and_mkdir_are_journaled_with_their_operations(self, store_dir: Path, workspace: Path) -> None:
-        (workspace / "r.txt").write_text("alpha beta\n", encoding="utf-8")
+        (workspace / "r.txt").write_text("alpha beta\n", encoding="utf-8", newline="\n")  # LF bytes on every OS
         (workspace / "p.txt").write_bytes(b"line1\nline2\n")  # LF bytes on every OS
         ctx = _ctx(workspace)
         replaced = execute_runtime_tool(
@@ -677,6 +689,7 @@ class TestRollback:
         raw = bytes(range(256)) * 3
         (workspace / "bin.dat").write_bytes(raw)
         os.chmod(workspace / "bin.dat", 0o600)
+        mode_set = _mode_as_set(workspace / "bin.dat", 0o600)
         ctx = _ctx(workspace, "idem")
         from core.effect_gateway import named_background_effect_scope
 
@@ -690,7 +703,7 @@ class TestRollback:
         assert first.ok, first.response_text
         assert first.status == "executed"
         assert (workspace / "bin.dat").read_bytes() == raw
-        assert (os.stat(workspace / "bin.dat").st_mode & 0o7777) == 0o600
+        assert (os.stat(workspace / "bin.dat").st_mode & 0o7777) == mode_set
         assert not (workspace / "made" / "new.txt").exists()
         # The parent directory the create brought into being is journaled as `missing_parents`
         # and removed with it: a rollback leaves no empty scaffolding the turn created.

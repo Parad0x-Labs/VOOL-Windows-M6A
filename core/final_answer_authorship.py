@@ -660,16 +660,16 @@ def local_manifest_authorship_certified(manifest: Any) -> bool:
     escalate to a certified author instead of re-offering a refused one.
     """
     try:
-        from core.local_model_tool_certification import certification_applies, certification_status
+        from core.local_model_tool_certification import certification_applies
 
         if not certification_applies(manifest):
             return True
-        status = certification_status(manifest)
-        # ``certification_status`` returns a DICT whose key holds the state; an attribute read
-        # with the dict as its own default made EVERY certified local manifest read as
-        # uncertified here, demoting in ranking the very authors the fence accepts.
-        state = str(status.get("state") or "") if isinstance(status, dict) else str(getattr(status, "state", "") or "")
-        return state.strip().lower() == "verified"
+        # Through the fence's own verdict cache: ``certification_status`` reads the backend identity
+        # (three loopback requests, each a spawned provider-HTTP worker) and ranking asks for every
+        # candidate on every turn -- 30 of a served cold run's 31 identity reads (Steve job 44 left the
+        # Windows turn 0.7 s short of its wait). The same model at the same destination is read once
+        # per window, and ranking and the fence answer from the same verdict.
+        return author_certification(manifest).state.strip().lower() == "verified"
     except Exception:
         # The fence owns the decision; ranking must never break on this read.
         return True

@@ -2371,11 +2371,25 @@ def _tzdb_city_table() -> dict[str, tuple[float, float]]:
     lane). ISO 6709 +DDMM+DDDMM parsing, minutes to decimal."""
 
     import pathlib
+    import sys
     import zoneinfo
 
+    tabs = [pathlib.Path(root) / "zone.tab" for root in zoneinfo.TZPATH]
+    if sys.platform == "win32" and not any(tab.exists() for tab in tabs):
+        # Windows ships no system tz database, so TZPATH names no readable zone.tab and this table
+        # came back empty: the coordinate channel had nothing to compare a provider's station with,
+        # and a mis-geolocated report ("Talinn" -> Bouma'chouk, Algeria) was accepted on its name.
+        # zoneinfo's own Windows fallback is the pip `tzdata` package, whose tables sit in
+        # `tzdata/zoneinfo/`, so read the same database there (as the clock lane's
+        # `_canonical_zone_leaves` does). POSIX hosts are untouched.
+        try:
+            import tzdata
+
+            tabs.append(pathlib.Path(str(tzdata.__file__)).parent / "zoneinfo" / "zone.tab")
+        except (ImportError, TypeError):
+            pass
     table: dict[str, tuple[float, float]] = {}
-    for root in zoneinfo.TZPATH:
-        tab = pathlib.Path(root) / "zone.tab"
+    for tab in tabs:
         if not tab.exists():
             continue
         for line in tab.read_text(encoding="utf-8", errors="ignore").splitlines():

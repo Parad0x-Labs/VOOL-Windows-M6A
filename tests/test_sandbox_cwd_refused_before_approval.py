@@ -9,12 +9,18 @@ command and asks only for an "exact action" with shell operators -- the shape th
 """
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from core import project_store, runtime_paths
 from core.hive_activity_tracker import HiveActivityTracker, HiveActivityTrackerConfig
 from core.mode_permission_policy import reset_mode_permission_state, set_active_mode
 from core.tool_intent_executor import execute_tool_intent
+
+# A full local path outside the workspace: "/Users" on POSIX; on Windows a bare "/Users" is refused
+# earlier, by its spelling, as not a full local path, so use the drive-rooted folder instead.
+_OUTSIDE = "C:\\Users" if os.name == "nt" else "/Users"
 
 
 @pytest.fixture(autouse=True)
@@ -57,10 +63,10 @@ def _run(tmp_path, cwd: str):
 
 
 def test_an_outside_cwd_is_refused_with_no_approval_request(tmp_path) -> None:
-    outside = _run(tmp_path, "/Users")
+    outside = _run(tmp_path, _OUTSIDE)
     assert outside.mode == "tool_failed" and outside.status == "cwd_outside_workspace", (outside.mode, outside.status)
     assert not outside.details.get("approval_request"), outside.details
-    assert "/Users" in outside.response_text and "Nothing was run" in outside.response_text
+    assert _OUTSIDE in outside.response_text and "Nothing was run" in outside.response_text
     assert "unknown" not in outside.response_text.lower()
 
 

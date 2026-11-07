@@ -7,11 +7,13 @@ the model's catalog actually contains the tool. None is about prose.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
 
 from core import plugin_lifecycle as lifecycle
+from core.owner_only import verify_owner_only
 from tests._toolchain_fixtures import PLUGIN_ID, make_plugin, reset_toolchain_state
 
 
@@ -230,6 +232,11 @@ def test_the_store_is_written_atomically_and_owner_only(pack) -> None:
     import stat as stat_module
 
     lifecycle.install(PLUGIN_ID, root=pack)
+    if os.name == "nt":
+        # chmod only flips the read-only bit on Windows; owner-only is the protected one-ACE DACL.
+        report = verify_owner_only(lifecycle.store_path())
+        assert report.ok, report.reason
+        return
     mode = lifecycle.store_path().stat().st_mode
     assert not mode & stat_module.S_IRGRP
     assert not mode & stat_module.S_IROTH

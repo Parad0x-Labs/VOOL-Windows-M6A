@@ -29,6 +29,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from core.runtime_execution_tools import execute_runtime_tool
 
@@ -186,13 +187,29 @@ class SearchTextMatrixTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "unreadable.py"
             path.write_text("def needle(): pass\n", encoding="utf-8")
-            os.chmod(path, 0o000)
-            try:
-                result = execute_runtime_tool(
-                    "workspace.search_text", {"query": "needle", "path": "unreadable.py"}, source_context={"workspace": tmpdir}
-                )
-            finally:
-                os.chmod(path, 0o644)
+            if os.name != "nt" and os.geteuid() != 0:
+                # A real refused open: this user may not read the file.
+                os.chmod(path, 0o000)
+                try:
+                    result = execute_runtime_tool(
+                        "workspace.search_text", {"query": "needle", "path": "unreadable.py"}, source_context={"workspace": tmpdir}
+                    )
+                finally:
+                    os.chmod(path, 0o644)
+            else:
+                # `chmod 0o000` refuses nothing on Windows (it only sets the read-only flag) or for
+                # root, so the read itself is refused here as it would be for a file this user may not open.
+                real_read_bytes = Path.read_bytes
+
+                def refused_read(self: Path) -> bytes:
+                    if self.name == "unreadable.py":
+                        raise PermissionError(13, "Permission denied", str(self))
+                    return real_read_bytes(self)
+
+                with mock.patch.object(Path, "read_bytes", refused_read):
+                    result = execute_runtime_tool(
+                        "workspace.search_text", {"query": "needle", "path": "unreadable.py"}, source_context={"workspace": tmpdir}
+                    )
             assert result is not None
             self.assertFalse(result.ok)
             self.assertEqual(result.status, "search_incomplete")

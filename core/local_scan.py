@@ -627,7 +627,7 @@ def scan_bytes(name: str, content: bytes, *, deadline: float = DEFAULT_DEADLINE)
     concealment_instructs: list = []
 
     for index, raw in enumerate(lines, start=1):
-        if time.monotonic() > stop:
+        if time.monotonic() >= stop:
             report["status"] = "incomplete"
             report["reason"] = "work_deadline_exceeded"
             report["limitations"] = ["The local check exceeded its work deadline; results are partial, not clean."]
@@ -861,7 +861,7 @@ def _encoded_payloads(lines: list, normalized: list, stop: float):
             if seen_b64 >= _MAX_DECODED_BLOBS or ops >= _MAX_TOTAL_DECODE_OPS:
                 tail_b64 = norm[match.start():]  # this match and any after it went unexamined
                 break
-            if time.monotonic() > stop:
+            if time.monotonic() >= stop:
                 return out, "work_deadline_exceeded"
             blob = match.group(0)[:_MAX_BLOB_CHARS]
             try:
@@ -888,7 +888,7 @@ def _encoded_payloads(lines: list, normalized: list, stop: float):
                                     "commands", {"section": "", "block": "encoded-blob"}, encoding=provenance, decoded_excerpt=text))
         if found_here:
             continue
-        if time.monotonic() > stop:
+        if time.monotonic() >= stop:
             return out, "work_deadline_exceeded"
         hex_match = _HEX_BLOB.search(norm)
         if not hex_match:
@@ -896,7 +896,7 @@ def _encoded_payloads(lines: list, normalized: list, stop: float):
         if seen_hex >= _MAX_DECODED_HEX or ops >= _MAX_TOTAL_DECODE_OPS:
             tail_hex = norm[hex_match.start():]
             continue
-        if time.monotonic() > stop:
+        if time.monotonic() >= stop:
             return out, "work_deadline_exceeded"
         try:
             decoded = _decode_candidate(hex_match.group(0)[:_MAX_BLOB_CHARS], "hex")
@@ -943,7 +943,7 @@ def _nested_stage(text: str, stop: float, budget_ok) -> tuple:
     inner = _BASE64_BLOB.search(text) or _HEX_BLOB.search(text)
     if inner is None:
         return 0, None, []
-    if time.monotonic() > stop or not budget_ok():
+    if time.monotonic() >= stop or not budget_ok():
         return 0, None, []
     blob = inner.group(0)[:_MAX_BLOB_CHARS]
     enc = "hex" if inner.re is _HEX_BLOB else "base64"

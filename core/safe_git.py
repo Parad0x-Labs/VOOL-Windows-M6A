@@ -117,6 +117,7 @@ def hardening_args() -> list[str]:
     ``gc.recentObjectsHook``. The user's own git and scheduled maintenance are unaffected."""
     return [
         "--no-optional-locks",
+        "-c", "safe.bareRepository=explicit",
         "-c", "core.fsmonitor=false",
         "-c", f"core.hooksPath={os.devnull}",
         "-c", "diff.external=",
@@ -269,7 +270,7 @@ def _config_entries(cwd: Path, options: list[str], *, timeout: float) -> list[tu
     fields; the value is None for a key set without one. With ``--show-scope`` each entry is a scope
     field followed by its key field."""
     probe = subprocess.run(
-        ["git", "-C", str(cwd), "config", *options, "--includes", "--null", "--list"],
+        ["git", "-c", "safe.bareRepository=explicit", "-C", str(cwd), "config", *options, "--includes", "--null", "--list"],
         capture_output=True, timeout=timeout, env=safe_env(),
     )
     if probe.returncode not in (0, 1):  # 1: no entries at all
@@ -754,12 +755,18 @@ def _endpoint_host(url: str) -> str:
     return f"path:{url}"
 
 
-def active_hooks(cwd: Path, *, timeout: float = 20) -> list[str]:
+def active_hooks(cwd: Path, *, timeout: float = 20, git_dir: bool = False) -> list[str]:
     """Hooks git would run here without hardening (the repository's own, or the user's
     core.hooksPath). Hardening disables them; a mutation that would have run one is refused
-    instead, so a pre-commit check is never skipped silently."""
+    instead, so a pre-commit check is never skipped silently.
+
+    ``git_dir=True`` means ``cwd`` IS a git directory VOOL already resolved (a push destination),
+    named with ``--git-dir``; otherwise git discovers the repository from ``cwd`` and, like every
+    hardened command, never adopts a bare repository found that way (``safe.bareRepository``)."""
+    where = ["--git-dir", str(cwd)] if git_dir else ["-C", str(cwd)]
     probe = subprocess.run(
-        ["git", "--no-optional-locks", "-c", "core.fsmonitor=false", "-C", str(cwd), "rev-parse", "--git-path", "hooks"],
+        ["git", "--no-optional-locks", "-c", "safe.bareRepository=explicit", "-c", "core.fsmonitor=false", *where,
+         "rev-parse", "--git-path", "hooks"],
         capture_output=True, encoding="utf-8", errors="surrogateescape", timeout=timeout, env=safe_env(),
     )
     if probe.returncode != 0:

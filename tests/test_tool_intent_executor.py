@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -133,7 +135,14 @@ class ToolIntentExecutorTests(unittest.TestCase):
         # must clear the entry gate, get planned into workspace.write_file, and
         # actually execute the workspace write -- not bounce off as "cannot map".
         user_text = "create a file test.txt with hello"
-        source_context = {"operating_mode": "auto", "surface": "api", "platform": "api", "workspace_root": "/tmp/vool-router-regression"}
+        # A real folder, marked as a disposable workspace: on Windows VOOL writes only inside one
+        # (core/windows_write_gate.py), and the write below must reach the workspace.write_file branch.
+        workspace = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, workspace, True)
+        flagged = mock.patch.dict(os.environ, {"VOOL_WINDOWS_DISPOSABLE_WORKSPACES": workspace})
+        flagged.start()
+        self.addCleanup(flagged.stop)
+        source_context = {"operating_mode": "auto", "surface": "api", "platform": "api", "workspace_root": workspace}
 
         # 1) Entry gate the chat/API loop checks before doing any tool work.
         self.assertTrue(

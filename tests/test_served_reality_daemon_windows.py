@@ -7,6 +7,7 @@ behaves the same on a Windows host and on Linux CI.
 from __future__ import annotations
 
 import subprocess
+import threading
 
 import pytest
 
@@ -24,8 +25,14 @@ class _FakeProcess:
 
 
 def _forbid_posix_paths(monkeypatch: pytest.MonkeyPatch, calls: list[list[str]]) -> None:
+    # subprocess.run is process-wide: a background thread an earlier test left running (the
+    # hardware probe's nvidia-smi / Win32_VideoController queries, Windows run 41969949799) also
+    # lands here. Only calls made by terminate_tree, on this test's own thread, are its argv.
+    test_thread = threading.get_ident()
+
     def fake_run(cmd, *args, **kwargs):
-        calls.append([str(part) for part in cmd])
+        if threading.get_ident() == test_thread:
+            calls.append([str(part) for part in cmd])
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     def fail_kill(pid, sig):
@@ -45,8 +52,11 @@ def test_windows_terminate_tree_uses_taskkill_and_waits_for_exit(monkeypatch):
     def fake_alive(pid: int) -> bool:
         return state["alive"] if pid == 4242 else False
 
+    test_thread = threading.get_ident()
+
     def fake_run(cmd, *args, **kwargs):
-        calls.append([str(part) for part in cmd])
+        if threading.get_ident() == test_thread:
+            calls.append([str(part) for part in cmd])
         if cmd[0] == TASKKILL:
             state["alive"] = False
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
