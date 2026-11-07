@@ -625,6 +625,58 @@ def test_shipped_feed_points_windows_at_its_own_release():
     assert feed.allow_publisher_verified_adhoc is False
 
 
+def _as_windows_interpreter(monkeypatch, interpreter_platform):
+    """Windows has no os.uname: the running interpreter's build is the only architecture fact."""
+    import sys
+    import sysconfig
+
+    from core.updater import platforms
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.delattr(os, "uname", raising=False)
+    monkeypatch.setattr(platforms, "_bundle_manifest_arch", lambda: None)
+    monkeypatch.setattr(sysconfig, "get_platform", lambda: interpreter_platform)
+
+
+@pytest.mark.parametrize(("interpreter_platform", "expected"), [
+    ("win-amd64", "windows-x64"),
+    ("win-arm64", "windows-arm64"),
+])
+def test_installed_windows_app_knows_its_own_platform(monkeypatch, interpreter_platform, expected):
+    from core.updater.platforms import platform_key
+
+    _as_windows_interpreter(monkeypatch, interpreter_platform)
+    assert platform_key() == expected
+
+
+def test_a_build_manifest_planted_outside_the_install_never_steers_windows(monkeypatch, tmp_path):
+    """{app} is %LOCALAPPDATA%\\Programs\\VOOL: three folders above its python.exe is user-writable."""
+    import sys
+    import sysconfig
+
+    from core.updater.platforms import platform_key
+
+    programs = tmp_path / "Programs"
+    python = programs / "VOOL" / "python" / "python.exe"
+    python.parent.mkdir(parents=True)
+    python.write_bytes(b"")
+    (programs / "BUILD_MANIFEST.json").write_text(json.dumps({"arch": "arm64"}))
+    monkeypatch.setattr(sys, "executable", str(python))
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.delattr(os, "uname", raising=False)
+    monkeypatch.setattr(sysconfig, "get_platform", lambda: "win-amd64")
+    assert platform_key() == "windows-x64"
+
+
+def test_installed_windows_app_checks_its_own_feed_not_the_mac_one(monkeypatch):
+    from core.updater.feed import load_feed_config
+
+    _as_windows_interpreter(monkeypatch, "win-amd64")
+    feed = load_feed_config(env={})
+    assert feed.manifest_url.startswith("https://github.com/Parad0x-Labs/VOOL-Windows-M6A/releases/")
+    assert feed.allow_publisher_verified_adhoc is False
+
+
 def test_windows_source_checkout_reports_it_cannot_update(tmp_path):
     from core.updater.feed import FeedConfig
     from core.updater.runtime import UnavailableReason, UpdateSubsystem

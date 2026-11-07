@@ -35,6 +35,23 @@ def _bundle_manifest_arch() -> str | None:
         return None
 
 
+def _interpreter_arch() -> str:
+    """Windows has no os.uname. The bundle's own interpreter build is what this install IS.
+
+    sysconfig names the architecture the running Python was BUILT for (win-amd64, win-arm64),
+    so an x64 bundle under Windows-on-Arm emulation still reads x64, exactly like the Rosetta
+    rule above, and never fetches another architecture's update.
+    """
+    import sysconfig
+
+    build = sysconfig.get_platform().lower()
+    if build == "win32":
+        return "x86"
+    if build.startswith("win-"):
+        return build[len("win-"):]
+    return ""
+
+
 def platform_key(platform: str | None = None, machine: str | None = None) -> str:
     """Normalize to `<os>-<arch>`: macos-arm64, macos-x64, windows-x64, linux-x64…"""
     raw_os = (platform or sys.platform).lower()
@@ -54,9 +71,16 @@ def platform_key(platform: str | None = None, machine: str | None = None) -> str
         # "x86_64" and would fetch the Intel update feed for an arm64 install, then swap an Intel
         # bundle over it. The shipped BUILD_MANIFEST records the architecture the artifact was
         # actually built for, so it is the authority whenever it is present.
-        raw_machine = (_bundle_manifest_arch() or "").lower()
-        if not raw_machine:
-            raw_machine = os.uname().machine.lower() if hasattr(os, "uname") else ""
+        #
+        # On Windows the interpreter's own build is that authority. BUILD_MANIFEST.json is the Mac
+        # layout: three folders above {app}\python\python.exe is the user-writable Programs folder,
+        # OUTSIDE the install, so a file planted there must never steer the feed choice.
+        if sys.platform.startswith("win"):
+            raw_machine = _interpreter_arch()
+        else:
+            raw_machine = (_bundle_manifest_arch() or "").lower()
+            if not raw_machine:
+                raw_machine = os.uname().machine.lower() if hasattr(os, "uname") else _interpreter_arch()
     if raw_machine in ("arm64", "aarch64"):
         arch = "arm64"
     elif raw_machine in ("x86_64", "amd64"):
