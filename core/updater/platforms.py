@@ -75,7 +75,10 @@ def platform_key(platform: str | None = None, machine: str | None = None) -> str
         # On Windows the interpreter's own build is that authority. BUILD_MANIFEST.json is the Mac
         # layout: three folders above {app}\python\python.exe is the user-writable Programs folder,
         # OUTSIDE the install, so a file planted there must never steer the feed choice.
-        if sys.platform.startswith("win"):
+        if os_name == "windows" and sys.platform.startswith("win"):
+            # Keyed for Windows AND running on Windows: only then is this interpreter the
+            # Windows bundle's own. Keying another OS (a Mac test on a Windows host) keeps that
+            # OS's own rules below.
             raw_machine = _interpreter_arch()
         else:
             raw_machine = (_bundle_manifest_arch() or "").lower()
