@@ -1,15 +1,23 @@
 """Windows ``vool://`` protocol handler for the bundled VOOL installation.
 
-The handler validates the callback shape, starts or reuses the bundle supervisor
-when necessary, and forwards the two OAuth parameters to the shared desktop
-callback endpoint. It never exchanges the code, checks PKCE state itself, or
-writes the callback URI to a log or file.
+An OpenRouter sign-in callback (``vool://auth/openrouter/callback``) is validated
+strictly, the bundle supervisor is started or reused when necessary, and the two
+OAuth parameters are forwarded to the shared desktop callback endpoint. It never
+exchanges the code, checks PKCE state itself, or writes the callback URI to a log
+or file.
+
+Any other ``vool:`` link (``vool://`` from Win+R, a bookmark) opens VOOL the way
+the Start-menu shortcut does -- which brings an open window forward -- and uses
+nothing from the link. A link that is refused, or a callback that cannot be
+delivered, is reported in a message box instead of failing silently; the message
+never repeats the link.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -23,11 +31,25 @@ _RETRY_COUNT = 30
 _RETRY_DELAY_SECONDS = 1.0
 _MAX_CODE_LENGTH = 4096
 _MAX_STATE_LENGTH = 1024
+_MAX_URI_LENGTH = 16384
+# vool:auth/... and vool:/auth/... are sign-in links too, held to the same strict check.
+_AUTH_LINK = re.compile(r"/*auth(?:[/?#]|$)", re.IGNORECASE)
+_TITLE = "VOOL"
+_REFUSED_LINK = "VOOL did not open this link: it is not a VOOL link it can use."
+_REFUSED_SIGN_IN = (
+    "VOOL did not accept this sign-in link: it is not a valid OpenRouter sign-in callback. "
+    "Start the sign-in again from VOOL."
+)
+_SIGN_IN_UNDELIVERED = (
+    "VOOL could not finish the OpenRouter sign-in: VOOL did not answer in time. "
+    "Open VOOL and start the sign-in again."
+)
+_NOT_STARTED = "VOOL could not be started from this link. Open VOOL from the Start menu."
 
 
 def parse_callback_uri(uri: str) -> tuple[str, str]:
     """Return decoded ``(code, state)`` from the exact VOOL callback shape."""
-    if not isinstance(uri, str) or len(uri) > 16384:
+    if not isinstance(uri, str) or len(uri) > _MAX_URI_LENGTH:
         raise ValueError("callback URI is invalid")
     parsed = urlsplit(uri)
     if parsed.scheme.lower() != "vool" or parsed.netloc.lower() != "auth":
@@ -92,7 +114,7 @@ def _start_bundle(root: Path) -> None:
 def deliver_callback(uri: str, *, root: Path | None = None, sleep=time.sleep) -> bool:
     """Validate and deliver a callback through the shared desktop runtime."""
     code, state = parse_callback_uri(uri)
-    bundle_root = (root or Path(__file__).resolve().parent).resolve()
+    bundle_root = (root or _bundle_root()).resolve()
     started = False
     for attempt in range(_RETRY_COUNT):
         if _post_callback(code, state):
@@ -105,14 +127,72 @@ def deliver_callback(uri: str, *, root: Path | None = None, sleep=time.sleep) ->
     return False
 
 
+def _bundle_root() -> Path:
+    return Path(__file__).resolve().parent
+
+
+def _notify(message: str) -> None:
+    """Tell the user, who launched this from a link with no console (pythonw), what happened."""
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            mb_ok, mb_iconwarning, mb_setforeground = 0x0, 0x30, 0x10000
+            ctypes.windll.user32.MessageBoxW(None, message, _TITLE, mb_ok | mb_iconwarning | mb_setforeground)
+            return
+        except Exception:
+            pass
+    try:
+        print(message, file=sys.stderr)
+    except Exception:
+        pass
+
+
+def classify_uri(uri: object) -> str:
+    """``"callback"`` for a link addressed to vool://auth, ``"open"`` for any other vool: link,
+    ``"refused"`` for anything else. Only the scheme and host are read; nothing in an "open"
+    link is used for anything."""
+    if not isinstance(uri, str) or not uri or len(uri) > _MAX_URI_LENGTH:
+        return "refused"
+    scheme, sep, rest = uri.partition(":")
+    if not sep or scheme.lower() != "vool":
+        return "refused"
+    try:
+        host = urlsplit(uri).netloc.lower()
+    except ValueError:
+        host = ""
+    if host == "auth" or _AUTH_LINK.match(rest):
+        return "callback"
+    return "open"
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if len(args) != 1:
         return 2
-    try:
-        return 0 if deliver_callback(args[0]) else 1
-    except (FileNotFoundError, OSError, ValueError):
+    kind = classify_uri(args[0])
+    if kind == "refused":
+        _notify(_REFUSED_LINK)
         return 1
+    if kind == "open":
+        try:
+            _start_bundle(_bundle_root())
+        except (FileNotFoundError, OSError, ValueError):
+            _notify(_NOT_STARTED)
+            return 1
+        return 0
+    try:
+        delivered = deliver_callback(args[0])
+    except ValueError:
+        _notify(_REFUSED_SIGN_IN)
+        return 1
+    except (FileNotFoundError, OSError):
+        _notify(_NOT_STARTED)
+        return 1
+    if not delivered:
+        _notify(_SIGN_IN_UNDELIVERED)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
