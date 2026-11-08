@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import os
 import re
 from collections import OrderedDict
 from pathlib import Path
@@ -791,6 +792,41 @@ def maybe_handle_direct_machine_write_request(
             execution=execution,
             reason="machine_write_fast_path",
         )
+    marked_write = _extract_marked_folder_write_target(user_input)
+    if marked_write is not None:
+        execution = execute_authorized_runtime_tool(
+            "machine.write_file",
+            marked_write,
+            source_context=dict(source_context or {}),
+        )
+        if execution is None:
+            return None
+        return _machine_tool_fast_path_result(
+            agent,
+            user_input=user_input,
+            session_id=session_id,
+            source_context=source_context,
+            intent="machine.write_file",
+            execution=execution,
+            reason="machine_write_fast_path",
+            response_text=_read_back_reply(execution, marked_write),
+        )
+    unserved = _marked_destination_outside_workspace(user_input, source_context=source_context)
+    if unserved:
+        # The builder and the workspace lanes join what they write onto the chat's workspace, so a
+        # turn they took here would land somewhere other than the marked folder it names.
+        return agent._fast_path_result(
+            session_id=session_id,
+            user_input=user_input,
+            response=(
+                f"I can write into `{unserved}`, but only a plain text file with the exact text given, "
+                "for example: create notes.txt in that folder with the text hello. I won't write this "
+                "somewhere else and report it as done. Nothing was written on this turn."
+            ),
+            confidence=0.95,
+            source_context=source_context,
+            reason="machine_write_guard",
+        )
     machine_file_write = _extract_machine_text_file_write_target(
         user_input,
         source_context=source_context,
@@ -1073,6 +1109,113 @@ def _extract_machine_text_file_write_target(
         "path": _home_relative_safe_machine_path(target),
         "content": content,
     }
+
+
+_PATH_SLOT = " the-named-folder "
+
+
+def _extract_marked_folder_write_target(user_input: str) -> dict[str, str] | None:
+    """On Windows, the literal text file this turn asks to write inside a folder the owner marked,
+    as a ``machine.write_file`` call; None otherwise and off Windows.
+
+    Captest B3, 2026-11-08: "create hello.txt in <marked folder> with the text hi" never reached a
+    writer. This lane knew only Desktop, Documents and Downloads by name, the builder took the turn
+    and joined `C:\\Users\\...` onto the chat's workspace as a folder named `C`. The destination is
+    read whole (quoted, or through folders with spaces, see `write_root_honesty.write_destinations`)
+    and kept absolute; it is taken only when it lies inside a marked folder, and the call still goes
+    through the normal approval and the write gate. Only literal text this lane already reads
+    (`with the text ...`, `that says ...`) is written; a brief is left to the other lanes."""
+    from core import windows_write_gate
+    from core.agent_runtime.write_root_honesty import write_destinations
+
+    if not windows_write_gate.active():
+        return None
+    text = str(user_input or "")
+    if not text.strip() or not _has_affirmative_machine_write_verb(text):
+        return None
+    from core.instructional_request import asks_for_instructions_not_execution
+
+    if asks_for_instructions_not_execution(text):
+        return None
+    destinations = write_destinations(text)
+    if not destinations:
+        return None
+    destination = destinations[0]
+    if not windows_write_gate.inside_flagged(destination):
+        return None
+    at = text.find(destination)
+    rest = " ".join((text if at < 0 else text[:at] + _PATH_SLOT + text[at + len(destination):]).split())
+    content = _extract_machine_text_file_content(rest)
+    if not content:
+        return None
+    filename = _extract_machine_text_filename(rest)
+    named_ext = Path(destination).suffix.lstrip(".").lower()
+    if os.path.isdir(destination):
+        if not filename:
+            return None
+        target = os.path.join(destination, filename)
+    elif os.path.exists(destination) or (named_ext in _SAFE_MACHINE_TEXT_EXTENSIONS and not filename):
+        target = destination
+    elif filename:
+        target = os.path.join(destination, filename)
+    else:
+        return None
+    if Path(target).suffix.lstrip(".").lower() not in _SAFE_MACHINE_TEXT_EXTENSIONS:
+        return None
+    if not windows_write_gate.inside_flagged(target):
+        return None
+    return {"path": target, "content": content}
+
+
+def _marked_destination_outside_workspace(user_input: str, *, source_context: dict[str, object] | None) -> str:
+    """On Windows, the marked-folder destination this turn names that lies outside the chat's
+    workspace when `_extract_marked_folder_write_target` could not serve it, or ``""``."""
+    from core import windows_write_gate
+    from core.agent_runtime.write_root_honesty import write_destinations
+
+    if not windows_write_gate.active() or not _has_affirmative_machine_write_verb(str(user_input or "")):
+        return ""
+    destinations = write_destinations(str(user_input or ""))
+    if not destinations or not windows_write_gate.inside_flagged(destinations[0]):
+        return ""
+    workspace = str((source_context or {}).get("workspace") or (source_context or {}).get("workspace_root") or "").strip()
+    if workspace and not windows_path_policy.refused_form(workspace, network_only=True):
+        try:
+            resolved_workspace = os.path.normcase(os.path.realpath(workspace))
+            resolved = os.path.normcase(os.path.realpath(destinations[0]))
+            if os.path.commonpath([resolved, resolved_workspace]) == resolved_workspace:
+                return ""
+        except (OSError, ValueError):
+            pass
+    return destinations[0]
+
+
+def _read_back_reply(execution: Any, write: dict[str, str]) -> str | None:
+    """The reply for a write the tool reports done, from what is on disk now: the file is read back,
+    and only what it holds is claimed. None (the tool's own words) for a write that did not run."""
+    if not bool(getattr(execution, "ok", False)):
+        return None
+    status = str(getattr(execution, "status", "") or "")
+    if status not in {"executed", "updated"}:
+        return None
+    path, wanted = str(write.get("path") or ""), str(write.get("content") or "")
+    verb = "Updated" if status == "updated" else "Created"
+    try:
+        from core.runtime_execution_tools import anchor_machine_path
+
+        landed = anchor_machine_path(path).read_bytes().decode("utf-8")
+    except (OSError, RuntimeError, UnicodeDecodeError, ValueError):
+        return (
+            f"The write to `{path}` was reported done, but the file could not be read back, so I "
+            "can't confirm what it holds."
+        )
+    if landed.replace("\r\n", "\n") != wanted.replace("\r\n", "\n"):
+        return (
+            f"The write to `{path}` was reported done, but reading the file back did not give the "
+            "text you asked for, so I can't confirm it holds it."
+        )
+    lines = len(wanted.splitlines()) or 1
+    return f"{verb} `{path}` and read it back: it holds exactly the text you asked for ({lines} line{'s' if lines != 1 else ''})."
 
 
 def _extract_machine_text_file_content(raw: str) -> str:

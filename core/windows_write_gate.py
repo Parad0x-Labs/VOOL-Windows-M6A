@@ -52,6 +52,12 @@ _GATED: dict[str, tuple[str, ...]] = {
     "operator.cleanup_temp_files": ("target_path",),
     "media.export": ("output_path",),
 }
+#: Keyed intents whose writer changes only the paths their arguments name, placed from the user's
+#: home (`anchor_machine_path`) and never from the chat's workspace, so the chat's workspace is not
+#: one of their targets. Checked against it as well, a write the owner asked for inside a marked
+#: folder was refused whenever the chat's own workspace (an unbound chat's Desktop) was not marked
+#: (captest B3, 2026-11-08). Every path they name must still lie inside a marked folder.
+_LANDING_ONLY = frozenset({"machine.write_file", "machine.ensure_directory"})
 #: Step intents whose effect is the inner intent's (gated only when that inner intent is gated).
 _STEPS = frozenset({"code.task.step", "repo.step"})
 #: Gated intents refused on Windows whatever they name, because they also change folders their
@@ -191,6 +197,16 @@ def _inside(path: str, roots: list[str]) -> bool:
         except ValueError:  # different drives
             continue
     return False
+
+
+def inside_flagged(path: str, environ: dict[str, str] | None = None) -> bool:
+    """Whether ``path``, resolved as the gate resolves it, lies inside a flagged folder. False when
+    none is flagged. A lane asks this to pick a destination; the gate still decides every write."""
+    try:
+        roots = flagged_roots(environ)
+    except Exception:  # an unknown state flags nothing
+        return False
+    return bool(roots) and _inside(str(path or ""), roots)
 
 
 def _landing(intent: str, value: str) -> list[str] | None:
@@ -437,7 +453,7 @@ def refusal(
             f"are not limited to the folders marked in {ENV_VAR}. Nothing was changed."
         )
     roots = flagged_roots(environ)
-    targets = [str(workspace_root)] if workspace_root else []
+    targets = [str(workspace_root)] if workspace_root and intent not in _LANDING_ONLY else []
     for key in _GATED[intent]:
         value = str(arguments.get(key) or "")
         if not value.strip():
@@ -474,4 +490,4 @@ def refusal(
     )
 
 
-__all__ = ["ENV_VAR", "STATUS", "active", "broker_report", "flagged_roots", "may_refuse", "refusal"]
+__all__ = ["ENV_VAR", "STATUS", "active", "broker_report", "flagged_roots", "inside_flagged", "may_refuse", "refusal"]

@@ -176,9 +176,12 @@ def allowed_write_roots(source_context: dict[str, object] | None) -> list[Path]:
 
 def _windows_writable(roots: list[Path]) -> list[Path]:
     """On Windows only folders marked disposable can be written (core/windows_write_gate.py), so the
-    roots are cut to where they overlap a marked folder: a marked folder inside a root, or a root
-    inside a marked folder. Clean-VM job 52 was offered `~/Desktop` and `~/Downloads`, which the gate
-    then refused because neither was marked. Off Windows the roots stay as they are."""
+    writable roots are exactly the marked folders, wherever they are. Clean-VM job 52 was offered
+    `~/Desktop` and `~/Downloads`, which the gate then refused because neither was marked. Captest B3
+    (2026-11-08) was the other half: the roots used to be cut to where a marked folder overlapped
+    the workspace or Desktop, Documents and Downloads, so a folder marked anywhere else was dropped
+    and chat answered "no folder I can write to is marked yet" while Settings showed it marked.
+    Marked folders inside one of ``roots`` are listed first. Off Windows the roots stay as they are."""
     from core import windows_write_gate
 
     if not windows_write_gate.active():
@@ -187,17 +190,16 @@ def _windows_writable(roots: list[Path]) -> list[Path]:
         flagged = [Path(root) for root in windows_write_gate.flagged_roots()]
     except Exception:
         return []
-    writable: list[Path] = []
 
     def _under(child: Path, parent: Path) -> bool:
         c, p = os.path.normcase(str(child)), os.path.normcase(str(parent)).rstrip("\\/")
         return c == p or c.startswith(p + "\\") or c.startswith(p + "/")
 
-    for root in roots:
-        for marked in flagged:
-            overlap = marked if _under(marked, root) else root if _under(root, marked) else None
-            if overlap is not None and all(os.path.normcase(str(overlap)) != os.path.normcase(str(w)) for w in writable):
-                writable.append(overlap)
+    inside_a_root = [marked for marked in flagged if any(_under(marked, root) for root in roots)]
+    writable: list[Path] = []
+    for marked in inside_a_root + flagged:
+        if all(os.path.normcase(str(marked)) != os.path.normcase(str(w)) for w in writable):
+            writable.append(marked)
     return writable
 
 
@@ -333,21 +335,130 @@ def _is_payload_span(
     )
 
 
+# A full local path the user put in quotes or backticks: `"C:\Users\me\VOOL Test\notes"`. The rooted
+# path pattern above never starts right after a quote, so a quoted path, spaces and all, was no
+# candidate at all. The span runs to the matching quote on the same line.
+_QUOTED_ROOTED_PATH_RE = re.compile(
+    r"(?P<quote>[\"'`])(?P<path>(?:~[/\\]|[A-Za-z]:[\\/]|/(?![/\\]))[^\"'`\r\n<>|]*?)(?P=quote)"
+)
+# How many space-separated words an unquoted path may be extended through (`_extend_through_spaces`).
+_MAX_SPACED_WORDS = 16
+_NEXT_WORD_RE = re.compile(r"[ \t]+[^\s`'\"<>|]+")
+
+
+def _path_separators() -> str:
+    return "\\/" if os.name == "nt" else "/"
+
+
+def _spaces_may_extend(candidate: str) -> bool:
+    """Only a full local path is extended, and only by looking at what exists: never a share, a
+    device or a root-relative path on Windows (looking a share up is already the SMB connection),
+    and never a ``~`` path."""
+    if not candidate or windows_path_policy.refused_form(candidate):
+        return False
+    if re.match(r"^[A-Za-z]:[\\/]", candidate):
+        return True
+    return os.name != "nt" and candidate.startswith("/") and not candidate.startswith(("//", "/\\"))
+
+
+def _spaced_component_state(path: str) -> str:
+    """For ``path``, judged at the component holding its LAST space: ``"exists"`` when that whole
+    component is an existing folder (or, at the end of ``path``, an existing file), ``"prefix"``
+    when it is still open at the end of ``path`` and begins the name of an entry in its folder, and
+    ``""`` otherwise."""
+    seps = _path_separators()
+    space = max(path.rfind(" "), path.rfind("\t"))
+    if space < 0:
+        return ""
+    head = max(path.rfind(sep, 0, space) for sep in seps)
+    if head < 0:
+        return ""
+    tails = [found for found in (path.find(sep, space) for sep in seps) if found >= 0]
+    tail = min(tails) if tails else -1
+    parent, name = path[: head + 1], path[head + 1 : tail if tail >= 0 else len(path)]
+    if not name.strip():
+        return ""
+    try:
+        if tail >= 0:
+            return "exists" if os.path.isdir(parent + name) else ""
+        if os.path.exists(parent + name):
+            return "exists"
+        wanted = os.path.normcase(name)
+        with os.scandir(parent) as entries:
+            if any(os.path.normcase(entry.name).startswith(wanted) for entry in entries):
+                return "prefix"
+    except (OSError, ValueError):
+        return ""
+    return ""
+
+
+def _extend_through_spaces(text: str, start: int, end: int) -> int:
+    """Where an unquoted path typed at ``start`` really ends, when it names a folder with spaces.
+
+    Captest B3, 2026-11-08: "create hello.txt in C:\\Users\\VOOLT\\VOOL Test\\Allowed Ä folder with the
+    text hi" was read as `C:\\Users\\VOOLT\\VOOL`. The path is extended one word at a time while each
+    spaced component it gains is a folder or file that exists (or, while still being read, starts
+    the name of one), and it ends after the longest extension that named something on disk. A word
+    that would only make up a new name ("... folder with") is never taken in."""
+    if not _spaces_may_extend(_clean_path(text[start:end])):
+        return end
+    best, pos = end, end
+    for _ in range(_MAX_SPACED_WORDS):
+        word = _NEXT_WORD_RE.match(text, pos)
+        if word is None:
+            break
+        pos = word.end()
+        state = _spaced_component_state(_clean_path(text[start:pos]))
+        if state == "exists":
+            best = pos
+        elif state != "prefix":
+            break
+    return best
+
+
+def _rooted_candidates(body: str) -> list[tuple[int, str]]:
+    """``(start, raw path)`` for every rooted path in ``body``, quoted or not, in order. A URL's
+    authority section is never one."""
+    found: list[tuple[int, str]] = []
+    quoted: list[tuple[int, int]] = []
+    for match in _QUOTED_ROOTED_PATH_RE.finditer(body):
+        found.append((match.start("path"), match.group("path")))
+        quoted.append((match.start("path"), match.end("path")))
+    for match in _ROOTED_PATH_RE.finditer(body):
+        start = match.start()
+        if _is_url_authority(body, start) or any(low <= start < high for low, high in quoted):
+            continue
+        found.append((start, body[start : _extend_through_spaces(body, start, match.end())]))
+    return sorted(found)
+
+
 def _destination_candidates(body: str) -> Iterator[tuple[int, str]]:
     """``(start, path)`` for every rooted candidate in ``body`` that is not payload, in order."""
     fence_spans = _fenced_spans(body)
-    candidate_matches = [
-        match for match in _ROOTED_PATH_RE.finditer(body) if not _is_url_authority(body, match.start())
-    ]
-    content_spans = _content_marker_spans(body, [match.start() for match in candidate_matches])
-    for match in candidate_matches:
-        start = match.start()
-        candidate = _clean_path(match.group("path"))
+    candidate_matches = _rooted_candidates(body)
+    content_spans = _content_marker_spans(body, [start for start, _raw in candidate_matches])
+    for start, raw in candidate_matches:
+        candidate = _clean_path(raw)
         if len(candidate) <= 1:
             continue
         if _is_payload_span(body, start, fence_spans=fence_spans, content_spans=content_spans):
             continue
         yield start, candidate
+
+
+def write_destinations(text: str) -> list[str]:
+    """The full local paths this turn asks us to write, in order: rooted, with a destination verb
+    just before them, and not dictated content. A quoted path, and an unquoted one through folders
+    with spaces in their names, is read whole. Whether a path may be written is not decided here:
+    that is the write gate's."""
+    body = str(text or "")
+    found: list[str] = []
+    for start, candidate in _destination_candidates(body):
+        if typed_path_kind(body, start, candidate) or not _write_intent_precedes(body, start):
+            continue
+        if candidate not in found:
+            found.append(candidate)
+    return found
 
 
 def unreachable_write_target(text: str, *, source_context: dict[str, object] | None) -> str:
@@ -455,4 +566,5 @@ __all__ = [
     "typed_path_kind",
     "unreachable_write_response",
     "unreachable_write_target",
+    "write_destinations",
 ]
