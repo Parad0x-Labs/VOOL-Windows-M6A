@@ -475,8 +475,13 @@ def _undispatchable_execution(intent: str, arguments: dict[str, Any]) -> ToolInt
                     f"MCP server {server!r} is not configured (MCP is opt-in)."
                 )
             else:
+                from core.plugin_executor import windows_plugin_mcp_refusal
+
                 failure = server_failure_reason(server)
-                if failure:
+                refusal = windows_plugin_mcp_refusal()
+                if refusal:
+                    status, reason = "mcp_refused_on_windows", refusal
+                elif failure:
                     status, reason = "mcp_server_unavailable", (
                         f"MCP server {server!r} could not be started: {failure}"
                     )
@@ -793,6 +798,7 @@ def _execute_plugin_tool(intent: str, arguments: dict[str, Any]) -> ToolIntentEx
         "handler_missing",
         "handler_escaped",
         "confinement_unavailable",
+        "refused_on_windows",
     }
     text = str(result.text or "").strip()
     if not result.ok:

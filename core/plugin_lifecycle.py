@@ -417,10 +417,37 @@ def verify(plugin_id: str, *, root: Path | None = None, expected_digest: str = "
     return _save(record)
 
 
+def _declares_runnable_code(root: Path | str) -> bool:
+    """Whether a pack's manifest declares anything that would start a process.
+
+    A manifest that cannot be read counts as runnable: the answer is unknown, so it fails closed.
+    """
+
+    from core.skill_package import _RUNNABLE_MANIFEST_KEYS
+
+    if not str(root or "").strip():
+        return True
+    try:
+        payload = json.loads((Path(root) / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+    except Exception:
+        return True
+    if not isinstance(payload, dict):
+        return True
+    return any(payload.get(key) for key in _RUNNABLE_MANIFEST_KEYS)
+
+
 def enable(plugin_id: str) -> PluginRecord:
     record = _load(plugin_id)
     if record is None:
         raise LifecycleError(f"{plugin_id}: nothing installed to enable")
+    # Windows starts no plugin in 0.7.1. A pack whose manifest declares runnable code is refused
+    # here, at the add-ons enable step, in the plain words; an instruction-only (skills) pack
+    # starts nothing and still enables.
+    from core.plugin_executor import windows_plugin_mcp_refusal
+
+    refusal = windows_plugin_mcp_refusal()
+    if refusal and _declares_runnable_code(record.root):
+        raise LifecycleError(refusal)
     if record.stage != STAGE_VERIFIED and not (record.stage == STAGE_ENABLED and record.verified_digest):
         raise LifecycleError(f"{plugin_id}: cannot enable from stage `{record.stage}` — verify it first")
     if record.revoked_at:
