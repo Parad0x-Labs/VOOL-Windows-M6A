@@ -3,13 +3,29 @@
 All notable changes to VOOL. Dates are YYYY-MM-DD. Earlier internal development
 history is not republished here.
 
-## [Unreleased] — Windows
+## [0.7.1-beta] — Windows — 2026-11-12
 
-### Known limitations
-- On Windows, VOOL can't yet run code tools (tests, git, npm, Python scripts) for you in its sandbox, and it doesn't start plugins or MCP servers or open files that need an external decoder. It refuses all of these rather than run them unprotected. This refusal does not affect chat with local or cloud models, or workspace edits. To run code tools, use VOOL under WSL2/Linux.
+The first native Windows download: `VOOL-Setup.exe` with `SHA256SUMS`, for Windows 10 22H2 and
+Windows 11, 64-bit.
+
+### Added
+- **Windows installer.** A per-user Inno Setup installer (`%LOCALAPPDATA%\Programs\VOOL`) that never asks for administrator rights. It bundles VOOL's own Python, the local-model runner and the Windows broker, so nothing else needs installing.
+- **Folders VOOL may change.** On Windows, VOOL changes files only inside folders you mark as disposable, in **Settings → Folders VOOL may change (Windows)**. Marking asks Windows to confirm the folder. A new mark is used after VOOL restarts; unmarking takes effect at once. Outside a marked folder, VOOL refuses a write before asking you to approve it.
+- **Owner-only secrets.** Keys and other secrets on disk are locked to your Windows account, and VOOL refuses to store one where that lock can't be set.
+- **No console windows.** Background tools no longer flash a window on every turn.
+- **Signed updates for Windows** from the next release on, with rollback. 0.7.1 itself is installed by download.
+
+### Windows limits in 0.7.1
+- VOOL runs **Python and pytest** for you in its Windows sandbox.
+- It refuses **git, npm, node, ruff and pip**, does not start **plugins or MCP servers**, and does not read **PDF or 7z** files. It refuses these rather than run them unprotected. To use them, run VOOL under WSL2/Linux.
+- It does not clean temp files. A patch is applied only when VOOL can reproduce it byte for byte; otherwise it is refused and nothing changes.
+- Files on other machines (network shares, mapped network drives, device paths) are refused.
+- The installer is **not code-signed yet**. SmartScreen shows **Windows protected your PC**; check the file against `SHA256SUMS` first, then use **More info → Run anyway**.
+- VOOL does not send Windows notifications yet; alerts stay in its own bell.
 
 ### Planned
-- A native Windows sandbox for code tools (AppContainer + Job Object).
+- A native Windows sandbox for the remaining code tools (AppContainer + Job Object).
+- Authenticode signing of the installer.
 
 ## [0.7.0-beta] — 2026-10-13
 
