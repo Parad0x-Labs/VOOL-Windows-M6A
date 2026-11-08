@@ -175,6 +175,32 @@ def broker_report() -> dict[str, Any]:
     return report()
 
 
+def capability_report() -> dict[str, Any] | None:
+    """The Windows write rule as GET /api/runtime/capabilities states it, or None when this process
+    does not enforce it (`active()`). The folders are `flagged_roots()`, the list every gated
+    intent is checked against; an error reading them reports none (a write would be refused)."""
+    if not active():
+        return None
+    try:
+        folders = flagged_roots()
+    except Exception as exc:
+        logger.warning("the capability report lists no flagged folder: %s", type(exc).__name__)
+        folders = []
+    return {
+        "status": STATUS,
+        "write_scope": "marked_folders_only",
+        "env_var": ENV_VAR,
+        "marked_folders": list(folders),
+        "gated_intents": sorted(_GATED),
+        "always_refused_intents": sorted(_ALWAYS_REFUSED),
+        "reason": (
+            "On Windows, VOOL changes your files only inside folders marked in Settings, Folders VOOL "
+            f"may change (or listed in {ENV_VAR}); a write anywhere else is refused before approval."
+            + (f" {len(folders)} folder(s) are marked now." if folders else " No folder is marked now, so every such write is refused.")
+        ),
+    }
+
+
 def _inside(path: str, roots: list[str]) -> bool:
     # No file can have a path holding a NUL. POSIX realpath raises on one, but Windows realpath
     # returns it unresolved, so the text around the NUL would decide where it lies.

@@ -302,6 +302,46 @@ def kernel_confinement_available() -> bool:
         return False
 
 
+def windows_child_report() -> dict[str, Any] | None:
+    """Whether plugins and MCP servers start on this Windows host, or None off Windows.
+
+    Both start only through `confined_argv`: never bare on Windows (`_WINDOWS_REFUSES_BARE`, which
+    also overrides `heuristic_only`), and confined only by the Windows sandbox, whose phase 1 runs
+    the programs `sandbox.job_runner.windows_sandbox_report` names and refuses every other one.
+    - A plugin's handler is a file inside its own plugin folder (`run_plugin_tool`), never the
+      interpreter phase 1 accepts, so no plugin starts.
+    - An MCP server's command is whatever its config names: one that is not a confined program is
+      refused. One that is (a Python server) would meet the same confinement as a sandbox job; no
+      Windows run has shown one start, so it is reported as unproven, never as available.
+    """
+    if not _WINDOWS_REFUSES_BARE:
+        return None
+    from sandbox.job_runner import windows_sandbox_report
+
+    sandbox = windows_sandbox_report() or {}
+    confined = list(sandbox.get("confined_programs") or ())
+    return {
+        "runs_unconfined": False,
+        "plugins": {
+            "status": "refused",
+            "reason": (
+                "Windows never starts a plugin unconfined, and its sandbox runs only "
+                f"{', '.join(confined) or 'no program'}; a plugin's own handler is none of them."
+            ),
+        },
+        "mcp_servers": {
+            "status": "refused_unless_confined_program",
+            "confined_programs": confined,
+            "proven": False,
+            "reason": (
+                "Windows never starts an MCP server unconfined. A server whose command is not one of "
+                f"{', '.join(confined) or 'the confined programs'} is refused; a Python server is "
+                "unproven on Windows."
+            ),
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Execution
 # ---------------------------------------------------------------------------
@@ -492,4 +532,5 @@ __all__ = [
     "confined_argv",
     "kernel_confinement_available",
     "run_plugin_tool",
+    "windows_child_report",
 ]
