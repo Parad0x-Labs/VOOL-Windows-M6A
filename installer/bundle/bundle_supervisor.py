@@ -76,6 +76,14 @@ _REOPEN_GRACE_SECONDS = 10.0
 # attached: its exit 1 is a forced end, and it stays closed.
 _WINDOW_ATTACH_SECONDS = 60.0
 _WINDOW_REOPEN_RETRIES = 6
+# Set for the bundled Ollama on top of the supervisor's environment, overriding any inherited value.
+# Capability test A6 (0.7.1-beta, clean VM, nothing turned on): the bundled ollama.exe opened a
+# connection to ollama.com minutes after the network came on, while every VOOL pull was still gated
+# (core.web.api.runtime.start_ollama_model_pull, core.local_model_pull). OLLAMA_NO_CLOUD turns off
+# Ollama's own cloud features (cloud models, web search, sign-in), which VOOL never uses: its cloud
+# lanes are its own providers, behind its own consent. A download the user clicks still goes to
+# Ollama's registry.
+_OLLAMA_CHILD_ENV: dict[str, str] = {"OLLAMA_NO_CLOUD": "1"}
 _WINDOWS_SCRIPT_ARGUMENT_PREFIX = (
     r'^(?:\x22(?:[^\x22]*\\)?pythonw?\.exe\x22|(?:[^\s\x22]*\\)?pythonw?\.exe)'
     r'(?:\s+-[bBdEhIiOPqRsSuvVx]+'
@@ -686,7 +694,9 @@ class BundleSupervisor:
     def _ensure_ollama(self) -> None:
         if self._watch_child("ollama", "http://127.0.0.1:11434/api/tags"):
             return
-        self._start("ollama", [str(self.root / "ollama" / "ollama.exe"), "serve"], cwd=self.root)
+        self._start(
+            "ollama", [str(self.root / "ollama" / "ollama.exe"), "serve"], cwd=self.root, extra_env=_OLLAMA_CHILD_ENV
+        )
 
     def _ensure_api(self) -> None:
         if self._watch_child("api", "http://127.0.0.1:11435/healthz"):

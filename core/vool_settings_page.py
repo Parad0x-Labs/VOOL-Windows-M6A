@@ -3420,6 +3420,9 @@ function widgetLocalModels(stack) {
       body.appendChild(rowEl);
     }
     if (note) body.appendChild(el('div', 'state saved', note));
+    // The other offered models stay downloadable once one is installed (capability tests D1/D2):
+    // the box lists only offered models not installed yet, and shows nothing when every one is.
+    if (window.VoolModelDownload) window.VoolModelDownload.mount(body, { onDone: (name) => draw('Downloaded ' + name + '. Run the certification to see if it may author answers.') });
     body.appendChild(el('div', 'subtle', 'Certification is a sealed local probe (synthetic tools, no workspace, no credentials). A model that fails it can still route and call tools; it just cannot write a final answer.'));
   };
   draw();
