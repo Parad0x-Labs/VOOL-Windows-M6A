@@ -44,7 +44,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from core import os_file_lock
+from core import os_file_lock, windows_sharing_retry
 
 GENESIS_PREV = ""
 _UNSIGNED_KEYS = frozenset({"entry_hash", "mac"})
@@ -111,7 +111,9 @@ def _atomic_write(path: Path, data: bytes, *, mode: int = 0o600) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.chmod(tmp_name, mode)
-        os.replace(tmp_name, path)
+        # A reader holding HEAD open refuses the replace for a moment on Windows (a sharing
+        # violation); the bounded retry waits it out. Off Windows a refusal is raised at once.
+        windows_sharing_retry.replace(tmp_name, path)
     except BaseException:
         with contextlib.suppress(OSError):
             os.unlink(tmp_name)
@@ -170,14 +172,14 @@ class Journal:
     # -- key ----------------------------------------------------------------------------------
     def key(self) -> bytes:
         try:
-            data = self.key_path.read_bytes()
+            data = windows_sharing_retry.retried(Path.read_bytes, self.key_path)
             if len(data) >= 32:
                 return data
         except FileNotFoundError:
             pass
         with self.exclusive():
             try:
-                data = self.key_path.read_bytes()
+                data = windows_sharing_retry.retried(Path.read_bytes, self.key_path)
                 if len(data) >= 32:
                     return data
             except FileNotFoundError:
@@ -189,7 +191,7 @@ class Journal:
     # -- reading ------------------------------------------------------------------------------
     def _raw_lines(self) -> list[bytes]:
         try:
-            raw = self.journal_path.read_bytes()
+            raw = windows_sharing_retry.retried(Path.read_bytes, self.journal_path)
         except FileNotFoundError:
             return []
         if not raw:
@@ -215,7 +217,7 @@ class Journal:
 
     def head(self) -> dict[str, Any] | None:
         try:
-            payload = json.loads(self.head_path.read_text(encoding="utf-8"))
+            payload = json.loads(windows_sharing_retry.read_text(self.head_path))
         except (FileNotFoundError, ValueError):
             return None
         return payload if isinstance(payload, dict) else None
