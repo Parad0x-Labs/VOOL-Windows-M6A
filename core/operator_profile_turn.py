@@ -122,18 +122,63 @@ def _forget(proposal: ProfileProposal, *, principal: str, session_id: str) -> pr
     return profile.ProfileChange("forgotten", "; ".join(reports) + ". Say 'undo that' to restore.", item=last.item if last else None, previous=last.previous if last else None)
 
 
-def _undo(principal: str, session_id: str) -> profile.ProfileChange:
+_UNDOABLE_PROFILE_ACTIONS_SQL = (
+    "SELECT item_id, created_at FROM operator_profile_history WHERE principal = ? "
+    "AND action IN ('create','update','forget','move_scope','restore','confirm_chat') "
+    "ORDER BY created_at DESC, rowid DESC LIMIT 1"
+)
+
+
+def _latest_undoable_profile_change(principal: str) -> Any:
     from storage.db import get_connection
 
     conn = get_connection()
     try:
-        row = conn.execute(
-            "SELECT item_id FROM operator_profile_history WHERE principal = ? AND action IN ('create','update','forget','move_scope','restore','confirm_chat') "
-            "ORDER BY created_at DESC, rowid DESC LIMIT 1",
-            (principal,),
-        ).fetchone()
+        return conn.execute(_UNDOABLE_PROFILE_ACTIONS_SQL, (principal,)).fetchone()
     finally:
         conn.close()
+
+
+def _stamp(value: Any) -> Any:
+    from datetime import datetime, timezone
+
+    stamp = datetime.fromisoformat(str(value or "").strip())
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+
+
+def profile_owns_undo(principal: str, session_id: str) -> bool:
+    """Whether a bare "undo" / "revert" / "roll back the last change" in this chat undoes a PROFILE change.
+
+    The same words ask to roll back the last file change VOOL made in the chat's workspace
+    (`workspace.rollback_last_change`). Measured on the Windows 0.7.1-beta in a marked folder: after an
+    edit, "undo the last change" was answered "There is no profile change to undo." -- this lane claimed
+    every such sentence, so the rollback tool was never reached. The profile owns the undo only when it
+    holds a change to undo AND that change is newer than this chat's last tracked workspace change
+    (`latest_workspace_mutation_for_session`, rolled-back changes excluded). With no profile change, or
+    when either store cannot be read, the lane stands down: it never restores a profile item on a guess,
+    and the turn goes on to the lanes that own the workspace."""
+    try:
+        row = _latest_undoable_profile_change(principal)
+    except Exception:
+        return False
+    if row is None:
+        return False
+    try:
+        from core.execution.artifacts import latest_workspace_mutation_for_session
+
+        mutation = latest_workspace_mutation_for_session(session_id)
+    except Exception:
+        return False
+    if mutation is None:
+        return True
+    try:
+        return _stamp(row["created_at"]) > _stamp(mutation.get("created_at"))
+    except (TypeError, ValueError, KeyError, IndexError):
+        return False
+
+
+def _undo(principal: str, session_id: str) -> profile.ProfileChange:
+    row = _latest_undoable_profile_change(principal)
     if row is None:
         return profile.ProfileChange("unchanged", "There is no profile change to undo.")
     return profile.restore_previous(str(row["item_id"]), actor="chat")
@@ -199,6 +244,9 @@ def observe_profile_turn(
         source_context["profile_context_lines"] = used_lines
         source_context["profile_used"] = used
         _observation(source_context)["used"] = used
+    if principal and any(getattr(p, "action", "") == "undo" for p in proposals):
+        if not profile_owns_undo(principal, session_id):
+            proposals = [p for p in proposals if getattr(p, "action", "") != "undo"]
     if not proposals:
         return None
     if not principal:

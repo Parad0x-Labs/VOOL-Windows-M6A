@@ -91,7 +91,33 @@ def windows_write_refusal(intent: OperatorActionIntent, *, session_id: str | Non
                     if reason:
                         return reason
                 return None
-        return windows_write_gate.refusal("operator.move_path", arguments, None)
+        # No pending preview: the handler acts on what `_parse_move_request` reads from this request
+        # (the parsed source and the folder it moves into, `archive` defaulting to VOOL's own archive
+        # folder), so those are gated. A request it reads no move from is answered `invalid_request`
+        # by the handler with nothing changed. Gated on the intent's raw fields instead, "move
+        # C:\...\hello.txt into it" was refused with the gate's internal "operator.move_path names no
+        # destination_path, so its target cannot be checked" (Windows 0.7.1-beta, B12) before the
+        # handler could say what the move needs.
+        # Read exactly as `_parse_move_request` reads it, but with environment variables left for the
+        # gate to expand once, as it expands every operator path (the handler expands them once too).
+        try:
+            parsed = operator_storage.parse_move_request(
+                intent.raw_text,
+                fallback_source=intent.target_path,
+                fallback_destination=intent.destination_path,
+                extract_quoted_values_fn=_extract_quoted_values,
+                data_path_fn=data_path,
+                expandvars_fn=str,
+            )
+        except Exception:  # an unreadable request: judge this turn's own paths, as before
+            return windows_write_gate.refusal("operator.move_path", arguments, None)
+        if parsed is None:
+            return None
+        return windows_write_gate.refusal(
+            "operator.move_path",
+            {"source_path": parsed.get("source_path"), "destination_path": parsed.get("destination_dir")},
+            None,
+        )
     return windows_write_gate.refusal("operator.cleanup_temp_files", {"target_path": intent.target_path}, None)
 
 
