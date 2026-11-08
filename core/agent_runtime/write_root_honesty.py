@@ -38,6 +38,16 @@ from core.execution.constants import drive_left_behind
 _ROOTED_PATH_RE = re.compile(
     r"(?<![\w`'\"/~\\.-])(?P<path>(?:~(?=[/\\])|[A-Za-z]:[\\/]|/)[^\s`'\"<>|]*)"
 )
+# A share, device or NT path as a Windows user types it, with backslashes, which `_ROOTED_PATH_RE`
+# never starts at: its alternatives start at `~`, a drive or `/`, so `\\host\share\x`, `\\?\C:\x`,
+# `\\.\pipe\x` and `\??\UNC\host` were no candidate at all, and a write to one fell through to the
+# builder or the model (clean-VM capability test B10, 0.7.1-beta). A share needs a host and a separator
+# after it, so an escape such as `\\d+` or `\\n` is no share. A quote or backtick may sit right before it
+# (`"\\host\s\x"`). Only the write finder behind the Windows refusal reads these
+# (`non_local_write_target`); what the reachability check reads is unchanged.
+_TYPED_SHARE_RE = re.compile(
+    r"(?<![\w/~\\.-])(?P<path>(?:\\\\(?:[?.][\\/]|[^\\/\s`'\"<>|]+[\\/])|\\\?\?\\)[^\s`'\"<>|]*)"
+)
 # ANVIL round 2, 2026-08-07: the first D16 fix truncated the scan at the first guessed content
 # marker. That is directional and single-shot -- it missed every shebang that had no marker word
 # in front of it ("create ./b.sh\n#!/bin/sh", "make ./a.sh executable, content #!/usr/bin/env
@@ -333,12 +343,22 @@ def _is_payload_span(
     )
 
 
-def _destination_candidates(body: str) -> Iterator[tuple[int, str]]:
-    """``(start, path)`` for every rooted candidate in ``body`` that is not payload, in order."""
+def _destination_candidates(body: str, *, typed_shares: bool = False) -> Iterator[tuple[int, str]]:
+    """``(start, path)`` for every rooted candidate in ``body`` that is not payload, in order. With
+    ``typed_shares``, a share, device or NT path typed with backslashes is a candidate too, quoted or
+    not (`_TYPED_SHARE_RE`)."""
     fence_spans = _fenced_spans(body)
     candidate_matches = [
         match for match in _ROOTED_PATH_RE.finditer(body) if not _is_url_authority(body, match.start())
     ]
+    if typed_shares:
+        starts = {match.start() for match in candidate_matches}
+        candidate_matches.extend(
+            match
+            for match in _TYPED_SHARE_RE.finditer(body)
+            if match.start() not in starts and not _is_url_authority(body, match.start())
+        )
+        candidate_matches.sort(key=lambda match: match.start())
     content_spans = _content_marker_spans(body, [match.start() for match in candidate_matches])
     for match in candidate_matches:
         start = match.start()
@@ -374,13 +394,14 @@ def unreachable_write_target(text: str, *, source_context: dict[str, object] | N
 def non_local_write_target(text: str, *, network_only: bool = False) -> tuple[str, str]:
     """On Windows, the first path this turn asks us to write that names a share, a device or no full
     local folder (only a share or a device, with ``network_only``), with its kind; ``("", "")``
-    otherwise, and always off Windows. Nothing is looked up. A block comment opened against its text
-    (``/*eslint-disable*/``) is not one. A path named after one this passes over is judged by the verb
-    before that one too.
+    otherwise, and always off Windows. Nothing is looked up. A share or device typed with backslashes
+    (`\\\\host\\s\\x`, `\\\\?\\C:\\x`), quoted or not, is found as typed. A block comment opened
+    against its text (``/*eslint-disable*/``) is not one. A path named after one this passes over is
+    judged by the verb before that one too.
     """
     body = str(text or "")
     passed_start = -1
-    for start, candidate in _destination_candidates(body):
+    for start, candidate in _destination_candidates(body, typed_shares=windows_path_policy.active()):
         if not candidate.strip("/\\*"):
             # A bare `//`, `///`, `/*` or `/**` (a code comment's marker in the text to write) names no
             # host and no folder as typed, so it is not answered here. The input normalizer can still
