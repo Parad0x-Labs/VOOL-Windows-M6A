@@ -32,7 +32,7 @@ SOURCE = "Ollama's registry (registry.ollama.ai), through the Ollama on this com
 AUDIT_EVENT = "model_pull_user_requested"
 
 _lock = threading.Lock()
-_active: dict[str, Any] | None = None   # {"progress", "cancel", "thread", "model", "size_gb"}
+_active: dict[str, Any] | None = None   # {"progress", "cancel", "wake", "thread", "model", "size_gb"}
 _last: dict[str, Any] | None = None
 
 
@@ -211,7 +211,8 @@ def _run(job: dict[str, Any]) -> None:
 
     progress, model, size_gb = job["progress"], job["model"], job["size_gb"]
     try:
-        _stream_ollama_pull(model, progress=progress, cancelled=job["cancel"].is_set)
+        _stream_ollama_pull(model, progress=progress, cancelled=job["cancel"].is_set,
+                            on_open=lambda wake: _hand_over_wake(job, wake))
         if job["cancel"].is_set():
             raise ModelPullCancelled(model)
         try:
@@ -235,12 +236,23 @@ def _run(job: dict[str, Any]) -> None:
         progress.finish()
 
 
+def _hand_over_wake(job: dict[str, Any], wake: Any) -> None:
+    """Keep the pull's wake for Cancel; if Cancel already came, the pull thread sees the flag next."""
+    with _lock:
+        job["wake"] = wake
+
+
 def cancel() -> tuple[int, dict[str, Any]]:
+    """Ask the running pull to stop, and wake its read so it stops now, not at Ollama's next line."""
     with _lock:
         job = _active
+        wake = job.get("wake") if job is not None else None
     if job is None:
         return _refusal(409, "no_pull_running", "No model download is running.")
     job["cancel"].set()
+    if callable(wake):
+        with contextlib.suppress(Exception):
+            wake()
     return 200, {"ok": True, "status": "cancelling", "model": job["model"]}
 
 

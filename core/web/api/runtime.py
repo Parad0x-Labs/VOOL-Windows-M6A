@@ -582,20 +582,45 @@ def _pull_line_is_local_work(event: dict[str, Any], *, bytes_arrived: bool) -> b
     return bytes_arrived
 
 
+def _pull_socket(response: Any) -> Any:
+    """The socket under a streaming pull response, or None.
+
+    urllib hands back an ``http.client.HTTPResponse`` whose ``fp`` is a buffered reader over the
+    socket's ``SocketIO``, which holds the socket as ``_sock``.
+    """
+    return getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
+
+
 def _set_pull_read_timeout(response: Any, seconds: float) -> bool:
     """Set the socket timeout for the next read of a streaming pull. False if the socket is not found.
 
-    urllib hands back an ``http.client.HTTPResponse`` whose ``fp`` is a buffered reader over the
-    socket's ``SocketIO``; the socket's timeout applies to each later recv, so changing it between
-    lines changes how long the next line may take, without reconnecting.
+    The socket's timeout applies to each later recv, so changing it between lines changes how long
+    the next line may take, without reconnecting.
     """
-    sock = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
-    settimeout = getattr(sock, "settimeout", None)
+    settimeout = getattr(_pull_socket(response), "settimeout", None)
     if not callable(settimeout):
         return False
     try:
         settimeout(float(seconds))
     except (OSError, ValueError):
+        return False
+    return True
+
+
+def _wake_pull_read(response: Any) -> bool:
+    """Hang up a streaming pull from another thread, so a recv blocked in Ollama's silence returns now.
+
+    ``shutdown`` (not ``close``) is used: it ends a blocked recv on the socket without taking the
+    reader's buffer lock, which a ``close`` from this thread would wait on until the read returns.
+    The reading thread still closes the response itself when it leaves its ``with``. False if the
+    socket is not found; Cancel then takes effect at Ollama's next line, as before.
+    """
+    shutdown = getattr(_pull_socket(response), "shutdown", None)
+    if not callable(shutdown):
+        return False
+    try:
+        shutdown(socket.SHUT_RDWR)
+    except OSError:
         return False
     return True
 
@@ -617,6 +642,7 @@ def _stream_ollama_pull(
     *,
     progress: ModelPullProgress,
     cancelled: Callable[[], bool] | None = None,
+    on_open: Callable[[Callable[[], bool]], None] | None = None,
 ) -> None:
     """Pull over Ollama's HTTP API, reporting real progress.
 
@@ -631,7 +657,10 @@ def _stream_ollama_pull(
     connection is closed: a model Ollama has registered is a finished pull, not a failure.
 
     ``cancelled`` is asked after every progress line; when it answers True the response is closed
-    (leaving the ``with``), which is how a client tells Ollama to stop the pull.
+    (leaving the ``with``), which is how a client tells Ollama to stop the pull. ``on_open`` is handed
+    a callable that wakes this read from another thread (``_wake_pull_read``), so a Cancel does not
+    wait for Ollama's next line; whatever the woken read then raises or returns, a pull whose
+    ``cancelled`` answers True ends as ``ModelPullCancelled``, never as a failure or a success.
     """
     body = json.dumps({"model": model_tag, "stream": True}).encode("utf-8")
     request = urllib.request.Request(
@@ -646,13 +675,24 @@ def _stream_ollama_pull(
     checking = False  # the last line was local disk work (verify / manifest), not bytes moving
     read_timeout = _OLLAMA_PULL_READ_TIMEOUT_SECONDS
     with urlopen(request, timeout=_OLLAMA_PULL_READ_TIMEOUT_SECONDS) as response:
+        if on_open is not None:
+            on_open(lambda: _wake_pull_read(response))
+        if cancelled is not None and cancelled():  # cancelled before the wake was handed over
+            raise ModelPullCancelled(model_tag)
         lines = iter(response)
         while True:
             try:
                 raw_line = next(lines)
             except StopIteration:
+                if cancelled is not None and cancelled():
+                    raise ModelPullCancelled(model_tag) from None
                 break
-            except (TimeoutError, OSError) as exc:
+            except Exception as exc:
+                # A woken read ends as EOF, an OSError or http.client.IncompleteRead (chunked).
+                if cancelled is not None and cancelled():
+                    raise ModelPullCancelled(model_tag) from exc
+                if not isinstance(exc, OSError):
+                    raise
                 # Asked while the connection is still open, so an Ollama that is just finishing is
                 # not told to stop by our hang-up first.
                 if bytes_arrived and _pulled_model_registered(model_tag, progress.base_url):
