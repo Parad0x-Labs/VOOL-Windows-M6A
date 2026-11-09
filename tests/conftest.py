@@ -1004,20 +1004,42 @@ def _diag_wrap_runtime_tool():
     real = _rt.execute_runtime_tool
 
     def wrapped(intent, arguments, *a, **kw):
+        state = {}
+        if intent == "machine.write_file":
+            from core import windows_disposable_store as _store
+            from core import windows_write_gate as _gate
+            from core.windows_broker import session as _broker
+
+            for name, read in (("flagged_roots", lambda: _gate.flagged_roots()),
+                               ("start_folders", lambda: _store.start_folders()),
+                               ("broker_wired", lambda: _broker.wired())):
+                try:
+                    state[name] = read()
+                except Exception as exc:  # noqa: BLE001
+                    state[name] = f"error: {exc!r}"
+            state["TEMP"] = os.environ.get("TEMP")
+            state["VOOL_WINDOWS_DISPOSABLE_WORKSPACES"] = os.environ.get("VOOL_WINDOWS_DISPOSABLE_WORKSPACES")
+            state["VOOL_HOME"] = os.environ.get("VOOL_HOME")
         result = real(intent, arguments, *a, **kw)
         if intent == "machine.write_file":
-            info = {"intent": intent, "arguments": arguments,
+            info = {"intent": intent, "arguments": arguments, "state_before": state,
                     "ok": getattr(result, "ok", None), "status": getattr(result, "status", None),
                     "response_text": getattr(result, "response_text", None),
                     "details": getattr(result, "details", None),
                     "env": {k: v for k, v in os.environ.items() if k.startswith("VOOL_")}}
-            print("DIAG-B3 " + _json.dumps(info, default=str)[:6000])
+            _DIAG_LINES.append("DIAG-B3 " + _json.dumps(info, default=str)[:6000])
         return result
 
     _rt.execute_runtime_tool = wrapped
 
 
+_DIAG_LINES: list = []
 _diag_wrap_runtime_tool()
+
+
+def pytest_terminal_summary(terminalreporter):
+    for line in _DIAG_LINES:
+        terminalreporter.write_line(line)
 
 
 def pytest_collection_modifyitems(session, config, items):
