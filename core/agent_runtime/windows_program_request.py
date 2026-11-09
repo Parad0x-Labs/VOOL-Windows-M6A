@@ -17,6 +17,11 @@ A request is read as a command only when its program is unmistakably one: the co
 in backticks, the program has a Windows program suffix (`calc.exe`, `setup.msi`, `build.cmd`), or it
 is one of a closed set of program names people type as commands. "run the tests", "start a new
 project" and "launch the builder" are not commands, so they are left to the lanes that own them.
+
+A message that is itself a command line for an installer or tool ("pip install requests", "py -m pip
+install x", "npm install") or an install with a named installer ("install requests with pip") is read
+the same way, with no "run" before it (clean-VM round 1: a bare "pip install requests" got a model's
+offer to help instead of the refusal).
 """
 
 from __future__ import annotations
@@ -55,10 +60,46 @@ _TOOL_REQUEST_RE = re.compile(
     re.IGNORECASE,
 )
 _TOOL_COMMANDS = {"ruff": {"lint": "ruff check .", "check": "ruff check .", "format": "ruff format ."}}
+_LEAD = r"^\s*(?:(?:please|pls|can\s+you|could\s+you|would\s+you|vool)[\s,]+)*"
+_TAIL = r"\s*(?:,?\s*(?:please|for\s+me|now))?\s*[.!?]?\s*$"
+#: A whole message that IS a command line, with no "run" before it: "pip install requests",
+#: "py -m pip install x", "npm install", "ruff check .". Only programs whose next word is one of their
+#: own subcommands or a flag, so a sentence that starts with the word ("pip is slow", "python is
+#: fun") is not read as one. A Python command line must start with a flag (`python -m ...`); a script
+#: run ("python app.py") passes the gate anyway, and "python ..." prose is left alone.
+_BARE_COMMAND_RE = re.compile(
+    _LEAD
+    + r"(?P<command>"
+    r"(?:pip|pip3|pipx|pip3\.\d+)(?:\.exe)?\s+(?:install|uninstall|download|wheel|freeze|list|show|check|"
+    r"config|cache|inspect|index|search|hash|debug)\b[^\n]*?"
+    r"|(?:py|python|python3)(?:\.exe)?\s+-[^\n]*?"
+    r"|(?:npm|pnpm)(?:\.cmd)?\s+(?:install|i|ci|run|test|start|init|exec|uninstall|update|audit|publish|"
+    r"build|add)\b[^\n]*?"
+    r"|yarn\s+(?:install|add|run|build|test|start)\b[^\n]*?"
+    r"|npx(?:\.cmd)?\s+\S[^\n]*?"
+    r"|ruff(?:\.exe)?\s+(?:check|format|rule|clean|server)\b[^\n]*?"
+    r")"
+    + _TAIL,
+    re.IGNORECASE,
+)
+_INSTALLERS = r"pip|pip3|pipx|npm|pnpm|yarn|uv|conda"
+#: "install requests with pip", "add lodash using npm", "use pip to install requests": an install
+#: with a named installer is that installer's install command.
+_INSTALL_WITH_RE = re.compile(
+    _LEAD
+    + r"(?:(?:install|add)\s+(?P<packages>[^\n]+?)\s+(?:with|using|via|through)\s+(?P<tool>"
+    + _INSTALLERS
+    + r")|use\s+(?P<tool2>"
+    + _INSTALLERS
+    + r")\s+to\s+(?:install|add)\s+(?P<packages2>[^\n]+?))"
+    + _TAIL,
+    re.IGNORECASE,
+)
 
 
 def requested_command(text: str) -> str:
-    """The command line a whole-message run request names, or "" when the message is not one.
+    """The command line a whole-message run request names (or the message itself, when it is a bare
+    installer or tool command line), or "" when the message is not one.
 
     One line only: a request that carries a script or several lines is not a single command."""
     raw = str(text or "")
@@ -69,6 +110,14 @@ def requested_command(text: str) -> str:
         commands = _TOOL_COMMANDS.get(tool.group("tool").lower())
         if commands:
             return commands[tool.group("verb").lower()]
+    bare = _BARE_COMMAND_RE.match(raw)
+    if bare:
+        return bare.group("command").strip()
+    install = _INSTALL_WITH_RE.match(raw)
+    if install:
+        tool = (install.group("tool") or install.group("tool2")).lower()
+        packages = (install.group("packages") or install.group("packages2")).strip()
+        return f"{tool} install {packages}"
     match = _REQUEST_RE.match(raw)
     if not match:
         return ""
