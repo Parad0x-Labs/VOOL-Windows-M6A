@@ -991,3 +991,13 @@ def isolated_mock_provider_host_state(request, monkeypatch):
         # The builder helper stubs its generator/executor; these router cases stub invocation.
         # Enable the lane under test, without enabling local inference for unrelated modules.
         monkeypatch.setenv("VOOL_LOCAL_MODELS_ENABLED", "1")
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Windows 0.7.1 stated limits (tests/_windows_0_7_1_limits.py): inert off Windows."""
+    outcome = yield
+    from tests import _windows_0_7_1_limits as limits
+
+    if limits.ACTIVE:
+        limits.apply(item, call, outcome.get_result())
