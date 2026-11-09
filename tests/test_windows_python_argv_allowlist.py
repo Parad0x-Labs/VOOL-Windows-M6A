@@ -219,3 +219,63 @@ def test_a_unittest_job_runs_through_the_launcher(windows, tmp_path) -> None:
 def test_allowing_the_stdlib_runners_refuses_every_other_module(argv) -> None:
     with pytest.raises(jr.KernelIsolationUnavailableError, match="Python and pytest"):
         jr.JobRunner._windows_phase1_argv(argv)
+
+
+# --- the program must be the interpreter running VOOL ------------------------------------------
+#
+# The launcher accepts any absolute .exe (windows/broker/src/VoolConfine.Core/LauncherCommandLine.cs),
+# and config/confine-pin.json pins only the launcher's own files. So the gate is what keeps a job's
+# program to the interpreter running VOOL: an absolute program must resolve to sys.executable or its
+# base. A Windows venv's Scripts\python.exe is a copied redirector, not a link, so it resolves to
+# itself and is refused. These rows build that shape on Linux with a real copy of the interpreter.
+
+
+def _copied_interpreter(folder: Path) -> Path:
+    folder.mkdir(parents=True, exist_ok=True)
+    copy = folder / "python.exe"
+    copy.write_bytes(Path(_INTERPRETER).read_bytes())
+    copy.chmod(0o755)
+    (folder.parent / "pyvenv.cfg").write_text(f"home = {Path(_INTERPRETER).parent}\n", encoding="utf-8")
+    return copy
+
+
+@pytest.mark.parametrize(
+    "rest",
+    [["-c", "0"], ["script.py"], ["-m", "pytest"], ["-m", "unittest"]],
+    ids=["-c", "script", "-m pytest", "-m unittest"],
+)
+def test_a_new_venv_python_in_a_marked_folder_is_refused_before_start(windows, tmp_path, rest) -> None:
+    launcher = _fake_launcher(tmp_path / "bin", "run")
+    _use_launcher(windows, launcher)
+    runner = _runner(tmp_path)
+    venv_python = _copied_interpreter(tmp_path / "ws" / "newvenv" / "Scripts")
+    (tmp_path / "ws" / "script.py").write_text("print('ran')\n", encoding="utf-8")
+    with pytest.raises(jr.KernelIsolationUnavailableError, match="Python and pytest"):
+        runner.run([str(venv_python), *rest], cwd=tmp_path / "ws")
+    assert _launched(launcher) == [], "the launcher was started for a venv interpreter"
+    assert not jr._WINDOWS_STAGED
+
+
+def test_a_venv_python_outside_the_workspace_is_refused_by_the_gate(tmp_path) -> None:
+    venv_python = _copied_interpreter(tmp_path / "work" / "newvenv" / "Scripts")
+    for rest in (["script.py"], ["-c", "0"]):
+        with pytest.raises(jr.KernelIsolationUnavailableError, match="Python and pytest"):
+            jr.JobRunner._windows_phase1_argv([str(venv_python), *rest])
+
+
+def test_a_relative_venv_python_is_refused(tmp_path) -> None:
+    for program in ("newvenv\\Scripts\\python.exe", "newvenv/Scripts/python.exe", ".\\python.exe"):
+        with pytest.raises(jr.KernelIsolationUnavailableError, match="Python and pytest"):
+            jr.JobRunner._windows_phase1_argv([program, "-c", "0"])
+
+
+def test_a_linked_venv_python_runs_as_the_interpreter_itself_never_the_venv(tmp_path) -> None:
+    """A `--symlinks` venv's python is a link to the base. The gate hands the launcher the resolved
+    path, so what starts is the interpreter running VOOL, beside which no pyvenv.cfg sits."""
+    scripts = tmp_path / "linkvenv" / "Scripts"
+    scripts.mkdir(parents=True)
+    link = scripts / "python.exe"
+    link.symlink_to(_INTERPRETER)
+    argv = jr.JobRunner._windows_phase1_argv([str(link), "-c", "0"])
+    assert argv == [_INTERPRETER, "-c", "0"]
+    assert str(link) not in argv
