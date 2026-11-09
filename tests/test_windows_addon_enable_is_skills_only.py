@@ -119,11 +119,23 @@ def test_a_runnable_key_refuses_even_when_empty(store, monkeypatch, key) -> None
     _assert_refused()
 
 
-def test_an_unknown_key_refuses_on_windows(store, monkeypatch) -> None:
-    pack = _skills_pack(store, {"homepage": "https://example.invalid"})
+@pytest.mark.parametrize("key", ["postinstall", "x_custom"])
+def test_an_unknown_key_refuses_on_windows(store, monkeypatch, key) -> None:
+    pack = _skills_pack(store, {key: "anything"})
     _verified(pack)
     _windows(monkeypatch)
     _assert_refused()
+
+
+def test_homepage_repository_and_license_are_inert_and_still_enable(store, monkeypatch) -> None:
+    pack = _skills_pack(store, {
+        "homepage": "https://example.invalid",
+        "repository": {"type": "git", "url": "https://example.invalid/repo.git"},
+        "license": "MIT",
+    })
+    _verified(pack)
+    _windows(monkeypatch)
+    assert plugin_lifecycle.enable("skillpack").enabled is True
 
 
 def test_an_unreadable_manifest_refuses_on_windows(store, monkeypatch) -> None:
@@ -148,7 +160,7 @@ def test_the_safe_list_decision_itself_fails_closed(tmp_path) -> None:
     assert _declares_runnable_code(tmp_path / "p") is True, "a missing manifest"
     path.write_text(json.dumps({"name": "p", "version": "1", "skills": "./skills/"}), encoding="utf-8")
     assert _declares_runnable_code(tmp_path / "p") is False
-    path.write_text(json.dumps({"name": "p", "homepage": "x"}), encoding="utf-8")
+    path.write_text(json.dumps({"name": "p", "x_custom": "x"}), encoding="utf-8")
     assert _declares_runnable_code(tmp_path / "p") is True
 
 
@@ -157,6 +169,6 @@ def test_other_hosts_enable_as_before(store, monkeypatch) -> None:
     from sandbox import job_runner
 
     monkeypatch.setattr(job_runner, "_is_windows_platform", lambda: False)
-    pack = _skills_pack(store, {"homepage": "https://example.invalid", "hooks": {"x": 1}})
+    pack = _skills_pack(store, {"x_custom": "anything", "hooks": {"x": 1}})
     _verified(pack)
     assert plugin_lifecycle.enable("skillpack").enabled is True
