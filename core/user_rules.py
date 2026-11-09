@@ -1225,6 +1225,8 @@ class _ScanIncomplete(RuntimeError):
 def _git_text(root: Path, *argv: str) -> str:
     # The repository's own config must not make this scan start programs (core/safe_git.py); a
     # repository whose config names any is an incomplete scan, which fails closed.
+    if safe_git.git_refused_here():  # Windows: no git runs, so the scan cannot finish (fails closed)
+        raise _ScanIncomplete(safe_git.GIT_REFUSED_TEXT)
     try:
         executable_keys = safe_git.executable_config_for(root, argv, timeout=GIT_SCAN_TIMEOUT_SECONDS)
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
@@ -1723,6 +1725,8 @@ def _commit_all(rest: list[str]) -> bool:
 
 
 def _is_inside_repo(path: Path) -> bool:
+    if safe_git.git_refused_here():  # Windows: git is not started to ask
+        return False
     try:
         completed = subprocess.run(safe_git.hardened_argv(path, "rev-parse", "--git-dir"), capture_output=True, env=safe_git.safe_env(),
                                    timeout=GIT_SCAN_TIMEOUT_SECONDS)

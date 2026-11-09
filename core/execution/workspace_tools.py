@@ -457,7 +457,8 @@ def apply_unified_diff_workspace(
 
     applied_with = ""
     errors: list[str] = []
-    git_available = shutil.which("git")
+    # None on Windows, where VOOL runs no git: the patch then goes through the Python engine below.
+    git_available = safe_git.git_executable()
     if git_available:
         # The repository's own config could make `git apply` run a filter program; such a
         # repository skips git and uses the Python engine below (core/safe_git.py).

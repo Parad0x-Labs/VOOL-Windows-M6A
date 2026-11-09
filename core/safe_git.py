@@ -37,7 +37,9 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import re
 import subprocess
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -181,6 +183,7 @@ _MAX_SUBMODULE_DEPTH = 8
 def _executable_config(cwd: Path, *, timeout: float, depth: int) -> list[tuple[str, str]]:
     """``(key, scope)`` of each program-running entry, submodule keys as ``<path>:<key>``."""
     # Fails outside a repository, which the callers already treat as "not checked".
+    _refuse_git_here()  # Windows: refused before git starts; callers treat it as "not checked"
     inside_work_tree = _rev_parse(cwd, "--is-inside-work-tree", timeout=timeout) == "true"
     scoped = _config_entries(cwd, ["--show-scope"], timeout=timeout)
     if len(scoped) % 2:
@@ -301,6 +304,8 @@ def lfs_endpoint_refusal(cwd: Path, argv: Sequence[str] = (), *, timeout: float 
     git-lfs at storage elsewhere; that is the server's choice, not the repository's. Commands that
     never write LFS files into the work tree (add, commit, tag, branch, worktree remove and prune,
     restore of the index only, push without git-lfs's hook) are not checked. A check that cannot finish refuses."""
+    if git_refused_here():
+        return GIT_REFUSED_TEXT
     if argv and (argv[0] in _LFS_FREE_SUBCOMMANDS or tuple(argv[:2]) in _LFS_FREE_WORKTREE_COMMANDS
                  or _restores_the_index_only(argv)):
         return ""
@@ -763,6 +768,7 @@ def active_hooks(cwd: Path, *, timeout: float = 20, git_dir: bool = False) -> li
     ``git_dir=True`` means ``cwd`` IS a git directory VOOL already resolved (a push destination),
     named with ``--git-dir``; otherwise git discovers the repository from ``cwd`` and, like every
     hardened command, never adopts a bare repository found that way (``safe.bareRepository``)."""
+    _refuse_git_here()
     where = ["--git-dir", str(cwd)] if git_dir else ["-C", str(cwd)]
     probe = subprocess.run(
         ["git", "--no-optional-locks", "-c", "safe.bareRepository=explicit", "-c", "core.fsmonitor=false", *where,
@@ -801,6 +807,230 @@ def hardened_argv(cwd: Path, *argv: str) -> list[str]:
 read_only_argv = hardened_argv
 
 
-__all__ = ["active_hooks", "executable_config_for", "executable_local_config", "hardened_argv", "hardening_args",
-           "is_executable_key", "is_safe_value", "lfs_endpoint_refusal",
-           "read_only_argv", "safe_env"]
+# ------------------------------------------------------------------------------- Windows: no git
+#
+# 0.7.1 stated limit: VOOL runs no git on Windows. The hardening above keeps git from running what
+# a repository's config names, but on Windows nothing confines git itself, and a repository VOOL did
+# not author reaches git through more than config (hooks, helpers, programs other git versions
+# add). So on Windows git is refused before any process starts, wherever the spawn comes from:
+#   - the owning choke point is a process-wide audit hook (`install_spawn_guard`) that refuses any
+#     process start whose program is git, raised from inside subprocess.Popen, os.system,
+#     os.spawn*, os.exec*, os.posix_spawn and _winapi.CreateProcess before the process exists;
+#     core/__init__.py arms it in every VOOL runtime process (`arm_spawn_guard_for_this_process`);
+#   - VOOL's git runners (RepoOps' GitRunner, core.execution.git_tools, the Windows write gate)
+#     refuse in plain words without asking the hook, so the user reads the same sentence in any
+#     process, and the Windows write gate refuses git intents before any approval prompt.
+# The refusal is a FileNotFoundError, so every caller that already copes with git being absent
+# (the state the 0.7.1 Windows VM was tested in) copes with the refusal the same way.
+# POSIX (Linux, macOS) is unaffected: the predicate is false there and no hook is installed.
+
+GIT_REFUSED_STATUS = "git_refused_on_windows"
+GIT_REFUSED_TEXT = "VOOL doesn't run git on Windows in 0.7.1; use WSL2/Linux for git. No git was started, so nothing was changed."
+#: Set in the environment of an armed process so VOOL's own Python children arm themselves too.
+#: It can only turn the refusal on; nothing reads it to turn the refusal off.
+SPAWN_GUARD_ENV = "VOOL_GIT_SPAWN_GUARD"
+#: Patched by tests to drive the decision on any platform (None: decide from the platform).
+_REFUSE_GIT: bool | None = None
+#: `__main__` modules that are VOOL runtime processes (arming is by the process's real entry, so a
+#: test runner or a build script that imports core is not armed; see arm_spawn_guard_for_this_process).
+_RUNTIME_MAIN_PREFIXES = ("apps.", "installer.bundle.", "core.")
+_SPAWN_EVENTS = frozenset({"subprocess.Popen", "os.system", "os.spawn", "os.exec", "os.posix_spawn",
+                           "_winapi.CreateProcess", "os.startfile"})
+#: Programs that run another program named in their arguments: their command text is searched for git.
+_WRAPPERS = frozenset({"cmd", "command", "powershell", "pwsh", "sh", "bash", "zsh", "dash", "ksh", "fish",
+                       "busybox", "env", "start", "call", "nohup", "time", "timeout", "nice", "sudo", "stdbuf",
+                       "xargs", "wsl", "conhost", "runas"})
+_GIT_WORD = re.compile(r"""(?:^|[\s"'`&|;(<>=\\/^])git(?:-[\w.-]+)?(?:\.exe|\.cmd|\.bat|\.com)?(?=$|[\s"'`&|;)<>^])""",
+                       re.IGNORECASE)
+_GUARD_INSTALLED = False
+
+
+class GitRefusedOnWindows(FileNotFoundError):
+    """git was refused before a process started (VOOL runs no git on Windows in 0.7.1)."""
+
+    def __init__(self) -> None:
+        super().__init__(GIT_REFUSED_TEXT)
+
+    def __str__(self) -> str:
+        return GIT_REFUSED_TEXT
+
+
+def git_refused_here() -> bool:
+    """Whether this process must not run git: on Windows, and whenever the platform cannot be told
+    apart from Windows (fail closed). Linux and macOS are the platforms VOOL runs git on."""
+    forced = _REFUSE_GIT
+    if forced is not None:
+        return bool(forced)
+    try:
+        name = str(os.name)
+        platform = str(sys.platform).lower()
+    except Exception:
+        return True
+    if name != "posix":
+        return True
+    return not platform or platform.startswith(("win", "cygwin", "msys"))
+
+
+def _program_name(token: object) -> str:
+    try:
+        text = os.fsdecode(token) if isinstance(token, (bytes, os.PathLike)) else str(token)
+    except Exception:
+        return ""
+    text = text.strip().strip("\"'").strip()
+    name = text.replace("\\", "/").rsplit("/", 1)[-1].rstrip(". ").lower()
+    for suffix in (".exe", ".cmd", ".bat", ".com"):
+        if name.endswith(suffix):
+            return name[: -len(suffix)]
+    return name
+
+
+def _is_git_name(name: str) -> bool:
+    return name == "git" or name.startswith("git-")
+
+
+def _split_first(command: str) -> tuple[str, str]:
+    """A command line's program token and the rest, the way CreateProcess and a shell read it."""
+    text = command.lstrip()
+    if text.startswith('"'):
+        end = text.find('"', 1)
+        return (text[1:], "") if end < 0 else (text[1:end], text[end + 1:])
+    parts = text.split(None, 1)
+    return (parts[0], parts[1] if len(parts) > 1 else "") if parts else ("", "")
+
+
+def is_git_command(args: object, executable: object = None) -> bool:
+    """Whether starting `args` (an argv sequence or a command line) runs git: its program is git (any
+    path, any case, .exe/.cmd/.bat, git-<helper>), or a shell or wrapper whose command text names git.
+    `executable`, when given, is the program actually started and is checked too."""
+    if executable is not None and _is_git_name(_program_name(executable)):
+        return True
+    if isinstance(args, (str, bytes)):
+        text = os.fsdecode(args)
+        program, rest = _split_first(text)
+    elif isinstance(args, os.PathLike):
+        program, rest = os.fsdecode(args), ""
+    elif args is None:
+        return False
+    else:
+        items = [os.fsdecode(item) if isinstance(item, (bytes, os.PathLike)) else str(item) for item in args]
+        if not items:
+            return False
+        program, rest = items[0], " ".join(items[1:])
+    name = _program_name(program)
+    if _is_git_name(name):
+        return True
+    wrapper = name in _WRAPPERS or (executable is not None and _program_name(executable) in _WRAPPERS)
+    return bool(wrapper and _GIT_WORD.search(rest))
+
+
+#: git at a command position of a shell command line: its start, or after ; & | ( or a newline.
+_GIT_AT_COMMAND = re.compile(
+    r"""(?:^|[;&|(\n])\s*(?:["']?[^\s"';&|()]*[\\/])?git(?:-[\w.-]+)?(?:\.exe|\.cmd|\.bat|\.com)?["']?(?=$|[\s;&|)])""",
+    re.IGNORECASE)
+
+
+def command_text_runs_git(command: object) -> bool:
+    """Whether a command a tool call names (a shell line or an argv list) starts git anywhere a shell
+    would run it: as its program, after a separator (``cd x && git commit``), or through a wrapper."""
+    if is_git_command(command):
+        return True
+    if isinstance(command, (str, bytes)):
+        return bool(_GIT_AT_COMMAND.search(os.fsdecode(command)))
+    if isinstance(command, (list, tuple)):
+        return bool(_GIT_AT_COMMAND.search(" ".join(str(item) for item in command)))
+    return bool(_GIT_AT_COMMAND.search(str(command)))
+
+
+def _refuse_git_here() -> None:
+    """Raise GitRefusedOnWindows when this process must not run git at all (safe_git's own probes)."""
+    if git_refused_here():
+        raise GitRefusedOnWindows()
+
+
+def refuse_git_spawn(args: object, executable: object = None) -> None:
+    """Raise GitRefusedOnWindows when this process must not run git and `args` would."""
+    if git_refused_here() and is_git_command(args, executable):
+        raise GitRefusedOnWindows()
+
+
+def _spawn_audit(event: str, args: tuple) -> None:
+    if event not in _SPAWN_EVENTS:
+        return
+    if not git_refused_here():
+        return
+    try:
+        if event == "subprocess.Popen":      # (executable, args, cwd, env)
+            executable, argv = args[0], args[1]
+        elif event == "os.system":           # (command,)
+            executable, argv = None, args[0]
+        elif event == "os.spawn":            # (mode, path, args, env)
+            executable, argv = args[1], args[2]
+        elif event == "os.startfile":        # (path, operation, ...)
+            executable, argv = args[0], None
+        else:                                # os.exec / os.posix_spawn / _winapi.CreateProcess
+            executable, argv = args[0], args[1]
+        runs_git = is_git_command(argv, executable)
+    except Exception:
+        runs_git = True  # a process start that cannot be read is not started (fail closed)
+    if runs_git:
+        raise GitRefusedOnWindows()
+
+
+def install_spawn_guard() -> None:
+    """Install the process-wide audit hook that refuses git before a process starts, once per process.
+    An audit hook cannot be removed. While `git_refused_here()` is false it lets everything through."""
+    global _GUARD_INSTALLED
+    if _GUARD_INSTALLED:
+        return
+    sys.addaudithook(_spawn_audit)
+    _GUARD_INSTALLED = True
+
+
+def _main_module_name() -> str:
+    main = sys.modules.get("__main__")
+    spec = getattr(main, "__spec__", None)
+    name = str(getattr(spec, "name", "") or "")
+    if name and name != "__main__":
+        return name
+    path = str(getattr(main, "__file__", "") or "")
+    if not path:
+        return ""
+    try:
+        relative = Path(path).resolve().relative_to(Path(__file__).resolve().parents[1])
+    except (OSError, ValueError):
+        return ""
+    return ".".join(relative.with_suffix("").parts)
+
+
+def arm_spawn_guard_for_this_process(*, runtime: bool = False) -> bool:
+    """Arm the guard when this is a VOOL runtime process on a platform that refuses git: its entry is
+    one of VOOL's apps, bundle hosts or core modules, a VOOL process that was armed started it, or
+    its entry says so (``runtime=True``, from a ``__main__`` block outside the source tree, such as
+    the Windows bundle's top-level vool_window.py). A test runner or build script that merely imports
+    core is not armed, since its own git is not VOOL running git for a user. Returns whether the
+    guard is armed."""
+    if not git_refused_here():
+        return False
+    if not (runtime or str(os.environ.get(SPAWN_GUARD_ENV) or "") == "1"
+            or _main_module_name().startswith(_RUNTIME_MAIN_PREFIXES)):
+        return False
+    install_spawn_guard()
+    os.environ[SPAWN_GUARD_ENV] = "1"
+    return True
+
+
+def git_executable() -> str | None:
+    """The git program VOOL may use here, or None: none on Windows (it is refused), else PATH's git."""
+    if git_refused_here():
+        return None
+    import shutil
+
+    return shutil.which("git")
+
+
+__all__ = ["GIT_REFUSED_STATUS", "GIT_REFUSED_TEXT", "SPAWN_GUARD_ENV", "GitRefusedOnWindows",
+           "active_hooks", "arm_spawn_guard_for_this_process", "command_text_runs_git", "executable_config_for",
+           "executable_local_config",
+           "git_executable", "git_refused_here", "hardened_argv", "hardening_args", "install_spawn_guard",
+           "is_executable_key", "is_git_command", "is_safe_value", "lfs_endpoint_refusal",
+           "read_only_argv", "refuse_git_spawn", "safe_env"]
