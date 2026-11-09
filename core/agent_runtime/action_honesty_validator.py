@@ -5,6 +5,7 @@ import os
 import posixpath
 import re
 from contextlib import suppress
+from pathlib import Path
 from typing import Any
 
 from core.reply_control_sanitizer import is_bare_reply_control_token, reveal_reply_control_prefix
@@ -970,6 +971,10 @@ def _file_claim_matches_output(claim: str, outputs: set[str], context: dict[str,
         return any(claim.casefold() == name.rsplit("/", 1)[-1].casefold() for name in outputs)
     root = str((context or {}).get("workspace_root") or (context or {}).get("workspace") or "")
     root = root.replace("\\", "/")
+    try:
+        home = str(Path.home().resolve()).replace("\\", "/")
+    except (OSError, RuntimeError, ValueError):
+        home = ""
 
     def absolute(path: str) -> bool:
         # A drive-rooted spelling (D:/ws, from D:\ws) is absolute on Windows; posixpath alone
@@ -978,6 +983,13 @@ def _file_claim_matches_output(claim: str, outputs: set[str], context: dict[str,
 
     def identity(name: str) -> str:
         normalized = posixpath.normpath(name.replace("\\", "/"))
+        if (normalized == "~" or normalized.startswith("~/")) and home:
+            # A machine writer records its file home-relative (`~/VOOL Test/x.txt`, the label
+            # `_home_relative_label` makes from this process's own home); a reply names the same file
+            # by its full path. Captest B3 round 1 (2026-11-09): every write into a marked folder under
+            # the profile was read back, then replaced with "I cannot verify that file". Both
+            # spellings are placed at that one home, so only the same file matches.
+            normalized = posixpath.normpath(home + normalized[1:])
         if absolute(root) and not absolute(normalized) and not normalized.startswith("~"):
             normalized = posixpath.normpath(posixpath.join(root, normalized))
         # Windows paths compare without case, as the filesystem resolves them.

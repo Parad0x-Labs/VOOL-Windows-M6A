@@ -644,6 +644,13 @@ _LITERAL_SPAN_RE = re.compile(
       # extension list (which omitted .ai); resolution belongs to the network owner.
       | \b(?:[A-Za-z0-9](?:[A-Za-z0-9\-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,63}\b(?:/[^\s`"']*)?
       | [A-Za-z]:\\[^\s]+                                        # windows path  C:\Users\...
+      # The rest of a Windows path after a space, joined by backslashes. Captest B3 round 1
+      # (2026-11-09, installed build): "create hello.txt in C:\Users\VOOLT\VOOL Test\Allowed Ä folder
+      # with the text hi" reached the front door as "...\VOOL Test \ Allowed Ä folder ...": the rule
+      # above stops at the space, and `Test\Allowed` was split on its backslash, so the write-root
+      # check read `C:\Users\VOOLT\VOOL Test` and refused it. The forward-slash form already keeps
+      # `Test/Allowed` whole (the relative path rule below); this is the same rule for `\`.
+      | (?<![\w\\])[\w.\-]+(?:\\[\w.\-]+)+\\?                    # windows path tail  Test\Allowed, folder\..\x.txt
       # The `~` / `.` / `..` prefix has to be INSIDE the protected span. Without it only the
       # `/Desktop/...` part was protected, `~` fell through to the tokenizer as its own token, and the
       # rejoin put a space in: "~/Desktop/x" reached the runtime as "~ /Desktop/x". Every home-rooted
@@ -659,7 +666,9 @@ _LITERAL_SPAN_RE = re.compile(
       # could see a filename, and the turn answered with a listing of the folder instead of the
       # file. The document and media formats a user actually names are listed here for the same
       # reason the code formats already were.
-      | \b[A-Za-z0-9_\-]+(?:\.[A-Za-z0-9_\-]+)*\.(?:null|sol|eth|io|com|org|net|xyz|dev|app|py|ps1|txt|json|jsonl|md|toml|cfg|ini|log|sh|bat|cmd|yaml|yml|js|ts|tsx|rs|go|html|css|pdf|csv|tsv|doc|docx|xls|xlsx|ppt|pptx|rtf|epub|png|jpg|jpeg|gif|webp|svg|heic|mp3|mp4|mov|wav|zip|sql|xml|srt)\b
+      # Its stem is any word characters, not ASCII only: "hello Ä.txt" reached the runtime as
+      # "hello Ä. txt" on a resend (captest round 1, 2026-11-09), so no lane saw a file name.
+      | (?<![\w\-])[\w\-]+(?:\.[\w\-]+)*\.(?:null|sol|eth|io|com|org|net|xyz|dev|app|py|ps1|txt|json|jsonl|md|toml|cfg|ini|log|sh|bat|cmd|yaml|yml|js|ts|tsx|rs|go|html|css|pdf|csv|tsv|doc|docx|xls|xlsx|ppt|pptx|rtf|epub|png|jpg|jpeg|gif|webp|svg|heic|mp3|mp4|mov|wav|zip|sql|xml|srt)\b
       # A BARE extension naming a file kind ("hand it to me as a .md file", "export to a .csv"). With
       # no stem it missed the filename rule above, so "." and "md" became two tokens and the turn
       # reached every router as "as a. md file" (measured live 2026-10-06): the file order was not
