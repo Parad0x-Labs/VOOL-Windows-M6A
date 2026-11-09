@@ -23,7 +23,8 @@ LIMITS = {
     "git": ({("core.safe_git", "GitRefusedOnWindows"), ("core.repoops.identity", "WorkspaceError"),
              ("core.project_archaeology", "ArchaeologyInputError"), ("core.user_rules", "_ScanIncomplete")},
             "VOOL doesn't run git on Windows in 0.7.1"),
-    "plugin": ({("core.plugin_lifecycle", "LifecycleError"), ("core.plugin_executor", "ConfinementUnavailableError")},
+    "plugin": ({("core.plugin_lifecycle", "LifecycleError"), ("core.plugin_executor", "ConfinementUnavailableError"),
+                ("core.mcp_client", "MCPRefusedOnWindows")},
                "VOOL doesn't start plugins or MCP servers on Windows in 0.7.1"),
 }
 GUARD_FRAME = "_spawn_audit"
