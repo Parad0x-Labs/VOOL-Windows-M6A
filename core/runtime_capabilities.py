@@ -184,8 +184,20 @@ def runtime_capability_snapshot(context: RuntimeContext | None = None) -> dict[s
         "speculative_decoding": _speculative_decoding_capability(provider_capability_truth, provider_env),
         "eagle_status": _eagle_capability(provider_capability_truth, provider_env),
         "model_lane_defaults": _model_lane_defaults_capability(),
+        "git_spawn_guard": _git_spawn_guard_capability(),
         "capabilities": capabilities_payload,
     }
+
+
+def _git_spawn_guard_capability() -> dict[str, Any]:
+    """Whether this process refuses git before a git process starts (core/safe_git.py), read from the
+    live audit hook. On Windows "unarmed" means the 0.7.1 git refusal is not in force here."""
+    from core import safe_git
+
+    try:
+        return dict(safe_git.spawn_guard_state())
+    except Exception as exc:  # an unreadable guard is reported as unarmed, never as armed
+        return {"status": "unarmed", "armed": False, "error": type(exc).__name__}
 
 
 def _gpu_driver_compat_capability(probe: Any) -> dict[str, Any]:

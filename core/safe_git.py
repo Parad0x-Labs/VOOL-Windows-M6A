@@ -812,7 +812,7 @@ read_only_argv = hardened_argv
 # 0.7.1 stated limit: VOOL runs no git on Windows. The hardening above keeps git from running what
 # a repository's config names, but on Windows nothing confines git itself, and a repository VOOL did
 # not author reaches git through more than config (hooks, helpers, programs other git versions
-# add). So on Windows git is refused before any process starts, wherever the spawn comes from:
+# add). So on Windows VOOL's own processes refuse to start git, before the git process exists:
 #   - the owning choke point is a process-wide audit hook (`install_spawn_guard`) that refuses any
 #     process start whose program is git, raised from inside subprocess.Popen, os.system,
 #     os.spawn*, os.exec*, os.posix_spawn and _winapi.CreateProcess before the process exists;
@@ -823,9 +823,13 @@ read_only_argv = hardened_argv
 # The refusal is a FileNotFoundError, so every caller that already copes with git being absent
 # (the state the 0.7.1 Windows VM was tested in) copes with the refusal the same way.
 # POSIX (Linux, macOS) is unaffected: the predicate is false there and no hook is installed.
+# What this does not cover: a separate program VOOL starts that then starts git itself (a job's own
+# code in the sandbox, a .bat file, gh), and a process start made through ctypes. The hook lives in
+# VOOL's Python processes only; the sandbox's own Windows program list is a separate gate.
 
 GIT_REFUSED_STATUS = "git_refused_on_windows"
-GIT_REFUSED_TEXT = "VOOL doesn't run git on Windows in 0.7.1; use WSL2/Linux for git. No git was started, so nothing was changed."
+GIT_REFUSED_TEXT = ("VOOL doesn't run git on Windows in 0.7.1; use WSL2/Linux for git. "
+                    "VOOL did not start git for this, so nothing was changed.")
 #: Set in the environment of an armed process so VOOL's own Python children arm themselves too.
 #: It can only turn the refusal on; nothing reads it to turn the refusal off.
 SPAWN_GUARD_ENV = "VOOL_GIT_SPAWN_GUARD"
@@ -843,6 +847,8 @@ _WRAPPERS = frozenset({"cmd", "command", "powershell", "pwsh", "sh", "bash", "zs
 _GIT_WORD = re.compile(r"""(?:^|[\s"'`&|;(<>=\\/^])git(?:-[\w.-]+)?(?:\.exe|\.cmd|\.bat|\.com)?(?=$|[\s"'`&|;)<>^])""",
                        re.IGNORECASE)
 _GUARD_INSTALLED = False
+#: A private audit event the hook answers: proof the hook really sits in this process's audit chain.
+_PROBE_EVENT = "vool.git_spawn_guard.probe"
 
 
 class GitRefusedOnWindows(FileNotFoundError):
@@ -955,6 +961,8 @@ def refuse_git_spawn(args: object, executable: object = None) -> None:
 
 def _spawn_audit(event: str, args: tuple) -> None:
     if event not in _SPAWN_EVENTS:
+        if event == _PROBE_EVENT and args and isinstance(args[0], list):
+            args[0].append(_spawn_audit)
         return
     if not git_refused_here():
         return
@@ -1019,6 +1027,34 @@ def arm_spawn_guard_for_this_process(*, runtime: bool = False) -> bool:
     return True
 
 
+def spawn_guard_live() -> bool:
+    """Whether the hook answers from this process's audit chain right now (not a remembered flag)."""
+    answers: list = []
+    try:
+        sys.audit(_PROBE_EVENT, answers)
+    except Exception:
+        return False
+    return _spawn_audit in answers
+
+
+def spawn_guard_state() -> dict[str, object]:
+    """The spawn guard as it is in this process, for /api/runtime/capabilities and the install smoke.
+
+    ``armed`` is true only when the hook answers from the audit chain AND this platform refuses git:
+    then a git start from this process is refused. On Windows anything else is ``unarmed``, which the
+    Windows install smoke treats as a failure; off Windows it is ``not_needed``."""
+    live = spawn_guard_live()
+    refuses = git_refused_here()
+    armed = live and refuses
+    return {
+        "status": "armed" if armed else ("unarmed" if refuses else "not_needed"),
+        "armed": armed,
+        "hook_live": live,
+        "refuses_git": refuses,
+        "inherited_marker": str(os.environ.get(SPAWN_GUARD_ENV) or "") == "1",
+    }
+
+
 def git_executable() -> str | None:
     """The git program VOOL may use here, or None: none on Windows (it is refused), else PATH's git."""
     if git_refused_here():
@@ -1033,4 +1069,4 @@ __all__ = ["GIT_REFUSED_STATUS", "GIT_REFUSED_TEXT", "SPAWN_GUARD_ENV", "GitRefu
            "executable_local_config",
            "git_executable", "git_refused_here", "hardened_argv", "hardening_args", "install_spawn_guard",
            "is_executable_key", "is_git_command", "is_safe_value", "lfs_endpoint_refusal",
-           "read_only_argv", "refuse_git_spawn", "safe_env"]
+           "read_only_argv", "refuse_git_spawn", "safe_env", "spawn_guard_live", "spawn_guard_state"]
