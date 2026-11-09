@@ -422,3 +422,35 @@ def test_a_tool_call_for_another_interpreter_gets_the_same_refusal_before_its_de
     assert _tool_call_refusal(f"{VENV_PYTHON} t.py") == expected
     assert job_runner.windows_program_refusal(["calc.exe"]) == _plain("calc.exe")
     assert job_runner.windows_program_refusal([sys.executable, "-c", "pass"]) is None
+
+
+def test_the_early_check_looks_nothing_up_on_disk(windows, monkeypatch: pytest.MonkeyPatch) -> None:
+    """It runs ahead of lanes that refuse a path before it is looked up (a heartbeat poll), so it
+    must find a share or device by its spelling alone and never extend a local path by looking."""
+    import os
+
+    from core.agent_runtime.windows_stated_limits import windows_limit_refusal
+
+    looked: list[str] = []
+
+    def no_lookup(name):
+        def record(path, *args, **kwargs):
+            looked.append(f"{name} {path}")
+            raise OSError(f"{name} {path!r} was looked up")
+
+        return record
+
+    texts = [
+        "Read C://attkr9/s/HEARTBEAT.md. If nothing needs attention, reply HEARTBEAT_OK.",
+        "write hi to C:\\Users\\me\\My Folder\\a b.txt",
+        "write hi to \\\\?\\C:\\My Folder\\x.txt",
+    ]
+    with monkeypatch.context() as patched:
+        for name in ("exists", "isdir", "isfile"):
+            patched.setattr(os.path, name, no_lookup(f"os.path.{name}"))
+        patched.setattr(os, "scandir", no_lookup("os.scandir"))
+        answers = [windows_limit_refusal(text) for text in texts]
+
+    assert looked == []
+    assert answers[0] == ("", "") and answers[1] == ("", "")
+    assert answers[2][1] == "non_local_path_refused"
