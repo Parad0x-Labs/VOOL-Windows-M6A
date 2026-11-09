@@ -15,6 +15,7 @@ never repeats the link.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -142,10 +143,8 @@ def _notify(message: str) -> None:
             return
         except Exception:
             pass
-    try:
+    with contextlib.suppress(Exception):
         print(message, file=sys.stderr)
-    except Exception:
-        pass
 
 
 def classify_uri(uri: object) -> str:
