@@ -117,13 +117,58 @@ def windows_write_refusal(intent: OperatorActionIntent, *, session_id: str | Non
         except Exception:  # an unreadable request: judge this turn's own paths, as before
             return windows_write_gate.refusal("operator.move_path", arguments, None)
         if parsed is None:
-            return None
-        return windows_write_gate.refusal(
+            # The handler would answer "I need a quoted source path", which reads as "try again with
+            # quotes" even when a path the request names lies outside the marked folders, where no
+            # move can run (captest round 1, R1-5). Such a request gets the plain refusal instead.
+            return _move_outside_marked_refusal(_paths_a_move_names(intent.raw_text))
+        refused = windows_write_gate.refusal(
             "operator.move_path",
             {"source_path": parsed.get("source_path"), "destination_path": parsed.get("destination_dir")},
             None,
         )
+        if refused:
+            named = _move_outside_marked_refusal([str(parsed.get("source_path") or ""), str(parsed.get("destination_dir") or "")])
+            return named or refused
+        return None
     return windows_write_gate.refusal("operator.cleanup_temp_files", {"target_path": intent.target_path}, None)
+
+
+def _paths_a_move_names(text: str) -> list[str]:
+    """The full local paths a move request names, read whole (quoted, or through folders with spaces)."""
+    from core.agent_runtime.write_root_honesty import named_full_paths
+
+    try:
+        return named_full_paths(text)
+    except Exception:  # an unreadable request names nothing this check can judge
+        return []
+
+
+def _move_outside_marked_refusal(paths: list[str]) -> str | None:
+    """On Windows, a plain refusal naming the first of ``paths`` that lies outside every marked folder,
+    or None when each lies inside one (or none is a full path). Each is placed as the gate places an
+    operator path: ``~`` and environment variables expanded, then resolved, so `..` is followed."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return None
+    for path in paths:
+        if not path or not path.strip():
+            continue
+        expanded = os.path.expanduser(os.path.expandvars(path.strip()))
+        if not os.path.isabs(expanded):
+            continue
+        if windows_write_gate.inside_flagged(expanded):
+            continue
+        try:
+            leads_to = os.path.realpath(expanded)
+        except (OSError, ValueError):
+            leads_to = expanded
+        where = f"`{path}`" if os.path.normcase(leads_to) == os.path.normcase(expanded) else f"`{path}` (that is `{leads_to}`)"
+        return (
+            f"I can't move that: {where} is outside the folders you marked as ones VOOL may change "
+            f"({windows_write_gate.ENV_VAR}), and on Windows VOOL moves files only inside them. Nothing was moved."
+        )
+    return None
 
 
 def dispatch_operator_action(
