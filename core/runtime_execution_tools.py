@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:  # annotation-only: the refusal type is imported lazily at the doors
     from core.effect_budget import EffectBudgetRefusedError
 
+import contextlib
 import json
 import os
 import platform
@@ -7806,6 +7807,13 @@ def windows_program_refusal(intent: str, arguments: dict[str, Any]) -> RuntimeEx
     )
 
 
+#: The calls whose handler runs exactly one sandbox command derived from the call's arguments, so an
+#: exact approval of the call is an approval of that command (`_run_command`, `_run_validation`).
+_OPERATOR_APPROVED_COMMAND_INTENTS = frozenset(
+    {"sandbox.run_command", "workspace.run_tests", "workspace.run_lint", "workspace.run_formatter"}
+)
+
+
 def _run_command(
     arguments: dict[str, Any], *, workspace_root: Path, source_context: dict[str, Any] | None = None
 ) -> RuntimeExecutionResult:
@@ -7852,10 +7860,20 @@ def _run_command(
         network_isolation_mode=_trusted_local_network_mode(command, arguments=arguments),
         **({"read_roots": tuple(Path(root) for root in proof_reads)} if proof_reads else {}),
     )
+    # The call the operator approved exactly runs this one command in this one folder: the sandbox
+    # gate lets exactly that through, once, instead of asking about it again (core.execution_gate).
+    from core.execution_gate import claim_operator_approved_call, operator_approved_command
+
+    approved = (
+        operator_approved_command(command, cwd=str(cwd))
+        if claim_operator_approved_call(_OPERATOR_APPROVED_COMMAND_INTENTS)
+        else contextlib.nullcontext()
+    )
     # The operator's stop button reaches INTO the command: the turn's cancel signal (and, for a
     # code task step, the task's own) is polled by the job runner while the child runs, so a
     # cancellation kills the process instead of waiting for it to finish.
-    result = runner.run_command(command, cwd=str(cwd), cancel_event=_cancel_token_from(source_context))
+    with approved:
+        result = runner.run_command(command, cwd=str(cwd), cancel_event=_cancel_token_from(source_context))
     relative_cwd = _relative_path(cwd, workspace_root=workspace_root)
     status = str(result.get("status") or ("blocked_by_policy" if result.get("error") else ""))
     if status and status != "executed":
