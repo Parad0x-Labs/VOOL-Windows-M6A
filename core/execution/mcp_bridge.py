@@ -44,7 +44,7 @@ from typing import Any
 
 from core.blackbox.coverage.capability import LOCAL_MUTATION_CLASSES
 from core.execution.models import ToolIntentExecution, _tool_observation
-from core.mcp_client import MCPError, MCPStdioClient
+from core.mcp_client import MCPError, MCPRefusedOnWindows, MCPStdioClient
 from core.runtime_tool_contracts import RuntimeToolContract, ToolClaim
 
 _INTENT_PREFIX = "mcp."
@@ -53,6 +53,9 @@ _INTENT_PREFIX = "mcp."
 #: vocabulary so it can never be mistaken for a reviewed tier: it carries no permission actions,
 #: which the controller reads as ``unknown_side_effect``.
 UNPINNED_SIDE_EFFECT_CLASS = "external_unpinned"
+
+#: The status of an MCP call Windows refused before any server started.
+MCP_REFUSED_ON_WINDOWS_STATUS = "mcp_refused_on_windows"
 
 _MAX_DESCRIPTION_CHARS = 300
 _MAX_OUTPUT_CHARS = 64_000
@@ -179,6 +182,15 @@ def _client_for(server: str) -> MCPStdioClient | None:
     cfg = next((s for s in load_mcp_server_configs() if s["name"] == server), None)
     if cfg is None:
         return None
+    # Windows starts no MCP server (boot listing, skill discovery and calls all come through
+    # here). The reason kept is the plain refusal, so every surface that explains the absence
+    # says it in those words.
+    from core.plugin_executor import windows_plugin_mcp_refusal
+
+    refusal = windows_plugin_mcp_refusal()
+    if refusal:
+        _CLIENT_FAILURES[server] = refusal
+        return None
     try:
         client = MCPStdioClient(
             cfg["command"],
@@ -192,6 +204,9 @@ def _client_for(server: str) -> MCPStdioClient | None:
             confinement=str(cfg.get("confinement") or "auto"),
         )
         client.start()
+    except MCPRefusedOnWindows as exc:
+        _CLIENT_FAILURES[server] = str(exc)
+        return None
     except Exception as exc:
         _CLIENT_FAILURES[server] = f"{type(exc).__name__}: {exc}"[:400]
         return None
@@ -396,6 +411,12 @@ def execute_mcp_intent(intent: str, arguments: dict[str, Any]) -> ToolIntentExec
 
     if not any(s["name"] == server for s in load_mcp_server_configs()):
         return _fail("mcp_server_not_configured", f"MCP server {server!r} is not configured (MCP is opt-in).")
+    from core.plugin_executor import windows_plugin_mcp_refusal
+
+    refusal = windows_plugin_mcp_refusal()
+    if refusal:
+        _CLIENT_FAILURES[server] = refusal
+        return _fail(MCP_REFUSED_ON_WINDOWS_STATUS, refusal)
     client = _client_for(server)
     if client is None:
         reason = server_failure_reason(server)
@@ -461,6 +482,7 @@ def reset_mcp_state() -> None:
 
 
 __all__ = [
+    "MCP_REFUSED_ON_WINDOWS_STATUS",
     "UNPINNED_SIDE_EFFECT_CLASS",
     "execute_mcp_intent",
     "framed_description",

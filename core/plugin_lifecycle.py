@@ -417,10 +417,58 @@ def verify(plugin_id: str, *, root: Path | None = None, expected_digest: str = "
     return _save(record)
 
 
+#: Manifest keys that are data, never a way to run something: the keys VOOL's own manifest code
+#: reads or writes (plugin_tools.parse_manifest, plugin_lifecycle.inspect, plugin_catalog,
+#: skill_package._stage_pack/create_plugin, addon_store.install_review). Any key outside this list
+#: and `_SKILLS_ONLY_EMPTY_KEYS` makes a pack not skills-only, whatever its value. homepage,
+#: repository and license are inert package metadata nothing in VOOL acts on.
+_SKILLS_ONLY_SAFE_KEYS = frozenset({
+    "name", "version", "description", "author", "interface", "keywords",
+    "skills", "permissions", "credential_bindings", "requires", "vool",
+    "homepage", "repository", "license",
+})
+#: Runnable keys tolerated only when empty (null, [], {}, ""): VOOL's own skills installs write
+#: `"tools": []` (addon_store.install_review). Non-empty, they declare runnable code.
+_SKILLS_ONLY_EMPTY_KEYS = frozenset({"tools", "runtime"})
+
+
+def _declares_runnable_code(root: Path | str) -> bool:
+    """Whether a pack is anything but provably skills-only. Decided fail closed.
+
+    True when the manifest is missing, unreadable or not a JSON object, when it has any key
+    outside the known-safe list (commands, hooks, mcpServers, lspServers, monitors, bin, scripts,
+    apps, agents and every key nobody listed), or when `tools`/`runtime` is non-empty.
+    """
+
+    if not str(root or "").strip():
+        return True
+    try:
+        payload = json.loads((Path(root) / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+    except Exception:
+        return True
+    if not isinstance(payload, dict):
+        return True
+    for key, value in payload.items():
+        if key in _SKILLS_ONLY_SAFE_KEYS:
+            continue
+        if key in _SKILLS_ONLY_EMPTY_KEYS and value in (None, [], {}, ""):
+            continue
+        return True
+    return False
+
+
 def enable(plugin_id: str) -> PluginRecord:
     record = _load(plugin_id)
     if record is None:
         raise LifecycleError(f"{plugin_id}: nothing installed to enable")
+    # Windows starts no plugin in 0.7.1. A pack whose manifest declares runnable code is refused
+    # here, at the add-ons enable step, in the plain words; an instruction-only (skills) pack
+    # starts nothing and still enables.
+    from core.plugin_executor import windows_plugin_mcp_refusal
+
+    refusal = windows_plugin_mcp_refusal()
+    if refusal and _declares_runnable_code(record.root):
+        raise LifecycleError(refusal)
     if record.stage != STAGE_VERIFIED and not (record.stage == STAGE_ENABLED and record.verified_digest):
         raise LifecycleError(f"{plugin_id}: cannot enable from stage `{record.stage}` — verify it first")
     if record.revoked_at:

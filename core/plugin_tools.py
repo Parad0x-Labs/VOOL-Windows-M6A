@@ -525,10 +525,20 @@ def execute_plugin_contract(contract: RuntimeToolContract, arguments: dict[str, 
     """Run a registered plugin contract's handler. Returns a `PluginToolResult`; never raises."""
 
     from core import plugin_lifecycle as lifecycle
-    from core.plugin_executor import PluginToolResult, run_plugin_tool
+    from core.plugin_executor import (
+        WINDOWS_REFUSED_STATUS,
+        PluginToolResult,
+        run_plugin_tool,
+        windows_plugin_mcp_refusal,
+    )
     from core.plugin_package import PackageError, capture_package, execution_directory
 
     intent = str(contract.intent)
+    # Windows starts no plugin: refuse before the package snapshot is copied or anything runs.
+    refusal = windows_plugin_mcp_refusal()
+    if refusal:
+        return PluginToolResult(ok=False, status=WINDOWS_REFUSED_STATUS, error=refusal,
+                                observation={"intent": intent})
     plugin_id = str(contract.source or "")[len("plugin:"):]
     root = plugin_root_for(intent)
     if root is None:

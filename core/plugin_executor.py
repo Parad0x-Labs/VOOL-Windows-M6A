@@ -63,9 +63,46 @@ CONFINEMENT_MODES = frozenset({"auto", "heuristic_only"})
 #: too, because untrusted plugins and parsers never run bare. Patched by tests.
 _WINDOWS_REFUSES_BARE = os.name == "nt"
 
+#: 0.7.1 Windows stated limit, in the words the operator is shown. Windows starts no plugin and no
+#: MCP server, whatever the command (python, pythonw, py or a full path included): the VoolConfine
+#: launcher is proven only for VOOL's own Python/pytest sandbox jobs, and a plugin or MCP child is
+#: neither. The refusal happens before anything is spawned, including the launcher's own probe.
+WINDOWS_PLUGIN_MCP_REFUSAL = "VOOL doesn't start plugins or MCP servers on Windows in 0.7.1; use WSL2/Linux."
+#: Patched by tests to drive the Windows decision on every platform.
+_WINDOWS_REFUSES_PLUGINS_AND_MCP = os.name == "nt"
+#: The result status of a plugin call Windows refused before anything started.
+WINDOWS_REFUSED_STATUS = "refused_on_windows"
+
 
 class ConfinementUnavailableError(RuntimeError):
     """This host cannot confine a child process and the caller did not opt into running bare."""
+
+
+def windows_plugin_mcp_refusal() -> str:
+    """The plain refusal when this host is Windows, else ``""``.
+
+    Asks both this module's switch and the sandbox backend's own platform check, so neither can
+    open the door alone. If the backend's check cannot be asked, ``os.name`` decides.
+    """
+
+    if _WINDOWS_REFUSES_PLUGINS_AND_MCP:
+        return WINDOWS_PLUGIN_MCP_REFUSAL
+    try:
+        from sandbox.job_runner import _is_windows_platform
+
+        windows = bool(_is_windows_platform())
+    except Exception:
+        windows = os.name == "nt"
+    return WINDOWS_PLUGIN_MCP_REFUSAL if windows else ""
+
+
+def _kernel_isolation_error_type() -> type[BaseException]:
+    try:
+        from sandbox.job_runner import KernelIsolationUnavailableError
+
+        return KernelIsolationUnavailableError
+    except Exception:  # pragma: no cover - the sandbox package ships with VOOL
+        return ConfinementUnavailableError
 
 
 @dataclass(frozen=True)
@@ -267,14 +304,28 @@ def confined_argv(
     case and labels the result so nothing downstream can mistake it for a confined run.
     """
 
+    # Windows refuses here, before the backend is asked anything: asking it probes and grants
+    # through the VoolConfine launcher, which is itself a process start.
+    refusal = windows_plugin_mcp_refusal()
+    if refusal:
+        raise ConfinementUnavailableError(refusal)
     clean_mode = str(mode or "auto").strip().lower()
     if clean_mode not in CONFINEMENT_MODES:
         clean_mode = "auto"
     bare = [str(a) for a in argv]
-    wrapped = _kernel_confinement_prefix(
-        bare, writable_roots=writable_roots, allow_network=allow_network,
-        working_directory=working_directory, readable_roots=readable_roots,
-    )
+    try:
+        wrapped = _kernel_confinement_prefix(
+            bare, writable_roots=writable_roots, allow_network=allow_network,
+            working_directory=working_directory, readable_roots=readable_roots,
+        )
+    except _kernel_isolation_error_type() as exc:
+        # The sandbox backend refused (on Windows: a program phase 1 does not run, or the launcher
+        # could not grant). It is a ValueError, so no caller's ConfinementUnavailableError handler
+        # saw it and it escaped as an exception. It is a refusal: nothing was started.
+        refusal = windows_plugin_mcp_refusal()
+        raise ConfinementUnavailableError(
+            refusal or f"this host could not confine the child ({exc}), so the child was not started."
+        ) from None
     if wrapped is not None:
         return list(wrapped), _backend_label(list(wrapped), bare) or "kernel:unknown"
     if clean_mode == "heuristic_only" and not _WINDOWS_REFUSES_BARE:
@@ -327,6 +378,11 @@ def run_plugin_tool(
 ) -> PluginToolResult:
     """Validate, then run one plugin tool. Never raises; every failure is a structured result."""
 
+    refusal = windows_plugin_mcp_refusal()
+    if refusal:
+        return PluginToolResult(
+            ok=False, status=WINDOWS_REFUSED_STATUS, error=refusal, observation={"intent": intent}
+        )
     filled = json_schema_lite.apply_defaults(arguments, schema)
     errors = json_schema_lite.validate(filled, schema)
     if errors:
@@ -378,7 +434,12 @@ def run_plugin_tool(
             readable_roots=(*(Path(p).resolve() for p in (package_dependencies or {}).values()),
                             *((Path(scratch_dir).resolve(),) if scratch_dir else ())),
         )
-    except ConfinementUnavailableError as exc:
+    except (ConfinementUnavailableError, _kernel_isolation_error_type()) as exc:
+        refusal = windows_plugin_mcp_refusal()
+        if refusal:
+            return PluginToolResult(
+                ok=False, status=WINDOWS_REFUSED_STATUS, error=refusal, observation={"intent": intent}
+            )
         return PluginToolResult(
             ok=False,
             status="confinement_unavailable",
@@ -487,9 +548,12 @@ __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
     "ConfinementUnavailableError",
     "PluginToolResult",
+    "WINDOWS_PLUGIN_MCP_REFUSAL",
+    "WINDOWS_REFUSED_STATUS",
     "build_child_env",
     "check_argument_shapes",
     "confined_argv",
     "kernel_confinement_available",
     "run_plugin_tool",
+    "windows_plugin_mcp_refusal",
 ]
