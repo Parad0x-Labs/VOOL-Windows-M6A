@@ -586,10 +586,10 @@ def run_plugin_tool(
 __all__ = [
     "CONFINEMENT_MODES",
     "DEFAULT_TIMEOUT_SECONDS",
-    "ConfinementUnavailableError",
-    "PluginToolResult",
     "WINDOWS_PLUGIN_MCP_REFUSAL",
     "WINDOWS_REFUSED_STATUS",
+    "ConfinementUnavailableError",
+    "PluginToolResult",
     "build_child_env",
     "check_argument_shapes",
     "confined_argv",
