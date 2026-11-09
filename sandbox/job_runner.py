@@ -90,6 +90,71 @@ class NestedGitMetadataError(ValueError):
 _WINDOWS_PYTHON_NAMES = frozenset({"python", "python3", "py"})
 _WINDOWS_PYTEST_NAMES = frozenset({"pytest", "py.test"})
 
+#: The only modules a phase-1 Python job may run with `-m`: pytest, and the two stdlib runners
+#: VOOL's own builder uses to verify generated apps (`-m unittest`, `-m compileall -q`; see
+#: core/agent_runtime/builder/app_builder.py and builder/controller.py). Neither installs anything.
+#: Every other module is refused: pip, ensurepip, venv and ruff are tools the 0.7.1 Windows limits
+#: say VOOL refuses. Names are matched exactly, as CPython's import does.
+_WINDOWS_PYTHON_MODULES = frozenset({"pytest", "unittest", "compileall"})
+
+#: CPython flags that take no argument and neither run a module nor read code from stdin. They
+#: may come before the script, `-c` or an allowed `-m`, alone or combined (`-IB`). Every other flag
+#: is refused: `-i` (a REPL on stdin), `-W` (a warning category is imported by name), `-X`
+#: (implementation options, some of which import a module), `-h`/`-V` and every long option.
+_WINDOWS_PYTHON_PLAIN_FLAGS = frozenset("bBdEIOPqRsSuvx")
+
+#: CPython flags that take an argument, either the rest of the cluster (`-mpip`) or the next
+#: argv item. Only `-c` and an allowed `-m` are accepted; knowing the others keeps the parser in step
+#: with CPython so that `-W x -m pip` is read as CPython reads it.
+_CPYTHON_FLAGS_WITH_ARGUMENT = frozenset("cmWX")
+
+
+def _windows_python_args_refusal(args: list[str]) -> str | None:
+    """Why phase 1 refuses this Python command line, or None when it runs.
+
+    `args` is everything after the interpreter. It is read the way CPython reads its own
+    command line: flags come first, alone or combined in one item; a flag that takes an argument
+    takes the rest of its item or else the next item; `-c` and `-m` end the options; the first
+    item that does not start with `-` is the script and ends the options too. Accepted forms:
+    a `.py` script, `-c <code>` and `-m` with a module in `_WINDOWS_PYTHON_MODULES` (pytest,
+    unittest, compileall), each after plain flags only. Anything else,
+    including no program at all (`python` reads stdin), `-` (stdin), `--`, a long option or a
+    flag this parser does not know, is refused. Unknown means refused.
+    """
+    index = 0
+    while index < len(args):
+        item = args[index]
+        if item == "--":
+            return "'--' (an end-of-options marker)"
+        if item == "-":
+            return "'-' (a program read from standard input)"
+        if not item.startswith("-"):
+            name = item.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+            if item and name.lower().endswith(".py") and len(name) > 3:
+                return None
+            return f"'{item}' (only a .py script runs; not a folder, zip or wheel)"
+        if item.startswith("--"):
+            return f"the option '{item}'"
+        cluster = item[1:]
+        for position, flag in enumerate(cluster):
+            if flag in _CPYTHON_FLAGS_WITH_ARGUMENT:
+                value = cluster[position + 1:]
+                if not value:
+                    if index + 1 >= len(args):
+                        return f"'-{flag}' with nothing after it"
+                    value = args[index + 1]
+                if flag == "c":
+                    return None
+                if flag == "m":
+                    if value in _WINDOWS_PYTHON_MODULES:
+                        return None
+                    return f"'-m {value}'"
+                return f"the option '-{flag}'"
+            if flag not in _WINDOWS_PYTHON_PLAIN_FLAGS:
+                return f"the option '-{flag}'"
+        index += 1
+    return "a Python command with no script, -c code or allowed -m module"
+
 #: Policy and status files the Windows launcher was handed, keyed by the policy path in the argv,
 #: so that `run` can read the status back and delete the staging folder. Only the Windows branch
 #: of `_with_network_isolation` adds entries.
@@ -1171,6 +1236,10 @@ class JobRunner:
         On Windows a bare `python3` resolves to the Microsoft Store alias stub, and the
         launcher never searches PATH anyway. An absolute program is accepted only when it IS
         this interpreter or its base. Nothing else runs in phase 1.
+
+        A Python command line must also be a `.py` script, `-c <code>` or `-m pytest`, `-m unittest`
+        or `-m compileall` (`_windows_python_args_refusal`). Judging only the program name let `python -m pip`,
+        `-m ensurepip`, `-m venv` and `-m ruff` through.
         """
         interpreter = Path(sys.executable).resolve()
         accepted = {os.path.normcase(str(interpreter))}
@@ -1181,13 +1250,25 @@ class JobRunner:
         name = Path(program.replace("\\", "/")).name.lower()
         stem = name[:-4] if name.endswith(".exe") else name
         rest = [str(item) for item in argv[1:]]
+        python: list[str] | None = None
         if "/" not in program and "\\" not in program:  # a bare name, not a path (any case)
             if stem in _WINDOWS_PYTHON_NAMES:
-                return [str(interpreter), *rest]
-            if stem in _WINDOWS_PYTEST_NAMES:
+                python = [str(interpreter), *rest]
+            elif stem in _WINDOWS_PYTEST_NAMES:
                 return [str(interpreter), "-m", "pytest", *rest]
         elif Path(program).is_absolute() and os.path.normcase(str(Path(program).resolve())) in accepted:
-            return [str(Path(program).resolve()), *rest]
+            python = [str(Path(program).resolve()), *rest]
+        if python is not None:
+            refused = _windows_python_args_refusal(rest)
+            if refused is None:
+                return python
+            raise KernelIsolationUnavailableError(
+                f"Windows confinement runs Python and pytest jobs only for now: a Python job must be "
+                f"a .py script, -c code or -m pytest (or VOOL's own -m unittest and -m compileall), "
+                f"so {refused} is refused. VOOL 0.7.1 on "
+                "Windows refuses pip, ruff, venv and other Python modules. Run them under "
+                "WSL2/Linux instead. It was not run."
+            )
         raise KernelIsolationUnavailableError(
             f"Windows confinement runs Python and pytest jobs only for now; '{program}' is refused "
             "until its toolchain is proven inside the confinement (git, npm, node, cargo, cmd and "
