@@ -313,11 +313,12 @@ def test_a_local_relative_path_still_reaches_the_decision_on_the_windows_seam(
     # folder it lands in, the only one flagged, as the gauntlet flags it. A host without drives also
     # gets the drive-relative spelling, which the policy reads as drive-relative even there. Its writer
     # joins it onto the home (as a folder named `C:Documents`, which a ':'-separated
-    # VOOL_WINDOWS_DISPOSABLE_WORKSPACES cannot name), so the home is flagged for it. On Windows the
-    # first spelling already is the drive-relative one.
+    # VOOL_WINDOWS_DISPOSABLE_WORKSPACES cannot name). The home itself is never a write root (it is the
+    # profile), so the folder flagged for it is this test's own tmp_path, which holds the home. On
+    # Windows the first spelling already is the drive-relative one.
     machine_paths = [(home.drive + "Documents" + os.sep + "x.txt", home / "Documents")]
     if not home.drive:
-        machine_paths.append(("C:Documents" + os.sep + "x.txt", home))
+        machine_paths.append(("C:Documents" + os.sep + "x.txt", tmp_path))
     decisions = _spy(monkeypatch, executor, "decide_tool_call")
     windows_host.on()
 
