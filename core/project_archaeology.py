@@ -174,7 +174,7 @@ class GitRefused(ArchaeologyInputError):
 _GIT_OBJECT_NAME_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
 
 
-def _git_refusal_answers(scan: "_Scan", reference: str, items: list[dict]) -> bool:
+def _git_refusal_answers(scan: _Scan, reference: str, items: list[dict]) -> bool:
     """Whether git's refusal is the answer: git was refused for this read, and either nothing else
     matched or the reference names what may be a git object, which VOOL could not look for."""
     return scan.git_refused and (not items or bool(_GIT_OBJECT_NAME_RE.match(str(reference or "").strip())))

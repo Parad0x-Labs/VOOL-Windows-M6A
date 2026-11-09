@@ -693,7 +693,7 @@ def _destinations_as_found(patch_text: str, touched_paths: list[str], *, workspa
         for index, line in enumerate(lines[:-1])
         if line.startswith("--- ") and _header_name(line[4:]) == "/dev/null" and lines[index + 1].startswith("+++ ")
     }
-    try:
+    with contextlib.suppress(ValueError):
         # The engine's own parse, when it reads the patch: a removed `-- /dev/null` line followed by an
         # added `++ x` line is content, not the creation of `x`.
         created = {
@@ -701,8 +701,6 @@ def _destinations_as_found(patch_text: str, touched_paths: list[str], *, workspa
             for old_raw, new_raw, _hunks in _parse_unified_diff(_protected_patch_text(patch_text)[0])
             if old_raw == "/dev/null"
         }
-    except ValueError:
-        pass
     rows: list[dict[str, Any]] = []
     for relative in touched_paths:
         target = resolve_workspace_path(relative, workspace_root=workspace_root, write=True)
@@ -1329,8 +1327,9 @@ def _starts_next_file(lines: list[str], index: int, old_left: int, new_left: int
     A hunk with no old lines left has no removal to read, so the line is a header (one without its `+++`
     is then refused as malformed). While old lines are left it is a removal, except where it opens a
     whole `---`/`+++`/`@@` section and the hunk claimed more lines than it holds: the hunk then ends there
-    and is refused for its counts (`unsupported_patch`), naming that hunk. A removal and an addition that close the hunk exactly (one old
-    and one new line left) stay content even when the next hunk's `@@` follows them."""
+    and, on Windows, is refused for its counts (`unsupported_patch`), naming that hunk. A removal and an
+    addition that close the hunk exactly (one old and one new line left) stay content even when the next
+    hunk's `@@` follows them."""
     if old_left <= 0:
         return True
     opens_a_section = (
@@ -1401,7 +1400,9 @@ def _parse_unified_diff(patch_text: str) -> list[tuple[str, str, list[tuple[int,
                     raise ValueError(f"Unsupported unified diff line: {hunk_line}")
                 body.append(hunk_line)
                 index += 1
-            if old_left or new_left:
+            if (old_left or new_left) and windows_write_gate.active():
+                # Windows only in 0.7.1: VOOL's engine is the only one there. Off Windows the hunk is
+                # read as far as it goes, as before (and `git apply --recount` recounts it).
                 raise ValueError(
                     "Unsupported unified diff: a hunk's lines do not match the line counts in its `@@` "
                     f"header ({current})."
