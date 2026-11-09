@@ -359,7 +359,27 @@ def test_a_broker_routed_write_logs_one_line_with_path_op_and_result(broker, cap
     lines = _broker_lines(caplog)
     assert len(lines) == 1, lines
     assert "write_file" in lines[0] and str(target) in lines[0] and "done" in lines[0], lines
+    assert f"{len(b'the private words')} bytes" in lines[0], lines
     assert "private" not in lines[0]
+
+
+def test_a_broker_log_line_carries_no_hash_of_the_bytes(broker, caplog) -> None:
+    """Security Architect condition (9 Nov 2026): a short content hash lets anyone holding the log
+    confirm a guess of a short secret, so the line keeps the operation, path, byte count and result
+    only."""
+    import hashlib
+
+    from core.windows_broker import writes
+
+    secret = b"1234"
+    caplog.set_level(logging.INFO, logger="core.windows_broker.writes")
+    writes.write_file(broker.folder / "pin.txt", secret, "absent")
+    digest = hashlib.sha256(secret).hexdigest()
+    lines = _broker_lines(caplog)
+    assert len(lines) == 1, lines
+    assert "sha256" not in lines[0].lower(), lines
+    assert all(digest[:size] not in lines[0] for size in (6, 8, 12)), lines
+    assert "4 bytes" in lines[0] and "done" in lines[0], lines
 
 
 def test_a_refused_broker_write_logs_the_refusal(broker, caplog, monkeypatch) -> None:
