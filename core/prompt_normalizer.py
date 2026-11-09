@@ -1343,7 +1343,15 @@ def _runtime_turn_truth(source_context: dict[str, Any] | None, *, reference_now:
     binding = str(context.get("workspace_binding") or "").strip().lower()
     project_id = str(context.get("project_id") or "").strip()
     workspace_bound = bool(str(context.get("workspace") or context.get("workspace_root") or "").strip())
-    if workspace_bound and (binding not in {"", "default"} or project_id):
+    if workspace_bound and binding == "marked_folder" and not project_id:
+        # core/windows_marked_code_folder.py: this turn works in a folder the user named.
+        folder = str(context.get("workspace") or context.get("workspace_root") or "").strip()
+        facts.append(
+            f"This turn works in the folder the user named, `{folder}`, which the owner marked as a "
+            "folder VOOL may change. Use `.` or paths relative to it with workspace, test and sandbox "
+            "tools; the sandbox runs Python and pytest there."
+        )
+    elif workspace_bound and (binding not in {"", "default"} or project_id):
         project_label = f" `{project_id}`" if project_id else ""
         facts.append(
             f"This chat is bound to project{project_label}. Phrases such as `this folder`, "

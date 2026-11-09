@@ -107,6 +107,12 @@ __all__ = [
 ]
 
 
+#: Intents whose handler runs one sandbox command in the `cwd` its arguments name (`_run_command`).
+_CWD_COMMAND_INTENTS = frozenset(
+    {"sandbox.run_command", "workspace.run_tests", "workspace.run_lint", "workspace.run_formatter"}
+)
+
+
 def runtime_capability_ledger(*, hive_read_reachable_fn=None) -> list[dict[str, Any]]:
     return execution_capabilities.runtime_capability_ledger(
         allow_web_fallback_fn=policy_engine.allow_web_fallback,
@@ -1288,11 +1294,13 @@ def _execute_tool_intent_impl(
     # Background/internal callers are served by an explicit typed scope
     # (`mode_permission_policy.grant_internal_authority`) that names the actions it needs. Not
     # sending a mode is not that scope, and must never be read as one again.
-    if intent == "sandbox.run_command" and str(arguments.get("cwd") or "").strip():
+    if intent in _CWD_COMMAND_INTENTS and str(arguments.get("cwd") or "").strip():
         # A working directory outside the workspace is refused HERE, before the permission
         # decision: measured live 2026-09-07, the controller asked the operator to approve
         # `cwd=/Users`, the operator did, and the handler then refused -- the approval bought
         # nothing and the refusal surfaced as an unknown outcome. Same predicate as the handler.
+        # The validation commands run through that same handler with the same `cwd`, and were
+        # approved and then refused the same way (captest C3, 2026-11-09: run_tests).
         from core.runtime_execution_tools import _workspace_root, sandbox_cwd_refusal
 
         refusal = sandbox_cwd_refusal(arguments.get("cwd"), workspace_root=_workspace_root(source_context))

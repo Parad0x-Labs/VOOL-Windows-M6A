@@ -16,7 +16,7 @@ Windows 11, 64-bit.
 - **Signed updates for Windows** from the next release on, with rollback. 0.7.1 itself is installed by download.
 
 ### Windows limits in 0.7.1
-- VOOL runs **Python and pytest** for you in its Windows sandbox.
+- VOOL runs **Python and pytest** for you in its Windows sandbox. Name the marked folder in your request (for example `run the tests in C:\Users\you\Projects\calc`), and VOOL works in that folder, after your approval.
 - It refuses **git, npm, node, ruff and pip**, does not start **plugins or MCP servers**, and does not read **PDF or 7z** files. It refuses these rather than run them unprotected. To use them, run VOOL under WSL2/Linux.
 - It does not clean temp files. A patch is applied only when VOOL can reproduce it byte for byte; otherwise it is refused and nothing changes.
 - Files on other machines (network shares, mapped network drives, device paths) are refused.
