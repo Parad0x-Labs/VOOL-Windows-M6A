@@ -354,6 +354,7 @@ _QUOTED_ROOTED_PATH_RE = re.compile(
 # How many space-separated words an unquoted path may be extended through (`_extend_through_spaces`).
 _MAX_SPACED_WORDS = 16
 _NEXT_WORD_RE = re.compile(r"[ \t]+[^\s`'\"<>|]+")
+_ON_WINDOWS = os.name == "nt"
 
 
 def _path_separators() -> str:
@@ -362,12 +363,14 @@ def _path_separators() -> str:
 
 def _spaces_may_extend(candidate: str) -> bool:
     """Only a full local path is extended, and only by looking at what exists: never a share, a
-    device or a root-relative path on Windows (looking a share up is already the SMB connection),
-    and never a ``~`` path."""
+    device, a root-relative path or a mapped network drive on Windows (looking a share up is already
+    the SMB connection), and never a ``~`` path."""
     if not candidate or windows_path_policy.refused_form(candidate):
         return False
     if re.match(r"^[A-Za-z]:[\\/]", candidate):
-        return True
+        # A mapped network drive is a share under a letter: looking it up is the SMB connection.
+        # GetDriveTypeW does no I/O on the share; only a drive Windows calls local is looked at.
+        return not _ON_WINDOWS or windows_known_folders._drive_is_remote(candidate[:2]) is False
     return os.name != "nt" and candidate.startswith("/") and not candidate.startswith(("//", "/\\"))
 
 
