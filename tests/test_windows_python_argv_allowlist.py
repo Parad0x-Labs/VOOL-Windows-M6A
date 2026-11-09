@@ -163,3 +163,59 @@ def test_cpython_reads_the_allowed_edge_forms_the_same_way(tmp_path) -> None:
         [sys.executable, "-IBmjson.tool", "--help"], capture_output=True, text=True, timeout=60
     )
     assert "json.tool" in clustered.stdout or "usage" in clustered.stdout, "-IBm<module> runs <module>"
+
+
+#: VOOL's own builder runs `python -m unittest` and `python -m compileall -q`
+#: (core/agent_runtime/builder/app_builder.py, builder/controller.py), so phase 1 accepts those two
+#: stdlib runners as well as pytest. Neither installs anything.
+STDLIB_RUNNERS = [
+    pytest.param(["python", "-m", "unittest", "-v", "test_app"],
+                 [_INTERPRETER, "-m", "unittest", "-v", "test_app"], id="-m unittest"),
+    pytest.param(["python3", "-m", "unittest", "discover"],
+                 [_INTERPRETER, "-m", "unittest", "discover"], id="python3 -m unittest"),
+    pytest.param(["python", "-Im", "unittest"], [_INTERPRETER, "-Im", "unittest"], id="-Im unittest"),
+    pytest.param(["py", "-IBmunittest", "-q"], [_INTERPRETER, "-IBmunittest", "-q"], id="-IBmunittest"),
+    pytest.param(["python", "-I", "-B", "-m", "unittest"], [_INTERPRETER, "-I", "-B", "-m", "unittest"],
+                 id="flags -m unittest"),
+    pytest.param(["python", "-m", "compileall", "-q", "src"],
+                 [_INTERPRETER, "-m", "compileall", "-q", "src"], id="-m compileall"),
+    pytest.param(["python", "-Im", "compileall", "-q", "src"],
+                 [_INTERPRETER, "-Im", "compileall", "-q", "src"], id="-Im compileall"),
+    pytest.param([_INTERPRETER, "-m", "compileall", "-q", "src"],
+                 [_INTERPRETER, "-m", "compileall", "-q", "src"], id="full path -m compileall"),
+]
+
+
+@pytest.mark.parametrize(("argv", "expected"), STDLIB_RUNNERS)
+def test_the_gate_accepts_vools_stdlib_test_and_compile_runners(argv, expected) -> None:
+    assert jr.JobRunner._windows_phase1_argv(argv) == expected
+
+
+def test_a_unittest_job_runs_through_the_launcher(windows, tmp_path) -> None:
+    launcher = _fake_launcher(tmp_path / "bin", "run")
+    _use_launcher(windows, launcher)
+    runner = _runner(tmp_path)
+    workspace = tmp_path / "ws"
+    (workspace / "test_ok.py").write_text(
+        "import unittest\nclass T(unittest.TestCase):\n    def test_ok(self):\n        pass\n", encoding="utf-8"
+    )
+    result = runner.run(["python", "-Bm", "unittest", "-q", "test_ok"], cwd=workspace)
+    assert result.returncode == 0, result.stderr
+    assert "env-run.json" in _launched(launcher)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["python", "-Im", "pip", "install", "x"],
+        ["python", "-m", "ensurepip"],
+        ["python", "-Im", "venv", "env"],
+        ["python", "-m", "ruff", "check", "."],
+        ["python", "-m", "unittest.mock"],
+        ["python", "-m", "Unittest"],
+        ["python", "-m", "compileall.x"],
+    ],
+)
+def test_allowing_the_stdlib_runners_refuses_every_other_module(argv) -> None:
+    with pytest.raises(jr.KernelIsolationUnavailableError, match="Python and pytest"):
+        jr.JobRunner._windows_phase1_argv(argv)
