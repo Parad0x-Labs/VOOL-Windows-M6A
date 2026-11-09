@@ -20,6 +20,12 @@ Sessions are opened and bound through the production tool door, every repository
 repo.git goes through the real executor with a spy on the permission decision, as in the file
 above. The Windows decision is switched on through the gate's `_IS_WINDOWS`, so the file runs on
 every platform; folder links are junctions on Windows and symbolic links elsewhere.
+
+Re-pinned for 0.7.1 (VOOL doesn't run git on Windows, core/safe_git.py): every commit in this file is
+now refused before the permission decision with the git sentence, whatever the repository's layout,
+and VOOL starts no git process while it is decided (see the file above). The `says` each refusal row
+passes is what the gate said before 0.7.1; the rows that "still commit" now pin the same refusal.
+Row names are kept so each row maps to the earlier contract.
 """
 from __future__ import annotations
 
@@ -33,6 +39,7 @@ import pytest
 
 from tests.test_windows_gate_checks_where_git_writes import (
     MODES,
+    REFUSAL,
     _assert_refused_before_approval,
     _bound_session,
     _commit,
@@ -86,7 +93,8 @@ def _marked_repo(tmp_path: Path, monkeypatch) -> tuple[Path, Path, Path]:
 
 def _refused(tmp_path: Path, monkeypatch, world, mode: str, prepare, *, says: str) -> None:
     """`prepare(repo, outside)` sets up the redirect after the session is bound; the commit is then
-    refused before approval with `says` in the reason, and nothing changes inside or outside."""
+    refused before approval with the git sentence (before 0.7.1 the reason held `says`), and nothing
+    changes inside or outside."""
     marked, repo, outside = _marked_repo(tmp_path, monkeypatch)
     session = _bound_session(repo)
     prepare(repo, outside)
@@ -96,7 +104,7 @@ def _refused(tmp_path: Path, monkeypatch, world, mode: str, prepare, *, says: st
     execution = _commit(session, marked, mode)
 
     _assert_refused_before_approval(execution, world)
-    assert says in execution.response_text, execution.response_text
+    assert execution.response_text == REFUSAL and says not in execution.response_text, execution.response_text
     assert _state(repo) == before
     assert _files(outside) == outside_before
     assert _journal_steps(session) == {}
@@ -269,20 +277,16 @@ def test_gc_repack_filter_to_in_the_repository_config_is_refused(tmp_path: Path,
 
 
 def _approved_commit_runs(session: str, marked: Path, repo: Path, mode: str, world) -> None:
-    from core.mode_permission_policy import resolve_approval
-
+    """Before 0.7.1 this commit reached approval and ran; on Windows it is now refused before approval
+    with the git sentence, no approval card, no git started and nothing changed."""
     (repo / "change.txt").write_bytes(b"pending\n")
     before = _state(repo)
     task, chat = f"repo-git-{uuid.uuid4().hex}", f"repo-git-session-{uuid.uuid4().hex}"
     asked = _commit(session, marked, mode, task_id=task, chat_session=chat)
-    assert asked.status == "pending_approval", (asked.status, asked.response_text)
+    _assert_refused_before_approval(asked, world)
+    assert "approval_request" not in asked.details
     assert _state(repo) == before
-    token = asked.details["approval_request"]["approval_id"]
-    assert (resolve_approval(token, decision="allow") or {}).get("status") == "approved"
-    ran = _commit(session, marked, mode, task_id=task, chat_session=chat, token=token)
-    assert ran.ok and ran.status == "executed", (ran.status, ran.response_text)
-    assert _git(repo, "rev-parse", "HEAD~1").strip() == before["head"]
-    assert _git(repo, "show", "HEAD:change.txt") == "pending\n"
+    assert _journal_steps(session) == {}
 
 
 @pytest.mark.parametrize("mode", MODES)
