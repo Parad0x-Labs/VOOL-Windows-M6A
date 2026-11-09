@@ -209,14 +209,19 @@ def refusal_reason(path: str, *, extra_sealed: tuple[str, ...] = ()) -> str:
     linked = _link_on_the_way(raw)
     if linked:
         return f"{linked} is a junction or link; mark the folder it points at instead"
-    # The gate's drive, profile and TEMP/TMP/LOCALAPPDATA rule (`wide_root_reason`) is applied by
-    # `mark` and `load` beside this judgement, and by the gate on every read of the list.
+    # The gate's drive, profile and TEMP/TMP/LOCALAPPDATA rule is judged just below, so a whole
+    # drive keeps its own plain answer here.
     root = windows_write_gate._windows_root(raw, wide=False)
     if root is None:
         return "it is a network, device, linked or missing folder"
     real = _real(raw)
     if ntpath.splitdrive(_norm(real))[1] in ("", "\\"):
         return "it is a whole drive"
+    # The same rule the gate skips a root by (`wide_root_reason`): the raw TEMP and TMP variables,
+    # LOCALAPPDATA and the profile, besides the system temp root judged below.
+    too_wide = windows_write_gate.wide_root_reason(raw)
+    if too_wide:
+        return too_wide
     try:
         from core.runtime_paths import active_vool_home
 
@@ -286,11 +291,8 @@ def load(home: str | os.PathLike[str] | None = None) -> dict[str, Any]:
         logger.warning("disposable folder list %s adds nothing: %s", path, problem)
     started = {_norm(p) for p in _START.get(_start_key(home), [])}
     shown = []
-    from core import windows_write_gate
-
     for entry in entries:
-        # A folder the gate skips as too wide never counts, so the list does not show it as marked.
-        reason = refusal_reason(entry["path"]) or windows_write_gate.wide_root_reason(entry["path"])
+        reason = refusal_reason(entry["path"])
         shown.append({
             **entry,
             "refused": reason,
@@ -371,9 +373,7 @@ def _audit(event: str, path: str) -> None:
 
 def mark(path: str, *, home: str | os.PathLike[str] | None = None, extra_sealed: tuple[str, ...] = ()) -> dict[str, str]:
     """Add ``path`` (already confirmed by the owner in an OS dialog). Raises MarkRefused."""
-    from core import windows_write_gate
-
-    reason = refusal_reason(path, extra_sealed=extra_sealed) or windows_write_gate.wide_root_reason(path)
+    reason = refusal_reason(path, extra_sealed=extra_sealed)
     if reason:
         raise MarkRefused(reason)
     real = _real(path)
