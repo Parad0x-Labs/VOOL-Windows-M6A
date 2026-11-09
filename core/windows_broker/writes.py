@@ -133,10 +133,12 @@ def _place(target: Path, status: Any) -> tuple[Any, str]:
 @contextlib.contextmanager
 def _logged(operation: str, *paths: Path) -> Iterator[list[str]]:
     """One INFO line per change routed through the broker: the operation, the path(s) and the result,
-    never the bytes. Security Architect question SA1 (captest round 1, 2026-11-09): the runner found
-    no record on the VM that a marked-folder write went through VoolBroker, because nothing logged a
-    routed change. The caller appends what was done to the yielded list; a refusal and an unknown
-    outcome are logged with their code before they propagate."""
+    never the bytes and never a hash of them (a short content hash lets anyone holding the log confirm
+    a guess of a short secret; Security Architect, 9 Nov 2026). Security Architect question SA1
+    (captest round 1, 2026-11-09): the runner found no record on the VM that a marked-folder write
+    went through VoolBroker, because nothing logged a routed change. The caller appends what was done
+    to the yielded list; a refusal and an unknown outcome are logged with their code before they
+    propagate."""
     done: list[str] = []
     where = " -> ".join(str(path) for path in paths)
     try:
@@ -250,7 +252,7 @@ def write_file(target: Path, data: bytes, expect: str) -> Written:
             call.ensure_directory(parent)
         result = call.change("write_file", rel=call.rel, data=base64.b64encode(data).decode("ascii"), expect=expect)[0]
         written = _written(result, call.rel, data, tuple(call.created))
-        done.append(f"{len(data)} bytes, sha256 {written.sha256[:12]}")
+        done.append(f"{len(data)} bytes")
         return written
 
 
