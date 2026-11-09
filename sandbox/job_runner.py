@@ -1533,7 +1533,9 @@ def windows_sandbox_report() -> dict | None:
     - `confined_programs`: the program names phase 1 accepts (`_WINDOWS_PYTHON_NAMES`,
       `_WINDOWS_PYTEST_NAMES`); every other program is refused before anything launches.
     - `programs`: each name in `WINDOWS_REPORTED_PROGRAMS` with the verdict
-      `_windows_phase1_argv` gives it as a bare program name ("confined" or "refused").
+      `_windows_phase1_argv` gives it ("confined" or "refused"). A Python name is asked as
+      `[name, "-c", "0"]`: phase 1 runs Python only with a .py script, -c or -m pytest, so a bare
+      interpreter is refused and would misreport Python as refused. Every other name is asked bare.
     - `backend`: "launcher_missing" when no pinned VoolConfine launcher verifies, "proven" or
       "probe_failed" from the probe the first job runs (cached per process), and "not_probed"
       until a job has asked. This report never runs the probe: it starts a confined child, too
@@ -1544,7 +1546,8 @@ def windows_sandbox_report() -> dict | None:
     verdicts: dict[str, str] = {}
     for name in WINDOWS_REPORTED_PROGRAMS:
         try:
-            JobRunner._windows_phase1_argv([name])
+            probe = [name, "-c", "0"] if name in _WINDOWS_PYTHON_NAMES else [name]
+            JobRunner._windows_phase1_argv(probe)
         except KernelIsolationUnavailableError:
             verdicts[name] = "refused"
         else:
