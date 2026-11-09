@@ -7,7 +7,8 @@ Owner decision (Jesse, 7 Nov 2026 05:14Z): "click-to-download counts as consent"
 (🔐, design D2) bound that consent:
 
 * Only a name:tag the machine-sized install plan offers (``build_install_recommendation_truth``:
-  the recommended bundle, then its fallback) is pulled, matched exactly. There is no free text and
+  the recommended bundle, then its fallback, led by the bundle manifest's own model when the machine
+  meets its documented RAM floor) is pulled, matched exactly. There is no free text and
   no host or registry field; the pull goes to the local Ollama only, which fetches from its registry.
 * Local-only (offline) mode and a local-models-disabled policy win over the click. The click only
   stands in for the default ``outbound_enabled=false``, for this one pull, and never changes it.
@@ -35,13 +36,44 @@ _active: dict[str, Any] | None = None   # {"progress", "cancel", "thread", "mode
 _last: dict[str, Any] | None = None
 
 
+# The RAM a CPU-only PC needs to run a bundle's certified local author, as the install guide states it
+# (docs/getting-started/install.md: "qwen3:8b ... needs at least 10 GB of RAM on a PC without a
+# graphics card"). A model not listed here has no documented floor and is never added to the offer.
+_BUNDLE_AUTHOR_MIN_RAM_GB: dict[str, float] = {"qwen3:8b": 10.0}
+
+
+def _bundle_author(ram_gb: float) -> str:
+    """The installed bundle's own model (bundle_manifest.json ``selected_model``) when this machine meets
+    its documented RAM floor, else empty.
+
+    Capability tests A7/D1/D2: on a 16 GB CPU-only Windows PC the hardware bucket alone offered
+    qwen3:0.6b, qwen3:4b and gemma3:4b, never qwen3:8b -- the model the bundle ships for, the one
+    build_bundle.ps1 names the certified local author, and the one the runtime defaults to
+    (core.runtime_provider_defaults.default_runtime_model_tag). The name comes from the immutable
+    bundle manifest, never from the request, so the click door still matches a fixed plan exactly.
+    """
+    from core.bundle_manifest import selected_bundle_model
+
+    try:
+        model = str(selected_bundle_model() or "").strip()
+    except Exception:
+        return ""
+    floor = _BUNDLE_AUTHOR_MIN_RAM_GB.get(model)
+    if floor is None or float(ram_gb or 0.0) < floor:
+        return ""
+    return model
+
+
 def _plan() -> tuple[tuple[str, ...], float]:
-    """The offered names (recommended bundle first, then fallback) and the free space where models go."""
+    """The offered names (the bundle's author when it fits, then the recommended bundle, then its
+    fallback) and the free space where models go."""
+    from core.hardware_tier import probe_machine
     from core.install_recommendations import build_install_recommendation_truth
 
-    truth = build_install_recommendation_truth()
+    probe = probe_machine()
+    truth = build_install_recommendation_truth(probe=probe)
     names: list[str] = []
-    for name in (*truth.recommended_bundle_models, *truth.fallback_bundle_models):
+    for name in (_bundle_author(probe.ram_gb), *truth.recommended_bundle_models, *truth.fallback_bundle_models):
         clean = str(name or "").strip()
         if clean and clean not in names:
             names.append(clean)
