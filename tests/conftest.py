@@ -991,3 +991,38 @@ def isolated_mock_provider_host_state(request, monkeypatch):
         # The builder helper stubs its generator/executor; these router cases stub invocation.
         # Enable the lane under test, without enabling local inference for unrelated modules.
         monkeypatch.setenv("VOOL_LOCAL_MODELS_ENABLED", "1")
+
+
+# ---- DIAGNOSTIC BRANCH ONLY (never merged): B3 rerun of test_mechanism_still_blocks on Windows.
+_DIAG_KEEP = ("tests/test_effect_gate_a1.py::TestA5_GateAllowsMechanismRejects::test_mechanism_still_blocks",)
+
+
+def _diag_wrap_runtime_tool():
+    import json as _json
+    from core import runtime_execution_tools as _rt
+
+    real = _rt.execute_runtime_tool
+
+    def wrapped(intent, arguments, *a, **kw):
+        result = real(intent, arguments, *a, **kw)
+        if intent == "machine.write_file":
+            info = {"intent": intent, "arguments": arguments,
+                    "ok": getattr(result, "ok", None), "status": getattr(result, "status", None),
+                    "response_text": getattr(result, "response_text", None),
+                    "details": getattr(result, "details", None),
+                    "env": {k: v for k, v in os.environ.items() if k.startswith("VOOL_")}}
+            print("DIAG-B3 " + _json.dumps(info, default=str)[:6000])
+        return result
+
+    _rt.execute_runtime_tool = wrapped
+
+
+_diag_wrap_runtime_tool()
+
+
+def pytest_collection_modifyitems(session, config, items):
+    keep = [item for item in items if item.nodeid.replace("\\", "/").startswith(_DIAG_KEEP)]
+    deselected = [item for item in items if item not in keep]
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+    items[:] = keep
