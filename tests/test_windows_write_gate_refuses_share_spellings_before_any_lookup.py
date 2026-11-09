@@ -227,7 +227,7 @@ def test_the_gate_s_own_folder_lists_skip_the_spelling_without_a_lookup(folder, 
 
 def test_a_local_path_in_a_marked_folder_is_still_looked_up_and_allowed(windows, spy, monkeypatch) -> None:
     looked_up: list[str] = []
-    real = posixpath.realpath
+    real = os.path.realpath  # ntpath on Windows, posixpath elsewhere
 
     def realpath(path, *args, **kwargs):
         looked_up.append(os.fspath(path))
