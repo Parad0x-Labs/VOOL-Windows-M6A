@@ -300,10 +300,15 @@ class _Scan:
     bytes_read: int = 0
     #: The git store was in scope and git was refused before any process started (Windows).
     git_refused: bool = False
+    #: Roots that journal entries naming the queried path were recorded under, which are not on this
+    #: machine: those entries cannot be canonicalized and answer nothing (fail closed).
+    unplaced_roots: list[str] | None = None
 
     def __post_init__(self) -> None:
         if self.truncation_reasons is None:
             self.truncation_reasons = []
+        if self.unplaced_roots is None:
+            self.unplaced_roots = []
 
     def cut(self, reason: str) -> None:
         self.truncated = True
@@ -597,17 +602,26 @@ def _canonical_path(path: str) -> str:
         return os.path.normpath(os.path.abspath(path))
 
 
-def _path_matcher(query: str, workspace_root: str = ""):
+def _path_matcher(query: str, workspace_root: str = "", unplaced: list[str] | None = None):
     """A test for whether a recorded ``(path, root)`` answers a query for ``query``: its canonical path
     equals the queried path's or lies inside it (`_path_covers`). A relative query is read inside
-    ``workspace_root``. A record whose root is not on this machine cannot be canonicalized; it answers
-    only a relative query, by its path relative to its root."""
+    ``workspace_root``; with no root to read it in, it matches nothing.
+
+    Fails closed: a record whose root is not on this machine cannot be canonicalized, so it never
+    matches. When its root-relative path is the one asked for, its root is added to ``unplaced`` so the
+    answer can name where the journal recorded it."""
     raw = os.path.expanduser(str(query or "").strip())
     root = os.path.expanduser(str(workspace_root or "").strip())
+    root_canonical = _canonical_path(root) if root and os.path.isabs(root) else ""
     if os.path.isabs(raw):
-        query_canonical, query_relative = _canonical_path(raw), ""
+        query_canonical = _canonical_path(raw)
+        query_relative = ""
+        if root and _path_covers(root, raw):
+            query_relative = os.path.relpath(raw, root)
+        elif root_canonical and _path_covers(root_canonical, query_canonical):
+            query_relative = os.path.relpath(query_canonical, root_canonical)
     else:
-        query_canonical = _canonical_path(os.path.join(root, raw)) if root and os.path.isabs(root) else ""
+        query_canonical = _canonical_path(os.path.join(root_canonical, raw)) if root_canonical else ""
         query_relative = raw
     seen: dict[tuple[str, str], str] = {}
 
@@ -628,10 +642,16 @@ def _path_matcher(query: str, workspace_root: str = ""):
         path = str(path or "").strip()
         if not path:
             return False
-        recorded = recorded_canonical(path, str(record_root or "").strip())
-        if query_canonical and recorded:
-            return _path_covers(query_canonical, recorded)
-        return bool(query_relative) and not os.path.isabs(path) and _path_covers(query_relative, path)
+        record_root = str(record_root or "").strip()
+        recorded = recorded_canonical(path, record_root)
+        if recorded:
+            return bool(query_canonical) and _path_covers(query_canonical, recorded)
+        if (unplaced is not None and query_relative and not os.path.isabs(path)
+                and _path_covers(query_relative, path)):
+            named = record_root or "(no root recorded)"
+            if named not in unplaced:
+                unplaced.append(named)
+        return False
 
     return matches
 
@@ -661,7 +681,8 @@ def _read_blackbox(
     since, until = filters.get("since"), filters.get("until")
     # A path query answers only from entries recorded on that path (or inside it, for a folder).
     queried_path = str(filters.get("path") or "").strip()
-    path_matches = _path_matcher(queried_path, str(filters.get("workspace_root") or "")) if queried_path else None
+    path_root = str(filters.get("_path_root") or filters.get("workspace_root") or "")
+    path_matches = _path_matcher(queried_path, path_root, scan.unplaced_roots) if queried_path else None
     items: list[dict] = []
     for entry in entries:
         if scan.files_visited >= LIMITS["max_files"]:
@@ -2051,6 +2072,9 @@ def trace(
         until=until,
         trace_all=True,
     )
+    # A relative path is read inside the workspace root (the journal path match only; trace still
+    # reads no git).
+    filters["_path_root"] = str(workspace_root or "")
     effective = _effective_limits(limits)
     effective["limit"] = max(1, min(int(limit), effective["max_results"]))
     scan = _Scan()
@@ -2391,7 +2415,13 @@ def recovery_plan(
         )
     if clean_ref and not blackbox_items:
         notes.append("the reference resolved outside the blackbox journal")
-    if clean_path and not recoverable:
+    if clean_path and not recoverable and scan.unplaced_roots:
+        roots = ", ".join(repr(root) for root in scan.unplaced_roots)
+        notes.append(
+            f"NOT RECOVERABLE: the journal recorded {clean_path!r} under {roots}, which is not on this "
+            "machine, so VOOL cannot tell whether that record is this file"
+        )
+    elif clean_path and not recoverable:
         notes.append(f"NOT RECOVERABLE: no in-scope store holds evidence recorded for {clean_path!r}")
 
     envelope = _envelope(
