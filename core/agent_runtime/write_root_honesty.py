@@ -429,11 +429,12 @@ def _extend_through_spaces(text: str, start: int, end: int) -> int:
     return best
 
 
-def _rooted_candidates(body: str, *, typed_shares: bool = False) -> list[tuple[int, str]]:
+def _rooted_candidates(body: str, *, typed_shares: bool = False, look_up: bool = True) -> list[tuple[int, str]]:
     """``(start, raw path)`` for every rooted path in ``body``, quoted or not, in order. A URL's
     authority section is never one. With ``typed_shares``, a share, device or NT path typed with
     backslashes is a candidate too, quoted or not (`_TYPED_SHARE_RE`), taken as typed (never
-    extended through spaces)."""
+    extended through spaces). Without ``look_up``, no unquoted path is extended through spaces either,
+    so nothing on disk is looked at."""
     found: list[tuple[int, str]] = []
     quoted: list[tuple[int, int]] = []
     for match in _QUOTED_ROOTED_PATH_RE.finditer(body):
@@ -443,7 +444,8 @@ def _rooted_candidates(body: str, *, typed_shares: bool = False) -> list[tuple[i
         start = match.start()
         if _is_url_authority(body, start) or any(low <= start < high for low, high in quoted):
             continue
-        found.append((start, body[start : _extend_through_spaces(body, start, match.end())]))
+        end = _extend_through_spaces(body, start, match.end()) if look_up else match.end()
+        found.append((start, body[start:end]))
     if typed_shares:
         starts = {start for start, _raw in found}
         found.extend(
@@ -454,12 +456,14 @@ def _rooted_candidates(body: str, *, typed_shares: bool = False) -> list[tuple[i
     return sorted(found)
 
 
-def _destination_candidates(body: str, *, typed_shares: bool = False) -> Iterator[tuple[int, str]]:
+def _destination_candidates(
+    body: str, *, typed_shares: bool = False, look_up: bool = True
+) -> Iterator[tuple[int, str]]:
     """``(start, path)`` for every rooted candidate in ``body`` that is not payload, in order. With
     ``typed_shares``, a share, device or NT path typed with backslashes is a candidate too, quoted or
     not (`_TYPED_SHARE_RE`)."""
     fence_spans = _fenced_spans(body)
-    candidate_matches = _rooted_candidates(body, typed_shares=typed_shares)
+    candidate_matches = _rooted_candidates(body, typed_shares=typed_shares, look_up=look_up)
     content_spans = _content_marker_spans(body, [start for start, _raw in candidate_matches])
     for start, raw in candidate_matches:
         candidate = _clean_path(raw)
@@ -506,17 +510,19 @@ def unreachable_write_target(text: str, *, source_context: dict[str, object] | N
     return ""
 
 
-def non_local_write_target(text: str, *, network_only: bool = False) -> tuple[str, str]:
+def non_local_write_target(text: str, *, network_only: bool = False, look_up: bool = True) -> tuple[str, str]:
     """On Windows, the first path this turn asks us to write that names a share, a device or no full
     local folder (only a share or a device, with ``network_only``), with its kind; ``("", "")``
     otherwise, and always off Windows. Nothing is looked up. A share or device typed with backslashes
     (`\\\\host\\s\\x`, `\\\\?\\C:\\x`), quoted or not, is found as typed. A block comment opened
     against its text (``/*eslint-disable*/``) is not one. A path named after one this passes over is
-    judged by the verb before that one too.
+    judged by the verb before that one too. Without ``look_up``, a local path typed through folders
+    with spaces is not extended by looking at what exists (`_extend_through_spaces`): that never
+    changes whether a path is a share or a device, so a ``network_only`` reading needs no lookup.
     """
     body = str(text or "")
     passed_start = -1
-    for start, candidate in _destination_candidates(body, typed_shares=windows_path_policy.active()):
+    for start, candidate in _destination_candidates(body, typed_shares=windows_path_policy.active(), look_up=look_up):
         if not candidate.strip("/\\*"):
             # A bare `//`, `///`, `/*` or `/**` (a code comment's marker in the text to write) names no
             # host and no folder as typed, so it is not answered here. The input normalizer can still

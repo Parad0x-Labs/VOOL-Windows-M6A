@@ -201,11 +201,13 @@ def windows_limit_refusal(text: str, *, source_context: dict | None = None) -> t
         from core import windows_path_policy
 
         if windows_path_policy.active():
-            from core.agent_runtime.turn_frontdoor import _non_local_typed_path
+            from core.agent_runtime.write_root_honesty import non_local_write_target
 
             # Shares and devices only: a path with no full local folder is the front door's to
-            # answer, in its place, as on base (a build's `/api/users` route names no folder).
-            path, kind, _lane = _non_local_typed_path(raw, "write", network_only=True)
+            # answer, in its place, as on base (a build's `/api/users` route names no folder). And
+            # nothing is looked up: the lanes ahead of the front door (a heartbeat poll) still get
+            # a local path untouched, and a share or device is found by its spelling alone.
+            path, kind = non_local_write_target(raw, network_only=True, look_up=False)
             if kind:
                 return windows_path_policy.refusal_text(path, kind, nothing="written"), "non_local_path_refused"
     from core.plugin_executor import windows_plugin_mcp_refusal
