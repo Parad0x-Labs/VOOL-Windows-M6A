@@ -568,6 +568,74 @@ def _content_sha256(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
+def _path_covers(query: str, recorded: str, *, pathmod: Any = os.path) -> bool:
+    """Whether ``recorded`` is ``query`` or lies inside it (a folder query), compared as ``pathmod``'s
+    platform compares paths: normalized, and case-insensitive on Windows (normcase). Whole components
+    only, never a string prefix: `a/b` does not cover `a/bc`. Both sides are taken as already canonical."""
+    if not str(query or "").strip() or not str(recorded or "").strip():
+        return False
+    wanted = pathmod.normcase(pathmod.normpath(str(query)))
+    candidate = pathmod.normcase(pathmod.normpath(str(recorded)))
+    if candidate == wanted:
+        return True
+    base = wanted if wanted.endswith(pathmod.sep) else wanted + pathmod.sep
+    return candidate.startswith(base)
+
+
+def _is_network_path(path: str) -> bool:
+    return str(path).startswith(("\\\\", "//"))
+
+
+def _canonical_path(path: str) -> str:
+    """``path`` after realpath (links and junctions followed). A network path is only normalized:
+    resolving it would reach the network."""
+    if _is_network_path(path):
+        return os.path.normpath(path)
+    try:
+        return os.path.realpath(path)
+    except (OSError, ValueError):
+        return os.path.normpath(os.path.abspath(path))
+
+
+def _path_matcher(query: str, workspace_root: str = ""):
+    """A test for whether a recorded ``(path, root)`` answers a query for ``query``: its canonical path
+    equals the queried path's or lies inside it (`_path_covers`). A relative query is read inside
+    ``workspace_root``. A record whose root is not on this machine cannot be canonicalized; it answers
+    only a relative query, by its path relative to its root."""
+    raw = os.path.expanduser(str(query or "").strip())
+    root = os.path.expanduser(str(workspace_root or "").strip())
+    if os.path.isabs(raw):
+        query_canonical, query_relative = _canonical_path(raw), ""
+    else:
+        query_canonical = _canonical_path(os.path.join(root, raw)) if root and os.path.isabs(root) else ""
+        query_relative = raw
+    seen: dict[tuple[str, str], str] = {}
+
+    def recorded_canonical(path: str, record_root: str) -> str:
+        key = (path, record_root)
+        if key not in seen:
+            full = path if os.path.isabs(path) else (
+                os.path.join(record_root, path) if record_root and os.path.isabs(record_root) else "")
+            if not full:
+                seen[key] = ""
+            elif _is_network_path(full):
+                seen[key] = os.path.normpath(full)
+            else:
+                seen[key] = _canonical_path(full) if os.path.lexists(record_root or full) else ""
+        return seen[key]
+
+    def matches(path: str, record_root: str = "") -> bool:
+        path = str(path or "").strip()
+        if not path:
+            return False
+        recorded = recorded_canonical(path, str(record_root or "").strip())
+        if query_canonical and recorded:
+            return _path_covers(query_canonical, recorded)
+        return bool(query_relative) and not os.path.isabs(path) and _path_covers(query_relative, path)
+
+    return matches
+
+
 def _read_blackbox(
     *, scan: _Scan, filters: dict[str, Any], deadline: float
 ) -> tuple[list[dict], dict[str, Any] | None]:
@@ -591,6 +659,9 @@ def _read_blackbox(
     text = str(filters.get("text") or "").strip().casefold()
     reference = str(filters.get("reference") or "").strip().casefold()
     since, until = filters.get("since"), filters.get("until")
+    # A path query answers only from entries recorded on that path (or inside it, for a folder).
+    queried_path = str(filters.get("path") or "").strip()
+    path_matches = _path_matcher(queried_path, str(filters.get("workspace_root") or "")) if queried_path else None
     items: list[dict] = []
     for entry in entries:
         if scan.files_visited >= LIMITS["max_files"]:
@@ -612,6 +683,8 @@ def _read_blackbox(
         if turn and entry_turn != turn:
             continue
         if path_prefix and not entry_path.startswith(path_prefix):
+            continue
+        if path_matches is not None and not path_matches(entry_path, str(entry.get("root") or "")):
             continue
         if not _in_window(stamp, since, until):
             continue
@@ -945,6 +1018,9 @@ def _memory_items(
     reference = str(filters.get("reference") or "").strip().casefold()
     turn = str(filters.get("turn_id") or "").strip()
     since, until = filters.get("since"), filters.get("until")
+    if str(filters.get("path") or "").strip() and not (session or text or reference or turn or since or until):
+        # Memory items carry no path: a query that selects only by path matches none of them.
+        return [], None
     items: list[dict] = []
     count = 0
     try:
@@ -2315,6 +2391,8 @@ def recovery_plan(
         )
     if clean_ref and not blackbox_items:
         notes.append("the reference resolved outside the blackbox journal")
+    if clean_path and not recoverable:
+        notes.append(f"NOT RECOVERABLE: no in-scope store holds evidence recorded for {clean_path!r}")
 
     envelope = _envelope(
         "recovery_plan",
