@@ -83,7 +83,23 @@ _WINDOW_REOPEN_RETRIES = 6
 # Ollama's own cloud features (cloud models, web search, sign-in), which VOOL never uses: its cloud
 # lanes are its own providers, behind its own consent. A download the user clicks still goes to
 # Ollama's registry.
-_OLLAMA_CHILD_ENV: dict[str, str] = {"OLLAMA_NO_CLOUD": "1"}
+#
+# The address is pinned too (capability test: OLLAMA_NO_CLOUD does not stop a cloud pull, so who can reach serve
+# matters). Serve listens on 127.0.0.1:<bundle port> only, whatever OLLAMA_HOST the user or machine set (an
+# inherited 0.0.0.0 would put it on the LAN), and an inherited OLLAMA_ORIGINS is dropped, so Ollama's default
+# (local origins only) applies. Every child is handed the same address as VOOL_BUNDLE_OLLAMA_URL, which VOOL's
+# Ollama client takes over any other variable (core.ollama_endpoint), so serve and the client cannot split. The
+# client-side overrides that could name another endpoint are dropped from the children's environment.
+_OLLAMA_PORT = 11434
+_OLLAMA_HOST_PIN = f"127.0.0.1:{_OLLAMA_PORT}"
+_OLLAMA_URL_PIN = f"http://{_OLLAMA_HOST_PIN}"
+_OLLAMA_CHILD_ENV: dict[str, str] = {"OLLAMA_NO_CLOUD": "1", "OLLAMA_HOST": _OLLAMA_HOST_PIN}
+_OLLAMA_PINNED_ENV: dict[str, str] = {
+    "OLLAMA_HOST": _OLLAMA_HOST_PIN,
+    "VOOL_BUNDLE_OLLAMA_URL": _OLLAMA_URL_PIN,
+    "VOOL_RAW_OLLAMA_API_URL": _OLLAMA_URL_PIN,
+}
+_OLLAMA_DROPPED_ENV = ("OLLAMA_ORIGINS", "VOOL_OLLAMA_URL", "VOOL_OLLAMA_CHAT_URL", "VOOL_OLLAMA_PS_URL")
 _WINDOWS_SCRIPT_ARGUMENT_PREFIX = (
     r'^(?:\x22(?:[^\x22]*\\)?pythonw?\.exe\x22|(?:[^\s\x22]*\\)?pythonw?\.exe)'
     r'(?:\s+-[bBdEhIiOPqRsSuvVx]+'
@@ -609,6 +625,10 @@ class BundleSupervisor:
 
     def _child_env(self) -> dict[str, str]:
         env = dict(self.env)
+        # Matched without regard to case: Windows environment names are case-insensitive.
+        dropped = {name.upper() for name in (*_OLLAMA_DROPPED_ENV, *_OLLAMA_PINNED_ENV)}
+        env = {name: value for name, value in env.items() if name.upper() not in dropped}
+        env.update(_OLLAMA_PINNED_ENV)
         app = str(self.root / "app")
         env["PYTHONPATH"] = app + os.pathsep + str(env.get("PYTHONPATH") or "")
         return env
@@ -788,7 +808,7 @@ class BundleSupervisor:
         return True
 
     def _ensure_ollama(self) -> None:
-        if self._watch_child("ollama", "http://127.0.0.1:11434/api/tags"):
+        if self._watch_child("ollama", f"{_OLLAMA_URL_PIN}/api/tags"):
             return
         self._start(
             "ollama", [str(self.root / "ollama" / "ollama.exe"), "serve"], cwd=self.root, extra_env=_OLLAMA_CHILD_ENV

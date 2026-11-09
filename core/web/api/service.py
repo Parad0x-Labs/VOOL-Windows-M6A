@@ -765,12 +765,12 @@ def _runtime_model_catalog(
     catalog: list[dict[str, str]] = []
     seen: set[str] = set()
 
-    from core.ollama_cloud_models import is_cloud_model_name
+    from core.ollama_cloud_models import refuses_cloud_name
 
     def _add(model_id: str, *, owned_by: str) -> None:
         normalized = str(model_id or "").strip()
         # An Ollama cloud model is never listed on /api/tags or /v1/models (core.ollama_cloud_models).
-        if not normalized or normalized in seen or is_cloud_model_name(normalized):
+        if not normalized or normalized in seen or refuses_cloud_name(normalized):
             return
         seen.add(normalized)
         catalog.append({"id": normalized, "owned_by": str(owned_by or "vool-runtime").strip() or "vool-runtime"})
@@ -795,12 +795,12 @@ def _ollama_cloud_model_refusal(model: Any, runtime: RuntimeServices, *, check_s
     ``check_store`` also reads Ollama's model store on disk for a cloud stub (remote_host /
     remote_model) or an unreadable entry; the chat door checks the name only, every turn.
     """
-    from core.ollama_cloud_models import REASON, is_cloud_model, is_cloud_model_name, refusal_text
+    from core.ollama_cloud_models import REASON, is_cloud_model, refusal_text, refuses_cloud_name
 
     name = str(model or "").strip() if isinstance(model, str) else ""
     if not name:
         return None
-    cloud = is_cloud_model(name) if check_store else is_cloud_model_name(name)
+    cloud = is_cloud_model(name) if check_store else refuses_cloud_name(name)
     if not cloud:
         return None
     message = refusal_text(name)

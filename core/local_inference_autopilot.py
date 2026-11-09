@@ -773,7 +773,7 @@ def select_daily_residency_model_tag(
     returns ``""`` and the caller retains its configured default.
     """
 
-    from core.ollama_cloud_models import is_cloud_model_name
+    from core.ollama_cloud_models import refuses_cloud_name
 
     seen: set[str] = set()
     candidates: list[ProviderCapabilityTruth] = []
@@ -785,7 +785,7 @@ def select_daily_residency_model_tag(
     for raw_tag in model_tags or ():
         model_tag = str(raw_tag or "").strip()
         key = model_tag.lower()
-        if not model_tag or key in seen or is_cloud_model_name(model_tag):
+        if not model_tag or key in seen or refuses_cloud_name(model_tag):
             continue  # an Ollama cloud model is never a residency candidate (core.ollama_cloud_models)
         seen.add(key)
         metadata = model_metadata(model_tag)

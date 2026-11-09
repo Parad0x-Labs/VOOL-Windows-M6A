@@ -693,9 +693,9 @@ def _ensure_local_ollama_provider(
     env: Mapping[str, str] | None = None,
 ) -> bool:
     env_map = os.environ if env is None else env
-    from core.ollama_cloud_models import is_cloud_model_name
+    from core.ollama_cloud_models import refuses_cloud_name
 
-    if is_cloud_model_name(model_tag):
+    if refuses_cloud_name(model_tag):
         # A cloud name (for example a VOOL_OLLAMA_MODEL pin) is never a lane; boot carries on.
         return False
     existing = registry.get_manifest("ollama-local", model_tag)

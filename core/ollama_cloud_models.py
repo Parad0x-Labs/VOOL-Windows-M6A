@@ -17,6 +17,12 @@ VOOL surface treats an Ollama cloud model as absent, and refuses one by name:
   them, or that cannot be read (an unknown answer counts as cloud).
 
 Nothing here contacts Ollama or the network. Refusals are plain sentences.
+
+Scope (0.7.1): the refusal is Windows only, behind ``CLOUD_REFUSAL_ACTIVE``. Off Windows every
+surface behaves as before; whether it applies on macOS and Linux is the owner's later call. The
+pure readers (``is_cloud_model_name``, ``entry_is_remote``, ``manifest_reports_remote``) only say
+what a model is; every policy entry point (``refuses_*``, ``is_cloud_model``, ``refuse_*``,
+``local_tag_rows``, ``manifest_is_ollama_cloud``) answers "no refusal" while the flag is off.
 """
 from __future__ import annotations
 
@@ -28,6 +34,14 @@ from pathlib import Path
 from typing import Any
 
 REASON = "ollama_cloud_model_refused"
+
+# Windows only in 0.7.1 (the same scoping as the patch engine's miscounted-hunk refusal). Tests patch it.
+CLOUD_REFUSAL_ACTIVE: bool = os.name == "nt"
+
+
+def active() -> bool:
+    """Whether this process refuses Ollama cloud models (CLOUD_REFUSAL_ACTIVE)."""
+    return bool(CLOUD_REFUSAL_ACTIVE)
 
 _REMOTE_KEYS = ("remote_host", "remote_model")
 _NAME_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -157,10 +171,20 @@ def manifest_reports_remote(model: str, *, env: Mapping[str, str] | None = None)
     return False
 
 
+def refuses_cloud_name(model: Any) -> bool:
+    """Policy: refuse this name (the flag is on and the name says Ollama cloud)."""
+    return active() and is_cloud_model_name(model)
+
+
+def refuses_remote_entry(entry: Any) -> bool:
+    """Policy: refuse this Ollama row (the flag is on and it names a remote host)."""
+    return active() and entry_is_remote(entry)
+
+
 def is_cloud_model(model: Any, *, entry: Any = None, env: Mapping[str, str] | None = None) -> bool:
-    """Name, then the row Ollama gave (if any), then the store on disk."""
+    """Policy: name, then the row Ollama gave (if any), then the store on disk. False while off."""
     name = str(model or "").strip()
-    if not name:
+    if not name or not active():
         return False
     if is_cloud_model_name(name) or entry_is_remote(entry):
         return True
@@ -175,13 +199,13 @@ def refuse_cloud_model(model: Any, *, entry: Any = None, env: Mapping[str, str] 
 
 def refuse_cloud_model_name(model: Any) -> None:
     """The name-only check, for hot paths that must not read the disk (each model call)."""
-    if is_cloud_model_name(model):
+    if refuses_cloud_name(model):
         raise CloudModelRefused(str(model or ""))
 
 
 def local_tag_rows(models: Any, *, env: Mapping[str, str] | None = None) -> list[Any]:
     """An Ollama ``/api/tags`` ``models`` list without its cloud rows (by name, row or store)."""
-    if not isinstance(models, list):
+    if not isinstance(models, list) or not active():
         return models
     kept: list[Any] = []
     for row in models:
@@ -194,7 +218,10 @@ def local_tag_rows(models: Any, *, env: Mapping[str, str] | None = None) -> list
 
 
 def manifest_is_ollama_cloud(manifest: Any) -> bool:
-    """Whether a registry manifest names an Ollama cloud model (by name or recorded remote host)."""
+    """Policy: whether a registry manifest names an Ollama cloud model (by name or recorded remote
+    host). False while the flag is off."""
+    if not active():
+        return False
     name = str(getattr(manifest, "model_name", "") or "").strip()
     metadata = getattr(manifest, "metadata", None) or {}
     runtime_config = getattr(manifest, "runtime_config", None) or {}
@@ -218,8 +245,10 @@ def without_ollama_cloud_manifests(manifests: Iterable[Any]) -> list[Any]:
 
 
 __all__ = [
+    "CLOUD_REFUSAL_ACTIVE",
     "REASON",
     "CloudModelRefused",
+    "active",
     "entry_is_remote",
     "is_cloud_model",
     "is_cloud_model_name",
@@ -229,5 +258,7 @@ __all__ = [
     "refusal_text",
     "refuse_cloud_model",
     "refuse_cloud_model_name",
+    "refuses_cloud_name",
+    "refuses_remote_entry",
     "without_ollama_cloud_manifests",
 ]

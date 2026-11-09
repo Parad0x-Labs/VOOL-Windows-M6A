@@ -75,9 +75,9 @@ def _listed_chat_models(data: dict) -> list[str] | None:
         if not isinstance(families, list) or not all(isinstance(item, str) for item in families):
             return None
         name = row["name"].strip().lower()
-        from core.ollama_cloud_models import entry_is_remote, is_cloud_model_name
+        from core.ollama_cloud_models import refuses_cloud_name, refuses_remote_entry
 
-        if is_cloud_model_name(name) or entry_is_remote(row):
+        if refuses_cloud_name(name) or refuses_remote_entry(row):
             continue  # an Ollama cloud stub answers nothing on this computer
         if name and "embed" not in name and not any("bert" in family.lower() for family in families):
             chat.append(name)

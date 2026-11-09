@@ -1848,7 +1848,7 @@ class OpenAICompatibleAdapter(ModelAdapter):
             return identity
         # A row or /api/show reply naming remote_host / remote_model is an Ollama cloud stub: the
         # identity read refuses it rather than certify a model that would run on ollama.com.
-        from core.ollama_cloud_models import CloudModelRefused, entry_is_remote
+        from core.ollama_cloud_models import CloudModelRefused, refuses_remote_entry
 
         native_base = _native_ollama_base_url(base_url)
         if _identity_base_recently_unreachable(native_base):
@@ -1867,7 +1867,7 @@ class OpenAICompatibleAdapter(ModelAdapter):
                     names = {str(row.get("name") or ""), str(row.get("model") or "")}
                     if self.manifest.model_name not in names:
                         continue
-                    if entry_is_remote(row):
+                    if refuses_remote_entry(row):
                         raise CloudModelRefused(str(self.manifest.model_name or ""))
                     identity["model_digest"] = str(row.get("digest") or identity["model_digest"])
                     details = dict(row.get("details") or {})
@@ -1891,7 +1891,7 @@ class OpenAICompatibleAdapter(ModelAdapter):
             )
             if show_response.ok:
                 show = dict(show_response.json() or {})
-                if entry_is_remote(show):
+                if refuses_remote_entry(show):
                     raise CloudModelRefused(str(self.manifest.model_name or ""))
                 template = str(show.get("template") or "")
                 if template:

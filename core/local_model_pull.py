@@ -73,11 +73,11 @@ def _plan() -> tuple[tuple[str, ...], float]:
     probe = probe_machine()
     truth = build_install_recommendation_truth(probe=probe)
     names: list[str] = []
-    from core.ollama_cloud_models import is_cloud_model_name
+    from core.ollama_cloud_models import refuses_cloud_name
 
     for name in (_bundle_author(probe.ram_gb), *truth.recommended_bundle_models, *truth.fallback_bundle_models):
         clean = str(name or "").strip()
-        if clean and clean not in names and not is_cloud_model_name(clean):
+        if clean and clean not in names and not refuses_cloud_name(clean):
             names.append(clean)
     return tuple(names), float(truth.free_disk_gb or 0.0)
 
@@ -165,12 +165,12 @@ def start(model: Any, *, runtime: Any = None) -> tuple[int, dict[str, Any]]:
     """Start the one pull this click asked for, or refuse with a typed reason. Never blocks on the pull."""
     global _active
     from core.ollama_cloud_models import REASON as _CLOUD_REASON
-    from core.ollama_cloud_models import is_cloud_model, is_cloud_model_name, refusal_text
+    from core.ollama_cloud_models import is_cloud_model, refusal_text, refuses_cloud_name
 
     # An Ollama cloud model is refused before the inventory or anything that asks Ollama
     # (core.ollama_cloud_models): a cloud name first; an offered name is then checked against the
     # model store for a cloud stub. The plan never offers one; this holds even if it did.
-    if isinstance(model, str) and is_cloud_model_name(model):
+    if isinstance(model, str) and refuses_cloud_name(model):
         return _refusal(400, _CLOUD_REASON, refusal_text(model))
     names, free_gb = _plan()
     if not isinstance(model, str) or model not in names:

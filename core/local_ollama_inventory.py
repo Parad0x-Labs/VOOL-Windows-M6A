@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from core.ollama_cloud_models import entry_is_remote, is_cloud_model, is_cloud_model_name
+from core.ollama_cloud_models import is_cloud_model, refuses_cloud_name, refuses_remote_entry
 
 
 @dataclass(frozen=True)
@@ -68,7 +68,7 @@ def installed_ollama_model_inventory(
                 for chunk in explicit.splitlines()
                 for item in chunk.split(",")
             )
-            if not is_cloud_model_name(name)
+            if not refuses_cloud_name(name)
         )
 
     models = _ollama_models_payload(
@@ -114,7 +114,7 @@ def loaded_ollama_model_names(
             item.strip()
             for chunk in explicit.splitlines()
             for item in chunk.split(",")
-            if not is_cloud_model_name(item)
+            if not refuses_cloud_name(item)
         )
     models = _ollama_models_payload(
         env=env_map,
@@ -128,8 +128,8 @@ def loaded_ollama_model_names(
         str(item.get("name") or item.get("model") or "").strip()
         for item in models
         if isinstance(item, dict)
-        and not is_cloud_model_name(str(item.get("name") or item.get("model") or ""))
-        and not entry_is_remote(item)
+        and not refuses_cloud_name(str(item.get("name") or item.get("model") or ""))
+        and not refuses_remote_entry(item)
     )
 
 
