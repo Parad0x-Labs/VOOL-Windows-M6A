@@ -257,3 +257,77 @@ def test_a_download_that_stalls_part_way_stops_on_the_short_bound(ollama, monkey
     assert "no download progress" in final["detail"]
     assert "Download again" in final["detail"]
     assert fake.installed == []
+
+
+class _NoSocketResponse:
+    """The real pull response, minus the ``fp.raw._sock`` path the fix uses to widen the timeout."""
+
+    def __init__(self, real) -> None:
+        self._real = real
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self._real.close()
+
+    def __iter__(self):
+        return iter(self._real)
+
+
+@pytest.fixture
+def no_socket(monkeypatch):
+    """Pull responses without a reachable socket, and a record of every timeout change asked for."""
+    import core.provider_http as provider_http
+
+    real_urlopen = provider_http.urlopen
+    real_set = web_runtime._set_pull_read_timeout
+    asked: list[tuple[float, bool]] = []
+
+    def urlopen(request, *, timeout):
+        response = real_urlopen(request, timeout=timeout)
+        if getattr(request, "full_url", "").endswith("/api/pull"):
+            assert timeout == STALL_BOUND, "the pull no longer opens on the stall bound"
+            return _NoSocketResponse(response)
+        return response
+
+    def recording_set(response, seconds):
+        result = real_set(response, seconds)
+        asked.append((seconds, result))
+        return result
+
+    monkeypatch.setattr(provider_http, "urlopen", urlopen)
+    monkeypatch.setattr(web_runtime, "_set_pull_read_timeout", recording_set)
+    return asked
+
+
+def test_without_a_reachable_socket_the_stall_bound_stays_and_tags_still_decide_success(
+    ollama, monkeypatch, no_socket
+) -> None:
+    # The socket can't be found, so the verify allowance can't be applied: the read keeps the
+    # stall bound and times out inside the quiet verify, and /api/tags (Ollama has registered the
+    # model by then) still turns that timeout into a finished pull.
+    _verify_allowance(monkeypatch, 10.0)
+    ollama.make(silence={"verifying sha256 digest": 3.0}, register_after="verifying sha256 digest",
+                register_delay=0.1, send_success=False)
+    started = time.monotonic()
+    final = _click()
+    assert time.monotonic() - started < 2.5, "the timeout was widened although no socket was found"
+    assert no_socket, "the fix never tried to widen the timeout for the verify phase"
+    assert all(result is False for _seconds, result in no_socket)
+    assert final["status"] == "ready", final
+    assert ollama.registered == ["qwen3:8b"]
+
+
+def test_without_a_reachable_socket_an_unregistered_model_still_fails_plainly(ollama, monkeypatch, no_socket) -> None:
+    _verify_allowance(monkeypatch, 10.0)
+    fake = ollama.make(silence={"verifying sha256 digest": 3.0})
+    started = time.monotonic()
+    final = _click()
+    assert time.monotonic() - started < 2.5, "the timeout was widened although no socket was found"
+    assert no_socket and all(result is False for _seconds, result in no_socket)
+    assert final["status"] == "failed", final
+    assert "timed out" not in final["detail"].lower()
+    assert "Download again" in final["detail"]
+    assert fake.installed == []
+    assert ollama.registered == []
