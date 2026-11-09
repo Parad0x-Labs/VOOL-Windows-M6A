@@ -66,7 +66,9 @@ def is_refusal(limit: str, excinfo: pytest.ExceptionInfo | None) -> bool:
 
 
 def node_of(item: pytest.Item) -> str:
-    return item.nodeid.replace("\\", "/")
+    """The node id with its file part in forward slashes (a parameter id keeps its own backslashes)."""
+    file, sep, rest = item.nodeid.partition("::")
+    return file.replace("\\", "/") + sep + rest
 
 
 def apply(item: pytest.Item, call: pytest.CallInfo, report: pytest.TestReport) -> None:
