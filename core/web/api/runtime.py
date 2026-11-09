@@ -9,6 +9,7 @@ import os
 import queue
 import re
 import secrets
+import socket
 import subprocess
 import threading
 import urllib.parse
@@ -83,6 +84,12 @@ BUILD_SOURCE_PATH = Path("config") / "build-source.json"
 # Bounds a STALLED pull between reads, not the whole download: a multi-GB model on a slow link must
 # not be killed part-way, but a dead socket must not hang the prewarm thread forever.
 _OLLAMA_PULL_READ_TIMEOUT_SECONDS = 120.0
+# Once every byte has arrived, Ollama sends one "verifying sha256 digest" line and is silent while it
+# hashes the blobs, then "writing manifest". On a slow disk that silence lasts minutes (R1-1: a
+# 4.87 GB qwen3:8b on a fresh Windows 11 VM outlived the 120 s bound above, so VOOL hung up before
+# the manifest was written and the model was never registered). This is the allowance between lines
+# in that phase: still an idle bound, never a cap on the whole pull.
+_OLLAMA_PULL_VERIFY_IDLE_SECONDS = 1200.0
 _MODEL_PULL_WAIT_SECONDS = 1800.0
 _OPENCLAW_SENDER_WRAPPER_RE = re.compile(
     r"^Sender \(untrusted metadata\):\s*```json\s*\{.*?\}\s*```\s*\[[^\]]+\]\s*(.*)$",
@@ -551,6 +558,60 @@ class ModelPullCancelled(Exception):
     """The user cancelled a pull: the stream was closed, so Ollama stops downloading."""
 
 
+class ModelPullTimedOut(RuntimeError):
+    """Ollama went quiet for longer than the phase allows. The message is what the user reads."""
+
+
+def _minutes(seconds: float) -> str:
+    whole = max(1, round(float(seconds) / 60.0))
+    return f"{whole} minute" if whole == 1 else f"{whole} minutes"
+
+
+def _pull_line_is_local_work(event: dict[str, Any], *, bytes_arrived: bool) -> bool:
+    """Whether the silence after this pull line is Ollama's disk work rather than the network.
+
+    A line still moving bytes (``completed < total``), or anything before the first byte, is
+    followed by network time, and waits the stall bound. Every other line once bytes have arrived
+    (a finished layer, "verifying sha256 digest", "writing manifest", or any status Ollama adds
+    later) is followed by local hashing and writing, which waits the verify allowance.
+    """
+    total = event.get("total")
+    completed = event.get("completed")
+    if isinstance(total, (int, float)) and total > 0 and isinstance(completed, (int, float)) and completed < total:
+        return False
+    return bytes_arrived
+
+
+def _set_pull_read_timeout(response: Any, seconds: float) -> bool:
+    """Set the socket timeout for the next read of a streaming pull. False if the socket is not found.
+
+    urllib hands back an ``http.client.HTTPResponse`` whose ``fp`` is a buffered reader over the
+    socket's ``SocketIO``; the socket's timeout applies to each later recv, so changing it between
+    lines changes how long the next line may take, without reconnecting.
+    """
+    sock = getattr(getattr(getattr(response, "fp", None), "raw", None), "_sock", None)
+    settimeout = getattr(sock, "settimeout", None)
+    if not callable(settimeout):
+        return False
+    try:
+        settimeout(float(seconds))
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def _pulled_model_registered(model_tag: str, base_url: str) -> bool:
+    """Whether Ollama lists the model now (/api/tags). Any doubt answers False: the pull then fails."""
+    wanted = normalized_ollama_tag(model_tag)
+    if not wanted:
+        return False
+    try:
+        names = installed_ollama_model_names(base_url=base_url, timeout_seconds=5.0)
+    except Exception:
+        return False
+    return wanted in {normalized_ollama_tag(name) for name in names}
+
+
 def _stream_ollama_pull(
     model_tag: str,
     *,
@@ -560,8 +621,15 @@ def _stream_ollama_pull(
     """Pull over Ollama's HTTP API, reporting real progress.
 
     HTTP rather than `ollama pull`: the CLI's output is the only progress signal and this process
-    has no console to stream it to, so it was captured and discarded. The per-read timeout bounds a
-    STALLED download without capping the total, so a slow large pull is never killed mid-way.
+    has no console to stream it to, so it was captured and discarded. The timeout is an idle bound
+    between streamed lines, never a cap on the total, so a slow large pull is never killed mid-way:
+    while bytes are moving a STALLED download is stopped after ``_OLLAMA_PULL_READ_TIMEOUT_SECONDS``;
+    once they have all arrived, Ollama's quiet sha256 check and manifest write get
+    ``_OLLAMA_PULL_VERIFY_IDLE_SECONDS`` (see ``_pull_line_is_local_work``).
+
+    If Ollama still goes quiet too long after the bytes arrived, /api/tags is asked before the
+    connection is closed: a model Ollama has registered is a finished pull, not a failure.
+
     ``cancelled`` is asked after every progress line; when it answers True the response is closed
     (leaving the ``with``), which is how a client tells Ollama to stop the pull.
     """
@@ -574,8 +642,33 @@ def _stream_ollama_pull(
     )
     from core.provider_http import urlopen
 
+    bytes_arrived = False
+    checking = False  # the last line was local disk work (verify / manifest), not bytes moving
+    read_timeout = _OLLAMA_PULL_READ_TIMEOUT_SECONDS
     with urlopen(request, timeout=_OLLAMA_PULL_READ_TIMEOUT_SECONDS) as response:
-        for raw_line in response:
+        lines = iter(response)
+        while True:
+            try:
+                raw_line = next(lines)
+            except StopIteration:
+                break
+            except (TimeoutError, OSError) as exc:
+                # Asked while the connection is still open, so an Ollama that is just finishing is
+                # not told to stop by our hang-up first.
+                if bytes_arrived and _pulled_model_registered(model_tag, progress.base_url):
+                    progress.update(percent=100, detail="registered by Ollama")
+                    return
+                if isinstance(exc, (TimeoutError, socket.timeout)):
+                    if checking:
+                        raise ModelPullTimedOut(
+                            f"the model downloaded, but Ollama did not finish checking it within "
+                            f"{_minutes(read_timeout)}. Click Download again to finish."
+                        ) from exc
+                    raise ModelPullTimedOut(
+                        f"no download progress from Ollama for {_minutes(read_timeout)}. "
+                        "Check the internet connection, then click Download again."
+                    ) from exc
+                raise
             if cancelled is not None and cancelled():
                 raise ModelPullCancelled(model_tag)
             line = raw_line.decode("utf-8", errors="replace").strip()
@@ -595,6 +688,15 @@ def _stream_ollama_pull(
             percent = None
             if isinstance(total, (int, float)) and isinstance(completed, (int, float)) and total > 0:
                 percent = int(completed / total * 100)
+                if completed > 0:
+                    bytes_arrived = True
+            checking = _pull_line_is_local_work(event, bytes_arrived=bytes_arrived)
+            next_timeout = (
+                max(_OLLAMA_PULL_READ_TIMEOUT_SECONDS, _OLLAMA_PULL_VERIFY_IDLE_SECONDS)
+                if checking else _OLLAMA_PULL_READ_TIMEOUT_SECONDS
+            )
+            if next_timeout != read_timeout and _set_pull_read_timeout(response, next_timeout):
+                read_timeout = next_timeout
             progress.update(status="pulling", percent=percent, detail=str(event.get("status") or ""))
 
 
