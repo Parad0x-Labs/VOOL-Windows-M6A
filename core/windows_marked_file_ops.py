@@ -329,8 +329,10 @@ def marked_file_ask(text: str, *, source_context: dict[str, Any] | None, session
     if not windows_write_gate.active() or not _owner_local(source_context):
         return None
     body = str(text or "")
-    if not body.strip() or "\n" in body.strip() or "\r" in body.strip():
-        return None  # a request is one line; a paste of several is never read as one
+    if not body.strip() or len(body.strip().splitlines()) > 1:
+        # A request is one line; a paste of several is never read as one. `splitlines` also breaks
+        # at \x0b, \x0c, \x1c-\x1e, \x85, U+2028 and U+2029, not only at CR and LF.
+        return None
     ledger_session = str((source_context or {}).get("session_id") or "").strip() or str(session_id or "").strip()
     for reader in (lambda: _undo(body, ledger_session), lambda: _move(body), lambda: _edit(body)):
         ask = reader()
