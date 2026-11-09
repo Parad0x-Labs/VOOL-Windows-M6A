@@ -1167,6 +1167,8 @@ def _git_repo_for(workspace_root: str) -> str:
     candidate = Path(workspace_root).expanduser()
     if not workspace_root:
         return ""
+    if safe_git.git_refused_here():  # Windows: no git evidence, and no git process to look for it
+        raise ArchaeologyInputError(safe_git.GIT_REFUSED_TEXT)
     ceiling = _GIT_CEILING.get()
     probe = candidate if (candidate / ".git").exists() else candidate.parent
     while str(probe) != str(probe.parent):

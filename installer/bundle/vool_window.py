@@ -1879,4 +1879,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # Windows 0.7.1: this host runs no git (core/safe_git.py). The bundle runs this file from the top
+    # of the install, outside the source tree, so it says it is a VOOL runtime entry itself.
+    from core.safe_git import arm_spawn_guard_for_this_process
+
+    arm_spawn_guard_for_this_process(runtime=True)
     sys.exit(main())

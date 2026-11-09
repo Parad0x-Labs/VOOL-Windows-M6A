@@ -111,7 +111,10 @@ class GitRunner:
         config must not make git start programs, and a mutation must not run hooks unsandboxed
         (core/safe_git.py). With ``argv``, only the keys that matter for that command count (a
         read-only command ignores signing switches); without it, every key does. A mutation with
-        ``argv`` also must not send Git LFS to a server the repository chose."""
+        ``argv`` also must not send Git LFS to a server the repository chose. On Windows git is not
+        run at all, and nothing is asked of git to say so (core/safe_git.py)."""
+        if safe_git.git_refused_here():
+            return safe_git.GIT_REFUSED_TEXT
         try:
             keys = (safe_git.executable_config_for(self.root, argv, timeout=self.timeout) if argv
                     else safe_git.executable_local_config(self.root, timeout=self.timeout))
@@ -135,7 +138,10 @@ class GitRunner:
         destination is checked like this repository is, and a transport VOOL cannot read the
         destination of (a remote helper, an unknown scheme, an unusual ``file://`` form) is refused.
         A check that cannot finish refuses. On Windows this repository's own git folders are checked
-        first (`_windows_push_source_refusal`), since every push writes there too."""
+        first (`_windows_push_source_refusal`), since every push writes there too; before that, on
+        Windows no git runs at all (core/safe_git.py)."""
+        if safe_git.git_refused_here():
+            return safe_git.GIT_REFUSED_TEXT
         try:
             source = _windows_push_source_refusal(self.root, timeout=self.timeout)
             if source:

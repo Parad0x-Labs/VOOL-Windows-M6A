@@ -34,6 +34,13 @@ with its token, as the chat resumes a turn. The gate is switched on through
 `windows_write_gate._IS_WINDOWS`, and the file is written to run on Windows as well. The one fault
 injected is a task journal another program holds open: reading it raises the PermissionError Windows
 gives for such a file.
+
+Re-pinned for 0.7.1 (VOOL doesn't run git on Windows, core/safe_git.py): RepoOps is git's session
+plane, so every repo.step call is now refused before the permission decision with the git sentence,
+whichever folder its session is on and whether or not the runtime can find the session, and VOOL
+starts no git process while it is decided. Sessions are opened with the gate off (a session opened
+before 0.7.1 or on another platform), since on Windows repo.session.open is itself refused. The
+code-task rows are unchanged. Row names are kept so each row maps to the earlier contract.
 """
 from __future__ import annotations
 
@@ -52,6 +59,7 @@ from core import windows_write_gate as gate
 from core.hive_activity_tracker import HiveActivityTracker, HiveActivityTrackerConfig
 from core.mode_permission_policy import reset_mode_permission_state, resolve_approval
 from tests.repoops._forge_fixture import UNIFIED_DIFF, RecordedForge, github_pull_request
+from tests.test_windows_gate_checks_where_git_writes import _GIT_STARTS, REFUSAL, _as_before_0_7_1, _on_windows
 
 BUGGY = b"def add(a, b):\n    return a - b\n"
 FIXED = b"def add(a, b):\n    return a + b\n"
@@ -269,6 +277,11 @@ def _diagnosed_session(chat: _Chat, folder: Path, forge) -> str:
     head = _head(folder)
     forge.route("GET /pulls/7", github_pull_request("7", base_sha=_git(folder, "rev-parse", "HEAD~1").strip(), head_sha=head))
     forge.route("GET /commits/feature", {"sha": head})
+    with _as_before_0_7_1():
+        return _diagnose(chat, folder, forge, context, head)
+
+
+def _diagnose(chat: _Chat, folder: Path, forge, context: dict, head: str) -> str:
     opened = _door(
         "repo.session.open",
         {"objective": "repair add in calc.py", "pull_request": "7", "provider": "github", "namespace": "o/r",
@@ -291,6 +304,23 @@ def _diagnosed_session(chat: _Chat, folder: Path, forge) -> str:
     assert diagnosed.ok, (diagnosed.status, diagnosed.response_text)
     assert Path(json.loads(_session_journal(session).read_bytes())["root"]) == folder
     return session
+
+
+def _ask_on_windows(chat: _Chat, intent: str, arguments: dict):
+    """The call as the model makes it, decided as 0.7.1 decides it on Windows, every git start recorded."""
+    _GIT_STARTS.clear()
+    with _on_windows():
+        return chat.ask(intent, arguments)
+
+
+def _assert_refused_with_the_git_sentence(execution, decisions: list[dict]) -> None:
+    """Refused before the permission decision with the git sentence, nothing dispatched, no git started."""
+    assert execution.status == gate.STATUS, (execution.status, execution.response_text)
+    assert decisions == [], "refused before the permission decision: no approval is asked for it"
+    assert execution.ok is False and execution.details.get("executed") is False
+    assert execution.response_text == REFUSAL, execution.response_text
+    assert _OUTSIDE.search(execution.response_text) is None
+    assert _GIT_STARTS == [], "VOOL starts no git process on Windows"
 
 
 def _assert_refused_before_approval(execution, decisions: list[dict], label: str, folder: Path) -> None:
@@ -613,9 +643,12 @@ def test_a_step_whose_inner_intent_is_padded_is_still_checked_on_its_own_folder(
     journal_before, project_before, head = journal.read_bytes(), _tree(project), _head(project)
     arguments = {**owner, "step_id": "repair", "intent": padded, "arguments": dict(REPAIRS[padded.strip()])}
 
-    execution = chat.ask(step, arguments)
-
-    _assert_refused_before_approval(execution, decisions, label, project)
+    if step == "repo.step":  # 0.7.1: a repo step is refused as git, before its folder is placed
+        execution = _ask_on_windows(chat, step, arguments)
+        _assert_refused_with_the_git_sentence(execution, decisions)
+    else:
+        execution = chat.ask(step, arguments)
+        _assert_refused_before_approval(execution, decisions, label, project)
     # The journal records no step for the call (in flight or refused) and no fault.
     assert journal.read_bytes() == journal_before
     record = json.loads(journal_before)
@@ -652,9 +685,9 @@ def test_a_repo_step_on_a_session_folder_that_is_not_flagged_is_refused_before_a
     journal_before, repo_before, head = journal.read_bytes(), _tree(repo), _head(repo)
     arguments = {"repo_session_id": session, "step_id": "repair", "intent": inner, "arguments": dict(REPAIRS[inner])}
 
-    execution = chat.ask("repo.step", arguments)
+    execution = _ask_on_windows(chat, "repo.step", arguments)
 
-    _assert_refused_before_approval(execution, decisions, SESSION_FOLDER, repo)
+    _assert_refused_with_the_git_sentence(execution, decisions)
     # The session journal records no step for the call (in flight or refused) and no fault.
     assert journal.read_bytes() == journal_before
     assert json.loads(journal_before)["step_order"] == ["read"]
@@ -692,9 +725,9 @@ def test_a_repo_step_whose_journal_cannot_be_read_is_checked_on_the_session_the_
     arguments = {"repo_session_id": session, "step_id": "repair", "intent": "workspace.write_file",
                  "arguments": dict(REPAIRS["workspace.write_file"])}
 
-    execution = chat.ask("repo.step", arguments)
+    execution = _ask_on_windows(chat, "repo.step", arguments)
 
-    _assert_refused_before_approval(execution, decisions, SESSION_FOLDER, repo)
+    _assert_refused_with_the_git_sentence(execution, decisions)
     assert _tree(_session_store()) == sessions_before
     assert _tree(repo) == repo_before and _head(repo) == head
     assert _git(repo, "status", "--porcelain", "--untracked-files=all") == ""
@@ -725,16 +758,10 @@ def test_a_repo_session_the_runtime_cannot_find_is_checked_on_the_chats_folder_a
     arguments = {"repo_session_id": session, "step_id": "repair", "intent": "workspace.write_file",
                  "arguments": dict(REPAIRS["workspace.write_file"])}
 
-    asked = chat.ask("repo.step", arguments)
+    asked = _ask_on_windows(chat, "repo.step", arguments)
 
-    assert len(decisions) == 1, "the call reaches the permission decision, as before"
-    if mode == "manual":
-        assert _tree(_session_store()) == sessions_before and _tree(scratch) == {"calc.py": BUGGY}
-        answer = chat.approve_and_resume(asked, "repo.step", arguments)
-    else:
-        answer = asked
-    assert answer.status == "unknown_session", (answer.status, answer.response_text)
-    assert answer.ok is False
+    # Before 0.7.1 the call reached the permission decision and the runtime answered unknown_session.
+    _assert_refused_with_the_git_sentence(asked, decisions)
     assert _tree(_session_store()) == sessions_before
     assert _tree(scratch) == {"calc.py": BUGGY}
     assert _tree(repo) == repo_before and _head(repo) == head
@@ -754,22 +781,13 @@ def test_a_repo_step_patch_on_a_flagged_session_folder_lands_through_vools_own_e
     arguments = {"repo_session_id": session, "step_id": "repair", "intent": "workspace.apply_unified_diff",
                  "arguments": dict(REPAIRS["workspace.apply_unified_diff"])}
 
-    asked = chat.ask("repo.step", arguments)
+    asked = _ask_on_windows(chat, "repo.step", arguments)
 
-    assert len(decisions) == 1, "the call reaches the permission decision"
-    # Manual asks first and nothing moves before the approval; Auto runs a repair in the session's folder.
-    assert asked.status == ("pending_approval" if mode == "manual" else "executed"), (asked.status, asked.response_text)
-    if mode == "manual":
-        assert _tree(repo) == repo_before
-        execution = chat.approve_and_resume(asked, "repo.step", arguments)
-    else:
-        execution = asked
-    assert execution.ok is True and execution.status == "executed", (execution.status, execution.response_text)
-    result = execution.details["tool_result"]
-    assert result["engine"] == "protected_python"
-    assert result["changed_paths"] == ["calc.py"]
-    assert _tree(repo) == {**repo_before, "calc.py": FIXED}
-    assert _git(repo, "status", "--porcelain", "--untracked-files=all") == " M calc.py\n"
+    # Before 0.7.1 the patch reached approval (Manual) or ran (Auto) through VOOL's own engine; a repo
+    # step is git's session plane and is now refused before approval, with nothing written.
+    _assert_refused_with_the_git_sentence(asked, decisions)
+    assert _tree(repo) == repo_before
+    assert _git(repo, "status", "--porcelain", "--untracked-files=all") == ""
     assert _head(repo) == head
-    assert json.loads(_session_journal(session).read_bytes())["steps"]["repair"]["status"] == "executed"
+    assert "repair" not in json.loads(_session_journal(session).read_bytes())["steps"]
     assert _tree(scratch) == {}

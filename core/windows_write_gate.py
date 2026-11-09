@@ -11,7 +11,8 @@ its shared git folder, as git reports them (`_places_beyond_workspace`); a repos
 hold a link or hard link, or whose own config sets keys that move git's writes (Git LFS keys,
 `gc.repackFilterTo`), is refused, since git's writes can then land outside those folders
 (core/git_write_redirects.py). An intent that also changes folders its arguments do not name is
-refused outright (`_ALWAYS_REFUSED`).
+refused outright (`_ALWAYS_REFUSED`). A call that runs git is refused outright too, marked folder or
+not (`_GIT_INTENTS`): VOOL runs no git on Windows in 0.7.1 (core/safe_git.py).
 The developer sets that variable when starting VOOL; nothing inside a
 workspace can set it. VOOL's own private stores (skills, media projects, browser profiles,
 notes) are not user-filesystem destinations and are not gated here. POSIX is unaffected.
@@ -58,6 +59,15 @@ _STEPS = frozenset({"code.task.step", "repo.step"})
 #: arguments do not name: a temp cleanup empties the folders TMPDIR, TMP and TEMP name, and its
 #: approval empties the plan a disk scan stored earlier (core.operator.handlers).
 _ALWAYS_REFUSED = frozenset({"operator.cleanup_temp_files"})
+#: Intents that run git. VOOL runs no git on Windows in 0.7.1 (core/safe_git.py), so each is refused
+#: whatever it names, here, before the permission decision, so no approval is asked for git that can
+#: never run, with the same sentence the git runners give. A marked folder does not change that: git
+#: also runs a repository's hooks and helpers, which no marked folder confines.
+_GIT_INTENTS = frozenset({"workspace.git_status", "workspace.git_diff", "workspace.git_summary"})
+#: RepoOps is git's control plane: every repo.* call opens, reads or acts on a git session.
+_GIT_INTENT_PREFIXES = ("repo.",)
+#: Intents that start a command named in an argument: refused when that command runs git.
+_COMMAND_INTENTS: dict[str, tuple[str, ...]] = {"sandbox.run_command": ("command", "cmd")}
 
 
 #: The skipped entries already warned about, so a list read on every gate check warns once.
@@ -329,6 +339,8 @@ def _git_places(folder: str) -> list[tuple[str, str]] | str:
     from core import git_write_redirects, safe_git
     from core.repoops.gitops import GitRunner
 
+    if safe_git.git_refused_here():  # no git process is started to place git's writes on Windows
+        return safe_git.GIT_REFUSED_TEXT
     unplaceable = "git cannot say where this repository's work tree and git folders are, so where it writes cannot be checked"
     config_refusal = GitRunner(root=Path(folder))._repository_refusal(mutating=False)
     if config_refusal:
@@ -396,9 +408,46 @@ def may_refuse(intent: str, *, windows: bool | None = None) -> bool:
     the gate has no say in gets exactly the handling it got before the early check existed: its
     arguments are not bound, its action is not built, and nothing about it can raise here.
     """
+    if _git_refused(windows) and (_names_git_intent(intent) or intent in _COMMAND_INTENTS or intent in _STEPS):
+        return True
     if not (_IS_WINDOWS if windows is None else windows):
         return False
     return intent in _GATED or intent in _STEPS
+
+
+def _git_refused(windows: bool | None) -> bool:
+    """Whether git intents are refused: on Windows (the gate's own test seam, `_IS_WINDOWS`), and
+    wherever core/safe_git.py refuses git (any platform it cannot tell from Windows)."""
+    if windows is not None:
+        return bool(windows)
+    from core import safe_git
+
+    return bool(_IS_WINDOWS) or safe_git.git_refused_here()
+
+
+def _names_git_intent(intent: str) -> bool:
+    return intent in _GIT_INTENTS or intent.startswith(_GIT_INTENT_PREFIXES)
+
+
+def _runs_git(intent: str, arguments: Any) -> bool:
+    """Whether this call runs git: a git intent, or a command intent whose command starts git."""
+    if _names_git_intent(intent):
+        return True
+    keys = _COMMAND_INTENTS.get(intent)
+    if not keys or not isinstance(arguments, dict):
+        return False
+    from core import safe_git
+
+    for key in keys:
+        value = arguments.get(key)
+        if value is None or value == "":
+            continue
+        try:
+            if safe_git.command_text_runs_git(value):
+                return True
+        except Exception:
+            return True  # a command that cannot be read is not let through to git (fail closed)
+    return False
 
 
 def refusal(
@@ -414,7 +463,19 @@ def refusal(
 
     Every place the call changes must lie inside a flagged folder: the chat's workspace, each keyed
     path where its writer puts it, and the folders the call really runs in, which are not the chat's
-    for a step, a code-task rollback or a git operation (`_places_beyond_workspace`)."""
+    for a step, a code-task rollback or a git operation (`_places_beyond_workspace`).
+
+    A call that runs git (`_runs_git`, or a step whose inner call does) is refused first, whatever
+    it names: VOOL runs no git on Windows in 0.7.1 (core/safe_git.py)."""
+    if _git_refused(windows):
+        from core import safe_git
+
+        if _runs_git(intent, arguments):
+            return safe_git.GIT_REFUSED_TEXT
+        if intent in _STEPS:
+            inner = str((inner_intent_of or (lambda args: str(args.get("intent") or "")))(arguments) or "").strip()
+            if _runs_git(inner, arguments.get("arguments") or {}):
+                return safe_git.GIT_REFUSED_TEXT
     if not (_IS_WINDOWS if windows is None else windows):
         return None
     step = None
