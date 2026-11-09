@@ -301,6 +301,21 @@ def start_for_api(
             logger.warning("the owner's disposable folder list adds nothing: %s", type(exc).__name__)
             owned = []
         flagged.extend(part for part in owned if part not in flagged)
+    # Except a drive root, the user profile or a folder holding TEMP, TMP or LOCALAPPDATA, judged
+    # after resolving (core/windows_write_gate.py `wide_root_reason`): the broker refuses a volume
+    # root itself but has no rule for the others, and the gate would skip them anyway, so the broker
+    # never holds a handle on them.
+    from core import windows_write_gate
+
+    kept: list[str] = []
+    for part in flagged:
+        too_wide = windows_write_gate.wide_root_reason(part)
+        if too_wide:
+            logger.warning("%s entry %r is not flagged: %s, which as a write root would open far more than a workspace",
+                           _FLAGGED_ENV, part, too_wide)
+        else:
+            kept.append(part)
+    flagged = kept
     # The whole list the broker is handed, so a folder marked outside the VOOL window is visible.
     # Joined, not a list's repr, which would double every backslash of a Windows path in the log.
     logger.info("Windows broker flagged folders at start: %s", "; ".join(flagged) or "(none)")
