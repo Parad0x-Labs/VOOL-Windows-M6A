@@ -1080,7 +1080,7 @@ def _workspace_folder_as_typed(typed: str, workspace_root: str) -> str | None:
 
 def _clean_workspace_directory_path(candidate: str, *, workspace_root: str = "") -> str:
     raw = str(candidate or "").strip().strip("`\"'")
-    typed_kind = windows_path_policy.refused_form(raw)
+    typed_kind = windows_path_policy.refused_form(raw) or windows_path_policy.refused_doubled_drive(raw)
     if typed_kind in windows_path_policy.NETWORK_KINDS:
         # On Windows a share or a device path names no workspace folder, and is not resolved to find
         # out: resolving `\\host\share` is already the SMB connection.

@@ -135,8 +135,10 @@ def _local(body: str, start: int, path: str) -> bool:
     from core import windows_known_folders
     from core.agent_runtime import write_root_honesty as paths
 
-    if paths.typed_path_kind(body, start, path):
-        return False
+    from core import windows_path_policy
+
+    if paths.typed_path_kind(body, start, path) or windows_path_policy.refused_doubled_drive(path):
+        return False  # `typed_path_kind` asks the doubled-separator rule too; asked here as well
     drive = re.match(r"^[A-Za-z]:(?=[\\/])", path)
     if _ON_WINDOWS:
         return bool(drive) and windows_known_folders._drive_is_remote(drive.group(0)) is False

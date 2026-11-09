@@ -269,6 +269,28 @@ def refused_form(value: Any, *, network_only: bool = False) -> str:
     return classify(value, network_only=network_only)
 
 
+# A drive letter followed by two separators: `C://host/s`, `C:\\\\host\\s`, `C:/\\host`, `C:\\/host`.
+_DOUBLED_DRIVE_SEPARATOR_RE = re.compile(r"^\s*[\"'`]?[A-Za-z]:[\\/]{2}")
+
+
+def refused_doubled_drive(value: Any) -> str:
+    """On Windows, ``"unc"`` for a drive path with a doubled separator right after the colon
+    (`C://host/s/x`, `C:\\\\host\\s`, `C:/\\x`, `C:\\/x`); off Windows, and for any other value, "".
+
+    `classify` calls these full local paths, but a lane that reads text from its first `/` (the
+    heartbeat poll, a URL-ish reader) sees the share `//host/s` in them, so they are refused like a
+    share and fail closed: nothing that reads a path out of a message stats, lists or resolves one.
+    The message lanes ask this beside `refused_form` (`write_root_honesty.typed_path_kind` and
+    `_spaces_may_extend`, the marked-folder lanes, the planner's folder cleaner). Post-launch this
+    rule belongs in `classify` itself (DIAGNOSIS, heartbeat-drive-share)."""
+    if not _IS_WINDOWS:
+        return ""
+    text = _text(value)
+    if text is None or not _DOUBLED_DRIVE_SEPARATOR_RE.match(text):
+        return ""
+    return "unc"
+
+
 def refused_drive(value: Any) -> str:
     """On Windows, the kind `classify_drive` gives `value`; off Windows, always ""."""
     if not _IS_WINDOWS:

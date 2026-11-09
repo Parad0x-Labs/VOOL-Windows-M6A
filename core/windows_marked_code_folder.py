@@ -60,8 +60,10 @@ def _on_a_local_drive(candidate: str) -> bool:
     letter only when Windows calls that drive local (a mapped network drive is a share under a
     letter, and looking it up is already the SMB connection; a type Windows cannot name counts as
     remote). On Windows a path with no drive letter is never local here."""
-    from core import windows_known_folders
+    from core import windows_known_folders, windows_path_policy
 
+    if windows_path_policy.refused_doubled_drive(candidate):
+        return False  # `C://host/s` is read as the share `//host/s`: never looked up
     drive = ntpath.splitdrive(str(candidate or ""))[0]
     if re.fullmatch(r"[A-Za-z]:", drive):
         return windows_known_folders._drive_is_remote(drive) is False
