@@ -1060,3 +1060,47 @@ def isolated_mock_provider_host_state(request, monkeypatch):
         # The builder helper stubs its generator/executor; these router cases stub invocation.
         # Enable the lane under test, without enabling local inference for unrelated modules.
         monkeypatch.setenv("VOOL_LOCAL_MODELS_ENABLED", "1")
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Windows 0.7.1 stated limits (tests/_windows_0_7_1_limits.py): inert off Windows."""
+    outcome = yield
+    from tests import _windows_0_7_1_limits as limits
+
+    if limits.ACTIVE:
+        limits.apply(item, call, outcome.get_result())
+
+
+_WINDOWS_LIMIT_COLLECTED: set[str] = set()
+
+
+def pytest_itemcollected(item):
+    from tests import _windows_0_7_1_limits as limits
+
+    if limits.ACTIVE:
+        _WINDOWS_LIMIT_COLLECTED.add(limits.node_of(item))
+
+
+def pytest_collection_finish(session):
+    from tests import _windows_0_7_1_limits as limits
+
+    if limits.ACTIVE:
+        session.config._windows_limit_missing = limits.missing(
+            _WINDOWS_LIMIT_COLLECTED, list(session.config.args), Path(str(session.config.rootpath)))
+
+
+def pytest_sessionfinish(session, exitstatus):
+    from tests import _windows_0_7_1_limits as limits
+
+    if not limits.ACTIVE:
+        return
+    problems = []
+    gone = getattr(session.config, "_windows_limit_missing", [])
+    if gone:
+        problems.append(f"{len(gone)} listed rows were not collected, first: {gone[0]}")
+    if len(limits.EXCUSED) > len(limits.ROWS):
+        problems.append(f"{len(limits.EXCUSED)} expected failures exceed the {len(limits.ROWS)} listed rows")
+    if problems:
+        print(f"\n{limits.LIST.name}: " + "; ".join(problems))
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED

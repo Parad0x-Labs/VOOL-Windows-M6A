@@ -304,8 +304,9 @@ def test_user_rule_scans_start_no_git(repo: Path, windows, git_starts) -> None:
 
 
 @pytest.fixture
-def guarded(windows) -> None:
-    safe_git.install_spawn_guard()  # permanent for this process, but inert once _REFUSE_GIT is reset
+def guarded(windows, monkeypatch) -> None:
+    monkeypatch.setattr(safe_git, "_GUARD_ARMED", safe_git._GUARD_ARMED)  # disarmed again after the row
+    safe_git.install_spawn_guard()  # the hook stays in this process; only _GUARD_ARMED turns it off
 
 
 @pytest.mark.parametrize("start", [
@@ -315,7 +316,8 @@ def guarded(windows) -> None:
     lambda: subprocess.check_output(["/bin/sh", "-c", f"{GIT} log"]),
     lambda: subprocess.Popen(["env", GIT, "status"]).wait(),
     lambda: os.system(f"{GIT} status"),
-    lambda: os.posix_spawnp(GIT, [GIT, "status"], os.environ),
+    pytest.param(lambda: os.posix_spawnp(GIT, [GIT, "status"], os.environ),
+                 marks=pytest.mark.skipif(not hasattr(os, "posix_spawnp"), reason="no os.posix_spawnp on this host")),
 ], ids=["run", "shell", "shell-chain", "sh-c", "env-wrapper", "os.system", "posix_spawnp"])
 def test_the_spawn_guard_refuses_git_before_the_process_exists(guarded, fake_git: Path, start) -> None:
     with pytest.raises(safe_git.GitRefusedOnWindows):
@@ -378,6 +380,8 @@ def test_runtime_processes_arm_the_guard_and_test_runners_do_not(windows, monkey
 
 # ------------------------------------------------------------------- Linux and macOS unchanged
 
+_ON_POSIX = os.name == "posix" and not sys.platform.startswith(("win", "cygwin", "msys"))
+
 
 def test_off_windows_nothing_is_refused_or_armed(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(safe_git, "_REFUSE_GIT", None)
@@ -392,6 +396,7 @@ def test_off_windows_nothing_is_refused_or_armed(tmp_path: Path, monkeypatch) ->
     assert safe_git.git_executable()
 
 
+@pytest.mark.skipif(not _ON_POSIX, reason="POSIX guard: git still runs on Linux and macOS")
 def test_off_windows_git_still_runs_through_every_runner(repo: Path, monkeypatch) -> None:
     monkeypatch.setattr(safe_git, "_REFUSE_GIT", False)
     from core.execution.git_tools import git_status_workspace, git_summary_workspace
@@ -405,10 +410,28 @@ def test_off_windows_git_still_runs_through_every_runner(repo: Path, monkeypatch
     assert safe_git.executable_local_config(repo) == []
 
 
+@pytest.mark.skipif(not _ON_POSIX, reason="POSIX guard: git still runs on Linux and macOS")
 def test_off_windows_the_installed_guard_lets_git_run(repo: Path, monkeypatch, fake_git: Path) -> None:
+    monkeypatch.setattr(safe_git, "_GUARD_ARMED", safe_git._GUARD_ARMED)  # disarmed again after the row
     safe_git.install_spawn_guard()
     monkeypatch.setattr(safe_git, "_REFUSE_GIT", False)
 
     completed = subprocess.run([GIT, "status"], cwd=repo, capture_output=True, text=True)
 
     assert completed.returncode == 0 and fake_git.exists(), "git ran (the fake on PATH left its marker)"
+
+
+def test_only_install_spawn_guard_arms_the_guard_and_no_runtime_code_disarms_it() -> None:
+    """_GUARD_ARMED is assigned in VOOL's code only where it is declared (False) and by install_spawn_guard
+    (True); nothing in VOOL turns an armed guard off. Only tests put it back, through monkeypatch."""
+    import re
+
+    assignment = re.compile(r"\b_GUARD_ARMED\s*=(?!=)|setattr\([^)]*_GUARD_ARMED")
+    root = Path(safe_git.__file__).resolve().parents[1]
+    writes = []
+    for folder in ("core", "installer", "apps"):
+        for path in (root / folder).rglob("*.py"):
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                if assignment.search(line) and not line.lstrip().startswith("#"):
+                    writes.append((path.relative_to(root).as_posix(), line.strip()))
+    assert writes == [("core/safe_git.py", "_GUARD_ARMED = False"), ("core/safe_git.py", "_GUARD_ARMED = True")], writes
