@@ -847,6 +847,11 @@ _WRAPPERS = frozenset({"cmd", "command", "powershell", "pwsh", "sh", "bash", "zs
 _GIT_WORD = re.compile(r"""(?:^|[\s"'`&|;(<>=\\/^])git(?:-[\w.-]+)?(?:\.exe|\.cmd|\.bat|\.com)?(?=$|[\s"'`&|;)<>^])""",
                        re.IGNORECASE)
 _GUARD_INSTALLED = False
+#: Whether the installed hook enforces. install_spawn_guard sets it; tests that install the hook put
+#: it back afterwards (an audit hook cannot be removed, and on Windows `git_refused_here()` stays true
+#: once a test's own _REFUSE_GIT is reset, so a hook a test installed would refuse every later test's
+#: own git). In-process code can already turn the refusal off through _REFUSE_GIT; this adds no way out.
+_GUARD_ARMED = False
 #: A private audit event the hook answers: proof the hook really sits in this process's audit chain.
 _PROBE_EVENT = "vool.git_spawn_guard.probe"
 
@@ -960,6 +965,8 @@ def refuse_git_spawn(args: object, executable: object = None) -> None:
 
 
 def _spawn_audit(event: str, args: tuple) -> None:
+    if not _GUARD_ARMED:
+        return
     if event not in _SPAWN_EVENTS:
         if event == _PROBE_EVENT and args and isinstance(args[0], list):
             args[0].append(_spawn_audit)
@@ -987,7 +994,8 @@ def _spawn_audit(event: str, args: tuple) -> None:
 def install_spawn_guard() -> None:
     """Install the process-wide audit hook that refuses git before a process starts, once per process.
     An audit hook cannot be removed. While `git_refused_here()` is false it lets everything through."""
-    global _GUARD_INSTALLED
+    global _GUARD_INSTALLED, _GUARD_ARMED
+    _GUARD_ARMED = True
     if _GUARD_INSTALLED:
         return
     sys.addaudithook(_spawn_audit)

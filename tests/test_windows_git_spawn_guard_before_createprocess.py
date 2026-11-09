@@ -27,7 +27,8 @@ GIT_EXE = r"C:\Program Files\Git\cmd\git.exe"
 @pytest.fixture
 def guarded(monkeypatch) -> None:
     monkeypatch.setattr(safe_git, "_REFUSE_GIT", True)
-    safe_git.install_spawn_guard()  # permanent for this process, inert once _REFUSE_GIT is reset
+    monkeypatch.setattr(safe_git, "_GUARD_ARMED", safe_git._GUARD_ARMED)  # disarmed again after the row
+    safe_git.install_spawn_guard()  # the hook stays in this process; only _GUARD_ARMED turns it off
 
 
 def _windows_execute_child(args, *, executable=None, shell=False, cwd=None, env=None) -> list:
