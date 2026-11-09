@@ -113,7 +113,16 @@ def windows(tmp_path: Path, monkeypatch) -> Path:
     monkeypatch.setenv(gate.ENV_VAR, str(marked))
     runtime_paths.configure_runtime_home(tmp_path / "vool")
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(windows_known_folders, "_drive_is_remote", _drive_kind)
+    # The drive holding tmp_path is local too (D: on GitHub's Windows runners); every other drive
+    # keeps the fake's answer, so Q: and the like stay unknown.
+    tmp_drive = ntpath.splitdrive(str(tmp_path))[0].upper()
+
+    def _drive_kind_here(drive: str) -> bool | None:
+        if tmp_drive and drive.upper().rstrip("\\/") == tmp_drive:
+            return False
+        return _drive_kind(drive)
+
+    monkeypatch.setattr(windows_known_folders, "_drive_is_remote", _drive_kind_here)
     monkeypatch.setattr(gate, "_IS_WINDOWS", True)
     monkeypatch.setattr(windows_path_policy, "_IS_WINDOWS", True)
     monkeypatch.setattr(windows_known_folders, "_IS_WINDOWS", True)
