@@ -466,7 +466,10 @@ def test_the_temp_root_comes_from_the_system_not_from_the_raw_variable(home, tmp
     decoy = _folder(tmp_path, "decoy")
     monkeypatch.setenv("TEMP", str(decoy))
     monkeypatch.setenv("TMP", str(decoy))
-    assert store.refusal_reason(str(decoy)) == ""          # not treated as the temp root
+    # The raw variables are no temp root that lifts anything: a folder inside the decoy is judged
+    # as any folder. The decoy itself is refused as the gate skips it (it is the TEMP folder).
+    assert store.refusal_reason(str(_folder(decoy, "job-52"))) == ""
+    assert "TEMP" in store.refusal_reason(str(decoy))
     assert store.refusal_reason(str(real_temp))
 
 

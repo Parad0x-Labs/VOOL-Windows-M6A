@@ -86,12 +86,77 @@ def _skip(part: str, reason: str) -> None:
         logger.warning("%s entry \"%s\" is not flagged: %s. The other entries stay flagged.", ENV_VAR, part, reason)
 
 
-def _windows_root(part: str) -> str | None:
+#: Environment variables naming folders a marked root may not be, nor hold: as a write root it
+#: would open the user's whole profile, the temp folders or the per-user app data (VOOL's own
+#: install and home live in LOCALAPPDATA).
+_PROFILE_VARS = ("USERPROFILE",)
+_HELD_VARS = ("TEMP", "TMP", "LOCALAPPDATA")
+
+
+def _resolved_norm(value: str) -> str:
+    """`value` as the gate compares it: resolved (junctions and links followed) and normcased.
+    A share or device spelling is never resolved, since resolving it is the SMB connection."""
+    if windows_path_policy.classify(value, network_only=True):
+        return os.path.normcase(value)
+    return os.path.normcase(os.path.realpath(value))
+
+
+def _holds_path(folder: str, other: str) -> bool:
+    """Whether `folder` is `other` or an ancestor of it (both already resolved and normcased)."""
+    try:
+        return os.path.commonpath([folder, other]) == folder
+    except ValueError:  # different drives, or one relative
+        return False
+
+
+def _too_wide(resolved: str) -> str:
+    """Why the resolved, normcased folder `resolved` is too wide to be a write root, or '': a drive
+    root, the user profile itself, or a folder that is or holds TEMP, TMP or LOCALAPPDATA (a folder
+    inside them, such as the test harness's own temp folders, is fine).
+    Each named folder is resolved too, so a junction on either side is judged by its target. A
+    named folder that cannot be resolved makes the root too wide (unknown states fail closed)."""
+    env = os.environ
+    if not os.path.splitdrive(resolved)[1].strip("\\/"):
+        return "it is a whole drive"
+    named: list[tuple[str, str]] = [(name, str(env.get(name) or "").strip()) for name in (*_PROFILE_VARS, *_HELD_VARS)]
+    named.append(("the user's home", os.path.expanduser("~")))
+    for name, value in named:
+        if not value or not os.path.isabs(value):
+            continue
+        try:
+            other = _resolved_norm(value)
+        except (OSError, ValueError):
+            return f"{name} cannot be resolved, so the folder cannot be checked against it"
+        if name in _HELD_VARS:
+            if _holds_path(resolved, other):
+                return f"it is or holds the {name} folder"
+        elif resolved == other:
+            # A folder above the profile is skipped too on a real Windows profile, where it
+            # also holds LOCALAPPDATA (inside the profile), by the rule above.
+            return "it is the user profile"
+    return ""
+
+
+def wide_root_reason(part: str) -> str:
+    """Why the folder `part` names may never be a write root on Windows (`_too_wide`), or ''. For
+    the broker's list and the owner's list, which read entries outside `_windows_root`."""
+    raw = str(part or "").strip()
+    if not raw or "\x00" in raw:
+        return "it is not a folder path"
+    try:
+        return _too_wide(_resolved_norm(raw))
+    except (OSError, ValueError):
+        return "it cannot be resolved"
+
+
+def _windows_root(part: str, *, wide: bool = True) -> str | None:
     """The flagged root `part` gives on Windows, or None (with a warning) for an entry the broker
     refuses too (Phase C picks 1, 5 and 10, owner 2026-10-23). A share or device path is judged by its
     spelling before anything opens it, because checking whether a share is a folder connects to it.
     On Linux CI every POSIX root spells as root-relative, so the full spelling rule applies only on
-    a real Windows host."""
+    a real Windows host. A drive root, the user profile and a folder holding TEMP, TMP or
+    LOCALAPPDATA are skipped too, judged after resolving (`_too_wide`); `wide=False` leaves that
+    to the caller (the owner's list judges marks with its own rules, core/windows_disposable_store.py)."""
     kind = windows_path_policy.classify(part, network_only=True) or (
         windows_path_policy.classify(part) if os.name == "nt" else ""
     )
@@ -111,7 +176,16 @@ def _windows_root(part: str) -> str | None:
     if windows_path_policy.classify(resolved, network_only=True):
         _skip(part, "it is on a network drive")
         return None
-    return os.path.normcase(resolved)
+    root = os.path.normcase(resolved)
+    if wide:
+        try:
+            too_wide = _too_wide(root)
+        except (OSError, ValueError):
+            too_wide = "it cannot be checked against the profile and temp folders"
+        if too_wide:
+            _skip(part, f"{too_wide}, which as a write root would open far more than a workspace")
+            return None
+    return root
 
 
 def flagged_roots(environ: dict[str, str] | None = None) -> list[str]:
@@ -133,7 +207,15 @@ def flagged_roots(environ: dict[str, str] | None = None) -> list[str]:
 
                 folders = [path for path in folders
                            if path in kept or ("*" not in gone and normalised(path) not in gone)]
-            return folders
+            # The broker's own checks refuse a volume root but not the profile or the temp folders.
+            kept_folders = []
+            for path in folders:
+                too_wide = wide_root_reason(path)
+                if too_wide:
+                    _skip(path, f"{too_wide}, which as a write root would open far more than a workspace")
+                else:
+                    kept_folders.append(path)
+            return kept_folders
     roots = _env_roots(os.environ if environ is None else environ)
     if environ is None and _IS_WINDOWS:
         # The owner's own list (core/windows_disposable_store.py): its entries as they were at this
@@ -577,4 +659,5 @@ def refusal(
     )
 
 
-__all__ = ["ENV_VAR", "STATUS", "active", "broker_report", "flagged_roots", "inside_flagged", "may_refuse", "refusal"]
+__all__ = ["ENV_VAR", "STATUS", "active", "broker_report", "flagged_roots", "inside_flagged", "may_refuse", "refusal",
+           "wide_root_reason"]
