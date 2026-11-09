@@ -213,6 +213,34 @@ class TestA5_GateAllowsMechanismRejects(unittest.TestCase):
             marker = outside / "outside_roots" / "A5_test.txt"
             self.assertFalse(marker.exists())
 
+    def test_mechanism_still_blocks_when_the_windows_gate_lets_the_write_through(self):
+        """Defense in depth beneath the Windows write gate: with the gate made to let the call through,
+        the handler's safe-root containment still refuses a folder outside every root, and nothing is
+        written. Off Windows the gate already lets every call through, so this is the row above."""
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             mock.patch("core.runtime_execution_tools.Path.home", return_value=Path(tmpdir)), \
+             mock.patch.object(windows_write_gate, "refusal", return_value=None), \
+             mock.patch.object(ExecutionGate, "evaluate_machine_effect",
+                               return_value={
+                                   "decision": "authorized",
+                                   "reason": "Machine effect authorized.",
+                               }):
+            outside = Path(tmpdir)
+            if _windows_disposable_tmp.running_on_windows():
+                # The same unmarked folder as above: a marked one the machine writers may write.
+                outside = Path(tempfile.mkdtemp(prefix="a5-outside-", dir=Path(tempfile.gettempdir()).parent))
+                self.addCleanup(shutil.rmtree, outside, True)
+            result = execute_runtime_tool(
+                "machine.write_file",
+                {"path": str(outside / "outside_roots" / "A5_test.txt"),
+                 "content": "mechanism should block"},
+                source_context={},
+            )
+            self.assertIsNotNone(result)
+            self.assertFalse(result.ok)
+            self.assertEqual(result.status, "not_allowed")
+            self.assertFalse((outside / "outside_roots" / "A5_test.txt").exists())
+
 
 class TestA6_CanonicalPathIdentity(unittest.TestCase):
     """A6 — Authorization uses canonical resolved path. Two distinct
