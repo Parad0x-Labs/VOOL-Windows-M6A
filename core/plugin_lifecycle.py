@@ -417,13 +417,26 @@ def verify(plugin_id: str, *, root: Path | None = None, expected_digest: str = "
     return _save(record)
 
 
+#: Manifest keys that are data, never a way to run something: the keys VOOL's own manifest code
+#: reads or writes (plugin_tools.parse_manifest, plugin_lifecycle.inspect, plugin_catalog,
+#: skill_package._stage_pack/create_plugin, addon_store.install_review). Any key outside this list
+#: and `_SKILLS_ONLY_EMPTY_KEYS` makes a pack not skills-only, whatever its value.
+_SKILLS_ONLY_SAFE_KEYS = frozenset({
+    "name", "version", "description", "author", "interface", "keywords",
+    "skills", "permissions", "credential_bindings", "requires", "vool",
+})
+#: Runnable keys tolerated only when empty (null, [], {}, ""): VOOL's own skills installs write
+#: `"tools": []` (addon_store.install_review). Non-empty, they declare runnable code.
+_SKILLS_ONLY_EMPTY_KEYS = frozenset({"tools", "runtime"})
+
+
 def _declares_runnable_code(root: Path | str) -> bool:
-    """Whether a pack's manifest declares anything that would start a process.
+    """Whether a pack is anything but provably skills-only. Decided fail closed.
 
-    A manifest that cannot be read counts as runnable: the answer is unknown, so it fails closed.
+    True when the manifest is missing, unreadable or not a JSON object, when it has any key
+    outside the known-safe list (commands, hooks, mcpServers, lspServers, monitors, bin, scripts,
+    apps, agents and every key nobody listed), or when `tools`/`runtime` is non-empty.
     """
-
-    from core.skill_package import _RUNNABLE_MANIFEST_KEYS
 
     if not str(root or "").strip():
         return True
@@ -433,7 +446,13 @@ def _declares_runnable_code(root: Path | str) -> bool:
         return True
     if not isinstance(payload, dict):
         return True
-    return any(payload.get(key) for key in _RUNNABLE_MANIFEST_KEYS)
+    for key, value in payload.items():
+        if key in _SKILLS_ONLY_SAFE_KEYS:
+            continue
+        if key in _SKILLS_ONLY_EMPTY_KEYS and value in (None, [], {}, ""):
+            continue
+        return True
+    return False
 
 
 def enable(plugin_id: str) -> PluginRecord:
