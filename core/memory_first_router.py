@@ -5506,12 +5506,49 @@ class MemoryFirstRouter:
                 item for item in capability_truth if item.provider_id in eligible_provider_ids
             )
             capability_by_provider = {item.provider_id: item for item in capability_truth}
-        if autopilot.selected_provider_id and _can_prioritize_autopilot_selection(
+        promoted_provider_id = str(autopilot.selected_provider_id or "")
+        # The authorship fence (precall_author_verdict) covers final-answer calls and escalates
+        # them itself; a tool_intent, planning or verifier call is outside it, so certification
+        # is applied here for those calls only.
+        from core.final_answer_authorship import FINAL_ANSWER_ROLE, resolve_author_role
+
+        _outside_author_fence = (
+            resolve_author_role(source_context=source_context, output_mode=output_mode) != FINAL_ANSWER_ROLE
+        )
+        if promoted_provider_id and requested_manifest is None and _outside_author_fence:
+            # The autopilot's pick is a speed pick that never reads certification; a header pin
+            # (requested_manifest) is the user's own choice and is never replaced here.
+            certified = _certified_local_in_place_of(ranked_manifests, promoted_provider_id)
+            if certified is not None:
+                _emit_model_routing_event(
+                    source_context,
+                    "model_lane_certified_preferred",
+                    f"{certified.model_name} passed VOOL's certification, so it runs this step "
+                    f"instead of the uncertified {_manifest_model_for(ranked_manifests, promoted_provider_id)}.",
+                    provider_id=certified.provider_id,
+                    model_id=certified.model_name,
+                    replaced_provider_id=promoted_provider_id,
+                )
+                promoted_provider_id = certified.provider_id
+        if promoted_provider_id and _can_prioritize_autopilot_selection(
             ranked_manifests,
-            autopilot.selected_provider_id,
+            promoted_provider_id,
             allow_paid_fallback=resolved_allow_paid,
         ):
-            ranked_manifests = _prioritize_autopilot_selection(ranked_manifests, autopilot.selected_provider_id)
+            ranked_manifests = _prioritize_autopilot_selection(ranked_manifests, promoted_provider_id)
+        _uncertified_first = _uncertified_local_first(ranked_manifests) if _outside_author_fence else None
+        if _uncertified_first is not None:
+            _emit_model_routing_event(
+                source_context,
+                "model_lane_uncertified_local",
+                f"{_uncertified_first.model_name} has not passed VOOL's certification.",
+                provider_id=_uncertified_first.provider_id,
+                model_id=_uncertified_first.model_name,
+                reason=(
+                    f"{_uncertified_first.model_name} has not passed VOOL's certification and may fail "
+                    "tool work; certify it in Settings, or use a certified model."
+                ),
+            )
         attempted: list[str] = []
         # Every non-empty entry mirrors `attempted` 1:1. Lets the terminal "all failed" state say
         # REQUIRED_TOOLS_NOT_OFFERED instead of the generic all_ranked_providers_failed when that is
@@ -7907,6 +7944,46 @@ def _can_prioritize_autopilot_selection(
     if _manifest_locality(ranked_manifests[0]) != "local" or _manifest_locality(selected) != "remote":
         return True
     return _local_remote_race_pair(ranked_manifests) is None
+
+
+def _local_certified(manifest: Any) -> bool:
+    """Ranking's own certification read (True where certification does not apply)."""
+    from core.final_answer_authorship import local_manifest_authorship_certified
+
+    return bool(local_manifest_authorship_certified(manifest))
+
+
+def _certified_local_in_place_of(ranked_manifests: list[Any], selected_provider_id: str) -> Any | None:
+    """The certified local model to promote instead of an uncertified local autopilot pick, else None.
+
+    Capability follow-up (0.7.1-beta, 16 GB CPU-only VM): a tool_intent step resolves to the
+    autopilot's tiny lane, which scores a 4B model above an 8B one, and the pick was promoted to the
+    front even though qwen3:4b had failed certification (degraded) and a certified qwen3:8b was
+    ranked. The tool loop then ran on the degraded model and hung. The pick stands when it is
+    certified, not local, or when no certified local model is in the list. The first certified
+    local model in ranked order replaces it otherwise. Certification standards are unchanged:
+    this reads the same verdict the ranking and the authorship fence read.
+    """
+    selected = next((m for m in ranked_manifests if m.provider_id == selected_provider_id), None)
+    if selected is None or not _manifest_is_local(selected) or _local_certified(selected):
+        return None
+    return next(
+        (m for m in ranked_manifests if m is not selected and _manifest_is_local(m) and _local_certified(m)),
+        None,
+    )
+
+
+def _uncertified_local_first(ranked_manifests: list[Any]) -> Any | None:
+    """The first candidate, when it is a local model that has not passed certification."""
+    first = ranked_manifests[0] if ranked_manifests else None
+    if first is None or not _manifest_is_local(first) or _local_certified(first):
+        return None
+    return first
+
+
+def _manifest_model_for(ranked_manifests: list[Any], provider_id: str) -> str:
+    found = next((m for m in ranked_manifests if m.provider_id == provider_id), None)
+    return str(getattr(found, "model_name", "") or provider_id)
 
 
 def _prioritize_autopilot_selection(ranked_manifests: list[Any], selected_provider_id: str) -> list[Any]:
