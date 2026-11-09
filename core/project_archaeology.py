@@ -160,6 +160,26 @@ class ReferenceNotFound(LookupError):
         self.reference = str(reference)
 
 
+class GitRefused(ArchaeologyInputError):
+    """The answer needed the git store, and VOOL runs no git here (Windows, core/safe_git.py). Its text
+    is safe_git's refusal sentence: VOOL did not look, so it never says "not found"."""
+
+    status = safe_git.GIT_REFUSED_STATUS
+
+    def __init__(self) -> None:
+        super().__init__(safe_git.GIT_REFUSED_TEXT)
+
+
+#: A reference git could read as an object name: 7 to 40 hex digits (an abbreviated or full sha-1).
+_GIT_OBJECT_NAME_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
+
+
+def _git_refusal_answers(scan: "_Scan", reference: str, items: list[dict]) -> bool:
+    """Whether git's refusal is the answer: git was refused for this read, and either nothing else
+    matched or the reference names what may be a git object, which VOOL could not look for."""
+    return scan.git_refused and (not items or bool(_GIT_OBJECT_NAME_RE.match(str(reference or "").strip())))
+
+
 @dataclass(frozen=True)
 class ScopeGrant:
     """One bounded scope grant. ``access`` is ``metadata`` (names only) or
@@ -278,6 +298,8 @@ class _Scan:
     excerpts_wrapped: int = 0
     files_visited: int = 0
     bytes_read: int = 0
+    #: The git store was in scope and git was refused before any process started (Windows).
+    git_refused: bool = False
 
     def __post_init__(self) -> None:
         if self.truncation_reasons is None:
@@ -1168,7 +1190,7 @@ def _git_repo_for(workspace_root: str) -> str:
     if not workspace_root:
         return ""
     if safe_git.git_refused_here():  # Windows: no git evidence, and no git process to look for it
-        raise ArchaeologyInputError(safe_git.GIT_REFUSED_TEXT)
+        raise GitRefused()
     ceiling = _GIT_CEILING.get()
     probe = candidate if (candidate / ".git").exists() else candidate.parent
     while str(probe) != str(probe.parent):
@@ -1311,11 +1333,15 @@ def _git_items(
     *, scan: _Scan, filters: dict[str, Any], deadline: float
 ) -> tuple[list[dict], dict[str, Any] | None]:
     workspace_root = str(filters.get("workspace_root") or "").strip()
+    reference = str(filters.get("reference") or "").strip()
+    path = str(filters.get("path") or "").strip()
+    if workspace_root and (reference or path) and safe_git.git_refused_here():
+        # Recorded so the answer can say git was not read; _git_repo_for raises the refusal below,
+        # which _collect keeps as a truncation reason.
+        scan.git_refused = True
     repo = _git_repo_for(workspace_root) if workspace_root else ""
     if not repo:
         return [], None
-    reference = str(filters.get("reference") or "").strip()
-    path = str(filters.get("path") or "").strip()
     items: list[dict] = []
     if reference:
         item = _git_commit_item(repo, reference, "exact" if len(reference) == 40 else "derived", scan)
@@ -1842,7 +1868,12 @@ def locate(
     scope, _norm = _resolve_scope(workspace_root, grants, refused)
     filters = _filters(reference=clean, workspace_root=workspace_root)
     items, rows = _collect(scope, filters, effective, scan, deadline)
+    git_refused = _git_refusal_answers(scan, clean, items)
     if not items:
+        # Not found only when every store that could hold it was read: when git was refused, VOOL
+        # did not look, and says so.
+        if git_refused:
+            raise GitRefused()
         raise ReferenceNotFound(clean)
     envelope = _envelope(
         "locate",
@@ -1854,6 +1885,7 @@ def locate(
         rows,
         effective["limit"],
     )
+    envelope["notices"] = [safe_git.GIT_REFUSED_TEXT] if git_refused else []
     return envelope
 
 
@@ -2269,7 +2301,11 @@ def recovery_plan(
             }
         )
     recoverable = bool(steps)
-    if not items:
+    git_refused = _git_refusal_answers(scan, clean_ref, items)
+    if git_refused:
+        # git was not read, so the plan cannot say nothing was found there.
+        notes.append(safe_git.GIT_REFUSED_TEXT)
+    elif not items:
         notes.append("nothing matching the reference was found in any in-scope store")
     elif not steps:
         notes.append(
@@ -2300,4 +2336,5 @@ def recovery_plan(
         "execution": "not_performed_read_only_plan",
         "notes": notes,
     }
+    envelope["notices"] = [safe_git.GIT_REFUSED_TEXT] if git_refused else []
     return envelope

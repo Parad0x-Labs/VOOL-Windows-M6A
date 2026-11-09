@@ -26,6 +26,7 @@ from core.command_registry.spec import (
 )
 from core.project_archaeology import (
     ArchaeologyInputError,
+    GitRefused,
     ReferenceNotFound,
     ScopeRefused,
     confine_to_root,
@@ -121,6 +122,13 @@ def _fault_for(exc: Exception, command: str) -> HandlerFault:
             summary=f"not found: {exc}",
             detail={"reason": str(exc), "not_found": True, "command": command},
         )
+    if isinstance(exc, GitRefused):
+        # VOOL did not look (no git on Windows): the limit sentence, never "not found".
+        return HandlerFault(
+            fault_code="fault_validation",
+            summary=str(exc),
+            detail={"reason": str(exc), "status": exc.status, "command": command},
+        )
     if isinstance(exc, ScopeRefused):
         return HandlerFault(
             fault_code="fault_validation",
@@ -143,6 +151,12 @@ def _fault_for(exc: Exception, command: str) -> HandlerFault:
         summary=f"{command} failed: {exc}",
         detail={"error": str(exc), "command": command},
     )
+
+
+def _notices(payload: dict) -> str:
+    """The limits the answer carries (the git refusal on Windows), as the summary's last sentences."""
+    notices = [str(notice) for notice in payload.get("notices") or [] if str(notice or "").strip()]
+    return "".join(f". {notice}" for notice in notices)
 
 
 def _identity_summary(results: list[dict], *, cap: int = 8) -> str:
@@ -206,6 +220,7 @@ def _handle_locate(inp, ctx):
             f"located {payload['returned']} object(s) for {inp.reference!r}"
             + (f" (TRUNCATED, limit {payload['limits']['limit']})" if payload["truncated"] else "")
             + f": {_identity_summary(payload['results'])}"
+            + _notices(payload)
         ),
     )
 
@@ -311,6 +326,7 @@ def _handle_recovery_plan(inp, ctx):
         summary=(
             f"recovery plan ({verdict}): {len(plan['steps'])} step(s); "
             f"execution: {plan['execution']}"
+            + _notices(payload)
         ),
     )
 
