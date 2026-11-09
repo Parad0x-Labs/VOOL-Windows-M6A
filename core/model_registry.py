@@ -15,6 +15,7 @@ from adapters.optional_transformers_adapter import OptionalTransformersAdapter
 from adapters.peft_lora_adapter import PeftLoRAAdapter
 from core.local_model_policy import filter_local_manifests_for_policy
 from core.model_selection_policy import ModelSelectionRequest, rank_providers, select_provider
+from core.ollama_cloud_models import CloudModelRefused, manifest_is_ollama_cloud, without_ollama_cloud_manifests
 from core.provider_execution_boundary import invoke_provider_execution_boundary
 from storage.model_provider_manifest import (
     ModelProviderManifest,
@@ -42,6 +43,8 @@ class ProviderAuditRow:
 class ModelRegistry:
     def register_manifest(self, manifest: ModelProviderManifest | dict) -> ModelProviderManifest:
         entry = manifest if isinstance(manifest, ModelProviderManifest) else ModelProviderManifest.model_validate(manifest)
+        if manifest_is_ollama_cloud(entry):
+            raise CloudModelRefused(entry.model_name)
         upsert_provider_manifest(entry)
         return entry
 
@@ -58,12 +61,18 @@ class ModelRegistry:
         # canonical LocalModelPolicy is disabled, no local manifest may leave this listing, so
         # nothing downstream can discover, route to, prewarm or fall back onto a local provider,
         # not even rows persisted by an earlier enabled run before a restart.
-        return filter_local_manifests_for_policy(
+        # An Ollama cloud model never leaves this seam either, whatever an earlier build or a
+        # hand edit persisted (core.ollama_cloud_models): nothing can list, route to, certify or
+        # prewarm one.
+        return without_ollama_cloud_manifests(filter_local_manifests_for_policy(
             list_provider_manifests(enabled_only=enabled_only, limit=limit)
-        )
+        ))
 
     def get_manifest(self, provider_name: str, model_name: str) -> ModelProviderManifest | None:
-        return get_provider_manifest(provider_name, model_name)
+        manifest = get_provider_manifest(provider_name, model_name)
+        if manifest is not None and manifest_is_ollama_cloud(manifest):
+            return None
+        return manifest
 
     def startup_warnings(self) -> list[str]:
         warnings: list[str] = []

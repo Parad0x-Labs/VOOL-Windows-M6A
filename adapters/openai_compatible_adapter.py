@@ -285,6 +285,12 @@ class OpenAICompatibleAdapter(ModelAdapter):
         prewarm_config = dict(self.manifest.runtime_config.get("prewarm") or {})
         if not prewarm_config:
             return super().prewarm()
+        from core.ollama_cloud_models import CloudModelRefused
+
+        try:
+            self._refuse_ollama_cloud_model()
+        except CloudModelRefused as exc:
+            return {"ok": False, "provider_id": self.manifest.provider_id, "status": "error", "error": str(exc)}
 
         strategy = str(prewarm_config.get("strategy") or "").strip().lower()
         if strategy not in {"ollama_generate", "ollama_chat"}:
@@ -432,12 +438,24 @@ class OpenAICompatibleAdapter(ModelAdapter):
         """
         from core.auto_local_only_mode import assert_endpoint_allowed
 
+        self._refuse_ollama_cloud_model()
         metadata = getattr(request, "metadata", None) if request is not None else None
         assert_endpoint_allowed(
             str(self.manifest.runtime_config.get("base_url") or ""),
             lane=str(self.manifest.provider_id or "openai_compatible"),
             source_context=metadata if isinstance(metadata, dict) else None,
         )
+
+    def _refuse_ollama_cloud_model(self) -> None:
+        """No call, prewarm or probe ever goes to an Ollama cloud model (core.ollama_cloud_models).
+
+        Checked by name and by any remote host the manifest records, before bytes leave: whatever
+        selected this lane, an Ollama ``/api/chat`` or ``/api/generate`` for a cloud stub is refused.
+        """
+        from core.ollama_cloud_models import CloudModelRefused, manifest_is_ollama_cloud
+
+        if manifest_is_ollama_cloud(self.manifest):
+            raise CloudModelRefused(str(self.manifest.model_name or ""))
 
     def run_text_task(self, request: ModelRequest) -> ModelResponse:
         return self._invoke_http(request, force_json=False)
@@ -1828,6 +1846,10 @@ class OpenAICompatibleAdapter(ModelAdapter):
         base_url = str(self.manifest.runtime_config.get("base_url") or "").strip().rstrip("/")
         if not _strict_tool_certification_loopback(base_url) or self._runtime_family() != "ollama":
             return identity
+        # A row or /api/show reply naming remote_host / remote_model is an Ollama cloud stub: the
+        # identity read refuses it rather than certify a model that would run on ollama.com.
+        from core.ollama_cloud_models import CloudModelRefused, refuses_remote_entry
+
         native_base = _native_ollama_base_url(base_url)
         if _identity_base_recently_unreachable(native_base):
             return identity
@@ -1845,12 +1867,16 @@ class OpenAICompatibleAdapter(ModelAdapter):
                     names = {str(row.get("name") or ""), str(row.get("model") or "")}
                     if self.manifest.model_name not in names:
                         continue
+                    if refuses_remote_entry(row):
+                        raise CloudModelRefused(str(self.manifest.model_name or ""))
                     identity["model_digest"] = str(row.get("digest") or identity["model_digest"])
                     details = dict(row.get("details") or {})
                     identity["quantization"] = str(
                         details.get("quantization_level") or identity["quantization"]
                     )
                     break
+        except CloudModelRefused:
+            raise
         except requests.exceptions.ConnectionError:
             _note_identity_base_unreachable(native_base)
             return identity
@@ -1865,6 +1891,8 @@ class OpenAICompatibleAdapter(ModelAdapter):
             )
             if show_response.ok:
                 show = dict(show_response.json() or {})
+                if refuses_remote_entry(show):
+                    raise CloudModelRefused(str(self.manifest.model_name or ""))
                 template = str(show.get("template") or "")
                 if template:
                     identity["template_hash"] = hashlib.sha256(template.encode()).hexdigest()
@@ -1872,6 +1900,8 @@ class OpenAICompatibleAdapter(ModelAdapter):
                 identity["quantization"] = str(
                     details.get("quantization_level") or identity["quantization"]
                 )
+        except CloudModelRefused:
+            raise
         except requests.exceptions.ConnectionError:
             _note_identity_base_unreachable(native_base)
         except Exception:
@@ -1897,6 +1927,7 @@ class OpenAICompatibleAdapter(ModelAdapter):
         base_url = str(self.manifest.runtime_config.get("base_url") or "").strip().rstrip("/")
         if not _strict_tool_certification_loopback(base_url):
             raise ValueError("tool certification is restricted to a loopback model endpoint")
+        self._refuse_ollama_cloud_model()
         safe_messages = [dict(item) for item in messages if isinstance(item, dict)]
         max_tokens = max(1, min(int(max_output_tokens or 1), 1024))
         headers = self._headers()

@@ -44,9 +44,11 @@ _MODEL_ENV = "VOOL_ARBITER_MODEL"
 def _ollama_chat_url() -> str:
     """The chat endpoint through the runtime's ONE Ollama resolution; an explicit
     VOOL_OLLAMA_CHAT_URL still wins, as the launcher contract promises."""
-    from core.ollama_endpoint import ollama_api_url
+    from core.ollama_endpoint import bundle_pinned_ollama_url, ollama_api_url
 
-    return os.environ.get("VOOL_OLLAMA_CHAT_URL") or ollama_api_url("/api/chat")
+    # Under the bundle supervisor its pinned address wins (core.ollama_endpoint): no override splits it.
+    override = "" if bundle_pinned_ollama_url() else os.environ.get("VOOL_OLLAMA_CHAT_URL")
+    return override or ollama_api_url("/api/chat")
 
 
 # Read window must survive a COLD LOAD of the tiny model: measured ~8.6s to load qwen3:0.6b on a
@@ -119,7 +121,9 @@ def _resolve_model() -> str:
     if _local_models_disabled():
         return ""
     explicit = str(os.environ.get(_MODEL_ENV) or "").strip()
-    if explicit:
+    from core.ollama_cloud_models import refuses_cloud_name
+
+    if explicit and not refuses_cloud_name(explicit):
         return explicit
     cached = _MODEL_CACHE.get("model")
     if cached is not None:
@@ -132,6 +136,9 @@ def _resolve_model() -> str:
 
         base = _ollama_chat_url().rsplit("/api/", 1)[0]
         tags = requests.get(f"{base}/api/tags", timeout=1.5).json().get("models") or []
+        from core.ollama_cloud_models import local_tag_rows
+
+        tags = local_tag_rows(list(tags))  # never an Ollama cloud stub (core.ollama_cloud_models)
         names = [str(t.get("name") or "").strip() for t in tags if t.get("name")]
         pick = ""
         for preferred in ("qwen3:0.6b", "qwen3:1.7b", "qwen3:4b", "qwen3:8b"):
