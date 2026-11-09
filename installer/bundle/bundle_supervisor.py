@@ -370,6 +370,9 @@ class BundleSupervisor:
         self.failures: dict[str, int] = {"ollama": 0, "api": 0, "window": 0}
         # Set while another program answers on the bundled Ollama's port (_note_ollama_owner).
         self.ollama_conflict = ""
+        # Set with a conflict, cleared only by a passing ownership check: until then no API starts,
+        # even after the port goes quiet.
+        self.ollama_needs_verify = False
         self.restart_counts: dict[str, int] = {"ollama": 0, "api": 0, "window": 0}
         self.next_attempt: dict[str, float] = {"ollama": 0.0, "api": 0.0, "window": 0.0}
         self.last_exit: dict[str, dict[str, Any]] = {}
@@ -842,15 +845,14 @@ class BundleSupervisor:
     def _ollama_is_ours(self) -> bool:
         """Whether the Ollama answering on the pinned port is the serve this supervisor started.
 
-        The listening socket decides: ours only when every pid listening on the port is the live
-        serve this supervisor started. A listener we did not start (the user's own Ollama) is another
-        program, and so is a table that cannot be read (fail closed). No listener seen at all leaves
-        the answer as it was (nothing on the port is attributed to anyone else)."""
+        The listening socket decides, and an unknown answer is not ours: ours only when the serve
+        this supervisor started is alive and is the one and only pid listening on the port, at any
+        address (127.0.0.1, ::1, 0.0.0.0, ::). A table that cannot be read, an empty table (an answer
+        with no listener seen), a listener whose pid is not reported (None or 0), or any other pid is
+        another program."""
         pids = self._ollama_listener_pids()
-        if pids is None:
-            return False
         if not pids:
-            return True
+            return False
         child = self.processes.get("ollama")
         if child is None or child.poll() is not None:
             return False
@@ -872,10 +874,12 @@ class BundleSupervisor:
 
     def _note_ollama_owner(self, ours: bool) -> None:
         if ours:
-            if self.ollama_conflict:
-                self._log("ollama port conflict cleared")
+            if self.ollama_conflict or self.ollama_needs_verify:
+                self._log("ollama port conflict cleared: our own serve answers and is the only listener")
             self.ollama_conflict = ""
+            self.ollama_needs_verify = False
             return
+        self.ollama_needs_verify = True
         self.health.setdefault("ollama", {})["owner"] = "another_program"
         if self.ollama_conflict:
             return
@@ -885,12 +889,14 @@ class BundleSupervisor:
         self._tell_user(_OLLAMA_PORT_IN_USE_TEXT)
 
     def _ensure_ollama(self) -> None:
+        # Every pass that finds the port answering reruns the full ownership check. A port gone quiet
+        # clears the message but not the check: the API waits until our own serve answers and passes.
         if self._watch_child("ollama", f"{_OLLAMA_URL_PIN}/api/tags"):
             if self.health.get("ollama", {}).get("healthy"):
                 self._note_ollama_owner(self._ollama_is_ours())
             return
         if self.ollama_conflict:
-            self._log("ollama port conflict cleared: the port no longer answers")
+            self._log("ollama port conflict cleared: the port no longer answers; the api waits for our own serve")
             self.ollama_conflict = ""
         self._start(
             "ollama", [str(self.root / "ollama" / "ollama.exe"), "serve"], cwd=self.root, extra_env=_OLLAMA_CHILD_ENV
@@ -907,6 +913,12 @@ class BundleSupervisor:
             return
         if _tick() < self.next_attempt["api"]:
             return  # backing off: no process scan and no start until the retry is due
+        # Every API start reruns the full ownership check on an answering port. After a conflict (a
+        # recovery) the API waits until that check passes, even while the port is quiet.
+        if self.health.get("ollama", {}).get("healthy"):
+            self._note_ollama_owner(self._ollama_is_ours())
+        if self.ollama_needs_verify:
+            return
         self._clear_stale_api_processes()
         # Our own work: awake time up to its own limit, a pause beyond that (see _PAUSE_SECONDS).
         self._absorb_pause(_STALE_API_CLEANUP_TIMEOUT_SECONDS, "during the stale-API scan")
@@ -1147,6 +1159,7 @@ class BundleSupervisor:
             "next_attempt": {name: wall + at - tick if at else 0.0 for name, at in self.next_attempt.items()},
             "last_exit": self.last_exit,
             "ollama_conflict": self.ollama_conflict,
+            "ollama_needs_verify": self.ollama_needs_verify,
         }
         with contextlib.suppress(OSError):
             self.state_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
