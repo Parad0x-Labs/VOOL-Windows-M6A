@@ -1345,7 +1345,9 @@ def _runtime_turn_truth(source_context: dict[str, Any] | None, *, reference_now:
     workspace_bound = bool(str(context.get("workspace") or context.get("workspace_root") or "").strip())
     if workspace_bound and binding == "marked_folder" and not project_id:
         # core/windows_marked_code_folder.py: this turn works in a folder the user named.
-        folder = str(context.get("workspace") or context.get("workspace_root") or "").strip()
+        folder = str(context.get("workspace") or context.get("workspace_root") or "")
+        # Quoted in backticks on one line: a folder name cannot close the quote or start a new line.
+        folder = re.sub(r"[\r\n\u2028\u2029]+", " ", folder.replace("`", "")).strip()
         facts.append(
             f"This turn works in the folder the user named, `{folder}`, which the owner marked as a "
             "folder VOOL may change. Use `.` or paths relative to it with workspace, test and sandbox "
