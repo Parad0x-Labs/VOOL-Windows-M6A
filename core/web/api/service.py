@@ -7603,10 +7603,11 @@ def _dispatch_post_inner(
             if requested_workspace
             else ("project" if project_workspace else "default")
         )
-        if workspace_binding == "default":
+        if workspace_binding == "default" and owner_local:
             # Windows: an unbound chat's Python or pytest ask that names a marked folder (or a
             # file in one) works in that folder, instead of being refused as outside the Desktop
-            # (captest C1-C3). Only a marked folder is ever chosen; every gate still decides.
+            # (captest C1-C3). Only a marked folder is ever chosen; every gate still decides. Only
+            # the owner's own turns: a channel or remote turn keeps the chat's folder.
             from core import windows_marked_code_folder
 
             try:

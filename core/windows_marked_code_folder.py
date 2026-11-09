@@ -18,6 +18,7 @@ Off Windows nothing changes.
 """
 from __future__ import annotations
 
+import ntpath
 import os
 import re
 from pathlib import Path
@@ -48,6 +49,19 @@ def is_code_ask(text: str) -> bool:
     return bool(_CODE_ASK_RE.search(body))
 
 
+def _on_a_local_drive(candidate: str) -> bool:
+    """Whether ``candidate`` may be looked at: decided before any stat of it. A path on a drive
+    letter only when Windows calls that drive local (a mapped network drive is a share under a
+    letter, and looking it up is already the SMB connection; a type Windows cannot name counts as
+    remote). On Windows a path with no drive letter is never local here."""
+    from core import windows_known_folders
+
+    drive = ntpath.splitdrive(str(candidate or ""))[0]
+    if re.fullmatch(r"[A-Za-z]:", drive):
+        return windows_known_folders._drive_is_remote(drive) is False
+    return not drive and os.name != "nt"
+
+
 def _named_folder(text: str) -> str | None:
     """The one marked folder ``text`` names (a folder, or the folder of a file it names).
 
@@ -63,6 +77,8 @@ def _named_folder(text: str) -> str | None:
     for start, candidate in candidates:
         if paths.typed_path_kind(body, start, candidate):
             return ""  # a share, device or incomplete path is never looked up
+        if not _on_a_local_drive(candidate):
+            return ""
         try:
             target = Path(candidate).expanduser()
             if not target.is_absolute():
