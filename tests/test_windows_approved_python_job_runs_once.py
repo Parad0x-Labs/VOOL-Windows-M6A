@@ -364,7 +364,9 @@ def test_without_an_approval_the_gate_still_asks_in_manual_mode(tmp_path) -> Non
     assert _gate("python t.py", str(tmp_path))["decision"] == "advice_only"
 
 
-def test_the_gate_lets_exactly_the_approved_command_through_once(tmp_path) -> None:
+def test_the_gate_lets_exactly_the_approved_command_through_once(tmp_path, monkeypatch) -> None:
+    # Windows only for 0.7.1 (Security Architect, 9 Nov): the spend applies on the Windows seam.
+    monkeypatch.setattr(job_runner, "_is_windows_platform", lambda: True)
     cwd = str(tmp_path)
     with execution_gate.operator_approved_command("python t.py", cwd=cwd):
         assert _gate("python -m pip install x", cwd)["decision"] == "advice_only"
