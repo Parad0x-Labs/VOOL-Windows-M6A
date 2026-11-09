@@ -119,7 +119,9 @@ def _resolve_model() -> str:
     if _local_models_disabled():
         return ""
     explicit = str(os.environ.get(_MODEL_ENV) or "").strip()
-    if explicit:
+    from core.ollama_cloud_models import is_cloud_model_name
+
+    if explicit and not is_cloud_model_name(explicit):
         return explicit
     cached = _MODEL_CACHE.get("model")
     if cached is not None:
@@ -132,6 +134,9 @@ def _resolve_model() -> str:
 
         base = _ollama_chat_url().rsplit("/api/", 1)[0]
         tags = requests.get(f"{base}/api/tags", timeout=1.5).json().get("models") or []
+        from core.ollama_cloud_models import local_tag_rows
+
+        tags = local_tag_rows(list(tags))  # never an Ollama cloud stub (core.ollama_cloud_models)
         names = [str(t.get("name") or "").strip() for t in tags if t.get("name")]
         pick = ""
         for preferred in ("qwen3:0.6b", "qwen3:1.7b", "qwen3:4b", "qwen3:8b"):

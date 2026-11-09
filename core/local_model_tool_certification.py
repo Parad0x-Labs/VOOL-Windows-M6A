@@ -277,6 +277,15 @@ def run_local_model_tool_certification(
     the probe. The only executable operations are the three in-memory functions below.
     """
 
+    from core.ollama_cloud_models import is_cloud_model, manifest_is_ollama_cloud, refusal_text
+
+    # An Ollama cloud model is never certified: by name, recorded remote host, or a stub (or an
+    # unreadable entry) in Ollama's model store (core.ollama_cloud_models). Nothing is sent.
+    if manifest_is_ollama_cloud(manifest) or (
+        str((manifest.metadata or {}).get("runtime_family") or "").strip().lower() == "ollama"
+        and is_cloud_model(manifest.model_name)
+    ):
+        raise CertificationBoundaryError(refusal_text(manifest.model_name))
     adapter_type = str(manifest.adapter_type or "openai_compatible")
     # ``LocalQwenProvider`` is the shipped Ollama registration and is a strict subclass of the
     # OpenAI-compatible adapter. Refusing its manifest made the explicit probe unusable against the
@@ -307,7 +316,12 @@ def run_local_model_tool_certification(
             raise CertificationBoundaryError(
                 "tool certification requires an OpenAI-compatible local adapter"
             )
-        runtime_identity = adapter.tool_certification_runtime_identity()
+        from core.ollama_cloud_models import CloudModelRefused
+
+        try:
+            runtime_identity = adapter.tool_certification_runtime_identity()
+        except CloudModelRefused as exc:  # Ollama's listing or /api/show named a remote host
+            raise CertificationBoundaryError(str(exc)) from exc
         backend_version = backend_version or str(runtime_identity.get("backend_version") or "unknown")
         exchange = adapter.tool_certification_exchange
     else:

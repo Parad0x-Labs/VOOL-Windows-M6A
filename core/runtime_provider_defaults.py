@@ -663,6 +663,11 @@ def register_installed_local_model(
     if not clean:
         return None
     env_map = os.environ if env is None else env
+    from core.ollama_cloud_models import refuse_cloud_model
+
+    # An Ollama cloud model is never registered: a cloud name, or a stub whose stored manifest names
+    # remote_host / remote_model, or one whose manifest cannot be read (core.ollama_cloud_models).
+    refuse_cloud_model(clean, env=env_map)
     from core.local_model_bundles import installed_ollama_role_for_model
 
     role = installed_ollama_role_for_model(
@@ -688,6 +693,11 @@ def _ensure_local_ollama_provider(
     env: Mapping[str, str] | None = None,
 ) -> bool:
     env_map = os.environ if env is None else env
+    from core.ollama_cloud_models import is_cloud_model_name
+
+    if is_cloud_model_name(model_tag):
+        # A cloud name (for example a VOOL_OLLAMA_MODEL pin) is never a lane; boot carries on.
+        return False
     existing = registry.get_manifest("ollama-local", model_tag)
     selected_base_url = default_local_provider_base_url(env_map)
     if existing is not None and not isinstance(existing, ModelProviderManifest):
