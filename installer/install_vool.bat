@@ -483,7 +483,7 @@ if "%OLLAMA_EXE%"=="" (
 
 echo Step 10/14: Starting Ollama server...
 REM Check if Ollama is already serving
-powershell -NoProfile -Command "try { $r = Invoke-WebRequest -Uri 'http://localhost:11434' -UseBasicParsing -TimeoutSec 3; exit 0 } catch { exit 1 }" >nul 2>&1
+powershell -NoProfile -Command "try { $r = Invoke-WebRequest -Uri 'http://127.0.0.1:11434' -UseBasicParsing -TimeoutSec 3; exit 0 } catch { exit 1 }" >nul 2>&1
 if !errorlevel! neq 0 (
   start "" /B "%OLLAMA_EXE%" serve
   powershell -NoProfile -Command "Start-Sleep -Seconds 5" >nul 2>&1

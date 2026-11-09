@@ -291,6 +291,75 @@ def supervisor_job_stays_with_its_own_tests(monkeypatch):
     yield
 
 
+# Modules whose bundle supervisors run on mock children, with every health check answered by a stub
+# and no socket table of their own.
+_FAKE_CHILD_SOCKET_TABLE_MODULES = ("test_windows_supervisor_restarts_a_hung_child_not_a_slow_one",)
+
+
+@pytest.fixture(autouse=True)
+def fake_children_listen_on_the_ollama_port(request, monkeypatch):
+    """Give the mock-child supervisor tests a port 11434 that only their own Ollama child holds.
+
+    The bundle supervisor uses the Ollama answering on 127.0.0.1:11434 only when the serve it
+    started is alive and is the only pid listening on that port (``_ollama_is_ours``); anything
+    unknown is not ours. The tests in ``_FAKE_CHILD_SOCKET_TABLE_MODULES`` stand a stub in for the
+    bundled serve and answer its port from the very first pass, before any serve is started, while
+    their mock children own no real socket: to the supervisor that is another program on the port,
+    so no API would start. Here those tests get the port a real machine would show for them:
+
+    * the stub's Ollama answer counts only while a live mock "ollama serve" child of that supervisor
+      runs (a real port answers only once its serve is up), and
+    * psutil's socket table holds one LISTEN row on 127.0.0.1:11434 for each such child, and
+      nothing else.
+
+    The supervisor's ownership check runs unchanged against that table. Test infrastructure only:
+    no test in those modules is edited, and the rows for a foreign or unknown listener live in
+    tests/test_windows_bundled_ollama_ownership_fails_closed.py.
+    """
+    if request.module.__name__.rsplit(".", 1)[-1] not in _FAKE_CHILD_SOCKET_TABLE_MODULES:
+        yield
+        return
+    import psutil
+
+    from installer.bundle import bundle_supervisor
+
+    built: list[object] = []
+    real_init = bundle_supervisor.BundleSupervisor.__init__
+
+    def init(self, *args, **kwargs):
+        real_init(self, *args, **kwargs)
+        built.append(self)
+
+    def net_connections(kind="inet"):
+        rows = []
+        for supervisor in built:
+            child = supervisor.processes.get("ollama")
+            if child is not None and child.poll() is None:
+                rows.append(
+                    SimpleNamespace(
+                        laddr=SimpleNamespace(ip="127.0.0.1", port=11434),
+                        raddr=(),
+                        status=psutil.CONN_LISTEN,
+                        pid=child.pid,
+                    )
+                )
+        return rows
+
+    real_checked = bundle_supervisor.BundleSupervisor._checked
+
+    def checked(self, url, what):
+        answered = real_checked(self, url, what)
+        if ":11434/" in url:
+            child = self.processes.get("ollama")
+            return answered and child is not None and child.poll() is None
+        return answered
+
+    monkeypatch.setattr(bundle_supervisor.BundleSupervisor, "_checked", checked)
+    monkeypatch.setattr(bundle_supervisor.BundleSupervisor, "__init__", init)
+    monkeypatch.setattr(psutil, "net_connections", net_connections)
+    yield
+
+
 @pytest.fixture(autouse=True)
 def windows_broker_session_does_not_outlive_its_test(monkeypatch):
     """Put the broker session back as it was after every test.
