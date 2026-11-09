@@ -2937,7 +2937,10 @@ def plan_tool_workflow(
     steps = [dict(step) for step in list(executed_steps or []) if isinstance(step, dict)]
     replacement = _explicit_replace_request(raw_text)
     patch_text = _explicit_unified_diff_request(raw_text)
-    explicit_command = _explicit_command_request(raw_text)
+    # The command a job runs is read from what the user typed (`verbatim_request_text`), like a write's
+    # content: input normalization glues a lone "." to the word before it, so
+    # "run python -m compileall -q ." was planned, shown on the card and approved as `-q.`.
+    explicit_command = _explicit_command_request(verbatim_request_text(source_context, raw_text) or raw_text)
     compare_or_verify = any(marker in lowered for marker in (" compare ", " versus ", " vs ", " verify ", " confirm ", " is it true "))
     lookup_followup_text = ""
     if followup_resume and not (looks_like_explicit_lookup_request(text) or looks_like_public_entity_lookup_request(text)):

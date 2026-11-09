@@ -106,6 +106,11 @@ class PermissionDecision:
     actions: tuple[PermissionAction, ...]
     reason: str
     approval_request: dict[str, Any] | None = None
+    #: True only when the allow is the operator's own answer for this exact call: the live approval
+    #: token this call spent, or a task grant the operator chose, bound to the call's fingerprint. The
+    #: sandbox command gate reads it (via the authorized boundary) so the approved command runs
+    #: instead of being asked about again. An earlier, already-spent grant does not set it.
+    exact_approval: bool = False
 
     @property
     def allowed(self) -> bool:
@@ -3231,7 +3236,14 @@ def _consume_matching_approval(
     fingerprint: str,
     session_id: str,
     task_id: str,
+    spent: list[str] | None = None,
 ) -> bool:
+    """Spend the live approval token for this exact call, or ride an earlier grant of it.
+
+    ``spent`` (when given) receives ``"token"`` when THIS call spent the live token in hand: the
+    operator's one answer was used up by it, which is what lets the sandbox command gate run the
+    approved command once (``PermissionDecision.exact_approval``). Riding an earlier, already-spent
+    grant appends nothing."""
     token = str(source_context.get("mode_approval_token") or "").strip()
     if not token:
         # No live token in hand, but the operator may already have granted this EXACT call
@@ -3271,11 +3283,15 @@ def _consume_matching_approval(
             if not remaining:
                 approval["status"] = "consumed"
                 _persist_pending_approvals_locked()
+            if spent is not None:
+                spent.append("token")
             return True
         if approval.get("fingerprint") != fingerprint:
             return False
         approval["status"] = "consumed"
         _persist_pending_approvals_locked()
+        if spent is not None:
+            spent.append("token")
         return True
 
 
@@ -3681,12 +3697,15 @@ def _decide_tool_call(
         source_context=context,
     )
 
-    token_step = _consume_matching_approval if consume else _matching_approval_covers
-    if token_step(
-        context,
-        fingerprint=fingerprint,
-        session_id=session_id,
-        task_id=logical_task_id,
+    spent: list[str] = []
+    if (
+        _consume_matching_approval(
+            context, fingerprint=fingerprint, session_id=session_id, task_id=logical_task_id, spent=spent
+        )
+        if consume
+        else _matching_approval_covers(
+            context, fingerprint=fingerprint, session_id=session_id, task_id=logical_task_id
+        )
     ):
         meta["token_matched"] = True
         if consume:
@@ -3702,6 +3721,9 @@ def _decide_tool_call(
             mode=mode,
             actions=actions,
             reason="Exact action approval matched this task, target, and side-effect class.",
+            # Only the call that spent the operator's live token: a re-emission riding an earlier,
+            # already-spent grant is allowed by the controller but is not a fresh approval to run.
+            exact_approval=bool(spent),
         ), meta
 
     with _LOCK:
@@ -3732,6 +3754,7 @@ def _decide_tool_call(
             mode=mode,
             actions=actions,
             reason="This non-edit action type was approved for the current task and mode revision.",
+            exact_approval=True,
         ), meta
 
     # Project permissions can only narrow mode permissions, never widen them.
