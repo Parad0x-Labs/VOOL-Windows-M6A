@@ -472,7 +472,20 @@ def spawn_detached_stop(*, project_root: Path, vool_home: Path | None) -> bool:
         if sys.platform == "win32":
             # DETACHED | NEW_GROUP | NO_WINDOW | BREAKAWAY_FROM_JOB
             flags = 0x00000008 | 0x00000200 | 0x08000000 | 0x01000000
-            subprocess.Popen(launcher_cmd, cwd=str(root), creationflags=flags, close_fds=True)
+            try:
+                subprocess.Popen(launcher_cmd, cwd=str(root), creationflags=flags, close_fds=True)
+            except OSError as exc:
+                # The installed bundle's API runs in the supervisor's kill-on-close job, which
+                # does not allow breakaway, and CreateProcess refuses BREAKAWAY_FROM_JOB there
+                # with ERROR_ACCESS_DENIED. Start it inside the job instead, as
+                # start_windows_detached does: the supervisor stop signal the stopper writes
+                # before its port kills closes that job only after the supervisor has stopped
+                # its own children.
+                if getattr(exc, "winerror", None) != 5:
+                    raise
+                subprocess.Popen(
+                    launcher_cmd, cwd=str(root), creationflags=flags & ~0x01000000, close_fds=True
+                )
         else:
             subprocess.Popen(launcher_cmd, cwd=str(root), start_new_session=True)
         return True

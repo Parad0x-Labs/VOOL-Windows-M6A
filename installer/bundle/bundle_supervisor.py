@@ -224,6 +224,100 @@ def _windows_root_forms(root: Path) -> tuple[str, ...]:
     return tuple(forms)
 
 
+#: The title the window host gives the main VOOL window (vool_window.py create_window("VOOL", ...)).
+_MAIN_WINDOW_TITLE = "VOOL"
+
+
+def _raise_window_of(windows: Any, pid: int) -> bool:
+    """Restore and bring forward the main VOOL window of ``pid``. True when one was found."""
+    targets = [hwnd for hwnd in windows.windows_of(pid) if windows.title(hwnd) == _MAIN_WINDOW_TITLE]
+    if not targets:
+        return False
+    # The process that may set the foreground (this one, which the user just started) lets the
+    # window host take it, so the host's window can come forward rather than only flash.
+    windows.allow_foreground(pid)
+    for hwnd in targets:
+        if windows.is_minimized(hwnd):
+            windows.restore(hwnd)
+        else:
+            windows.show(hwnd)
+        windows.set_foreground(hwnd)
+    return True
+
+
+class _Win32Windows:
+    """The few user32 calls that find a process's top-level windows and bring one forward."""
+
+    _SW_SHOW = 5
+    _SW_RESTORE = 9
+    _GW_OWNER = 4
+
+    def __init__(self) -> None:
+        import ctypes
+        from ctypes import wintypes
+
+        self._ctypes = ctypes
+        self._wintypes = wintypes
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        self._enum_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        user32.EnumWindows.argtypes = (self._enum_proc, wintypes.LPARAM)
+        user32.EnumWindows.restype = wintypes.BOOL
+        user32.GetWindowThreadProcessId.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.DWORD))
+        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+        user32.GetWindow.argtypes = (wintypes.HWND, ctypes.c_uint)
+        user32.GetWindow.restype = wintypes.HWND
+        user32.GetWindowTextLengthW.argtypes = (wintypes.HWND,)
+        user32.GetWindowTextLengthW.restype = ctypes.c_int
+        user32.GetWindowTextW.argtypes = (wintypes.HWND, wintypes.LPWSTR, ctypes.c_int)
+        user32.GetWindowTextW.restype = ctypes.c_int
+        user32.IsIconic.argtypes = (wintypes.HWND,)
+        user32.IsIconic.restype = wintypes.BOOL
+        user32.ShowWindow.argtypes = (wintypes.HWND, ctypes.c_int)
+        user32.ShowWindow.restype = wintypes.BOOL
+        user32.SetForegroundWindow.argtypes = (wintypes.HWND,)
+        user32.SetForegroundWindow.restype = wintypes.BOOL
+        user32.AllowSetForegroundWindow.argtypes = (wintypes.DWORD,)
+        user32.AllowSetForegroundWindow.restype = wintypes.BOOL
+        self._user32 = user32
+
+    def windows_of(self, pid: int) -> list[int]:
+        ctypes, wintypes, user32 = self._ctypes, self._wintypes, self._user32
+        found: list[int] = []
+
+        def _each(hwnd: Any, _lparam: Any) -> bool:
+            owner = wintypes.DWORD(0)
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+            if owner.value == pid and not user32.GetWindow(hwnd, self._GW_OWNER):
+                found.append(int(hwnd))
+            return True
+
+        user32.EnumWindows(self._enum_proc(_each), 0)
+        return found
+
+    def title(self, hwnd: int) -> str:
+        length = int(self._user32.GetWindowTextLengthW(hwnd))
+        if length <= 0:
+            return ""
+        buffer = self._ctypes.create_unicode_buffer(length + 1)
+        self._user32.GetWindowTextW(hwnd, buffer, length + 1)
+        return buffer.value
+
+    def is_minimized(self, hwnd: int) -> bool:
+        return bool(self._user32.IsIconic(hwnd))
+
+    def allow_foreground(self, pid: int) -> None:
+        self._user32.AllowSetForegroundWindow(pid)
+
+    def restore(self, hwnd: int) -> None:
+        self._user32.ShowWindow(hwnd, self._SW_RESTORE)
+
+    def show(self, hwnd: int) -> None:
+        self._user32.ShowWindow(hwnd, self._SW_SHOW)
+
+    def set_foreground(self, hwnd: int) -> None:
+        self._user32.SetForegroundWindow(hwnd)
+
+
 class BundleSupervisor:
     def __init__(self, root: Path, *, env: dict[str, str] | None = None) -> None:
         self.root = root.resolve()
@@ -264,6 +358,8 @@ class BundleSupervisor:
         self._job_factory: Callable[[], Any] = new_kill_on_close_job
         self._resume: Callable[[int], None] = resume_suspended
         self._job: Any | None = None
+        # Windows: the user32 calls a second launch uses to bring the open window forward.
+        self._windows_factory: Callable[[], Any] = _Win32Windows
 
     def _manifest(self) -> dict[str, Any]:
         path = self.root / "bundle_manifest.json"
@@ -871,6 +967,34 @@ class BundleSupervisor:
         with contextlib.suppress(OSError):
             self.window_reopen_path.write_text("reopen\n", encoding="utf-8")
 
+    def _bring_open_window_forward(self) -> None:
+        """A second launch shows the window that is already open: restored if minimized, then
+        brought to the front. The running supervisor leaves an open window as it is, so without
+        this a minimized window stayed minimized and the launch looked like nothing happened.
+
+        This process is the one the user just started from the Start menu, desktop shortcut or a
+        vool:// link, so it is the one Windows may let hand the foreground on. Only the window
+        host's pid that this home's supervisor recorded is used, and only its top-level window
+        titled VOOL is touched. Anything unreadable or unexpected touches nothing.
+        """
+        if not _is_windows_platform():
+            return
+        try:
+            payload = json.loads(self.state_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        pids = payload.get("pids") if isinstance(payload, dict) else None
+        pid = pids.get("window") if isinstance(pids, dict) else None
+        if type(pid) is not int or pid <= 0 or pid == os.getpid():
+            return
+        try:
+            raised = _raise_window_of(self._windows_factory(), pid)
+        except Exception as exc:  # a launch must never fail on this; the reopen request stands
+            self._log(f"open window not brought forward: {type(exc).__name__}: {exc}")
+            return
+        if raised:
+            self._log("open window brought forward")
+
     def _consume_window_reopen(self) -> None:
         """Honor a reopen request: a window the user closed opens again once the API answers. A
         window that is still open is left as it is, unless it exits within the grace period --
@@ -935,6 +1059,7 @@ class BundleSupervisor:
         if not self._acquire_lease():
             self._request_window_reopen()
             self._log("supervisor already running; window reopen requested")
+            self._bring_open_window_forward()
             return 0
         self._prepare()
         self.stop_path.unlink(missing_ok=True)
