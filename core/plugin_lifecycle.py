@@ -420,10 +420,12 @@ def verify(plugin_id: str, *, root: Path | None = None, expected_digest: str = "
 #: Manifest keys that are data, never a way to run something: the keys VOOL's own manifest code
 #: reads or writes (plugin_tools.parse_manifest, plugin_lifecycle.inspect, plugin_catalog,
 #: skill_package._stage_pack/create_plugin, addon_store.install_review). Any key outside this list
-#: and `_SKILLS_ONLY_EMPTY_KEYS` makes a pack not skills-only, whatever its value.
+#: and `_SKILLS_ONLY_EMPTY_KEYS` makes a pack not skills-only, whatever its value. homepage,
+#: repository and license are inert package metadata nothing in VOOL acts on.
 _SKILLS_ONLY_SAFE_KEYS = frozenset({
     "name", "version", "description", "author", "interface", "keywords",
     "skills", "permissions", "credential_bindings", "requires", "vool",
+    "homepage", "repository", "license",
 })
 #: Runnable keys tolerated only when empty (null, [], {}, ""): VOOL's own skills installs write
 #: `"tools": []` (addon_store.install_review). Non-empty, they declare runnable code.
