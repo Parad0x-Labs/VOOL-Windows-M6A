@@ -991,3 +991,19 @@ def isolated_mock_provider_host_state(request, monkeypatch):
         # The builder helper stubs its generator/executor; these router cases stub invocation.
         # Enable the lane under test, without enabling local inference for unrelated modules.
         monkeypatch.setenv("VOOL_LOCAL_MODELS_ENABLED", "1")
+
+
+# ---- DIAGNOSTIC BRANCH ONLY (never merged): move-share-lexical rows on windows-latest.
+_DIAG_KEEP = (
+    "tests/test_windows_write_gate_refuses_share_spellings_before_any_lookup.py::",
+    "tests/test_windows_write_gate_judges_home_and_relative_spellings.py::",
+    "tests/test_windows_nonlocal_path_message_lanes.py::test_each_message_lane_refuses_every_form_lexically[operator_move_and_disk_usage]",
+)
+
+
+def pytest_collection_modifyitems(session, config, items):
+    keep = [item for item in items if item.nodeid.replace("\\", "/").startswith(_DIAG_KEEP)]
+    deselected = [item for item in items if item not in keep]
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+    items[:] = keep
