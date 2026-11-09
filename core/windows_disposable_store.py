@@ -206,6 +206,10 @@ def refusal_reason(path: str, *, extra_sealed: tuple[str, ...] = ()) -> str:
     raw = str(path or "").strip()
     if not raw or "\x00" in raw:
         return "it is not a folder path"
+    if (_IS_NT or windows_write_gate.active()) and windows_write_gate._refused_spelling(raw):
+        # A share, device, doubled-separator or network-drive spelling is refused before the link
+        # check below looks at any part of it: that lookup is already the SMB connection.
+        return "it is a network, device, linked or missing folder"
     linked = _link_on_the_way(raw)
     if linked:
         return f"{linked} is a junction or link; mark the folder it points at instead"

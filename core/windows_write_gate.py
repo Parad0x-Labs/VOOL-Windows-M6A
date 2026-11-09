@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import json
 import logging
+import ntpath
 import os
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -93,10 +95,80 @@ _PROFILE_VARS = ("USERPROFILE",)
 _HELD_VARS = ("TEMP", "TMP", "LOCALAPPDATA")
 
 
+#: A drive letter followed by two separators: `C://host/s`, `C:\\\\host\\s`, `C:/\\x`, `C:\\/x`.
+_DOUBLED_DRIVE_SEPARATOR_RE = re.compile(r"^[\"'`]?[A-Za-z]:[\\/]{2}")
+_DRIVE_RE = re.compile(r"[A-Za-z]:")
+#: What `_refused_spelling` answers besides `windows_path_policy.NETWORK_KINDS`.
+DOUBLED_DRIVE = "doubled_drive_separator"
+REMOTE_DRIVE = "remote_drive"
+
+
+def _refused_spelling(value: Any) -> str:
+    """Why the gate refuses `value` by its spelling alone, before anything resolves, stats or lists
+    it, or "" when it may be looked up: a share, a device path or an NT object path
+    (`windows_path_policy.classify`, network tier); a drive path with a doubled separator right after
+    the colon (`C://host/s`, `C:\\\\host\\s`), which a reader of the text from its first separator
+    takes for the share `//host/s`; and a drive Windows does not call local
+    (`windows_known_folders._drive_is_remote` is not False: a mapped network drive is a share under
+    a letter, and a drive type Windows cannot name counts as remote). Each is judged as written and
+    with `%VAR%` and `$VAR` expanded, since the operator lane expands them.
+
+    On Windows looking any of these up is already the SMB connection, and the user's NTLM hash sent
+    to whoever answers, so every check here runs before `_inside`, `_landing` or a root's own checks
+    reach the filesystem (RECONCILE-351 F1). Asked only where the gate is on."""
+    text = windows_path_policy._text(value)
+    if text is None:
+        return ""
+    kind = windows_path_policy.classify(text, network_only=True)
+    if kind:
+        return kind
+    stripped = text.strip()
+    for spelled in dict.fromkeys((stripped, ntpath.expandvars(stripped).strip(), os.path.expandvars(stripped).strip())):
+        if _DOUBLED_DRIVE_SEPARATOR_RE.match(spelled):
+            return DOUBLED_DRIVE
+        drive = ntpath.splitdrive(spelled.lstrip("\"'`"))[0]
+        if _DRIVE_RE.fullmatch(drive):
+            from core import windows_known_folders
+
+            try:
+                local = windows_known_folders._drive_is_remote(drive.upper()) is False
+            except Exception:  # an unknown drive type counts as remote (fail closed)
+                local = False
+            if not local:
+                return REMOTE_DRIVE
+    return ""
+
+
+def refused_spelling(value: Any, *, windows: bool | None = None) -> str:
+    """Where the gate is on (`active`), the kind `_refused_spelling` gives `value`; otherwise "".
+    For a lane that reads a path out of a message and must refuse it before its own first lookup."""
+    if not active(windows=windows):
+        return ""
+    return _refused_spelling(value)
+
+
+def spelling_refusal_text(value: Any, kind: str, *, what: str = "path", nothing: str = "changed") -> str:
+    """The sentence the gate refuses a `_refused_spelling` kind with, naming `value` as written."""
+    text = windows_path_policy._text(value)
+    shown = re.sub(r"[\r\n\v\f\x1c\x1d\x1e\x85\u2028\u2029]", " ",
+                   (str(value) if text is None else text).replace("`", ""))[:120]
+    if kind == DOUBLED_DRIVE:
+        form = "a drive path with a doubled separator, which reads as a share"
+    elif kind == REMOTE_DRIVE:
+        form = "a drive Windows does not call local (a mapped network drive is a share under a letter)"
+    else:
+        form = "a share or a device path"
+    return (
+        f"On Windows, VOOL does not look up the {what} `{shown}`: it is {form}, and looking it up already "
+        f"connects to it. Nothing was {nothing}."
+    )
+
+
 def _resolved_norm(value: str) -> str:
     """`value` as the gate compares it: resolved (junctions and links followed) and normcased.
-    A share or device spelling is never resolved, since resolving it is the SMB connection."""
-    if windows_path_policy.classify(value, network_only=True):
+    A share, device, doubled-separator or network-drive spelling is never resolved, since resolving
+    it is the SMB connection."""
+    if _refused_spelling(value):
         return os.path.normcase(value)
     return os.path.normcase(os.path.realpath(value))
 
@@ -157,7 +229,7 @@ def _windows_root(part: str, *, wide: bool = True) -> str | None:
     a real Windows host. A drive root, the user profile and a folder holding TEMP, TMP or
     LOCALAPPDATA are skipped too, judged after resolving (`_too_wide`); `wide=False` leaves that
     to the caller (the owner's list judges marks with its own rules, core/windows_disposable_store.py)."""
-    kind = windows_path_policy.classify(part, network_only=True) or (
+    kind = _refused_spelling(part) or (
         windows_path_policy.classify(part) if os.name == "nt" else ""
     )
     if kind:
@@ -299,10 +371,15 @@ def capability_report() -> dict[str, Any] | None:
     }
 
 
-def _inside(path: str, roots: list[str]) -> bool:
+def _inside(path: str, roots: list[str], *, lexical: bool | None = None) -> bool:
+    """Whether `path`, resolved, lies inside one of `roots`. Where the gate is on (`lexical`, by
+    default `active()`), a spelling `_refused_spelling` refuses is never inside, and is not resolved:
+    resolving a share is already the SMB connection."""
     # No file can have a path holding a NUL. POSIX realpath raises on one, but Windows realpath
     # returns it unresolved, so the text around the NUL would decide where it lies.
     if "\x00" in path:
+        return False
+    if (active() if lexical is None else lexical) and _refused_spelling(path):
         return False
     try:
         candidate = os.path.normcase(os.path.realpath(path))
@@ -621,6 +698,16 @@ def refusal(
             "complete: a cleanup also empties the system temp folders and a plan stored earlier, which "
             f"are not limited to the folders marked in {ENV_VAR}. Nothing was changed."
         )
+    # Every path the call names, judged by its spelling before anything places, resolves or stats it:
+    # `_landing` resolves a machine path, and `_inside` resolves every target.
+    if workspace_root and intent not in _LANDING_ONLY:
+        kind = _refused_spelling(workspace_root)
+        if kind:
+            return spelling_refusal_text(workspace_root, kind, what="folder this call works in")
+    for key in _GATED[intent]:
+        kind = _refused_spelling(arguments.get(key))
+        if kind:
+            return spelling_refusal_text(arguments.get(key), kind, what=key)
     roots = flagged_roots(environ)
     targets = [str(workspace_root)] if workspace_root and intent not in _LANDING_ONLY else []
     for key in _GATED[intent]:
@@ -634,7 +721,7 @@ def refusal(
                         "so its target cannot be checked")
             return f"{intent} names a {key} the gate cannot place exactly, so its target cannot be checked"
         targets.extend(landing)
-    if roots and targets and all(_inside(target, roots) for target in targets):
+    if roots and targets and all(_inside(target, roots, lexical=True) for target in targets):
         # Only once every place the arguments name is inside: the folders the call runs in, which
         # need a journal read (and for git, one git process).
         try:
@@ -643,7 +730,7 @@ def refusal(
             places = f"where this call writes could not be checked ({type(exc).__name__})"
         if isinstance(places, str):
             return f"{places}; nothing was changed."
-        outside = [(label, place) for label, place in places if not _inside(place, roots)]
+        outside = [(label, place) for label, place in places if not _inside(place, roots, lexical=True)]
         if not outside:
             return None
         label, place = outside[0]
@@ -659,5 +746,5 @@ def refusal(
     )
 
 
-__all__ = ["ENV_VAR", "STATUS", "active", "broker_report", "flagged_roots", "inside_flagged", "may_refuse", "refusal",
-           "wide_root_reason"]
+__all__ = ["DOUBLED_DRIVE", "ENV_VAR", "REMOTE_DRIVE", "STATUS", "active", "broker_report", "flagged_roots",
+           "inside_flagged", "may_refuse", "refusal", "refused_spelling", "spelling_refusal_text", "wide_root_reason"]
