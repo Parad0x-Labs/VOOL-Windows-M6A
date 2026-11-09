@@ -77,12 +77,17 @@ def _value(name: str, *, bare: bool) -> str:
 
 
 _WORD = r"(?:the\s+(?:word|text)\s+)?"
+#: How a request may open before its verb. Every reader here is anchored at the start of a one-line
+#: message (as `_UNDO_RE` and the program-request lane are), so a pasted log or a sentence that only
+#: mentions "replace 'a' with 'b' in <file>" is never read as a request: in Auto mode it would run
+#: with no approval (Security Architect review of R1-4, 9 Nov 2026).
+_LEAD = r"^\s*(?:(?:please|ok(?:ay)?|now)\b[,]?\s+)*"
 #: "replace a with b" may name single words bare, as the planner reads it; "change ... to ..." only
 #: in quotes, since "change the font to bold" names no text to replace.
 _EDIT_RES = (
-    re.compile(r"\breplace\s+" + _WORD + _value("old", bare=True) + r"\s+with\s+" + _WORD + _value("new", bare=True),
+    re.compile(r"replace\s+" + _WORD + _value("old", bare=True) + r"\s+with\s+" + _WORD + _value("new", bare=True),
                re.IGNORECASE),
-    re.compile(r"\bchange\s+" + _WORD + _value("old", bare=False) + r"\s+(?:to|into)\s+" + _WORD
+    re.compile(r"change\s+" + _WORD + _value("old", bare=False) + r"\s+(?:to|into)\s+" + _WORD
                + _value("new", bare=False), re.IGNORECASE),
 )
 _UNDO_RE = re.compile(
@@ -92,7 +97,10 @@ _UNDO_RE = re.compile(
     r"(?:,?\s+please)?\s*[.!]?\s*$",
     re.IGNORECASE,
 )
-_MOVE_VERB_RE = re.compile(r"\b(?:move|mv)(?:\s+(?:the\s+)?file)?\s*\Z", re.IGNORECASE)
+_LEAD_RE = re.compile(_LEAD, re.IGNORECASE)
+#: The one other opening an edit may have: the folder first ("in <folder>, replace 'a' with 'b' in x.txt").
+_FOLDER_FIRST_RE = re.compile(r"in\s+[\"'`]?", re.IGNORECASE)
+_MOVE_VERB_RE = re.compile(_LEAD + r"(?:move|mv)(?:\s+(?:the\s+)?file)?\s*\Z", re.IGNORECASE)
 _MOVE_LINK_RE = re.compile(r"(?:to|into|in|over\s+to)(?:\s+the)?(?:\s+folder)?", re.IGNORECASE)
 #: A bare file name an edit names next to a folder: "... in mixed.txt in <folder>".
 #: A name with spaces is read only in quotes; a quoted name holds no folder separator.
@@ -174,8 +182,28 @@ def _blank(body: str, start: int, end: int) -> str:
     return body[:start] + " " * (end - start) + body[end:]
 
 
+def _edit_request_start(text: str) -> int:
+    """Where the verb of an edit request may stand: after the lead words, or after a leading
+    "in <full path>," that names the folder first; -1 when the message opens any other way."""
+    lead = _LEAD_RE.match(text)
+    pos = lead.end() if lead else 0
+    if any(pattern.match(text, pos) for pattern in _EDIT_RES):
+        return pos
+    folder = _FOLDER_FIRST_RE.match(text, pos)
+    if folder is None:
+        return -1
+    for start, path in _candidates(text):
+        if start == folder.end():
+            after = re.compile(r"[\"'`]?\s*,?\s*").match(text, start + len(path))
+            return after.end() if after else -1
+    return -1
+
+
 def _edit(text: str) -> MarkedFileAsk | None:
-    match = next((found for found in (pattern.search(text) for pattern in _EDIT_RES) if found), None)
+    pos = _edit_request_start(text)
+    if pos < 0:
+        return None
+    match = next((found for found in (pattern.match(text, pos) for pattern in _EDIT_RES) if found), None)
     if match is None:
         return None
     old, new = _quoted(match, "old"), _quoted(match, "new")
@@ -222,7 +250,7 @@ def _first_unlookable(body: str, candidates: list[tuple[int, str]]) -> str:
 
 def _move(text: str) -> MarkedFileAsk | None:
     candidates = _candidates(text)
-    if not candidates or not _MOVE_VERB_RE.search(text[:candidates[0][0]].rstrip("\"'`")):
+    if not candidates or not _MOVE_VERB_RE.match(text[:candidates[0][0]].rstrip("\"'`")):
         return None
     # A share or a drive Windows does not call local is refused before it is read any further.
     refusal = _first_unlookable(text, candidates)
@@ -301,8 +329,8 @@ def marked_file_ask(text: str, *, source_context: dict[str, Any] | None, session
     if not windows_write_gate.active() or not _owner_local(source_context):
         return None
     body = str(text or "")
-    if not body.strip():
-        return None
+    if not body.strip() or "\n" in body.strip() or "\r" in body.strip():
+        return None  # a request is one line; a paste of several is never read as one
     ledger_session = str((source_context or {}).get("session_id") or "").strip() or str(session_id or "").strip()
     for reader in (lambda: _undo(body, ledger_session), lambda: _move(body), lambda: _edit(body)):
         ask = reader()
