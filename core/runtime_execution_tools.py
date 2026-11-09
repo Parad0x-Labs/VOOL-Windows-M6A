@@ -2031,6 +2031,11 @@ def _machine_move_path(
     allowed_roots = list(_safe_machine_roots())
     if workspace_root is not None:
         allowed_roots.append(workspace_root)
+    # On Windows the folders the owner marked are the places VOOL may change, wherever they are, as
+    # for machine.write_file (`_marked_folder_machine_target`): a move between two marked folders
+    # outside Desktop, Documents and Downloads was refused here (captest R1-4). The Windows write
+    # gate checks both paths again before this runs.
+    allowed_roots.extend(_marked_machine_roots())
     result = move_path(
         str((arguments or {}).get("source") or ""),
         str((arguments or {}).get("destination") or ""),
@@ -4707,6 +4712,19 @@ def _marked_folder_machine_target(raw_path: str | None) -> Path | None:
     except (OSError, RuntimeError, ValueError):
         return None
     return candidate if windows_write_gate.inside_flagged(str(candidate)) else None
+
+
+def _marked_machine_roots() -> list[Path]:
+    """On Windows, the folders the owner marked (core/windows_write_gate.py); none off Windows or
+    when they cannot be read."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return []
+    try:
+        return [Path(root) for root in windows_write_gate.flagged_roots()]
+    except Exception:  # an unknown state adds no folder
+        return []
 
 
 def _resolve_machine_directory(raw_path: str | None, *, write: bool = False) -> Path:

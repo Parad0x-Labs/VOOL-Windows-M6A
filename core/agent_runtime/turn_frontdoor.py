@@ -489,6 +489,57 @@ def _windows_program_turn(
     }
 
 
+def _windows_marked_file_turn(
+    agent: Any,
+    text: str,
+    *,
+    session_id: str,
+    user_input: str,
+    source_context: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """The answer to a Windows edit, undo or move of a file in a marked folder; None otherwise."""
+    from core import windows_marked_file_ops as marked
+    from core.execution.write_demand import verbatim_request_text
+
+    try:
+        ask = marked.marked_file_ask(verbatim_request_text(source_context, text), source_context=source_context, session_id=session_id)
+    except Exception:  # an unknown state acts on nothing: the other lanes see the turn as before
+        ask = None
+    if ask is None:
+        return None
+    reason = f"windows_marked_file_{ask.kind}"
+    if ask.refusal:
+        return {
+            "result": agent._fast_path_result(
+                session_id=session_id,
+                user_input=user_input,
+                response=ask.refusal,
+                confidence=0.95,
+                source_context=source_context,
+                reason=reason,
+            )
+        }
+    from core.agent_runtime.fast_paths_machine import _machine_tool_fast_path_result
+    from core.authorized_tool_execution import execute_authorized_runtime_tool
+
+    execution = execute_authorized_runtime_tool(
+        ask.intent, dict(ask.arguments), source_context=marked.placed_context(ask, source_context)
+    )
+    if execution is None:
+        return None
+    return {
+        "result": _machine_tool_fast_path_result(
+            agent,
+            user_input=user_input,
+            session_id=session_id,
+            source_context=source_context,
+            intent=ask.intent,
+            execution=execution,
+            reason=reason,
+        )
+    }
+
+
 def handle_turn_frontdoor(
     agent: Any,
     *,
@@ -1815,7 +1866,19 @@ def handle_turn_frontdoor(
     )
     if program_turn is not None:
         return program_turn
-    unreachable_target = unreachable_write_target(effective_input, source_context=source_context)
+    # On Windows, an edit, an undo of it, or a move of a file the owner names inside a marked folder
+    # runs there, through the normal approval and the write gate, instead of in the chat's own
+    # workspace (an unbound chat's Desktop) (core.windows_marked_file_ops, captest R1-4).
+    marked_file_turn = None if action_forbidden else _windows_marked_file_turn(
+        agent,
+        raw_user_input,
+        session_id=session_id,
+        user_input=effective_input,
+        source_context=source_context,
+    )
+    if marked_file_turn is not None:
+        return marked_file_turn
+    unreachable_target =unreachable_write_target(effective_input, source_context=source_context)
     if unreachable_target:
         return {
             "result": agent._fast_path_result(
