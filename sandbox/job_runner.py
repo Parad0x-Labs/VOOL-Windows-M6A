@@ -4,6 +4,7 @@ import atexit
 import contextlib
 import json
 import os
+import re
 import shutil
 import signal
 import stat
@@ -1485,6 +1486,30 @@ WINDOWS_PROGRAM_REFUSED_TEXT = (
     "On Windows, VOOL 0.7.1 runs only Python and pytest in its sandbox; it doesn't run {program}. "
     "Use WSL2/Linux for that. Nothing was run."
 )
+#: The plain answer when the program is a Python interpreter that is not the one running VOOL (a
+#: virtual environment's `Scripts\python.exe`, another install): phase 1 pins every Python job to
+#: this interpreter, so the refusal names it. `{interpreter}` is that interpreter's full path.
+WINDOWS_OTHER_PYTHON_REFUSED_TEXT = (
+    "On Windows, VOOL 0.7.1 runs Python only with its own interpreter, {interpreter} (ask for python "
+    "or py and VOOL uses it); it doesn't run {program}. Use WSL2/Linux for other interpreters and "
+    "virtual environments. Nothing was run."
+)
+#: A program file name that is a Python interpreter: python, python3, python3.12, pythonw, py, pyw
+#: (any case, `.exe` or not).
+_PYTHON_PROGRAM_NAME_RE = re.compile(r"(?:python[0-9.]*w?|pyw?)(?:\.exe)?", re.IGNORECASE)
+
+
+def _other_python_refusal(program: str) -> str:
+    """The refusal for a program spelled as a path to a Python interpreter phase 1 does not run;
+    "" when `program` is not such a path (a bare name is left to the plain sentence)."""
+    if "/" not in program and "\\" not in program:
+        return ""
+    name = program.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    if not _PYTHON_PROGRAM_NAME_RE.fullmatch(name):
+        return ""
+    return WINDOWS_OTHER_PYTHON_REFUSED_TEXT.format(
+        interpreter=str(Path(sys.executable).resolve()), program=program
+    )
 
 
 def windows_program_refusal(argv: list[str] | tuple[str, ...]) -> str | None:
@@ -1517,7 +1542,7 @@ def windows_program_refusal(argv: list[str] | tuple[str, ...]) -> str | None:
     try:
         JobRunner._windows_phase1_argv([program, "-c", "pass"])
     except KernelIsolationUnavailableError:
-        return WINDOWS_PROGRAM_REFUSED_TEXT.format(program=program)
+        return _other_python_refusal(program) or WINDOWS_PROGRAM_REFUSED_TEXT.format(program=program)
     return refused
 
 
