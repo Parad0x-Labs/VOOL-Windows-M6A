@@ -103,6 +103,22 @@ def windows_write_refusal(intent: OperatorActionIntent, *, session_id: str | Non
         # C:\...\hello.txt into it" was refused with the gate's internal "operator.move_path names no
         # destination_path, so its target cannot be checked" (Windows 0.7.1-beta, B12) before the
         # handler could say what the move needs.
+        # The paths as written, judged by their spelling first: a share, device, doubled-separator or
+        # network-drive path is refused before `Path` folds its spelling and before the gate resolves
+        # it (on Windows resolving `\\host\share` is already the SMB connection; RECONCILE-351 F1).
+        try:
+            written = operator_storage.move_request_values(
+                intent.raw_text,
+                fallback_source=intent.target_path,
+                fallback_destination=intent.destination_path,
+                extract_quoted_values_fn=_extract_quoted_values,
+            )
+        except Exception:  # an unreadable request: judge this turn's own paths, as before
+            written = (intent.target_path, intent.destination_path)
+        for key, value in zip(("source_path", "destination_path"), written, strict=True):
+            kind = windows_write_gate.refused_spelling(value)
+            if kind:
+                return windows_write_gate.spelling_refusal_text(value, kind, what=key, nothing="moved")
         # Read exactly as `_parse_move_request` reads it, but with environment variables left for the
         # gate to expand once, as it expands every operator path (the handler expands them once too).
         try:
@@ -187,6 +203,19 @@ def dispatch_operator_action(
         refused = operator_handlers.non_local_path_refusal(intent.kind, intent.target_path, intent.destination_path)
         if refused is not None:
             return refused
+        # Where the Windows write gate is on, its spelling rule too (a doubled separator after the
+        # drive, a mapped or unknown drive), before the disk-usage handler stats the path. A move and
+        # a clean-up are judged by the gate itself in `windows_write_refusal` below.
+        if intent.kind == "inspect_disk_usage":
+            from core import windows_write_gate
+
+            kind = windows_write_gate.refused_spelling(intent.target_path)
+            if kind:
+                return OperatorActionResult(
+                    ok=False, status=windows_write_gate.STATUS,
+                    response_text=windows_write_gate.spelling_refusal_text(intent.target_path, kind, nothing="looked up"),
+                    details={"kind": intent.kind},
+                )
     if intent.kind in {"schedule_reminder", "list_reminders", "cancel_reminder", "move_reminder",
                        "cancel_calendar_event", "move_calendar_event",
                        "check_availability", "list_calendars", "inspect_calendar_event",
