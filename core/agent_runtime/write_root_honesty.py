@@ -222,7 +222,7 @@ def typed_path_kind(text: str, start: int, candidate: str) -> str:
     full path. Nothing else rescues a candidate: a share is what a lookup of the candidate itself
     would reach, whatever was typed before it.
     """
-    kind = windows_path_policy.refused_form(candidate)
+    kind = windows_path_policy.refused_form(candidate) or windows_path_policy.refused_doubled_drive(candidate)
     if kind == "root_relative" and drive_left_behind(text, start, candidate):
         return ""
     return kind
@@ -365,7 +365,11 @@ def _spaces_may_extend(candidate: str) -> bool:
     """Only a full local path is extended, and only by looking at what exists: never a share, a
     device, a root-relative path or a mapped network drive on Windows (looking a share up is already
     the SMB connection), and never a ``~`` path."""
-    if not candidate or windows_path_policy.refused_form(candidate):
+    if (
+        not candidate
+        or windows_path_policy.refused_form(candidate)
+        or windows_path_policy.refused_doubled_drive(candidate)
+    ):
         return False
     if re.match(r"^[A-Za-z]:[\\/]", candidate):
         # A mapped network drive is a share under a letter: looking it up is the SMB connection.
