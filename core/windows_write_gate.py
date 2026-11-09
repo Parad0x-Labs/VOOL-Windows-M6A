@@ -98,44 +98,88 @@ _HELD_VARS = ("TEMP", "TMP", "LOCALAPPDATA")
 #: A drive letter followed by two separators: `C://host/s`, `C:\\\\host\\s`, `C:/\\x`, `C:\\/x`.
 _DOUBLED_DRIVE_SEPARATOR_RE = re.compile(r"^[\"'`]?[A-Za-z]:[\\/]{2}")
 _DRIVE_RE = re.compile(r"[A-Za-z]:")
-#: What `_refused_spelling` answers besides `windows_path_policy.NETWORK_KINDS`.
+#: What `_refused_spelling` answers besides `windows_path_policy.NETWORK_KINDS` and `root_relative`.
 DOUBLED_DRIVE = "doubled_drive_separator"
 REMOTE_DRIVE = "remote_drive"
+RELATIVE_OFF_LOCAL = "relative_off_local_drive"
+#: Whether this host spells paths as Windows does (patched by tests). There a root-relative path
+#: (`\\x`) lands on whatever drive is current, which is not the place anyone reviewed, so it is
+#: refused. Off Windows every POSIX full path (the marked folders too) spells as root-relative.
+_NT_SPELLING = os.name == "nt"
 
 
-def _refused_spelling(value: Any) -> str:
+def _spellings(stripped: str) -> list[str]:
+    """`stripped` as written and as a caller may expand it: `%VAR%` and `$VAR`, then `~` (a redirected
+    profile, `USERPROFILE=\\\\server\\home\\me`, puts `~\\x` on that share). Reads only the environment."""
+    found: list[str] = []
+    for spelled in (stripped, ntpath.expandvars(stripped), os.path.expandvars(stripped)):
+        variants = [spelled, ntpath.expanduser(spelled), os.path.expanduser(spelled)]
+        if spelled == "~" or spelled.startswith(("~\\", "~/")):
+            # How the machine tools place `~\\rest`: the home folder joined with `rest`.
+            variants.append(os.path.expanduser("~") + "\\" + spelled[2:])
+        found.extend(variant.strip() for variant in variants)
+    return list(dict.fromkeys(found))
+
+
+def _drive_refusal(drive: str) -> str:
+    """REMOTE_DRIVE unless Windows calls the drive letter `drive` (`C:`) local; an unknown type is remote."""
+    from core import windows_known_folders
+
+    try:
+        local = windows_known_folders._drive_is_remote(drive.upper()) is False
+    except Exception:  # an unknown drive type counts as remote (fail closed)
+        local = False
+    return "" if local else REMOTE_DRIVE
+
+
+def _refused_spelling(value: Any, *, anchor: str | None = None) -> str:
     """Why the gate refuses `value` by its spelling alone, before anything resolves, stats or lists
-    it, or "" when it may be looked up: a share, a device path or an NT object path
-    (`windows_path_policy.classify`, network tier); a drive path with a doubled separator right after
-    the colon (`C://host/s`, `C:\\\\host\\s`), which a reader of the text from its first separator
-    takes for the share `//host/s`; and a drive Windows does not call local
-    (`windows_known_folders._drive_is_remote` is not False: a mapped network drive is a share under
-    a letter, and a drive type Windows cannot name counts as remote). Each is judged as written and
-    with `%VAR%` and `$VAR` expanded, since the operator lane expands them.
+    it, or "" when it may be looked up:
 
-    On Windows looking any of these up is already the SMB connection, and the user's NTLM hash sent
-    to whoever answers, so every check here runs before `_inside`, `_landing` or a root's own checks
-    reach the filesystem (RECONCILE-351 F1). Asked only where the gate is on."""
+    - a share, a device path or an NT object path (`windows_path_policy.classify`, network tier);
+    - a drive path with a doubled separator right after the colon (`C://host/s`, `C:\\\\host\\s`),
+      which a reader of the text from its first separator takes for the share `//host/s`;
+    - on a Windows host (`_NT_SPELLING`), a root-relative path (`\\x`), which lands on whatever
+      drive is current;
+    - a path on a drive Windows does not call local (`windows_known_folders._drive_is_remote` is
+      not False: a mapped network drive is a share under a letter, and a drive type Windows cannot
+      name counts as remote), a drive-relative one (`Z:x`) included;
+    - a relative path (`x\\y`) read from a folder that is itself refused here: `anchor`, the folder
+      the caller places it in, by default the working directory (RELATIVE_OFF_LOCAL).
+
+    Each is judged as written and as expanded (`_spellings`: `%VAR%`, `$VAR`, `~`). On Windows looking
+    any of these up is already the SMB connection, and the user's NTLM hash sent to whoever answers,
+    so every check here runs before `_inside`, `_landing` or a root's own checks reach the filesystem
+    (RECONCILE-351 F1). Asked only where the gate is on."""
     text = windows_path_policy._text(value)
     if text is None:
         return ""
-    kind = windows_path_policy.classify(text, network_only=True)
-    if kind:
-        return kind
     stripped = text.strip()
-    for spelled in dict.fromkeys((stripped, ntpath.expandvars(stripped).strip(), os.path.expandvars(stripped).strip())):
+    if not stripped:
+        return ""
+    for spelled in _spellings(stripped):
+        kind = windows_path_policy.classify(spelled, network_only=True)
+        if kind:
+            return kind
         if _DOUBLED_DRIVE_SEPARATOR_RE.match(spelled):
             return DOUBLED_DRIVE
-        drive = ntpath.splitdrive(spelled.lstrip("\"'`"))[0]
+        unquoted = spelled.lstrip("\"'`")
+        if _NT_SPELLING and unquoted[:1] in ("\\", "/"):
+            return "root_relative"
+        drive = ntpath.splitdrive(unquoted)[0]
         if _DRIVE_RE.fullmatch(drive):
-            from core import windows_known_folders
-
+            kind = _drive_refusal(drive)
+            if kind:
+                return kind
+        elif not drive and unquoted[:1] not in ("\\", "/", "~") and anchor != "":
+            # A relative path lands in the folder it is read from, judged as that folder is (never
+            # itself as a relative path again).
             try:
-                local = windows_known_folders._drive_is_remote(drive.upper()) is False
-            except Exception:  # an unknown drive type counts as remote (fail closed)
-                local = False
-            if not local:
-                return REMOTE_DRIVE
+                folder = os.getcwd() if anchor is None else anchor
+            except OSError:  # no working directory to place it in: fail closed
+                return RELATIVE_OFF_LOCAL
+            if _refused_spelling(folder, anchor=""):
+                return RELATIVE_OFF_LOCAL
     return ""
 
 
@@ -156,6 +200,10 @@ def spelling_refusal_text(value: Any, kind: str, *, what: str = "path", nothing:
         form = "a drive path with a doubled separator, which reads as a share"
     elif kind == REMOTE_DRIVE:
         form = "a drive Windows does not call local (a mapped network drive is a share under a letter)"
+    elif kind == RELATIVE_OFF_LOCAL:
+        form = "a relative path, and the folder it would be read from is not on a local drive"
+    elif kind == "root_relative":
+        form = "a path with no drive, which lands on whatever drive is current"
     else:
         form = "a share or a device path"
     return (
@@ -705,7 +753,10 @@ def refusal(
         if kind:
             return spelling_refusal_text(workspace_root, kind, what="folder this call works in")
     for key in _GATED[intent]:
-        kind = _refused_spelling(arguments.get(key))
+        # A machine write places a relative path in the home folder (`anchor_machine_path`); every
+        # other keyed writer reads it from the working directory.
+        anchor = os.path.expanduser("~") if intent in _LANDING_ONLY else None
+        kind = _refused_spelling(arguments.get(key), anchor=anchor)
         if kind:
             return spelling_refusal_text(arguments.get(key), kind, what=key)
     roots = flagged_roots(environ)
@@ -746,5 +797,5 @@ def refusal(
     )
 
 
-__all__ = ["DOUBLED_DRIVE", "ENV_VAR", "REMOTE_DRIVE", "STATUS", "active", "broker_report", "flagged_roots",
+__all__ = ["DOUBLED_DRIVE", "ENV_VAR", "RELATIVE_OFF_LOCAL", "REMOTE_DRIVE", "STATUS", "active", "broker_report", "flagged_roots",
            "inside_flagged", "may_refuse", "refusal", "refused_spelling", "spelling_refusal_text", "wide_root_reason"]
