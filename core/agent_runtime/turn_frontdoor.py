@@ -463,6 +463,32 @@ def _non_local_path_turn(
     }
 
 
+def _windows_program_turn(
+    agent: Any,
+    text: str,
+    *,
+    session_id: str,
+    user_input: str,
+    source_context: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """The answer to a Windows run request whose program VOOL never runs there; None otherwise."""
+    from core.agent_runtime.windows_program_request import windows_program_request_refusal
+
+    response = windows_program_request_refusal(text, source_context=source_context)
+    if not response:
+        return None
+    return {
+        "result": agent._fast_path_result(
+            session_id=session_id,
+            user_input=user_input,
+            response=response,
+            confidence=0.95,
+            source_context=source_context,
+            reason="windows_program_refused",
+        )
+    }
+
+
 def handle_turn_frontdoor(
     agent: Any,
     *,
@@ -1777,6 +1803,18 @@ def handle_turn_frontdoor(
     )
     if non_local_turn is not None:
         return non_local_turn
+    # On Windows, "run <program>" for a program VOOL never runs there is answered here, with the
+    # verdict the tool call would get before its permission decision, instead of a model round and
+    # an approval card for a run that is refused anyway (core.agent_runtime.windows_program_request).
+    program_turn = _windows_program_turn(
+        agent,
+        raw_user_input,
+        session_id=session_id,
+        user_input=effective_input,
+        source_context=source_context,
+    )
+    if program_turn is not None:
+        return program_turn
     unreachable_target = unreachable_write_target(effective_input, source_context=source_context)
     if unreachable_target:
         return {

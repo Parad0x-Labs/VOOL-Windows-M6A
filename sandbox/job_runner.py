@@ -1391,3 +1391,45 @@ class JobRunner:
                 cmd += ["--remount-ro", str(root)]
         cmd += ["--", *list(argv)]
         return cmd
+
+
+#: The plain answer when phase 1 does not run a program at all, given before any approval is asked
+#: or any model is called (`windows_program_refusal`). `{program}` is the program as the user typed it.
+WINDOWS_PROGRAM_REFUSED_TEXT = (
+    "On Windows, VOOL 0.7.1 runs only Python and pytest in its sandbox; it doesn't run {program}. "
+    "Use WSL2/Linux for that. Nothing was run."
+)
+
+
+def windows_program_refusal(argv: list[str] | tuple[str, ...]) -> str | None:
+    """On Windows, why phase 1 would refuse to run `argv`; None when it would run it, and always off
+    Windows.
+
+    Asked BEFORE the permission decision and before a model is called, so a program that can never
+    run gets a plain refusal instead of an approval card. The decision is `JobRunner._windows_phase1_argv`
+    itself, the gate `_windows_confine_prefix` applies when the job runs, so there is one list of
+    what phase 1 runs. When the program is one phase 1 runs (Python or pytest) and only this command
+    line of it is refused, the gate's own sentence is returned. A program spelled as a share or a
+    device path is refused without being looked at: the gate would resolve it, which opens it, and it
+    is never the interpreter running VOOL. An empty argv is left to the job's own checks.
+    """
+    if not _is_windows_platform():
+        return None
+    items = [str(item) for item in argv]
+    if not items or not items[0].strip():
+        return None
+    program = items[0]
+    from core import windows_path_policy
+
+    if windows_path_policy.classify(program, network_only=True):
+        return WINDOWS_PROGRAM_REFUSED_TEXT.format(program=program)
+    try:
+        JobRunner._windows_phase1_argv(items)
+        return None
+    except KernelIsolationUnavailableError as exc:
+        refused = str(exc)
+    try:
+        JobRunner._windows_phase1_argv([program, "-c", "pass"])
+    except KernelIsolationUnavailableError:
+        return WINDOWS_PROGRAM_REFUSED_TEXT.format(program=program)
+    return refused

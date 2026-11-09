@@ -892,10 +892,15 @@ def _windows_write_refusal(
     `_workspace_root`, council seats left to the dispatch-time gate) and the operator lane's (over
     the action it builds from these arguments). A call the gate never refuses (off Windows, or an
     ungated intent such as a calendar event) returns None before any of that work.
+
+    A call that starts a program (`sandbox.run_command`, the validation intents) is asked the
+    Windows phase-1 program check here too, through the same runtime helper, so a program VOOL
+    never runs on Windows is refused before the permission decision, not after an approval.
     """
     from core import windows_write_gate
+    from core.runtime_execution_tools import windows_program_check_applies
 
-    if not windows_write_gate.may_refuse(intent):
+    if not windows_write_gate.may_refuse(intent) and not windows_program_check_applies(intent):
         return None
     if intent in _MUTATING_OPERATOR_INTENTS:
         from core.local_operator_actions import windows_write_refusal as operator_refusal
