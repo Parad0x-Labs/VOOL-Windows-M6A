@@ -158,7 +158,7 @@ def test_the_engine_still_refuses_a_malformed_diff(tmp_path: Path, files, patch)
 
     # Called without a sink the engine writes each file as it renders it (its callers put files back on
     # a failure), so only the refusal is asserted here; the Windows rows below assert nothing is written.
-    with pytest.raises(ValueError, match="(?i)malformed unified diff|unsupported unified diff line"):
+    with pytest.raises(ValueError, match=r"(?i)malformed unified diff|unsupported unified diff line"):
         workspace_tools._apply_unified_diff_python(patch, workspace_root=tmp_path)
 
 
