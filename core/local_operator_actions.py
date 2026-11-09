@@ -91,6 +91,11 @@ def windows_write_refusal(intent: OperatorActionIntent, *, session_id: str | Non
                     if reason:
                         return reason
                 return None
+        if intent.approval_requested:
+            # An approval with no pending preview found (no session, none stored, or an unreadable
+            # store) has no paths of its own: judge this turn's own paths, as before, so it fails
+            # closed instead of reaching the handler ungated.
+            return windows_write_gate.refusal("operator.move_path", arguments, None)
         # No pending preview: the handler acts on what `_parse_move_request` reads from this request
         # (the parsed source and the folder it moves into, `archive` defaulting to VOOL's own archive
         # folder), so those are gated. A request it reads no move from is answered `invalid_request`
