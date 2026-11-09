@@ -4492,8 +4492,14 @@ def resolve_write_target(intent: str, raw_path: str | None, source_context: dict
     if not path:
         return None
     try:
-        if str(intent or "").strip().lower().startswith("machine."):
-            return _resolve_machine_directory(path)
+        clean_intent = str(intent or "").strip().lower()
+        if clean_intent.startswith("machine."):
+            try:
+                return _resolve_machine_directory(path)
+            except ValueError:
+                if clean_intent not in MACHINE_MARKED_WRITE_INTENTS or _marked_folder_machine_target(path) is None:
+                    raise
+                return _resolve_machine_write_target(path)
         return _resolve_workspace_path(path, workspace_root=_workspace_root(source_context))
     except (ValueError, OSError, RuntimeError):
         return None
@@ -4681,12 +4687,52 @@ def _expand_machine_user(raw: str) -> Path:
     return Path(value).expanduser()
 
 
+#: The machine writers that may also write inside a folder the owner marked on Windows.
+MACHINE_MARKED_WRITE_INTENTS = frozenset({"machine.write_file", "machine.ensure_directory"})
+
+
+def _marked_folder_machine_target(raw_path: str | None) -> Path | None:
+    """On Windows, where a machine write lands when that place is inside a folder the owner marked
+    (core/windows_write_gate.py), placed as the writer places it; None otherwise and off Windows.
+
+    The marked folders are the only places Windows lets VOOL change files, wherever they are, so the
+    machine writers take them as well as Desktop, Documents and Downloads (captest B3, 2026-11-08: a
+    folder marked under the profile could never be written). The gate still checks every write."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active() or not str(raw_path or "").strip():
+        return None
+    try:
+        candidate = anchor_machine_path(raw_path)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return candidate if windows_write_gate.inside_flagged(str(candidate)) else None
+
+
 def _resolve_machine_directory(raw_path: str | None, *, write: bool = False) -> Path:
     """A safe machine directory path, refused when it is this runtime's own state (or, for a write, its running code)."""
     target = _resolve_safe_machine_directory(raw_path)
     from core.runtime_state_protection import refusal as _protected_refusal
 
     reason = _protected_refusal(target, write=write)
+    if reason:
+        raise ValueError(reason)
+    return target
+
+
+def _resolve_machine_write_target(raw_path: str | None) -> Path:
+    """Where machine.write_file and machine.ensure_directory write: a safe machine directory path
+    (`_resolve_machine_directory`), or on Windows a path inside a folder the owner marked, refused
+    alike when it is this runtime's own state or running code."""
+    try:
+        return _resolve_machine_directory(raw_path, write=True)
+    except ValueError:
+        target = _marked_folder_machine_target(raw_path)
+        if target is None:
+            raise
+    from core.runtime_state_protection import refusal as _protected_refusal
+
+    reason = _protected_refusal(target, write=True)
     if reason:
         raise ValueError(reason)
     return target
@@ -5700,7 +5746,7 @@ def _ensure_machine_directory(arguments: dict[str, Any]) -> RuntimeExecutionResu
             },
         )
     try:
-        target = _resolve_machine_directory(arguments.get("path"), write=True)
+        target = _resolve_machine_write_target(arguments.get("path"))
     except ValueError as exc:
         return RuntimeExecutionResult(
             handled=True,
@@ -5776,7 +5822,7 @@ def _write_machine_file(
             },
         )
     try:
-        target = _resolve_machine_directory(arguments.get("path"), write=True)
+        target = _resolve_machine_write_target(arguments.get("path"))
     except ValueError as exc:
         return RuntimeExecutionResult(
             handled=True,

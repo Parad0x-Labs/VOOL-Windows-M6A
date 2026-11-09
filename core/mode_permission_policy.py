@@ -3132,9 +3132,13 @@ def _edit_preview(intent: str, arguments: dict[str, Any], source_context: dict[s
         # Desktop/Downloads/Documents overwrite with no visibility into what content will land
         # (confirmed red-team finding, 2026-08-04).
         try:
-            from core.runtime_execution_tools import _resolve_machine_directory
+            from core.runtime_execution_tools import _resolve_machine_directory, _resolve_machine_write_target
 
-            target = _resolve_machine_directory(raw_path)
+            try:
+                target = _resolve_machine_directory(raw_path)
+            except ValueError:
+                # On Windows a folder the owner marked is written too; its preview is shown the same way.
+                target = _resolve_machine_write_target(raw_path)
         except Exception:
             return ""
         if target is None:
