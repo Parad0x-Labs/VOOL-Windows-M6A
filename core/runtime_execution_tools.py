@@ -6296,14 +6296,17 @@ def _read_file(arguments: dict[str, Any], *, workspace_root: Path) -> RuntimeExe
         elsewhere = _nearby_workspace_matches(
             str(arguments.get("path") or ""), workspace_root=workspace_root
         )
+        # Where it looked, by name: "no file at `calc.py`" read as a statement about the folder the
+        # user meant, not the chat's own folder it was true of (captest C1, 2026-11-09).
+        looked_in = f" in `{workspace_root}`"
         if elsewhere:
             miss_text = (
-                f"There is no file at `{shown}`, but that name exists elsewhere in this project:\n"
+                f"There is no file at `{shown}`{looked_in}, but that name exists elsewhere in this project:\n"
                 + "\n".join(f"- {path}" for path in elsewhere)
             )
         else:
             miss_text = (
-                f"There is no file at `{shown}`, and no file of that name elsewhere in this "
+                f"There is no file at `{shown}`{looked_in}, and no file of that name elsewhere in this "
                 "project. If it may be outside the project folder, ask me to search your Desktop, "
                 "Downloads and Documents for it."
             )

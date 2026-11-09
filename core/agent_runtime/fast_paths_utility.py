@@ -94,6 +94,16 @@ _WORKSPACE_MUTATION_INTENT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# A request to RUN a file is not a read of it. Captest C1 (installed 0.7.1-beta, 2026-11-09): "run
+# calc.py" was served by the read lane and answered "There is no file at `calc.py`" from the chat's
+# folder, a statement about reading that nobody asked for; running it is the sandbox's job. "run" must
+# stand alone: "run.py" and "run_tests.py" are names, not verbs.
+_RUN_A_FILE_INTENT_RE = re.compile(
+    r"(?<![\w./\\-])(?:re-?)?(?:run|execute)(?![\w./\\-])"
+    r"|(?<![\w./\\-])(?:python3?|py|pytest)\s+(?:-\S+\s+)*[^\s]+\.py\b",
+    re.IGNORECASE,
+)
+
 # An explicit request for the BYTES. Its presence suppresses every stand-down below: "read
 # notes.txt and todo.txt" names two files joined by "and" and is still two reads, not a comparison.
 _EXPLICIT_READ_VERB_RE = re.compile(
@@ -1268,7 +1278,7 @@ def _direct_workspace_read_request(user_input: str) -> dict[str, object] | None:
     # symmetric: missing a read verb produces fabrication, while over-matching produces a harmless
     # extra read. So the file reference itself is the signal, and only an explicit MUTATION intent
     # opts out. _WORKSPACE_READ_FILE_RE requires a real extension, so this needs a genuine filename.
-    if _WORKSPACE_MUTATION_INTENT_RE.search(text):
+    if _WORKSPACE_MUTATION_INTENT_RE.search(text) or _RUN_A_FILE_INTENT_RE.search(text):
         return None
     # ...and neither is a question ABOUT that kind of file. The inversion above has no exit for a
     # sentence whose verb is `explain` or `compare`; without one, Python-packaging questions were

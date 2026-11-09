@@ -7603,6 +7603,19 @@ def _dispatch_post_inner(
             if requested_workspace
             else ("project" if project_workspace else "default")
         )
+        if workspace_binding == "default":
+            # Windows: an unbound chat's Python or pytest ask that names a marked folder (or a
+            # file in one) works in that folder, instead of being refused as outside the Desktop
+            # (captest C1-C3). Only a marked folder is ever chosen; every gate still decides.
+            from core import windows_marked_code_folder
+
+            try:
+                marked_code_folder = windows_marked_code_folder.turn_folder(user_text, history)
+            except Exception:  # an unknown state places nothing: the chat keeps its folder
+                marked_code_folder = ""
+            if marked_code_folder:
+                effective_workspace = marked_code_folder
+                workspace_binding = windows_marked_code_folder.BINDING
         # Owner-local trust is derived from the real TCP peer (loopback == the owner's own
         # session), never from the caller-supplied surface. A channel surface is remote by
         # definition, so it is never owner-local even over loopback. Privileged gates (cloud
