@@ -30,6 +30,7 @@ from core import tool_intent_executor as executor
 from core import windows_write_gate as gate
 from core.hive_activity_tracker import HiveActivityTracker, HiveActivityTrackerConfig
 from core.tool_argument_aliases import ARGUMENT_ALIASES
+from tests import _windows_refusals as windows_refusals
 from tests._nonlocal_touch_recorder import MARKER_FORMS, MarkerForm, recorder, windows_host
 from tools.browser import browser_render
 
@@ -447,9 +448,13 @@ def test_a_push_remote_the_repository_names_on_a_share_is_refused_before_it_is_l
     monkeypatch.setenv(gate.ENV_VAR, str(tmp_path))
     windows_host.on()
 
-    refusals = {name: GitRunner(repo).push_destination_refusal(name) for name in remotes}
+    with windows_refusals.watch_git(repo) as seen:
+        refusals = {name: GitRunner(repo).push_destination_refusal(name) for name in remotes}
 
     assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+    # Windows 0.7.1 runs no git: every check answers the git sentence before any remote is read.
+    if seen.refused(*refusals.values()):
+        return
     for name, url in remotes.items():
         assert f"`{url}` is a network or device path" in refusals[name], (name, refusals[name])
 
@@ -504,6 +509,13 @@ def test_a_push_remote_on_this_computer_is_judged_on_the_network_tier_only(
     assert windows_path_policy.refused_form(rooted) == "root_relative", rooted
 
     runner = GitRunner(repo)
+    if windows_refusals.git_refused():
+        # Windows 0.7.1 runs no git: each check and the push answer the git sentence, and nothing lands.
+        with windows_refusals.watch_git(tmp_path) as seen:
+            refusals = [runner.push_destination_refusal(remote) for remote in (*remotes, full, rooted)]
+            code, _, err = runner.run(*runner.push_argv(remote="full", ref="pinned", sha=runner.head()))
+        assert code == -1 and seen.refused(*refusals, err), (refusals, err)
+        return
     for remote in (*remotes, full, rooted):  # each configured remote, and each path given as the remote
         refusal = runner.push_destination_refusal(remote)
         assert "is not a full local path" not in refusal, (remote, refusal)

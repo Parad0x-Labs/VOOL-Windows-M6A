@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from core.execution.git_tools import git_diff_workspace
+from tests import _windows_refusals as windows_refusals
 from tests._nonlocal_touch_recorder import recorder, windows_host
 
 SHARES = ["\\\\attkr9\\s\\x", "//attkr9/s/x", "\\\\?\\UNC\\attkr9\\s\\x"]
@@ -53,8 +54,13 @@ def test_a_diff_of_a_share_pathspec_is_refused_before_git_runs(repo, recorder, w
                                                                cached) -> None:
     windows_host.on()
 
-    result = git_diff_workspace({"path": path, "cached": cached}, workspace_root=repo)
+    with windows_refusals.watch_git(repo) as seen:
+        result = git_diff_workspace({"path": path, "cached": cached}, workspace_root=repo)
 
+    # Windows 0.7.1 runs no git: the diff is refused with the git limit before any path is read.
+    if seen.refused_tool(result):
+        assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+        return
     assert result["ok"] is False and result["status"] == "refused_network_path", result
     assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
 
@@ -63,7 +69,10 @@ def test_a_plain_path_is_still_diffed(repo, windows_host) -> None:
     windows_host.on()
     (repo / "a.txt").write_text("two\n")
 
-    result = git_diff_workspace({"path": "a.txt"}, workspace_root=repo)
+    with windows_refusals.watch_git(repo) as seen:
+        result = git_diff_workspace({"path": "a.txt"}, workspace_root=repo)
 
+    if seen.refused_tool(result):
+        return
     assert result["ok"] is True, result
     assert "+two" in result["response_text"] or "+two" in str(result.get("details")), result

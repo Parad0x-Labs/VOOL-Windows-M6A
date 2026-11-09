@@ -40,6 +40,7 @@ from core.mode_permission_policy import (
 )
 from core.tool_intent_executor import execute_tool_intent
 from core.web.api.runtime import RuntimeServices
+from tests import _windows_refusals as windows_refusals
 
 
 @pytest.fixture(autouse=True)
@@ -103,12 +104,20 @@ def test_modeless_shell_command_is_permission_decided_and_side_effect_never_land
     context = {"workspace_root": str(tmp_path), "runtime_session_id": "sess-modeless-shell"}
     marker = tmp_path / "side_effect.txt"
 
-    execution, consulted = _run(
-        "sandbox.run_command",
-        {"command": f"touch {marker.name}", "cwd": str(tmp_path)},
-        context=context,
-    )
+    command = f"touch {marker.name}"
+    with windows_refusals.watch_programs(command, tmp_path) as seen:
+        execution, consulted = _run(
+            "sandbox.run_command",
+            {"command": command, "cwd": str(tmp_path)},
+            context=context,
+        )
 
+    # Windows 0.7.1 runs only Python and pytest in the sandbox: `touch` is refused before any
+    # permission decision is needed, so none is taken and nothing runs.
+    if seen.refused(execution.response_text):
+        assert consulted == [] and execution.status == seen.status, (consulted, execution.status)
+        assert not marker.exists()
+        return
     assert consulted == ["sandbox.run_command"]
     assert execution.status == "pending_approval"
     assert execution.details["executed"] is False

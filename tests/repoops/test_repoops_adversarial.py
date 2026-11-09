@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from tests import _windows_refusals as windows_refusals
 from tests.repoops._forge_fixture import RecordedForge, github_pull_request
 from tests.repoops._harness import FIXED, build_repo, context, door, git, head, remote_ref
 
@@ -75,6 +76,8 @@ def _to_repair_stage(root: Path, forge: RecordedForge, ctx: dict) -> str:
 def test_a_dirty_tree_refuses_to_bind_because_no_sha_describes_the_disk(world) -> None:
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     _arm(forge, root)
     sid = _open(root, ctx)
     door("repo.inspect", {"repo_session_id": sid}, ctx)
@@ -96,6 +99,8 @@ def test_a_dirty_tree_refuses_to_bind_because_no_sha_describes_the_disk(world) -
 def test_a_repository_that_moved_underneath_the_session_refuses_every_later_step(world) -> None:
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     _arm(forge, root)
     sid = _open(root, ctx)
     door("repo.inspect", {"repo_session_id": sid}, ctx)
@@ -120,6 +125,8 @@ def test_a_repository_that_moved_underneath_the_session_refuses_every_later_step
 def test_a_provider_that_refuses_is_reported_as_unavailable_not_as_an_empty_result(world) -> None:
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     _arm(forge, root)
     sid = _open(root, ctx, pull_request="7")
     door("repo.inspect", {"repo_session_id": sid}, ctx)
@@ -137,6 +144,8 @@ def test_a_remote_with_no_adapter_is_a_named_missing_capability(world) -> None:
     root, _bare, _forge = world
     ctx = context(root)
     # No provider named and a local remote URL: VOOL has no forge adapter for it, and says so.
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid = _open(root, ctx, provider="", namespace="")
     door("repo.inspect", {"repo_session_id": sid}, ctx)
     door("repo.bind", {"repo_session_id": sid}, ctx)
@@ -248,6 +257,8 @@ def test_gate0_refuses_a_wrong_base_sha() -> None:
 def test_a_push_without_an_authorization_is_refused_and_the_remote_does_not_move(world) -> None:
     root, bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid = _to_repair_stage(root, forge, ctx)
     refused = door("repo.push", {"repo_session_id": sid}, ctx)
     assert refused.status in {"stage_violation", "not_authorized"}
@@ -401,6 +412,8 @@ def test_a_diagnosis_cannot_cite_a_step_this_session_never_ran(world) -> None:
 def test_a_caller_cannot_smuggle_a_runtime_trust_key_into_an_inner_step(world) -> None:
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid = _to_repair_stage(root, forge, ctx)
     refused = door(
         "repo.step",
@@ -418,6 +431,8 @@ def test_a_caller_cannot_smuggle_a_runtime_trust_key_into_an_inner_step(world) -
 def test_an_off_vertical_intent_is_not_a_repository_step(world) -> None:
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid = _to_repair_stage(root, forge, ctx)
     refused = door(
         "repo.step",
@@ -433,6 +448,8 @@ def test_an_off_vertical_intent_is_not_a_repository_step(world) -> None:
 def test_a_cancelled_turn_stops_the_session_before_any_further_effect(world) -> None:
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid = _to_repair_stage(root, forge, ctx)
     cancelled = threading.Event()
     cancelled.set()

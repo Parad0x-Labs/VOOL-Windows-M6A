@@ -38,6 +38,7 @@ from urllib.request import urlopen
 
 import pytest
 
+from tests import _windows_refusals as windows_refusals
 from tests._blackbox_served_rig import REPO_ROOT, ServedDaemon, free_port, run_in_home
 from tests._vool_database_pack import install_pack
 
@@ -167,23 +168,30 @@ def served(tmp_path: Path):
     # Presence is not availability: the canonical register_plugin gate offers a pack's tools
     # only after the EXISTING lifecycle's three separate acts, recorded in the store under
     # this home (so the daemon and every in-home scenario process see the same activation).
-    run_in_home(
-        home,
-        textwrap.dedent(
-            """
-            import sys
-            from pathlib import Path
-            sys.path.insert(0, {root!r})
-            from core.plugin_lifecycle import enable, install, verify
-            pack = Path({plugins_root!r}) / "plugins" / "vool-database"
-            install("vool-database", root=pack, source="test-isolated")
-            verify("vool-database", root=pack)
-            enable("vool-database")
-            print("lifecycle: installed+verified+enabled")
-            """
-        ).format(root=str(REPO_ROOT), plugins_root=str(plugins_root)),
-        env_extra={"VOOL_PLUGINS_DIR": str(plugins_root), "VOOL_PLUGIN_SCRATCH_ROOT": str(scratch)},
-    )
+    activation = textwrap.dedent(
+        """
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, {root!r})
+        from core.plugin_lifecycle import enable, install, verify
+        pack = Path({plugins_root!r}) / "plugins" / "vool-database"
+        install("vool-database", root=pack, source="test-isolated")
+        verify("vool-database", root=pack)
+        enable("vool-database")
+        print("lifecycle: installed+verified+enabled")
+        """
+    ).format(root=str(REPO_ROOT), plugins_root=str(plugins_root))
+    activation_env = {"VOOL_PLUGINS_DIR": str(plugins_root), "VOOL_PLUGIN_SCRATCH_ROOT": str(scratch)}
+    # Windows 0.7.1 starts no plugin: the pack's enable step refuses in the plugin sentence, so no
+    # daemon is booted to serve it. The refusal is asserted here (the pack untouched, the scratch
+    # never made, the pack not enabled); the rows then end on `refused_on_windows`.
+    if windows_refusals.refuses_activation(home, activation, "vool-database", plugins_root, scratch,
+                                           env_extra=activation_env):
+        yield windows_refusals.RefusedWorld(
+            refused_on_windows=True, home=home, plugins_root=plugins_root, scratch=scratch
+        )
+        return
+    run_in_home(home, activation, env_extra=activation_env)
     daemon = ServedDaemon(
         home,
         env_extra={
@@ -204,6 +212,7 @@ def served(tmp_path: Path):
         "db": scratch / "vool-database" / "databases" / "orders.sqlite",
         "plugins_root": plugins_root,
         "scratch": scratch,
+        "refused_on_windows": False,
     }
     daemon.stop()
 
@@ -226,6 +235,8 @@ def _events_for(home: Path) -> list[tuple[str, str]]:
 
 
 def test_served_discovery_lists_the_pack_and_its_capabilities(served: dict[str, Any]) -> None:
+    if served["refused_on_windows"]:
+        return  # the fixture asserted the enable refusal; no daemon serves a pack to list
     daemon: ServedDaemon = served["daemon"]
 
     plugins = _get(daemon, "/api/plugins")
@@ -262,6 +273,8 @@ def test_served_chat_door_reaches_the_tool_loop_and_the_expanded_plugin_family_s
     family here.
     """
 
+    if served["refused_on_windows"]:
+        return  # the fixture asserted the enable refusal; no daemon serves a family to seat
     daemon: ServedDaemon = served["daemon"]
     expand_call = {
         "id": "e1",

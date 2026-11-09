@@ -13,6 +13,9 @@ import sys
 import textwrap
 from pathlib import Path
 
+from core import safe_git
+from tests import _windows_refusals as windows_refusals
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TEXT = "Jörg ✓ 日本"   # ö is cp1252; ✓ and 日本 are not
 
@@ -88,13 +91,32 @@ def test_run_git_decodes_commit_message_as_utf8(tmp_path):
     (root / "a.txt").write_bytes(b"base\n")
     _git(root, "add", "-A")
     _git(root, "commit", "-q", "-m", f"msg {TEXT}")
+    before = windows_refusals.tree_state(root)
+    # The child decides for itself whether git is refused (Windows 0.7.1 runs no git); a run that
+    # forces the parent's test seam hands the same decision down. It records any git it starts.
     got = _run_child("""
-        import json, sys
+        import json, subprocess, sys
         from pathlib import Path
+        from core import safe_git
+        if sys.argv[2] != "None":
+            safe_git._REFUSE_GIT = sys.argv[2] == "True"
+        starts, real = [], subprocess.Popen
+        class Recording(real):
+            def __init__(self, args, *rest, **kwargs):
+                if safe_git.is_git_command(args, kwargs.get("executable")):
+                    starts.append(repr(args))
+                super().__init__(args, *rest, **kwargs)
+        subprocess.Popen = Recording
         from core.execution.git_tools import _run_git
         out = _run_git(["log", "-1", "--format=%s"], cwd=Path(sys.argv[1]))
-        print(json.dumps(out))
-    """, str(root))
+        print(json.dumps({**out, "git_refused_here": safe_git.git_refused_here(), "git_starts": starts}))
+    """, str(root), str(safe_git._REFUSE_GIT))
+    if got["git_refused_here"]:
+        assert got["status"] == windows_refusals.GIT_STATUS and got["stdout"] == "", got
+        assert got["stderr"] == windows_refusals.GIT_REFUSAL, got
+        assert got["git_starts"] == [], got
+        assert windows_refusals.tree_state(root) == before
+        return
     assert got["status"] == "executed"
     assert got["stdout"].strip() == f"msg {TEXT}"
 

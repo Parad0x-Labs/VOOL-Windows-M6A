@@ -24,6 +24,7 @@ import pytest
 
 from core import windows_write_gate as gate
 from core.repoops.gitops import GitRunner
+from tests import _windows_refusals as windows_refusals
 
 _IDENTITY = {"GIT_AUTHOR_NAME": "fx", "GIT_AUTHOR_EMAIL": "fx@local",
              "GIT_COMMITTER_NAME": "fx", "GIT_COMMITTER_EMAIL": "fx@local"}
@@ -84,7 +85,17 @@ def _push(source: Path, remote: str) -> tuple[int, str]:
     return code, err
 
 
+def _windows_refuses_git(world: dict[str, Path], source: Path, remote: str, *, check: bool = True,
+                         push: bool = True) -> bool:
+    """On real Windows VOOL 0.7.1 runs no git at all, whatever the gate decides: the destination
+    check and the push answer the git sentence, no git starts and nothing under the test's folders
+    changes, and the row ends there. False where git runs (off Windows): the row goes on as before."""
+    return windows_refusals.refuses_push(source, remote, world["marked"].parent, check=check, push=push)
+
+
 def _assert_refused(world: dict[str, Path], remote: str, destination: Path, *, says: str) -> None:
+    if _windows_refuses_git(world, world["source"], remote):
+        return
     before = _refs(destination)
     refusal = GitRunner(root=world["source"]).push_destination_refusal(remote)
     assert says in refusal, refusal
@@ -131,6 +142,8 @@ def test_a_marked_destination_whose_git_folder_holds_a_link_is_refused(world, fo
 def test_a_push_to_a_repository_inside_the_marked_folders_lands(world) -> None:
     destination = _bare(world["marked"] / "dest.git")
 
+    if _windows_refuses_git(world, world["source"], str(destination)):
+        return
     assert GitRunner(root=world["source"]).push_destination_refusal(str(destination)) == ""
     code, err = _push(world["source"], str(destination))
 
@@ -140,6 +153,8 @@ def test_a_push_to_a_repository_inside_the_marked_folders_lands(world) -> None:
 
 @pytest.mark.parametrize("url", ("https://example.invalid/project.git", "git@example.invalid:project.git"))
 def test_a_push_to_an_online_server_is_not_placed(world, url: str) -> None:
+    if _windows_refuses_git(world, world["source"], url, push=False):
+        return
     assert GitRunner(root=world["source"]).push_destination_refusal(url) == ""
 
 
@@ -147,6 +162,8 @@ def test_off_windows_a_push_to_a_repository_anywhere_still_lands(world, monkeypa
     monkeypatch.setattr(gate, "_IS_WINDOWS", False)
     destination = _bare(world["elsewhere"] / "dest.git")
 
+    if _windows_refuses_git(world, world["source"], str(destination), check=False):
+        return
     code, err = _push(world["source"], str(destination))
 
     assert code == 0, err
@@ -186,6 +203,8 @@ def test_a_push_from_a_repository_that_saves_cookies_to_a_file_of_its_choosing_i
     _git(world["source"], "config", key, str(world["elsewhere"] / "cookies.txt"))
     _git(world["source"], "config", "http.saveCookies", "true")
 
+    if _windows_refuses_git(world, world["source"], "https://example.invalid/project.git", push=False):
+        return
     refusal = GitRunner(root=world["source"]).push_destination_refusal("https://example.invalid/project.git")
 
     assert "sets keys that can move git's writes elsewhere: http." in refusal and refusal.endswith("cookiefile"), refusal
@@ -206,6 +225,8 @@ def test_a_push_from_a_repository_outside_the_marked_folders_is_refused(world, t
     _git(source, "remote", "add", "dest", url)
     before = _refs(destination)
 
+    if _windows_refuses_git(world, source, "dest"):
+        return
     refusal = GitRunner(root=source).push_destination_refusal("dest")
     code, err = _push(source, "dest")
 
@@ -224,6 +245,8 @@ def test_a_push_between_a_housekept_repository_and_its_local_clone_lands(world) 
     _git(world["source"], "checkout", "-q", "-b", "side")  # the clone pushes to main, which the source no longer has checked out
     _git(clone, "commit", "-q", "--allow-empty", "-m", "from the clone")
 
+    if _windows_refuses_git(world, clone, "origin"):
+        return
     assert GitRunner(root=clone).push_destination_refusal("origin") == ""
     code, err = _push(clone, "origin")
 

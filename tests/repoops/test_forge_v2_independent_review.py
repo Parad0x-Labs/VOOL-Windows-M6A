@@ -5,6 +5,7 @@ documented ordinary losing-CAS result, distinct from an exception in that ledger
 """
 import pytest
 
+from tests import _windows_refusals as windows_refusals
 from tests.repoops._harness import door
 from tests.repoops.test_forge_actions import _calls, _comment_payload, _operator_authorizes, _pr_payload, world
 from tests.repoops.test_forge_integration_review import prepare
@@ -12,6 +13,8 @@ from tests.repoops.test_forge_integration_review import prepare
 
 @pytest.mark.parametrize('action',['create','comment'])
 def test_losing_durable_dispatch_claim_prevents_the_write(world,monkeypatch,action):
+    if windows_refusals.refuses_repo_session(world):
+        return
     forge,ctx,sid,*_=prepare(world,action)
     import core.runtime_continuity as continuity
     claims=[]
@@ -27,6 +30,8 @@ def test_losing_durable_dispatch_claim_prevents_the_write(world,monkeypatch,acti
 
 @pytest.mark.parametrize('action',['create','comment'])
 def test_accepted_object_with_invalid_nested_shape_stays_unknown(world,action):
+    if windows_refusals.refuses_repo_session(world):
+        return
     forge,ctx,sid,sha,base,action_hash=prepare(world,action)
     if action=='create':
         body=_pr_payload('31',base_sha=base,head_sha=sha,draft=True,title='Reviewed title',body='Reviewed exact text')
@@ -47,6 +52,8 @@ def test_accepted_object_with_invalid_nested_shape_stays_unknown(world,action):
 
 @pytest.mark.parametrize('action',['create','comment'])
 def test_proven_unsent_marker_error_can_resume_after_journal_recovers(world,monkeypatch,action):
+    if windows_refusals.refuses_repo_session(world):
+        return
     forge,ctx,sid,sha,base,action_hash=prepare(world,action)
     import core.runtime_continuity as continuity
     original=continuity.mark_effect_dispatched
