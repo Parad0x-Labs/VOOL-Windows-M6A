@@ -1308,6 +1308,23 @@ def _normalize_patch_path(raw_path: str) -> str:
     return clean
 
 
+def _starts_next_file(lines: list[str], index: int, old_left: int, new_left: int) -> bool:
+    """Whether the `--- ` line at ``index``, inside a hunk with ``old_left``/``new_left`` lines still to
+    read, is the next file's header rather than a removed line that starts with `-- `.
+
+    A hunk with no old lines left has no removal to read, so the line is a header (one without its `+++`
+    is then refused as malformed). While old lines are left it is a removal, except where it opens a
+    whole `---`/`+++`/`@@` section and the hunk claimed more lines than it holds: the hunk then ends there,
+    as it did before the counts were read. A removal and an addition that close the hunk exactly (one old
+    and one new line left) stay content even when the next hunk's `@@` follows them."""
+    if old_left <= 0:
+        return True
+    opens_a_section = (
+        index + 2 < len(lines) and lines[index + 1].startswith("+++ ") and lines[index + 2].startswith("@@ ")
+    )
+    return opens_a_section and not (old_left == 1 and new_left == 1)
+
+
 def _apply_unified_diff_python(patch_text: str, *, workspace_root: Path, sink: Any = None, source: Any = None) -> None:
     # ``sink(path, text)`` receives each rendered file in patch order instead of the write (``None``
     # text for a deletion); without one, each file is written or removed as it is rendered.
@@ -1356,10 +1373,16 @@ def _apply_unified_diff_python(patch_text: str, *, workspace_root: Path, sink: A
                 raise ValueError("Malformed unified diff: overlapping hunks are not supported.")
             rendered.extend(before_lines[cursor:old_start])
             cursor = old_start
+            # The hunk's body is read by its counts (1 when a count is left out): while it still has old
+            # lines to read, a `--- ` line is a removed line that starts with `-- `, not the next header.
+            old_left = int(match.group("old_count")) if match.group("old_count") is not None else 1
+            new_left = int(match.group("new_count")) if match.group("new_count") is not None else 1
             index += 1
             while index < len(lines):
                 hunk_line = lines[index]
-                if hunk_line.startswith("@@ ") or hunk_line.startswith("--- "):
+                if hunk_line.startswith("@@ "):
+                    break
+                if hunk_line.startswith("--- ") and _starts_next_file(lines, index, old_left, new_left):
                     break
                 if hunk_line == r"\ No newline at end of file":
                     index += 1
@@ -1371,12 +1394,16 @@ def _apply_unified_diff_python(patch_text: str, *, workspace_root: Path, sink: A
                         raise ValueError(f"Unified diff context mismatch for `{target_path.name}`.")
                     rendered.append(before_lines[cursor])
                     cursor += 1
+                    old_left -= 1
+                    new_left -= 1
                 elif prefix == "-":
                     if cursor >= len(before_lines) or before_lines[cursor].rstrip("\n") != body:
                         raise ValueError(f"Unified diff removal mismatch for `{target_path.name}`.")
                     cursor += 1
+                    old_left -= 1
                 elif prefix == "+":
                     rendered.append(body + "\n")
+                    new_left -= 1
                 else:
                     raise ValueError(f"Unsupported unified diff line: {hunk_line}")
                 index += 1
