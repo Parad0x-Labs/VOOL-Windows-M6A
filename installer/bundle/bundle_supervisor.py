@@ -100,6 +100,16 @@ _OLLAMA_PINNED_ENV: dict[str, str] = {
     "VOOL_RAW_OLLAMA_API_URL": _OLLAMA_URL_PIN,
 }
 _OLLAMA_DROPPED_ENV = ("OLLAMA_ORIGINS", "VOOL_OLLAMA_URL", "VOOL_OLLAMA_CHAT_URL", "VOOL_OLLAMA_PS_URL")
+# A healthy answer on the pinned port counts as the bundled Ollama only when it is this supervisor's own child:
+# a serve it started is alive and nothing else listens on the port. Anything else answering there (the user's
+# own Ollama, already running when VOOL starts, makes the bundled serve fail to bind) is another program, and
+# VOOL never talks to it: the API is not started (a running one is stopped), so no VOOL client can reach that
+# port, and the user is told so in plain words. When the port is free again the bundled serve starts as usual.
+_OLLAMA_PORT_IN_USE_TEXT = (
+    f"Another Ollama is already running on this computer and using port {_OLLAMA_PORT}, so VOOL cannot start "
+    "its own. VOOL will not use that Ollama. Quit the other Ollama (for example from the system tray), and VOOL "
+    "starts on its own."
+)
 _WINDOWS_SCRIPT_ARGUMENT_PREFIX = (
     r'^(?:\x22(?:[^\x22]*\\)?pythonw?\.exe\x22|(?:[^\s\x22]*\\)?pythonw?\.exe)'
     r'(?:\s+-[bBdEhIiOPqRsSuvVx]+'
@@ -358,6 +368,8 @@ class BundleSupervisor:
         self.handles: dict[str, Any] = {}
         self.started_at: dict[str, float] = {}
         self.failures: dict[str, int] = {"ollama": 0, "api": 0, "window": 0}
+        # Set while another program answers on the bundled Ollama's port (_note_ollama_owner).
+        self.ollama_conflict = ""
         self.restart_counts: dict[str, int] = {"ollama": 0, "api": 0, "window": 0}
         self.next_attempt: dict[str, float] = {"ollama": 0.0, "api": 0.0, "window": 0.0}
         self.last_exit: dict[str, dict[str, Any]] = {}
@@ -807,14 +819,90 @@ class BundleSupervisor:
         self._schedule_retry(name, f"unresponsive: {count} health checks unanswered over {span:.0f}s")
         return True
 
+    def _ollama_listener_pids(self) -> set[int] | None:
+        """The pids listening on the pinned Ollama port (any address), or None when that cannot be read.
+
+        A listener whose pid is not reported counts as -1: a program that is not ours."""
+        try:
+            import psutil
+
+            connections = psutil.net_connections(kind="tcp")
+        except Exception:
+            return None
+        pids: set[int] = set()
+        for connection in connections:
+            local = getattr(connection, "laddr", None)
+            if getattr(connection, "status", "") != "LISTEN" or not local:
+                continue
+            if int(getattr(local, "port", 0) or 0) != _OLLAMA_PORT:
+                continue
+            pids.add(int(connection.pid) if connection.pid else -1)
+        return pids
+
+    def _ollama_is_ours(self) -> bool:
+        """Whether the Ollama answering on the pinned port is the serve this supervisor started.
+
+        The listening socket decides: ours only when every pid listening on the port is the live
+        serve this supervisor started. A listener we did not start (the user's own Ollama) is another
+        program, and so is a table that cannot be read (fail closed). No listener seen at all leaves
+        the answer as it was (nothing on the port is attributed to anyone else)."""
+        pids = self._ollama_listener_pids()
+        if pids is None:
+            return False
+        if not pids:
+            return True
+        child = self.processes.get("ollama")
+        if child is None or child.poll() is not None:
+            return False
+        return pids == {int(child.pid)}
+
+    def _tell_user(self, message: str) -> None:
+        """Show one plain message box (Windows), without waiting for it to be closed."""
+        if not _is_windows_platform():
+            return
+        import threading
+
+        def show() -> None:
+            with contextlib.suppress(Exception):
+                import ctypes
+
+                ctypes.windll.user32.MessageBoxW(None, message, "VOOL", 0x00000030 | 0x00040000)
+
+        threading.Thread(target=show, name="vool-ollama-port-in-use", daemon=True).start()
+
+    def _note_ollama_owner(self, ours: bool) -> None:
+        if ours:
+            if self.ollama_conflict:
+                self._log("ollama port conflict cleared")
+            self.ollama_conflict = ""
+            return
+        self.health.setdefault("ollama", {})["owner"] = "another_program"
+        if self.ollama_conflict:
+            return
+        self.ollama_conflict = _OLLAMA_PORT_IN_USE_TEXT
+        self._log(f"ollama port {_OLLAMA_PORT} answered by another program; VOOL will not use it")
+        self._write_model_status("ollama_port_in_use", _OLLAMA_PORT_IN_USE_TEXT)
+        self._tell_user(_OLLAMA_PORT_IN_USE_TEXT)
+
     def _ensure_ollama(self) -> None:
         if self._watch_child("ollama", f"{_OLLAMA_URL_PIN}/api/tags"):
+            if self.health.get("ollama", {}).get("healthy"):
+                self._note_ollama_owner(self._ollama_is_ours())
             return
+        if self.ollama_conflict:
+            self._log("ollama port conflict cleared: the port no longer answers")
+            self.ollama_conflict = ""
         self._start(
             "ollama", [str(self.root / "ollama" / "ollama.exe"), "serve"], cwd=self.root, extra_env=_OLLAMA_CHILD_ENV
         )
 
     def _ensure_api(self) -> None:
+        if self.ollama_conflict:
+            # Another program answers on VOOL's Ollama port: no API runs, so no VOOL client talks to it.
+            if "api" in self.processes:
+                self._log("api stopped: another program answers on the Ollama port")
+                self._stop_child("api")
+            return
         if self._watch_child("api", "http://127.0.0.1:11435/healthz"):
             return
         if _tick() < self.next_attempt["api"]:
@@ -1058,6 +1146,7 @@ class BundleSupervisor:
             # reads the file.
             "next_attempt": {name: wall + at - tick if at else 0.0 for name, at in self.next_attempt.items()},
             "last_exit": self.last_exit,
+            "ollama_conflict": self.ollama_conflict,
         }
         with contextlib.suppress(OSError):
             self.state_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
