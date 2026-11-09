@@ -161,7 +161,10 @@ def runtime_capability_snapshot(context: RuntimeContext | None = None) -> dict[s
             row["state"] = "disabled_by_profile"
             row["reason"] = "Current install profile exposes no active remote model lane, so remote-only fallback is unavailable."
             break
-    return {
+    windows_limits = _windows_limits_capability()
+    if windows_limits is not None:
+        _apply_windows_sandbox_row(capabilities_payload, windows_limits)
+    snapshot = {
         "mode": runtime.mode,
         "runtime_home": str(runtime.paths.runtime_home),
         "workspace_root": str(runtime.paths.workspace_root),
@@ -187,6 +190,123 @@ def runtime_capability_snapshot(context: RuntimeContext | None = None) -> dict[s
         "git_spawn_guard": _git_spawn_guard_capability(),
         "capabilities": capabilities_payload,
     }
+    if windows_limits is not None:
+        # `allow_sandbox_execution` stays the policy value: core/execution_gate.py reads the same
+        # policy key to decide run versus simulate, and on Windows Python and pytest do run. What
+        # the Windows sandbox runs is its own field, read from the sandbox's own gate.
+        snapshot["feature_flags"]["sandbox_execution_programs"] = list(windows_limits["sandbox"]["runs_programs"])
+        writes = windows_limits.get("writes")
+        if writes is not None:
+            workspace_tools = snapshot["workspace_access"]["workspace_tools"]
+            workspace_tools["write_scope"] = writes["write_scope"]
+            workspace_tools["marked_folders"] = list(writes["marked_folders"])
+        snapshot["windows_limits"] = windows_limits
+    return snapshot
+
+
+#: Sandbox backend states under which no confined job can run on this Windows host.
+_WINDOWS_SANDBOX_UNAVAILABLE = frozenset({"launcher_missing", "probe_failed"})
+
+
+def _windows_limits_capability() -> dict[str, Any] | None:
+    """What this Windows host refuses, each fact read from the gate that refuses it; None off Windows.
+
+    - sandbox: `sandbox.job_runner.windows_sandbox_report` (the phase-1 program gate, launcher state);
+    - plugins and MCP servers: `core.plugin_executor.windows_child_report`;
+    - writes and temp cleanup: `core.windows_write_gate.capability_report`;
+    - share, mapped-drive and device paths: `core.windows_path_policy.active`;
+    - files not read: `core.artifact_readers.capability_report`, the formats it reports unavailable.
+    """
+    from core import windows_path_policy, windows_write_gate
+    from core.plugin_executor import windows_child_report
+    from sandbox.job_runner import windows_sandbox_report
+
+    sandbox = windows_sandbox_report()
+    children = windows_child_report()
+    writes = windows_write_gate.capability_report()
+    paths_refused = bool(windows_path_policy.active())
+    if sandbox is None and children is None and writes is None and not paths_refused:
+        return None
+    if sandbox is not None:
+        programs = dict(sandbox.get("programs") or {})
+        backend = str(sandbox.get("backend") or "launcher_missing")
+        runs = [] if backend in _WINDOWS_SANDBOX_UNAVAILABLE else list(sandbox.get("confined_programs") or ())
+        sandbox_limits = {
+            **sandbox,
+            "backend": backend,
+            "runs_programs": runs,
+            "refused_programs": sorted(name for name, verdict in programs.items() if verdict != "confined"),
+        }
+    else:
+        sandbox_limits = {"backend": "not_windows", "runs_programs": [], "refused_programs": []}
+    limits: dict[str, Any] = {"sandbox": sandbox_limits}
+    if children is not None:
+        limits["plugins"] = dict(children["plugins"])
+        limits["mcp_servers"] = dict(children["mcp_servers"])
+    limits["writes"] = writes
+    limits["non_local_paths"] = {
+        "status": windows_path_policy.STATUS if paths_refused else "not_enforced",
+        "refused": paths_refused,
+        "reason": (
+            "Network shares, mapped network drives and device paths are refused before anything opens them."
+            if paths_refused
+            else ""
+        ),
+    }
+    limits["file_reading"] = _windows_file_reading_limits()
+    return limits
+
+
+def _windows_file_reading_limits() -> dict[str, Any]:
+    try:
+        from core import artifact_readers
+
+        report = artifact_readers.capability_report()
+    except Exception as exc:  # unknown: nothing is claimed readable
+        return {"status": "unknown", "reason": type(exc).__name__, "confinement_available": False, "not_read": []}
+    not_read = [
+        {
+            "format": row.get("format"),
+            "label": row.get("label"),
+            "extensions": list(row.get("extensions") or ()),
+            "reason": row.get("blocked_reason") or "",
+        }
+        for row in report.get("formats") or ()
+        if not row.get("available")
+    ]
+    return {
+        "status": "limited" if not_read else "ok",
+        "confinement_available": bool(report.get("confinement_available")),
+        "not_read": not_read,
+    }
+
+
+def _apply_windows_sandbox_row(capabilities_payload: list[dict[str, Any]], limits: dict[str, Any]) -> None:
+    """The `sandbox_execution` row on Windows: what the sandbox really runs, not only the policy flag."""
+    sandbox = dict(limits.get("sandbox") or {})
+    if sandbox.get("backend") == "not_windows":
+        return
+    for row in capabilities_payload:
+        if str(row.get("name") or "").strip() != "sandbox_execution":
+            continue
+        if str(row.get("state") or "") == "disabled_by_policy":
+            return
+        runs = list(sandbox.get("runs_programs") or ())
+        refused = list(sandbox.get("refused_programs") or ())
+        refused_text = f" {', '.join(refused)} and every other program are refused." if refused else ""
+        if not runs:
+            row["state"] = "unavailable_on_host"
+            row["reason"] = (
+                "The Windows sandbox launcher is missing or failed its check, so no command runs here."
+                + refused_text
+            )
+        else:
+            row["state"] = "limited_by_platform"
+            row["reason"] = (
+                f"On Windows only {', '.join(runs)} run, confined by the Windows sandbox." + refused_text
+                + (" No sandbox job has run in this process yet." if sandbox.get("backend") == "not_probed" else "")
+            )
+        return
 
 
 def _git_spawn_guard_capability() -> dict[str, Any]:

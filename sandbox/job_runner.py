@@ -222,6 +222,11 @@ def _windows_project_root() -> Path:
 _BACKEND_USABLE: dict[str, bool] = {}
 
 
+def _windows_probe_key(launcher: Path | str) -> str:
+    """The `_BACKEND_USABLE` key the VoolConfine probe result is kept under."""
+    return f"voolconfine:{launcher}"
+
+
 def reset_isolation_backend_probe_cache() -> None:
     """Forget probe results. For tests that fake a backend's availability."""
     _BACKEND_USABLE.clear()
@@ -1182,7 +1187,7 @@ class JobRunner:
         launcher = windows_confinement.launcher_path(project_root)
         if launcher is None:
             return None
-        probe_key = f"voolconfine:{launcher}"
+        probe_key = _windows_probe_key(launcher)
         usable = _BACKEND_USABLE.get(probe_key)
         if usable is None:
             usable = bool(windows_confinement.probe(project_root))
@@ -1514,3 +1519,48 @@ def windows_program_refusal(argv: list[str] | tuple[str, ...]) -> str | None:
     except KernelIsolationUnavailableError:
         return WINDOWS_PROGRAM_REFUSED_TEXT.format(program=program)
     return refused
+
+
+#: The programs whose Windows verdict the capability report states (core/runtime_capabilities.py):
+#: the ones VOOL's own tools ask for and the README's Windows limits name. Only the names live
+#: here; each verdict comes from `JobRunner._windows_phase1_argv`, the gate a real job meets.
+WINDOWS_REPORTED_PROGRAMS = ("python", "pytest", "git", "npm", "node", "ruff", "pip")
+
+
+def windows_sandbox_report() -> dict | None:
+    """What the Windows sandbox runs, read from the gates a job meets, or None off Windows.
+
+    - `confined_programs`: the program names phase 1 accepts (`_WINDOWS_PYTHON_NAMES`,
+      `_WINDOWS_PYTEST_NAMES`); every other program is refused before anything launches.
+    - `programs`: each name in `WINDOWS_REPORTED_PROGRAMS` with the verdict
+      `_windows_phase1_argv` gives it as a bare program name ("confined" or "refused").
+    - `backend`: "launcher_missing" when no pinned VoolConfine launcher verifies, "proven" or
+      "probe_failed" from the probe the first job runs (cached per process), and "not_probed"
+      until a job has asked. This report never runs the probe: it starts a confined child, too
+      slow for a status read. Only "proven" means a confined job has run here. Any error while
+      looking reads as "launcher_missing" (fail closed)."""
+    if not _is_windows_platform():
+        return None
+    verdicts: dict[str, str] = {}
+    for name in WINDOWS_REPORTED_PROGRAMS:
+        try:
+            JobRunner._windows_phase1_argv([name])
+        except KernelIsolationUnavailableError:
+            verdicts[name] = "refused"
+        else:
+            verdicts[name] = "confined"
+    backend = "launcher_missing"
+    try:
+        from sandbox import windows_confinement
+
+        launcher = windows_confinement.launcher_path(_windows_project_root())
+        if launcher is not None:
+            usable = _BACKEND_USABLE.get(_windows_probe_key(launcher))
+            backend = "not_probed" if usable is None else "proven" if usable else "probe_failed"
+    except Exception:
+        backend = "launcher_missing"
+    return {
+        "confined_programs": sorted(_WINDOWS_PYTHON_NAMES | _WINDOWS_PYTEST_NAMES),
+        "programs": verdicts,
+        "backend": backend,
+    }
