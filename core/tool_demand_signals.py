@@ -247,7 +247,7 @@ _RULES: tuple[tuple[str, str, re.Pattern[str]], ...] = (
         "workspace.rollback_last_change",
         "workspace",
         re.compile(
-            r"\b(?:rollback|roll\s+back|revert)\b[^.?!]{0,20}?\b(?:last\s+change|last\s+edit|that\s+change)\b", re.I
+            r"\b(?:rollback|roll\s+back|revert|undo)\b[^.?!]{0,20}?\b(?:last\s+change|last\s+edit|that\s+change)\b", re.I
         ),
     ),
     # -- workspace reads ------------------------------------------------------
