@@ -1,7 +1,7 @@
 # Windows 0.7.1 stated limits: rows that cannot pass on a Windows host because VOOL refuses the feature there by design.
 # A row here counts on Windows only when the exception that fails it is its limit's refusal, raised from VOOL's code; an
 # AssertionError never counts. A listed row that passes fails. See tests/_windows_0_7_1_limits.py.
-# Columns: node id <TAB> limit (git | plugin). Approved by: PENDING Jesse test-contract OK.
+# Columns: node id <TAB> limit (git | plugin). Approved by: Jesse test-contract OK, 9 Nov 2026 22:34 UTC.
 tests/command_registry/test_projection_parity.py::test_the_empty_catalog_is_established_through_the_lifecycle_authority	plugin
 tests/command_registry/test_projection_parity_populated_catalog.py::test_available_transition_executes_identically_across_cli_chat_api	plugin
 tests/command_registry/test_projection_parity_populated_catalog.py::test_palette_renders_the_populated_command_available_without_reason	plugin
