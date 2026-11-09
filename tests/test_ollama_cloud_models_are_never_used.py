@@ -32,6 +32,15 @@ LOCAL = "qwen3:8b"
 REMOTE = {"remote_host": "https://ollama.com:443", "remote_model": "gpt-oss:20b"}
 
 
+@pytest.fixture(autouse=True)
+def cloud_refusal_on(monkeypatch):
+    """These rows pin the refusal itself; in 0.7.1 it is Windows only (CLOUD_REFUSAL_ACTIVE), so it is
+    turned on here. tests/test_ollama_cloud_refusal_is_windows_only.py pins the flag both ways."""
+    from core import ollama_cloud_models
+
+    monkeypatch.setattr(ollama_cloud_models, "CLOUD_REFUSAL_ACTIVE", True, raising=False)
+
+
 class _FakeOllama:
     def __init__(self) -> None:
         self.requests: list[tuple[str, str, dict[str, Any]]] = []
