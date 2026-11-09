@@ -3727,19 +3727,24 @@ def _decide_tool_call(
         ), meta
 
     with _LOCK:
-        task_approved = any(
-            item.get("session_id") == session_id
-            and item.get("task_id") == logical_task_id
-            and item.get("intent") == str(intent or "")
-            and tuple(item.get("actions") or ()) == tuple(action.value for action in actions)
-            and int(item.get("mode_revision") or 0) == revision
-            and float(item.get("expires_at") or 0) > time.time()
-            # The action-class tuple alone is not enough to prove THIS call was the one
-            # approved -- it only proves this call happens to classify the same way as some
-            # other, unrelated call that was. Require the exact-call fingerprint too.
-            and item.get("fingerprint") == fingerprint
-            for item in _TASK_APPROVALS
+        task_grant = next(
+            (
+                item
+                for item in _TASK_APPROVALS
+                if item.get("session_id") == session_id
+                and item.get("task_id") == logical_task_id
+                and item.get("intent") == str(intent or "")
+                and tuple(item.get("actions") or ()) == tuple(action.value for action in actions)
+                and int(item.get("mode_revision") or 0) == revision
+                and float(item.get("expires_at") or 0) > time.time()
+                # The action-class tuple alone is not enough to prove THIS call was the one
+                # approved -- it only proves this call happens to classify the same way as some
+                # other, unrelated call that was. Require the exact-call fingerprint too.
+                and item.get("fingerprint") == fingerprint
+            ),
+            None,
         )
+    task_approved = task_grant is not None
     if task_approved:
         if consume:
             _record_approval_event(
@@ -3754,7 +3759,8 @@ def _decide_tool_call(
             mode=mode,
             actions=actions,
             reason="This non-edit action type was approved for the current task and mode revision.",
-            exact_approval=True,
+            # Only a grant bound to THIS call's fingerprint is the operator's approval of this call.
+            exact_approval=bool(fingerprint) and str(task_grant.get("fingerprint") or "") == fingerprint,
         ), meta
 
     # Project permissions can only narrow mode permissions, never widen them.

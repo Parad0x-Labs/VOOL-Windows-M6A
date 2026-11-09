@@ -81,8 +81,22 @@ def operator_approved_call(intent: str):
         _OPERATOR_APPROVED_CALL.reset(token)
 
 
+def operator_approval_spend_applies() -> bool:
+    """Whether an operator's exact approval may lift this gate's ask: on Windows only, for 0.7.1
+    (Security Architect, 9 Nov). The seam is the job runner's own platform check, the one every
+    Windows job's confinement is decided by. Mac and Linux keep the gate exactly as it was."""
+    try:
+        from sandbox import job_runner
+
+        return bool(job_runner._is_windows_platform())
+    except Exception:
+        return False
+
+
 def claim_operator_approved_call(intents: frozenset[str] | set[str]) -> bool:
     """True once, for the handler of the approved call; False for anything else or a second claim."""
+    if not operator_approval_spend_applies():
+        return False
     call = _OPERATOR_APPROVED_CALL.get()
     if call is None or call.claimed or call.intent not in intents:
         return False
@@ -103,6 +117,8 @@ def operator_approved_command(command: str, *, cwd: str):
 
 
 def _spend_operator_approved_command(text: str, cwd: str) -> bool:
+    if not operator_approval_spend_applies():
+        return False
     approved = _OPERATOR_APPROVED_COMMAND.get()
     if approved is None or approved.spent:
         return False
@@ -496,7 +512,8 @@ class ExecutionGate:
             destructive=destructive,
             autonomy_mode=policy.autonomy_mode,
         )
-        if not requires_approval and not read_only:
+        mode_denied = False
+        if not read_only:
             # Operating-mode authority has the final word on side effects. The turn's
             # mode (Manual/Review-edits by default) requires approval for
             # side-effecting commands in MODE_PERMISSION_MATRIX; the autonomy
@@ -515,15 +532,14 @@ class ExecutionGate:
                 operating_mode = OperatingMode(str(getattr(policy, "mode", "") or "").strip().lower())
             except ValueError:
                 operating_mode = OperatingMode.MANUAL
-            actions = _command_actions(text)
-            if PermissionEffect.REQUIRE_APPROVAL in [
-                MODE_PERMISSION_MATRIX[operating_mode][action] for action in actions
-            ] or PermissionEffect.DENY in [
-                MODE_PERMISSION_MATRIX[operating_mode][action] for action in actions
-            ]:
+            effects = [MODE_PERMISSION_MATRIX[operating_mode][action] for action in _command_actions(text)]
+            # A mode that DENIES one of the command's actions refuses it whatever was approved: an
+            # operator approval may lift only REQUIRE_APPROVAL (see the spend below).
+            mode_denied = PermissionEffect.DENY in effects
+            if not requires_approval and (PermissionEffect.REQUIRE_APPROVAL in effects or mode_denied):
                 requires_approval = True
         operator_approved = False
-        if requires_approval and _spend_operator_approved_command(text, cwd):
+        if requires_approval and not mode_denied and _spend_operator_approved_command(text, cwd):
             # The operator approved exactly this command line in exactly this folder, and the
             # controller spent that approval for this call. Asking again is the approval loop.
             requires_approval = False

@@ -44,7 +44,7 @@ import contextlib
 from typing import Any
 
 from core import windows_path_policy
-from core.execution_gate import operator_approved_call
+from core.execution_gate import operator_approval_spend_applies, operator_approved_call
 from core.mode_permission_policy import (
     PermissionDecision,
     PermissionEffect,
@@ -314,10 +314,13 @@ def execute_authorized_runtime_tool(
     runtime = _runtime_execution_tools()
     # An allow that is the operator's exact approval of this call is carried to the sandbox command
     # gate, which would otherwise ask about the approved command again. Only this dispatch carries
-    # it, and its handler may use it for the one command it derives from these arguments.
+    # it, and its handler may use it for the one command it derives from these arguments. Windows
+    # only for 0.7.1: elsewhere the gate is unchanged.
     approved_scope = (
         operator_approved_call(intent)
-        if decision.effect is PermissionEffect.ALLOW and bool(getattr(decision, "exact_approval", False))
+        if decision.effect is PermissionEffect.ALLOW
+        and bool(getattr(decision, "exact_approval", False))
+        and operator_approval_spend_applies()
         else contextlib.nullcontext()
     )
     with approved_scope:
