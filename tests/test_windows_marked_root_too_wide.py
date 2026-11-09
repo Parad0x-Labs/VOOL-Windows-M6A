@@ -229,6 +229,23 @@ def test_an_entry_already_in_the_owners_list_that_holds_temp_counts_nowhere(vool
     assert len(shown) == 1 and "TEMP" in shown[0]["refused"] and shown[0]["active"] is False
 
 
+@pytest.mark.parametrize("case", ["is_TEMP", "is_TMP", "holds_TEMP", "holds_TMP", "inside_TEMP"])
+def test_the_owners_list_judges_raw_temp_and_tmp_as_the_gate_does(vool_home, machine, monkeypatch, case: str) -> None:
+    """refusal_reason (what the Settings list and the window bridge ask) refuses a folder that is, or
+    holds, the raw TEMP or TMP variable, as the gate skips it; a folder inside them stays markable."""
+    name = case.rsplit("_", 1)[1]
+    raw_temp = machine["side"] / "Temp"
+    monkeypatch.setenv(name, str(raw_temp))
+    inside = raw_temp / "job-52"
+    inside.mkdir()
+    folder = {"is": raw_temp, "holds": machine["side"], "inside": inside}[case.split("_", 1)[0]]
+    reason = store.refusal_reason(str(folder))
+    if case == "inside_TEMP":
+        assert reason == ""
+    else:
+        assert name in reason, (case, reason)
+
+
 # --- the test harness's own folders inside TEMP stay marked ---------------------------------------
 
 
