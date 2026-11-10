@@ -1681,8 +1681,13 @@ def maybe_handle_cloud_command(user_input: str, *, owner_local: bool = False) ->
 
         if arg == cep.MODE_OFF and windows_cloud_gate.active():
             # Windows: `cloud off` turns cloud OFF, the free lane a key save switched on included,
-            # so the gate is closed when this reply says so (core/windows_cloud_gate.py).
+            # and a pinned cloud model (the gate counts a pin as the owner turning cloud on), so the
+            # gate is closed when this reply says so (core/windows_cloud_gate.py).
             cep.set_free_cloud_enabled(False)
+            if str(cep.load_policy().model or "").strip():
+                from dataclasses import replace as _replace
+
+                cep.save_policy(_replace(cep.load_policy(), model=""))
             if not windows_cloud_gate.cloud_off():
                 return (
                     "I could not turn cloud off just now, so it may still be on. Check that VOOL can "

@@ -17,6 +17,9 @@ both hold:
   ``core.cloud_transport`` already reads before a model call. Saving an OpenRouter key in
   Settings sets ``free_cloud_enabled`` (``registry_authorities.bind_saved_cloud_key``);
   ``cloud ask`` / ``cloud auto``, ``cloud model auto`` and the Settings "Auto fallback" picker set it too.
+  A cloud model the owner pinned by name (``model``) counts as well: a confirmed paid pin turns the
+  free lane off on purpose, and must not close the gate on the model it just chose. ``cloud off``
+  clears the pin with the free lane.
 
 Without both, every gated caller answers locally, with ``OFF_TEXT``, and opens no socket.
 
@@ -40,6 +43,16 @@ from core.remote_fetch_policy import RemoteFetchRefusedError
 
 OFF_TEXT = "Cloud models are off. Add your own key in Settings to use one."
 REASON = "cloud_models_off_before_opt_in"
+
+#: The chat header texts every UI locale shows while cloud is off: nothing reads as free cloud, and
+#: Auto's free-only rule is still stated. ``core.i18n.page_bundle`` puts them in the page's i18n
+#: bundle; ``core.vool_chat_page`` puts them in the served template.
+CLOUD_OFF_UI_TEXTS = {
+    "header.run_local_first_hint": "cloud models off",
+    "header.model_auto_hint": "local first",
+    "header.model_auto_explainer": "Starts local. " + OFF_TEXT + " Auto never selects a paid model.",
+    "header.model_connect_note": OFF_TEXT,
+}
 
 #: The one host the owner's Settings Verify may reach, while that route runs ("" = none).
 _OWNER_KEY_CHECK: ContextVar[str] = ContextVar("vool_windows_owner_key_check", default="")
@@ -90,12 +103,20 @@ def cloud_key_stored() -> bool:
 
 
 def owner_turned_cloud_on() -> bool:
-    """The cloud routing consent: free cloud on, or escalation ``ask`` / ``auto``."""
+    """The cloud routing consent: free cloud on, escalation ``ask`` / ``auto``, or a cloud model the
+    owner pinned by name (``model``).
+
+    The pin counts because it is the owner's own act naming a cloud model (owner-local only, and a
+    paid one only with their spend confirmation), and because that same act turns the free lane off
+    on purpose (``cloud_model_control.set_cloud_model``): without it, confirming a paid pin in
+    Settings would close the gate on the model just chosen. ``cloud off`` clears the pin with the
+    rest (``fast_command_surface.maybe_handle_cloud_command``)."""
     try:
         from core.cloud_escalation_policy import MODE_ASK, MODE_AUTO, load_policy
 
         policy = load_policy()
-        return bool(policy.free_cloud_enabled) or policy.mode in {MODE_ASK, MODE_AUTO}
+        pinned = str(policy.model or "").strip().lower() not in {"", "auto"}
+        return bool(policy.free_cloud_enabled) or policy.mode in {MODE_ASK, MODE_AUTO} or pinned
     except Exception:
         return False
 
@@ -242,6 +263,7 @@ def door_refusal(url: str, provider_id: str = "", keyed_or_keyless: str = "") ->
 
 
 __all__ = [
+    "CLOUD_OFF_UI_TEXTS",
     "OFF_TEXT",
     "REASON",
     "CloudContactRefused",

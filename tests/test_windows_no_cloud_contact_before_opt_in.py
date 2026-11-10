@@ -597,3 +597,71 @@ def test_a_lane_on_this_machine_reads_its_cached_catalog_row_while_off(profile_e
     finally:
         oc._CACHED_ROW_MEMO.clear()
     assert _outbound(sockets) == []
+
+
+def test_local_only_keeps_its_own_refusal_for_a_cloud_url_while_off(profile_env, windows, sockets):
+    """Cloud off and Local Only both refuse a cloud URL before any socket; under Local Only the owner
+    reads the Local Only sentence (the door checks it first), not the cloud-off line."""
+    from core import windows_cloud_gate
+    from core.auto_local_only_mode import CONTEXT_KEY, SELECTED_KEY, SELECTOR_VALUE
+    from core.remote_fetch_policy import RemoteFetchRefusedError, open_remote, remote_fetch_policy_scope
+
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    local_only = {"session_id": "cloud-off-local-only", CONTEXT_KEY: True, SELECTED_KEY: True,
+                  "requested_model": SELECTOR_VALUE}
+    with remote_fetch_policy_scope(local_only):
+        with pytest.raises(RemoteFetchRefusedError) as caught:
+            open_remote(urllib.request.Request(url), timeout=1.0)
+    assert not isinstance(caught.value, windows_cloud_gate.CloudContactRefused)
+    assert "local only" in str(caught.value).lower(), str(caught.value)
+    with remote_fetch_policy_scope({"session_id": "cloud-off-default-lane"}):
+        with pytest.raises(windows_cloud_gate.CloudContactRefused):
+            open_remote(urllib.request.Request(url), timeout=1.0)
+    assert _outbound(sockets) == [], _outbound(sockets)
+
+
+def test_a_confirmed_paid_pin_keeps_cloud_on_and_cloud_off_clears_it(profile_env, windows, sockets):
+    """Settings' paid handshake: confirming a paid pin turns the free lane off on purpose. The pin is
+    the owner turning cloud on for that model, so the gate stays open on it; ``cloud off`` closes it."""
+    from core import cloud_escalation_policy as cep
+    from core import windows_cloud_gate
+    from core.cloud_model_control import set_cloud_model
+
+    _store_openrouter_key()
+    _turn_cloud_on()
+    _seed_cache(profile_env)
+    ok, message, chosen = set_cloud_model(PAID_ID, owner_local=True, confirm_paid=True)
+    assert ok and chosen == PAID_ID, message
+    assert cep.load_policy().free_cloud_enabled is False
+    assert cep.load_policy().model == PAID_ID
+    assert windows_cloud_gate.cloud_off() is False
+    reply = chat(make_agent(), "cloud off", "cloud-off-after-paid-pin")
+    assert OFF_TEXT in reply["text"], reply["text"]
+    assert cep.load_policy().model == ""
+    assert windows_cloud_gate.cloud_off() is True
+
+
+def test_a_pin_without_a_stored_key_still_refuses(profile_env, windows, sockets):
+    from core import cloud_escalation_policy as cep
+    from core import openrouter_catalog as oc
+    from core import windows_cloud_gate
+
+    cep.save_policy(cep.CloudEscalationPolicy(mode=cep.MODE_OFF, free_cloud_enabled=False, model=PAID_ID))
+    assert windows_cloud_gate.cloud_key_stored() is False
+    with pytest.raises(windows_cloud_gate.CloudContactRefused):
+        oc.refresh_openrouter_catalog()
+    assert _outbound(sockets) == []
+
+
+def test_chat_page_serves_its_bootstrap_verbatim_and_states_auto_is_free_only_while_off(profile_env, windows, sockets):
+    """The cloud-off texts are applied in the bundle's owner, so the served page embeds exactly what
+    ``i18n_bootstrap_js`` builds; and Auto's free-only rule is still stated."""
+    from core.i18n.page_bundle import i18n_bootstrap_js
+
+    html = served_get(make_agent(), "/chat", {}).body.decode("utf-8")
+    bootstrap = i18n_bootstrap_js("en")
+    assert bootstrap in html
+    assert '"header.run_local_first_hint":"cloud models off"' in bootstrap
+    assert "free cloud only if needed" not in bootstrap
+    assert "Auto never selects a paid model" in html
+    assert _outbound(sockets) == []

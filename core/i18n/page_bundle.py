@@ -211,7 +211,26 @@ def i18n_client_bundle_for(catalog: MessageCatalog) -> dict[str, Any]:
     bundle["dir"] = spec.direction
     bundle["rtl"] = spec.direction == DIRECTION_RTL
     bundle["uiLocales"] = {tag: get_locale(tag).endonym for tag in ui_catalog_tags()}
+    _windows_cloud_off_texts(bundle)
     return bundle
+
+
+def _windows_cloud_off_texts(bundle: dict[str, Any]) -> None:
+    """Windows, before a key is stored and cloud is turned on (core/windows_cloud_gate.py): the chat
+    header texts in every locale say cloud models are off instead of offering free cloud. Applied
+    here, in the bundle's owner, so every page that embeds the bootstrap embeds exactly what
+    ``i18n_bootstrap_js`` returns. Off Windows, or once cloud is on, the bundle is unchanged."""
+    from core import windows_cloud_gate
+
+    if not windows_cloud_gate.cloud_off():
+        return
+    for part in ("messages", "english"):
+        table = bundle.get(part)
+        if not isinstance(table, dict):
+            continue
+        for key, text in windows_cloud_gate.CLOUD_OFF_UI_TEXTS.items():
+            if key in table:
+                table[key] = text
 
 
 def render_i18n_bootstrap(locale: str) -> str:
