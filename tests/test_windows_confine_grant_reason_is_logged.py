@@ -436,7 +436,7 @@ def test_a_transient_grant_refusal_gives_up_after_three_attempts(windows, tmp_pa
         SandboxRunner(ExecutionGate(), str(proj)).job_runner.run(["python", "calc.py"], cwd=proj)
 
     assert str(raised.value) == _GRANT_SENTENCE
-    assert _calls(launcher) == ["grant"] * 3
+    assert _calls(launcher) == ["grant"] * 3 + ["revoke"], "then one best-effort revoke"
     assert waits == [0.5, 1.5]
     assert _confine_warnings(caplog) == [
         f"VoolConfine grant failed: exit 125, reason entry_vanished: {message} (attempt 1 of 3, retrying in 0.5 s)",
@@ -495,3 +495,126 @@ def test_a_revoke_is_never_retried_even_for_a_transient_reason(windows, tmp_path
 
     assert _calls(launcher) == ["revoke"] and waits == []
     assert _confine_warnings(caplog) == [f"VoolConfine revoke failed: exit 125, reason entry_vanished: {message}"]
+
+
+# --- a grant that finally fails is revoked once -------------------------------------------------
+
+#: Grant fails with GRANT_REFUSAL while a file named "fail" sits next to the script (and succeeds
+#: without it); revoke exits REVOKE_EXIT with REVOKE_REFUSAL. Each grant or revoke call appends
+#: "<form>:<policy exists>" to calls.log.
+_REVOKING_FAKE = r'''#!{python}
+import json, os, subprocess, sys
+GRANT_REFUSAL = {grant_refusal!r}
+REVOKE_REFUSAL = {revoke_refusal!r}
+REVOKE_EXIT = {revoke_exit!r}
+args = sys.argv[1:]
+here = os.path.dirname(os.path.abspath(__file__))
+if args and args[0] in ("grant", "revoke"):
+    with open(os.path.join(here, "calls.log"), "a", encoding="utf-8") as f:
+        f.write(args[0] + ":" + str(os.path.isfile(args[2])) + "\n")
+    if args[0] == "grant":
+        if os.path.exists(os.path.join(here, "fail")):
+            sys.stderr.write(GRANT_REFUSAL)
+            sys.exit(125)
+        sys.exit(0)
+    sys.stderr.write(REVOKE_REFUSAL)
+    sys.exit(REVOKE_EXIT)
+if args and args[0] == "scan":
+    sys.exit(0)
+status = os.path.join(os.path.dirname(args[1]), "status.json")
+def record(**fields):
+    with open(status, "w", encoding="utf-8") as f:
+        json.dump(dict(schema={schema!r}, **fields), f)
+record(child_started=True)
+rc = subprocess.call(args[3:])
+record(child_started=True, timed_out=False, exit_code=rc, new_repositories=[], repositories_scanned=True)
+sys.exit(rc)
+'''
+
+
+def _revoking_launcher(
+    folder: Path, *, grant_code: str, revoke_exit: int = 0, revoke_refusal: str = "revoked: 2 updated\n",
+    failing: bool = True,
+) -> Path:
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / "VoolConfine-revoking"
+    path.write_text(
+        _REVOKING_FAKE.format(
+            python=sys.executable, schema=_STATUS,
+            grant_refusal=f"VOOLCONFINE-REFUSED: grant failed ({grant_code}): Cannot open 'calc.py' (NTSTATUS 0xc0000043).\n",
+            revoke_refusal=revoke_refusal, revoke_exit=revoke_exit,
+        ),
+        encoding="utf-8",
+    )
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    if failing:
+        (folder / "fail").write_text("", encoding="utf-8")
+    return path
+
+
+def _staging(tmp_path: Path) -> list[str]:
+    return [p.name for p in (tmp_path / "systemp").iterdir() if p.name.startswith("vool-confine-")]
+
+
+def test_a_grant_that_fails_three_times_is_revoked_once_and_the_job_refused(windows, tmp_path, caplog, waits) -> None:
+    marks = _marks(tmp_path)
+    launcher = _revoking_launcher(tmp_path / "bin", grant_code="in_use")
+    _use(windows, launcher)
+    proj = marks["proj"].resolve()
+    marker = proj / "ran"
+    caplog.set_level(logging.WARNING, logger=wc.__name__)
+
+    with pytest.raises(jr.KernelIsolationUnavailableError) as raised:
+        SandboxRunner(ExecutionGate(), str(proj)).job_runner.run(
+            ["python", "-c", f"open({str(marker)!r}, 'w')"], cwd=proj
+        )
+
+    assert str(raised.value) == _GRANT_SENTENCE
+    assert _calls(launcher) == ["grant:True"] * 3 + ["revoke:True"], "one revoke, while the policy still exists"
+    assert waits == [0.5, 1.5]
+    assert not marker.exists()
+    assert _staging(tmp_path) == [] and not jr._WINDOWS_STAGED
+    assert not any("revoke" in line for line in _confine_warnings(caplog)), "a revoke that succeeds logs nothing"
+
+
+def test_a_revoke_after_a_failed_grant_that_fails_too_logs_its_reason(windows, tmp_path, caplog, waits) -> None:
+    marks = _marks(tmp_path)
+    launcher = _revoking_launcher(
+        tmp_path / "bin", grant_code="nested_write_roots", revoke_exit=125,
+        revoke_refusal="VOOLCONFINE-REFUSED: revoke failed (acl_write_failed): Cannot write the DACL of C:\\w (Win32 error 5)\n",
+    )
+    _use(windows, launcher)
+    proj = marks["proj"].resolve()
+    caplog.set_level(logging.WARNING, logger=wc.__name__)
+
+    with pytest.raises(jr.KernelIsolationUnavailableError) as raised:
+        SandboxRunner(ExecutionGate(), str(proj)).job_runner.run(["python", "calc.py"], cwd=proj)
+
+    assert str(raised.value) == _GRANT_SENTENCE
+    assert _calls(launcher) == ["grant:True", "revoke:True"], "no retry of either form"
+    assert waits == []
+    assert _confine_warnings(caplog)[-1] == (
+        "VoolConfine revoke failed: exit 125, reason acl_write_failed: Cannot write the DACL of C:\\w (Win32 error 5)"
+    )
+    assert _staging(tmp_path) == [] and not jr._WINDOWS_STAGED
+
+
+def test_a_failed_grant_forgets_remembered_grants_so_the_next_job_grants_again(windows, tmp_path, waits) -> None:
+    """The revoke strips the job folder's capability ACE that an earlier, remembered grant shares."""
+    marks = _marks(tmp_path)
+    launcher = _revoking_launcher(tmp_path / "bin", grant_code="repo_appeared", failing=False)
+    _use(windows, launcher)
+    proj = marks["proj"].resolve()
+    runner = SandboxRunner(ExecutionGate(), str(proj)).job_runner
+
+    assert runner.run(["python", "calc.py"], cwd=proj).returncode == 0
+    (launcher.parent / "fail").write_text("", encoding="utf-8")
+    with pytest.raises(jr.KernelIsolationUnavailableError):
+        # Another policy shape that names the same job folder: it shares that folder's capability.
+        jr.JobRunner(
+            ExecutionPolicy(workspace_root=proj, writable_roots=(proj, marks["b"].resolve()))
+        ).run(["python", "calc.py"], cwd=proj)
+    (launcher.parent / "fail").unlink()
+    assert runner.run(["python", "calc.py"], cwd=proj).returncode == 0
+
+    assert _calls(launcher) == ["grant:True", "grant:True", "revoke:True", "grant:True"]
