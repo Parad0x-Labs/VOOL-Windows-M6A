@@ -1448,8 +1448,12 @@ class ResearchToolLoopFacadeMixin:
                         operator_approval_spend_applies,
                     )
 
+                    # Set or cleared on every round: the mark is the loop's own, never a value
+                    # that arrived with the context (a body, a restored checkpoint).
                     if steps_that_ran(executed_steps) and operator_approval_spend_applies():
                         loop_source_context[TOOL_FOLLOWUP_AFTER_RUN_KEY] = True
+                    else:
+                        loop_source_context.pop(TOOL_FOLLOWUP_AFTER_RUN_KEY, None)
                     tool_decision = self.memory_router.resolve_tool_intent(
                         task=task,
                         classification=classification,

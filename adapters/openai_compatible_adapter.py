@@ -2650,10 +2650,13 @@ def _followup_prose_as_respond_direct(
     already stripped). Otherwise nothing changes and the check after this still fails closed.
     """
 
-    from core.execution_gate import TOOL_FOLLOWUP_AFTER_RUN_KEY
+    from core.execution_gate import TOOL_FOLLOWUP_AFTER_RUN_KEY, operator_approval_spend_applies
 
     message = str(output_text or "").strip()
     if not message or not dict(getattr(request, "metadata", None) or {}).get(TOOL_FOLLOWUP_AFTER_RUN_KEY):
+        return (), output_text
+    # The seam again, here: a stray or forwarded mark never turns the repair on off Windows.
+    if not operator_approval_spend_applies():
         return (), output_text
     respond = next((item for item in definitions if item.intent == "respond.direct"), None)
     if respond is None:
