@@ -527,6 +527,7 @@ def _windows_marked_file_turn(
     )
     if execution is None:
         return None
+    marked.moved_back(ask, execution, session_id=str((source_context or {}).get("session_id") or session_id or ""))
     return {
         "result": _machine_tool_fast_path_result(
             agent,
