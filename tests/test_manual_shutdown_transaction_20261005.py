@@ -256,7 +256,9 @@ def test_an_entered_write_under_stop_and_store_switch_is_rolled_back_everywhere(
         report, elapsed = _timed_stop(agent, join_timeout=0.05)
         assert elapsed is not None and elapsed < 0.35, f"stop took {elapsed:.3f}s against a 0.05s bound"
         assert report["_public_presence_sync_thread"] is False, "the entered write's thread must be reported, not hidden"
-        stop_returned = time.monotonic()
+        # perf_counter: Windows advances time.monotonic() only every ~15.6 ms, so a join that ends
+        # inside one tick read as "not after" the stop.
+        stop_returned = time.perf_counter()
         # The next session's store becomes active while the stopped session's write is in flight.
         configure_default_db_path(next_db)
         real_audit_logger.reset_schema_ready_flag()
@@ -264,7 +266,7 @@ def test_an_entered_write_under_stop_and_store_switch_is_rolled_back_everywhere(
         gate.proceed.set()
         sync_thread.join(10.0)
         assert not sync_thread.is_alive()
-        assert time.monotonic() > stop_returned
+        assert time.perf_counter() > stop_returned
 
     assert _sync_rows(session_db) == rows_before, "the entered write committed into its session store after stop returned"
     assert _triple_counts(session_db) == counts_before, "the rolled-back write left a partial triple"
