@@ -16,7 +16,7 @@ from core.execution.constants import (
     _WEB_TOOL_INTENTS,
 )
 from core.execution.mcp_bridge import mcp_tool_specs
-from core.hive_activity_tracker import load_hive_activity_tracker_config, windows_watcher_route_named
+from core.hive_activity_tracker import load_hive_activity_tracker_config
 from core.local_operator_actions import list_operator_tools, operator_capability_ledger
 from core.public_hive_bridge import load_public_hive_bridge_config, public_hive_write_enabled
 from core.runtime_execution_tools import runtime_execution_capability_ledger, runtime_execution_tool_specs
@@ -32,15 +32,12 @@ def runtime_capability_ledger(
     public_hive_write_enabled_fn=public_hive_write_enabled,
     runtime_execution_capability_ledger_fn=runtime_execution_capability_ledger,
     operator_capability_ledger_fn=operator_capability_ledger,
-    windows_watcher_route_named_fn: Callable[[], bool] = windows_watcher_route_named,
 ) -> list[dict[str, Any]]:
     hive_cfg = load_hive_activity_tracker_config_fn()
     public_hive_cfg = load_public_hive_bridge_config_fn()
     hive_list_available = bool(
         (hive_cfg.enabled and hive_cfg.watcher_api_url)
         or (public_hive_cfg.enabled and public_hive_cfg.topic_target_url)
-        # Windows: the route stays configured while the opt-in rule keeps contact off (no lookup).
-        or windows_watcher_route_named_fn()
     )
     hive_public_read = bool(public_hive_cfg.enabled and public_hive_cfg.topic_target_url)
     hive_read_intents = ["hive.list_available"] if hive_list_available else []
@@ -366,7 +363,6 @@ def runtime_tool_specs(
     load_public_hive_bridge_config_fn=load_public_hive_bridge_config,
     public_hive_write_enabled_fn=public_hive_write_enabled,
     list_operator_tools_fn=list_operator_tools,
-    windows_watcher_route_named_fn: Callable[[], bool] = windows_watcher_route_named,
 ) -> list[dict[str, Any]]:
     specs: list[dict[str, Any]] = [
         {
@@ -467,12 +463,7 @@ def runtime_tool_specs(
 
     hive_cfg = load_hive_activity_tracker_config_fn()
     public_hive_cfg = load_public_hive_bridge_config_fn()
-    if (
-        (hive_cfg.enabled and hive_cfg.watcher_api_url)
-        or (public_hive_cfg.enabled and public_hive_cfg.topic_target_url)
-        # Windows: advertised while the opt-in rule keeps contact off; a call answers locally.
-        or windows_watcher_route_named_fn()
-    ):
+    if (hive_cfg.enabled and hive_cfg.watcher_api_url) or (public_hive_cfg.enabled and public_hive_cfg.topic_target_url):
         specs.append(
             {
                 "intent": "hive.list_available",
