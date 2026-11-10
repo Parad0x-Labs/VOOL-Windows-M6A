@@ -112,6 +112,27 @@ def watcher_contact_allowed() -> bool:
     return not windows_watcher_needs_opt_in()
 
 
+def windows_watcher_route_named() -> bool:
+    """Windows only: whether this build names a Hive watcher route that the opt-in rule keeps off.
+
+    The capability catalog and ledger describe the runtime, not this machine's contact rule: the
+    route the shipped cluster manifests (or ``VOOL_HIVE_WATCHER_URL``) name is still a configured
+    route, so ``hive.list_available`` stays advertised and the ledger keeps reporting ``hive.read``
+    as configured, as before the rule. This reads the environment and the local manifest files
+    only: no name lookup and no socket. The tracker's own config stays empty
+    (``load_hive_activity_tracker_config``), so a call still reaches no watcher: the executor
+    answers ``not_configured``, and ``_http_get_json`` refuses before the fetch door. Off Windows
+    this is False and the callers use the tracker config alone, as before.
+    """
+    if not windows_watcher_needs_opt_in():
+        return False
+    enabled_raw = str(os.environ.get("VOOL_HIVE_FOLLOWUPS_ENABLED", "1")).strip().lower()
+    if enabled_raw in {"0", "false", "no", "off"}:
+        return False
+    watcher_url = str(os.environ.get("VOOL_HIVE_WATCHER_URL") or "").strip() or _load_watcher_url_from_manifest()
+    return bool(_watcher_api_url(watcher_url))
+
+
 @dataclass(frozen=True)
 class HiveActivityTrackerConfig:
     enabled: bool = True
