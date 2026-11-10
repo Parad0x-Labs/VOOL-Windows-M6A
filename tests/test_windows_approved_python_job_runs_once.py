@@ -422,3 +422,83 @@ def test_a_python_planted_on_path_never_runs_and_other_programs_are_still_looked
             result = runner.run_command(command, cwd=str(workspace))
             assert result.get("status") == "blocked_by_policy", (command, result)
     assert [job["launched"] for job in jobs] == [[_interpreter(), "t.py"]]
+
+
+# --- after the approved run, a refused follow-up still ends the turn on the command's output -----
+
+
+def test_an_approved_python_run_whose_followup_is_malformed_ends_with_the_output(
+    windows, served, workspace, monkeypatch
+) -> None:
+    """Captest (Windows 11 VM, qwen3:8b on the bundled Ollama, CPU only): "run calc.py in <marked
+    folder>", Allow, the job ran, and the model's next step answered in prose where a tool call was
+    required: "No usable provider reply ... malformed_tool_arguments:required native tool call is
+    missing". The turn then asked the same model to write the answer and showed "Working" for 12+
+    minutes. It must end on the command's output, saying the follow-up failed, without that call."""
+    from apps import vool_api_server
+    from core.memory_first_router import ModelExecutionDecision
+
+    agent = vool_api_server._agent
+    reason = "malformed_tool_arguments:required native tool call is missing"
+    approved_call = {"intent": "sandbox.run_command", "arguments": {"command": "python t.py", "cwd": str(workspace)}}
+    synthesis: list[dict[str, Any]] = []
+
+    def decide(**kwargs: Any) -> ModelExecutionDecision:
+        served.rounds += 1
+        if not served.jobs:
+            return ModelExecutionDecision(
+                source="provider_execution", task_hash=f"t{served.rounds}", provider_id="ollama-local:test",
+                provider_name="ollama-local", model_name="test", structured_output=dict(approved_call),
+                confidence=0.8, trust_score=0.84, used_model=True, validation_state="valid",
+            )
+        context = kwargs.get("source_context")
+        if isinstance(context, dict):
+            # What the router records on the shared context when it refuses the reply.
+            context["last_tool_call_rejection"] = {
+                "error_kind": "malformed_tool_arguments", "provider_id": "ollama-local:test", "resolution": {},
+            }
+        return ModelExecutionDecision(
+            source="selected_model_blocked", task_hash=f"t{served.rounds}", used_model=False,
+            structured_output=None, validation_state="not_run",
+            details={"reason": reason, "block_reason": reason, "model_was_attempted": True},
+        )
+
+    real_resolve = agent.memory_router.resolve
+
+    def resolve(**kwargs: Any):
+        if kwargs.get("force_model") and served.jobs:
+            synthesis.append(dict(kwargs.get("source_context") or {}))
+        return real_resolve(**kwargs)
+
+    monkeypatch.setattr(agent.memory_router, "resolve_tool_intent", decide)
+    monkeypatch.setattr(agent.memory_router, "resolve", resolve)
+
+    _first, resumed, token, _turn = served.ask_allow_resume("run t.py in the folder", approved_call)
+
+    assert len(served.jobs) == 1, (served.jobs, resumed)
+    assert os.path.samefile(served.jobs[0]["cwd"], workspace), served.jobs
+    assert mpp._APPROVALS[token]["status"] == "consumed"
+    assert synthesis == [], "after the run, the model that just failed was asked to write the answer"
+    assert "Command executed in `.`" in resumed, resumed
+    assert "ran" in resumed, resumed
+    assert "The model's follow-up step failed, so this is the tool output without a written answer." in resumed, resumed
+    assert "malformed_tool_arguments" not in resumed, resumed
+    # The approval card's preview step is not output: only what ran is shown as the result.
+    assert "requires approval" not in resumed, resumed
+
+
+@pytest.mark.parametrize("folder", ["", "sub"], ids=["the-workspace", "a-subfolder"])
+def test_the_approved_cwd_label_is_never_blank(windows, jobs, executor, workspace, folder) -> None:
+    """The captest trail read "Command executed in ``:". The label is the folder relative to the
+    workspace: "." for the workspace itself, never an empty string."""
+    cwd = workspace / folder if folder else workspace
+    cwd.mkdir(exist_ok=True)
+    approved = {"command": "python t.py", "cwd": str(cwd)}
+    token = _approved_token(executor, approved)
+
+    ran = executor(approved, token)
+
+    assert ran.status == "executed", (ran.status, ran.response_text)
+    first_line = ran.response_text.splitlines()[0]
+    assert first_line == f"Command executed in `{folder or '.'}`:", first_line
+    assert [job["cwd"] for job in jobs] == [str(cwd)]

@@ -420,6 +420,17 @@ def _within_turn_navigation(loop: Any) -> Any:
     return run_in_turn_scope
 
 
+
+def steps_that_ran(executed_steps: list[dict] | None) -> list[dict]:
+    """The steps that actually ran: an approval card's preview step (mode ``tool_preview`` or
+    status ``pending_approval``) is not output. Empty when nothing ran."""
+    return [
+        step for step in (executed_steps or [])
+        if str(step.get("mode") or "") != "tool_preview"
+        and str(step.get("status") or "") != "pending_approval"
+    ]
+
+
 class ResearchToolLoopFacadeMixin:
     def _collect_live_web_notes(
         self,
@@ -2332,6 +2343,96 @@ class ResearchToolLoopFacadeMixin:
             return None
         if not loop_stop_reason and model_rounds >= max_rounds:
             loop_stop_reason = "step_budget_exhausted"
+
+        # Steps ran, then the model's next step produced no usable reply: a refused call (the
+        # local lane raises "required native tool call is missing" when the model answers in prose
+        # where a call is required) or a recorded provider failure. Synthesis below would ask the
+        # SAME lane to write the answer; on a CPU-only machine that call may run its whole 720 s
+        # timeout with nothing on screen (Windows captest, calc.py: "Working" for 12+ minutes after
+        # the approved job had finished). The tool output is the grounded result, so end on it.
+        #
+        # Windows only for 0.7.1, on the seam the approval spend uses (Security Architect): Mac and
+        # Linux keep the synthesis path exactly as it was.
+        from core.execution_gate import operator_approval_spend_applies
+
+        followup_failure = ""
+        # Only what ran is the result: an approval card's preview step (a resumed turn carries
+        # it from the checkpoint) is not output. With nothing that ran, the old path is kept.
+        ran_steps = steps_that_ran(executed_steps)
+        if loop_stop_reason == "provider_did_not_answer" and ran_steps and operator_approval_spend_applies():
+            followup_rejection = dict((loop_source_context or {}).get("last_tool_call_rejection") or {})
+            followup_details = dict(getattr(last_tool_decision, "details", None) or {}) if last_tool_decision else {}
+            followup_failure = str(
+                followup_details.get("block_reason")
+                or followup_details.get("reason")
+                or followup_rejection.get("error_kind")
+                or ""
+            ).strip()
+        if followup_failure:
+            outputs: list[str] = []
+            for step in ran_steps:
+                text = str(step.get("response_text") or step.get("summary") or "").strip()
+                if text and text not in outputs:
+                    outputs.append(text)
+            followup_message = "\n\n".join(outputs) or self._tool_loop_final_message(None, executed_steps)
+            # The cause stays in details (`followup_failure`); the reply says it plainly.
+            followup_message += (
+                "\n\nThe model's follow-up step failed, so this is the tool output without a "
+                "written answer."
+            )
+            steps_ok = all(bool(step.get("ok", True)) for step in ran_steps)
+            self._emit_runtime_event(
+                loop_source_context,
+                event_type="tool_loop_completed",
+                message="Returning the tool output: the model's follow-up step failed, so it was not asked again.",
+                step_count=len(executed_steps),
+                tool_name=str(executed_steps[-1].get("tool_name") or ""),
+                render_mode="tool_output_after_failed_followup",
+                status="tool_followup_failed",
+            )
+            if checkpoint_id:
+                self._record_runtime_tool_progress(
+                    checkpoint_id,
+                    executed_steps=executed_steps,
+                    loop_source_context=loop_source_context,
+                    seen_tool_payloads=seen_tool_payloads,
+                    pending_tool_payload=None,
+                    last_tool_payload=checkpoint_state.get("last_tool_payload"),
+                    last_tool_response=checkpoint_state.get("last_tool_response"),
+                    last_tool_name=str(executed_steps[-1].get("tool_name") or ""),
+                    task_class=str(classification.get("task_class") or "unknown"),
+                    status="running",
+                )
+            return enforce_code_task_completion({
+                "response": self._render_tool_loop_response(
+                    final_message=followup_message,
+                    executed_steps=executed_steps,
+                    include_step_summary=not self._live_runtime_stream_enabled(loop_source_context),
+                ),
+                "confidence": 0.35,
+                "success": steps_ok,
+                "status": "tool_followup_failed",
+                "mode": "tool_executed" if steps_ok else "tool_failed",
+                "task_outcome": "success" if steps_ok else "failed",
+                "details": {
+                    "tool_name": executed_steps[-1].get("tool_name"),
+                    "tool_provider": None,
+                    "tool_validation": "followup_failed",
+                    "tool_steps": [step["tool_name"] for step in executed_steps],
+                    "step_count": len(executed_steps),
+                    "render_mode": "tool_output_after_failed_followup",
+                    "loop_stop_reason": loop_stop_reason,
+                    "followup_failure": followup_failure,
+                    "max_rounds": max_rounds,
+                    "max_steps": max_rounds,
+                },
+                "learned_plan": None,
+                "workflow_summary": self._tool_intent_loop_workflow_summary(
+                    executed_steps=executed_steps,
+                    provider_id=None,
+                    validation_state="followup_failed",
+                ),
+            }, executed_steps)
 
         # Deterministic direct render: for read-only machine tools the tool text IS the
         # answer. Return it as-is -- no model synthesis pass, so a degraded model lane can
