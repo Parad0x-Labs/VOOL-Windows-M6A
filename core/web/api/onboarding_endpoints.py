@@ -154,12 +154,47 @@ def handle_pact_post(path: str, body: Any, headers: dict | None, client_host: st
 
     from core.command_registry.legacy import forward as _cr_forward
 
-    status, payload = _cr_forward(command_id, input_data)
+    with _owner_verify_scope(command_id, input_data):
+        status, payload = _cr_forward(command_id, input_data)
     if status == 200:
         payload = {"ok": True, **(payload or {})}
     else:
         payload = {"ok": False, **(payload or {})}
     return _with_runtime_headers(_json_response(status, payload), runtime)
+
+
+def _owner_verify_scope(command_id: str, input_data: dict):
+    """Windows: the owner's Verify in Settings may send the key they pasted to the selected
+    provider's verification host even while cloud is off (core/windows_cloud_gate.py). Opened only
+    here, after the owner-local guard, and only when the intake session holds a pasted key."""
+    import contextlib
+
+    from core import windows_cloud_gate
+
+    if command_id != "intake.verify" or not windows_cloud_gate.active():
+        return contextlib.nullcontext()
+    try:
+        from urllib.parse import urlsplit
+
+        from core.cloud_providers import CUSTOM_NO_KEY_VALUE
+        from core.command_registry.groups import first_run as _intake
+
+        with _intake._intake_lock():
+            session = _intake._INTAKE_SESSIONS.get(str(input_data.get("session_id") or ""))
+            pasted = str(getattr(session, "value", "") or "") if session is not None else ""
+        if not pasted or pasted == CUSTOM_NO_KEY_VALUE:
+            return contextlib.nullcontext()
+        descriptor, fault = _intake._intake_descriptor(
+            str(input_data.get("provider_id") or ""), str(input_data.get("base_url") or ""),
+            str(input_data.get("auth") or ""))
+        if fault is not None or descriptor is None:
+            return contextlib.nullcontext()
+        host = str(urlsplit(str(descriptor.verify_endpoint or "")).hostname or "")
+    except Exception:
+        return contextlib.nullcontext()
+    if not host:
+        return contextlib.nullcontext()
+    return windows_cloud_gate.owner_key_check(host)
 
 
 def _command_input(command_id: str, body: dict) -> dict:

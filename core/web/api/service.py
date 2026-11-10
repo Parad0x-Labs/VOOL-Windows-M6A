@@ -2570,6 +2570,14 @@ def dispatch_get(
             except Exception:
                 payload["auto_free_model"] = "auto"
                 payload["free_cloud_enabled"] = False
+            from core import windows_cloud_gate as _cloud_gate
+
+            if _cloud_gate.cloud_off():
+                # Windows, before a key is stored and cloud is turned on: no catalog was read or
+                # fetched, and no free cloud lane is offered (core/windows_cloud_gate.py).
+                payload["free_cloud_enabled"] = False
+                payload["cloud_off"] = True
+                payload["message"] = _cloud_gate.OFF_TEXT
             if refresh_result is not None:
                 payload["refresh"] = refresh_result
             return apply_runtime_headers(json_response(200, payload), runtime)

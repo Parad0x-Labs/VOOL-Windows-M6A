@@ -12574,15 +12574,74 @@ _WINDOWS_FILE_ACTIONS = (
 )
 
 
+# Windows, before a cloud key is stored and cloud is turned on (core/windows_cloud_gate.py): nothing
+# on the composer is labelled free cloud. The default lane stays VOOL Auto ("Local first", the lane
+# `modelForChat` gives every chat without a stored choice); with cloud off it runs no cloud model, and
+# its hint says so. "This computer only" is not made the default: it is zero public egress, web
+# search included. The swapped texts drop their i18n key, so a catalog cannot put the free-cloud
+# wording back. Off Windows, or once cloud is on, the template is served byte for byte.
+_CLOUD_OFF_NOTE = "Cloud models are off. Add your own key in Settings to use one."
+_WINDOWS_CLOUD_OFF = (
+    ('<button type="button" class="run-choice" role="radio" aria-checked="true" data-run-model="vool">'
+     '<b data-i18n="header.run_local_first">Local first</b>'
+     '<small data-i18n="header.run_local_first_hint">free cloud only if needed</small></button>',
+     '<button type="button" class="run-choice" role="radio" aria-checked="true" data-run-model="vool">'
+     '<b data-i18n="header.run_local_first">Local first</b><small>cloud models off</small></button>'),
+    ('<span class="pi-hint" data-i18n="header.model_auto_hint">local-first &middot; free</span>',
+     '<span class="pi-hint">local first</span>'),
+    ('<div class="pop-hint" hidden data-i18n-html="header.model_auto_explainer">Starts local. If needed, Auto may use a '
+     'verified-free cloud fallback. Auto never selects a paid model.</div>',
+     '<div class="pop-hint" hidden>Starts local. ' + _CLOUD_OFF_NOTE + '</div>'),
+    ('<div class="pop-note" hidden data-i18n="header.model_connect_note">Connect a provider key in Settings to choose an '
+     'exact cloud model or configure Auto’s verified-free fallback.</div>',
+     '<div class="pop-note" hidden>' + _CLOUD_OFF_NOTE + '</div>'),
+    ("pageT('header.model_auto_hint', 'local-first · free')", "'local first'"),
+    ("pageT('header.model_connect_note', 'Connect a provider key in Settings.')", "'" + _CLOUD_OFF_NOTE + "'"),
+)
+
+
+#: The same texts in the page's i18n bundle, for every UI locale (the bundle is embedded in the page).
+_WINDOWS_CLOUD_OFF_BUNDLE = {
+    "header.run_local_first_hint": "cloud models off",
+    "header.model_auto_hint": "local first",
+    "header.model_auto_explainer": "Starts local. " + _CLOUD_OFF_NOTE,
+    "header.model_connect_note": _CLOUD_OFF_NOTE,
+}
+
+
+def _windows_cloud_off_bundle(body: str) -> str:
+    import json
+    import re
+
+    from core import windows_cloud_gate
+
+    if not windows_cloud_gate.cloud_off():
+        return body
+    for key, text in _WINDOWS_CLOUD_OFF_BUNDLE.items():
+        value = json.dumps(text, ensure_ascii=False)
+        body = re.sub(r'"' + re.escape(key) + r'":"(?:[^"\\]|\\.)*"', lambda _m, k=key, v=value: f'"{k}":{v}', body)
+    return body
+
+
+def _windows_cloud_off(page: str) -> str:
+    from core import windows_cloud_gate
+
+    if not windows_cloud_gate.cloud_off():
+        return page
+    for before, after in _WINDOWS_CLOUD_OFF:
+        page = page.replace(before, after)
+    return page
+
+
 def _host_chat_template() -> str:
     from core.generated_files import host_is_windows
 
     if not host_is_windows():
-        return _VOOL_CHAT_HTML
+        return _windows_cloud_off(_VOOL_CHAT_HTML)
     page = _VOOL_CHAT_HTML
     for mac, windows in _WINDOWS_FILE_ACTIONS:
         page = page.replace(mac, windows)
-    return page
+    return _windows_cloud_off(page)
 
 
 def render_vool_chat_html(*, build_commit: str = "", ui_locale: str = "en") -> str:
@@ -12625,7 +12684,7 @@ def render_vool_chat_html(*, build_commit: str = "", ui_locale: str = "en") -> s
         )
         .replace(
             "<script>\n",
-            "<script>\n" + i18n_bootstrap_js(tag) + "\n",
+            "<script>\n" + _windows_cloud_off_bundle(i18n_bootstrap_js(tag)) + "\n",
             1,
         )
     )

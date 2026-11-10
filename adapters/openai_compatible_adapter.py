@@ -1437,8 +1437,10 @@ class OpenAICompatibleAdapter(ModelAdapter):
         if self._is_openrouter_lane():
             try:
                 from core.openrouter_catalog import cached_catalog_row
+                from core.windows_cloud_gate import catalog_lane
 
-                row = cached_catalog_row(model)
+                with catalog_lane(str(self.manifest.runtime_config.get("base_url") or "")):
+                    row = cached_catalog_row(model)
             except Exception:
                 row = None
             if row is not None:
@@ -1460,8 +1462,10 @@ class OpenAICompatibleAdapter(ModelAdapter):
         if self._is_openrouter_lane():
             try:
                 from core.openrouter_catalog import cached_catalog_row
+                from core.windows_cloud_gate import catalog_lane
 
-                row = cached_catalog_row(str(self.manifest.model_name or ""))
+                with catalog_lane(str(self.manifest.runtime_config.get("base_url") or "")):
+                    row = cached_catalog_row(str(self.manifest.model_name or ""))
             except Exception:
                 row = None
             if row is not None:
@@ -2156,6 +2160,12 @@ class OpenAICompatibleAdapter(ModelAdapter):
         and the call itself (including a same-lane retry) — a mid-flight replacement cannot
         split one request across two bindings, and no lock is held across the network."""
         base_url = str(self.manifest.runtime_config.get("base_url") or "").rstrip("/")
+        from core import windows_cloud_gate
+
+        if windows_cloud_gate.cloud_off() and windows_cloud_gate.is_cloud_provider_request(base_url):
+            # Windows: no call to a cloud provider (a model call, a health check) before a key is
+            # stored AND cloud is turned on (core/windows_cloud_gate.py). Before any socket.
+            raise windows_cloud_gate.CloudContactRefused(base_url)
         if not self._is_custom_managed_lane():
             credential_key = str(self.manifest.runtime_config.get("credential_key") or "").strip()
             return base_url, self._dispatch_credential(credential_key)

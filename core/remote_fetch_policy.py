@@ -327,6 +327,13 @@ def open_remote(
 
     if current_effect_ledger() is None:
         raise RemoteFetchRefusedError(NO_ACTIVE_LEDGER_DENIAL)
+    # Windows backstop: no request to a cloud model provider (by declared provider or by host)
+    # before a key is stored AND cloud is turned on (core/windows_cloud_gate.py). Before any socket.
+    from core.windows_cloud_gate import door_refusal
+
+    refusal = door_refusal(str(getattr(request, "full_url", "") or ""), provider_id, keyed_or_keyless)
+    if refusal is not None:
+        raise refusal
     return _open_enforced(
         request,
         timeout=timeout,

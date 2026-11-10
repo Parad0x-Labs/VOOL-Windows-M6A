@@ -21,6 +21,12 @@ class CloudTransportError(RuntimeError):
     pass
 
 def _operator_cloud_network_allowed() -> bool:
+    from core import windows_cloud_gate
+
+    if windows_cloud_gate.cloud_off():
+        # Windows: no model call before a key is stored AND cloud is turned on
+        # (core/windows_cloud_gate.py), whatever the background-outbound switch says.
+        return False
     if policy_engine.automatic_outbound_enabled():
         return True
     try:
