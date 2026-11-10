@@ -176,6 +176,44 @@ def chat(machine, tmp_path, monkeypatch):
 # --- 1. the turn splitter keeps a path's `..` and `.` names --------------------------------------
 
 
+@pytest.fixture
+def windows_seam(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The Windows seam the splitter reads (the write gate's): on."""
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+
+
+#: The VM's write, and how the splitter cut it on base (and still cuts it off Windows).
+VM_WRITE = rf"write hi to {SPACED}\..\y.txt"
+VM_WRITE_OLD_SPLIT = [rf"write hi to {SPACED}\.", r"\y.txt"]
+
+
+def test_off_windows_the_splitter_is_unchanged_and_on_windows_it_keeps_the_path(monkeypatch) -> None:
+    """Security Architect condition on dbceb2f5: on Mac and Linux sentence splitting stays byte for byte as
+    it was; only the Windows seam keeps a path's `..` inside the request. Asked off, on, then off again for
+    the same text, so a cached reading of one seam is never served for the other."""
+    from core.agent_runtime.answer_coverage import interpret_request, turn_slices
+    from core.agent_runtime.demand_ownership import execution_units
+
+    readings = {}
+    for seam in (False, True, False):
+        monkeypatch.setattr(gate, "_IS_WINDOWS", seam)
+        readings.setdefault(seam, []).append((
+            [part.text for part in turn_slices(VM_WRITE)],
+            [unit.text for unit in interpret_request(VM_WRITE).requests],
+            [unit for _id, unit in execution_units(VM_WRITE)],
+        ))
+    off_first, off_again = readings[False]
+    assert off_first == off_again == (VM_WRITE_OLD_SPLIT, VM_WRITE_OLD_SPLIT, VM_WRITE_OLD_SPLIT), off_first
+    assert readings[True] == [([VM_WRITE], [VM_WRITE], [VM_WRITE])], readings[True]
+    for text, old in (("move x.txt to ../y.txt", ["move x.txt to .", "/y.txt"]),
+                      ("create y.txt in .. with the text hi", ["create y.txt in .", "with the text hi"])):
+        monkeypatch.setattr(gate, "_IS_WINDOWS", False)
+        assert [part.text for part in turn_slices(text)] == old, text
+        monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+        assert [part.text for part in turn_slices(text)] == [text], text
+
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -191,7 +229,7 @@ def chat(machine, tmp_path, monkeypatch):
         r"run .\calc.py",
     ],
 )
-def test_a_path_dot_name_does_not_end_the_request(text: str) -> None:
+def test_a_path_dot_name_does_not_end_the_request(windows_seam, text: str) -> None:
     from core.agent_runtime.answer_coverage import turn_slices
     from core.agent_runtime.demand_ownership import execution_units, units_as_plan
 
@@ -200,7 +238,7 @@ def test_a_path_dot_name_does_not_end_the_request(text: str) -> None:
     assert [task.request for task in units_as_plan(text)] == [text]
 
 
-def test_the_vm_write_is_no_longer_split_into_a_read_of_y_txt() -> None:
+def test_the_vm_write_is_no_longer_split_into_a_read_of_y_txt(windows_seam) -> None:
     """What base served: the second part, `\\y.txt`, is read by the workspace read lane as `y.txt`."""
     from core.agent_runtime.demand_ownership import execution_units
 
@@ -217,9 +255,12 @@ def test_the_vm_write_is_no_longer_split_into_a_read_of_y_txt() -> None:
         ("wait.. what? ok", ["wait.", "what?", "ok"]),
     ],
 )
-def test_a_sentence_still_ends_at_its_full_stop(text: str, parts: list[str]) -> None:
+@pytest.mark.parametrize("seam", [False, True], ids=["off-windows", "windows"])
+def test_a_sentence_still_ends_at_its_full_stop(monkeypatch, text: str, parts: list[str], seam: bool) -> None:
     """Guard (passes on base too): a full stop, an ellipsis and a `..` after a word still end a sentence."""
     from core.agent_runtime.answer_coverage import turn_slices
+
+    monkeypatch.setattr(gate, "_IS_WINDOWS", seam)
 
     assert [part.text for part in turn_slices(text)] == parts
 
