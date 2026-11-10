@@ -32,6 +32,7 @@ from core import windows_write_gate
 from core.machine_file_ops import move_path
 from core.runtime_execution_tools import execute_runtime_tool
 from tests import _windows_disposable_tmp
+from tests._move_allowed_on_its_card import move_allowed_on_its_card
 
 
 def _allow(reason: str) -> bool:
@@ -222,8 +223,11 @@ class TraversalMatrixTests(unittest.TestCase):
         secret = self._secret()
         dest = self.workspace / "subdir" / "moved.txt"
         dest.parent.mkdir()
-        result = execute_runtime_tool(
-            "machine.move_path", {"source": str(secret), "destination": str(dest)}, source_context=self.source_context
+        # A move that is meant to land is the one the owner allowed on its card (on Windows that Allow is
+        # its consent and a bare dispatch is refused, captest R4-1b); the boundary dispatches it through
+        # the real `execute_runtime_tool`.
+        result = move_allowed_on_its_card(
+            {"source": str(secret), "destination": str(dest)}, source_context=self.source_context
         )
         self.assertTrue(result.ok, result.response_text)
         self.assertEqual(result.status, "moved")
@@ -238,10 +242,9 @@ class TraversalMatrixTests(unittest.TestCase):
             desktop = self.root / "Desktop"
             desktop.mkdir()
             dest = desktop / "moved.txt"
-            result = execute_runtime_tool(
-                "machine.move_path",
-                {"source": str(secret), "destination": str(dest)},
-                source_context=self.source_context,
+            # Allowed on its card, as a move meant to land is (see test_in_workspace_move_still_succeeds).
+            result = move_allowed_on_its_card(
+                {"source": str(secret), "destination": str(dest)}, source_context=self.source_context
             )
         self.assertTrue(result.ok, result.response_text)
         self.assertTrue(dest.exists())
@@ -340,10 +343,11 @@ class MutationSabotageTests(unittest.TestCase):
                     ),
                 ):
                     dest = outside / "exfil.txt"
-                    result = execute_runtime_tool(
-                        "machine.move_path",
-                        {"source": str(secret), "destination": str(dest)},
-                        source_context=source_context,
+                    # Allowed on its card, so the move reaches the containment the sabotage removed: on
+                    # Windows a move without that Allow is refused before containment is checked
+                    # (captest R4-1b), which would hide the sabotage.
+                    result = move_allowed_on_its_card(
+                        {"source": str(secret), "destination": str(dest)}, source_context=source_context
                     )
             finally:
                 consent_gate.set_consent_override_for_tests(None)
@@ -442,10 +446,9 @@ class SourceContainmentMutationSabotageTests(unittest.TestCase):
                         else _dest_only_validation(resolved, allowed_roots)
                     ),
                 ):
-                    result = execute_runtime_tool(
-                        "machine.move_path",
-                        {"source": str(outside_file), "destination": str(dest)},
-                        source_context=source_context,
+                    # Allowed on its card, as in the destination sabotage above: only containment can refuse it.
+                    result = move_allowed_on_its_card(
+                        {"source": str(outside_file), "destination": str(dest)}, source_context=source_context
                     )
             finally:
                 consent_gate.set_consent_override_for_tests(None)
