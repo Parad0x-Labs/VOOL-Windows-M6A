@@ -91,6 +91,10 @@ RESERVED_TRUST_KEYS = (
     # provider's own batch and the permission controller turns it into a bounded batch approval, so
     # a caller-supplied one would be a caller choosing what a single click authorizes.
     "pending_batch_calls",
+    # The tool loop marks a Windows round that follows a step that ran (core.execution_gate
+    # TOOL_FOLLOWUP_AFTER_RUN_KEY); on that round a local model's prose closes the turn. A
+    # caller-supplied mark would be a client switching that repair on for its own turn.
+    "tool_followup_after_run",
     # A9 P0: the turn's routing plan is minted server-side BEFORE model spend (core.turn_routing)
     # and enforced at the broker seam. A caller-supplied one would be a client choosing its own
     # provider fences — exactly what the paid/locality ceilings exist to prevent.
