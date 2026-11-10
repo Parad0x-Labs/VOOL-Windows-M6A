@@ -1677,6 +1677,21 @@ def maybe_handle_cloud_command(user_input: str, *, owner_local: bool = False) ->
                 "Check that VOOL can write its data directory, then try again."
             )
         prefix = f"Cloud escalation set to {arg}."
+        from core import windows_cloud_gate
+
+        if arg == cep.MODE_OFF and windows_cloud_gate.active():
+            # Windows: `cloud off` turns cloud OFF, the free lane a key save switched on included,
+            # so the gate is closed when this reply says so (core/windows_cloud_gate.py).
+            cep.set_free_cloud_enabled(False)
+            if not windows_cloud_gate.cloud_off():
+                return (
+                    "I could not turn cloud off just now, so it may still be on. Check that VOOL can "
+                    "write its data directory, then try again."
+                )
+            return (
+                f"{windows_cloud_gate.OFF_TEXT} VOOL will not contact a cloud provider until you turn "
+                "cloud on again with `cloud ask` or `cloud auto`."
+            )
     elif arg.startswith("cap"):
         return "Call-count limits have been removed. Use Settings → Usage & Budgets to manage monetary spending limits. No setting was changed."
     return _cloud_status_text(cep, cep.load_policy(), prefix=prefix)

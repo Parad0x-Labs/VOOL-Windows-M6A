@@ -467,42 +467,37 @@ def _ask(placed: tuple[str, dict[str, str], bytes | None], descriptor: ProviderD
     # name would keep the import-time binding instead.
     from core.remote_fetch_policy import open_remote, open_remote_url
 
-    from core.windows_cloud_gate import owner_key_check
-
     url, headers, data = placed
     path_token = str(descriptor.auth_style or "").strip().lower() in _URL_CARRIED_STYLES
     try:
-        # The owner's own Verify on a key they pasted: the one cloud request the Windows
-        # opt-in rule lets through (core/windows_cloud_gate.py), since it is how a key gets stored.
-        with owner_key_check():
-            if path_token:
-                # The URL itself carries the credential: a redirect is returned, never followed (it is
-                # judged ``redirected`` below with only its origin kept), and no ambient proxy sits
-                # between the token and the pinned origin.
-                import urllib.request
+        if path_token:
+            # The URL itself carries the credential: a redirect is returned, never followed (it is
+            # judged ``redirected`` below with only its origin kept), and no ambient proxy sits
+            # between the token and the pinned origin.
+            import urllib.request
 
-                response = open_remote(
-                    urllib.request.Request(url, data=data, headers=headers, method=descriptor.verify_method),
-                    timeout=timeout_s,
-                    no_proxy=True,
-                    provider_id=descriptor.provider_id,
-                    keyed_or_keyless="keyed",
-                    redirect_policy="refuse",
-                )
-            else:
-                response = open_remote_url(
-                    url,
-                    data=data,
-                    headers=headers,
-                    method=descriptor.verify_method,
-                    timeout=timeout_s,
-                    no_proxy=True,
-                    provider_id=descriptor.provider_id,
-                    keyed_or_keyless="keyed" if keyed else "keyless",
-                    # Judged as a key-bearing exchange either way: a keyless first ask is still refused an
-                    # answer from another origin.
-                    credential_headers=_credential_header_names(descriptor) if keyed else (),
-                )
+            response = open_remote(
+                urllib.request.Request(url, data=data, headers=headers, method=descriptor.verify_method),
+                timeout=timeout_s,
+                no_proxy=True,
+                provider_id=descriptor.provider_id,
+                keyed_or_keyless="keyed",
+                redirect_policy="refuse",
+            )
+        else:
+            response = open_remote_url(
+                url,
+                data=data,
+                headers=headers,
+                method=descriptor.verify_method,
+                timeout=timeout_s,
+                no_proxy=True,
+                provider_id=descriptor.provider_id,
+                keyed_or_keyless="keyed" if keyed else "keyless",
+                # Judged as a key-bearing exchange either way: a keyless first ask is still refused an
+                # answer from another origin.
+                credential_headers=_credential_header_names(descriptor) if keyed else (),
+            )
     except RemoteFetchRefusedError:
         return _outcome(STATUS_REFUSED, descriptor, None, host, detail="the runtime did not permit this request")
     except CredentialRedirectRefusedError as exc:

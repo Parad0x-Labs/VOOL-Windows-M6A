@@ -20,9 +20,10 @@ both hold:
 
 Without both, every gated caller answers locally, with ``OFF_TEXT``, and opens no socket.
 
-One request is not gated: the key check the owner starts by pressing Verify on a key they pasted
-(``owner_key_check``). It sends that key to the provider's own verification endpoint and nothing
-else, and it is how a key gets stored at all.
+One request is not gated: the owner's Verify in Settings on a key they pasted (the
+``/api/intake/verify`` route, owner-local only, opens ``owner_key_check``). It sends that key to the
+selected provider's verification host and nothing else, and it is how a key gets stored at all.
+The verifier itself grants nothing: called from anywhere else (a tool, a probe, a scan) it is refused.
 
 Scope (0.7.1): behind the same seam as the Windows Ollama cloud-model refusal,
 ``core.ollama_cloud_models.active()`` (``CLOUD_REFUSAL_ACTIVE``). Off Windows nothing changes.
@@ -40,7 +41,8 @@ from core.remote_fetch_policy import RemoteFetchRefusedError
 OFF_TEXT = "Cloud models are off. Add your own key in Settings to use one."
 REASON = "cloud_models_off_before_opt_in"
 
-_OWNER_KEY_CHECK: ContextVar[bool] = ContextVar("vool_windows_owner_key_check", default=False)
+#: The one host the owner's Settings Verify may reach, while that route runs ("" = none).
+_OWNER_KEY_CHECK: ContextVar[str] = ContextVar("vool_windows_owner_key_check", default="")
 
 
 class CloudContactRefused(RemoteFetchRefusedError):
@@ -117,9 +119,11 @@ def refuse_cloud_contact(what: str = "") -> None:
 
 
 @contextlib.contextmanager
-def owner_key_check() -> Iterator[None]:
-    """Scope of the owner's own Verify press on a pasted key (see the module docstring)."""
-    token = _OWNER_KEY_CHECK.set(True)
+def owner_key_check(host: str) -> Iterator[None]:
+    """Scope of the owner's Verify press in Settings on a key they pasted (``/api/intake/verify``,
+    owner-local only). Inside it the door lets through a request that carries a key to ``host``,
+    the selected provider's verification host, and nothing else: no keyless request, no other host."""
+    token = _OWNER_KEY_CHECK.set(str(host or "").strip().lower().rstrip("."))
     try:
         yield
     finally:
@@ -178,11 +182,16 @@ def is_cloud_provider_request(url: str, provider_id: str = "") -> bool:
     return any(host == known or host.endswith("." + known) for known in known_hosts)
 
 
-def door_refusal(url: str, provider_id: str = "") -> CloudContactRefused | None:
+def _host(url: str) -> str:
+    return str(urlsplit(str(url or "")).hostname or "").lower().rstrip(".")
+
+
+def door_refusal(url: str, provider_id: str = "", keyed_or_keyless: str = "") -> CloudContactRefused | None:
     """The outbound door's backstop: the refusal to raise for this request, or None."""
-    if not active() or _OWNER_KEY_CHECK.get():
+    if not active() or not is_cloud_provider_request(url, provider_id):
         return None
-    if not is_cloud_provider_request(url, provider_id):
+    allowed_host = _OWNER_KEY_CHECK.get()
+    if allowed_host and str(keyed_or_keyless or "").strip().lower() == "keyed" and _host(url) == allowed_host:
         return None
     if cloud_contact_allowed():
         return None

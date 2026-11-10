@@ -331,7 +331,7 @@ def open_remote(
     # before a key is stored AND cloud is turned on (core/windows_cloud_gate.py). Before any socket.
     from core.windows_cloud_gate import door_refusal
 
-    refusal = door_refusal(str(getattr(request, "full_url", "") or ""), provider_id)
+    refusal = door_refusal(str(getattr(request, "full_url", "") or ""), provider_id, keyed_or_keyless)
     if refusal is not None:
         raise refusal
     return _open_enforced(

@@ -12574,20 +12574,19 @@ _WINDOWS_FILE_ACTIONS = (
 )
 
 
-# Windows, before a cloud key is stored and cloud is turned on (core/windows_cloud_gate.py): the
-# composer starts on the local-only lane ("This computer only") instead of "Local first · free cloud
-# only if needed", and nothing on it is labelled free cloud. The swapped texts drop their i18n key, so
-# a catalog cannot put the free-cloud wording back. A stored lane choice is kept. Off Windows, or once
-# cloud is on, the template is served byte for byte.
+# Windows, before a cloud key is stored and cloud is turned on (core/windows_cloud_gate.py): nothing
+# on the composer is labelled free cloud. The default lane stays VOOL Auto ("Local first", the lane
+# `modelForChat` gives every chat without a stored choice); with cloud off it runs no cloud model, and
+# its hint says so. "This computer only" is not made the default: it is zero public egress, web
+# search included. The swapped texts drop their i18n key, so a catalog cannot put the free-cloud
+# wording back. Off Windows, or once cloud is on, the template is served byte for byte.
 _CLOUD_OFF_NOTE = "Cloud models are off. Add your own key in Settings to use one."
 _WINDOWS_CLOUD_OFF = (
     ('<button type="button" class="run-choice" role="radio" aria-checked="true" data-run-model="vool">'
      '<b data-i18n="header.run_local_first">Local first</b>'
      '<small data-i18n="header.run_local_first_hint">free cloud only if needed</small></button>',
-     '<button type="button" class="run-choice" role="radio" aria-checked="false" data-run-model="vool">'
+     '<button type="button" class="run-choice" role="radio" aria-checked="true" data-run-model="vool">'
      '<b data-i18n="header.run_local_first">Local first</b><small>cloud models off</small></button>'),
-    ('<button type="button" class="run-choice" role="radio" aria-checked="false" data-run-model="vool-local-only">',
-     '<button type="button" class="run-choice" role="radio" aria-checked="true" data-run-model="vool-local-only">'),
     ('<span class="pi-hint" data-i18n="header.model_auto_hint">local-first &middot; free</span>',
      '<span class="pi-hint">local first</span>'),
     ('<div class="pop-hint" hidden data-i18n-html="header.model_auto_explainer">Starts local. If needed, Auto may use a '
@@ -12598,10 +12597,6 @@ _WINDOWS_CLOUD_OFF = (
      '<div class="pop-note" hidden>' + _CLOUD_OFF_NOTE + '</div>'),
     ("pageT('header.model_auto_hint', 'local-first · free')", "'local first'"),
     ("pageT('header.model_connect_note', 'Connect a provider key in Settings.')", "'" + _CLOUD_OFF_NOTE + "'"),
-    ('<span class="model-where" id="modelWhere" data-i18n="header.run_local_first">Local first</span>',
-     '<span class="model-where" id="modelWhere" data-i18n="header.run_computer_only">This computer only</span>'),
-    ("let modelValue = localStorage.getItem('vool_model') || 'vool';",
-     "let modelValue = localStorage.getItem('vool_model') || 'vool-local-only';"),
 )
 
 
