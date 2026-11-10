@@ -870,6 +870,16 @@ def handle_turn_frontdoor(
     from core.request_trust import request_is_owner_local
 
     _owner_local = request_is_owner_local(source_context)
+    # The writers of the cloud model pin and the cloud consent (`cloud model ...`, the switch intent,
+    # `cloud ask|auto|off`) act only on a turn the owner wrote. A loopback turn an agent sends (an
+    # agent team's session: ``turn_author`` "agent") is owner-local by transport, but its words are a
+    # model's brief, and a model must never pin a cloud model or turn cloud on (on Windows the pin
+    # and the consent open the cloud gate, core/windows_cloud_gate.py).
+    from core.request_trust import TURN_AUTHOR_KEY
+
+    _owner_wrote_turn = _owner_local and str(
+        (source_context or {}).get(TURN_AUTHOR_KEY) or "owner"
+    ).strip().lower() == "owner"
     # R1g — the catalog's finalize law, enforced at the one seam every
     # whole-text fast intent reads. The recognizers below are single-request
     # readers living under `turn_frontdoor_deterministic`, which LANE_CATALOG
@@ -1027,7 +1037,7 @@ def handle_turn_frontdoor(
             )
         }
 
-    cloud_model_reply = maybe_handle_cloud_model_command(_intent_input, owner_local=_owner_local)
+    cloud_model_reply = maybe_handle_cloud_model_command(_intent_input, owner_local=_owner_wrote_turn)
     if cloud_model_reply is not None:
         return {
             "result": agent._fast_path_result(
@@ -1081,7 +1091,10 @@ def handle_turn_frontdoor(
         maybe_handle_connection_test_intent,
     )
     for _nl_action in _nl_actions:
-        _action = _nl_action(_intent_input, owner_local=_owner_local)
+        _action = _nl_action(
+            _intent_input,
+            owner_local=_owner_wrote_turn if _nl_action is maybe_handle_cloud_switch_intent else _owner_local,
+        )
         if _action is None:
             continue
         if _action.get("advice_only"):
@@ -1158,7 +1171,7 @@ def handle_turn_frontdoor(
             )
         }
 
-    cloud_reply = maybe_handle_cloud_command(_intent_input, owner_local=_owner_local)
+    cloud_reply = maybe_handle_cloud_command(_intent_input, owner_local=_owner_wrote_turn)
     if cloud_reply is not None:
         return {
             "result": agent._fast_path_result(
