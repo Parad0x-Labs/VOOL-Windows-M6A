@@ -890,13 +890,32 @@ _MEASURED_SIZE_MISS_SECONDS = 30.0
 _measured_size_misses: dict[tuple[str, str], float] = {}
 
 
+def gpu_fit_windows_seam() -> bool:
+    """Whether the 0.7.1 Windows GPU-fit behaviours apply: the job runner's own platform check.
+
+    The measured-size stamp after Setup's download, the per-turn ``/api/tags`` re-judge, the
+    context window fitted to graphics memory and the local-route refusal wording are Windows-only
+    in 0.7.1 (Security Architect review of c5228d51). Mac and Linux keep the earlier behaviour.
+    """
+    try:
+        from sandbox import job_runner
+
+        return bool(job_runner._is_windows_platform())
+    except Exception:
+        return False
+
+
 def _stamp_measured_ollama_size(manifest: ModelProviderManifest) -> ModelProviderManifest | None:
     """Stamp Ollama's ``/api/tags`` size on an unmeasured ``ollama-local`` lane; the stamped lane, or None.
 
-    Only for a lane with no ``artifact_size_gb``, only against the Ollama on this computer, with a
-    short timeout. A miss (Ollama down, model not listed, no size) is remembered for a few seconds
-    so a refused turn does not ask Ollama again on every ranking pass.
+    Windows only (``gpu_fit_windows_seam``). Only for a lane with no ``artifact_size_gb``, only
+    against the Ollama on this computer: the loopback check is made on the one base URL the
+    inventory call then reads, and a miss never falls back to any other host. Short timeout; a miss
+    (Ollama down, model not listed, no size) is remembered for a few seconds so a refused turn does
+    not ask Ollama again on every ranking pass.
     """
+    if not gpu_fit_windows_seam():
+        return None
     if str(manifest.provider_name or "").strip() != "ollama-local":
         return None
     if _float_or_zero((manifest.metadata or {}).get("artifact_size_gb")) > 0.0:
@@ -910,8 +929,9 @@ def _stamp_measured_ollama_size(manifest: ModelProviderManifest) -> ModelProvide
         from core.runtime_guard import is_loopback_host
         from core.runtime_provider_defaults import record_ollama_artifact_sizes
 
-        base_url = ollama_base_url()
-        if not is_loopback_host(str(urlsplit(base_url).hostname or "")):
+        base_url = str(ollama_base_url() or "").strip()
+        # An empty URL would let the inventory reader resolve its own: refuse instead.
+        if not base_url or not is_loopback_host(str(urlsplit(base_url).hostname or "")):
             return None
         key = (base_url, str(manifest.model_name or "").strip())
         now = time.monotonic()

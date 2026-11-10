@@ -591,7 +591,18 @@ def _gpu_resident_gb(model_tag: str, *, num_ctx: int, artifact_size_gb: float = 
 
 
 def _discrete_gpu_spare_gb(env_map: Mapping[str, str]) -> float:
-    """Spare graphics memory on a CUDA/DirectML card that will hold the layers, else 0.0."""
+    """Spare graphics memory on a CUDA/DirectML card that will hold the layers, else 0.0.
+
+    Windows only in 0.7.1 (``core.provider_routing.gpu_fit_windows_seam``): elsewhere 0.0, so the
+    bucket's window stands.
+    """
+    try:
+        from core.provider_routing import gpu_fit_windows_seam
+
+        if not gpu_fit_windows_seam():
+            return 0.0
+    except Exception:
+        return 0.0
     if _resolve_ollama_num_gpu(env_map) == 0:
         return 0.0
     try:

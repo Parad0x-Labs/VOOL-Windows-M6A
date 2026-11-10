@@ -207,9 +207,11 @@ def no_route_hint() -> str:
             else f"`{shortfall['model']}` needs about {shortfall['required_gb']:.1f} GB of memory and this computer "
             f"can spare about {shortfall['available_gb']:.1f} GB for it, so I didn't start it."
         )
-        if has_cloud and graphics:
+        from core.provider_routing import gpu_fit_windows_seam
+
+        if has_cloud and graphics and gpu_fit_windows_seam():
             # The graphics card is too small for THIS model, not for every local model: a cloud
-            # model is one way to an answer, not the only one.
+            # model is one way to an answer, not the only one. Windows only in 0.7.1.
             return (
                 f"{lead} Download a smaller local model in Setup under \u201cWhere should it think?\u201d, "
                 "or pick a cloud model in the model selector."

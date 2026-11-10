@@ -122,10 +122,23 @@ def _register(model: str) -> None:
     # Boot stamps Ollama's measured size only on the lanes it saw at boot; size this one now, or
     # every turn judges it by the parameter estimate until VOOL restarts (Windows, RTX 4060 8 GB:
     # qwen3:8b refused at 7.5 GB estimated, against 6.37 GB measured and 6.8 GB of graphics memory).
-    from core.web.api.runtime import record_installed_ollama_artifact_sizes
+    # Windows only in 0.7.1, and only from the Ollama on this computer: the loopback check is made
+    # on the same base URL the inventory call reads.
+    from core.provider_routing import gpu_fit_windows_seam
 
+    if not gpu_fit_windows_seam():
+        return
     with contextlib.suppress(Exception):
-        record_installed_ollama_artifact_sizes(registry)
+        from core.local_ollama_inventory import installed_ollama_model_inventory
+        from core.runtime_guard import is_loopback_host
+        from core.runtime_provider_defaults import record_ollama_artifact_sizes
+
+        base_url = str(_base_url() or "").strip()
+        if not base_url or not is_loopback_host(str(urlsplit(base_url).hostname or "")):
+            return
+        record_ollama_artifact_sizes(
+            registry, installed_ollama_model_inventory(base_url=base_url, timeout_seconds=5.0)
+        )
 
 
 def _audit(model: str, size_gb: float, outcome: str, detail: str = "") -> None:
