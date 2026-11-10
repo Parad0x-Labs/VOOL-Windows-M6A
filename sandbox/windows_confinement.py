@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import re
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -25,6 +27,8 @@ EXIT_TIMEOUT = 124
 EXIT_SETUP_FAILED = 125
 EXIT_POLICY_INVALID = 126
 REFUSED_MARKER = "VOOLCONFINE-REFUSED:"  # human-readable stderr line only; never trusted
+
+_log = logging.getLogger(__name__)
 
 _KEYS = (
     "schema",
@@ -373,6 +377,11 @@ def adopt_launcher(pid: int) -> None:
 
 def _run_launcher(argv: list[str], *, timeout: float) -> int:
     """Run one launcher invocation in VOOL's job with the scrubbed environment; its exit code."""
+    return _run_launcher_output(argv, timeout=timeout)[0]
+
+
+def _run_launcher_output(argv: list[str], *, timeout: float) -> tuple[int, bytes]:
+    """`_run_launcher`, with the launcher's stderr kept (its own refusal line, for the log)."""
     import subprocess
 
     process = subprocess.Popen(
@@ -386,12 +395,39 @@ def _run_launcher(argv: list[str], *, timeout: float) -> int:
     )
     try:
         adopt_launcher(process.pid)
-        process.communicate(timeout=timeout)
+        _stdout, stderr = process.communicate(timeout=timeout)
     except BaseException:
         process.kill()
         process.communicate()
         raise
-    return int(process.returncode)
+    return int(process.returncode), stderr or b""
+
+
+#: The reason the launcher's grant and revoke forms print: `<form> failed (<AclException code>): <message>`.
+_FORM_REASON_RE = re.compile(r"\b(?:grant|revoke) failed \(([a-z0-9_]+)\): ?(.*)")
+#: The log keeps one line of the launcher's own text, never more.
+_REASON_LOG_LIMIT = 600
+
+
+def form_failure_reason(stderr: bytes | str) -> tuple[str, str]:
+    """The launcher's reason for a failed grant or revoke: (code, message).
+
+    Only the launcher's own `VOOLCONFINE-REFUSED:` line is read. The grant and revoke forms run no
+    child, and that line names a reason code, paths and an NTSTATUS, never file contents. The code
+    is the AclException's ("nested_write_roots", "entry_vanished", ...); a refusal without one (an
+    unreadable policy, an I/O error) is "unspecified", and no refusal line at all is "no_reason"."""
+    text = stderr.decode("utf-8", "replace") if isinstance(stderr, bytes) else str(stderr or "")
+    refusal = ""
+    for line in text.splitlines():
+        if line.startswith(REFUSED_MARKER):
+            refusal = line[len(REFUSED_MARKER):].strip()
+    if not refusal:
+        return "no_reason", ""
+    refusal = "".join(ch if ch.isprintable() else "?" for ch in refusal)[:_REASON_LOG_LIMIT]
+    match = _FORM_REASON_RE.search(refusal)
+    if match:
+        return match.group(1), match.group(2)
+    return "unspecified", refusal
 
 
 def launcher_form(launcher: Path | str, form: str, policy_path: Path, *, timeout: float = 300) -> bool:
@@ -405,9 +441,16 @@ def launcher_form(launcher: Path | str, form: str, policy_path: Path, *, timeout
     if form not in ("grant", "revoke"):
         raise ValueError(f"unknown launcher form {form!r}")
     try:
-        return _run_launcher([str(launcher), form, "--policy", str(policy_path)], timeout=timeout) == 0
-    except (OSError, subprocess.SubprocessError):
+        returncode, stderr = _run_launcher_output([str(launcher), form, "--policy", str(policy_path)], timeout=timeout)
+    except (OSError, subprocess.SubprocessError) as exc:
+        # The exception's class only: an OSError's text can carry the launcher's path, nothing more useful.
+        _log.warning("VoolConfine %s did not finish (%s), so it counts as failed", form, type(exc).__name__)
         return False
+    if returncode == 0:
+        return True
+    code, message = form_failure_reason(stderr)
+    _log.warning("VoolConfine %s failed: exit %s, reason %s: %s", form, returncode, code, message)
+    return False
 
 
 def launcher_scan(launcher: Path | str, policy_path: Path, *, timeout: float = 300) -> int | None:
