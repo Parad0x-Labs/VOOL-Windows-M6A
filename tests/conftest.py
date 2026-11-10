@@ -1112,6 +1112,7 @@ import os as _diag_os
 
 _DIAG_KEEP = (
     "tests/test_windows_approved_python_job_narrowed.py::",
+    "tests/test_windows_approved_python_job_runs_once.py::",
 )
 _DIAG_SKIP_PARTS = ("__pycache__", ".pytest_cache", ".ruff_cache")
 
