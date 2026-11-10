@@ -2158,9 +2158,7 @@ class OpenAICompatibleAdapter(ModelAdapter):
         base_url = str(self.manifest.runtime_config.get("base_url") or "").rstrip("/")
         from core import windows_cloud_gate
 
-        if windows_cloud_gate.cloud_off() and (
-            self._is_custom_managed_lane() or windows_cloud_gate.is_cloud_provider_request(base_url)
-        ):
+        if windows_cloud_gate.cloud_off() and windows_cloud_gate.is_cloud_provider_request(base_url):
             # Windows: no call to a cloud provider (a model call, a health check) before a key is
             # stored AND cloud is turned on (core/windows_cloud_gate.py). Before any socket.
             raise windows_cloud_gate.CloudContactRefused(base_url)

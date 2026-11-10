@@ -148,19 +148,34 @@ def _cloud_hosts() -> frozenset[str]:
     return frozenset(hosts)
 
 
-def is_cloud_provider_request(url: str, provider_id: str = "") -> bool:
-    """Whether a request goes to a cloud model provider: by its declared provider or its host."""
+def _custom_endpoint_host() -> str:
+    """The owner's custom (BYOK) endpoint host, unless it is on this machine or the LAN."""
     try:
-        from core.cloud_providers import PROVIDERS
+        from core.auto_local_only_mode import endpoint_is_local
+        from core.cloud_providers import custom_base_url
 
-        if str(provider_id or "").strip().lower() in PROVIDERS:
-            return True
+        url = str(custom_base_url() or "").strip()
+        if not url or endpoint_is_local(url):
+            return ""
+        return str(urlsplit(url).hostname or "").lower()
     except Exception:
-        pass
+        return ""
+
+
+def is_cloud_provider_request(url: str, provider_id: str = "") -> bool:
+    """Whether a request goes to a cloud model provider, by its host: a provider's base URL host,
+    openrouter.ai, the UsePod origin, or the owner's custom endpoint when that is not local.
+
+    The declared ``provider_id`` is not used: other services share ids with model providers (the
+    calendar adapter declares ``google``)."""
     host = str(urlsplit(str(url or "")).hostname or "").lower().rstrip(".")
     if not host:
         return False
-    return any(host == known or host.endswith("." + known) for known in _cloud_hosts())
+    known_hosts = set(_cloud_hosts())
+    custom = _custom_endpoint_host()
+    if custom:
+        known_hosts.add(custom)
+    return any(host == known or host.endswith("." + known) for known in known_hosts)
 
 
 def door_refusal(url: str, provider_id: str = "") -> CloudContactRefused | None:
