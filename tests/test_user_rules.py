@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from core import user_rules as ur
+from tests import _windows_refusals as windows_refusals
 
 GLOBAL_GIT_RULE = "add this to global rules: never push the words xxx or ffff to git"
 CHAT_RULE = "add to chat rules: never fff and ggg"
@@ -263,6 +264,8 @@ def test_the_command_gate_refuses_a_banned_commit_before_any_approval(home, tmp_
         refused = ExecutionGate.evaluate_command('git commit -am "add xxx support"', cwd=str(root))
         clean = ExecutionGate.evaluate_command('git commit -am "add support"', cwd=str(root))
     assert refused["decision"] == "blocked" and "rule 1" in refused["reason"]
+    if _windows_refuses_unchecked_commit('git commit -am "add support"', root, "chat-a"):
+        return
     # The clean commit still meets the ordinary approval gate: no rule grants anything.
     assert clean["decision"] == "advice_only"
 
@@ -413,6 +416,26 @@ def _gate(cmd: str, root: Path, chat: str) -> dict:
         return ExecutionGate.evaluate_command(cmd, cwd=str(root))
 
 
+#: Where git is refused, the words of the rule gate for a commit no ban hits: its staged change
+#: cannot be read, so it is not clean (the gate fails closed).
+_UNCHECKED_COMMIT = ("Refused: your rules ban words from git, and I couldn't check this git commit completely "
+                     f"({windows_refusals.GIT_REFUSAL}). Nothing was committed.")
+
+
+def _windows_refuses_unchecked_commit(cmd: str, root: Path, chat: str) -> bool:
+    """Where git is refused (Windows 0.7.1), a commit no ban hits cannot be checked completely: the
+    gate refuses it in the fail-closed words, starting no git and changing nothing in the repository.
+    Returns True then; False where git runs, and the row expects the ordinary approval gate."""
+    if not windows_refusals.git_refused():
+        return False
+    with windows_refusals.watch_git(root) as seen:
+        gated = _gate(cmd, root, chat)
+    assert gated["decision"] == "blocked" and gated.get("user_rule") == "refused", gated
+    assert gated["reason"] == _UNCHECKED_COMMIT, gated
+    assert seen.refused(gated["reason"])
+    return True
+
+
 def test_a_chat_exception_lifts_a_global_word_ban_in_that_chat_only(home, tmp_path):
     root = _repo(tmp_path)
     _say(GLOBAL_GIT_RULE, "chat-a")
@@ -420,9 +443,10 @@ def test_a_chat_exception_lifts_a_global_word_ban_in_that_chat_only(home, tmp_pa
     assert kind == "saved" and saved[0].is_exception and saved[0].scope == "chat"
     assert "rule 1" in reply
 
-    allowed = _gate('git commit -am "ffff cleanup"', root, "chat-a")
-    assert allowed["decision"] == "advice_only"  # back to the ordinary approval gate, not refused
-    assert "exception" in allowed["reason"] and "rule 1" in allowed["reason"]
+    if not _windows_refuses_unchecked_commit('git commit -am "ffff cleanup"', root, "chat-a"):
+        allowed = _gate('git commit -am "ffff cleanup"', root, "chat-a")
+        assert allowed["decision"] == "advice_only"  # back to the ordinary approval gate, not refused
+        assert "exception" in allowed["reason"] and "rule 1" in allowed["reason"]
     # The exception lifts only the word it names, and only here.
     assert _gate('git commit -am "xxx cleanup"', root, "chat-a")["decision"] == "blocked"
     assert _gate('git commit -am "ffff cleanup"', root, "chat-b")["decision"] == "blocked"
@@ -442,7 +466,8 @@ def test_removing_the_exception_restores_the_ban(home, tmp_path):
     root = _repo(tmp_path)
     _say(GLOBAL_GIT_RULE, "chat-a")
     _, saved, _ = _say("allow ffff in this chat", "chat-a")
-    assert _gate('git commit -am "ffff"', root, "chat-a")["decision"] == "advice_only"
+    if not _windows_refuses_unchecked_commit('git commit -am "ffff"', root, "chat-a"):
+        assert _gate('git commit -am "ffff"', root, "chat-a")["decision"] == "advice_only"
     _, removed, kind = _say(f"remove rule {saved[0].rule_no}", "chat-a")
     assert kind == "removed" and removed[0].is_exception
     assert _gate('git commit -am "ffff"', root, "chat-a")["decision"] == "blocked"
