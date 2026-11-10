@@ -1104,3 +1104,196 @@ def pytest_sessionfinish(session, exitstatus):
     if problems:
         print(f"\n{limits.LIST.name}: " + "; ".join(problems))
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+# ---- DIAGNOSTIC BRANCH ONLY (never merged): dotdot-and-run-script rows + 142 nearby files on windows-latest,
+# with a before/after listing of the user profile and the checkout to count touches outside the test folders.
+import os as _diag_os
+
+_DIAG_KEEP = (
+    "tests/test_windows_dotdot_and_run_script.py::",
+    "tests/test_a_fragment_between_requests_rides_the_request_it_opens.py::",
+    "tests/test_an_isolated_reproduction_never_touches_the_audited_repository.py::",
+    "tests/test_build_lane_qa_gauntlet.py::",
+    "tests/test_coding_turns_are_atomic_and_ungrounded.py::",
+    "tests/test_conversation_intent_repair.py::",
+    "tests/test_daily_use_round4_fresh_wording.py::",
+    "tests/test_demand_gauntlet_r1g.py::",
+    "tests/test_demand_ownership_r1e.py::",
+    "tests/test_git_command_gate.py::",
+    "tests/test_integration_bridges_unified_candidate.py::",
+    "tests/test_job_runner_real_confinement.py::",
+    "tests/test_lane_catalog_r1f.py::",
+    "tests/test_leading_fragment_rides_the_request_after_it.py::",
+    "tests/test_live_data_turn_integration.py::",
+    "tests/test_mixed_demand_execution_p0.py::",
+    "tests/test_mixed_demand_terminal_closure_p0.py::",
+    "tests/test_mixed_intent_slice_arbitration.py::",
+    "tests/test_named_file_build_reaches_the_builder.py::",
+    "tests/test_one_intent_one_declaration.py::",
+    "tests/test_operator_binder_binds_only_what_the_request_reads.py::",
+    "tests/test_policy_conservation_p0.py::",
+    "tests/test_request_interpretation_slice1_contract.py::",
+    "tests/test_rss_demand_accounting.py::",
+    "tests/test_simple_file_write_routing.py::",
+    "tests/test_structured_output_and_build_scope.py::",
+    "tests/test_toolsmith_write_root_path_extraction.py::",
+    "tests/test_travel_story_is_one_demand.py::",
+    "tests/test_two_intent_conjunction_grain.py::",
+    "tests/test_undeclared_claims_yield_to_registered_owners.py::",
+    "tests/test_v07_smoke_repairs.py::",
+    "tests/test_windows_addon_enable_is_skills_only.py::",
+    "tests/test_windows_approval_resource_paths.py::",
+    "tests/test_windows_approval_wording.py::",
+    "tests/test_windows_approved_python_job_narrowed.py::",
+    "tests/test_windows_approved_python_job_runs_once.py::",
+    "tests/test_windows_attachment_door_names_confinement.py::",
+    "tests/test_windows_backslash_share_write_refusal.py::",
+    "tests/test_windows_browser_fallback_holds_runtime.py::",
+    "tests/test_windows_bundle_default_reaches_auto.py::",
+    "tests/test_windows_bundle_pip_is_pinned.py::",
+    "tests/test_windows_bundle_runtime_parity.py::",
+    "tests/test_windows_bundle_supervisor_job_kill.py::",
+    "tests/test_windows_bundled_ollama_address_is_pinned.py::",
+    "tests/test_windows_bundled_ollama_must_be_its_own.py::",
+    "tests/test_windows_bundled_ollama_ownership_fails_closed.py::",
+    "tests/test_windows_bundled_ollama_starts_with_cloud_off.py::",
+    "tests/test_windows_captest_edit_undo_move.py::",
+    "tests/test_windows_catalog_wording.py::",
+    "tests/test_windows_clean_vm_polish.py::",
+    "tests/test_windows_code_asks_in_a_marked_folder.py::",
+    "tests/test_windows_code_asks_marked_folder_conditions.py::",
+    "tests/test_windows_command_line_parse.py::",
+    "tests/test_windows_confinement_attacks.py::",
+    "tests/test_windows_confinement_interface.py::",
+    "tests/test_windows_confinement_runner.py::",
+    "tests/test_windows_declares_tzdata.py::",
+    "tests/test_windows_default_local_model.py::",
+    "tests/test_windows_dictation_availability.py::",
+    "tests/test_windows_disposable_folders.py::",
+    "tests/test_windows_doubled_drive_separator_each_site_looks_nothing_up.py::",
+    "tests/test_windows_doubled_drive_separator_is_refused_like_a_share.py::",
+    "tests/test_windows_find_largest_takes_the_home_folder.py::",
+    "tests/test_windows_fresh_host_gauntlet.py::",
+    "tests/test_windows_gate_checks_the_task_and_session_folder.py::",
+    "tests/test_windows_gate_checks_where_git_writes.py::",
+    "tests/test_windows_gate_refuses_git_writes_sent_elsewhere.py::",
+    "tests/test_windows_git_refusal_fails_closed.py::",
+    "tests/test_windows_git_spawn_guard_before_createprocess.py::",
+    "tests/test_windows_git_spawn_guard_reported.py::",
+    "tests/test_windows_install_path_forms.py::",
+    "tests/test_windows_installed_notes_live_in_the_vool_home.py::",
+    "tests/test_windows_installed_unbound_chat_uses_the_desktop.py::",
+    "tests/test_windows_installer_icons_and_kept_data_wording.py::",
+    "tests/test_windows_installer_ownership.py::",
+    "tests/test_windows_installer_setup_initializes.py::",
+    "tests/test_windows_installer_stops_only_this_install.py::",
+    "tests/test_windows_job_resume.py::",
+    "tests/test_windows_junction_boundary.py::",
+    "tests/test_windows_known_folder_roots.py::",
+    "tests/test_windows_lock_adoption.py::",
+    "tests/test_windows_marked_code_folder_looks_nothing_up_off_a_code_ask.py::",
+    "tests/test_windows_marked_folder_edit_anchor_and_resend.py::",
+    "tests/test_windows_marked_folder_edit_undo_move.py::",
+    "tests/test_windows_marked_folder_unicode_line_breaks.py::",
+    "tests/test_windows_marked_folder_writes.py::",
+    "tests/test_windows_marked_root_too_wide.py::",
+    "tests/test_windows_move_approval_is_gated_on_the_pending_preview.py::",
+    "tests/test_windows_mutation_ledger_names.py::",
+    "tests/test_windows_never_runs_unconfined_children.py::",
+    "tests/test_windows_nonlocal_path_chat_page.py::",
+    "tests/test_windows_nonlocal_path_commands.py::",
+    "tests/test_windows_nonlocal_path_doors.py::",
+    "tests/test_windows_nonlocal_path_message_lanes.py::",
+    "tests/test_windows_nonlocal_path_posix_parity.py::",
+    "tests/test_windows_nonlocal_path_routes.py::",
+    "tests/test_windows_nonlocal_path_tool_calls.py::",
+    "tests/test_windows_ops_stop_paths.py::",
+    "tests/test_windows_own_tmp_path_is_disposable.py::",
+    "tests/test_windows_pact_journeys_refusal.py::",
+    "tests/test_windows_patch_lands_only_where_checked.py::",
+    "tests/test_windows_path_forms_fail_closed.py::",
+    "tests/test_windows_path_policy.py::",
+    "tests/test_windows_posix_only_calls.py::",
+    "tests/test_windows_program_refused_before_approval.py::",
+    "tests/test_windows_python_argv_allowlist.py::",
+    "tests/test_windows_quiet_subprocess.py::",
+    "tests/test_windows_quit_vool.py::",
+    "tests/test_windows_readonly_fsync.py::",
+    "tests/test_windows_refuses_plugins_and_mcp.py::",
+    "tests/test_windows_relaunch_reopens_a_closed_window.py::",
+    "tests/test_windows_runs_no_git.py::",
+    "tests/test_windows_runtime_startup.py::",
+    "tests/test_windows_second_launch_brings_the_open_window_forward.py::",
+    "tests/test_windows_settings_local_card.py::",
+    "tests/test_windows_shortcut_labels.py::",
+    "tests/test_windows_show_in_folder.py::",
+    "tests/test_windows_spaced_path_never_probes_a_network_drive.py::",
+    "tests/test_windows_stack_handoff.py::",
+    "tests/test_windows_staged_bytes_binary_reads.py::",
+    "tests/test_windows_stated_limits_before_any_lane.py::",
+    "tests/test_windows_stop_root_quoting.py::",
+    "tests/test_windows_stop_spares_foreign_listeners.py::",
+    "tests/test_windows_stopall_starts_inside_the_supervisor_job.py::",
+    "tests/test_windows_supervisor_backs_off_a_child_that_exits_mid_pass.py::",
+    "tests/test_windows_supervisor_keeps_state_out_of_the_program_folder.py::",
+    "tests/test_windows_supervisor_restarts_a_hung_child_not_a_slow_one.py::",
+    "tests/test_windows_supervisor_scan_opens_no_console.py::",
+    "tests/test_windows_system32_tools_are_pinned.py::",
+    "tests/test_windows_unconfined_reader_remedy.py::",
+    "tests/test_windows_uninstall_removes_program_files.py::",
+    "tests/test_windows_utf8_mode.py::",
+    "tests/test_windows_weather_coordinates_read_tzdata.py::",
+    "tests/test_windows_window_attaches_to_supervised_api.py::",
+    "tests/test_windows_window_vouched_attach.py::",
+    "tests/test_windows_write_gate.py::",
+    "tests/test_windows_write_gate_before_approval.py::",
+    "tests/test_windows_write_gate_flagged_roots_match_the_broker.py::",
+    "tests/test_windows_write_gate_judges_home_and_relative_spellings.py::",
+    "tests/test_windows_write_gate_refuses_share_spellings_before_any_lookup.py::",
+    "tests/test_windows_write_lane_honesty.py::",
+    "tests/test_workspace_read_probe_recursion.py::",
+    "tests/test_workspace_scope_yields_to_registered_owner.py::",
+)
+_DIAG_SKIP_PARTS = ("__pycache__", ".pytest_cache", ".ruff_cache")
+
+
+def _diag_listing():
+    roots = [_diag_os.path.expanduser("~"), str(_diag_os.path.dirname(_diag_os.path.dirname(_diag_os.path.abspath(__file__))))]
+    temp = _diag_os.path.normcase(_diag_os.path.abspath(_diag_os.environ.get("TEMP", "/tmp")))
+    seen = {}
+    for root in roots:
+        for here, dirs, names in _diag_os.walk(root):
+            norm = _diag_os.path.normcase(_diag_os.path.abspath(here))
+            if norm.startswith(temp) or any(p in here for p in _DIAG_SKIP_PARTS):
+                dirs[:] = []
+                continue
+            for name in names + [d + _diag_os.sep for d in dirs]:
+                path = _diag_os.path.join(here, name)
+                try:
+                    st = _diag_os.lstat(path.rstrip(_diag_os.sep))
+                except OSError:
+                    continue
+                seen[path] = (st.st_size, st.st_mtime_ns)
+    return seen
+
+
+def pytest_collection_modifyitems(session, config, items):
+    keep = [item for item in items if item.nodeid.replace("\\", "/").startswith(_DIAG_KEEP)]
+    deselected = [item for item in items if item not in keep]
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+    items[:] = keep
+    config._diag_before = _diag_listing() if keep else None
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    before = getattr(config, "_diag_before", None)
+    if before is None:
+        return
+    after = _diag_listing()
+    changed = sorted(p for p in set(before) | set(after) if before.get(p) != after.get(p))
+    terminalreporter.write_line(f"DIAG-TOUCH count={len(changed)} listed={len(after)}")
+    for path in changed[:200]:
+        kind = "new" if path not in before else ("gone" if path not in after else "changed")
+        terminalreporter.write_line(f"DIAG-TOUCH {kind} {path}")
