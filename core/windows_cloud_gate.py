@@ -152,28 +152,48 @@ def _cloud_hosts() -> frozenset[str]:
     return frozenset(hosts)
 
 
-def _custom_endpoint_host() -> str:
-    """The owner's custom (BYOK) endpoint host, unless it is on this machine or the LAN."""
+def _literal_local(url: str) -> bool:
+    """Whether a URL names this machine or the LAN by itself: a loopback name, or a loopback,
+    private, link-local or CGNAT address. No name is resolved (a lookup is itself a contact)."""
     try:
-        from core.auto_local_only_mode import endpoint_is_local
+        import ipaddress
+
+        from core.auto_local_only_mode import _LOOPBACK_NAMES, _address_is_internal
+
+        host = str(urlsplit(str(url or "")).hostname or "").strip().lower().strip("[]")
+        if not host:
+            return False
+        if host in _LOOPBACK_NAMES:
+            return True
+        try:
+            return bool(_address_is_internal(ipaddress.ip_address(host)))
+        except ValueError:
+            return False
+    except Exception:
+        return False
+
+
+def _custom_endpoint_host() -> str:
+    """The owner's custom (BYOK) endpoint host."""
+    try:
         from core.cloud_providers import custom_base_url
 
         url = str(custom_base_url() or "").strip()
-        if not url or endpoint_is_local(url):
-            return ""
-        return str(urlsplit(url).hostname or "").lower()
+        return str(urlsplit(url).hostname or "").lower() if url else ""
     except Exception:
         return ""
 
 
 def is_cloud_provider_request(url: str, provider_id: str = "") -> bool:
     """Whether a request goes to a cloud model provider, by its host: a provider's base URL host,
-    openrouter.ai, the UsePod origin, or the owner's custom endpoint when that is not local.
+    openrouter.ai, the UsePod origin, or the owner's custom endpoint.
 
-    The declared ``provider_id`` is not used: other services share ids with model providers (the
-    calendar adapter declares ``google``)."""
+    A URL that names this machine or the LAN (a loopback name, a loopback or private address) is
+    never one, whatever it is configured as: a UsePod origin or custom endpoint on the owner's own
+    hardware is local. The declared ``provider_id`` is not used: other services share ids with
+    model providers (the calendar adapter declares ``google``)."""
     host = str(urlsplit(str(url or "")).hostname or "").lower().rstrip(".")
-    if not host:
+    if not host or _literal_local(url):
         return False
     known_hosts = set(_cloud_hosts())
     custom = _custom_endpoint_host()
