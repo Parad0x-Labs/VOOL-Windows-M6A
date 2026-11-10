@@ -335,3 +335,40 @@ def test_off_windows_the_os_prompt_is_asked_exactly_once(machine, consent_yes, m
     assert result is not None and result.ok, result.response_text
     assert not source.exists() and destination.read_bytes() == b"hi\n"
     assert len(consent_yes) == 1
+
+
+def test_off_windows_the_card_text_of_a_move_is_unchanged(machine, monkeypatch) -> None:
+    """Off Windows a machine move's card reads as it did before this change ("No specific path
+    reported": no `source`/`destination` is read), and nothing is resolved while the card is built."""
+    from core import machine_file_ops
+    from core.mode_permission_policy import _affected_resources, _affected_resources_display
+
+    _seams(monkeypatch, windows=False)
+    resolved: list[str] = []
+    real = machine_file_ops._canonicalize
+    monkeypatch.setattr(machine_file_ops, "_canonicalize", lambda raw: resolved.append(raw) or real(raw))
+    arguments = {"source": str(machine["home"] / "Documents" / "notes.txt"),
+                 "destination": str(machine["home"] / "Downloads" / "notes.txt")}
+    assert _affected_resources(arguments) == []
+    for context in ({}, _owner_context(machine["home"] / "Documents")):
+        assert _affected_resources_display(arguments, context, intent="machine.move_path") == []
+    assert resolved == []
+
+
+@pytest.mark.parametrize("remote", ["source", "destination"])
+def test_a_move_naming_a_network_drive_is_refused_before_anything_resolves_it(machine, monkeypatch, remote) -> None:
+    """A mapped network drive is not a share spelling, so the pre-card check (which a council seat still
+    reaches) refuses it on the drive's own type, before `_canonicalize` could look it up over SMB."""
+    from core import machine_file_ops
+    from core.runtime_execution_tools import _windows_move_card_refusal
+
+    resolved: list[str] = []
+    monkeypatch.setattr(machine_file_ops, "_canonicalize", lambda raw: resolved.append(raw))
+    monkeypatch.setattr(windows_known_folders, "_drive_is_remote",
+                        lambda drive: True if str(drive or "").upper().rstrip("\\/") == "Z:" else False)
+    arguments = {"source": str(machine["first"] / "notes.txt"), "destination": str(machine["second"] / "notes.txt")}
+    arguments[remote] = "Z:\\VOOL Test\\notes.txt"
+    refused = _windows_move_card_refusal("machine.move_path", arguments)
+    assert refused is not None and not refused.ok
+    assert "Nothing was moved." in str(refused.response_text), refused.response_text
+    assert resolved == []
