@@ -225,6 +225,15 @@ def _local_only_egress_forbidden(
     if not local_only_active(source_context):
         return False, ""
     try:
+        from core import windows_cloud_gate
+
+        # Windows: a host the cloud gate names a cloud provider is never this machine or the LAN
+        # (literal local addresses are not cloud), so it is public egress with no name lookup.
+        if windows_cloud_gate.active() and windows_cloud_gate.is_cloud_provider_request(url):
+            return True, LOCAL_ONLY_EGRESS_DENIAL
+    except Exception:
+        pass
+    try:
         from core.auto_local_only_mode import endpoint_is_local
 
         if endpoint_is_local(url):
@@ -334,13 +343,12 @@ def open_remote(
     _url = str(getattr(request, "full_url", "") or "")
     refusal = door_refusal(_url, provider_id, keyed_or_keyless)
     if refusal is not None:
-        if local_only_active(_SCOPE_CONTEXT.get() or {}):
-            # Local Only stays the first word: the turn reads its own sentence and leaves its own
-            # receipt. The gate already named this host a cloud provider (never this machine or
-            # the LAN), so it is public egress without the name lookup the Local Only classifier
-            # would make -- a lookup is itself a contact, and cloud is off.
+        # Local Only stays the first word: a Local Only turn reads its own sentence and leaves its
+        # own receipt, decided by its one check (which makes no name lookup for a cloud host).
+        _lo_forbidden, _lo_reason = _local_only_egress_forbidden(_SCOPE_CONTEXT.get() or {}, _url)
+        if _lo_forbidden:
             _refuse_local_only(
-                current_effect_ledger(), _url, LOCAL_ONLY_EGRESS_DENIAL,
+                current_effect_ledger(), _url, _lo_reason,
                 provider_id=provider_id, keyed_or_keyless=keyed_or_keyless, retry_of=retry_of,
             )
         raise refusal
