@@ -1104,3 +1104,79 @@ def pytest_sessionfinish(session, exitstatus):
     if problems:
         print(f"\n{limits.LIST.name}: " + "; ".join(problems))
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+# ---- DIAGNOSTIC BRANCH ONLY (never merged): repin-74 touched test files on windows-latest,
+# with a before/after listing of the user profile and the checkout to count touches outside the test folders.
+import os as _diag_os
+
+_DIAG_KEEP = (
+    "tests/plugin_mcp_budgets/test_served_plugin_mcp_budgets.py::",
+    "tests/project_archaeology/test_recovery_plan.py::",
+    "tests/repoops/test_forge_action_safety_r3.py::",
+    "tests/repoops/test_forge_dispatch_authority_r5.py::",
+    "tests/repoops/test_forge_listing_truth.py::",
+    "tests/repoops/test_forge_served_journey.py::",
+    "tests/repoops/test_issue_inspection.py::",
+    "tests/repoops/test_local_lifecycle.py::",
+    "tests/repoops/test_local_lifecycle_checks_git_lfs_servers.py::",
+    "tests/repoops/test_repoops_adversarial.py::",
+    "tests/repoops/test_repoops_served.py::",
+    "tests/repoops/test_repoops_vertical.py::",
+    "tests/test_code_assistant_served_plugin_journeys.py::",
+    "tests/test_git_follows_links_in_its_git_folder.py::",
+    "tests/test_git_tools_repository_config_cannot_run_programs.py::",
+    "tests/test_runtime_capabilities.py::",
+    "tests/test_runtime_execution_operator_phase1.py::",
+    "tests/test_runtime_execution_tools.py::",
+    "tests/test_safe_git_lfs_and_signing_by_command.py::",
+    "tests/test_safe_git_worktree_config_cannot_run_programs.py::",
+    "tests/test_user_rules.py::",
+    "tests/test_user_rules_git_check_refuses_share_paths.py::",
+    "tests/test_user_rules_reused_message_is_not_an_option.py::",
+    "tests/test_utf8_text_io.py::",
+    "tests/test_vool_agent_brake.py::",
+    "tests/test_windows_known_folder_roots.py::",
+)
+_DIAG_SKIP_PARTS = ("__pycache__", ".pytest_cache", ".ruff_cache")
+
+
+def _diag_listing():
+    roots = [_diag_os.path.expanduser("~"), str(_diag_os.path.dirname(_diag_os.path.dirname(_diag_os.path.abspath(__file__))))]
+    temp = _diag_os.path.normcase(_diag_os.path.abspath(_diag_os.environ.get("TEMP", "/tmp")))
+    seen = {}
+    for root in roots:
+        for here, dirs, names in _diag_os.walk(root):
+            norm = _diag_os.path.normcase(_diag_os.path.abspath(here))
+            if norm.startswith(temp) or any(p in here for p in _DIAG_SKIP_PARTS):
+                dirs[:] = []
+                continue
+            for name in names + [d + _diag_os.sep for d in dirs]:
+                path = _diag_os.path.join(here, name)
+                try:
+                    st = _diag_os.lstat(path.rstrip(_diag_os.sep))
+                except OSError:
+                    continue
+                seen[path] = (st.st_size, st.st_mtime_ns)
+    return seen
+
+
+def pytest_collection_modifyitems(session, config, items):
+    keep = [item for item in items if item.nodeid.replace("\\", "/").startswith(_DIAG_KEEP)]
+    deselected = [item for item in items if item not in keep]
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+    items[:] = keep
+    config._diag_before = _diag_listing() if keep else None
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    before = getattr(config, "_diag_before", None)
+    if before is None:
+        return
+    after = _diag_listing()
+    changed = sorted(p for p in set(before) | set(after) if before.get(p) != after.get(p))
+    terminalreporter.write_line(f"DIAG-TOUCH count={len(changed)} listed={len(after)}")
+    for path in changed[:200]:
+        kind = "new" if path not in before else ("gone" if path not in after else "changed")
+        terminalreporter.write_line(f"DIAG-TOUCH {kind} {path}")
