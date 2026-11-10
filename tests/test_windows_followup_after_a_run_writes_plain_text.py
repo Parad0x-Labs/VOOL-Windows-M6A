@@ -221,7 +221,7 @@ def _run(adapter, request):
         return adapter.run_structured_task(request)
 
 
-def test_on_a_marked_round_prose_closes_the_turn_as_respond_direct(ollama) -> None:
+def test_on_a_marked_round_prose_closes_the_turn_as_respond_direct(ollama, windows_seam) -> None:
     response = _run(ollama({"role": "assistant", "content": PROSE}), _request(marked=True))
 
     assert [call.intent for call in response.tool_calls] == ["respond.direct"], response.tool_calls
@@ -229,7 +229,7 @@ def test_on_a_marked_round_prose_closes_the_turn_as_respond_direct(ollama) -> No
     assert json.loads(response.output_text) == {"intent": "respond.direct", "arguments": {"message": PROSE}}
 
 
-def test_a_leading_reasoning_block_is_not_part_of_the_answer(ollama) -> None:
+def test_a_leading_reasoning_block_is_not_part_of_the_answer(ollama, windows_seam) -> None:
     content = f"<think>The user ran calc.py; summarise.</think>\n{PROSE}"
     response = _run(ollama({"role": "assistant", "content": content}), _request(marked=True))
 
@@ -242,7 +242,7 @@ def test_on_an_unmarked_round_prose_still_fails_closed(ollama) -> None:
         _run(ollama({"role": "assistant", "content": PROSE}), _request(marked=False))
 
 
-def test_a_marked_round_without_respond_direct_on_offer_still_fails_closed(ollama) -> None:
+def test_a_marked_round_without_respond_direct_on_offer_still_fails_closed(ollama, windows_seam) -> None:
     with pytest.raises(MalformedToolArgumentsError, match="required native tool call is missing"):
         _run(ollama({"role": "assistant", "content": PROSE}), _request(marked=True, offer=(RUN,)))
 
@@ -250,12 +250,12 @@ def test_a_marked_round_without_respond_direct_on_offer_still_fails_closed(ollam
 @pytest.mark.parametrize(
     "content", ["", "   ", "<think>Only reasoning, no answer.</think>"], ids=["empty", "blank", "reasoning-only"]
 )
-def test_a_marked_round_with_no_answer_still_fails_closed(ollama, content: str) -> None:
+def test_a_marked_round_with_no_answer_still_fails_closed(ollama, windows_seam, content: str) -> None:
     with pytest.raises(MalformedToolArgumentsError, match="required native tool call is missing"):
         _run(ollama({"role": "assistant", "content": content}), _request(marked=True))
 
 
-def test_a_real_tool_call_on_a_marked_round_is_kept_as_it_came(ollama) -> None:
+def test_a_real_tool_call_on_a_marked_round_is_kept_as_it_came(ollama, windows_seam) -> None:
     native = build_cloud_tool_definitions([RUN, RESPOND])[0].name
     message = {
         "role": "assistant", "content": "Running it again.",
