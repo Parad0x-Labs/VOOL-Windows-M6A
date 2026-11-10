@@ -331,8 +331,18 @@ def open_remote(
     # before a key is stored AND cloud is turned on (core/windows_cloud_gate.py). Before any socket.
     from core.windows_cloud_gate import door_refusal
 
-    refusal = door_refusal(str(getattr(request, "full_url", "") or ""), provider_id, keyed_or_keyless)
+    _url = str(getattr(request, "full_url", "") or "")
+    refusal = door_refusal(_url, provider_id, keyed_or_keyless)
     if refusal is not None:
+        if local_only_active(_SCOPE_CONTEXT.get() or {}):
+            # Local Only stays the first word: the turn reads its own sentence and leaves its own
+            # receipt. The gate already named this host a cloud provider (never this machine or
+            # the LAN), so it is public egress without the name lookup the Local Only classifier
+            # would make -- a lookup is itself a contact, and cloud is off.
+            _refuse_local_only(
+                current_effect_ledger(), _url, LOCAL_ONLY_EGRESS_DENIAL,
+                provider_id=provider_id, keyed_or_keyless=keyed_or_keyless, retry_of=retry_of,
+            )
         raise refusal
     return _open_enforced(
         request,
@@ -398,6 +408,37 @@ def _file_transport_fault(exc: BaseException, *, url: str, provider_id: str) -> 
     except Exception:
         # The fault record must never change the exception's path: it propagates untouched.
         pass
+
+
+def _refuse_local_only(
+    ledger: Any, url: str, reason: str, *, provider_id: str = "", keyed_or_keyless: str = "",
+    retry_of: str = "",
+) -> None:
+    """Local Only's denial: one ``denied`` receipt carrying the host and nothing else from the
+    request, then the refusal. Always raises."""
+    from core.effect_gateway import (
+        DECISION_DENIED,
+        EFFECT_NETWORK_FETCH,
+        LIFECYCLE_DENIED,
+        EffectReceipt,
+    )
+
+    ledger.open_effect(
+        EffectReceipt(
+            effect_class=EFFECT_NETWORK_FETCH,
+            decision=DECISION_DENIED,
+            lifecycle=LIFECYCLE_DENIED,
+            reason=reason,
+            host=_host_of(url),
+            provider_id=str(provider_id or ""),
+            keyed_or_keyless=str(keyed_or_keyless or ""),
+            mode=_active_mode_label(),
+            decided_by="remote_fetch_policy.local_only_egress",
+            recorded_at=_utcnow_iso(),
+        ),
+        retry_of=retry_of,
+    )
+    raise RemoteFetchRefusedError(reason)
 
 
 def _open_enforced(
@@ -480,22 +521,10 @@ def _open_enforced(
     # without transmission.
     _lo_forbidden, _lo_reason = _local_only_egress_forbidden(_SCOPE_CONTEXT.get() or {}, url)
     if _lo_forbidden:
-        ledger.open_effect(
-            EffectReceipt(
-                effect_class=EFFECT_NETWORK_FETCH,
-                decision=DECISION_DENIED,
-                lifecycle=LIFECYCLE_DENIED,
-                reason=_lo_reason,
-                host=_host_of(url),
-                provider_id=str(provider_id or ""),
-                keyed_or_keyless=str(keyed_or_keyless or ""),
-                mode=_active_mode_label(),
-                decided_by="remote_fetch_policy.local_only_egress",
-                recorded_at=_utcnow_iso(),
-            ),
-            retry_of=retry_of,
+        _refuse_local_only(
+            ledger, url, _lo_reason,
+            provider_id=provider_id, keyed_or_keyless=keyed_or_keyless, retry_of=retry_of,
         )
-        raise RemoteFetchRefusedError(_lo_reason)
     if remote_fetch_forbidden():
         ledger.open_effect(
             EffectReceipt(
