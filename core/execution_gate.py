@@ -40,6 +40,95 @@ def effective_autonomy_mode() -> str:
 
 
 @dataclass
+class _OperatorApprovedCall:
+    intent: str
+    claimed: bool = False
+
+
+@dataclass
+class _OperatorApprovedCommand:
+    command: str
+    cwd: str
+    spent: bool = False
+
+
+# The operator's exact approval of ONE command, carried from the permission controller to this gate.
+# The controller (core.mode_permission_policy.decide_tool_call) spends the approval token for the
+# exact call (intent and arguments); this gate re-applies the mode matrix to every side-effecting
+# command and cannot see that, so the approved call used to be asked about again ("Command requires
+# explicit user approval.") and never ran. Two scopes, both contextvars, both single-use:
+# - the authorized boundary opens `operator_approved_call(intent)` around the one dispatch it allows
+#   on an exact approval;
+# - the command handler claims it once (`claim_operator_approved_call`) and opens
+#   `operator_approved_command(command, cwd=...)` around the one command it derives from the call;
+# - `evaluate_command` spends that only for exactly that command text and folder, once.
+# Nothing a caller passes in arguments can open either scope.
+_OPERATOR_APPROVED_CALL: contextvars.ContextVar[_OperatorApprovedCall | None] = contextvars.ContextVar(
+    "vool_operator_approved_call", default=None
+)
+_OPERATOR_APPROVED_COMMAND: contextvars.ContextVar[_OperatorApprovedCommand | None] = contextvars.ContextVar(
+    "vool_operator_approved_command", default=None
+)
+
+
+@contextlib.contextmanager
+def operator_approved_call(intent: str):
+    """The dispatch of one call the operator approved exactly (opened by the authorized boundary)."""
+    token = _OPERATOR_APPROVED_CALL.set(_OperatorApprovedCall(intent=str(intent or "")))
+    try:
+        yield
+    finally:
+        _OPERATOR_APPROVED_CALL.reset(token)
+
+
+def operator_approval_spend_applies() -> bool:
+    """Whether an operator's exact approval may lift this gate's ask: on Windows only, for 0.7.1
+    (Security Architect, 9 Nov). The seam is the job runner's own platform check, the one every
+    Windows job's confinement is decided by. Mac and Linux keep the gate exactly as it was."""
+    try:
+        from sandbox import job_runner
+
+        return bool(job_runner._is_windows_platform())
+    except Exception:
+        return False
+
+
+def claim_operator_approved_call(intents: frozenset[str] | set[str]) -> bool:
+    """True once, for the handler of the approved call; False for anything else or a second claim."""
+    if not operator_approval_spend_applies():
+        return False
+    call = _OPERATOR_APPROVED_CALL.get()
+    if call is None or call.claimed or call.intent not in intents:
+        return False
+    call.claimed = True
+    return True
+
+
+@contextlib.contextmanager
+def operator_approved_command(command: str, *, cwd: str):
+    """The one command, in the one folder, the approved call runs (opened by its handler)."""
+    token = _OPERATOR_APPROVED_COMMAND.set(
+        _OperatorApprovedCommand(command=str(command or "").strip(), cwd=str(cwd or ""))
+    )
+    try:
+        yield
+    finally:
+        _OPERATOR_APPROVED_COMMAND.reset(token)
+
+
+def _spend_operator_approved_command(text: str, cwd: str) -> bool:
+    if not operator_approval_spend_applies():
+        return False
+    approved = _OPERATOR_APPROVED_COMMAND.get()
+    if approved is None or approved.spent:
+        return False
+    if approved.command != str(text or "").strip() or approved.cwd != str(cwd or ""):
+        return False
+    approved.spent = True
+    return True
+
+
+@dataclass
 class GateDecision:
     mode: str                     # blocked, advice_only, simulate_only, sandbox, execute
     reason: str
@@ -423,7 +512,8 @@ class ExecutionGate:
             destructive=destructive,
             autonomy_mode=policy.autonomy_mode,
         )
-        if not requires_approval and not read_only:
+        mode_denied = False
+        if not read_only:
             # Operating-mode authority has the final word on side effects. The turn's
             # mode (Manual/Review-edits by default) requires approval for
             # side-effecting commands in MODE_PERMISSION_MATRIX; the autonomy
@@ -442,13 +532,18 @@ class ExecutionGate:
                 operating_mode = OperatingMode(str(getattr(policy, "mode", "") or "").strip().lower())
             except ValueError:
                 operating_mode = OperatingMode.MANUAL
-            actions = _command_actions(text)
-            if PermissionEffect.REQUIRE_APPROVAL in [
-                MODE_PERMISSION_MATRIX[operating_mode][action] for action in actions
-            ] or PermissionEffect.DENY in [
-                MODE_PERMISSION_MATRIX[operating_mode][action] for action in actions
-            ]:
+            effects = [MODE_PERMISSION_MATRIX[operating_mode][action] for action in _command_actions(text)]
+            # A mode that DENIES one of the command's actions refuses it whatever was approved: an
+            # operator approval may lift only REQUIRE_APPROVAL (see the spend below).
+            mode_denied = PermissionEffect.DENY in effects
+            if not requires_approval and (PermissionEffect.REQUIRE_APPROVAL in effects or mode_denied):
                 requires_approval = True
+        operator_approved = False
+        if requires_approval and not mode_denied and _spend_operator_approved_command(text, cwd):
+            # The operator approved exactly this command line in exactly this folder, and the
+            # controller spent that approval for this call. Asking again is the approval loop.
+            requires_approval = False
+            operator_approved = True
         if requires_approval:
             return _receipted(
                 DECISION_DENIED,
@@ -465,7 +560,11 @@ class ExecutionGate:
             DECISION_ALLOWED,
             {
                 "decision": "sandbox",
-                "reason": "Sandbox execution allowed.",
+                "reason": (
+                    "Sandbox execution allowed: the operator approved this exact command."
+                    if operator_approved
+                    else "Sandbox execution allowed."
+                ),
                 "base_command": base_cmd,
                 "destructive": str(destructive).lower(),
                 "read_only": str(read_only).lower(),

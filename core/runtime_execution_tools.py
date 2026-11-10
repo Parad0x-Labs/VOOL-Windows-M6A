@@ -5,10 +5,12 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:  # annotation-only: the refusal type is imported lazily at the doors
     from core.effect_budget import EffectBudgetRefusedError
 
+import contextlib
 import json
 import os
 import platform
 import re
+import shlex
 import subprocess
 import urllib.error
 import urllib.request
@@ -2030,6 +2032,11 @@ def _machine_move_path(
     allowed_roots = list(_safe_machine_roots())
     if workspace_root is not None:
         allowed_roots.append(workspace_root)
+    # On Windows the folders the owner marked are the places VOOL may change, wherever they are, as
+    # for machine.write_file (`_marked_folder_machine_target`): a move between two marked folders
+    # outside Desktop, Documents and Downloads was refused here (captest R1-4). The Windows write
+    # gate checks both paths again before this runs.
+    allowed_roots.extend(_marked_machine_roots())
     result = move_path(
         str((arguments or {}).get("source") or ""),
         str((arguments or {}).get("destination") or ""),
@@ -4491,8 +4498,14 @@ def resolve_write_target(intent: str, raw_path: str | None, source_context: dict
     if not path:
         return None
     try:
-        if str(intent or "").strip().lower().startswith("machine."):
-            return _resolve_machine_directory(path)
+        clean_intent = str(intent or "").strip().lower()
+        if clean_intent.startswith("machine."):
+            try:
+                return _resolve_machine_directory(path)
+            except ValueError:
+                if clean_intent not in MACHINE_MARKED_WRITE_INTENTS or _marked_folder_machine_target(path) is None:
+                    raise
+                return _resolve_machine_write_target(path)
         return _resolve_workspace_path(path, workspace_root=_workspace_root(source_context))
     except (ValueError, OSError, RuntimeError):
         return None
@@ -4680,12 +4693,65 @@ def _expand_machine_user(raw: str) -> Path:
     return Path(value).expanduser()
 
 
+#: The machine writers that may also write inside a folder the owner marked on Windows.
+MACHINE_MARKED_WRITE_INTENTS = frozenset({"machine.write_file", "machine.ensure_directory"})
+
+
+def _marked_folder_machine_target(raw_path: str | None) -> Path | None:
+    """On Windows, where a machine write lands when that place is inside a folder the owner marked
+    (core/windows_write_gate.py), placed as the writer places it; None otherwise and off Windows.
+
+    The marked folders are the only places Windows lets VOOL change files, wherever they are, so the
+    machine writers take them as well as Desktop, Documents and Downloads (captest B3, 2026-11-08: a
+    folder marked under the profile could never be written). The gate still checks every write."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active() or not str(raw_path or "").strip():
+        return None
+    try:
+        candidate = anchor_machine_path(raw_path)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return candidate if windows_write_gate.inside_flagged(str(candidate)) else None
+
+
+def _marked_machine_roots() -> list[Path]:
+    """On Windows, the folders the owner marked (core/windows_write_gate.py); none off Windows or
+    when they cannot be read."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return []
+    try:
+        return [Path(root) for root in windows_write_gate.flagged_roots()]
+    except Exception:  # an unknown state adds no folder
+        return []
+
+
 def _resolve_machine_directory(raw_path: str | None, *, write: bool = False) -> Path:
     """A safe machine directory path, refused when it is this runtime's own state (or, for a write, its running code)."""
     target = _resolve_safe_machine_directory(raw_path)
     from core.runtime_state_protection import refusal as _protected_refusal
 
     reason = _protected_refusal(target, write=write)
+    if reason:
+        raise ValueError(reason)
+    return target
+
+
+def _resolve_machine_write_target(raw_path: str | None) -> Path:
+    """Where machine.write_file and machine.ensure_directory write: a safe machine directory path
+    (`_resolve_machine_directory`), or on Windows a path inside a folder the owner marked, refused
+    alike when it is this runtime's own state or running code."""
+    try:
+        return _resolve_machine_directory(raw_path, write=True)
+    except ValueError:
+        target = _marked_folder_machine_target(raw_path)
+        if target is None:
+            raise
+    from core.runtime_state_protection import refusal as _protected_refusal
+
+    reason = _protected_refusal(target, write=True)
     if reason:
         raise ValueError(reason)
     return target
@@ -5699,7 +5765,7 @@ def _ensure_machine_directory(arguments: dict[str, Any]) -> RuntimeExecutionResu
             },
         )
     try:
-        target = _resolve_machine_directory(arguments.get("path"), write=True)
+        target = _resolve_machine_write_target(arguments.get("path"))
     except ValueError as exc:
         return RuntimeExecutionResult(
             handled=True,
@@ -5775,7 +5841,7 @@ def _write_machine_file(
             },
         )
     try:
-        target = _resolve_machine_directory(arguments.get("path"), write=True)
+        target = _resolve_machine_write_target(arguments.get("path"))
     except ValueError as exc:
         return RuntimeExecutionResult(
             handled=True,
@@ -6249,14 +6315,17 @@ def _read_file(arguments: dict[str, Any], *, workspace_root: Path) -> RuntimeExe
         elsewhere = _nearby_workspace_matches(
             str(arguments.get("path") or ""), workspace_root=workspace_root
         )
+        # Where it looked, by name: "no file at `calc.py`" read as a statement about the folder the
+        # user meant, not the chat's own folder it was true of (captest C1, 2026-11-09).
+        looked_in = f" in `{workspace_root}`"
         if elsewhere:
             miss_text = (
-                f"There is no file at `{shown}`, but that name exists elsewhere in this project:\n"
+                f"There is no file at `{shown}`{looked_in}, but that name exists elsewhere in this project:\n"
                 + "\n".join(f"- {path}" for path in elsewhere)
             )
         else:
             miss_text = (
-                f"There is no file at `{shown}`, and no file of that name elsewhere in this "
+                f"There is no file at `{shown}`{looked_in}, and no file of that name elsewhere in this "
                 "project. If it may be outside the project folder, ask me to search your Desktop, "
                 "Downloads and Documents for it."
             )
@@ -7639,13 +7708,110 @@ def windows_write_refusal_before_decision(
 
     A council seat is left to the dispatch-time gate: `execute_runtime_tool` re-roots a seat onto
     its own disposable workspace first, and only that gate sees the root the seat writes to.
+
+    Then, for a call that starts a program, the Windows phase-1 program check
+    (`windows_program_refusal`): it does not depend on any workspace, so a council seat gets it too.
     """
     refusal = windows_write_refusal(intent, arguments, source_context=source_context)
-    if refusal is None:
-        return None
-    from core.council.containment import binding_for_context
+    if refusal is not None:
+        from core.council.containment import binding_for_context
 
-    return None if binding_for_context(source_context) is not None else refusal
+        if binding_for_context(source_context) is None:
+            return refusal
+    return windows_program_refusal(intent, arguments)
+
+
+#: Intents that start the program a command line names: `sandbox.run_command` its `command`, the
+#: validation intents the command `_run_validation` builds. A step is judged by its inner call.
+_WINDOWS_PROGRAM_INTENTS = frozenset(
+    {"sandbox.run_command", "workspace.run_tests", "workspace.run_lint", "workspace.run_formatter"}
+)
+_WINDOWS_PROGRAM_STEPS = frozenset({"code.task.step", "repo.step"})
+WINDOWS_PROGRAM_STATUS = "windows_program_refused"
+
+
+def windows_program_check_applies(intent: str) -> bool:
+    """Whether `windows_program_refusal` can refuse this intent: on Windows, a call that starts a
+    program, or a step (whose inner call may). False everywhere else, before anything is read."""
+    from sandbox.job_runner import _is_windows_platform
+
+    if not _is_windows_platform():
+        return False
+    return intent in _WINDOWS_PROGRAM_INTENTS or intent in _WINDOWS_PROGRAM_STEPS
+
+
+def _command_argv(command: str) -> list[str]:
+    """The argv the sandbox would split `command` into, or the lenient split of a line its rules
+    refuse (the program is still judged; the sandbox reports the rest), or [] when unreadable."""
+    try:
+        return [str(item) for item in parse_command(command)]
+    except ValueError:
+        pass
+    try:
+        return [str(item) for item in shlex.split(command, posix=False)]
+    except ValueError:
+        return []
+
+
+def windows_program_refusal(intent: str, arguments: dict[str, Any]) -> RuntimeExecutionResult | None:
+    """On Windows, the refusal for a call whose program phase 1 never runs, asked before the
+    permission decision; None otherwise, and always off Windows.
+
+    The verdict is `sandbox.job_runner.windows_program_refusal`, the same gate the job runner applies
+    when the job starts, so no approval is asked for a program that can never run and no allow-list
+    is kept here. The command judged is the one the handler would run: `command` (or `cmd`) for
+    `sandbox.run_command`, `_run_validation`'s command for the validation intents, the inner call for
+    a step. A call with no command is left to its handler.
+    """
+    if not windows_program_check_applies(intent):
+        return None
+    call_intent, call_arguments = intent, arguments
+    if intent in _WINDOWS_PROGRAM_STEPS:
+        call_intent = str(arguments.get("intent") or "").strip()
+        inner = arguments.get("arguments")
+        call_arguments = inner if isinstance(inner, dict) else {}
+    if call_intent not in _WINDOWS_PROGRAM_INTENTS:
+        return None
+    if call_intent == "sandbox.run_command":
+        command = str(call_arguments.get("command") or call_arguments.get("cmd") or "").strip()
+    else:
+        try:
+            command = runtime_validation_command(validation_command(call_intent, dict(call_arguments)))
+        except Exception:
+            return None  # the handler reports a validation call it cannot build
+    argv = _command_argv(command) if command else []
+    if not argv:
+        return None
+    from sandbox.job_runner import windows_program_refusal as phase1_refusal
+
+    reason = phase1_refusal(argv)
+    if not reason:
+        return None
+    contract = runtime_tool_contract_map().get(intent)
+    return RuntimeExecutionResult(
+        handled=True,
+        ok=False,
+        status=WINDOWS_PROGRAM_STATUS,
+        response_text=reason,
+        details={
+            "executed": False,
+            "command": command,
+            "observation": _tool_observation(
+                intent=intent,
+                tool_surface=str(getattr(contract, "tool_surface", "") or "sandbox"),
+                ok=False,
+                status=WINDOWS_PROGRAM_STATUS,
+                reason=reason,
+            ),
+        },
+    )
+
+
+#: The calls whose handler runs exactly one sandbox command derived from the call's arguments, so an
+#: exact approval of the call is an approval of that command (`_run_command`, `_run_validation`).
+_OPERATOR_APPROVED_COMMAND_INTENTS = frozenset(
+    {"sandbox.run_command", "workspace.run_tests", "workspace.run_lint", "workspace.run_formatter"}
+)
 
 
 def _run_command(
@@ -7694,10 +7860,20 @@ def _run_command(
         network_isolation_mode=_trusted_local_network_mode(command, arguments=arguments),
         **({"read_roots": tuple(Path(root) for root in proof_reads)} if proof_reads else {}),
     )
+    # The call the operator approved exactly runs this one command in this one folder: the sandbox
+    # gate lets exactly that through, once, instead of asking about it again (core.execution_gate).
+    from core.execution_gate import claim_operator_approved_call, operator_approved_command
+
+    approved = (
+        operator_approved_command(command, cwd=str(cwd))
+        if claim_operator_approved_call(_OPERATOR_APPROVED_COMMAND_INTENTS)
+        else contextlib.nullcontext()
+    )
     # The operator's stop button reaches INTO the command: the turn's cancel signal (and, for a
     # code task step, the task's own) is polled by the job runner while the child runs, so a
     # cancellation kills the process instead of waiting for it to finish.
-    result = runner.run_command(command, cwd=str(cwd), cancel_event=_cancel_token_from(source_context))
+    with approved:
+        result = runner.run_command(command, cwd=str(cwd), cancel_event=_cancel_token_from(source_context))
     relative_cwd = _relative_path(cwd, workspace_root=workspace_root)
     status = str(result.get("status") or ("blocked_by_policy" if result.get("error") else ""))
     if status and status != "executed":

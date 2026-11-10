@@ -106,6 +106,11 @@ class PermissionDecision:
     actions: tuple[PermissionAction, ...]
     reason: str
     approval_request: dict[str, Any] | None = None
+    #: True only when the allow is the operator's own answer for this exact call: the live approval
+    #: token this call spent, or a task grant the operator chose, bound to the call's fingerprint. The
+    #: sandbox command gate reads it (via the authorized boundary) so the approved command runs
+    #: instead of being asked about again. An earlier, already-spent grant does not set it.
+    exact_approval: bool = False
 
     @property
     def allowed(self) -> bool:
@@ -3132,9 +3137,13 @@ def _edit_preview(intent: str, arguments: dict[str, Any], source_context: dict[s
         # Desktop/Downloads/Documents overwrite with no visibility into what content will land
         # (confirmed red-team finding, 2026-08-04).
         try:
-            from core.runtime_execution_tools import _resolve_machine_directory
+            from core.runtime_execution_tools import _resolve_machine_directory, _resolve_machine_write_target
 
-            target = _resolve_machine_directory(raw_path)
+            try:
+                target = _resolve_machine_directory(raw_path)
+            except ValueError:
+                # On Windows a folder the owner marked is written too; its preview is shown the same way.
+                target = _resolve_machine_write_target(raw_path)
         except Exception:
             return ""
         if target is None:
@@ -3227,7 +3236,14 @@ def _consume_matching_approval(
     fingerprint: str,
     session_id: str,
     task_id: str,
+    spent: list[str] | None = None,
 ) -> bool:
+    """Spend the live approval token for this exact call, or ride an earlier grant of it.
+
+    ``spent`` (when given) receives ``"token"`` when THIS call spent the live token in hand: the
+    operator's one answer was used up by it, which is what lets the sandbox command gate run the
+    approved command once (``PermissionDecision.exact_approval``). Riding an earlier, already-spent
+    grant appends nothing."""
     token = str(source_context.get("mode_approval_token") or "").strip()
     if not token:
         # No live token in hand, but the operator may already have granted this EXACT call
@@ -3267,11 +3283,15 @@ def _consume_matching_approval(
             if not remaining:
                 approval["status"] = "consumed"
                 _persist_pending_approvals_locked()
+            if spent is not None:
+                spent.append("token")
             return True
         if approval.get("fingerprint") != fingerprint:
             return False
         approval["status"] = "consumed"
         _persist_pending_approvals_locked()
+        if spent is not None:
+            spent.append("token")
         return True
 
 
@@ -3677,12 +3697,15 @@ def _decide_tool_call(
         source_context=context,
     )
 
-    token_step = _consume_matching_approval if consume else _matching_approval_covers
-    if token_step(
-        context,
-        fingerprint=fingerprint,
-        session_id=session_id,
-        task_id=logical_task_id,
+    spent: list[str] = []
+    if (
+        _consume_matching_approval(
+            context, fingerprint=fingerprint, session_id=session_id, task_id=logical_task_id, spent=spent
+        )
+        if consume
+        else _matching_approval_covers(
+            context, fingerprint=fingerprint, session_id=session_id, task_id=logical_task_id
+        )
     ):
         meta["token_matched"] = True
         if consume:
@@ -3698,22 +3721,30 @@ def _decide_tool_call(
             mode=mode,
             actions=actions,
             reason="Exact action approval matched this task, target, and side-effect class.",
+            # Only the call that spent the operator's live token: a re-emission riding an earlier,
+            # already-spent grant is allowed by the controller but is not a fresh approval to run.
+            exact_approval=bool(spent),
         ), meta
 
     with _LOCK:
-        task_approved = any(
-            item.get("session_id") == session_id
-            and item.get("task_id") == logical_task_id
-            and item.get("intent") == str(intent or "")
-            and tuple(item.get("actions") or ()) == tuple(action.value for action in actions)
-            and int(item.get("mode_revision") or 0) == revision
-            and float(item.get("expires_at") or 0) > time.time()
-            # The action-class tuple alone is not enough to prove THIS call was the one
-            # approved -- it only proves this call happens to classify the same way as some
-            # other, unrelated call that was. Require the exact-call fingerprint too.
-            and item.get("fingerprint") == fingerprint
-            for item in _TASK_APPROVALS
+        task_grant = next(
+            (
+                item
+                for item in _TASK_APPROVALS
+                if item.get("session_id") == session_id
+                and item.get("task_id") == logical_task_id
+                and item.get("intent") == str(intent or "")
+                and tuple(item.get("actions") or ()) == tuple(action.value for action in actions)
+                and int(item.get("mode_revision") or 0) == revision
+                and float(item.get("expires_at") or 0) > time.time()
+                # The action-class tuple alone is not enough to prove THIS call was the one
+                # approved -- it only proves this call happens to classify the same way as some
+                # other, unrelated call that was. Require the exact-call fingerprint too.
+                and item.get("fingerprint") == fingerprint
+            ),
+            None,
         )
+    task_approved = task_grant is not None
     if task_approved:
         if consume:
             _record_approval_event(
@@ -3728,6 +3759,8 @@ def _decide_tool_call(
             mode=mode,
             actions=actions,
             reason="This non-edit action type was approved for the current task and mode revision.",
+            # Only a grant bound to THIS call's fingerprint is the operator's approval of this call.
+            exact_approval=bool(fingerprint) and str(task_grant.get("fingerprint") or "") == fingerprint,
         ), meta
 
     # Project permissions can only narrow mode permissions, never widen them.

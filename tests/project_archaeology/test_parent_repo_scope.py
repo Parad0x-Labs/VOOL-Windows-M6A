@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from tests import _windows_refusals as windows_refusals
+
 OUTSIDE_SUBJECT = "ARCH-PARENT-SUBJECT-MARKER-77c1"
 OUTSIDE_NAME = "parent-only-ledger.txt"
 
@@ -99,13 +101,18 @@ def test_model_locate_never_returns_a_commit_subject_from_above_the_bound_folder
 
 def test_model_still_reads_a_repository_rooted_inside_the_bound_folder(parent_repo):
     # Bound to the repository itself, a subfolder of it may still be named.
-    execution = _model_call(
-        "compare",
-        {"kind": "git_commits", "a": parent_repo["first"], "b": parent_repo["second"],
-         "workspace_root": str(parent_repo["bound"])},
-        bound=parent_repo["outer"],
-    )
+    with windows_refusals.watch_git(parent_repo["outer"]) as seen:
+        execution = _model_call(
+            "compare",
+            {"kind": "git_commits", "a": parent_repo["first"], "b": parent_repo["second"],
+             "workspace_root": str(parent_repo["bound"])},
+            bound=parent_repo["outer"],
+        )
     envelope = _envelope(execution)
+    # Windows 0.7.1 runs no git: the comparison is refused with the git sentence, and no commit is read.
+    if seen.refused(envelope.get("summary", "")):
+        assert execution.ok is False and envelope["data"] is None, envelope
+        return
     assert execution.ok is True, envelope
     assert OUTSIDE_NAME in envelope["data"]["comparison"]["changed_paths"], envelope
 

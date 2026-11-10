@@ -1,6 +1,7 @@
 """Independent mutation-safety regression cases using the delivered real runtime."""
 import pytest
 
+from tests import _windows_refusals as windows_refusals
 from tests.repoops._harness import context, door
 from tests.repoops.test_forge_actions import (
     _armed_session,
@@ -33,6 +34,8 @@ def prepare(world, action='create'):
 
 @pytest.mark.parametrize('action', ['create', 'comment'])
 def test_journal_reservation_failure_prevents_external_write(world, monkeypatch, action):
+    if windows_refusals.refuses_repo_session(world):
+        return
     forge, ctx, sid, *_ = prepare(world, action)
     import core.runtime_continuity as continuity
     def unavailable(**kwargs):
@@ -45,6 +48,8 @@ def test_journal_reservation_failure_prevents_external_write(world, monkeypatch,
 
 @pytest.mark.parametrize('action', ['create', 'comment'])
 def test_verification_failure_remains_failed_on_replay(world, action):
+    if windows_refusals.refuses_repo_session(world):
+        return
     forge, ctx, sid, sha, base, _ = prepare(world, action)
     if action == 'create':
         forge.route('POST /pulls', _pr_payload('31', base_sha=base, head_sha=sha, draft=False,
@@ -61,6 +66,8 @@ def test_verification_failure_remains_failed_on_replay(world, action):
 
 @pytest.mark.parametrize('mismatch', ['draft', 'body'])
 def test_unknown_create_cannot_claim_exact_success_for_different_pr(world, mismatch):
+    if windows_refusals.refuses_repo_session(world):
+        return
     forge, ctx, sid, sha, base, _ = prepare(world)
     forge.arm_unknown('POST /repos/o/r/pulls')
     first = door('repo.pr.create', {'repo_session_id': sid}, ctx)
@@ -77,6 +84,8 @@ def test_unknown_create_cannot_claim_exact_success_for_different_pr(world, misma
 
 @pytest.mark.parametrize('payload', ['{broken JSON', {}], ids=['malformed-json', 'empty-object'])
 def test_success_reply_decode_failure_is_unknown_not_safe_to_retry(world, payload):
+    if windows_refusals.refuses_repo_session(world):
+        return
     forge, ctx, sid, _, _, action_hash = prepare(world, 'comment')
     forge.route('POST /issues/17/comments', payload, status=201)
     first = door('repo.pr.comment', {'repo_session_id': sid}, ctx)

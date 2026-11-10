@@ -10,6 +10,7 @@ import json
 
 import pytest
 
+from tests import _windows_refusals as windows_refusals
 from tests.repoops._forge_fixture import RecordedForge
 from tests.repoops._harness import context, door
 from tests.repoops.test_forge_actions import (
@@ -41,6 +42,8 @@ def test_reservation_failure_blocks_update_action_on_different_text(world, monke
     update whose journal reservation fails must not PATCH."""
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, sha, base = _armed_session(world, ctx)
     forge.route("GET /pulls/8", _pr_payload("8", base_sha=base, head_sha=sha, body="older wording"))
     _plan_and_authorize(world, ctx, sid, action="update", number="8", body="fresh reviewed wording")
@@ -64,6 +67,8 @@ def test_dispatch_marker_failure_blocks_the_write(world, monkeypatch) -> None:
     the marker failing must stop the write before any socket."""
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, _sha, _base = _armed_session(world, ctx)
     _plan_and_authorize(
         world, ctx, sid, action="comment", number="17", subject="issue", body="marker probe text"
@@ -91,6 +96,8 @@ def test_session_journal_failure_before_dispatch_blocks_the_write(world, monkeyp
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, _sha, _base = _armed_session(world, ctx)
     _plan_and_authorize(world, ctx, sid, action="create", base_ref="main", title="journal probe", body="words")
     forge.route("GET /pulls?head=", [])
@@ -111,6 +118,8 @@ def test_active_continuity_row_blocks_concurrent_identical_dispatch(world) -> No
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, sha, base = _armed_session(world, ctx)
     import hashlib
 
@@ -143,6 +152,8 @@ def test_unknown_outcome_survives_a_restart_and_blocks_until_resolved(world) -> 
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, _sha, _base = _armed_session(world, ctx)
     action_hash = _plan_and_authorize(world, ctx, sid, action="comment", number="17", subject="issue", body="restart probe")
     forge.route("POST /issues/17/comments", _comment_payload(9200, body="restart probe"))
@@ -178,6 +189,8 @@ def test_replayed_verification_failure_survives_a_restart(world) -> None:
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, sha, base = _armed_session(world, ctx)
     # The plan carries a title AND a body; the forge's answer keeps the body but echoes a
     # DIFFERENT title: the write lands, exact verification fails, and that verdict must persist.
@@ -225,6 +238,8 @@ def test_reconciliation_with_a_different_title_stays_unproven_and_never_resends(
     differs. No verified success, no replacement POST, no auto-resolution."""
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, sha, base = _armed_session(world, ctx)
     action_hash = _plan_and_authorize(
         world, ctx, sid, action="create", base_ref="main", title="authorized title", body="authorized body"
@@ -254,6 +269,8 @@ def test_reconciliation_full_match_words_state_not_causation(world) -> None:
     equality) is distinct from causal claims."""
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, sha, base = _armed_session(world, ctx)
     _plan_and_authorize(
         world, ctx, sid, action="create", base_ref="main", title="authorized title", body="authorized body"
@@ -281,6 +298,8 @@ def test_update_reconciliation_with_prior_text_stays_unknown(world) -> None:
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, sha, base = _armed_session(world, ctx)
     forge.route("GET /pulls/8", _pr_payload("8", base_sha=base, head_sha=sha, title="old title", body="old body"))
     planned = _door(
@@ -338,6 +357,8 @@ def test_plane_keeps_accepted_unreadable_comment_blocked_after_reauthorization_a
     proves the resolution -> resume loop terminates in exactly one more dispatch."""
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, _sha, _base = _armed_session(world, ctx)
     action_hash = _plan_and_authorize(
         world, ctx, sid, action="comment", number="17", subject="issue", body="uniquely worded probe text"
@@ -363,6 +384,8 @@ def test_pre_dispatch_denials_stay_definitive(world) -> None:
     ordinary operator decision again (no resolution hoop for a write the forge refused)."""
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, _sha, _base = _armed_session(world, ctx)
     action_hash = _plan_and_authorize(
         world, ctx, sid, action="comment", number="17", subject="issue", body="denial probe"

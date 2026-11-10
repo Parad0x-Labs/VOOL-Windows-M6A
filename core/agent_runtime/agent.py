@@ -2548,6 +2548,28 @@ class VoolAgent(
         # web-search machinery can see the raw phrase. Returns None for anything that does not
         # classify as a follow-up, or that classifies but has no resolvable attempt -- in which
         # case the turn proceeds exactly as it always did, honestly, with no fabricated antecedent.
+        #
+        # Ahead of that, and of every seam below that may split the message, plan it with a model or
+        # hand it to the builder: on Windows, a message that asks for a stated 0.7.1 limit (git, a
+        # program or Python form phase 1 does not run, a share or device path to write) gets that
+        # limit's own plain refusal, read from the text the user typed. Off Windows, and for every
+        # message it does not read, this returns nothing and the turn goes on as before
+        # (core.agent_runtime.windows_stated_limits).
+        from core.agent_runtime.windows_stated_limits import windows_limit_refusal
+
+        limit_response, limit_reason = windows_limit_refusal(raw_turn_text, source_context=runtime_source_context)
+        if limit_response:
+            semantic_reach.claimed(semantic_reach.GATE_FRONTDOOR, "windows stated limit")
+            return _guard_final_result(
+                self._fast_path_result(
+                    session_id=session_id,
+                    user_input=effective_input,
+                    response=limit_response,
+                    confidence=0.95,
+                    source_context=runtime_source_context,
+                    reason=limit_reason,
+                )
+            )
         followup_result = self._maybe_answer_attempt_followup_turn(
             effective_input=effective_input,
             session_id=session_id,

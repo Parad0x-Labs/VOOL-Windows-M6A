@@ -20,6 +20,7 @@ falls through to the normal responder rather than freezing the wallet.
 """
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Callable
 from typing import Any
@@ -88,15 +89,40 @@ def _set_frozen(frozen: bool, wallet_fn: Callable[[], Any] | None) -> bool:
     return set_frozen_mirrored(bool(frozen), wallet=wallet)
 
 
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
+def _under_bundle_supervisor(vool_home: Any) -> bool:
+    """True when this API runs under a live bundle supervisor of ``vool_home``: the supervisor
+    sets VOOL_BUNDLE_ROOT for its children and keeps its state file while it runs."""
+    if not os.environ.get("VOOL_BUNDLE_ROOT") or vool_home is None:
+        return False
+    try:
+        return (vool_home / "run" / "bundle-supervisor.json").is_file()
+    except OSError:
+        return False
+
+
 def _default_stopall() -> bool:
-    """Resolve paths and launch the detached hard-stop. Returns True if it was launched."""
+    """Start the full shutdown. Returns True only if something that stops VOOL was started.
+
+    The detached hard-stop is launched first. Under the installed bundle the API lives in the
+    supervisor's kill-on-close job, so the supervisor's own stop signal -- the file the Quit VOOL
+    button writes -- is also written here, in-process: it stops the window, the API and Ollama
+    whether or not a child of this API can leave the job. Without a supervisor nothing would
+    read that file, so it is not written and does not count.
+    """
     from pathlib import Path
 
     from core.runtime_paths import active_vool_home
-    from installer.vool_stop import spawn_detached_stop
+    from installer import vool_stop
 
     project_root = Path(__file__).resolve().parents[1]
-    return spawn_detached_stop(project_root=project_root, vool_home=active_vool_home())
+    vool_home = active_vool_home()
+    launched = vool_stop.spawn_detached_stop(project_root=project_root, vool_home=vool_home)
+    signaled = _under_bundle_supervisor(vool_home) and vool_stop.signal_bundle_supervisor(vool_home)
+    return bool(launched or signaled)
 
 
 def _default_unfreeze_consent(reason: str) -> bool:
@@ -138,17 +164,25 @@ def maybe_handle_agent_brake(
                 success=False,
             )
         launched = (stopall_fn or _default_stopall)()
+        windows = _is_windows()
         if not launched:
+            # Windows installs no "Stop VOOL" shortcut (installer/bundle/vool.iss [Icons]); the
+            # Quit VOOL button in the sidebar writes the supervisor's stop signal itself.
+            fallback = (
+                "Use the Quit VOOL button at the bottom of the sidebar to stop everything."
+                if windows
+                else "Use the 'Stop VOOL' desktop shortcut, or close the VOOL window, to stop everything."
+            )
             return _response(
-                "I could not start the shutdown just now. Use the 'Stop VOOL' desktop shortcut, "
-                "or close the VOOL window, to stop everything.",
+                f"I could not start the shutdown just now. {fallback}",
                 intent="agent_brake_stopall",
                 success=False,
             )
+        relaunch = "from the Start menu" if windows else "from the desktop shortcut"
         return _response(
             "Shutting down all of VOOL now -- the API, the OpenClaw gateway, the agent, and the "
             "auto-restart task. The dashboard will go offline in a few seconds and stay down until "
-            "you launch VOOL again from the desktop shortcut.",
+            f"you launch VOOL again {relaunch}.",
             intent="agent_brake_stopall",
         )
 

@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from tests import _windows_refusals as windows_refusals
 from tests.repoops._harness import build_repo, context, door, git, head
 from tests.repoops.test_forge_actions import (
     _armed_session,
@@ -70,6 +71,8 @@ def test_a_stale_runtime_that_read_the_consent_before_the_update_landed_replays_
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, sha, base = _armed_session(world, ctx)
     forge.route("GET /pulls/8", _pr_payload("8", base_sha=base, head_sha=sha, body="novel: release notes awaiting review"))
     action_hash = _plan(ctx, sid, action="update", number="8", body="novel: the reviewed release notes")
@@ -110,6 +113,8 @@ def test_a_stale_writer_cannot_erase_an_applied_record_that_a_third_runtime_repl
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, _sha, _base = _armed_session(world, ctx)
     body = "novel: a stale writer must not erase this comment's record"
     action_hash = _plan(ctx, sid, action="comment", number="23", subject="issue", body=body)
@@ -155,6 +160,8 @@ def test_identical_content_posts_again_only_as_a_new_operator_approved_operation
     root, _bare, forge = world
     body = "novel: nightly status -- every required check is green"
     monday = context(root, session="status-thread-monday")
+    if windows_refusals.refuses_repo_session(world, monday):
+        return
     sid1, _sha, _base = _armed_session(world, monday)
     hash1 = _plan(monday, sid1, action="comment", number="31", subject="issue", body=body)
     assert _operator_authorizes(world, sid1, hash1)["ok"]
@@ -192,6 +199,8 @@ def test_a_stale_runtime_replays_a_landed_create_whose_winner_lost_its_journal_w
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, sha, base = _armed_session(world, ctx)
     title, body = "novel: draft for the reviewed release", "novel: an evidence-backed description"
     action_hash = _plan(ctx, sid, action="create", base_ref="main", title=title, body=body)
@@ -230,6 +239,8 @@ def test_another_sessions_applied_row_never_reconciles_this_dispatch_as_landed(w
     root, _bare, forge = world
     body = "novel: shared wording, two separately approved operations"
     ops_a = context(root, session="ops-a")
+    if windows_refusals.refuses_repo_session(world, ops_a):
+        return
     sid_a, _sha, _base = _armed_session(world, ops_a)
     hash_a = _plan(ops_a, sid_a, action="comment", number="44", subject="issue", body=body)
     assert _operator_authorizes(world, sid_a, hash_a)["ok"]
@@ -267,6 +278,8 @@ def test_a_stale_runtime_cannot_blind_retry_an_unproven_comment(world, monkeypat
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, _sha, _base = _armed_session(world, ctx)
     body = "novel: this reply was lost in transit"
     action_hash = _plan(ctx, sid, action="comment", number="52", subject="issue", body=body)

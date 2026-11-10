@@ -202,8 +202,10 @@ def _pick_model_uncached() -> str:
     except Exception:
         return ""
 
+    from core.ollama_cloud_models import local_tag_rows
+
     eligible: dict[str, float] = {}
-    for entry in data.get("models", []) or []:
+    for entry in local_tag_rows(list(data.get("models", []) or [])):
         name = str(entry.get("name") or "").strip()
         if not name:
             continue

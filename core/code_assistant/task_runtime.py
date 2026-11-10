@@ -4200,9 +4200,10 @@ _DESTINATION_REFUSALS = {
 
 def _destination_paths(intent: str, arguments: dict[str, Any]) -> list[str]:
     if intent == "workspace.apply_unified_diff":
-        from core.execution.workspace_tools import _extract_patch_paths
+        # The files the engine that applies an approved patch will write, from its own parse.
+        from core.execution.workspace_tools import patch_review_paths
 
-        return _extract_patch_paths(str(arguments.get("patch") or arguments.get("diff") or ""))
+        return patch_review_paths(str(arguments.get("patch") or arguments.get("diff") or ""))
     return [str(arguments.get(key) or "").strip() for key in _PATH_KEYS if str(arguments.get(key) or "").strip()]
 
 

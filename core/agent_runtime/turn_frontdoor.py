@@ -463,6 +463,83 @@ def _non_local_path_turn(
     }
 
 
+def _windows_program_turn(
+    agent: Any,
+    text: str,
+    *,
+    session_id: str,
+    user_input: str,
+    source_context: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """The answer to a Windows run request whose program VOOL never runs there; None otherwise."""
+    from core.agent_runtime.windows_program_request import windows_program_request_refusal
+
+    response = windows_program_request_refusal(text, source_context=source_context)
+    if not response:
+        return None
+    return {
+        "result": agent._fast_path_result(
+            session_id=session_id,
+            user_input=user_input,
+            response=response,
+            confidence=0.95,
+            source_context=source_context,
+            reason="windows_program_refused",
+        )
+    }
+
+
+def _windows_marked_file_turn(
+    agent: Any,
+    text: str,
+    *,
+    session_id: str,
+    user_input: str,
+    source_context: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """The answer to a Windows edit, undo or move of a file in a marked folder; None otherwise."""
+    from core import windows_marked_file_ops as marked
+    from core.execution.write_demand import verbatim_request_text
+
+    try:
+        ask = marked.marked_file_ask(verbatim_request_text(source_context, text), source_context=source_context, session_id=session_id)
+    except Exception:  # an unknown state acts on nothing: the other lanes see the turn as before
+        ask = None
+    if ask is None:
+        return None
+    reason = f"windows_marked_file_{ask.kind}"
+    if ask.refusal:
+        return {
+            "result": agent._fast_path_result(
+                session_id=session_id,
+                user_input=user_input,
+                response=ask.refusal,
+                confidence=0.95,
+                source_context=source_context,
+                reason=reason,
+            )
+        }
+    from core.agent_runtime.fast_paths_machine import _machine_tool_fast_path_result
+    from core.authorized_tool_execution import execute_authorized_runtime_tool
+
+    execution = execute_authorized_runtime_tool(
+        ask.intent, dict(ask.arguments), source_context=marked.placed_context(ask, source_context)
+    )
+    if execution is None:
+        return None
+    return {
+        "result": _machine_tool_fast_path_result(
+            agent,
+            user_input=user_input,
+            session_id=session_id,
+            source_context=source_context,
+            intent=ask.intent,
+            execution=execution,
+            reason=reason,
+        )
+    }
+
+
 def handle_turn_frontdoor(
     agent: Any,
     *,
@@ -1777,13 +1854,58 @@ def handle_turn_frontdoor(
     )
     if non_local_turn is not None:
         return non_local_turn
-    unreachable_target = unreachable_write_target(effective_input, source_context=source_context)
+    # On Windows, "run <program>" for a program VOOL never runs there is answered here, with the
+    # verdict the tool call would get before its permission decision, instead of a model round and
+    # an approval card for a run that is refused anyway (core.agent_runtime.windows_program_request).
+    program_turn = _windows_program_turn(
+        agent,
+        raw_user_input,
+        session_id=session_id,
+        user_input=effective_input,
+        source_context=source_context,
+    )
+    if program_turn is not None:
+        return program_turn
+    # On Windows, an edit, an undo of it, or a move of a file the owner names inside a marked folder
+    # runs there, through the normal approval and the write gate, instead of in the chat's own
+    # workspace (an unbound chat's Desktop) (core.windows_marked_file_ops, captest R1-4).
+    marked_file_turn = None if action_forbidden else _windows_marked_file_turn(
+        agent,
+        raw_user_input,
+        session_id=session_id,
+        user_input=effective_input,
+        source_context=source_context,
+    )
+    if marked_file_turn is not None:
+        return marked_file_turn
+    unreachable_target =unreachable_write_target(effective_input, source_context=source_context)
     if unreachable_target:
         return {
             "result": agent._fast_path_result(
                 session_id=session_id,
                 user_input=effective_input,
                 response=unreachable_write_response(unreachable_target, source_context=source_context),
+                confidence=0.95,
+                source_context=source_context,
+                reason="write_root_unreachable",
+            )
+        }
+    # On Windows, a write or a move whose relative path climbs with `..` out of the chat's folder to a
+    # place outside every marked folder gets the same plain refusal, read from the typed text (the
+    # normalizer glues a lone `..` to the word before it) (captest round 2, build a22771c2).
+    from core.agent_runtime.write_root_honesty import climbing_relative_response, climbing_relative_target
+
+    climb_kind, climb_path, climb_leads_to = climbing_relative_target(
+        str(raw_user_input or effective_input), source_context=source_context
+    )
+    if climb_kind:
+        return {
+            "result": agent._fast_path_result(
+                session_id=session_id,
+                user_input=effective_input,
+                response=climbing_relative_response(
+                    climb_kind, climb_path, climb_leads_to, source_context=source_context
+                ),
                 confidence=0.95,
                 source_context=source_context,
                 reason="write_root_unreachable",

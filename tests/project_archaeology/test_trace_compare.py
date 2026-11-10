@@ -204,7 +204,9 @@ def test_which_task_changed_this_file_maps_config_and_report_to_their_turns(corp
     attempt (eff-push-77)."""
     pa = _pa()
 
-    config = pa.trace(path="src/config.py", workspace_root=str(corpus["workspace"]))
+    # The config edit happened in the git repository (committed as sha_b), and the journal records it
+    # under that root; a path is matched only through the real root it was recorded under.
+    config = pa.trace(path="src/config.py", workspace_root=str(corpus["git"]["repo"]))
     assert config["returned"] > 0
     config_items = [
         item for item in config["results"] if item["effect_id"] == "eff-config-08"

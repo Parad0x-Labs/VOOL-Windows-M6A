@@ -19,6 +19,8 @@ import json
 
 import pytest
 
+from tests import _windows_refusals as windows_refusals
+
 # ---------------------------------------------------------------------------
 # Local wire builders (kept here so the shared fixture stays untouched)
 # ---------------------------------------------------------------------------
@@ -589,6 +591,8 @@ def test_untrusted_issue_text_confers_no_authorization(world) -> None:
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, _sha, _base = _armed_session(world, ctx)
     forge.route(
         "GET /issues/17",
@@ -617,6 +621,8 @@ def test_create_refuses_when_head_branch_is_not_on_the_remote(world) -> None:
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, _sha, _base = _armed_session(world, ctx)
     # /commits/ghost-branch has no route -> the forge answers 404 -> resolve_ref is "".
     planned = door(
@@ -642,6 +648,8 @@ def test_create_refusals_are_typed_never_empty(world, status, headers, expected_
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, _sha, _base = _armed_session(world, ctx)
     planned = door(
         "repo.pr.request",
@@ -666,6 +674,8 @@ def test_stale_sha_after_preview_refuses_unsent(world) -> None:
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, sha, _base = _armed_session(world, ctx)
     planned = door(
         "repo.pr.request",
@@ -694,6 +704,8 @@ def test_update_refuses_when_the_pull_request_head_moved(world) -> None:
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, sha, base = _armed_session(world, ctx)
     forge.route("GET /pulls/8", _pr_payload("8", base_sha=base, head_sha=sha, body="old text"))
     planned = door(
@@ -715,6 +727,8 @@ def test_expired_authorization_is_refused_even_from_the_persisted_journal(world,
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, _sha, _base = _armed_session(world, ctx)
     planned = door(
         "repo.pr.request",
@@ -744,6 +758,8 @@ def test_one_authorization_is_one_dispatch_then_replay_only(world) -> None:
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, sha, base = _armed_session(world, ctx)
     planned = door(
         "repo.pr.request",
@@ -781,6 +797,8 @@ def test_existing_pull_request_is_never_duplicated(world) -> None:
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, sha, base = _armed_session(world, ctx)
     planned = door(
         "repo.pr.request",
@@ -801,6 +819,8 @@ def test_lost_create_reply_reconciles_from_the_forges_own_state(world) -> None:
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, sha, base = _armed_session(world, ctx)
     planned = door(
         "repo.pr.request",
@@ -840,6 +860,8 @@ def test_lost_create_reply_empty_lookup_is_not_proof_and_needs_operator_resoluti
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, sha, base = _armed_session(world, ctx)
     planned = door(
         "repo.pr.request",
@@ -883,6 +905,8 @@ def test_lost_comment_reply_blocks_until_the_operator_resolves_it(world) -> None
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, _sha, _base = _armed_session(world, ctx)
     planned = door(
         "repo.pr.request",
@@ -926,6 +950,8 @@ def test_plan_mode_cannot_mutate_the_forge(world) -> None:
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, _sha, _base = _armed_session(world, ctx)
     planned = door(
         "repo.pr.request",
@@ -966,6 +992,8 @@ def test_authorization_for_another_session_or_plan_is_refused(world) -> None:
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid_a, sha, base = _armed_session(world, ctx)
     planned = door(
         "repo.pr.request",
@@ -998,6 +1026,8 @@ def test_create_from_an_unprepared_task_refuses_rather_than_improvises(world) ->
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, _sha, _base = _armed_session(world, ctx)
     planned = door(
         "repo.pr.request",
@@ -1013,6 +1043,8 @@ def test_update_with_no_changes_and_unknown_subject_are_invalid(world) -> None:
 
     root, _bare, _forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, _sha, _base = _armed_session(world, ctx)
     empty_update = door("repo.pr.request", {"repo_session_id": sid, "action": "update", "number": "8"}, ctx)
     assert empty_update.ok is False and empty_update.status == "invalid_arguments"
@@ -1031,6 +1063,8 @@ def test_update_already_current_text_sends_nothing(world) -> None:
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, sha, base = _armed_session(world, ctx)
     forge.route("GET /pulls/8", _pr_payload("8", base_sha=base, head_sha=sha, body="the text"))
     planned = door(
@@ -1049,6 +1083,8 @@ def test_closed_pull_request_refuses_update_and_comment(world) -> None:
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, sha, base = _armed_session(world, ctx)
     forge.route("GET /pulls/8", _pr_payload("8", base_sha=base, head_sha=sha, state="closed"))
     update = door("repo.pr.request", {"repo_session_id": sid, "action": "update", "number": "8", "body": "x"}, ctx)

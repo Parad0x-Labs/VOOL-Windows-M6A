@@ -17,10 +17,12 @@ from core import project_store, runtime_paths
 from core.hive_activity_tracker import HiveActivityTracker, HiveActivityTrackerConfig
 from core.mode_permission_policy import reset_mode_permission_state, set_active_mode
 from core.tool_intent_executor import execute_tool_intent
+from tests import _windows_refusals as windows_refusals
 
 # A full local path outside the workspace: "/Users" on POSIX; on Windows a bare "/Users" is refused
 # earlier, by its spelling, as not a full local path, so use the drive-rooted folder instead.
 _OUTSIDE = "C:\\Users" if os.name == "nt" else "/Users"
+_COMMAND = "ls -laS 2>/dev/null | head -20"
 
 
 @pytest.fixture(autouse=True)
@@ -52,7 +54,7 @@ def _run(tmp_path, cwd: str):
     }
     tracker = HiveActivityTracker(config=HiveActivityTrackerConfig(enabled=False, watcher_api_url=None))
     return execute_tool_intent(
-        {"intent": "sandbox.run_command", "arguments": {"command": "ls -laS 2>/dev/null | head -20", "cwd": cwd}},
+        {"intent": "sandbox.run_command", "arguments": {"command": _COMMAND, "cwd": cwd}},
         task_id="task-a",
         session_id=session,
         source_context=context,
@@ -71,6 +73,13 @@ def test_an_outside_cwd_is_refused_with_no_approval_request(tmp_path) -> None:
 
 
 def test_an_inside_cwd_still_asks_for_approval_in_manual_mode(tmp_path) -> None:
-    inside = _run(tmp_path, ".")
+    (tmp_path / "repo").mkdir()  # the folder _run binds, made first so the watch sees only the call
+    with windows_refusals.watch_programs(_COMMAND, tmp_path / "repo") as seen:
+        inside = _run(tmp_path, ".")
+    # Windows 0.7.1 runs only Python and pytest in the sandbox: `ls` is refused before any approval.
+    if seen.refused(inside.response_text):
+        assert inside.mode == "tool_failed" and inside.status == seen.status, (inside.mode, inside.status)
+        assert not inside.details.get("approval_request"), inside.details
+        return
     assert inside.mode == "tool_preview" and inside.status == "pending_approval", (inside.mode, inside.status)
     assert inside.details.get("approval_request"), inside.details

@@ -87,6 +87,8 @@ class AppBuildReport:
     authorized_paths: tuple[str, ...] = ()
     paths_refused: list[str] = field(default_factory=list)
     commands_refused: list[str] = field(default_factory=list)
+    # Why a planned write did not happen, in the writer's own words (a write gate refusal, say).
+    skip_reasons: dict[str, str] = field(default_factory=dict)
 
 
 def _confine_relative_path(raw: str, *, target_dir: str, workspace_root: str = "") -> str | None:
@@ -663,13 +665,17 @@ def build_app_from_spec(
     # the one that must hold, and it is driven adversarially in
     # tests/test_mutation_scope_authority.py::test_a_target_outside_the_authority_is_refused_and_recorded.
     for path, content in file_map.items():
-        if run_tool_fn("workspace.write_file", {"path": path, "content": content}).ok:
+        outcome = run_tool_fn("workspace.write_file", {"path": path, "content": content})
+        if outcome.ok:
             report.files_written.append(path)
             # Kept so the reply can state SIZE, not just names. A bare bullet list of paths gives
             # the operator no way to tell a real file from an empty one.
             report.file_lines[path] = len(str(content or "").splitlines())
         else:
             report.files_skipped.append(path)
+            reason = " ".join(str(getattr(outcome, "response_text", "") or "").split())
+            if reason:
+                report.skip_reasons[path] = reason[:400]
 
     # Chosen from the files that EXIST, not the ones that were planned. A live build listed
     # `test_titlecase.py`, failed to generate its contents, and still picked the unittest command
@@ -847,12 +853,26 @@ def render_app_build_response(report: AppBuildReport) -> str:
         lines.append(f"| `{_rel(path)}` | — | ⛔ not requested — refused |")
 
     if report.scope_kind == mutation_scope_module.EXACT:
+        # Claimed from what the writes reported, never from what was planned. Captest B3, 2026-11-08:
+        # the write gate refused the one named file and this still said "that is all I wrote".
+        named = ", ".join(f"`{p}`" for p in report.authorized_paths)
         lines.append("")
-        lines.append(
-            "**Scope** — you named "
-            + ", ".join(f"`{p}`" for p in report.authorized_paths)
-            + ", so that is all I wrote. Ask for a project and I'll build one."
-        )
+        if not report.files_written:
+            reason = next((report.skip_reasons[p] for p in report.files_skipped if p in report.skip_reasons), "")
+            lines.append(
+                f"**Scope** — you named {named}. Nothing was written"
+                + (f": {reason.replace('|', '/')}" if reason else ".")
+            )
+        elif set(report.files_written) != set(report.authorized_paths):
+            lines.append(
+                f"**Scope** — you named {named}; I wrote only "
+                + ", ".join(f"`{_rel(p)}`" for p in report.files_written)
+                + " and nothing else. Ask for a project and I'll build one."
+            )
+        else:
+            lines.append(
+                f"**Scope** — you named {named}, so that is all I wrote. Ask for a project and I'll build one."
+            )
 
     if report.subject_paths:
         lines.append("")

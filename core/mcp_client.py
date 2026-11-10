@@ -36,6 +36,10 @@ class MCPError(RuntimeError):
     """MCP transport or protocol error."""
 
 
+class MCPRefusedOnWindows(MCPError):
+    """Windows starts no MCP server in 0.7.1. ``str()`` is the plain refusal the operator sees."""
+
+
 @dataclass
 class MCPTool:
     name: str
@@ -161,7 +165,19 @@ class MCPStdioClient:
         # server is the same trust class, so it gets the same treatment. A server still receives
         # every variable its own config names, via `self.env`, plus the minimum needed to start a
         # process — it simply no longer inherits secrets nobody offered it.
-        from core.plugin_executor import ConfinementUnavailableError, build_child_env, confined_argv
+        from core.plugin_executor import (
+            ConfinementUnavailableError,
+            _kernel_isolation_error_type,
+            build_child_env,
+            confined_argv,
+            windows_plugin_mcp_refusal,
+        )
+
+        # Windows refuses every MCP server, whatever its command (a bare `python` passed the
+        # sandbox's phase-1 program gate and would have started). Nothing is created or spawned.
+        refusal = windows_plugin_mcp_refusal()
+        if refusal:
+            raise MCPRefusedOnWindows(refusal)
 
         # The child's working directory is the one place it may write. A configured cwd is the
         # server's own; otherwise a per-server scratch directory outside VOOL's key home (which
@@ -184,7 +200,10 @@ class MCPStdioClient:
                 allow_network=self.allow_network,
                 mode=self.confinement_mode,
             )
-        except ConfinementUnavailableError as exc:
+        except (ConfinementUnavailableError, _kernel_isolation_error_type()) as exc:
+            refusal = windows_plugin_mcp_refusal()
+            if refusal:
+                raise MCPRefusedOnWindows(refusal) from None
             raise MCPError(f"{self.name}: refusing to start unconfined ({exc})") from exc
         full_env = build_child_env(
             env_allowlist=tuple(self.env_allowlist or ()),
@@ -267,4 +286,4 @@ class MCPStdioClient:
         self.close()
 
 
-__all__ = ["PROTOCOL_VERSION", "MCPError", "MCPStdioClient", "MCPTool"]
+__all__ = ["PROTOCOL_VERSION", "MCPError", "MCPRefusedOnWindows", "MCPStdioClient", "MCPTool"]

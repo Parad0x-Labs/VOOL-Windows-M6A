@@ -19,6 +19,7 @@ from core import safe_git
 from core import windows_write_gate as gate
 from core.repoops import gitops
 from core.repoops.gitops import GitRunner
+from tests import _windows_refusals as windows_refusals
 
 _IDENTITY = {"GIT_AUTHOR_NAME": "fx", "GIT_AUTHOR_EMAIL": "fx@local",
              "GIT_COMMITTER_NAME": "fx", "GIT_COMMITTER_EMAIL": "fx@local"}
@@ -61,6 +62,15 @@ def recorded(tmp_path: Path, monkeypatch) -> list[dict]:
     monkeypatch.setenv(gate.ENV_VAR, str(marked))
     monkeypatch.setattr(gate, "_IS_WINDOWS", True)
     runner = GitRunner(root=source)
+    if windows_refusals.git_refused():
+        # Windows 0.7.1 runs no git: the push check, the run and the gate's placing all answer the git
+        # sentence before any git starts, so VOOL reads no git output at all.
+        with windows_refusals.watch_git(tmp_path) as seen:
+            refusal = runner.push_destination_refusal(dest.as_uri())
+            code, _out, err = runner.run("status", "--porcelain")
+            places = gate._git_places(str(source))
+        assert code == -1 and seen.refused(refusal, err, places), (refusal, err, places)
+        return calls
     assert runner.push_destination_refusal(dest.as_uri()) == ""
     runner.run("status", "--porcelain")
     places = gate._git_places(str(source))
@@ -70,6 +80,9 @@ def recorded(tmp_path: Path, monkeypatch) -> list[dict]:
 
 def test_every_git_output_read_by_the_push_checks_is_utf8(recorded) -> None:
     text_reads = [kwargs for kwargs in recorded if kwargs.get("text") or kwargs.get("encoding")]
+    if windows_refusals.git_refused():
+        assert text_reads == [], text_reads  # the fixture checked the refusals; no git output was read
+        return
     assert text_reads
     for kwargs in text_reads:
         assert kwargs.get("encoding") == "utf-8" and kwargs.get("errors") == "surrogateescape", kwargs

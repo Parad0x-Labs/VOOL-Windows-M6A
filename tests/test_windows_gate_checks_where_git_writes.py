@@ -26,9 +26,18 @@ XDG_CONFIG_HOME point at an empty folder), and repo.git goes through the real ex
 that calls through to the real permission decision. repo.git takes no A6 reservation, so there is
 no A6 row to check. The Windows decision is switched on through the gate's `_IS_WINDOWS`, so the
 file runs on every platform and is on the Windows gauntlet's runtime list.
+
+Re-pinned for 0.7.1 (VOOL doesn't run git on Windows, core/safe_git.py): every repo.git call in this
+file is now refused before the permission decision with the git sentence, marked folder or not, and
+VOOL starts no git process while the call is decided (`_on_windows` records any git start and fails
+the row). The sessions are opened with the gate off (`_as_before_0_7_1`: a session opened before
+0.7.1, or on another platform), since on Windows repo.session.open is itself refused. Row names are
+kept so each row maps to the earlier contract; they name the layout each row builds, which no longer
+decides the outcome.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -38,6 +47,7 @@ from pathlib import Path
 
 import pytest
 
+from core import safe_git
 from core import tool_intent_executor as executor
 from core import windows_write_gate as gate
 from core.hive_activity_tracker import HiveActivityTracker, HiveActivityTrackerConfig
@@ -50,6 +60,41 @@ _IDENTITY = {
     "GIT_COMMITTER_EMAIL": "fx@local",
 }
 _OUTSIDE = re.compile(r"This call also changes [^(]+ \((.+)\), which is outside the marked folders; nothing was changed\.")
+REFUSAL = safe_git.GIT_REFUSED_TEXT
+#: Every git start attempted while a call is decided on Windows (cleared by the `world` fixture).
+_GIT_STARTS: list = []
+
+
+@contextlib.contextmanager
+def _as_before_0_7_1():
+    """The gate and core/safe_git.py's git refusal off, as when the session was opened before 0.7.1 or
+    on another platform. On a real Windows host safe_git refuses git from the platform itself, so the
+    gate's seam alone would leave repo.session.open refused there."""
+    saved_gate, saved_git = gate._IS_WINDOWS, safe_git._REFUSE_GIT
+    gate._IS_WINDOWS, safe_git._REFUSE_GIT = False, False
+    try:
+        yield
+    finally:
+        gate._IS_WINDOWS, safe_git._REFUSE_GIT = saved_gate, saved_git
+
+
+@contextlib.contextmanager
+def _on_windows():
+    """Windows as 0.7.1 decides it (the gate and core/safe_git.py), every git start recorded and failed."""
+    saved_gate, saved_git, real = gate._IS_WINDOWS, safe_git._REFUSE_GIT, subprocess.Popen
+
+    class Recording(real):  # type: ignore[misc, valid-type]
+        def __init__(self, args, *rest, **kwargs):
+            if safe_git.is_git_command(args, kwargs.get("executable")):
+                _GIT_STARTS.append(args)
+                raise AssertionError(f"git was started on Windows: {args!r}")
+            super().__init__(args, *rest, **kwargs)
+
+    gate._IS_WINDOWS, safe_git._REFUSE_GIT, subprocess.Popen = True, True, Recording
+    try:
+        yield
+    finally:
+        gate._IS_WINDOWS, safe_git._REFUSE_GIT, subprocess.Popen = saved_gate, saved_git, real
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -105,7 +150,8 @@ def _door(intent: str, arguments: dict, folder: Path):
 
     context = {"workspace": str(folder), "workspace_root": str(folder), "session_id": f"repo-open-{uuid.uuid4().hex}",
                "operating_mode": "auto"}
-    result = execute_runtime_tool(intent, arguments, source_context=context)
+    with _as_before_0_7_1():
+        result = execute_runtime_tool(intent, arguments, source_context=context)
     assert result is not None and result.ok, (intent, result and result.status, result and result.response_text)
     return result
 
@@ -155,8 +201,9 @@ def world(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("VOOL_REPOOPS_DIR", str(tmp_path / "repo_sessions"))
     repo_ops_runtime().reset()
     monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    _GIT_STARTS.clear()
     try:
-        yield {"decide_tool_call": _spy(monkeypatch, "decide_tool_call")}
+        yield {"decide_tool_call": _spy(monkeypatch, "decide_tool_call"), "git_starts": _GIT_STARTS}
     finally:
         repo_ops_runtime().reset()
         reset_mode_permission_state()
@@ -171,16 +218,17 @@ def _commit(session: str, chat: Path, mode: str, *, task_id: str = "", chat_sess
     if token:
         context["mode_approval_token"] = token
     tracker = HiveActivityTracker(config=HiveActivityTrackerConfig(enabled=False, watcher_api_url=None))
-    return executor.execute_tool_intent(
-        {"intent": "repo.git",
-         "arguments": {"repo_session_id": session, "operation": "commit", "message": "commit the pending change"}},
-        task_id=task_id or f"repo-git-{uuid.uuid4().hex}",
-        session_id=chat_session or f"repo-git-session-{uuid.uuid4().hex}",
-        checkpoint_id=f"runtime-{uuid.uuid4().hex}",
-        step_index=0,
-        source_context=context,
-        hive_activity_tracker=tracker,
-    )
+    with _on_windows():
+        return executor.execute_tool_intent(
+            {"intent": "repo.git",
+             "arguments": {"repo_session_id": session, "operation": "commit", "message": "commit the pending change"}},
+            task_id=task_id or f"repo-git-{uuid.uuid4().hex}",
+            session_id=chat_session or f"repo-git-session-{uuid.uuid4().hex}",
+            checkpoint_id=f"runtime-{uuid.uuid4().hex}",
+            step_index=0,
+            source_context=context,
+            hive_activity_tracker=tracker,
+        )
 
 
 def _assert_names_one_of(text: str, outside: tuple[Path, ...]) -> None:
@@ -194,17 +242,21 @@ def _assert_names_one_of(text: str, outside: tuple[Path, ...]) -> None:
 
 
 def _assert_refused_before_approval(execution, spies: dict) -> None:
-    """Refused by the Windows gate before the permission decision, with nothing executed."""
+    """Refused by the Windows gate before the permission decision with the git sentence, nothing
+    executed and no git process started."""
     assert execution.status == gate.STATUS, (execution.status, execution.response_text)
     assert execution.ok is False and execution.details.get("executed") is False
     assert spies["decide_tool_call"] == [], "no approval is asked for a git operation Windows refuses"
+    assert execution.response_text == REFUSAL, execution.response_text
     assert "nothing was changed" in execution.response_text, execution.response_text
+    assert spies["git_starts"] == [], "VOOL starts no git process on Windows"
 
 
 def _assert_refused_naming(execution, spies: dict, *, outside: tuple[Path, ...]) -> None:
-    """Refused before the permission decision, naming one of the `outside` places git would write in."""
+    """Refused before the permission decision with the git sentence (0.7.1). Before 0.7.1 the refusal
+    named one of the `outside` places git would write in; git is not asked where it writes now."""
     _assert_refused_before_approval(execution, spies)
-    _assert_names_one_of(execution.response_text, outside)
+    assert not _OUTSIDE.search(execution.response_text), execution.response_text
 
 
 @pytest.mark.parametrize("mode", MODES)
@@ -231,8 +283,7 @@ def test_a_commit_in_a_repository_outside_the_marked_folders_is_refused_before_a
 def test_a_commit_in_a_repository_inside_a_marked_folder_reaches_approval_and_the_approved_commit_runs(
     tmp_path: Path, monkeypatch, world, mode: str
 ) -> None:
-    from core.mode_permission_policy import resolve_approval
-
+    """0.7.1: a marked folder does not let git run on Windows; the commit is refused before approval."""
     marked = tmp_path / "marked"
     repo = _repo(marked / "project")
     _flag(monkeypatch, marked)
@@ -243,21 +294,10 @@ def test_a_commit_in_a_repository_inside_a_marked_folder_reaches_approval_and_th
 
     asked = _commit(session, marked, mode, task_id=task, chat_session=chat)
 
-    assert asked.status == "pending_approval", (asked.status, asked.response_text)
-    assert len(world["decide_tool_call"]) == 1
-    assert _state(repo) == before, "nothing runs before the approval"
+    _assert_refused_before_approval(asked, world)
+    assert "approval_request" not in asked.details, "no approval card for git that never runs"
+    assert _state(repo) == before, "nothing ran"
     assert _journal_steps(session) == {}
-
-    token = asked.details["approval_request"]["approval_id"]
-    assert (resolve_approval(token, decision="allow") or {}).get("status") == "approved"
-    ran = _commit(session, marked, mode, task_id=task, chat_session=chat, token=token)
-
-    assert ran.ok and ran.status == "executed", (ran.status, ran.response_text)
-    assert _git(repo, "rev-parse", "HEAD~1").strip() == before["head"]
-    assert _git(repo, "show", "HEAD:change.txt") == "pending\n"
-    assert _git(repo, "status", "--porcelain", "--untracked-files=all") == ""
-    steps = _journal_steps(session)
-    assert [(row["intent"], row["status"]) for row in steps.values()] == [("repo.git.commit", "executed")]
 
 
 @pytest.mark.parametrize("mode", MODES)
@@ -472,10 +512,9 @@ def test_a_marked_repository_whose_config_names_a_program_is_refused_before_appr
     execution = _commit(session, marked, mode)
 
     _assert_refused_before_approval(execution, world)
-    runner_words = GitRunner(root=repo)._repository_refusal(mutating=False)
-    assert runner_words and f"{runner_words}; nothing was changed." in execution.response_text, (
-        runner_words, execution.response_text)
-    assert "core.sshcommand" in execution.response_text.lower(), execution.response_text
+    # Before 0.7.1 the refusal gave the runner's words naming core.sshCommand; git is not asked now.
+    with _as_before_0_7_1():
+        assert "core.sshcommand" in GitRunner(root=repo)._repository_refusal(mutating=False).lower()
     assert _state(repo) == before
     assert _journal_steps(session) == {}
 
@@ -497,7 +536,6 @@ def test_a_repository_git_cannot_place_is_refused_before_approval(
     execution = _commit(session, marked, mode)
 
     _assert_refused_before_approval(execution, world)
-    assert "cannot be checked" in execution.response_text, execution.response_text
     assert _files(marked) == before
     assert _journal_steps(session) == {}
 
@@ -546,14 +584,16 @@ def test_a_commit_sent_straight_to_the_production_door_is_refused_at_dispatch(
     context = {"workspace": str(marked), "workspace_root": str(marked), "session_id": f"repo-git-{uuid.uuid4().hex}",
                "operating_mode": "auto"}
 
-    result = execute_runtime_tool(
-        "repo.git", {"repo_session_id": session, "operation": "commit", "message": "commit the pending change"},
-        source_context=context,
-    )
+    with _on_windows():
+        result = execute_runtime_tool(
+            "repo.git", {"repo_session_id": session, "operation": "commit", "message": "commit the pending change"},
+            source_context=context,
+        )
 
     assert result is not None
     assert result.status == gate.STATUS, (result.status, result.response_text)
     assert result.ok is False and result.details.get("executed") is False
-    _assert_names_one_of(result.response_text, (repo, repo / ".git"))
+    assert result.response_text == REFUSAL, result.response_text
+    assert world["git_starts"] == []
     assert _state(repo) == before
     assert _journal_steps(session) == {}

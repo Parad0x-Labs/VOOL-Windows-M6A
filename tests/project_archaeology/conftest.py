@@ -208,8 +208,13 @@ def blackbox(arch_home, monkeypatch):
 
     store = BlackboxStore(arch_home["blackbox_root"])
     appended = []
+    # Each effect is recorded under the real temp folder it happened in, as the recorder writes it: the
+    # config edit (committed as sha_b) in the git repository, everything else in the workspace. A path
+    # query matches a journal entry only through its real root (core/project_archaeology.py).
+    real_roots = {"src/config.py": arch_home["tmp"] / "project-repo"}
     for entry in journal_entries():
         clock["ts"] = entry["ts"]  # one pinned instant per append (entry + HEAD)
+        entry["root"] = str(real_roots.get(entry["path"], arch_home["tmp"] / "ws"))
         appended.append(store.append(entry))
     assert len(store.journal.entries()) == len(journal_entries())
     assert appended[0]["ts"] == journal_entries()[0]["ts"], (

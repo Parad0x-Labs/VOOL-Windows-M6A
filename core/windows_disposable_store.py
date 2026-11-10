@@ -206,15 +206,26 @@ def refusal_reason(path: str, *, extra_sealed: tuple[str, ...] = ()) -> str:
     raw = str(path or "").strip()
     if not raw or "\x00" in raw:
         return "it is not a folder path"
+    if (_IS_NT or windows_write_gate.active()) and windows_write_gate._refused_spelling(raw):
+        # A share, device, doubled-separator or network-drive spelling is refused before the link
+        # check below looks at any part of it: that lookup is already the SMB connection.
+        return "it is a network, device, linked or missing folder"
     linked = _link_on_the_way(raw)
     if linked:
         return f"{linked} is a junction or link; mark the folder it points at instead"
-    root = windows_write_gate._windows_root(raw)
+    # The gate's drive, profile and TEMP/TMP/LOCALAPPDATA rule is judged just below, so a whole
+    # drive keeps its own plain answer here.
+    root = windows_write_gate._windows_root(raw, wide=False)
     if root is None:
         return "it is a network, device, linked or missing folder"
     real = _real(raw)
     if ntpath.splitdrive(_norm(real))[1] in ("", "\\"):
         return "it is a whole drive"
+    # The same rule the gate skips a root by (`wide_root_reason`): the raw TEMP and TMP variables,
+    # LOCALAPPDATA and the profile, besides the system temp root judged below.
+    too_wide = windows_write_gate.wide_root_reason(raw)
+    if too_wide:
+        return too_wide
     try:
         from core.runtime_paths import active_vool_home
 

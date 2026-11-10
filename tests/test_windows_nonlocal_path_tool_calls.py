@@ -30,6 +30,7 @@ from core import tool_intent_executor as executor
 from core import windows_write_gate as gate
 from core.hive_activity_tracker import HiveActivityTracker, HiveActivityTrackerConfig
 from core.tool_argument_aliases import ARGUMENT_ALIASES
+from tests import _windows_refusals as windows_refusals
 from tests._nonlocal_touch_recorder import MARKER_FORMS, MarkerForm, recorder, windows_host
 from tools.browser import browser_render
 
@@ -312,11 +313,12 @@ def test_a_local_relative_path_still_reaches_the_decision_on_the_windows_seam(
     # folder it lands in, the only one flagged, as the gauntlet flags it. A host without drives also
     # gets the drive-relative spelling, which the policy reads as drive-relative even there. Its writer
     # joins it onto the home (as a folder named `C:Documents`, which a ':'-separated
-    # VOOL_WINDOWS_DISPOSABLE_WORKSPACES cannot name), so the home is flagged for it. On Windows the
-    # first spelling already is the drive-relative one.
+    # VOOL_WINDOWS_DISPOSABLE_WORKSPACES cannot name). The home itself is never a write root (it is the
+    # profile), so the folder flagged for it is this test's own tmp_path, which holds the home. On
+    # Windows the first spelling already is the drive-relative one.
     machine_paths = [(home.drive + "Documents" + os.sep + "x.txt", home / "Documents")]
     if not home.drive:
-        machine_paths.append(("C:Documents" + os.sep + "x.txt", home))
+        machine_paths.append(("C:Documents" + os.sep + "x.txt", tmp_path))
     decisions = _spy(monkeypatch, executor, "decide_tool_call")
     windows_host.on()
 
@@ -447,9 +449,13 @@ def test_a_push_remote_the_repository_names_on_a_share_is_refused_before_it_is_l
     monkeypatch.setenv(gate.ENV_VAR, str(tmp_path))
     windows_host.on()
 
-    refusals = {name: GitRunner(repo).push_destination_refusal(name) for name in remotes}
+    with windows_refusals.watch_git(repo) as seen:
+        refusals = {name: GitRunner(repo).push_destination_refusal(name) for name in remotes}
 
     assert recorder.touches == [] and recorder.marker_popen == [], recorder.report()
+    # Windows 0.7.1 runs no git: every check answers the git sentence before any remote is read.
+    if seen.refused(*refusals.values()):
+        return
     for name, url in remotes.items():
         assert f"`{url}` is a network or device path" in refusals[name], (name, refusals[name])
 
@@ -504,6 +510,13 @@ def test_a_push_remote_on_this_computer_is_judged_on_the_network_tier_only(
     assert windows_path_policy.refused_form(rooted) == "root_relative", rooted
 
     runner = GitRunner(repo)
+    if windows_refusals.git_refused():
+        # Windows 0.7.1 runs no git: each check and the push answer the git sentence, and nothing lands.
+        with windows_refusals.watch_git(tmp_path) as seen:
+            refusals = [runner.push_destination_refusal(remote) for remote in (*remotes, full, rooted)]
+            code, _, err = runner.run(*runner.push_argv(remote="full", ref="pinned", sha=runner.head()))
+        assert code == -1 and seen.refused(*refusals, err), (refusals, err)
+        return
     for remote in (*remotes, full, rooted):  # each configured remote, and each path given as the remote
         refusal = runner.push_destination_refusal(remote)
         assert "is not a full local path" not in refusal, (remote, refusal)

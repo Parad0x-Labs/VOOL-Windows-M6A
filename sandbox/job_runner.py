@@ -4,6 +4,7 @@ import atexit
 import contextlib
 import json
 import os
+import re
 import shutil
 import signal
 import stat
@@ -90,6 +91,71 @@ class NestedGitMetadataError(ValueError):
 _WINDOWS_PYTHON_NAMES = frozenset({"python", "python3", "py"})
 _WINDOWS_PYTEST_NAMES = frozenset({"pytest", "py.test"})
 
+#: The only modules a phase-1 Python job may run with `-m`: pytest, and the two stdlib runners
+#: VOOL's own builder uses to verify generated apps (`-m unittest`, `-m compileall -q`; see
+#: core/agent_runtime/builder/app_builder.py and builder/controller.py). Neither installs anything.
+#: Every other module is refused: pip, ensurepip, venv and ruff are tools the 0.7.1 Windows limits
+#: say VOOL refuses. Names are matched exactly, as CPython's import does.
+_WINDOWS_PYTHON_MODULES = frozenset({"pytest", "unittest", "compileall"})
+
+#: CPython flags that take no argument and neither run a module nor read code from stdin. They
+#: may come before the script, `-c` or an allowed `-m`, alone or combined (`-IB`). Every other flag
+#: is refused: `-i` (a REPL on stdin), `-W` (a warning category is imported by name), `-X`
+#: (implementation options, some of which import a module), `-h`/`-V` and every long option.
+_WINDOWS_PYTHON_PLAIN_FLAGS = frozenset("bBdEIOPqRsSuvx")
+
+#: CPython flags that take an argument, either the rest of the cluster (`-mpip`) or the next
+#: argv item. Only `-c` and an allowed `-m` are accepted; knowing the others keeps the parser in step
+#: with CPython so that `-W x -m pip` is read as CPython reads it.
+_CPYTHON_FLAGS_WITH_ARGUMENT = frozenset("cmWX")
+
+
+def _windows_python_args_refusal(args: list[str]) -> str | None:
+    """Why phase 1 refuses this Python command line, or None when it runs.
+
+    `args` is everything after the interpreter. It is read the way CPython reads its own
+    command line: flags come first, alone or combined in one item; a flag that takes an argument
+    takes the rest of its item or else the next item; `-c` and `-m` end the options; the first
+    item that does not start with `-` is the script and ends the options too. Accepted forms:
+    a `.py` script, `-c <code>` and `-m` with a module in `_WINDOWS_PYTHON_MODULES` (pytest,
+    unittest, compileall), each after plain flags only. Anything else,
+    including no program at all (`python` reads stdin), `-` (stdin), `--`, a long option or a
+    flag this parser does not know, is refused. Unknown means refused.
+    """
+    index = 0
+    while index < len(args):
+        item = args[index]
+        if item == "--":
+            return "'--' (an end-of-options marker)"
+        if item == "-":
+            return "'-' (a program read from standard input)"
+        if not item.startswith("-"):
+            name = item.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+            if item and name.lower().endswith(".py") and len(name) > 3:
+                return None
+            return f"'{item}' (only a .py script runs; not a folder, zip or wheel)"
+        if item.startswith("--"):
+            return f"the option '{item}'"
+        cluster = item[1:]
+        for position, flag in enumerate(cluster):
+            if flag in _CPYTHON_FLAGS_WITH_ARGUMENT:
+                value = cluster[position + 1:]
+                if not value:
+                    if index + 1 >= len(args):
+                        return f"'-{flag}' with nothing after it"
+                    value = args[index + 1]
+                if flag == "c":
+                    return None
+                if flag == "m":
+                    if value in _WINDOWS_PYTHON_MODULES:
+                        return None
+                    return f"'-m {value}'"
+                return f"the option '-{flag}'"
+            if flag not in _WINDOWS_PYTHON_PLAIN_FLAGS:
+                return f"the option '-{flag}'"
+        index += 1
+    return "a Python command with no script, -c code or allowed -m module"
+
 #: Policy and status files the Windows launcher was handed, keyed by the policy path in the argv,
 #: so that `run` can read the status back and delete the staging folder. Only the Windows branch
 #: of `_with_network_isolation` adds entries.
@@ -155,6 +221,11 @@ def _windows_project_root() -> Path:
 # containers and CI runners that deny the namespace syscall it needs. Probed once per process --
 # it is a property of the host and the probe costs a subprocess.
 _BACKEND_USABLE: dict[str, bool] = {}
+
+
+def _windows_probe_key(launcher: Path | str) -> str:
+    """The `_BACKEND_USABLE` key the VoolConfine probe result is kept under."""
+    return f"voolconfine:{launcher}"
 
 
 def reset_isolation_backend_probe_cache() -> None:
@@ -1117,7 +1188,7 @@ class JobRunner:
         launcher = windows_confinement.launcher_path(project_root)
         if launcher is None:
             return None
-        probe_key = f"voolconfine:{launcher}"
+        probe_key = _windows_probe_key(launcher)
         usable = _BACKEND_USABLE.get(probe_key)
         if usable is None:
             usable = bool(windows_confinement.probe(project_root))
@@ -1171,6 +1242,10 @@ class JobRunner:
         On Windows a bare `python3` resolves to the Microsoft Store alias stub, and the
         launcher never searches PATH anyway. An absolute program is accepted only when it IS
         this interpreter or its base. Nothing else runs in phase 1.
+
+        A Python command line must also be a `.py` script, `-c <code>` or `-m pytest`, `-m unittest`
+        or `-m compileall` (`_windows_python_args_refusal`). Judging only the program name let `python -m pip`,
+        `-m ensurepip`, `-m venv` and `-m ruff` through.
         """
         interpreter = Path(sys.executable).resolve()
         accepted = {os.path.normcase(str(interpreter))}
@@ -1181,13 +1256,25 @@ class JobRunner:
         name = Path(program.replace("\\", "/")).name.lower()
         stem = name[:-4] if name.endswith(".exe") else name
         rest = [str(item) for item in argv[1:]]
+        python: list[str] | None = None
         if "/" not in program and "\\" not in program:  # a bare name, not a path (any case)
             if stem in _WINDOWS_PYTHON_NAMES:
-                return [str(interpreter), *rest]
-            if stem in _WINDOWS_PYTEST_NAMES:
+                python = [str(interpreter), *rest]
+            elif stem in _WINDOWS_PYTEST_NAMES:
                 return [str(interpreter), "-m", "pytest", *rest]
         elif Path(program).is_absolute() and os.path.normcase(str(Path(program).resolve())) in accepted:
-            return [str(Path(program).resolve()), *rest]
+            python = [str(Path(program).resolve()), *rest]
+        if python is not None:
+            refused = _windows_python_args_refusal(rest)
+            if refused is None:
+                return python
+            raise KernelIsolationUnavailableError(
+                f"Windows confinement runs Python and pytest jobs only for now: a Python job must be "
+                f"a .py script, -c code or -m pytest (or VOOL's own -m unittest and -m compileall), "
+                f"so {refused} is refused. VOOL 0.7.1 on "
+                "Windows refuses pip, ruff, venv and other Python modules. Run them under "
+                "WSL2/Linux instead. It was not run."
+            )
         raise KernelIsolationUnavailableError(
             f"Windows confinement runs Python and pytest jobs only for now; '{program}' is refused "
             "until its toolchain is proven inside the confinement (git, npm, node, cargo, cmd and "
@@ -1391,3 +1478,117 @@ class JobRunner:
                 cmd += ["--remount-ro", str(root)]
         cmd += ["--", *list(argv)]
         return cmd
+
+
+#: The plain answer when phase 1 does not run a program at all, given before any approval is asked
+#: or any model is called (`windows_program_refusal`). `{program}` is the program as the user typed it.
+WINDOWS_PROGRAM_REFUSED_TEXT = (
+    "On Windows, VOOL 0.7.1 runs only Python and pytest in its sandbox; it doesn't run {program}. "
+    "Use WSL2/Linux for that. Nothing was run."
+)
+#: The plain answer when the program is a Python interpreter that is not the one running VOOL (a
+#: virtual environment's `Scripts\python.exe`, another install): phase 1 pins every Python job to
+#: this interpreter, so the refusal names it. `{interpreter}` is that interpreter's full path.
+WINDOWS_OTHER_PYTHON_REFUSED_TEXT = (
+    "On Windows, VOOL 0.7.1 runs Python only with its own interpreter, {interpreter} (ask for python "
+    "or py and VOOL uses it); it doesn't run {program}. Use WSL2/Linux for other interpreters and "
+    "virtual environments. Nothing was run."
+)
+#: A program file name that is a Python interpreter: python, python3, python3.12, pythonw, py, pyw
+#: (any case, `.exe` or not).
+_PYTHON_PROGRAM_NAME_RE = re.compile(r"(?:python[0-9.]*w?|pyw?)(?:\.exe)?", re.IGNORECASE)
+
+
+def _other_python_refusal(program: str) -> str:
+    """The refusal for a program spelled as a path to a Python interpreter phase 1 does not run;
+    "" when `program` is not such a path (a bare name is left to the plain sentence)."""
+    if "/" not in program and "\\" not in program:
+        return ""
+    name = program.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    if not _PYTHON_PROGRAM_NAME_RE.fullmatch(name):
+        return ""
+    return WINDOWS_OTHER_PYTHON_REFUSED_TEXT.format(
+        interpreter=str(Path(sys.executable).resolve()), program=program
+    )
+
+
+def windows_program_refusal(argv: list[str] | tuple[str, ...]) -> str | None:
+    """On Windows, why phase 1 would refuse to run `argv`; None when it would run it, and always off
+    Windows.
+
+    Asked BEFORE the permission decision and before a model is called, so a program that can never
+    run gets a plain refusal instead of an approval card. The decision is `JobRunner._windows_phase1_argv`
+    itself, the gate `_windows_confine_prefix` applies when the job runs, so there is one list of
+    what phase 1 runs. When the program is one phase 1 runs (Python or pytest) and only this command
+    line of it is refused, the gate's own sentence is returned. A program spelled as a share or a
+    device path is refused without being looked at: the gate would resolve it, which opens it, and it
+    is never the interpreter running VOOL. An empty argv is left to the job's own checks.
+    """
+    if not _is_windows_platform():
+        return None
+    items = [str(item) for item in argv]
+    if not items or not items[0].strip():
+        return None
+    program = items[0]
+    from core import windows_path_policy
+
+    if windows_path_policy.classify(program, network_only=True):
+        return WINDOWS_PROGRAM_REFUSED_TEXT.format(program=program)
+    try:
+        JobRunner._windows_phase1_argv(items)
+        return None
+    except KernelIsolationUnavailableError as exc:
+        refused = str(exc)
+    try:
+        JobRunner._windows_phase1_argv([program, "-c", "pass"])
+    except KernelIsolationUnavailableError:
+        return _other_python_refusal(program) or WINDOWS_PROGRAM_REFUSED_TEXT.format(program=program)
+    return refused
+
+
+#: The programs whose Windows verdict the capability report states (core/runtime_capabilities.py):
+#: the ones VOOL's own tools ask for and the README's Windows limits name. Only the names live
+#: here; each verdict comes from `JobRunner._windows_phase1_argv`, the gate a real job meets.
+WINDOWS_REPORTED_PROGRAMS = ("python", "pytest", "git", "npm", "node", "ruff", "pip")
+
+
+def windows_sandbox_report() -> dict | None:
+    """What the Windows sandbox runs, read from the gates a job meets, or None off Windows.
+
+    - `confined_programs`: the program names phase 1 accepts (`_WINDOWS_PYTHON_NAMES`,
+      `_WINDOWS_PYTEST_NAMES`); every other program is refused before anything launches.
+    - `programs`: each name in `WINDOWS_REPORTED_PROGRAMS` with the verdict
+      `_windows_phase1_argv` gives it ("confined" or "refused"). A Python name is asked as
+      `[name, "-c", "0"]`: phase 1 runs Python only with a .py script, -c or -m pytest, so a bare
+      interpreter is refused and would misreport Python as refused. Every other name is asked bare.
+    - `backend`: "launcher_missing" when no pinned VoolConfine launcher verifies, "proven" or
+      "probe_failed" from the probe the first job runs (cached per process), and "not_probed"
+      until a job has asked. This report never runs the probe: it starts a confined child, too
+      slow for a status read. Only "proven" means a confined job has run here. Any error while
+      looking reads as "launcher_missing" (fail closed)."""
+    if not _is_windows_platform():
+        return None
+    verdicts: dict[str, str] = {}
+    for name in WINDOWS_REPORTED_PROGRAMS:
+        try:
+            probe = [name, "-c", "0"] if name in _WINDOWS_PYTHON_NAMES else [name]
+            JobRunner._windows_phase1_argv(probe)
+        except KernelIsolationUnavailableError:
+            verdicts[name] = "refused"
+        else:
+            verdicts[name] = "confined"
+    backend = "launcher_missing"
+    try:
+        from sandbox import windows_confinement
+
+        launcher = windows_confinement.launcher_path(_windows_project_root())
+        if launcher is not None:
+            usable = _BACKEND_USABLE.get(_windows_probe_key(launcher))
+            backend = "not_probed" if usable is None else "proven" if usable else "probe_failed"
+    except Exception:
+        backend = "launcher_missing"
+    return {
+        "confined_programs": sorted(_WINDOWS_PYTHON_NAMES | _WINDOWS_PYTEST_NAMES),
+        "programs": verdicts,
+        "backend": backend,
+    }

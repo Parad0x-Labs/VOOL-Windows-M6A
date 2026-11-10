@@ -1080,7 +1080,7 @@ def _workspace_folder_as_typed(typed: str, workspace_root: str) -> str | None:
 
 def _clean_workspace_directory_path(candidate: str, *, workspace_root: str = "") -> str:
     raw = str(candidate or "").strip().strip("`\"'")
-    typed_kind = windows_path_policy.refused_form(raw)
+    typed_kind = windows_path_policy.refused_form(raw) or windows_path_policy.refused_doubled_drive(raw)
     if typed_kind in windows_path_policy.NETWORK_KINDS:
         # On Windows a share or a device path names no workspace folder, and is not resolved to find
         # out: resolving `\\host\share` is already the SMB connection.
@@ -2442,19 +2442,46 @@ def _planned_delegate_lookup_after_read(
     )
 
 
+#: The quote pairs a replacement's two values may be written in: a code span, or plain or typographic
+#: single or double quotes. Each value opens and closes with the SAME pair, so a value never spans
+#: two different quote marks. Measured on the Windows 0.7.1-beta: "replace 'hi' with 'hello' in
+#: hello.txt" matched neither recognizer here (the code-span one needs backticks, the plain one
+#: excludes quote marks), so no replacement was planned and the turn went to the model, which only
+#: asked to confirm; the same request in backticks planned workspace.replace_in_file and landed.
+_REPLACE_QUOTE_PAIRS: tuple[tuple[str, str], ...] = (("`", "`"), ("'", "'"), ('"', '"'), ("\u2018", "\u2019"), ("\u201c", "\u201d"))
+
+
+def _quoted_value_pattern(name: str) -> str:
+    return "(?:" + "|".join(
+        f"{re.escape(open_)}(?P<{name}{index}>[^{re.escape(open_ + close)}]+){re.escape(close)}"
+        for index, (open_, close) in enumerate(_REPLACE_QUOTE_PAIRS)
+    ) + ")"
+
+
+_QUOTED_REPLACE_RE = re.compile(
+    r"replace\s+" + _quoted_value_pattern("old") + r"\s+with\s+" + _quoted_value_pattern("new")
+    + r"(?:\s+in\s+(?P<path>[A-Za-z0-9_./-]+\.[A-Za-z0-9_+-]+))?",
+    re.IGNORECASE,
+)
+
+
+def _quoted_group(match: re.Match[str], name: str) -> str:
+    for index in range(len(_REPLACE_QUOTE_PAIRS)):
+        value = match.group(f"{name}{index}")
+        if value is not None:
+            return value
+    return ""
+
+
 def _explicit_replace_request(user_text: str) -> dict[str, str] | None:
     text = str(user_text or "").strip()
     if not text:
         return None
-    fenced = re.search(
-        r"replace\s+`(?P<old>[^`]+)`\s+with\s+`(?P<new>[^`]+)`(?:\s+in\s+(?P<path>[A-Za-z0-9_./-]+\.[A-Za-z0-9_+-]+))?",
-        text,
-        re.IGNORECASE,
-    )
+    fenced = _QUOTED_REPLACE_RE.search(text)
     if fenced:
         return {
-            "old_text": str(fenced.group("old") or "").strip(),
-            "new_text": str(fenced.group("new") or "").strip(),
+            "old_text": _quoted_group(fenced, "old").strip(),
+            "new_text": _quoted_group(fenced, "new").strip(),
             "path": _normalize_inline_path(str(fenced.group("path") or "").strip()),
         }
     plain = re.search(
@@ -2910,7 +2937,10 @@ def plan_tool_workflow(
     steps = [dict(step) for step in list(executed_steps or []) if isinstance(step, dict)]
     replacement = _explicit_replace_request(raw_text)
     patch_text = _explicit_unified_diff_request(raw_text)
-    explicit_command = _explicit_command_request(raw_text)
+    # The command a job runs is read from what the user typed (`verbatim_request_text`), like a write's
+    # content: input normalization glues a lone "." to the word before it, so
+    # "run python -m compileall -q ." was planned, shown on the card and approved as `-q.`.
+    explicit_command = _explicit_command_request(verbatim_request_text(source_context, raw_text) or raw_text)
     compare_or_verify = any(marker in lowered for marker in (" compare ", " versus ", " vs ", " verify ", " confirm ", " is it true "))
     lookup_followup_text = ""
     if followup_resume and not (looks_like_explicit_lookup_request(text) or looks_like_public_entity_lookup_request(text)):

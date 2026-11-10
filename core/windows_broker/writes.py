@@ -22,8 +22,11 @@ Outcomes (section 8):
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
+import logging
 import os
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -32,6 +35,8 @@ from core.effect_reconciliation import EffectOutcomeUnknown as _VoolOutcomeUnkno
 
 from . import session
 from .protocol import BatchNotRestored, BrokerRefusal, EffectOutcomeUnknown
+
+logger = logging.getLogger(__name__)
 
 
 class OutcomeUnknown(_VoolOutcomeUnknown, EffectOutcomeUnknown):
@@ -125,6 +130,31 @@ def _place(target: Path, status: Any) -> tuple[Any, str]:
     return best, rel.replace("/", "\\")
 
 
+@contextlib.contextmanager
+def _logged(operation: str, *paths: Path) -> Iterator[list[str]]:
+    """One INFO line per change routed through the broker: the operation, the path(s) and the result,
+    never the bytes and never a hash of them (a short content hash lets anyone holding the log confirm
+    a guess of a short secret; Security Architect, 9 Nov 2026). Security Architect question SA1
+    (captest round 1, 2026-11-09): the runner found no record on the VM that a marked-folder write
+    went through VoolBroker, because nothing logged a routed change. The caller appends what was done
+    to the yielded list; a refusal and an unknown outcome are logged with their code before they
+    propagate."""
+    done: list[str] = []
+    where = " -> ".join(str(path) for path in paths)
+    try:
+        yield done
+    except Refused as refused:
+        logger.info("Windows broker %s %s: refused (%s)", operation, where, refused.code)
+        raise
+    except OutcomeUnknown as unknown:
+        logger.info("Windows broker %s %s: outcome unknown (%s)", operation, where, unknown.reason)
+        raise
+    except Exception as exc:
+        logger.info("Windows broker %s %s: failed (%s)", operation, where, type(exc).__name__)
+        raise
+    logger.info("Windows broker %s %s: done%s", operation, where, f" ({'; '.join(done)})" if done else "")
+
+
 def _parent(rel: str) -> str:
     return rel.rpartition("\\")[0]
 
@@ -203,9 +233,10 @@ class _Call:
 
 def ensure_directory(target: Path) -> tuple[str, ...]:
     """Create `target` and any missing parents through the broker; the folders it created."""
-    with _Call(target) as call:
+    with _logged("ensure_directory", target) as done, _Call(target) as call:
         if call.rel:
             call.ensure_directory(call.rel)
+        done.append(f"created {len(call.created)} folder(s)")
         return tuple(call.created)
 
 
@@ -213,20 +244,22 @@ def write_file(target: Path, data: bytes, expect: str) -> Written:
     """Write `data` to `target` through the broker, refused unless the file is what `expect` says.
 
     Missing parent folders are created first, as the by-path writers did."""
-    with _Call(target) as call:
+    with _logged("write_file", target) as done, _Call(target) as call:
         if not call.rel:
             raise Refused("invalid_path", "the target is the flagged folder itself, not a file in it")
         parent = _parent(call.rel)
         if parent:
             call.ensure_directory(parent)
         result = call.change("write_file", rel=call.rel, data=base64.b64encode(data).decode("ascii"), expect=expect)[0]
-        return _written(result, call.rel, data, tuple(call.created))
+        written = _written(result, call.rel, data, tuple(call.created))
+        done.append(f"{len(data)} bytes")
+        return written
 
 
 def delete(target: Path) -> None:
     """Delete `target` through the broker: a file, or a folder that is empty (`not_empty` otherwise).
     The broker sets it aside in its journal, so a stopped delete is put back."""
-    with _Call(target) as call:
+    with _logged("delete", target), _Call(target) as call:
         if not call.rel:
             raise Refused("invalid_path", "the target is the flagged folder itself")
         result = call.change("delete", rel=call.rel)[0]
@@ -239,6 +272,11 @@ def rename(source: Path, destination: Path) -> None:
     and renamed onto the held destination folder, never replacing an existing destination. Across two
     flagged folders the second is checked and opened as `to_root_id`; across volumes the broker refuses
     `cross_volume`. The destination folder must already exist."""
+    with _logged("rename", source, destination):
+        _rename(source, destination)
+
+
+def _rename(source: Path, destination: Path) -> None:
     _host, status = _status()
     folder, rel = _place(source, status)
     to_folder, to_rel = _place(destination, status)
@@ -283,6 +321,14 @@ def apply_batch(changes: list[tuple[Path, bytes | None, str]]) -> list[Written |
     write and the deleted path per delete, in order."""
     if not changes:
         return []
+    with _logged("apply_batch", *[target for target, _data, _expect in changes]) as done:
+        results = _apply_batch(changes)
+        done.append(f"{sum(isinstance(item, Written) for item in results)} written, "
+                    f"{sum(isinstance(item, str) for item in results)} deleted")
+        return results
+
+
+def _apply_batch(changes: list[tuple[Path, bytes | None, str]]) -> list[Written | str]:
     _host, status = _status()
     placed = [(_place(target, status), data, expect) for target, data, expect in changes]
     folder = placed[0][0][0]

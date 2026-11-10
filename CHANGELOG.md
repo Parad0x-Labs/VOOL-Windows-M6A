@@ -16,7 +16,7 @@ Windows 11, 64-bit.
 - **No console windows.** Background tools no longer flash a window on every turn.
 
 ### Windows limits in 0.7.1
-- VOOL runs **Python scripts** (`python file.py`, `python -c`), **pytest**, **unittest** and **compileall** for you in its Windows sandbox. `python -m` is allowed only for pytest, unittest and compileall.
+- VOOL runs **Python scripts** (`python file.py`, `python -c`), **pytest**, **unittest** and **compileall** for you in its Windows sandbox. `python -m` is allowed only for pytest, unittest and compileall. Name the marked folder in your request (for example `run the tests in C:\Users\you\Projects\calc`), and VOOL works in that folder, after your approval.
 - It refuses **git, pip, npm, node and ruff**, does not start **plugins or MCP servers**, does not read **PDF or 7z** files, and refuses **cloud models** and any other program. It refuses these rather than run them unprotected. To use the code tools, run VOOL under WSL2/Linux.
 - It does not clean temp files. A patch is applied only when it matches the file exactly; otherwise it is refused and nothing changes.
 - **Network locations are refused.** VOOL refuses paths that name a network share or a device, and never writes to a mapped network drive.

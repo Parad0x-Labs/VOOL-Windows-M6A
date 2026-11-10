@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests import _windows_refusals as windows_refusals
+
 
 @pytest.fixture
 def world(tmp_path, monkeypatch):
@@ -354,6 +356,8 @@ def test_read_only_auth_refuses_ci_control_without_pretending(world) -> None:
 
     root, bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid = _arm(world, ctx)
 
     forge.route("GET /actions/runs?head_sha=", {"workflow_runs": []})

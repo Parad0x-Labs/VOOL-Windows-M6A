@@ -68,7 +68,10 @@ def list_local_models(ollama_url: str | None = None, *, timeout: float = 10.0) -
         models = resp.json().get("models")
     except Exception:
         return []
-    return [m for m in (models or []) if isinstance(m, dict) and m.get("name")]
+    from core.ollama_cloud_models import local_tag_rows
+
+    # An Ollama cloud stub is not a local model (core.ollama_cloud_models).
+    return [m for m in local_tag_rows(list(models or [])) if isinstance(m, dict) and m.get("name")]
 
 
 def select_best_model(models: list[dict]) -> str | None:

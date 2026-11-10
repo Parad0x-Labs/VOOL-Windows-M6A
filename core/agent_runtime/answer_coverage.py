@@ -67,6 +67,7 @@ import re
 import unicodedata
 from contextvars import ContextVar
 from dataclasses import dataclass
+import functools
 from functools import lru_cache
 from typing import Any
 
@@ -107,11 +108,72 @@ _TERMINATORS = ".?!;"
 # "8,500" / "$1,240" / "app.py" / "1.5" -- a terminator with an alphanumeric on both sides is inside
 # a token, not between two sentences.
 _INTRA_TOKEN_RE = re.compile(r"[\w]$")
+_PATH_SEPARATORS = "\\/"
+#: What may stand right before a path's own `.` or `..` name: nothing, a space, a separator, a quote.
+_PATH_NAME_OPENERS = frozenset(" \t\"'`(" + _PATH_SEPARATORS)
+
+
+def _is_path_dot(text: str, index: int) -> bool:
+    """Whether the `.` at ``index`` belongs to a path's `.` or `..` name rather than ending a sentence.
+
+    Captest round 2 (build a22771c2): "write hi to C:\\Users\\VOOLT\\VOOL Test\\Allowed Ä folder\\..\\y.txt"
+    was cut at the `..` into "write hi to …\\Allowed Ä folder\\." and "\\y.txt", and the second part was
+    served on its own as a read of `y.txt`: "There is no file at `y.txt`". A dot run of one or two
+    followed by a separator (`..\\y.txt`, `.\\calc.py`, `folder/../y.txt`) is a path name; so is a
+    `..` that stands as a name of its own (after a space or a separator, `in .. with`, `folder\\..`).
+    A longer run (`...`) and a dot after a word (`Done.`, `wait..`) still end a sentence."""
+    start = index
+    while start > 0 and text[start - 1] == ".":
+        start -= 1
+    end = index
+    while end < len(text) and text[end] == ".":
+        end += 1
+    run = end - start
+    if run > 2:
+        return False
+    following = text[end] if end < len(text) else ""
+    if following and following in _PATH_SEPARATORS:
+        return True
+    before = text[start - 1] if start > 0 else " "
+    return run == 2 and before in _PATH_NAME_OPENERS and (not following or following.isspace() or following in "\"'`),;:!?")
+
+
+def _path_dots_apply() -> bool:
+    """Whether a path's `.` and `..` names are kept inside one request: on Windows only (the write
+    gate's seam), so the split of every sentence on Mac and Linux stays exactly as it was. Any error
+    reading the seam keeps the old split."""
+    try:
+        from core import windows_write_gate
+
+        return bool(windows_write_gate.active())
+    except Exception:
+        return False
+
+
+def _keyed_by_path_dots(maxsize: int):
+    """An `lru_cache` for a one-text reader whose answer depends on `_path_dots_apply`: the seam is part
+    of the key, so a reading made with the seam off is never served with it on, or the other way round.
+    The wrapper keeps `cache_clear` and `cache_info`."""
+
+    def wrap(function):
+        cached = lru_cache(maxsize=maxsize)(lambda text, _path_dots: function(text))
+
+        @functools.wraps(function)
+        def reader(text):
+            return cached(text, _path_dots_apply())
+
+        reader.cache_clear = cached.cache_clear  # type: ignore[attr-defined]
+        reader.cache_info = cached.cache_info  # type: ignore[attr-defined]
+        return reader
+
+    return wrap
 
 
 def _is_boundary(text: str, index: int) -> bool:
     char = text[index]
     if char not in _TERMINATORS:
+        return False
+    if char == "." and _path_dots_apply() and _is_path_dot(text, index):
         return False
     if char == "." and _INTRA_TOKEN_RE.search(text[:index]) and index + 1 < len(text):
         following = text[index + 1]
@@ -221,7 +283,7 @@ def _split_spans(text: str) -> list[tuple[int, int]]:
     return spans
 
 
-@lru_cache(maxsize=128)
+@_keyed_by_path_dots(maxsize=128)
 def turn_slices(text: str) -> tuple[TurnSlice, ...]:
     """The message's clauses, in the order the user wrote them.
 
@@ -488,7 +550,7 @@ def _slice_asks_nothing(text: str, slice_id: str) -> bool:
     return all(unit.kind in (KIND_CONTEXT, KIND_ENUMERATION, KIND_LITERAL) for unit in inside)
 
 
-@lru_cache(maxsize=128)
+@_keyed_by_path_dots(maxsize=128)
 def slice_families(text: str) -> tuple[tuple[str, tuple[str, ...]], ...]:
     """``((slice_id, (family, ...)), ...)`` -- every family that reads each clause on its own.
 
@@ -723,7 +785,7 @@ def slice_text(text: str, slice_ids: tuple[str, ...] | list[str]) -> str:
     return " ".join(item.text for item in turn_slices(text) if item.slice_id in wanted)
 
 
-@lru_cache(maxsize=128)
+@_keyed_by_path_dots(maxsize=128)
 def slice_entity_state(text: str) -> tuple[tuple[str, dict[str, object]], ...]:
     """Per-clause entity resolution, including contradictions a LATER clause creates.
 
@@ -2822,13 +2884,13 @@ def _catalog_key() -> tuple[str, ...]:
 
 
 @lru_cache(maxsize=256)
-def _interpret_cached(text: str, catalog: tuple[str, ...]) -> RequestInterpretation:
+def _interpret_cached(text: str, catalog: tuple[str, ...], path_dots: bool = False) -> RequestInterpretation:
     return _interpret_uncached(text)
 
 
 def interpret_request(text: str) -> RequestInterpretation:
     """ONE reading of the message: every fragment with kind, attachment and dependencies."""
-    return _interpret_cached(str(text or ""), _catalog_key())
+    return _interpret_cached(str(text or ""), _catalog_key(), _path_dots_apply())
 
 
 interpret_request.cache_clear = _interpret_cached.cache_clear  # type: ignore[attr-defined]

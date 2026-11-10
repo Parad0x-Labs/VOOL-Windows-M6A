@@ -215,6 +215,9 @@ def _best_embed_model() -> str | None:
     try:
         with urllib.request.urlopen(f"{ollama_base_url()}/api/tags", timeout=3) as r:
             data = json.loads(r.read().decode())
+        from core.ollama_cloud_models import local_tag_rows
+
+        data = {"models": local_tag_rows(list(data.get("models", []) or []))}
         available = {m["name"].split(":")[0] for m in data.get("models", [])}
         found = None
         for m in _EMBED_MODELS:

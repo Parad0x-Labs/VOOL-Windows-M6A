@@ -16,7 +16,7 @@ the run, and logs are always kept):
              swapped folder, and (Windows) a held file that can't be written or renamed
   launch     /healthz 200; the 11435 listener is VOOL's own python under the install dir, owned
              by the installing user; the window host is still alive after the settle period
-  slices     tools/installed_slices.py against the installed API: health and version identity,
+  slices     tools/installed_slices.py against the installed API: health, version identity and the git spawn guard (armed),
              each with a negative control (slices.json)
              then API recovery: the listener is killed and the supervisor must start a new one
   restart    stop leaves no owned process and a free port; relaunch is healthy again; the data
@@ -224,7 +224,9 @@ try {
         # Windows PowerShell 5.1 turns a native command's stderr into a terminating error under "Stop";
         # the exit code is the verdict here, so stderr only goes to the log.
         $ErrorActionPreference = "Continue"
-        & (Get-Command python).Source (Join-Path $RepoRoot "tools\installed_slices.py") --base-url "http://127.0.0.1:$ApiPort" --expected-commit $sliceCommit --out (Join-Path $ReportDir "slices.json") 2>&1 |
+        # --require-git-spawn-guard: VOOL 0.7.1 runs no git on Windows; an installed API whose git spawn
+        # guard is not armed (/api/runtime/capabilities git_spawn_guard) fails the smoke.
+        & (Get-Command python).Source (Join-Path $RepoRoot "tools\installed_slices.py") --base-url "http://127.0.0.1:$ApiPort" --expected-commit $sliceCommit --require-git-spawn-guard --out (Join-Path $ReportDir "slices.json") 2>&1 |
             Out-File (Join-Path $ReportDir "slices.log")
         $slicesExit = $LASTEXITCODE
         $ErrorActionPreference = "Stop"
