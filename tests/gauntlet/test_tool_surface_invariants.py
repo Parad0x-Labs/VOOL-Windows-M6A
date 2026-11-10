@@ -97,6 +97,16 @@ def test_the_snapshot_ignores_the_ambient_policy_cache() -> None:
 
 
 def test_no_intent_disappears_from_the_catalog(golden: dict, live: dict) -> None:
+    from core import windows_cloud_gate
+
+    if windows_cloud_gate.active():
+        # Windows 0.7.1 (the seam only): the Hive is off until the owner opts in, so the catalog
+        # does not offer `hive.list_available`, and nothing else leaves it. Rebuilt here so the
+        # snapshot and the seam are read at the same moment (`live` is module-scoped).
+        windows_live = build_snapshot()
+        windows_missing = sorted(set(golden["intents"]) - set(windows_live["intents"]))
+        assert windows_missing == ["hive.list_available"], f"on Windows, intents no longer advertised: {windows_missing}"
+        return
     missing = sorted(set(golden["intents"]) - set(live["intents"]))
     assert not missing, f"intents no longer advertised to the model: {missing}"
 
