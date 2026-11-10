@@ -481,7 +481,10 @@ def test_an_approved_python_run_whose_followup_is_malformed_ends_with_the_output
     assert synthesis == [], "after the run, the model that just failed was asked to write the answer"
     assert "Command executed in `.`" in resumed, resumed
     assert "ran" in resumed, resumed
-    assert "follow-up step failed" in resumed, resumed
+    assert "The model's follow-up step failed, so this is the tool output without a written answer." in resumed, resumed
+    assert "malformed_tool_arguments" not in resumed, resumed
+    # The approval card's preview step is not output: only what ran is shown as the result.
+    assert "requires approval" not in resumed, resumed
 
 
 @pytest.mark.parametrize("folder", ["", "sub"], ids=["the-workspace", "a-subfolder"])

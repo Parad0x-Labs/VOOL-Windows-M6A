@@ -557,7 +557,23 @@ def _malformed_followup_decision(_round_index: int) -> ModelExecutionDecision:
     return decision
 
 
-def test_a_malformed_followup_after_a_run_ends_with_the_tool_output() -> None:
+@pytest.fixture
+def windows_seam(monkeypatch):
+    """The Windows seam the approval spend uses (`execution_gate.operator_approval_spend_applies`
+    reads `job_runner._is_windows_platform`). The follow-up ending is Windows only for 0.7.1."""
+    from sandbox import job_runner
+
+    monkeypatch.setattr(job_runner, "_is_windows_platform", lambda: True)
+
+
+@pytest.fixture
+def off_windows_seam(monkeypatch):
+    from sandbox import job_runner
+
+    monkeypatch.setattr(job_runner, "_is_windows_platform", lambda: False)
+
+
+def test_a_malformed_followup_after_a_run_ends_with_the_tool_output(windows_seam) -> None:
     """A step ran, then the model's follow-up was refused as malformed. The turn ends on the tool's
     own output and says the follow-up failed; it does not ask the same failing model to write the
     answer (on a CPU-only machine that call may take its whole 720 s timeout)."""
@@ -570,14 +586,16 @@ def test_a_malformed_followup_after_a_run_ends_with_the_tool_output() -> None:
     assert router.synthesis_calls == 0, "the model that just failed was asked again to write the answer"
     response = str(result.get("response") or "")
     assert "UNIQ_00" in response and "UNIQ_01" in response, response
-    assert "follow-up step failed" in response, response
-    assert "malformed_tool_arguments" in response, response
-    assert (result.get("details") or {}).get("loop_stop_reason") == "provider_did_not_answer"
+    assert "The model's follow-up step failed, so this is the tool output without a written answer." in response, response
+    assert "malformed_tool_arguments" not in response, "the raw cause belongs in details, not the reply"
+    details = result.get("details") or {}
+    assert details.get("loop_stop_reason") == "provider_did_not_answer"
+    assert str(details.get("followup_failure") or "").startswith("malformed_tool_arguments"), details
     assert result.get("status") != "multi_step_executed", result.get("status")
     assert len(_steps(result)) == 2
 
 
-def test_a_followup_timeout_after_a_run_does_not_call_the_model_again() -> None:
+def test_a_followup_timeout_after_a_run_does_not_call_the_model_again(windows_seam) -> None:
     """Same, with the provider timing out on the follow-up (no reply, a recorded cause)."""
 
     def timed_out(index: int):
@@ -596,6 +614,53 @@ def test_a_followup_timeout_after_a_run_does_not_call_the_model_again() -> None:
     assert router.calls == 3, router.calls  # one selection round per round, and no extra
     assert router.synthesis_calls == 0, "the model was asked again after it did not answer"
     assert "follow-up step failed" in str(result.get("response") or "")
+
+
+def test_off_windows_a_malformed_followup_still_takes_the_synthesis_path(off_windows_seam) -> None:
+    """Mac and Linux are unchanged in 0.7.1: the same refused follow-up goes to synthesis."""
+
+    scripts = [[_call("workspace.read_file", path="f00.py")], [_call("workspace.read_file", path="f01.py")]]
+    result, router, _events, _ws = _drive(
+        scripts, decision_for_round=lambda index: _malformed_followup_decision(index) if index >= 2 else None
+    )
+
+    assert router.synthesis_calls == 1, router.synthesis_calls
+    assert result.get("status") != "tool_followup_failed", result.get("status")
+    assert "follow-up step failed" not in str(result.get("response") or "")
+    assert (result.get("details") or {}).get("loop_stop_reason") == "provider_did_not_answer"
+
+
+def test_a_first_round_refusal_with_no_steps_keeps_the_typed_rejection(windows_seam) -> None:
+    """Zero steps ran and the very first round was refused: the earlier typed-rejection ending is
+    taken (no IndexError on an empty step list, no synthesis, nothing reported as run)."""
+
+    result, router, _events, _ws = _drive([], decision_for_round=_malformed_followup_decision)
+
+    assert result.get("status") == "tool_call_rejected", result.get("status")
+    assert (result.get("details") or {}).get("loop_stop_reason") == "tool_call_rejected"
+    assert _steps(result) == []
+    assert router.synthesis_calls == 0
+
+
+def test_a_followup_failure_never_lifts_an_unfinished_code_task_to_done() -> None:
+    """`enforce_code_task_completion` only ever demotes: a follow-up-failed result over a coding
+    step whose task is not completed is reported as incomplete, not done."""
+    from core.code_assistant.task_runtime import enforce_code_task_completion
+
+    result = {
+        "response": "Wrote app.py.\n\nThe model's follow-up step failed, so this is the tool output without a written answer.",
+        "success": True, "status": "tool_followup_failed", "mode": "tool_executed", "task_outcome": "success",
+        "details": {"loop_stop_reason": "provider_did_not_answer"},
+    }
+    steps = [{
+        "tool_name": "code.task.step", "ok": True,
+        "details": {"task_id": "task-1", "stage": "editing", "code_task_verdict": "in_progress"},
+    }]
+
+    enforced = enforce_code_task_completion(result, steps)
+
+    assert enforced["status"] == "code_task_incomplete", enforced["status"]
+    assert enforced["success"] is False and enforced["task_outcome"] != "success"
 
 
 # ======================================================================================
