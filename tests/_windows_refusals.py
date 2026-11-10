@@ -324,3 +324,27 @@ def assert_git_ask_answered_at_the_door(seen: Watch, result: dict, invocations) 
     assert not any("git_status" in str(step) for step in invocations.timeline), invocations.timeline
     assert result["response"] == GIT_REFUSAL, result["response"]
     assert seen.refused(result["response"])
+
+
+# ── exact forms (added beside the helpers above, which are unchanged) ─────────────────────────────
+
+
+def refused_exactly(seen: Watch, *pairs: tuple[object, object]) -> bool:
+    """A stricter `Watch.refused`. False where the limit does not apply: the row goes on to its own
+    expectation, unchanged.
+
+    Where it applies, each ``(actual, expected)`` pair is equal: a status or verdict field, or the
+    whole text the user reads (never a part of it). At least one pair is that whole text and carries
+    the limit's sentence. Then `seen.refused` holds for those texts: no process started for the limit
+    and nothing under the watched folders changed. Returns True, and the row ends there."""
+    if not seen.active:
+        return False
+    assert pairs, "a refused row must name what it compares"
+    texts = []
+    for actual, expected in pairs:
+        assert actual == expected, f"expected {expected!r}, got {actual!r}"
+        if isinstance(expected, str) and seen.sentence and seen.sentence in expected:
+            texts.append(actual)
+    assert texts, f"no pair is the whole {seen.what} refusal text"
+    assert seen.refused(*texts)
+    return True
