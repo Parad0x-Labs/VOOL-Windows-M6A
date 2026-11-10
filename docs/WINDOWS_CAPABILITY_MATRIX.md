@@ -8,6 +8,10 @@
 
 **Apple / Linux lane:** start at [Parity checklist](#parity-checklist-for-the-applelinux-lane). It states, per capability, what to run on macOS/Linux, and which items are shared Python (already yours, no porting) versus Windows-only by nature.
 
+## Windows 0.7.1 requirements
+
+Windows needs 16 GB of RAM. With less, VOOL refuses to load its local model rather than freeze the PC, and chat answers that the model was blocked by the memory-safety gate.
+
 ## KAS Windows validation handoff
 
 The frozen rows below describe the Windows 10 / GTX 1080 audit at `1e4fd82`; their wording and measurements remain untouched. Most file:line citations in this document were later moved to the matching code at `9a15d6a`; the sentences still describe the code as it was when each was written.
