@@ -289,15 +289,139 @@ def test_cloud_turned_on_without_a_key_still_refuses(profile_env, windows, socke
     assert _cache_files(profile_env) == []
 
 
-def test_chat_page_defaults_to_local_only_and_shows_no_free_cloud_on_windows(profile_env, windows, sockets):
+def test_chat_page_shows_no_free_cloud_and_keeps_the_auto_lane_on_windows(profile_env, windows, sockets):
+    """The lane every chat without a stored choice runs on is Auto ("Local first",
+    ``modelForChat``'s ``'vool'``); with cloud off it is labelled "cloud models off" and runs no cloud
+    model. "This computer only" is not the default: it also cuts web access for the turn."""
     response = served_get(make_agent(), "/chat", {})
     html = response.body.decode("utf-8")
     assert "free cloud only if needed" not in html
     assert "verified-free cloud fallback" not in html
-    assert "let modelValue = localStorage.getItem('vool_model') || 'vool';" not in html
-    assert 'data-run-model="vool-local-only"><b data-i18n="header.run_computer_only">' in html
-    assert 'aria-checked="true" data-run-model="vool-local-only"' in html
+    assert "return choices[String(chatId)] || 'vool';" in html
+    assert ('aria-checked="true" data-run-model="vool"><b data-i18n="header.run_local_first">Local first</b>'
+            '<small>cloud models off</small>') in html
+    assert 'aria-checked="false" data-run-model="vool-local-only"' in html
     assert _outbound(sockets) == []
+
+
+def test_the_default_lane_keeps_web_access_when_the_owner_turns_it_on(profile_env, windows, sockets):
+    from core import auto_local_only_mode, policy_engine, windows_cloud_gate
+    from core.remote_fetch_policy import _local_only_egress_forbidden, effective_web_available
+
+    policy_engine.set_operator_policy_values({"system.allow_web_fallback": True})
+    policy_engine.load(force_reload=True)
+    assert windows_cloud_gate.cloud_off() is True
+    default_turn: dict = {}
+    assert auto_local_only_mode.bind_turn(default_turn, "vool") is False
+    assert effective_web_available(default_turn) is True
+    assert _local_only_egress_forbidden(default_turn, "https://93.184.216.34/search?q=x") == (False, "")
+    # The default lane still contacts no cloud provider.
+    assert windows_cloud_gate.door_refusal("https://openrouter.ai/api/v1/models") is not None
+    # "This computer only" is zero public egress, web included (its own contract, unchanged).
+    computer_only: dict = {}
+    assert auto_local_only_mode.bind_turn(computer_only, "vool-local-only") is True
+    assert effective_web_available(computer_only) is False
+    assert _local_only_egress_forbidden(computer_only, "https://93.184.216.34/search?q=x")[0] is True
+    assert _outbound(sockets) == []
+
+
+def test_cloud_off_command_closes_the_gate_on_windows(profile_env, windows, sockets):
+    from core import cloud_escalation_policy as cep
+    from core import windows_cloud_gate
+
+    _store_openrouter_key()
+    _turn_cloud_on()
+    assert windows_cloud_gate.cloud_off() is False
+    agent = make_agent()
+    reply = chat(agent, "cloud off", "cloud-off-command")
+    assert windows_cloud_gate.cloud_off() is True
+    assert cep.load_policy().free_cloud_enabled is False
+    assert cep.load_policy().mode == cep.MODE_OFF
+    assert OFF_TEXT in reply["text"], reply["text"]
+    turn = chat(agent, CLOUD_PROMPT, "cloud-off-command-after")
+    assert OFF_TEXT in turn["text"], turn["text"]
+    assert _outbound(sockets) == [], _outbound(sockets)
+    assert _cache_files(profile_env) == []
+
+
+def test_removing_the_key_in_settings_closes_the_gate(profile_env, windows, sockets):
+    from core import windows_cloud_gate
+    from core.runtime_paths import data_path
+    from tests.operator_profile_rig import served_post
+
+    _store_openrouter_key()
+    _turn_cloud_on()
+    assert windows_cloud_gate.cloud_off() is False
+    agent = make_agent()
+    response = served_post(agent, "/api/settings/credentials", {"name": "llm.cloud.openrouter", "delete": True})
+    assert int(response.status) == 200, response.body
+    for filename in ("credentials.meta.json", "credentials.enc.json"):
+        path = data_path(filename)
+        names = set(json.loads(path.read_text(encoding="utf-8")) or {}) if path.exists() else set()
+        assert not {name for name in names if name.startswith("llm.cloud.")} - {
+            "llm.cloud.usepod_origin", "llm.cloud.custom_base_url"}, (filename, names)
+    assert windows_cloud_gate.cloud_key_stored() is False
+    assert windows_cloud_gate.cloud_off() is True
+    turn = chat(agent, CLOUD_PROMPT, "key-removed")
+    assert OFF_TEXT in turn["text"], turn["text"]
+    assert _outbound(sockets) == [], _outbound(sockets)
+    assert _cache_files(profile_env) == []
+
+
+def test_a_keyless_request_inside_the_verify_scope_is_refused(profile_env, windows, sockets):
+    from core import windows_cloud_gate
+    from core.effect_gateway import named_background_effect_scope
+    from core.remote_fetch_policy import open_remote_url
+
+    with windows_cloud_gate.owner_key_check("openrouter.ai"), named_background_effect_scope("credential.verify"):
+        with pytest.raises(windows_cloud_gate.CloudContactRefused):
+            open_remote_url("https://openrouter.ai/api/v1/key", timeout=1.0, keyed_or_keyless="keyless")
+        with pytest.raises(windows_cloud_gate.CloudContactRefused):
+            open_remote_url("https://openrouter.ai/api/v1/key", timeout=1.0)
+        with pytest.raises(windows_cloud_gate.CloudContactRefused):
+            open_remote_url("https://api.openai.com/v1/models", timeout=1.0, keyed_or_keyless="keyed")
+    assert _outbound(sockets) == [], _outbound(sockets)
+
+
+def test_a_verify_started_outside_the_settings_route_is_refused(profile_env, windows, sockets):
+    """A model tool, a discovery scan or a connection probe calling the verifier itself."""
+    from core.credential_intelligence.provider_registry import default_registry
+    from core.credential_intelligence.verification import verify_provider_credential
+
+    descriptor = default_registry().get("openrouter")
+    assert descriptor is not None
+    for scope in ("credential.verify", "cloud.connection_probe", "discovery.refresh"):
+        outcome = verify_provider_credential("sk-or-v1-" + "0" * 64, descriptor, scope=scope)
+        assert str(outcome.status) == "refused", (scope, outcome)
+    assert _outbound(sockets) == [], _outbound(sockets)
+
+
+def _intake_verify(agent, *, client_host: str = "127.0.0.1"):
+    from tests.operator_profile_rig import body_json, served_post
+
+    begun = body_json(served_post(agent, "/api/intake/begin", {}))
+    sid = begun["session_id"]
+    served_post(agent, "/api/intake/classify", {"session_id": sid, "value": "sk-or-v1-" + "0" * 64})
+    response = served_post(agent, "/api/intake/verify", {"session_id": sid, "provider_id": "openrouter"},
+                           client_host=client_host)
+    return response, body_json(response)
+
+
+def test_the_settings_verify_reaches_only_that_providers_verify_endpoint(profile_env, windows, sockets):
+    response, payload = _intake_verify(make_agent())
+    assert int(response.status) == 200, payload
+    # The patched socket answers nothing, so the check ends as a network failure, after one
+    # lookup of the provider's own verification host and nothing else.
+    outbound = _outbound(sockets)
+    assert outbound and {host for _kind, host in outbound} == {"openrouter.ai"}, outbound
+    assert payload.get("outcome") != "refused", payload
+    assert _cache_files(profile_env) == []
+
+
+def test_the_settings_verify_from_another_machine_opens_nothing(profile_env, windows, sockets):
+    response, _payload = _intake_verify(make_agent(), client_host="192.168.1.20")
+    assert int(response.status) == 403
+    assert _outbound(sockets) == [], _outbound(sockets)
 
 
 # ---- Windows, key stored and cloud turned on: the fetch path is reached (mocked) ----------------
@@ -333,12 +457,16 @@ def test_key_and_cloud_on_lets_the_door_open(profile_env, windows, sockets):
     assert ("getaddrinfo", "openrouter.ai") in sockets, sockets
 
 
-def test_owner_key_check_is_not_refused(profile_env, windows):
+def test_owner_key_check_is_scoped_to_one_host_and_keyed_requests(profile_env, windows):
     from core import windows_cloud_gate
 
-    assert windows_cloud_gate.door_refusal("https://openrouter.ai/api/v1/key", "openrouter") is not None
-    with windows_cloud_gate.owner_key_check():
-        assert windows_cloud_gate.door_refusal("https://openrouter.ai/api/v1/key", "openrouter") is None
+    key_url = "https://openrouter.ai/api/v1/key"
+    assert windows_cloud_gate.door_refusal(key_url, "openrouter", "keyed") is not None
+    with windows_cloud_gate.owner_key_check("openrouter.ai"):
+        assert windows_cloud_gate.door_refusal(key_url, "openrouter", "keyed") is None
+        assert windows_cloud_gate.door_refusal(key_url, "openrouter", "keyless") is not None
+        assert windows_cloud_gate.door_refusal("https://api.openai.com/v1/models", "openai", "keyed") is not None
+    assert windows_cloud_gate.door_refusal(key_url, "openrouter", "keyed") is not None
 
 
 # ---- Off Windows (seam off): the old behaviour stands ---------------------------------------------
@@ -381,3 +509,14 @@ def test_off_windows_chat_page_keeps_local_first_default(profile_env, off_window
     assert "free cloud only if needed" in html
     assert "let modelValue = localStorage.getItem('vool_model') || 'vool';" in html
     assert 'aria-checked="true" data-run-model="vool"' in html
+
+
+def test_off_windows_cloud_off_command_is_unchanged(profile_env, off_windows, sockets):
+    from core import cloud_escalation_policy as cep
+
+    _store_openrouter_key()
+    _turn_cloud_on()
+    reply = chat(make_agent(), "cloud off", "off-windows-cloud-off")
+    assert cep.load_policy().mode == cep.MODE_OFF
+    assert cep.load_policy().free_cloud_enabled is True
+    assert OFF_TEXT not in reply["text"]
