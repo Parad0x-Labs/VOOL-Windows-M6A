@@ -103,7 +103,10 @@ def _path(name: str) -> str:
         ((_USER, False, [(_ALLOWED, _USER)]), "dacl_not_protected"),
         ((_OTHER, True, [(_ALLOWED, _USER)]), "owner_not_user"),
         ((_USER, True, [(_ALLOWED, _USER), (_ALLOWED, _OTHER)]), "foreign_ace"),
-        ((_USER, True, [(_DENIED, _USER)]), "foreign_ace"),
+        # A plain deny is accepted for any SID (it only takes access away), but a DACL of denies alone
+        # grants the user nothing: tests/test_owner_only_keeps_plain_deny_aces.py.
+        ((_USER, True, [(_DENIED, _USER)]), "empty_dacl"),
+        ((_USER, True, [(_DENIED, _OTHER), (_ALLOWED, _USER)]), ""),
         ((_USER, True, []), "empty_dacl"),
     ],
 )
@@ -365,7 +368,7 @@ def test_windows_private_dir_hands_its_owner_only_ace_to_new_files(tmp_path):
     finally:
         api.close(handle)
     assert dacl, dacl
-    assert {sid for _type, sid, _flags in dacl} == {api.user_sid()}
+    assert {ace[1] for ace in dacl} == {api.user_sid()}
     assert owner_only.make_owner_only(child).ok
 
 
