@@ -262,7 +262,13 @@ def test_windows_the_approval_card_renders_with_an_empty_footer(
     assert "requires approval" in card.lower(), card
     lowered = card.lower()
     assert not [word for word in _CONTACT_WORDS if word in lowered], card
-    assert all(footer == "" for footer in watch.footers), watch.footers
+    # Fresh profile: the watcher is off, so the footer is "" and asks for nothing. A tracker built
+    # before the rule: the real transport refuses before the fetch door, and the card's footer
+    # wrapper (`_maybe_hive_footer`) turns that into "": nothing else may come out of the footer.
+    from core.remote_fetch_policy import RemoteFetchRefusedError
+
+    allowed = (str,) if built == "fresh" else (str, RemoteFetchRefusedError)
+    assert all(isinstance(f, allowed) and (not isinstance(f, str) or f == "") for f in watch.footers), watch.footers
     assert watch.transport == [] and resolver.names == [], (watch.transport, resolver.names)
     assert len(served.jobs) == 1, served.jobs
 
