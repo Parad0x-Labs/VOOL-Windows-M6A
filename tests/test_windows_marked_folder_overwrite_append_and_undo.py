@@ -400,3 +400,180 @@ def test_undo_of_a_move_is_refused_when_its_place_is_taken(profile_env, machine,
     assert "already exists" in reply and "Nothing was" in reply, reply
     assert _pending(turn_id) == []
     assert source.read_bytes() == b"someone else\n" and moved.read_bytes() == b"move me\n"
+
+
+# --- SA condition on 6ab28266: an outside change refuses the undo; the hash schemes agree -----------------
+
+
+def _allow_or_refuse(agent, text: str, session: str, workspace: Path) -> str:
+    """The undo turn as the owner meets it: allowed on its card if it raises one; the reply either way."""
+    from core.mode_permission_policy import resolve_approval
+
+    first, turn_id = _chat(agent, text, session, workspace)
+    pending = _pending(turn_id)
+    if not pending:
+        return first
+    assert len(pending) == 1 and pending[0].get("intent") == "workspace.rollback_last_change", pending
+    token = str(pending[0].get("approval_id"))
+    assert resolve_approval(token, decision="allow") is not None
+    resumed, _ = _chat(agent, text, session, workspace, turn_id=turn_id, token=token)
+    return resumed
+
+
+def test_undo_after_a_create_is_refused_once_the_owner_edited_the_file(profile_env, machine) -> None:
+    """SA (a): created by VOOL, then changed outside VOOL: the undo would delete the owner's bytes."""
+    target = machine["second"] / "undo-r5.txt"
+    agent = make_agent()
+    session = "sa-a-create-edited"
+    _allow(agent, f"create undo-r5.txt in {machine['second']} with the text u", session, machine["workspace"],
+           "machine.write_file")
+    assert target.read_bytes() == b"u"
+    target.write_bytes(b"the owner's own words\r\n")
+    reply = _allow_or_refuse(agent, "undo that", session, machine["workspace"])
+    assert "did not roll back" in reply and "Nothing was written." in reply, reply
+    assert target.read_bytes() == b"the owner's own words\r\n"
+
+
+def test_undo_after_an_overwrite_is_refused_once_the_file_changed_outside(profile_env, machine) -> None:
+    """SA (b): overwritten by VOOL, then changed outside VOOL: the undo would overwrite that change."""
+    note = machine["first"] / "note.txt"
+    note.write_bytes(b"first line")
+    agent = make_agent()
+    session = "sa-b-overwrite-changed"
+    _allow(agent, f"write the text v2 to {note}", session, machine["workspace"], "workspace.write_file")
+    assert note.read_bytes() == b"v2"
+    note.write_bytes(b"v3 from another editor")
+    reply = _allow_or_refuse(agent, "undo that", session, machine["workspace"])
+    assert "did not roll back" in reply and "Nothing was written." in reply, reply
+    assert note.read_bytes() == b"v3 from another editor"
+
+
+BOM_CRLF = b"\xef\xbb\xbfone\r\ntwo\r\n"
+
+
+@pytest.mark.parametrize("before", [b"one\r\ntwo\r\n", BOM_CRLF], ids=["crlf", "utf8_bom"])
+def test_served_append_then_undo_restores_crlf_and_bom_files(profile_env, machine, before: bytes) -> None:
+    """SA (c), by path: an append and its undo, for a CRLF file and a UTF-8 BOM file."""
+    note = machine["first"] / "note.txt"
+    note.write_bytes(before)
+    agent = make_agent()
+    session = f"sa-c-served-{uuid.uuid4().hex[:6]}"
+    _allow(agent, f"append the line 'edited by VOOL' to {note}", session, machine["workspace"], "workspace.write_file")
+    assert note.read_bytes() == before + b"edited by VOOL\r\n"
+    _f, resumed, _card = _allow(agent, "undo that", session, machine["workspace"], "workspace.rollback_last_change")
+    assert note.read_bytes() == before, resumed
+
+
+class _LandingBroker:
+    """The broker's pipe, landing what it is asked to on disk, so a write and its rollback through the
+    broker can be checked by their bytes. Placed in one flagged folder."""
+
+    def __init__(self, folder: Path) -> None:
+        from tests.windows_broker.test_single_writes import _Broker
+
+        self._inner = _Broker(folder)
+        self.folder = folder
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    def _land(self, rel: str, data_b64: str) -> None:
+        import base64
+
+        (self.folder / rel.replace("\\", "/")).write_bytes(base64.b64decode(data_b64))
+
+    def request(self, operation: str, **arguments):
+        import base64
+
+        if operation == "write_file":
+            result = self._inner.request(operation, **arguments)
+            self._land(arguments["rel"], arguments["data"])
+            return result
+        if operation != "apply_batch":
+            return self._inner.request(operation, **arguments)
+        self._inner.requests.append((operation, arguments))
+        results = []
+        for op in arguments["ops"]:
+            target = self.folder / op["rel"].replace("\\", "/")
+            if op["op"] == "delete":
+                target.unlink()
+                results.append({"op": "delete", "path": op["rel"]})
+            else:
+                self._land(op["rel"], op["data"])
+                results.append({"op": "write_file", "path": op["rel"], "file_id": "f" * 32,
+                                "sha256": hashlib.sha256(base64.b64decode(op["data"])).hexdigest()})
+        return {"ok": True, "batch_id": "b5", "results": results, "cleanup_left": []}
+
+
+@pytest.fixture()
+def landing(tmp_path, monkeypatch):
+    from core.windows_broker import session
+    from tests.windows_broker.test_single_writes import _wire
+
+    folder = (tmp_path / "flagged").resolve()
+    folder.mkdir()
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    monkeypatch.setenv(gate.ENV_VAR, str(folder))
+    monkeypatch.setattr(session, "_host", None)
+    broker = _LandingBroker(folder)
+    _wire(monkeypatch, broker)
+    return broker
+
+
+@pytest.mark.parametrize("before", [b"one\r\ntwo\r\n", BOM_CRLF], ids=["crlf", "utf8_bom"])
+def test_brokered_append_then_undo_restores_crlf_and_bom_files(landing, before: bytes) -> None:
+    """SA (c), through the broker: the lane's append written by the broker, then rolled back by its
+    batch, whose check compares the bytes on disk with what the append left."""
+    from core import runtime_execution_tools as tools
+    from core.windows_marked_file_ops import marked_file_ask
+
+    note = landing.folder / "note.txt"
+    note.write_bytes(before)
+    ask = marked_file_ask(f"append the line 'edited by VOOL' to {note}", source_context=_owner())
+    assert ask is not None and ask.intent == "workspace.write_file", ask
+    written = tools._write_file(dict(ask.arguments), workspace_root=landing.folder, session_id="sa-c-broker")
+    assert written.ok, written.response_text
+    assert note.read_bytes() == before + b"edited by VOOL\r\n"
+    undone = tools._rollback_last_change({}, workspace_root=landing.folder, session_id="sa-c-broker")
+    assert undone.ok and undone.details["restored_paths"] == ["note.txt"], undone.response_text
+    assert "apply_batch" in landing.ops()
+    assert note.read_bytes() == before
+
+
+@pytest.mark.parametrize("before", [b"one\r\ntwo\r\n", BOM_CRLF, None], ids=["crlf", "utf8_bom", "created"])
+def test_brokered_machine_write_then_undo_restores_the_earlier_bytes(landing, monkeypatch, before) -> None:
+    """SA (c), the machine writer: its journal keeps bytes_sha256 of what the broker wrote ("\\n" as
+    "\\r\\n"), and the broker rollback's check of the bytes on disk agrees with it."""
+    from core import runtime_execution_tools as tools
+
+    monkeypatch.setattr(tools, "_resolve_machine_directory", lambda raw, write=False: landing.folder / str(raw))
+    monkeypatch.setattr(tools.ExecutionGate, "evaluate_machine_effect", staticmethod(lambda **kw: {"decision": "authorized"}))
+    note = landing.folder / "note.txt"
+    if before is not None:
+        note.write_bytes(before)
+    written = tools._write_machine_file({"path": "note.txt", "content": "v2\nmore"}, session_id="sa-c-machine")
+    assert written.ok, written.response_text
+    assert note.read_bytes() == b"v2\r\nmore"
+    undone = tools._rollback_last_change({}, workspace_root=landing.folder, session_id="sa-c-machine")
+    assert undone.ok, undone.response_text
+    if before is None:
+        assert not note.exists()
+    else:
+        assert note.read_bytes() == before
+
+
+def test_brokered_undo_after_an_outside_change_is_refused_and_sends_nothing(landing) -> None:
+    """SA (b), through the broker: the change the overwrite left is gone, so no batch is sent."""
+    from core import runtime_execution_tools as tools
+    from core.windows_marked_file_ops import marked_file_ask
+
+    note = landing.folder / "note.txt"
+    note.write_bytes(BOM_CRLF)
+    ask = marked_file_ask(f"write the text v2 to {note}", source_context=_owner())
+    assert ask is not None and ask.intent == "workspace.write_file", ask
+    assert tools._write_file(dict(ask.arguments), workspace_root=landing.folder, session_id="sa-b-broker").ok
+    note.write_bytes(b"v3 from another editor")
+    undone = tools._rollback_last_change({}, workspace_root=landing.folder, session_id="sa-b-broker")
+    assert not undone.ok and undone.status == "stale_revert_conflict", undone.response_text
+    assert "apply_batch" not in landing.ops()
+    assert note.read_bytes() == b"v3 from another editor"
