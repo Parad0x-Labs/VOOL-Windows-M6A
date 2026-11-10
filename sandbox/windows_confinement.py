@@ -13,6 +13,7 @@ import json
 import logging
 import re
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -430,26 +431,62 @@ def form_failure_reason(stderr: bytes | str) -> tuple[str, str]:
     return "unspecified", refusal
 
 
+#: Grant refusals that a moment later may not recur: an entry the walk listed was gone when it opened it
+#: (entry_vanished), or another program held a child (in_use) or the root (root_open_failed) without
+#: the sharing the walk needs. Only the grant form is retried, and only for these.
+GRANT_TRANSIENT_REASONS = frozenset({"entry_vanished", "in_use", "root_open_failed"})
+#: The waits before the second and the third grant attempt.
+GRANT_RETRY_DELAYS: tuple[float, ...] = (0.5, 1.5)
+_sleep = time.sleep  # a seam, so tests need not wait
+
+
 def launcher_form(launcher: Path | str, form: str, policy_path: Path, *, timeout: float = 300) -> bool:
     """Run the launcher's unconfined `grant` or `revoke` form for a policy. True only on exit 0.
 
     The run form only VERIFIES ACLs, and a miss there is 125, so a caller grants first. `grant`
     and `revoke` are run by VOOL, never by a job, and an error, a timeout or any other exit code
-    counts as not done."""
+    counts as not done.
+
+    A grant the launcher refused for a transient reason (`GRANT_TRANSIENT_REASONS`) is run again, up
+    to twice, after the `GRANT_RETRY_DELAYS` waits. Grant is idempotent and verifies at its end, so a
+    retry writes nothing a first success would not have. Any other reason, no reason, a launcher
+    that can't start or a timeout fails at once. Revoke is never retried. Every attempt is logged."""
     import subprocess
 
     if form not in ("grant", "revoke"):
         raise ValueError(f"unknown launcher form {form!r}")
-    try:
-        returncode, stderr = _run_launcher_output([str(launcher), form, "--policy", str(policy_path)], timeout=timeout)
-    except (OSError, subprocess.SubprocessError) as exc:
-        # The exception's class only: an OSError's text can carry the launcher's path, nothing more useful.
-        _log.warning("VoolConfine %s did not finish (%s), so it counts as failed", form, type(exc).__name__)
-        return False
-    if returncode == 0:
-        return True
-    code, message = form_failure_reason(stderr)
-    _log.warning("VoolConfine %s failed: exit %s, reason %s: %s", form, returncode, code, message)
+    delays = GRANT_RETRY_DELAYS if form == "grant" else ()
+    attempts = len(delays) + 1
+    for attempt in range(1, attempts + 1):
+        try:
+            returncode, stderr = _run_launcher_output(
+                [str(launcher), form, "--policy", str(policy_path)], timeout=timeout
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            # The exception's class only: an OSError's text can carry the launcher's path, nothing more useful.
+            _log.warning("VoolConfine %s did not finish (%s), so it counts as failed", form, type(exc).__name__)
+            return False
+        if returncode == 0:
+            if attempt > 1:
+                _log.warning("VoolConfine %s succeeded on attempt %s of %s", form, attempt, attempts)
+            return True
+        code, message = form_failure_reason(stderr)
+        if not delays or (attempt == 1 and code not in GRANT_TRANSIENT_REASONS):
+            # Revoke, or a first refusal that is not transient: one line, as before any retry existed.
+            _log.warning("VoolConfine %s failed: exit %s, reason %s: %s", form, returncode, code, message)
+            return False
+        if code not in GRANT_TRANSIENT_REASONS or attempt == attempts:
+            _log.warning(
+                "VoolConfine %s failed: exit %s, reason %s: %s (attempt %s of %s, giving up)",
+                form, returncode, code, message, attempt, attempts,
+            )
+            return False
+        delay = delays[attempt - 1]
+        _log.warning(
+            "VoolConfine %s failed: exit %s, reason %s: %s (attempt %s of %s, retrying in %s s)",
+            form, returncode, code, message, attempt, attempts, delay,
+        )
+        _sleep(delay)
     return False
 
 
