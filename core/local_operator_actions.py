@@ -1927,6 +1927,16 @@ def _load_pending_action(*, session_id: str, action_kind: str, action_id: str | 
     )
 
 
+def _close_pending_action(*, session_id: str, action_kind: str, action_id: str) -> bool:
+    return operator_approvals.close_pending_action(
+        action_id,
+        session_id=session_id,
+        action_kind=action_kind,
+        now_fn=_utcnow,
+        get_connection_fn=get_connection,
+    )
+
+
 def _mark_action_executed(action_id: str, *, result: dict[str, Any]) -> None:
     operator_approvals.mark_action_executed(
         action_id,

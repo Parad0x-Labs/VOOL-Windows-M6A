@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
+from core.effect_reconciliation import EffectOutcomeUnknown
 from core.execution.models import ToolIntentExecution, _tool_observation
 from core.local_operator_actions import OperatorActionIntent, dispatch_operator_action
 from core.operator.models import operator_step_executed
@@ -142,16 +143,38 @@ def _run_approved_preview(
             ),
             details={"action_id": action_id} if action_id else {},
         )
-    return dispatch_operator_action_fn(
-        replace(
-            operator_intent,
-            approval_requested=True,
-            action_id=action_id,
-            raw_text=f"approve move {action_id}",
-        ),
-        task_id=task_id,
-        session_id=session_id,
-    )
+    # The apply spends this preview on any outcome (Security Architect, 10 Nov): moved, it is marked
+    # executed by the handler; refused, conflicting or failed, it is closed here, so a later move in this
+    # chat is never answered from it and a typed "approve move <id>" never runs it; a broker reply lost
+    # mid-rename (the move may have happened) is recorded outcome_unproven and the error propagates.
+    from core import local_operator_actions as operator_actions
+
+    try:
+        applied = dispatch_operator_action_fn(
+            replace(
+                operator_intent,
+                approval_requested=True,
+                action_id=action_id,
+                raw_text=f"approve move {action_id}",
+            ),
+            task_id=task_id,
+            session_id=session_id,
+        )
+    except EffectOutcomeUnknown as unknown:
+        try:
+            operator_actions._mark_action_outcome_unproven(
+                action_id, result={"outcome_unknown": str(getattr(unknown, "reason", "") or type(unknown).__name__)}
+            )
+        except Exception:
+            # Not this worker's row to mark (another owner or state): if it is still pending, it is closed.
+            operator_actions._close_pending_action(session_id=session_id, action_kind="move_path", action_id=action_id)
+        raise
+    except BaseException:
+        operator_actions._close_pending_action(session_id=session_id, action_kind="move_path", action_id=action_id)
+        raise
+    if str(getattr(applied, "status", "") or "") != "executed":
+        operator_actions._close_pending_action(session_id=session_id, action_kind="move_path", action_id=action_id)
+    return applied
 
 
 #: Operator tools whose contract input is ``{"text": "the request as written"}``.
