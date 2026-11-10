@@ -316,10 +316,13 @@ def execute_authorized_runtime_tool(
     # gate, which would otherwise ask about the approved command again. Only this dispatch carries
     # it, and its handler may use it for the one command it derives from these arguments. Windows
     # only for 0.7.1: elsewhere the gate is unchanged.
+    # A machine move is narrower still: only the call that spent the live token on its card, never a
+    # task grant, since on Windows that Allow stands in for the move's OS prompt (captest R4-1b).
     approved_scope = (
         operator_approved_call(intent)
         if decision.effect is PermissionEffect.ALLOW
         and bool(getattr(decision, "exact_approval", False))
+        and (intent != "machine.move_path" or bool(getattr(decision, "token_spent", False)))
         and operator_approval_spend_applies()
         else contextlib.nullcontext()
     )

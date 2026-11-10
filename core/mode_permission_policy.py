@@ -111,6 +111,10 @@ class PermissionDecision:
     #: sandbox command gate reads it (via the authorized boundary) so the approved command runs
     #: instead of being asked about again. An earlier, already-spent grant does not set it.
     exact_approval: bool = False
+    #: True only when this call spent the operator's live approval token: the card answered for this
+    #: exact call. A task grant, even one bound to the call's fingerprint, does not set it. On Windows
+    #: a `machine.move_path` runs with this Allow as its consent and asks no OS prompt (captest R4-1b).
+    token_spent: bool = False
 
     @property
     def allowed(self) -> bool:
@@ -3058,7 +3062,9 @@ def _approval_effect_summary(actions: tuple[PermissionAction, ...]) -> str:
 
 def _affected_resources(arguments: dict[str, Any]) -> list[str]:
     resources: list[str] = []
-    for key in ("path", "paths", "cwd", "resource", "url", "recipient", "channel", "target"):
+    # A move names its two paths as `source` and `destination` (`machine.move_path`): without them its
+    # card read "No specific path reported" for a move between two named folders (captest R4-1b).
+    for key in ("path", "paths", "cwd", "source", "destination", "resource", "url", "recipient", "channel", "target"):
         value = arguments.get(key)
         if isinstance(value, list):
             resources.extend(str(item) for item in value[:12] if str(item).strip())
@@ -3083,6 +3089,8 @@ def _affected_resources_display(
     home. Placed under the chat workspace, the ask named "<workspace>/Documents/x.txt" while the
     write changed the real Documents folder.
     """
+    if str(intent or "").strip() == "machine.move_path":
+        return _machine_move_display(arguments)
     machine = str(intent or "").strip() in {"machine.write_file", "machine.ensure_directory"}
     root = _trusted_write_root(source_context).rstrip("/")
     raw = _affected_resources(arguments)
@@ -3111,6 +3119,21 @@ def _affected_resources_display(
                 displayed.append(f"{root}/{value}")
         else:
             displayed.append(value)
+    return displayed
+
+
+def _machine_move_display(arguments: dict[str, Any]) -> list[str]:
+    """A machine move's source and the final place it lands, each resolved as the mover resolves it
+    (`machine_file_ops._canonicalize`); a path that cannot be resolved is shown as given."""
+    from core.machine_file_ops import _canonicalize
+
+    displayed: list[str] = []
+    for key in ("source", "destination"):
+        value = str(arguments.get(key) or "").strip()
+        if not value:
+            continue
+        resolved = _canonicalize(value)
+        displayed.append(str(resolved) if resolved is not None else value)
     return displayed
 
 
@@ -3724,6 +3747,7 @@ def _decide_tool_call(
             # Only the call that spent the operator's live token: a re-emission riding an earlier,
             # already-spent grant is allowed by the controller but is not a fresh approval to run.
             exact_approval=bool(spent),
+            token_spent=bool(spent),
         ), meta
 
     with _LOCK:
