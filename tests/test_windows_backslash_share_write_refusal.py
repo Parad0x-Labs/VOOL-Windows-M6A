@@ -77,8 +77,12 @@ def test_the_front_door_answers_a_backslash_share_write_before_the_builder_or_mo
     assert found == {text: (path, kind, "write") for text, (path, kind) in TYPED_WRITES.items()}
 
 
-def test_off_windows_a_backslash_share_is_no_write_target() -> None:
+def test_off_windows_a_backslash_share_is_no_write_target(windows_host) -> None:
     from core.agent_runtime.write_root_honesty import non_local_write_target
+
+    # Off Windows: the rule's own seam off, so a Windows host (where it is on from the platform) runs
+    # this row as Linux and macOS do.
+    windows_host.off()
 
     assert {text: non_local_write_target(text) for text in TYPED_WRITES} == dict.fromkeys(TYPED_WRITES, ("", ""))
 

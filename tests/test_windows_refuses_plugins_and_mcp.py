@@ -132,6 +132,9 @@ def _phase1_gate(argv, **kwargs):
 
 def test_a_kernel_isolation_refusal_is_a_structured_plugin_result_not_an_exception(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(plugin_executor, "_WINDOWS_REFUSES_PLUGINS_AND_MCP", False, raising=False)
+    # Off Windows: the refusal also asks the sandbox backend's own platform check, which a Windows
+    # host answers from the platform; both switches off, as in test_other_hosts_see_no_refusal.
+    monkeypatch.setattr(job_runner, "_is_windows_platform", lambda: False)
     monkeypatch.setattr(plugin_executor, "_kernel_confinement_prefix", _phase1_gate)
     _no_process_may_start(monkeypatch)
     result = _run(_handler(tmp_path))  # used to raise KernelIsolationUnavailableError

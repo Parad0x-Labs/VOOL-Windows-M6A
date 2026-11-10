@@ -25,6 +25,7 @@ import pytest
 
 import core.runtime_state_protection as runtime_state_protection
 import core.windows_write_gate as gate
+from core import safe_git
 from core.execution import workspace_tools
 from core.execution.workspace_tools import apply_unified_diff_workspace
 
@@ -46,6 +47,10 @@ def _files(root: Path) -> dict[str, bytes]:
 @pytest.fixture(autouse=True)
 def off_windows(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(gate, "_IS_WINDOWS", False)
+    # Off Windows git runs: core/safe_git.py decides that from the platform itself, so on a Windows
+    # host the gate's seam alone would leave git refused (as tests/test_windows_gate_checks_where_git_writes.py
+    # `_as_before_0_7_1` does, turn both off).
+    monkeypatch.setattr(safe_git, "_REFUSE_GIT", False)
     monkeypatch.delenv(gate.ENV_VAR, raising=False)
 
 
