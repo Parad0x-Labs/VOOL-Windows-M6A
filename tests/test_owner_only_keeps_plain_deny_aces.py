@@ -295,6 +295,7 @@ def test_a_marks_file_with_a_foreign_allow_still_adds_nothing(home, tmp_path, mo
 # --- Mac and Linux are untouched -----------------------------------------------------------------
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX modes")
 def test_off_windows_the_posix_mode_check_is_unchanged(tmp_path, monkeypatch) -> None:
     def _no_windows_api():
         raise AssertionError("the Windows API is never asked off Windows")
