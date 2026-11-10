@@ -451,3 +451,125 @@ def test_only_an_exactly_approved_operator_move_is_run_from_its_fresh_preview(pr
     assert (machine["second"] / "hello.txt").read_bytes() == b"hi\n"
     assert second.mode != "tool_executed" and source.read_bytes() == b"again\n"  # the scope is spent once
     assert not (machine["unmarked"] / "hello.txt").exists()
+
+
+
+# --- an approved apply that comes back without a move closes its preview ----------------------------------
+# Security Architect condition on ffed811b/ccaa7c74: an approved apply that ends blocked or failed (the
+# broker's rename refused, a conflict at the apply, the stored path refused) used to leave its preview
+# `pending_approval`. Served, the next move still got its own preview (the executor gives each model call
+# its receipt key as `action_id`, so the handler never fell back to the chat's newest preview), but a
+# dispatch with no such id answered every later approved move in that chat "This chat holds another move
+# preview" from that stale row, and a typed "approve move <id>" could still run it later.
+
+
+def _preview_rows() -> list[dict]:
+    from storage.db import get_connection
+
+    conn = get_connection()
+    try:
+        rows = conn.execute("SELECT * FROM operator_action_requests WHERE action_kind = 'move_path'").fetchall()
+    finally:
+        conn.close()
+    return [dict(row) for row in rows]
+
+
+def _broker_refusing_once(monkeypatch) -> list[str]:
+    """A wired broker whose first rename is refused (`changed_since_check`), then moves by `os.replace`."""
+    from core.windows_broker import writes
+
+    refused: list[str] = []
+
+    def _rename(src: Path, dst: Path) -> None:
+        if not refused:
+            refused.append(str(src))
+            raise writes.Refused("changed_since_check", "the file changed since VOOL checked it")
+        os.replace(src, dst)
+
+    monkeypatch.setattr(writes, "routed", lambda: True)
+    monkeypatch.setattr(writes, "rename", _rename)
+    monkeypatch.setattr(writes, "ensure_directory", lambda folder: ())
+    return refused
+
+
+def _approved_operator_move(source: Path, folder: Path, session_id: str):
+    from core.execution.operator_tools import execute_operator_tool
+    from core.execution_gate import operator_approved_call
+
+    with operator_approved_call("operator.move_path"):
+        return execute_operator_tool("operator.move_path", {"source_path": str(source), "destination_path": str(folder)},
+                                     task_id="t-apply", session_id=session_id)
+
+
+def test_a_failed_approved_apply_leaves_no_preview_pending(profile_env, machine, monkeypatch) -> None:
+    refused = _broker_refusing_once(monkeypatch)
+    source = machine["first"] / "hello.txt"
+    source.write_bytes(b"hi\n")
+    failed = _approved_operator_move(source, machine["second"], "apply-fail")
+    assert refused and failed.status == "execution_failed" and source.exists(), failed
+    assert [row["status"] for row in _preview_rows()] == ["cancelled"]
+
+
+def test_a_second_approved_move_after_a_failed_apply_does_not_loop(profile_env, machine, monkeypatch) -> None:
+    _broker_refusing_once(monkeypatch)
+    source = machine["first"] / "hello.txt"
+    source.write_bytes(b"hi\n")
+    other = machine["first"] / "other.txt"
+    other.write_bytes(b"other\n")
+    _approved_operator_move(source, machine["second"], "apply-loop")
+    second = _approved_operator_move(other, machine["second"], "apply-loop")
+    assert "holds another move preview" not in second.response_text, second.response_text
+    assert second.status == "executed" and (machine["second"] / "other.txt").read_bytes() == b"other\n"
+    assert source.exists() and not (machine["second"] / "hello.txt").exists()  # the failed one is not re-run
+
+
+def test_a_typed_approval_of_the_failed_preview_runs_nothing(profile_env, machine, monkeypatch) -> None:
+    from core.local_operator_actions import OperatorActionIntent, dispatch_operator_action
+
+    _broker_refusing_once(monkeypatch)
+    source = machine["first"] / "hello.txt"
+    source.write_bytes(b"hi\n")
+    _approved_operator_move(source, machine["second"], "apply-typed")
+    (action_id,) = [row["action_id"] for row in _preview_rows()]
+    typed = dispatch_operator_action(
+        OperatorActionIntent(kind="move_path", approval_requested=True, action_id=action_id,
+                             raw_text=f"approve move {action_id}"),
+        task_id="t-typed", session_id="apply-typed",
+    )
+    assert not typed.ok and source.exists() and not (machine["second"] / "hello.txt").exists(), typed
+
+
+def test_an_outcome_unknown_apply_is_recorded_unproven_not_pending(profile_env, machine, monkeypatch) -> None:
+    from core.windows_broker import writes
+
+    def _lost(src: Path, dst: Path) -> None:
+        raise writes.OutcomeUnknown(reason="broker_reply_lost", detail="probe")
+
+    monkeypatch.setattr(writes, "routed", lambda: True)
+    monkeypatch.setattr(writes, "rename", _lost)
+    monkeypatch.setattr(writes, "ensure_directory", lambda folder: ())
+    source = machine["first"] / "hello.txt"
+    source.write_bytes(b"hi\n")
+    with pytest.raises(writes.OutcomeUnknown):
+        _approved_operator_move(source, machine["second"], "apply-unknown")
+    assert [row["status"] for row in _preview_rows()] == ["outcome_unproven"]
+
+
+def test_served_a_second_move_after_a_failed_approved_apply_lands(profile_env, machine, monkeypatch) -> None:
+    _broker_refusing_once(monkeypatch)
+    source = machine["first"] / "hello.txt"
+    source.write_bytes(b"hi\n")
+    other = machine["first"] / "other.txt"
+    other.write_bytes(b"other\n")
+    agent = _agent(monkeypatch, _Model(_move_call(source, machine["second"]), _move_call(other, machine["second"])))
+    text = TEXT.format(a=machine["first"], b=machine["second"])
+    _first, turn_id, token = _ask(agent, text, "r2-after-fail", machine["workspace"])
+    failed = _allow_and_resend(agent, text, "r2-after-fail", machine["workspace"], turn_id, token)
+    assert source.exists() and "couldn't move" in failed, failed
+    assert _pending_previews() == []
+    text2 = TEXT.replace("hello.txt", "other.txt").format(a=machine["first"], b=machine["second"])
+    _second, turn2, token2 = _ask(agent, text2, "r2-after-fail", machine["workspace"])
+    landed = _allow_and_resend(agent, text2, "r2-after-fail", machine["workspace"], turn2, token2)
+    assert "holds another move preview" not in landed, landed
+    assert not other.exists() and (machine["second"] / "other.txt").read_bytes() == b"other\n"
+    assert source.exists()
