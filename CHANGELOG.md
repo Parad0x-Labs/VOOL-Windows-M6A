@@ -11,13 +11,13 @@ Windows 11, 64-bit.
 ### Added
 - **Windows installer.** A per-user Inno Setup installer (`%LOCALAPPDATA%\Programs\VOOL`) that never asks for administrator rights. It bundles VOOL's own Python, the local-model runner and the Windows broker, so nothing else needs installing.
 - **Folders VOOL may change.** On Windows, VOOL changes files only inside folders you mark as disposable, in **Settings → Folders VOOL may change (Windows)**. Marking asks Windows to confirm the folder. A new mark is used after VOOL restarts; unmarking takes effect at once. Outside a marked folder, VOOL refuses a write before asking you to approve it. You can't mark a whole drive, your user folder itself, or a folder that holds your temp or app-data folders; mark a folder inside them instead.
-- **Offline by default.** VOOL for Windows works on this computer. It goes online only when you ask it to: to download its model, or when you turn on web access. VOOL's bundled Ollama answers only on this computer. VOOL never uses cloud models. If you run the bundled ollama command yourself, it can download a cloud model's listing, but VOOL refuses it and starts Ollama with cloud models turned off.
+- **Offline by default.** VOOL works offline by default. Ollama's cloud models are refused. A cloud provider is used only if you add your own key in Settings and turn it on. Otherwise VOOL goes online only when you ask it to: to download its model, or when you turn on web access. VOOL's bundled Ollama answers only on this computer. If you run the bundled ollama command yourself, it can download a cloud model's listing, but VOOL refuses it and starts Ollama with cloud models turned off.
 - **Owner-only secrets.** Secrets on disk are locked to your Windows account, and VOOL refuses to store one where that lock can't be set.
 - **No console windows.** Background tools no longer flash a window on every turn.
 
 ### Windows limits in 0.7.1
 - VOOL runs **Python scripts** (`python file.py`, `python -c`), **pytest**, **unittest** and **compileall** for you in its Windows sandbox. `python -m` is allowed only for pytest, unittest and compileall. Name the marked folder in your request (for example `run the tests in C:\Users\you\Projects\calc`), and VOOL works in that folder, after your approval.
-- It refuses **git, pip, npm, node and ruff**, does not start **plugins or MCP servers**, does not read **PDF or 7z** files, and refuses **cloud models** and any other program. It refuses these rather than run them unprotected. To use the code tools, run VOOL under WSL2/Linux.
+- It refuses **git, pip, npm, node and ruff**, does not start **plugins or MCP servers**, does not read **PDF or 7z** files, and refuses **Ollama's cloud models** and any other program. It refuses these rather than run them unprotected. To use the code tools, run VOOL under WSL2/Linux.
 - It does not clean temp files. A patch is applied only when it matches the file exactly; otherwise it is refused and nothing changes.
 - **Network locations are refused.** VOOL refuses paths that name a network share or a device, and never writes to a mapped network drive.
 - The installer is **not code-signed yet**. SmartScreen shows **Windows protected your PC**; check the file against `SHA256SUMS` first, then use **More info → Run anyway**.
@@ -28,6 +28,9 @@ Windows 11, 64-bit.
 - "create y.txt in .." asked from a subfolder of a marked folder writes y.txt into that subfolder, not its parent. It stays inside your marked folders.
 - Code tasks can stall when the model runs past its deadline. Plain python and pytest runs work.
 - If you've set OLLAMA_HOST yourself, VOOL says its model isn't certified and won't chat. Unset OLLAMA_HOST and restart VOOL.
+- A move to a network share gets a vague answer instead of a plain refusal; nothing is opened or moved.
+- Asking in chat to download a cloud model gets a vague answer; nothing is downloaded.
+- Give full paths when you ask VOOL to move a file.
 - Minor: `vool://` links, focus on a second launch, the `/stopall` text, reminders and the rules list.
 
 ### Planned
