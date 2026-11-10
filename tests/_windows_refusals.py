@@ -294,3 +294,20 @@ class RefusedWorld(dict):
     def __missing__(self, key: str):
         raise RuntimeError(f"the fixture's plugin activation was refused ({PLUGIN_REFUSAL!r}), so there is no "
                            f"{key!r}: this row has no Windows expectation of its own")
+
+
+def cloud_models_refused() -> bool:
+    """Whether this process refuses Ollama cloud models (Windows in 0.7.1, or the seam
+    ollama_cloud_models.CLOUD_REFUSAL_ACTIVE forced on)."""
+    from core import ollama_cloud_models
+
+    return ollama_cloud_models.active()
+
+
+def watch_cloud_model(model: str, *roots: Path) -> contextlib.AbstractContextManager[Watch]:
+    """Around a call that names the Ollama cloud model `model`: where cloud models are refused, record
+    every process start and any change under `roots`; the answer must carry the refusal sentence."""
+    from core import ollama_cloud_models
+
+    return _watch(cloud_models_refused(), ollama_cloud_models.refusal_text(model), "", "Ollama cloud model",
+                  lambda _args, _kwargs: True, tuple(Path(r) for r in roots))
