@@ -1114,3 +1114,102 @@ def pytest_collection_modifyitems(config, items):
     from tests import _windows_cloud_optin
 
     _windows_cloud_optin.apply(items)
+
+
+# ---- DIAGNOSTIC BRANCH ONLY (never merged): cloud-off-before-opt-in + openrouter/cloud_/routing_mode/provider files on windows-latest,
+# with a before/after listing of the user profile and the checkout to count touches outside the test folders.
+import os as _diag_os
+
+_DIAG_KEEP = (
+    'tests/test_a11_minimum_product_truth.py::test_confirmed_paid_pin_is_allowed_and_reported',
+    'tests/test_a11_minimum_product_truth.py::test_unconfirmed_paid_pin_refused_before_persist',
+    'tests/test_a11_minimum_product_truth.py::test_unknown_pricing_row_fails_closed_as_paid_status_unknown',
+    'tests/test_a11_pass002_authority.py::test_case_spacing_and_prefix_variants_cannot_dodge_the_paid_decision',
+    'tests/test_a11_pass002_authority.py::test_nl_switch_intent_cannot_self_certify_a_paid_model',
+    'tests/test_a11_pass002_authority.py::test_paid_pin_refused_on_every_surface_identically',
+    'tests/test_app_language_candidate.py::test_the_bootstrap_applies_aria_labels_client_side',
+    'tests/test_chat_composer_controls.py::test_dead_local_model_tiers_are_gone',
+    'tests/test_chat_page_dead_controls.py::test_no_fake_paid_presets_and_auto_is_free_only',
+    'tests/test_effect_identity_scope_r2b1.py::test_cloud_connection_probe_owns_its_fetch',
+    'tests/test_effect_identity_scope_r2b1.py::test_kernel_repl_model_call_owns_its_fetch',
+    'tests/test_effect_identity_scope_r2b1.py::test_model_catalog_refresh_owns_its_fetch',
+    'tests/test_explicit_pin_authority_p0.py::test_case1_paid_pin_succeeds_only_the_selected_model_runs',
+    'tests/test_fresh_install_network_defaults.py::test_saved_cloud_opt_in_does_not_enable_background_peers[ask-False]',
+    'tests/test_fresh_install_network_defaults.py::test_saved_cloud_opt_in_does_not_enable_background_peers[auto-False]',
+    'tests/test_fresh_install_network_defaults.py::test_saved_cloud_opt_in_does_not_enable_background_peers[off-True]',
+    'tests/test_load_bearing_guard_regressions.py::test_cloud_adapter_still_fails_closed_when_the_built_payload_claims_tools_it_was_never_offered',
+    'tests/test_local_only_zero_public_egress.py::test_no_public_url_can_be_opened_in_local_only[https://api.openai.com/v1/chat/completions]',
+    'tests/test_local_only_zero_public_egress.py::test_no_public_url_can_be_opened_in_local_only[https://openrouter.ai/api/v1/chat/completions]',
+    'tests/test_model_capability_catalog.py::test_a_cache_past_the_freshness_window_is_reported_stale_so_a_wrong_budget_is_traceable',
+    'tests/test_model_capability_catalog.py::test_an_openrouter_lane_reports_the_published_window_and_cap_instead_of_the_hardcoded_128k',
+    'tests/test_model_capability_catalog.py::test_an_unpublished_cap_is_zero_and_a_real_cap_of_4096_is_not_confused_with_it',
+    'tests/test_model_capability_catalog.py::test_the_bare_openrouter_lane_name_resolves_the_same_as_the_byok_one',
+    'tests/test_model_radar_api.py::test_force_catalog_refresh_feeds_the_radar',
+    'tests/test_model_radar_api.py::test_radar_failure_never_breaks_the_refresh',
+    'tests/test_openai_compatible_adapter.py::test_cloud_stream_requests_include_usage_and_captures_terminal_usage',
+    'tests/test_openai_compatible_adapter.py::test_openrouter_byok_free_lane_retries_one_malformed_turn_then_accepts_native_call',
+    'tests/test_openai_compatible_adapter.py::test_openrouter_byok_paid_lane_fails_loudly_without_repeating_malformed_turn',
+    'tests/test_openai_compatible_adapter.py::test_openrouter_byok_preserves_valid_native_batch_for_unified_executor',
+    'tests/test_openai_compatible_adapter.py::test_openrouter_byok_uses_native_tools_and_returns_canonical_intent',
+    'tests/test_owner_pick_paid_reservation.py::test_a_granted_reservation_is_settled_not_left_standing',
+    'tests/test_owner_pick_paid_reservation.py::test_a_paid_call_is_recorded_in_the_usage_meter',
+    'tests/test_owner_pick_paid_reservation.py::test_invariant_5_policy_off_blocks_auto_but_not_an_explicit_pick',
+    'tests/test_owner_pick_paid_reservation.py::test_invariant_6_the_free_lane_still_routes_without_a_reservation',
+    'tests/test_owner_pick_paid_reservation.py::test_legacy_zero_call_cap_does_not_disable_paid_selection',
+    'tests/test_owner_pick_paid_reservation.py::test_ordinary_paid_answer_emits_one_joinable_reservation_and_settlement_receipt[False]',
+    'tests/test_owner_pick_paid_reservation.py::test_ordinary_paid_answer_emits_one_joinable_reservation_and_settlement_receipt[True]',
+    'tests/test_owner_pick_paid_reservation.py::test_owner_local_explicit_pick_reaches_the_provider',
+    'tests/test_required_tools_final_boundary.py::test_cloud_adapter_fails_closed_when_neither_native_nor_fallback_available',
+    'tests/test_required_tools_final_boundary.py::test_cloud_adapter_fails_closed_when_tools_required_but_none_offered',
+    'tests/test_required_tools_final_boundary.py::test_cloud_adapter_still_serves_a_normal_tool_intent_call',
+    'tests/test_settings_keys_test_and_model_picker.py::test_models_can_be_picked_and_pinned_from_settings_including_the_paid_handshake',
+    'tests/test_v050_auto_local_only_mode.py::TestNegativeControls::test_the_cloud_transport_works_normally_outside_the_ambient_scope',
+    'tests/test_vool_api_server.py::test_vool_chat_page_is_self_contained_and_wired',
+    'tests/test_windows_no_cloud_contact_before_opt_in.py::',
+    'tests/test_local_only_zero_public_egress.py::',
+)
+_DIAG_SKIP_PARTS = ("__pycache__", ".pytest_cache", ".ruff_cache")
+
+
+def _diag_listing():
+    roots = [_diag_os.path.expanduser("~"), str(_diag_os.path.dirname(_diag_os.path.dirname(_diag_os.path.abspath(__file__))))]
+    temp = _diag_os.path.normcase(_diag_os.path.abspath(_diag_os.environ.get("TEMP", "/tmp")))
+    seen = {}
+    for root in roots:
+        for here, dirs, names in _diag_os.walk(root):
+            norm = _diag_os.path.normcase(_diag_os.path.abspath(here))
+            if norm.startswith(temp) or any(p in here for p in _DIAG_SKIP_PARTS):
+                dirs[:] = []
+                continue
+            for name in names + [d + _diag_os.sep for d in dirs]:
+                path = _diag_os.path.join(here, name)
+                try:
+                    st = _diag_os.lstat(path.rstrip(_diag_os.sep))
+                except OSError:
+                    continue
+                seen[path] = (st.st_size, st.st_mtime_ns)
+    return seen
+
+
+def pytest_collection_modifyitems(session, config, items):
+    from tests import _windows_cloud_optin as _diag_optin
+
+    _diag_optin.apply(items)  # the car's own hook, which this diagnostic one would otherwise shadow
+    keep = [item for item in items if item.nodeid.replace("\\", "/").startswith(_DIAG_KEEP)]
+    deselected = [item for item in items if item not in keep]
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+    items[:] = keep
+    config._diag_before = _diag_listing() if keep else None
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    before = getattr(config, "_diag_before", None)
+    if before is None:
+        return
+    after = _diag_listing()
+    changed = sorted(p for p in set(before) | set(after) if before.get(p) != after.get(p))
+    terminalreporter.write_line(f"DIAG-TOUCH count={len(changed)} listed={len(after)}")
+    for path in changed[:200]:
+        kind = "new" if path not in before else ("gone" if path not in after else "changed")
+        terminalreporter.write_line(f"DIAG-TOUCH {kind} {path}")
