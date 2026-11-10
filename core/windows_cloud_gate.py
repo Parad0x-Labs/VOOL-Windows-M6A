@@ -206,6 +206,29 @@ def _host(url: str) -> str:
     return str(urlsplit(str(url or "")).hostname or "").lower().rstrip(".")
 
 
+_CATALOG_LANE: ContextVar[str] = ContextVar("windows_cloud_catalog_lane", default="")
+
+
+@contextlib.contextmanager
+def catalog_lane(base_url: str) -> Iterator[None]:
+    """Scope of one provider lane's cached-catalog lookup: names the endpoint that lane sends to,
+    so ``openrouter_catalog.cached_catalog_row`` can tell a lane on this machine from a cloud one."""
+    token = _CATALOG_LANE.set(str(base_url or "").strip())
+    try:
+        yield
+    finally:
+        _CATALOG_LANE.reset(token)
+
+
+def lane_is_off_cloud(base_url: str = "") -> bool:
+    """A provider lane whose endpoint is named and is not a cloud provider (this machine, the
+    LAN, or any host the door does not count as cloud) -- the same host test the dispatch uses.
+    With no argument, the lane named by the enclosing ``catalog_lane`` scope. An empty base URL
+    is never off-cloud."""
+    url = str(base_url or "").strip() or _CATALOG_LANE.get()
+    return bool(url) and not is_cloud_provider_request(url)
+
+
 def door_refusal(url: str, provider_id: str = "", keyed_or_keyless: str = "") -> CloudContactRefused | None:
     """The outbound door's backstop: the refusal to raise for this request, or None."""
     if not active() or not is_cloud_provider_request(url, provider_id):

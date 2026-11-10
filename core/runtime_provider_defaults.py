@@ -1052,7 +1052,8 @@ def _register_openrouter_manifest(
     # resolution reads; without them the persisted manifest declares nothing and a reasoning
     # model's 240–520-token chat ceiling is spent entirely on reasoning (measured 2026-09-16:
     # empty content, finish_reason length, no answer published).
-    catalog_facts = _openrouter_catalog_facts(model_name)
+    base_url = _env_first(env, *_OPENROUTER_BASE_URL_ENV_NAMES) or _DEFAULT_OPENROUTER_BASE_URL
+    catalog_facts = _openrouter_catalog_facts(model_name, base_url=base_url)
     if (
         existing
         and existing.enabled
@@ -1063,7 +1064,6 @@ def _register_openrouter_manifest(
         and _catalog_facts_stamped(existing, catalog_facts)
     ):
         return existing.provider_id
-    base_url = _env_first(env, *_OPENROUTER_BASE_URL_ENV_NAMES) or _DEFAULT_OPENROUTER_BASE_URL
     runtime_config: dict[str, object] = {
         "base_url": base_url,
         "api_path": "/chat/completions",
@@ -1127,7 +1127,7 @@ def _register_openrouter_manifest(
     return manifest.provider_id
 
 
-def _openrouter_catalog_facts(model_name: str) -> dict[str, Any]:
+def _openrouter_catalog_facts(model_name: str, *, base_url: str = "") -> dict[str, Any]:
     """The cached catalog row's facts for one byok model, or {} when nothing is known.
 
     Cache-only by construction (`cached_catalog_row` never refreshes), so a boot-time or
@@ -1138,7 +1138,10 @@ def _openrouter_catalog_facts(model_name: str) -> dict[str, Any]:
     try:
         from core.openrouter_catalog import cached_catalog_row
 
-        row = cached_catalog_row(model_name)
+        from core.windows_cloud_gate import catalog_lane
+
+        with catalog_lane(base_url):
+            row = cached_catalog_row(model_name)
     except Exception:
         return {}
     if row is None:

@@ -1437,8 +1437,10 @@ class OpenAICompatibleAdapter(ModelAdapter):
         if self._is_openrouter_lane():
             try:
                 from core.openrouter_catalog import cached_catalog_row
+                from core.windows_cloud_gate import catalog_lane
 
-                row = cached_catalog_row(model)
+                with catalog_lane(str(self.manifest.runtime_config.get("base_url") or "")):
+                    row = cached_catalog_row(model)
             except Exception:
                 row = None
             if row is not None:
@@ -1460,8 +1462,10 @@ class OpenAICompatibleAdapter(ModelAdapter):
         if self._is_openrouter_lane():
             try:
                 from core.openrouter_catalog import cached_catalog_row
+                from core.windows_cloud_gate import catalog_lane
 
-                row = cached_catalog_row(str(self.manifest.model_name or ""))
+                with catalog_lane(str(self.manifest.runtime_config.get("base_url") or "")):
+                    row = cached_catalog_row(str(self.manifest.model_name or ""))
             except Exception:
                 row = None
             if row is not None:
