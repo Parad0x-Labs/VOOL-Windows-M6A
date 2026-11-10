@@ -1248,6 +1248,9 @@ def _diag_listing():
 
 
 def pytest_collection_modifyitems(session, config, items):
+    from tests import _windows_cloud_optin as _diag_optin
+
+    _diag_optin.apply(items)  # the car's own hook, which this diagnostic one would otherwise shadow
     keep = [item for item in items if item.nodeid.replace("\\", "/").startswith(_DIAG_KEEP)]
     deselected = [item for item in items if item not in keep]
     if deselected:
