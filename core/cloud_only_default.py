@@ -207,6 +207,13 @@ def no_route_hint() -> str:
             else f"`{shortfall['model']}` needs about {shortfall['required_gb']:.1f} GB of memory and this computer "
             f"can spare about {shortfall['available_gb']:.1f} GB for it, so I didn't start it."
         )
+        if has_cloud and graphics:
+            # The graphics card is too small for THIS model, not for every local model: a cloud
+            # model is one way to an answer, not the only one.
+            return (
+                f"{lead} Download a smaller local model in Setup under \u201cWhere should it think?\u201d, "
+                "or pick a cloud model in the model selector."
+            )
         if has_cloud:
             return (
                 f"{lead} Pick a cloud model in the model selector, or save one in Setup under "

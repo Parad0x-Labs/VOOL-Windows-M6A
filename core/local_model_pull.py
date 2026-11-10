@@ -117,7 +117,15 @@ def _register(model: str) -> None:
     from core.model_registry import ModelRegistry
     from core.runtime_provider_defaults import register_installed_local_model
 
-    register_installed_local_model(ModelRegistry(), model_tag=model)
+    registry = ModelRegistry()
+    register_installed_local_model(registry, model_tag=model)
+    # Boot stamps Ollama's measured size only on the lanes it saw at boot; size this one now, or
+    # every turn judges it by the parameter estimate until VOOL restarts (Windows, RTX 4060 8 GB:
+    # qwen3:8b refused at 7.5 GB estimated, against 6.37 GB measured and 6.8 GB of graphics memory).
+    from core.web.api.runtime import record_installed_ollama_artifact_sizes
+
+    with contextlib.suppress(Exception):
+        record_installed_ollama_artifact_sizes(registry)
 
 
 def _audit(model: str, size_gb: float, outcome: str, detail: str = "") -> None:

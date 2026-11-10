@@ -176,6 +176,14 @@ def _rank_provider_candidates_internal(
         fitting: list[ModelProviderManifest] = []
         for manifest in base_ranked:
             capability = provider_capability_truth_for_manifest(manifest)
+            if capability.hardware_fit_reason == "model_exceeds_hardware_budget":
+                # Judged by the parameter estimate only because nothing stamped Ollama's measured
+                # size on the lane yet (a model Setup downloaded after boot, or a boot whose
+                # Ollama was not answering): read the size now, so this turn and boot agree.
+                measured = _stamp_measured_ollama_size(manifest)
+                if measured is not None:
+                    manifest = measured
+                    capability = provider_capability_truth_for_manifest(manifest)
             if not capability.hardware_fit_reason:
                 fitting.append(manifest)
                 continue
@@ -876,6 +884,54 @@ def _manifest_is_pinned(
     if not model or model != str(manifest.model_name or "").strip():
         return False
     return not provider or provider == str(manifest.provider_name or "").strip()
+
+
+_MEASURED_SIZE_MISS_SECONDS = 30.0
+_measured_size_misses: dict[tuple[str, str], float] = {}
+
+
+def _stamp_measured_ollama_size(manifest: ModelProviderManifest) -> ModelProviderManifest | None:
+    """Stamp Ollama's ``/api/tags`` size on an unmeasured ``ollama-local`` lane; the stamped lane, or None.
+
+    Only for a lane with no ``artifact_size_gb``, only against the Ollama on this computer, with a
+    short timeout. A miss (Ollama down, model not listed, no size) is remembered for a few seconds
+    so a refused turn does not ask Ollama again on every ranking pass.
+    """
+    if str(manifest.provider_name or "").strip() != "ollama-local":
+        return None
+    if _float_or_zero((manifest.metadata or {}).get("artifact_size_gb")) > 0.0:
+        return None
+    try:
+        import time
+        from urllib.parse import urlsplit
+
+        from core.local_ollama_inventory import installed_ollama_model_inventory
+        from core.ollama_endpoint import ollama_base_url
+        from core.runtime_guard import is_loopback_host
+        from core.runtime_provider_defaults import record_ollama_artifact_sizes
+
+        base_url = ollama_base_url()
+        if not is_loopback_host(str(urlsplit(base_url).hostname or "")):
+            return None
+        key = (base_url, str(manifest.model_name or "").strip())
+        now = time.monotonic()
+        if now - _measured_size_misses.get(key, -_MEASURED_SIZE_MISS_SECONDS) < _MEASURED_SIZE_MISS_SECONDS:
+            return None
+        inventory = [
+            item
+            for item in installed_ollama_model_inventory(base_url=base_url, timeout_seconds=1.5)
+            if str(getattr(item, "name", "") or "").strip() == key[1]
+        ]
+        registry = ModelRegistry()
+        record_ollama_artifact_sizes(registry, inventory)
+        stamped = registry.get_manifest("ollama-local", key[1])
+        if stamped is None or _float_or_zero((stamped.metadata or {}).get("artifact_size_gb")) <= 0.0:
+            _measured_size_misses[key] = now
+            return None
+    except Exception:
+        return None
+    logger.info("Hardware fit: recorded Ollama's measured size for %s before judging this turn.", manifest.provider_id)
+    return stamped
 
 
 def _local_footprint_is_guessed(manifest: ModelProviderManifest) -> bool:
