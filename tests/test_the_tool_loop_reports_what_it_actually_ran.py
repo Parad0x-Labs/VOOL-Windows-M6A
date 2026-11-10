@@ -642,6 +642,26 @@ def test_a_first_round_refusal_with_no_steps_keeps_the_typed_rejection(windows_s
     assert router.synthesis_calls == 0
 
 
+def test_a_held_preview_alone_is_not_tool_output_so_the_followup_ending_does_not_fire() -> None:
+    """Security Architect (followup-ends review): a resumed turn that holds only the approval
+    card's preview step has run nothing. The follow-up ending needs at least one step that ran, so
+    with only a preview the old path is kept and "... requires approval ..." is never printed as
+    a command's output."""
+    from core.agent_runtime.research_tool_loop_facade import steps_that_ran
+
+    preview = {
+        "tool_name": "sandbox.run_command", "mode": "tool_preview", "status": "pending_approval",
+        "ok": True, "response_text": "Manual mode requires approval for this exact action.",
+    }
+    ran = {"tool_name": "sandbox.run_command", "ok": True, "status": "executed", "response_text": "ran"}
+
+    assert steps_that_ran([preview]) == []
+    assert steps_that_ran([{**preview, "status": "pending_approval", "mode": ""}]) == []
+    assert steps_that_ran([{**preview, "mode": "tool_preview", "status": ""}]) == []
+    assert steps_that_ran([preview, ran]) == [ran]
+    assert steps_that_ran([]) == [] and steps_that_ran(None) == []
+
+
 def test_a_followup_failure_never_lifts_an_unfinished_code_task_to_done() -> None:
     """`enforce_code_task_completion` only ever demotes: a follow-up-failed result over a coding
     step whose task is not completed is reported as incomplete, not done."""
