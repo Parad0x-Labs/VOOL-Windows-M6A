@@ -1854,6 +1854,12 @@ class MemoryFirstRouter:
             request.tools_required = True
             # Which offer this request carries: the same digest the prompt catalog's offer has.
             request.metadata["tool_offer_fingerprint"] = offer.fingerprint
+            # The loop marks a Windows round that follows a step that ran (core.execution_gate);
+            # the adapter never sees the source context, so the mark travels on the request.
+            from core.execution_gate import TOOL_FOLLOWUP_AFTER_RUN_KEY
+
+            if (source_context or {}).get(TOOL_FOLLOWUP_AFTER_RUN_KEY):
+                request.metadata[TOOL_FOLLOWUP_AFTER_RUN_KEY] = True
             # A later contextual follow-up in the same session inherits this
             # turn's families instead of receiving zero tools.
             note_family_offer(

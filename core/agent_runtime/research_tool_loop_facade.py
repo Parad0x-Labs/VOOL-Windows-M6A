@@ -1441,6 +1441,15 @@ class ResearchToolLoopFacadeMixin:
                         arguments=redact_tool_argument_data(tool_payload.get("arguments")),
                     )
                 else:
+                    # Windows: a round that follows a step that ran is the model's follow-up, and a
+                    # plain-text answer on it is the turn's answer (core.execution_gate).
+                    from core.execution_gate import (
+                        TOOL_FOLLOWUP_AFTER_RUN_KEY,
+                        operator_approval_spend_applies,
+                    )
+
+                    if steps_that_ran(executed_steps) and operator_approval_spend_applies():
+                        loop_source_context[TOOL_FOLLOWUP_AFTER_RUN_KEY] = True
                     tool_decision = self.memory_router.resolve_tool_intent(
                         task=task,
                         classification=classification,
