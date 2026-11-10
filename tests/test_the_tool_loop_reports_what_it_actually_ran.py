@@ -81,8 +81,10 @@ class _Router:
         self.decision_for_round = decision_for_round
         self.calls = 0
         self.contexts: list[dict] = []
+        self.synthesis_calls = 0
 
     def resolve(self, **_kwargs):
+        self.synthesis_calls += 1
         return SimpleNamespace(
             output_text="Grounded synthesis over the tool results.",
             provider_id="p", used_model=True, confidence=0.8, trust_score=0.8,
@@ -98,6 +100,11 @@ class _Router:
         if self.decision_for_round is not None:
             override = self.decision_for_round(index)
             if override is not None:
+                rejection = getattr(override, "_rejection", None)
+                if rejection and isinstance(kwargs.get("source_context"), dict):
+                    # What the real router writes on the shared context when it refuses a call
+                    # (core/memory_first_router.py, the ToolCallParseError branch).
+                    kwargs["source_context"]["last_tool_call_rejection"] = dict(rejection)
                 return override
         if index < len(self.scripts):
             batch = self.scripts[index]
@@ -528,6 +535,67 @@ def test_a_timeout_mid_turn_keeps_the_steps_that_already_ran() -> None:
     assert len(_steps(result)) == 2, "a provider timeout discarded the work that had already run"
     assert "UNIQ_00" in blob and "UNIQ_01" in blob
     assert (result.get("details") or {}).get("loop_stop_reason") == "provider_did_not_answer"
+
+
+def _malformed_followup_decision(_round_index: int) -> ModelExecutionDecision:
+    """What a local model that answers in prose where a tool call is required produces.
+
+    Ollama ignores `tool_choice: required`; after a tool result qwen3:8b writes its answer as prose,
+    the adapter raises `MalformedToolArgumentsError("required native tool call is missing")` and the
+    router returns no decision, with the refusal recorded on the context (Windows captest, calc.py).
+    """
+
+    reason = "malformed_tool_arguments:required native tool call is missing"
+    decision = ModelExecutionDecision(
+        source="selected_model_blocked", task_hash="h", used_model=False,
+        structured_output=None, provider_id=None, validation_state="not_run",
+        details={"reason": reason, "block_reason": reason, "model_was_attempted": True},
+    )
+    object.__setattr__(decision, "_rejection", {
+        "error_kind": "malformed_tool_arguments", "provider_id": "ollama-local", "resolution": {},
+    })
+    return decision
+
+
+def test_a_malformed_followup_after_a_run_ends_with_the_tool_output() -> None:
+    """A step ran, then the model's follow-up was refused as malformed. The turn ends on the tool's
+    own output and says the follow-up failed; it does not ask the same failing model to write the
+    answer (on a CPU-only machine that call may take its whole 720 s timeout)."""
+
+    scripts = [[_call("workspace.read_file", path="f00.py")], [_call("workspace.read_file", path="f01.py")]]
+    result, router, _events, _ws = _drive(
+        scripts, decision_for_round=lambda index: _malformed_followup_decision(index) if index >= 2 else None
+    )
+
+    assert router.synthesis_calls == 0, "the model that just failed was asked again to write the answer"
+    response = str(result.get("response") or "")
+    assert "UNIQ_00" in response and "UNIQ_01" in response, response
+    assert "follow-up step failed" in response, response
+    assert "malformed_tool_arguments" in response, response
+    assert (result.get("details") or {}).get("loop_stop_reason") == "provider_did_not_answer"
+    assert result.get("status") != "multi_step_executed", result.get("status")
+    assert len(_steps(result)) == 2
+
+
+def test_a_followup_timeout_after_a_run_does_not_call_the_model_again() -> None:
+    """Same, with the provider timing out on the follow-up (no reply, a recorded cause)."""
+
+    def timed_out(index: int):
+        if index < 2:
+            return None
+        reason = "provider timeout: Read timed out (read timeout=720.0)"
+        return ModelExecutionDecision(
+            source="selected_model_blocked", task_hash="h", used_model=False,
+            structured_output=None, provider_id=None, validation_state="not_run",
+            details={"reason": reason, "block_reason": reason, "model_was_attempted": True},
+        )
+
+    scripts = [[_call("workspace.read_file", path="f00.py")], [_call("workspace.read_file", path="f01.py")]]
+    result, router, _events, _ws = _drive(scripts, decision_for_round=timed_out)
+
+    assert router.calls == 3, router.calls  # one selection round per round, and no extra
+    assert router.synthesis_calls == 0, "the model was asked again after it did not answer"
+    assert "follow-up step failed" in str(result.get("response") or "")
 
 
 # ======================================================================================
