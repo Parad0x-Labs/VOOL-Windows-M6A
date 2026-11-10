@@ -802,6 +802,10 @@ class OpenAICompatibleAdapter(ModelAdapter):
             # would cut a block it cannot see the end of.
             output_text = strip_reasoning_block(_extract_ollama_chat_text(data))
         if bool(getattr(request, "tools_required", False)) and native_tools and not native_tool_calls:
+            native_tool_calls, output_text = _followup_prose_as_respond_direct(
+                request, definitions=native_tools, output_text=output_text
+            )
+        if bool(getattr(request, "tools_required", False)) and native_tools and not native_tool_calls:
             # SWITCHBOARD repair: `_extract_ollama_tool_calls` deliberately never raises on an
             # absent/empty `tool_calls` array (see its own docstring) -- a local turn that carries
             # no tools is an ordinary conversational one, and elsewhere that silence is correct.
@@ -2628,6 +2632,40 @@ def _extract_ollama_tool_call_text(
     return json.dumps(
         {"intent": calls[0].intent, "arguments": dict(calls[0].arguments)}, ensure_ascii=False
     )
+
+
+def _followup_prose_as_respond_direct(
+    request: ModelRequest,
+    *,
+    definitions: tuple[CloudToolDefinition, ...],
+    output_text: str,
+) -> tuple[tuple[CloudToolCall, ...], str]:
+    """A Windows follow-up round's plain-text answer, as the `respond.direct` it stands for.
+
+    Ollama ignores `tool_choice: required`: after a tool result qwen3:8b answers in prose, and the
+    check after this refused that answer as "required native tool call is missing" (captest,
+    calc.py: the job ran in seconds, the eight-minute answer was thrown away). Only on a round the
+    tool loop marked as following a step that ran (`TOOL_FOLLOWUP_AFTER_RUN_KEY`, Windows only),
+    only when `respond.direct` was offered, and only for non-empty text (the reasoning block is
+    already stripped). Otherwise nothing changes and the check after this still fails closed.
+    """
+
+    from core.execution_gate import TOOL_FOLLOWUP_AFTER_RUN_KEY, operator_approval_spend_applies
+
+    message = str(output_text or "").strip()
+    if not message or not dict(getattr(request, "metadata", None) or {}).get(TOOL_FOLLOWUP_AFTER_RUN_KEY):
+        return (), output_text
+    # The seam again, here: a stray or forwarded mark never turns the repair on off Windows.
+    if not operator_approval_spend_applies():
+        return (), output_text
+    respond = next((item for item in definitions if item.intent == "respond.direct"), None)
+    if respond is None:
+        return (), output_text
+    call = CloudToolCall(call_id="", intent="respond.direct", name=respond.name, arguments={"message": message})
+    request.metadata["tool_call_resolution"] = ToolCallResolution(
+        "repaired", (call,), "prose", repair_applied="followup_prose_as_respond_direct"
+    ).as_metadata()
+    return (call,), canonical_intent_text(call)
 
 
 def _ollama_tool_calls_with_recovery(

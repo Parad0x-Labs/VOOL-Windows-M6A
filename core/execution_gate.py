@@ -93,6 +93,13 @@ def operator_approval_spend_applies() -> bool:
         return False
 
 
+#: Set on the tool loop's context for a model round that follows a step that RAN, on Windows only
+#: (the seam above). The round's request carries it in its metadata; the Ollama lane, which ignores
+#: `tool_choice: required`, then takes a plain-text reply on that round as the `respond.direct` it
+#: stands for instead of refusing it (captest, calc.py: qwen3:8b wrote the answer as prose).
+TOOL_FOLLOWUP_AFTER_RUN_KEY = "tool_followup_after_run"
+
+
 def claim_operator_approved_call(intents: frozenset[str] | set[str]) -> bool:
     """True once, for the handler of the approved call; False for anything else or a second claim."""
     if not operator_approval_spend_applies():
