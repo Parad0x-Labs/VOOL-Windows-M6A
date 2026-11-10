@@ -19,7 +19,7 @@ Windows needs 16 GB of RAM. With less, VOOL refuses to load its local model rath
   turns cloud on; for other providers, also choose an Auto fallback model or pin a paid
   model in Settings. To turn cloud off again, type `cloud off` (it also clears a pinned paid
   model) or remove your key in Settings.
-* **Online add-on scan.** The add-on store's **Scan with Eyebrow** step (**Download and scan** for an external add-on) is an online service: it calls api.eyebrow.cc, and runs only after you add an Eyebrow key in Settings → API Keys and agree to the scan.
+* **Online add-on scan.** The add-on store's **Scan with Eyebrow** step (**Download and scan** for an external add-on) is an online service: it downloads the add-on from its source (for an external add-on) and calls api.eyebrow.cc, and runs only after you add an Eyebrow key in Settings → API Keys and agree to the scan.
 * **Windows limits.** VOOL runs Python scripts, pytest, unittest and compileall in its Windows
   sandbox. It refuses git, pip, npm, node, ruff and any other program, and does not start plugins
   or MCP servers or read PDF or 7z files. Use WSL2/Linux for those. The full list is on the

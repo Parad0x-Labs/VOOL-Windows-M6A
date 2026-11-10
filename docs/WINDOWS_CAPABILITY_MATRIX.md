@@ -14,7 +14,7 @@ Windows needs 16 GB of RAM. With less, VOOL refuses to load its local model rath
 
 VOOL works offline by default. Ollama's cloud models are refused. A cloud provider is used only after you add your own key in Settings. Saving an OpenRouter key turns cloud on; for other providers, also choose an Auto fallback model or pin a paid model in Settings. To turn cloud off again, type `cloud off` (it also clears a pinned paid model) or remove your key in Settings.
 
-The add-on store's **Scan with Eyebrow** step (**Download and scan** for an external add-on) is an online service: it calls api.eyebrow.cc, and runs only after you add an Eyebrow key in Settings → API Keys and agree to the scan.
+The add-on store's **Scan with Eyebrow** step (**Download and scan** for an external add-on) is an online service: it downloads the add-on from its source (for an external add-on) and calls api.eyebrow.cc, and runs only after you add an Eyebrow key in Settings → API Keys and agree to the scan.
 
 ## KAS Windows validation handoff
 
