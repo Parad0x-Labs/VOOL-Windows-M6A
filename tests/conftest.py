@@ -1114,3 +1114,155 @@ def pytest_collection_modifyitems(config, items):
     from tests import _windows_cloud_optin
 
     _windows_cloud_optin.apply(items)
+
+
+# ---- DIAGNOSTIC BRANCH ONLY (never merged): cloud-off-before-opt-in + openrouter/cloud_/routing_mode/provider files on windows-latest,
+# with a before/after listing of the user profile and the checkout to count touches outside the test folders.
+import os as _diag_os
+
+_DIAG_KEEP = (
+    "tests/effect_budget/test_door_provider_call.py::",
+    "tests/effect_budget/test_money_gateway_and_provider.py::",
+    "tests/pa_beta_gate/test_calendar_provider_vertical.py::",
+    "tests/pa_beta_gate/test_popular_provider_adapters.py::",
+    "tests/pa_beta_gate/test_provider_replay_and_claim_guards.py::",
+    "tests/pa_beta_gate/test_v3_novel_provider_guards.py::",
+    "tests/semantic_phase0/test_semantic_zero_provider_invocations.py::",
+    "tests/test_artifact_carry_through_provider_request.py::",
+    "tests/test_chat_page_cloud_dropdown.py::",
+    "tests/test_chat_page_cloud_pill.py::",
+    "tests/test_chat_page_multiprovider.py::",
+    "tests/test_cloud_broker.py::",
+    "tests/test_cloud_broker_epoch.py::",
+    "tests/test_cloud_broker_output_budget.py::",
+    "tests/test_cloud_connection_multiprovider.py::",
+    "tests/test_cloud_connection_state.py::",
+    "tests/test_cloud_escalation_policy.py::",
+    "tests/test_cloud_free_lane_reachability.py::",
+    "tests/test_cloud_grounding_and_intent.py::",
+    "tests/test_cloud_key_command.py::",
+    "tests/test_cloud_key_transport_safety.py::",
+    "tests/test_cloud_lane_presentation.py::",
+    "tests/test_cloud_lane_runs_the_pinned_free_model_and_walks_past_gateway_rejections.py::",
+    "tests/test_cloud_model_catalog.py::",
+    "tests/test_cloud_model_control.py::",
+    "tests/test_cloud_models_endpoint.py::",
+    "tests/test_cloud_nl_actions.py::",
+    "tests/test_cloud_only_path.py::",
+    "tests/test_cloud_picker_single_confirmation.py::",
+    "tests/test_cloud_privacy_policy.py::",
+    "tests/test_cloud_provider_adapters.py::",
+    "tests/test_cloud_provider_contract.py::",
+    "tests/test_cloud_providers.py::",
+    "tests/test_cloud_route_receipt.py::",
+    "tests/test_cloud_router_seam.py::",
+    "tests/test_cloud_routing.py::",
+    "tests/test_cloud_status_endpoint.py::",
+    "tests/test_cloud_text_generation_rule.py::",
+    "tests/test_cloud_tool_dialect.py::",
+    "tests/test_cloud_transport.py::",
+    "tests/test_cloud_usage_command.py::",
+    "tests/test_cloud_wire_evidence_binding.py::",
+    "tests/test_email_provider_adapters.py::",
+    "tests/test_email_served_providers.py::",
+    "tests/test_fake_provider_lifecycle.py::",
+    "tests/test_first_run_provider_onboarding.py::",
+    "tests/test_free_cloud_overanswer_recovery.py::",
+    "tests/test_media_providers.py::",
+    "tests/test_mock_provider_resource_fixture_20261007.py::",
+    "tests/test_model_provider_manifest_first_use_race.py::",
+    "tests/test_multiprovider_endpoints.py::",
+    "tests/test_multiprovider_key_entry.py::",
+    "tests/test_n12_free_cloud_routing.py::",
+    "tests/test_normalized_provider_result.py::",
+    "tests/test_ollama_cloud_models_are_never_used.py::",
+    "tests/test_ollama_cloud_refusal_is_windows_only.py::",
+    "tests/test_openrouter_attribution.py::",
+    "tests/test_openrouter_credential_split_closed.py::",
+    "tests/test_openrouter_free_and_search.py::",
+    "tests/test_openrouter_free_catalog.py::",
+    "tests/test_prompt_cloud_grounding.py::",
+    "tests/test_provider_answer_recovery_served.py::",
+    "tests/test_provider_answer_recovery_work1.py::",
+    "tests/test_provider_attestation_switchboard_followup.py::",
+    "tests/test_provider_auth_failure_surface.py::",
+    "tests/test_provider_byok_registrar.py::",
+    "tests/test_provider_completion_publication.py::",
+    "tests/test_provider_context_boundary.py::",
+    "tests/test_provider_credential_dispatch.py::",
+    "tests/test_provider_deadline_publication.py::",
+    "tests/test_provider_discovery.py::",
+    "tests/test_provider_failover.py::",
+    "tests/test_provider_failure_truthfulness.py::",
+    "tests/test_provider_health_is_isolated_between_tests.py::",
+    "tests/test_provider_http_error_states_its_cause.py::",
+    "tests/test_provider_http_lifetime.py::",
+    "tests/test_provider_http_refused_loopback_memory.py::",
+    "tests/test_provider_invocation_gateway_direct.py::",
+    "tests/test_provider_invocation_manifest_security.py::",
+    "tests/test_provider_key_guide.py::",
+    "tests/test_provider_manifest_is_isolated_between_tests.py::",
+    "tests/test_provider_model_attestation.py::",
+    "tests/test_provider_output_truncation_control.py::",
+    "tests/test_provider_probe.py::",
+    "tests/test_provider_probe_bounded_children.py::",
+    "tests/test_provider_probe_contract.py::",
+    "tests/test_provider_probe_gpu_verify.py::",
+    "tests/test_provider_prompt_cache_layout.py::",
+    "tests/test_provider_request_evidence_binding.py::",
+    "tests/test_provider_routing.py::",
+    "tests/test_provider_timeout_terminal_lifecycle.py::",
+    "tests/test_provider_verification_receipts.py::",
+    "tests/test_runtime_provider_defaults_gpu_gating.py::",
+    "tests/test_searxng_provider_contract.py::",
+    "tests/test_settings_provider_picker.py::",
+    "tests/test_skill_scope_provider_prompt.py::",
+    "tests/test_toolsmith_local_cloud_parity.py::",
+    "tests/test_unified_provider_policy.py::",
+    "tests/test_windows_bundled_ollama_starts_with_cloud_off.py::",
+    "tests/test_windows_no_cloud_contact_before_opt_in.py::",
+    "tests/usepod/test_provider_budget.py::",
+    "tests/usepod/test_provider_budget_served.py::",
+)
+_DIAG_SKIP_PARTS = ("__pycache__", ".pytest_cache", ".ruff_cache")
+
+
+def _diag_listing():
+    roots = [_diag_os.path.expanduser("~"), str(_diag_os.path.dirname(_diag_os.path.dirname(_diag_os.path.abspath(__file__))))]
+    temp = _diag_os.path.normcase(_diag_os.path.abspath(_diag_os.environ.get("TEMP", "/tmp")))
+    seen = {}
+    for root in roots:
+        for here, dirs, names in _diag_os.walk(root):
+            norm = _diag_os.path.normcase(_diag_os.path.abspath(here))
+            if norm.startswith(temp) or any(p in here for p in _DIAG_SKIP_PARTS):
+                dirs[:] = []
+                continue
+            for name in names + [d + _diag_os.sep for d in dirs]:
+                path = _diag_os.path.join(here, name)
+                try:
+                    st = _diag_os.lstat(path.rstrip(_diag_os.sep))
+                except OSError:
+                    continue
+                seen[path] = (st.st_size, st.st_mtime_ns)
+    return seen
+
+
+def pytest_collection_modifyitems(session, config, items):
+    keep = [item for item in items if item.nodeid.replace("\\", "/").startswith(_DIAG_KEEP)]
+    deselected = [item for item in items if item not in keep]
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+    items[:] = keep
+    config._diag_before = _diag_listing() if keep else None
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    before = getattr(config, "_diag_before", None)
+    if before is None:
+        return
+    after = _diag_listing()
+    changed = sorted(p for p in set(before) | set(after) if before.get(p) != after.get(p))
+    terminalreporter.write_line(f"DIAG-TOUCH count={len(changed)} listed={len(after)}")
+    for path in changed[:200]:
+        kind = "new" if path not in before else ("gone" if path not in after else "changed")
+        terminalreporter.write_line(f"DIAG-TOUCH {kind} {path}")
