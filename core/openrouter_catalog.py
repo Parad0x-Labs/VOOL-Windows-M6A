@@ -64,7 +64,11 @@ def refresh_openrouter_catalog(*, api_key: str = "", timeout_seconds: float = 15
     # amended): the door grants nothing, so the refresh authorizes itself here,
     # by name. Scope-local account — handed to no one at close.
     from core.effect_gateway import named_background_effect_scope
+    from core.windows_cloud_gate import refuse_cloud_contact
 
+    # Windows: no cloud provider contact before a key is stored AND cloud is turned on
+    # (core/windows_cloud_gate.py). Refused here, before the request and the cache write.
+    refuse_cloud_contact("openrouter catalog refresh")
     with named_background_effect_scope("model_catalog.refresh"):
         return _refresh_openrouter_catalog_owned(
             api_key=api_key,
@@ -111,6 +115,9 @@ def load_openrouter_catalog(
     first open after a key was connected, and a vetoed or offline refresh then served
     ``models: []`` with no distinction from "provider has no models").
     """
+    from core.windows_cloud_gate import refuse_cloud_contact
+
+    refuse_cloud_contact("openrouter catalog")  # Windows, cloud off: neither read nor fetched
     path = _cache_path()
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -278,6 +285,10 @@ def cached_catalog_row(model_id: str) -> OpenRouterModel | None:
     key = str(model_id or "").strip()
     if not key:
         return None
+    from core.windows_cloud_gate import cloud_off
+
+    if cloud_off():
+        return None  # Windows, cloud off: no catalog row is used (core/windows_cloud_gate.py)
     if key in _CACHED_ROW_MEMO:
         return _CACHED_ROW_MEMO[key]
     row: OpenRouterModel | None = None
@@ -366,6 +377,12 @@ def safe_all_models(*, allow_network: bool = True) -> tuple[tuple[OpenRouterMode
     """
     models: tuple[OpenRouterModel, ...] = ()
     age: float | None = None
+    from core.windows_cloud_gate import cloud_off
+
+    if cloud_off():
+        # Windows, before a key is stored and cloud is turned on: no catalog, fetched or cached,
+        # so nothing free-cloud is shown or picked (core/windows_cloud_gate.py).
+        return (), None
     try:
         if allow_network:
             models = load_openrouter_catalog()  # fresh-or-refresh (raises when offline w/o cache)

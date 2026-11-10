@@ -871,8 +871,11 @@ def _free_models_text(*, focus: str = "free") -> str:
     ``age is None`` only when there is no usable catalog, so that flag — not an empty list — is
     what makes a claim about reaching openrouter.ai true.
     """
+    from core import windows_cloud_gate
     from core.openrouter_catalog import model_is_coding, safe_free_models
 
+    if windows_cloud_gate.cloud_off():
+        return windows_cloud_gate.OFF_TEXT
     free, age = safe_free_models(allow_network=True)
     if age is None:
         return (
@@ -930,6 +933,10 @@ def _search_models_text(query: str) -> str:
     free models first, so "hunyuan" or "deepseek" surfaces the right ids without the full list."""
     from core.openrouter_catalog import load_openrouter_catalog, model_is_free
 
+    from core import windows_cloud_gate
+
+    if windows_cloud_gate.cloud_off():
+        return windows_cloud_gate.OFF_TEXT
     q = " ".join(str(query or "").strip().lower().split())
     if len(q) < 2:
         return "Give me at least 2 characters to search, e.g. `cloud models hunyuan`."
@@ -1331,6 +1338,21 @@ def maybe_handle_cloud_switch_intent(user_input: str, *, owner_local: bool = Fal
     if not tokens:
         return None
 
+    from core import windows_cloud_gate
+
+    if windows_cloud_gate.cloud_off():
+        # Windows, before a key is stored and cloud is turned on: no catalog is read or fetched.
+        # A request about a cloud model gets the plain line; anything else is ordinary chat.
+        if not _CLOUD_SUBJECT_RE.search(text):
+            return None
+        return {
+            "response": windows_cloud_gate.OFF_TEXT,
+            "success": False,
+            "advice_only": True,
+            "reason": windows_cloud_gate.REASON,
+            "details": {},
+        }
+
     from core.openrouter_catalog import model_is_free, safe_all_models
 
     models, _age = safe_all_models(allow_network=True)
@@ -1456,8 +1478,17 @@ def maybe_handle_catalog_refresh_intent(user_input: str, *, owner_local: bool = 
     if not owner_local:
         return None  # a refresh hits the network + rewrites the on-disk cache — owner's session only
 
+    from core import windows_cloud_gate
     from core.cloud_model_control import force_catalog_refresh
 
+    if windows_cloud_gate.cloud_off():
+        return {
+            "response": windows_cloud_gate.OFF_TEXT,
+            "success": False,
+            "advice_only": True,
+            "reason": windows_cloud_gate.REASON,
+            "details": {},
+        }
     result = force_catalog_refresh()
     if result.get("ok"):
         response = (
