@@ -22,7 +22,7 @@ def adapter(**config):
 
 
 @pytest.mark.parametrize("failure", [None, credential_store.CredentialReadError("locked")])
-def test_missing_or_unreadable_saved_key_never_sends_health_or_completion(monkeypatch, failure):
+def test_missing_or_unreadable_saved_key_never_sends_health_or_completion(monkeypatch, failure, tmp_path):
     def read(_):
         if failure:
             raise failure
@@ -31,6 +31,16 @@ def test_missing_or_unreadable_saved_key_never_sends_health_or_completion(monkey
     wire = Mock(side_effect=AssertionError("unauthenticated network request"))
     monkeypatch.setattr("adapters.openai_compatible_adapter.requests.get", wire)
     monkeypatch.setattr("adapters.openai_compatible_adapter.requests.post", wire)
+    from tests import _windows_cloud_optin as cloud_rule
+
+    if cloud_rule.cloud_gate_active():
+        # Windows 0.7.1 (core/windows_cloud_gate.py): no key is stored, so the gate answers first --
+        # cloud is off, the lane sends neither the health check nor the completion, no socket opens.
+        with cloud_rule.fresh_profile(tmp_path):
+            cloud_rule.assert_lane_says_cloud_is_off(
+                adapter(), lambda lane: lane.run_text_task(ModelRequest(task_kind="chat", prompt="Explain an immutable value.")),
+                wire, monkeypatch)
+        return
     lane = adapter()
     result = lane.health_check()
     assert result["ok"] is False

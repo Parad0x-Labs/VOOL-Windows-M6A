@@ -159,11 +159,21 @@ def test_forbidden_403_is_access_denied_not_an_authentication_rejection():
     assert "authentication" not in text
 
 
-def test_structured_dispatch_refuses_before_wire_with_recovery_action(monkeypatch):
+def test_structured_dispatch_refuses_before_wire_with_recovery_action(monkeypatch, tmp_path):
     monkeypatch.setattr(credential_store, "get_credential", lambda name: None)
     wire = Mock(side_effect=AssertionError("unauthenticated network request"))
     monkeypatch.setattr("adapters.openai_compatible_adapter.requests.get", wire)
     monkeypatch.setattr("adapters.openai_compatible_adapter.requests.post", wire)
+    from tests import _windows_cloud_optin as cloud_rule
+
+    if cloud_rule.cloud_gate_active():
+        # Windows 0.7.1 (core/windows_cloud_gate.py): no key is stored, so the gate refuses before
+        # the credential check: cloud is off, nothing reaches the wire, no socket opens.
+        with cloud_rule.fresh_profile(tmp_path):
+            cloud_rule.assert_lane_says_cloud_is_off(
+                _remote_lane(), lambda lane: lane.run_structured_task(ModelRequest(task_kind="chat", prompt="Return one keyword.")),
+                wire, monkeypatch)
+        return
     lane = _remote_lane()
     with pytest.raises(RuntimeError, match=r"provider_credential_unavailable.*API Keys") as caught:
         lane.run_structured_task(ModelRequest(task_kind="chat", prompt="Return one keyword."))
@@ -174,12 +184,23 @@ def test_structured_dispatch_refuses_before_wire_with_recovery_action(monkeypatc
     wire.assert_not_called()
 
 
-def test_unreadable_vault_read_is_refused_not_sent_anonymously(monkeypatch):
+def test_unreadable_vault_read_is_refused_not_sent_anonymously(monkeypatch, tmp_path):
     def read(_name):
         raise credential_store.CredentialReadError("keychain locked")
     monkeypatch.setattr(credential_store, "get_credential", read)
     wire = Mock(side_effect=AssertionError("unauthenticated network request"))
     monkeypatch.setattr("adapters.openai_compatible_adapter.requests.post", wire)
+    from tests import _windows_cloud_optin as cloud_rule
+
+    if cloud_rule.cloud_gate_active():
+        # Windows 0.7.1 (core/windows_cloud_gate.py): no key is stored, so the gate refuses before
+        # the vault is read: cloud is off, nothing is sent, anonymously or otherwise, no socket opens.
+        monkeypatch.setattr("adapters.openai_compatible_adapter.requests.get", wire)
+        with cloud_rule.fresh_profile(tmp_path):
+            cloud_rule.assert_lane_says_cloud_is_off(
+                _remote_lane(), lambda lane: lane.run_text_task(ModelRequest(task_kind="chat", prompt="Explain an immutable value.")),
+                wire, monkeypatch)
+        return
     lane = _remote_lane()
     with pytest.raises(RuntimeError, match=r"provider_credential_unavailable.*unreadable.*keychain locked"):
         lane.run_text_task(ModelRequest(task_kind="chat", prompt="Explain an immutable value."))
