@@ -2339,8 +2339,13 @@ class ResearchToolLoopFacadeMixin:
         # SAME lane to write the answer; on a CPU-only machine that call may run its whole 720 s
         # timeout with nothing on screen (Windows captest, calc.py: "Working" for 12+ minutes after
         # the approved job had finished). The tool output is the grounded result, so end on it.
+        #
+        # Windows only for 0.7.1, on the seam the approval spend uses (Security Architect): Mac and
+        # Linux keep the synthesis path exactly as it was.
+        from core.execution_gate import operator_approval_spend_applies
+
         followup_failure = ""
-        if loop_stop_reason == "provider_did_not_answer":
+        if loop_stop_reason == "provider_did_not_answer" and executed_steps and operator_approval_spend_applies():
             followup_rejection = dict((loop_source_context or {}).get("last_tool_call_rejection") or {})
             followup_details = dict(getattr(last_tool_decision, "details", None) or {}) if last_tool_decision else {}
             followup_failure = str(
@@ -2350,17 +2355,25 @@ class ResearchToolLoopFacadeMixin:
                 or ""
             ).strip()
         if followup_failure:
+            # Only what ran is the result: an approval card's preview step (a resumed turn carries
+            # it from the checkpoint) is not output and is left out.
+            ran_steps = [
+                step for step in executed_steps
+                if str(step.get("mode") or "") != "tool_preview"
+                and str(step.get("status") or "") != "pending_approval"
+            ] or executed_steps
             outputs: list[str] = []
-            for step in executed_steps:
+            for step in ran_steps:
                 text = str(step.get("response_text") or step.get("summary") or "").strip()
                 if text and text not in outputs:
                     outputs.append(text)
             followup_message = "\n\n".join(outputs) or self._tool_loop_final_message(None, executed_steps)
+            # The cause stays in details (`followup_failure`); the reply says it plainly.
             followup_message += (
-                f"\n\nThe model's follow-up step failed ({followup_failure}), so this is the tool "
-                "output without a written answer."
+                "\n\nThe model's follow-up step failed, so this is the tool output without a "
+                "written answer."
             )
-            steps_ok = all(bool(step.get("ok", True)) for step in executed_steps)
+            steps_ok = all(bool(step.get("ok", True)) for step in ran_steps)
             self._emit_runtime_event(
                 loop_source_context,
                 event_type="tool_loop_completed",
