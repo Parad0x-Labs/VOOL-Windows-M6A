@@ -1,4 +1,4 @@
-# nodeid	file	why -- the rows tests/_windows_cloud_optin.py opts in to cloud (count fence: 60)
+# nodeid	file	why -- the rows tests/_windows_cloud_optin.py opts in to cloud (count fence: 62)
 tests/test_cloud_escalation_policy.py::test_openrouter_attribution_headers_reach_the_outbound_request	tests/test_cloud_escalation_policy.py	drives the OpenRouter model wire (mocked) with no stored key or cloud consent
 tests/test_cloud_free_lane_reachability.py::test_cloud_model_auto_refuses_rather_than_standing_in_the_paid_default	tests/test_cloud_free_lane_reachability.py	drives cloud model auto against a seeded OpenRouter catalog with no opt-in
 tests/test_cloud_model_control.py::test_refresh_wrapper_fails_soft	tests/test_cloud_model_control.py	drives the OpenRouter catalog refresh (mocked) with no opt-in
@@ -59,3 +59,5 @@ tests/test_provider_model_attestation.py::test_retry_final_attestation_belongs_t
 tests/test_provider_output_truncation_control.py::test_openai_and_ollama_finish_reasons_are_preserved	tests/test_provider_output_truncation_control.py	dispatches an OpenAI-compatible cloud lane (mocked wire) with no opt-in
 tests/test_provider_timeout_terminal_lifecycle.py::test_blocking_transport_is_clamped_below_its_enclosing_turn_deadline[False]	tests/test_provider_timeout_terminal_lifecycle.py	dispatches a BYOK cloud lane (mocked wire) with no stored key slot or consent
 tests/test_provider_timeout_terminal_lifecycle.py::test_blocking_transport_is_clamped_below_its_enclosing_turn_deadline[True]	tests/test_provider_timeout_terminal_lifecycle.py	dispatches a BYOK cloud lane (mocked wire) with no stored key slot or consent
+tests/test_unpriced_builtin_tool_models.py::test_the_adapter_sends_nothing_to_such_a_model[groq-compound]	tests/test_unpriced_builtin_tool_models.py	has no per-test home and the adapter's gate runs before the unpriced-tools refusal it pins, so it passed on Windows only when an earlier row left a key and cloud consent in the session home
+tests/test_unpriced_builtin_tool_models.py::test_the_adapter_sends_nothing_to_such_a_model[openai-search]	tests/test_unpriced_builtin_tool_models.py	has no per-test home and the adapter's gate runs before the unpriced-tools refusal it pins, so it passed on Windows only when an earlier row left a key and cloud consent in the session home

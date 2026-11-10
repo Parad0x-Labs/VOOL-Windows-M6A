@@ -4,7 +4,9 @@
 turned cloud on (core/windows_cloud_gate.py). Rows written before that rule drive the OpenRouter
 catalog, the chat cloud intents or a BYOK lane (on a mocked wire) in a profile with neither, so on
 Windows the gate answers "Cloud models are off..." before the behaviour the row pins is reached
-(IM Windows run 42783582031: exactly the 60 rows in CLOUD-OPTIN-60.tsv).
+(IM Windows run 42783582031: 60 of the rows in CLOUD-OPTIN-62.tsv). The other 2 rows
+(test_unpriced_builtin_tool_models) were green there only because an earlier row had left a key and
+cloud consent in the shared session home; opted in, they no longer depend on that.
 
 The opt-in is the owner's two facts as the gate reads them: a stored provider key slot and the
 cloud consent (``free_cloud_enabled``). It is set at the gate's two readers
@@ -13,7 +15,7 @@ store or flipping its ``cloud_escalation.json``: several rows pin what happens w
 key, or with the free lane off, and a real key or a real policy change would change what they test.
 No assertion changes. Off Windows the gate is open anyway, so the opt-in changes nothing there.
 
-``CLOUD-OPTIN-60.tsv`` is the count fence: exactly ``EXPECTED_COUNT`` unique node ids, and a listed
+``CLOUD-OPTIN-62.tsv`` is the count fence: exactly ``EXPECTED_COUNT`` unique node ids, and a listed
 row whose file is collected but whose id is not is a collection error, so the list cannot drift.
 """
 from __future__ import annotations
@@ -22,8 +24,8 @@ from pathlib import Path
 
 import pytest
 
-TSV = Path(__file__).with_name("CLOUD-OPTIN-60.tsv")
-EXPECTED_COUNT = 60
+TSV = Path(__file__).with_name("CLOUD-OPTIN-62.tsv")
+EXPECTED_COUNT = 62
 FIXTURE = "windows_cloud_opted_in"
 
 
