@@ -14,6 +14,8 @@ from pathlib import Path
 import pytest
 
 from core import user_rules as ur
+from tests import _windows_refusals as windows_refusals
+from tests.test_user_rules import _unchecked
 
 GLOBAL_GIT_RULE = "add this to global rules: never push the words xxx or ffff to git"
 
@@ -75,6 +77,16 @@ def test_a_reused_message_from_a_real_commit_is_still_read(home, tmp_path: Path)
     subprocess.run(["git", "-C", str(repo), "commit", "-q", "--allow-empty", "-m", "ship xxx"], check=True,
                    capture_output=True)
 
-    verdict = ur.sandbox_git_check(["git", "commit", "--allow-empty", "-C", "HEAD"], cwd=str(repo))
+    with windows_refusals.watch_git(repo) as seen:
+        verdict = ur.sandbox_git_check(["git", "commit", "--allow-empty", "-C", "HEAD"], cwd=str(repo))
 
+    # Windows 0.7.1 runs no git, so the reused message cannot be read: the check fails closed and says why.
+    if seen.active and windows_refusals.refused_exactly(
+        seen,
+        (verdict.refusal.reason,
+         _unchecked("commit", f"the reused message 'HEAD' could not be read: {windows_refusals.GIT_REFUSAL}")),
+        (verdict.refusal.incomplete, True),
+        (verdict.refusal.violations, ()),
+    ):
+        return
     assert verdict.refusal is not None and not verdict.refusal.incomplete

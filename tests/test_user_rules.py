@@ -80,6 +80,57 @@ def _say(text: str, chat: str, **kw):
     return handled
 
 
+# ── Windows 0.7.1: git is refused, so the rule checks that need it fail closed ─────────────────
+
+
+def _unchecked(sub: str, why: str = windows_refusals.GIT_REFUSAL) -> str:
+    """The exact words of a rule check that could not finish (core/user_rules.py `_incomplete`)."""
+    done = "committed" if sub == "commit" else "run"
+    return f"Refused: your rules ban words from git, and I couldn't check this git {sub} completely ({why}). Nothing was {done}."
+
+
+def _named(sub: str, word: str, where: str) -> str:
+    """The exact words of a rule check that found `word` in the command itself (no git needed)."""
+    done = "committed" if sub == "commit" else "run"
+    return (f"Refused: this git {sub} carries '{word}' in the {where}, which your rule 1 bans from git. Nothing was "
+            f'{done}. To allow it here, say for example "in this chat, allow {word}" or remove the rule.')
+
+
+def _windows_git_checks(repo: Path, cases, *, cwd: Path | None = None) -> bool:
+    """Where git is refused (Windows 0.7.1): each ``(argv, reason)`` is refused with exactly `reason`,
+    starting no git and changing nothing in the repository. A reason that names the git limit is an
+    incomplete check (`_unchecked`); any other is a word found in the command itself (`_named`, or an
+    unreadable message source), which needs no git. Returns True then; False where git runs."""
+    if not windows_refusals.git_refused():
+        return False
+    for argv, reason in cases:
+        with windows_refusals.watch_git(repo) as seen:
+            verdict = ur.sandbox_git_check(argv, cwd=str(cwd or repo))
+        refusal = verdict.refusal
+        assert refusal is not None, argv
+        if windows_refusals.GIT_REFUSAL in reason:
+            assert windows_refusals.refused_exactly(
+                seen, (refusal.reason, reason), (refusal.incomplete, True), (refusal.violations, ()),
+                (refusal.rule_nos, (1,)),
+            ), argv
+        else:
+            assert (refusal.reason, refusal.incomplete) == (reason, reason.startswith("Refused: your rules")), argv
+            assert seen.starts == [] and seen.changed == [], argv
+    return True
+
+
+def _windows_gate_unchecked(cmd: str, root: Path, chat: str, sub: str) -> bool:
+    """Where git is refused: the command gate blocks `cmd` with exactly the incomplete-check words,
+    starting no git and changing nothing in the repository. False where git runs."""
+    if not windows_refusals.git_refused():
+        return False
+    with windows_refusals.watch_git(root) as seen:
+        gated = _gate(cmd, root, chat)
+    return windows_refusals.refused_exactly(
+        seen, (gated["decision"], "blocked"), (gated.get("user_rule"), "refused"), (gated["reason"], _unchecked(sub)),
+    )
+
+
 # ── saving, scope, persistence, removal ─────────────────────────────────────
 
 
@@ -278,6 +329,9 @@ def test_the_command_gate_reads_the_staged_change_not_just_the_message(home, tmp
     (root / "README.md").write_text("hello ffff\n", encoding="utf-8")
     _git(root, "add", "README.md")
     _say(GLOBAL_GIT_RULE, "chat-a")
+    # Windows 0.7.1: the staged change cannot be read without git, so the commit is refused as unchecked.
+    if _windows_gate_unchecked('git commit -m "update readme"', root, "chat-a", "commit"):
+        return
     with remote_fetch_policy_scope({"surface": "openclaw", "session_id": "chat-a"}):
         refused = ExecutionGate.evaluate_command('git commit -m "update readme"', cwd=str(root))
     assert refused["decision"] == "blocked" and "ffff" in refused["reason"]
@@ -337,6 +391,27 @@ def repo_world(home, tmp_path, monkeypatch):
         reset_mode_permission_state()
 
 
+def _windows_refuses_session(root: Path, bare: Path, chat: str) -> bool:
+    """Where git is refused (Windows 0.7.1) no RepoOps session opens for this chat: `repo.session.open`
+    is not ok, answers exactly the write gate's status and the git sentence, starts no git and changes
+    neither repository. Returns True then, and the row ends; False where git runs."""
+    if not windows_refusals.git_refused():
+        return False
+    from tests.repoops._harness import context, door
+
+    ctx = context(root, session=chat)
+    with windows_refusals.watch_git(root, bare) as seen:
+        opened = door(
+            "repo.session.open",
+            {"objective": "rules", "provider": "github", "namespace": "o/r", "reviewer_model": "anthropic/claude-sonnet-4"},
+            ctx,
+        )
+    return windows_refusals.refused_exactly(
+        seen, (opened.ok, False), (opened.status, windows_refusals.GIT_GATE_STATUS),
+        (opened.response_text, windows_refusals.GIT_REFUSAL),
+    )
+
+
 def _open_bound_session(root: Path, chat: str):
     from tests.repoops._harness import context, door
 
@@ -356,6 +431,8 @@ def test_repoops_commit_and_tag_carrying_a_banned_word_are_refused(repo_world):
 
     root, _bare = repo_world
     _say(GLOBAL_GIT_RULE, "chat-a")
+    if _windows_refuses_session(root, _bare, "chat-a"):
+        return
     sid, ctx = _open_bound_session(root, "chat-a")
     before = head(root)
 
@@ -544,6 +621,8 @@ def test_repoops_commit_with_a_lifted_word_runs_and_names_the_exception(repo_wor
     root, _bare = repo_world
     _say(GLOBAL_GIT_RULE, "chat-a")
     _say("in this chat, allow ffff", "chat-a")
+    if _windows_refuses_session(root, _bare, "chat-a"):
+        return
     sid, ctx = _open_bound_session(root, "chat-a")
     before = head(root)
     (root / "calc.py").write_text("def add(a, b):\n    return a + b  # ffff\n", encoding="utf-8")
@@ -582,6 +661,14 @@ def test_a_push_is_checked_on_the_ref_it_sends_not_on_head(home, tmp_path):
     repo = _repo(tmp_path)
     _side_branch_with(repo, "side", "the ffff plan\n")
     _say(GLOBAL_GIT_RULE, "chat-a")
+    if _windows_git_checks(repo, [
+        (["git", "push", "origin", "side"], _unchecked("push")),
+        (["git", "push", "origin", "side:refs/heads/release"], _unchecked("push")),
+        (["git", "push", "origin", "+side:main"], _unchecked("push")),
+        (["git", "push", "--all", "origin"], _unchecked("push")),
+    ]):
+        assert _windows_gate_unchecked("git push origin side", repo, "chat-a", "push")
+        return
     for argv in (
         ["git", "push", "origin", "side"],
         ["git", "push", "origin", "side:refs/heads/release"],
@@ -599,6 +686,12 @@ def test_a_push_of_a_clean_ref_passes_even_when_head_is_not(home, tmp_path):
     (repo / "README.md").write_text("ffff on main\n", encoding="utf-8")
     _git(repo, "commit", "-q", "-am", "main change")
     _say(GLOBAL_GIT_RULE, "chat-a")
+    # Windows 0.7.1: what either push sends cannot be read without git, so neither passes as clean.
+    if _windows_git_checks(repo, [
+        (["git", "push", "origin", "clean"], _unchecked("push")),
+        (["git", "push", "origin", "main"], _unchecked("push")),
+    ]):
+        return
     assert ur.sandbox_git_check(["git", "push", "origin", "clean"], cwd=str(repo)).refusal is None
     assert ur.sandbox_git_check(["git", "push", "origin", "main"], cwd=str(repo)).refusal is not None
 
@@ -620,6 +713,15 @@ def test_a_push_naming_its_remote_with_repo_checks_every_refspec(home, tmp_path)
     _side_branch_with(repo, "side", "the ffff plan\n")
     _side_branch_with(repo, "clean", "nothing to see\n")
     _say(GLOBAL_GIT_RULE, "chat-a")
+    if _windows_git_checks(repo, [
+        (["git", "push", "--repo", "origin", "side"], _unchecked("push")),
+        (["git", "push", "--repo=origin", "side"], _unchecked("push")),
+        (["git", "push", "--repo", "origin", "clean", "side:refs/heads/release"], _unchecked("push")),
+        (["git", "push", "--repo", "origin", "clean"], _unchecked("push")),
+        # a banned word in a ref name after --repo is in the command itself, so it is still named
+        (["git", "push", "--repo", "origin", "clean:refs/heads/xxx"], _named("push", "xxx", "push ref")),
+    ]):
+        return
     for argv in (
         ["git", "push", "--repo", "origin", "side"],
         ["git", "push", "--repo=origin", "side"],
@@ -639,6 +741,15 @@ def test_a_matching_or_configured_push_checks_every_branch_it_could_send(home, t
     repo = _repo(tmp_path)
     _side_branch_with(repo, "side", "the ffff plan\n")
     _say(GLOBAL_GIT_RULE, "chat-a")
+    # Windows 0.7.1: no push can be checked without git, a deletion and a bare push included.
+    if _windows_git_checks(repo, [
+        (["git", "push", "origin", ":"], _unchecked("push")),
+        (["git", "push", "origin", "+:"], _unchecked("push")),
+        (["git", "push", "--repo", "origin", ":"], _unchecked("push")),
+        (["git", "push", "origin", ":old-branch"], _unchecked("push")),
+        (["git", "push", "origin"], _unchecked("push")),
+    ]):
+        return
     for argv in (["git", "push", "origin", ":"], ["git", "push", "origin", "+:"],
                  ["git", "push", "--repo", "origin", ":"]):
         verdict = ur.sandbox_git_check(argv, cwd=str(repo))
@@ -662,6 +773,25 @@ def test_a_message_read_from_a_file_or_an_old_commit_is_checked(home, tmp_path):
     clean.write_text("release support\n", encoding="utf-8")
     _git(repo, "commit", "-q", "--allow-empty", "-m", "ship xxx")  # an old message to reuse
     (repo / "msg.txt").write_text("ffff notes\n", encoding="utf-8")
+    # Windows 0.7.1: a message the command names is still read and checked without git; only the
+    # reused message (-C HEAD) and what a clean commit adds need git, so those fail closed.
+    if _windows_git_checks(repo, [
+        (["git", "commit", "--allow-empty", "-F", str(banned)], _named("commit", "ffff", "message")),
+        (["git", "commit", "--allow-empty", f"--file={banned}"], _named("commit", "ffff", "message")),
+        (["git", "commit", "--allow-empty", "-F", "msg.txt"], _named("commit", "ffff", "message")),
+        (["git", "commit", "--allow-empty", "-C", "HEAD"],
+         _unchecked("commit", f"the reused message 'HEAD' could not be read: {windows_refusals.GIT_REFUSAL}")),
+        (["git", "tag", "-a", "v1", "-F", str(banned)], _named("tag", "ffff", "message")),
+        (["git", "commit", "--allow-empty", "-F", str(clean)], _unchecked("commit")),
+        (["git", "commit", "--allow-empty", "-F", str(tmp_path / "gone.txt")],
+         _unchecked("commit", f"the message file '{tmp_path / 'gone.txt'}' could not be read")),
+        (["git", "commit", "--allow-empty", "-F", "-"], _unchecked("commit", "the message comes from standard input")),
+    ]):
+        assert _windows_git_checks(
+            repo, [(["git", "-C", str(repo), "commit", "--allow-empty", "-F", "msg.txt"], _named("commit", "ffff", "message"))],
+            cwd=tmp_path,
+        )
+        return
     for argv in (
         ["git", "commit", "--allow-empty", "-F", str(banned)],
         ["git", "commit", "--allow-empty", f"--file={banned}"],
