@@ -50,6 +50,34 @@ class _Execution:
     details = {}
 
 
+@pytest.fixture(autouse=True)
+def on_windows(monkeypatch):
+    """These behaviours are Windows-only in 0.7.1, behind the job runner's platform seam."""
+    from sandbox import job_runner
+
+    monkeypatch.setattr(job_runner, "_is_windows_platform", lambda: True)
+
+
+def _off_windows(monkeypatch) -> None:
+    from sandbox import job_runner
+
+    monkeypatch.setattr(job_runner, "_is_windows_platform", lambda: False)
+
+
+def _add_cloud_model() -> None:
+    from storage.model_provider_manifest import ModelProviderManifest, upsert_provider_manifest
+
+    upsert_provider_manifest(
+        ModelProviderManifest(
+            provider_name="openai-compatible-remote",
+            model_name="cloud-test-model",
+            source_type="http",
+            capabilities=["summarize"],
+            runtime_config={"base_url": "https://api.example.com/v1"},
+        )
+    )
+
+
 def _gpu_host(monkeypatch, *, ram_gb: float, vram_gb: float, accelerator: str = "cuda") -> None:
     probe = SimpleNamespace(ram_gb=ram_gb, vram_gb=vram_gb, accelerator=accelerator)
     monkeypatch.setattr(provider_routing, "_device_probe", lambda: probe)
@@ -204,3 +232,109 @@ def test_a_graphics_refusal_with_a_cloud_model_also_names_a_smaller_local_model(
         "Download a smaller local model in Setup under “Where should it think?”, or pick a cloud model "
         "in the model selector."
     )
+
+
+# --- off Windows (Mac/Linux): 0.7.1 leaves each behaviour exactly as it was -----------------------
+
+
+def test_off_windows_the_turn_does_not_read_ollamas_size(home, monkeypatch) -> None:
+    _off_windows(monkeypatch)
+    _gpu_host(monkeypatch, ram_gb=STEVE_RAM_GB, vram_gb=STEVE_VRAM_GB)
+    registry = ModelRegistry()
+    register_installed_local_model(registry, model_tag="qwen3:8b")
+    calls: list[object] = []
+    monkeypatch.setattr(
+        "core.local_ollama_inventory.installed_ollama_model_inventory",
+        lambda **kwargs: calls.append(kwargs) or (),
+    )
+
+    with _FakeOllama([{"name": "qwen3:8b", "size": QWEN3_8B_BYTES}]) as fake:
+        monkeypatch.setenv("VOOL_RAW_OLLAMA_API_URL", fake.url)
+        ranked = _ranked_ids(registry)
+
+    assert "ollama-local:qwen3:8b" not in ranked
+    assert calls == []
+    assert "artifact_size_gb" not in (registry.get_manifest("ollama-local", "qwen3:8b").metadata or {})
+
+
+def test_off_windows_setups_download_does_not_stamp(home, monkeypatch) -> None:
+    from core import local_model_pull
+
+    _off_windows(monkeypatch)
+    with _FakeOllama([{"name": "qwen3:8b", "size": QWEN3_8B_BYTES}]) as fake:
+        monkeypatch.setenv("VOOL_RAW_OLLAMA_API_URL", fake.url)
+        local_model_pull._register("qwen3:8b")
+
+    manifest = ModelRegistry().get_manifest("ollama-local", "qwen3:8b")
+    assert manifest is not None
+    assert "artifact_size_gb" not in (manifest.metadata or {})
+
+
+def test_off_windows_a_graphics_refusal_keeps_the_cloud_wording(home, monkeypatch) -> None:
+    from core.agent_runtime.memory_runtime import chat_surface_honest_degraded_response
+
+    _off_windows(monkeypatch)
+    _gpu_host(monkeypatch, ram_gb=8.0, vram_gb=STEVE_VRAM_GB)
+    registry = ModelRegistry()
+    register_installed_local_model(registry, model_tag="qwen3:14b")
+    _add_cloud_model()
+    monkeypatch.setattr("core.local_model_presence.local_model_running", lambda **_: True)
+    with _FakeOllama([{"name": "qwen3:14b", "size": QWEN3_14B_BYTES}]) as fake:
+        monkeypatch.setenv("VOOL_RAW_OLLAMA_API_URL", fake.url)
+        _ranked_ids(registry)
+        text = chat_surface_honest_degraded_response(None, _Execution())
+
+    # Off Windows nothing reads the size, so the estimate (14 x 0.75 + 1.5) stands as before.
+    assert text == (
+        "I couldn't get a live model response in this run: `qwen3:14b` needs about 12.0 GB of graphics "
+        "memory and this computer's graphics card can spare about 6.8 GB for it, so I didn't start it. "
+        "Pick a cloud model in the model selector, or save one in Setup under “Where should it think?” "
+        "so Auto uses it."
+    )
+
+
+# --- the size is read only from the Ollama on this computer -------------------------------------
+
+
+def test_a_non_loopback_ollama_is_never_asked(home, monkeypatch) -> None:
+    from core import local_model_pull
+
+    _gpu_host(monkeypatch, ram_gb=STEVE_RAM_GB, vram_gb=STEVE_VRAM_GB)
+    registry = ModelRegistry()
+    register_installed_local_model(registry, model_tag="qwen3:8b")
+    calls: list[object] = []
+    monkeypatch.setattr(
+        "core.local_ollama_inventory.installed_ollama_model_inventory",
+        lambda **kwargs: calls.append(kwargs) or (),
+    )
+    monkeypatch.setenv("VOOL_RAW_OLLAMA_API_URL", "http://192.0.2.10:11434")
+
+    assert "ollama-local:qwen3:8b" not in _ranked_ids(registry)
+    local_model_pull._register("qwen3:8b")
+    assert calls == []
+
+
+def test_a_miss_on_the_local_ollama_falls_back_to_no_other_host(home, monkeypatch) -> None:
+    """Ollama on loopback answers without the model: one read, of that URL only, and the turn refuses."""
+    from core import local_ollama_inventory
+
+    _gpu_host(monkeypatch, ram_gb=STEVE_RAM_GB, vram_gb=STEVE_VRAM_GB)
+    registry = ModelRegistry()
+    register_installed_local_model(registry, model_tag="qwen3:8b")
+    real = local_ollama_inventory.installed_ollama_model_inventory
+    calls: list[str] = []
+
+    def _recording(**kwargs):
+        calls.append(str(kwargs.get("base_url") or ""))
+        return real(**kwargs)
+
+    monkeypatch.setattr(local_ollama_inventory, "installed_ollama_model_inventory", _recording)
+    monkeypatch.setenv("OLLAMA_HOST", "http://192.0.2.10:11434")
+    with _FakeOllama([{"name": "gemma3:4b", "size": 3_338_801_804}]) as fake:
+        monkeypatch.setenv("VOOL_RAW_OLLAMA_API_URL", fake.url)
+        ranked = _ranked_ids(registry)
+        ranked_again = _ranked_ids(registry)
+
+    assert "ollama-local:qwen3:8b" not in ranked and "ollama-local:qwen3:8b" not in ranked_again
+    # The miss is remembered, and the only URL ever read is the loopback one the check passed.
+    assert calls == [fake.url]

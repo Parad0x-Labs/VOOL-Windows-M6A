@@ -35,6 +35,26 @@ QWEN3_8B_GIB = 5_225_388_164 / 1024.0**3  # 4.87, Ollama's /api/tags size
 RTX_4060_VRAM_GB = 8188 / 1024.0
 
 
+@pytest.fixture(autouse=True)
+def on_windows(monkeypatch):
+    """The VRAM fit is Windows-only in 0.7.1, behind the job runner's platform seam."""
+    from sandbox import job_runner
+
+    monkeypatch.setattr(job_runner, "_is_windows_platform", lambda: True)
+
+
+def _off_windows(monkeypatch) -> None:
+    from sandbox import job_runner
+
+    monkeypatch.setattr(job_runner, "_is_windows_platform", lambda: False)
+
+
+def _sizing(**kwargs) -> dict:
+    return _ollama_context_sizing(
+        "general", model_tag="qwen3:8b", bucket="E", env={}, artifact_size_gb=QWEN3_8B_GIB, **kwargs
+    )
+
+
 def _host(monkeypatch, *, vram_gb: float, ram_gb: float = 32.0, accelerator: str = "cuda") -> None:
     probe = SimpleNamespace(ram_gb=ram_gb, vram_gb=vram_gb, accelerator=accelerator, cpu_cores=16)
     monkeypatch.setattr(hardware_tier, "probe_machine", lambda: probe)
@@ -134,3 +154,37 @@ def test_the_registered_lane_carries_the_gpu_sized_window(monkeypatch) -> None:
     manifest = manifests[("ollama-local", "qwen3:8b")]
     assert manifest.runtime_config["context_window"] == 8192
     assert manifest.runtime_config["prewarm"]["options"]["num_ctx"] == 8192
+
+
+def test_a_16gb_cuda_card_leaves_the_sizing_exactly_as_the_bucket_chose(monkeypatch) -> None:
+    _host(monkeypatch, vram_gb=0.0, accelerator="cpu")
+    bucket_choice = _sizing()["selected_num_ctx"]
+    _host(monkeypatch, vram_gb=16.0)
+    sizing = _sizing()
+    assert sizing["selected_num_ctx"] == bucket_choice == 24576
+    assert sizing["context_sizing_policy"] == "adaptive_persisted_bucket"
+
+
+@pytest.mark.parametrize("accelerator", ["cuda", "directml"])
+def test_a_probe_reporting_no_graphics_memory_leaves_the_window_unchanged(monkeypatch, accelerator) -> None:
+    _host(monkeypatch, vram_gb=0.0, accelerator=accelerator)
+    sizing = _sizing()
+    assert sizing["selected_num_ctx"] == 24576
+    assert "graphics_memory_spare_gb" not in sizing
+
+
+def test_a_probe_with_no_vram_field_leaves_the_window_unchanged(monkeypatch) -> None:
+    probe = SimpleNamespace(ram_gb=32.0, accelerator="cuda", cpu_cores=16)
+    monkeypatch.setattr(hardware_tier, "probe_machine", lambda: probe)
+    sizing = _sizing()
+    assert sizing["selected_num_ctx"] == 24576
+    assert "graphics_memory_spare_gb" not in sizing
+
+
+def test_off_windows_an_8gb_card_keeps_the_buckets_window(monkeypatch) -> None:
+    _off_windows(monkeypatch)
+    _host(monkeypatch, vram_gb=RTX_4060_VRAM_GB)
+    sizing = _sizing()
+    assert sizing["selected_num_ctx"] == 24576
+    assert sizing["context_sizing_policy"] == "adaptive_persisted_bucket"
+    assert "graphics_memory_spare_gb" not in sizing
