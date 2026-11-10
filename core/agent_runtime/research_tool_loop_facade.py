@@ -420,6 +420,17 @@ def _within_turn_navigation(loop: Any) -> Any:
     return run_in_turn_scope
 
 
+
+def steps_that_ran(executed_steps: list[dict] | None) -> list[dict]:
+    """The steps that actually ran: an approval card's preview step (mode ``tool_preview`` or
+    status ``pending_approval``) is not output. Empty when nothing ran."""
+    return [
+        step for step in (executed_steps or [])
+        if str(step.get("mode") or "") != "tool_preview"
+        and str(step.get("status") or "") != "pending_approval"
+    ]
+
+
 class ResearchToolLoopFacadeMixin:
     def _collect_live_web_notes(
         self,
@@ -2345,7 +2356,10 @@ class ResearchToolLoopFacadeMixin:
         from core.execution_gate import operator_approval_spend_applies
 
         followup_failure = ""
-        if loop_stop_reason == "provider_did_not_answer" and executed_steps and operator_approval_spend_applies():
+        # Only what ran is the result: an approval card's preview step (a resumed turn carries
+        # it from the checkpoint) is not output. With nothing that ran, the old path is kept.
+        ran_steps = steps_that_ran(executed_steps)
+        if loop_stop_reason == "provider_did_not_answer" and ran_steps and operator_approval_spend_applies():
             followup_rejection = dict((loop_source_context or {}).get("last_tool_call_rejection") or {})
             followup_details = dict(getattr(last_tool_decision, "details", None) or {}) if last_tool_decision else {}
             followup_failure = str(
@@ -2355,13 +2369,6 @@ class ResearchToolLoopFacadeMixin:
                 or ""
             ).strip()
         if followup_failure:
-            # Only what ran is the result: an approval card's preview step (a resumed turn carries
-            # it from the checkpoint) is not output and is left out.
-            ran_steps = [
-                step for step in executed_steps
-                if str(step.get("mode") or "") != "tool_preview"
-                and str(step.get("status") or "") != "pending_approval"
-            ] or executed_steps
             outputs: list[str] = []
             for step in ran_steps:
                 text = str(step.get("response_text") or step.get("summary") or "").strip()
