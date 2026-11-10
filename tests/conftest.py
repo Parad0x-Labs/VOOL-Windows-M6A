@@ -1104,3 +1104,13 @@ def pytest_sessionfinish(session, exitstatus):
     if problems:
         print(f"\n{limits.LIST.name}: " + "; ".join(problems))
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+# The Windows cloud opt-in for the rows listed in tests/CLOUD-OPTIN-60.tsv (tests/_windows_cloud_optin.py).
+from tests._windows_cloud_optin import windows_cloud_opted_in  # noqa: E402,F401
+
+
+def pytest_collection_modifyitems(config, items):
+    from tests import _windows_cloud_optin
+
+    _windows_cloud_optin.apply(items)
