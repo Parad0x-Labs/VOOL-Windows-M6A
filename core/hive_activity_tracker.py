@@ -313,8 +313,7 @@ class HiveActivityTracker:
         hive_followups_enabled: bool,
         idle_research_assist: bool,
     ) -> str:
-        # Windows: an empty footer, asked for nothing (the approval card renders as it is).
-        if not self.config.enabled or not watcher_contact_allowed() or not hive_followups_enabled or not session_id:
+        if not self.config.enabled or not hive_followups_enabled or not session_id:
             return ""
 
         dashboard = self.fetch_dashboard()
