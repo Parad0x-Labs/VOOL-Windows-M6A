@@ -138,8 +138,10 @@ def requested_command(text: str) -> str:
 
 
 def windows_program_request_refusal(text: str, *, source_context: dict | None = None) -> str:
-    """On Windows, the refusal a run request gets because its program never runs there; "" when the
-    message is not a run request, its command would pass the pre-decision checks, or off Windows."""
+    """On Windows, the refusal a run request gets because its program never runs there, or because the
+    folder it names to run in is outside the marked folders (`windows_run_folder_refusal`); "" when
+    the message is not a run request, its command and folder would pass the pre-decision checks, or
+    off Windows."""
     from sandbox.job_runner import _is_windows_platform
 
     if not _is_windows_platform():
@@ -152,7 +154,47 @@ def windows_program_request_refusal(text: str, *, source_context: dict | None = 
     refusal = windows_write_refusal_before_decision(
         "sandbox.run_command", {"command": command}, source_context=source_context
     )
-    return str(refusal.response_text or "") if refusal is not None else ""
+    if refusal is not None:
+        return str(refusal.response_text or "")
+    return windows_run_folder_refusal(text, source_context=source_context)
 
 
-__all__ = ["requested_command", "windows_program_request_refusal"]
+def windows_run_folder_refusal(text: str, *, source_context: dict | None = None) -> str:
+    """On Windows, the refusal for "run <command> in <folder>" whose folder is outside every marked
+    folder and outside the chat's own folder; "" otherwise, and always off Windows.
+
+    Hardware M4 (0.7.1): the folder after " in " is the job's working folder
+    (`core.execution.planner._windows_command_in_folder`). A folder the sandbox would refuse as its
+    working folder (outside the chat's folder, `sandbox_cwd_refusal`) that no mark covers either is
+    answered here, before any card, in words about the marks. Before, the same ask was answered by
+    the directory lane as "I can only inspect safe local directories in this lane". Nothing is
+    allowed here: a folder this does not refuse is still decided by every gate downstream."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return ""
+    import os
+
+    from core.execution.planner import _windows_command_in_folder
+    from core.execution.write_demand import verbatim_request_text
+
+    try:
+        command, folder = _windows_command_in_folder(verbatim_request_text(source_context, text) or text)
+        if not folder:
+            return ""
+        # Where the folder really is, links and junctions followed, as the marked-folder lane reads it.
+        if windows_write_gate.inside_flagged(os.path.realpath(folder)):
+            return ""
+        from core.runtime_execution_tools import _workspace_root, sandbox_cwd_refusal
+
+        if sandbox_cwd_refusal(folder, workspace_root=_workspace_root(source_context)) is None:
+            return ""
+    except Exception:  # an unknown state refuses nothing here: the gates downstream still decide
+        return ""
+    return (
+        f"`{folder}` is outside the folders you marked in Settings, Folders VOOL may change, so I won't "
+        f"run `{command}` there. Nothing was run."
+    )
+
+
+__all__ = ["requested_command", "windows_program_request_refusal", "windows_run_folder_refusal"]

@@ -2531,6 +2531,50 @@ def _explicit_command_request(user_text: str) -> str:
     return ""
 
 
+#: Before the folder of "run <command> in <folder>": " in ", then an optional opening quote.
+_RUN_IN_FOLDER_LEAD_RE = re.compile(r"\s+in\s+[\"'`]?\Z", re.IGNORECASE)
+#: After it: an optional closing quote and the sentence's end.
+_RUN_IN_FOLDER_TAIL_RE = re.compile(r"[\"'`]?[\s.!?]*")
+
+
+def _windows_command_in_folder(user_text: str) -> tuple[str, str]:
+    """On Windows, ``(command, folder)`` for a run request that ends "in <full path>", else ``("", "")``.
+
+    Captest M4 on hardware (0.7.1): "run pytest in C:\\Users\\Satoshi\\VOOL HW Test\\proj" was planned as
+    `pytest in C:` with no folder, and "run python -m unittest in \"<that path>\"" as
+    `python -m unittest in`: `_explicit_command_request` reads the command a word of
+    `[A-Za-z0-9_./:-]` at a time, so the folder became the command's arguments, cut at the first `\\`
+    or quote, and the job ran in the chat's folder. The folder is read here the way "run calc.py in
+    <folder>" reads it (`write_root_honesty`'s path reader: quoted, or through folders with spaces),
+    and the command is what comes before " in ". The folder becomes the call's `cwd`, so the card
+    names it and every gate (containment, approval, the launcher) still decides it. A share, a device
+    path or a folder on a drive Windows does not call local is never taken. Off Windows nothing is
+    read here and the request is planned as before.
+    """
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return "", ""
+    text = str(user_text or "").strip()
+    if not text or "\n" in text:
+        return "", ""
+    from core.agent_runtime import write_root_honesty as paths
+    from core.windows_marked_code_folder import _on_a_local_drive
+
+    for start, candidate in paths._destination_candidates(text):
+        # A share, a device path or a mapped network drive is never taken: the folder is looked up
+        # downstream, and looking one up is already the network connection.
+        if paths.typed_path_kind(text, start, candidate) or not _on_a_local_drive(candidate):
+            continue
+        lead = _RUN_IN_FOLDER_LEAD_RE.search(text[:start])
+        if lead is None or not _RUN_IN_FOLDER_TAIL_RE.fullmatch(text[start + len(candidate):]):
+            continue
+        command = _explicit_command_request(text[: lead.start()])
+        if command:
+            return command, candidate
+    return "", ""
+
+
 def _normalize_inline_command(command: str) -> str:
     clean = " ".join(str(command or "").split()).strip()
     if not clean:
@@ -2650,17 +2694,21 @@ def _regression_step_from_request(
     return {"intent": "workspace.run_tests", "arguments": {}}
 
 
-def _planned_command_payload(*, user_text: str, command: str) -> tuple[str, dict[str, Any]] | None:
+def _planned_command_payload(*, user_text: str, command: str, cwd: str = "") -> tuple[str, dict[str, Any]] | None:
+    """The call that runs ``command``; with ``cwd`` (only ever given on Windows, from
+    `_windows_command_in_folder`) the call runs it in that folder."""
     validation_step = _validation_step_from_request(user_text=user_text, explicit_command=command)
     if validation_step is not None:
+        if cwd:
+            validation_step["arguments"]["cwd"] = cwd
         return ("planned_validation_run", validation_step)
     normalized_command = _normalize_inline_command(command)
     if not normalized_command:
         return None
-    return (
-        "planned_command_run",
-        {"intent": "sandbox.run_command", "arguments": {"command": normalized_command}},
-    )
+    arguments: dict[str, Any] = {"command": normalized_command}
+    if cwd:
+        arguments["cwd"] = cwd
+    return ("planned_command_run", {"intent": "sandbox.run_command", "arguments": arguments})
 
 
 def _planned_orchestrated_operator_payload(
@@ -2940,7 +2988,13 @@ def plan_tool_workflow(
     # The command a job runs is read from what the user typed (`verbatim_request_text`), like a write's
     # content: input normalization glues a lone "." to the word before it, so
     # "run python -m compileall -q ." was planned, shown on the card and approved as `-q.`.
-    explicit_command = _explicit_command_request(verbatim_request_text(source_context, raw_text) or raw_text)
+    typed_request = verbatim_request_text(source_context, raw_text) or raw_text
+    explicit_command = _explicit_command_request(typed_request)
+    # Windows: "run <command> in <folder>" runs the command in that folder (`_windows_command_in_folder`).
+    # Off Windows `explicit_cwd` is always "" and every plan below is the one it was.
+    folder_command, explicit_cwd = _windows_command_in_folder(typed_request)
+    if folder_command:
+        explicit_command = folder_command
     compare_or_verify = any(marker in lowered for marker in (" compare ", " versus ", " vs ", " verify ", " confirm ", " is it true "))
     lookup_followup_text = ""
     if followup_resume and not (looks_like_explicit_lookup_request(text) or looks_like_public_entity_lookup_request(text)):
@@ -3278,7 +3332,7 @@ def plan_tool_workflow(
                 next_payload=orchestrated_payload,
             )
         if explicit_command and any(marker in lowered for marker in (" retry ", " then retry", " then rerun", " rerun ")):
-            command_payload = _planned_command_payload(user_text=raw_text, command=explicit_command)
+            command_payload = _planned_command_payload(user_text=raw_text, command=explicit_command, cwd=explicit_cwd)
             if command_payload is not None:
                 reason, next_payload = command_payload
                 return WorkflowPlannerDecision(
@@ -3314,7 +3368,7 @@ def plan_tool_workflow(
                 next_payload={"intent": "web.search", "arguments": {"query": research_text, "limit": 4}},
             )
         if explicit_command:
-            command_payload = _planned_command_payload(user_text=raw_text, command=explicit_command)
+            command_payload = _planned_command_payload(user_text=raw_text, command=explicit_command, cwd=explicit_cwd)
             if command_payload is not None:
                 reason, next_payload = command_payload
                 return WorkflowPlannerDecision(handled=True, reason=reason, next_payload=next_payload)
@@ -3543,7 +3597,7 @@ def plan_tool_workflow(
             _workflow_step_exists(steps, "sandbox.run_command", key="command", value=explicit_command)
             or _workflow_validation_command_already_attempted(steps, explicit_command)
         ):
-            command_payload = _planned_command_payload(user_text=user_text, command=explicit_command)
+            command_payload = _planned_command_payload(user_text=user_text, command=explicit_command, cwd=explicit_cwd)
             if command_payload is not None:
                 reason, next_payload = command_payload
                 return WorkflowPlannerDecision(
@@ -3608,7 +3662,7 @@ def plan_tool_workflow(
             _workflow_step_exists(steps, "sandbox.run_command", key="command", value=explicit_command)
             or _workflow_validation_command_already_attempted(steps, explicit_command)
         ):
-            command_payload = _planned_command_payload(user_text=user_text, command=explicit_command)
+            command_payload = _planned_command_payload(user_text=user_text, command=explicit_command, cwd=explicit_cwd)
             if command_payload is not None:
                 reason, next_payload = command_payload
                 return WorkflowPlannerDecision(
