@@ -63,11 +63,13 @@ _NOT_LOCAL = (
 class MarkedFileAsk:
     """What the lane does with a turn: one tool call placed in ``workspace``, or a plain refusal."""
 
-    kind: str  # "edit", "undo" or "move"
+    kind: str  # "edit", "write", "undo" or "move"
     intent: str = ""
     arguments: dict[str, Any] = field(default_factory=dict)
     workspace: str = ""
     refusal: str = ""
+    #: For an undo that moves a file back: the ledger record of the move it undoes.
+    undoes: str = ""
 
 
 def _value(name: str, *, bare: bool) -> str:
@@ -243,6 +245,109 @@ def _edit(text: str) -> MarkedFileAsk | None:
     )
 
 
+#: An overwrite or an append of a file the owner names by its full path (captest b58c5eb0, M3). The text
+#: is quoted, or one bare word; after "with" at the end of the message it may be bare to the end.
+_TEXT_VALUE = r"(?:[\"'`\u201c\u2018](?P<q>[^\"'`\u201c\u201d\u2018\u2019\r\n]*)[\"'`\u201d\u2019]|(?P<bare>[^\s\"'`]+))"
+_OPEN_QUOTE = r"\s*[\"'`]?\s*\Z"
+_WRITE_BEFORE_RES = (
+    # write the text X to <file>
+    ("overwrite", re.compile(_LEAD + r"(?:write|put)\s+(?:the\s+)?text\s+" + _TEXT_VALUE
+                             + r"\s+(?:to|in|into)(?:\s+the\s+file)?" + _OPEN_QUOTE, re.IGNORECASE)),
+    # append the line X to <file>
+    ("append", re.compile(_LEAD + r"(?:append|add)\s+(?:the\s+)?line\s+" + _TEXT_VALUE
+                          + r"\s+(?:to|at\s+the\s+end\s+of)(?:\s+the\s+file)?" + _OPEN_QUOTE, re.IGNORECASE)),
+)
+#: replace the contents of <file> with (the text) X
+_REPLACE_ALL_BEFORE_RE = re.compile(
+    _LEAD + r"replace\s+(?:all\s+)?(?:the\s+)?(?:contents?|text)\s+(?:of|in)(?:\s+the\s+file)?" + _OPEN_QUOTE,
+    re.IGNORECASE,
+)
+_REPLACE_ALL_AFTER_RE = re.compile(
+    r"\A[\"'`]?\s*,?\s+with\s+(?:the\s+)?(?:text\s+)?(?:[\"'`\u201c\u2018](?P<q>[^\"'`\u201c\u201d\u2018\u2019\r\n]*)"
+    r"[\"'`\u201d\u2019]|(?P<bare>[^\"'`\r\n]+?))\s*[.!]?\s*\Z",
+    re.IGNORECASE,
+)
+_PATH_TAIL_RE = re.compile(r"\A[\"'`]?\s*[.!]?\s*\Z")
+
+
+def _text_of(match: re.Match[str]) -> str:
+    quoted = match.group("q")
+    return quoted if quoted is not None else str(match.group("bare") or "")
+
+
+def _write(text: str) -> MarkedFileAsk | None:
+    """An overwrite ("write the text X to <file>", "replace the contents of <file> with X") or an append
+    ("append the line X to <file>") of a file that exists in a marked folder: one `workspace.write_file`
+    placed in the file's own folder, with the hash of the bytes read here, so it is journaled (and
+    "undo that" restores them) and refused if the file changed before it runs. A file that is not there
+    yet is a create, left to the machine.write_file lane."""
+    from core.agent_runtime import write_root_honesty as paths
+
+    candidates = list(paths._destination_candidates(text, typed_shares=True))
+    if not candidates:
+        return None
+    start, named = candidates[0]
+    before, after = text[:start], text[start + len(named):]
+    kind, value, tail = "", None, None
+    for found_kind, pattern in _WRITE_BEFORE_RES:
+        found = pattern.match(before)
+        if found:
+            kind, value, tail = found_kind, _text_of(found), _PATH_TAIL_RE.match(after)
+            break
+    if not kind and _REPLACE_ALL_BEFORE_RE.match(before):
+        kind = "overwrite"
+        tail = _REPLACE_ALL_AFTER_RE.match(after)
+        value = _text_of(tail) if tail else None
+    if not kind:
+        return None
+    # A share or a drive Windows does not call local is refused before it is read any further: where
+    # such a path ends is not looked up, so the rest of the message is not read against it.
+    refusal = _first_unlookable(text, candidates)
+    if refusal:
+        return MarkedFileAsk("write", refusal=refusal + _NOTHING_CHANGED)
+    if tail is None or value is None:
+        return None
+    if len({path for _start, path in candidates}) != 1:
+        return MarkedFileAsk("write", refusal="Name one file to change, by its full path. " + _NOTHING_CHANGED)
+    if ".." in re.split(r"[\\/]", named):
+        return MarkedFileAsk(
+            "write", refusal=f"`{named}` climbs out of a folder with `..`; name the file by its own full path. "
+            + _NOTHING_CHANGED,
+        )
+    try:
+        present = os.path.lexists(named)
+    except (OSError, ValueError):
+        present = False
+    if not present:
+        return None
+    folder, name, refusal = _marked_file(named)
+    if refusal:
+        return MarkedFileAsk("write", refusal=refusal + _NOTHING_CHANGED)
+    try:
+        with open(os.path.join(folder, name), "rb") as handle:
+            current = handle.read()
+    except OSError:
+        return MarkedFileAsk("write", refusal=f"I could not read `{named}`. " + _NOTHING_CHANGED)
+    if kind == "append":
+        try:
+            old_text = current.decode("utf-8")
+        except UnicodeDecodeError:
+            return MarkedFileAsk(
+                "write", refusal=f"`{named}` is not plain UTF-8 text, so I won't add a line to it. " + _NOTHING_CHANGED
+            )
+        newline = "\r\n" if "\r\n" in old_text else "\n"
+        ends_open = not old_text or old_text.endswith(("\n", "\r"))
+        content = old_text + ("" if ends_open else newline) + value + (newline if old_text and ends_open else "")
+    else:
+        content = value
+    import hashlib
+
+    return MarkedFileAsk(
+        "write", intent="workspace.write_file", workspace=folder,
+        arguments={"path": name, "content": content, "expected_hash": hashlib.sha256(current).hexdigest()},
+    )
+
+
 def _first_unlookable(body: str, candidates: list[tuple[int, str]]) -> str:
     for start, path in candidates:
         if not _local(body, start, path):
@@ -297,7 +402,7 @@ def _move(text: str) -> MarkedFileAsk | None:
 def _undo(text: str, session_id: str) -> MarkedFileAsk | None:
     if not _UNDO_RE.match(text):
         return None
-    from core.execution.artifacts import latest_workspace_mutation_for_session
+    from core.execution.artifacts import latest_marked_undo_record_for_session
 
     none_left = (
         "There is no change VOOL made in a marked folder in this chat that is left to undo. "
@@ -306,11 +411,13 @@ def _undo(text: str, session_id: str) -> MarkedFileAsk | None:
     if not session_id:
         return MarkedFileAsk("undo", refusal=none_left)
     try:
-        record = latest_workspace_mutation_for_session(session_id)
+        record = latest_marked_undo_record_for_session(session_id)
     except Exception:  # an unreadable ledger restores nothing on a guess
         return MarkedFileAsk("undo", refusal="I could not read this chat's change record. " + _NOTHING_CHANGED)
     if record is None:
         return MarkedFileAsk("undo", refusal=none_left)
+    if isinstance(record.get("move"), dict):
+        return _undo_move(record)
     folder = str(record.get("workspace_root") or "").strip()
     if (not folder or not os.path.isabs(folder) or _is_link(folder)
             or os.path.normcase(_real_folder(folder)) != os.path.normcase(folder)
@@ -325,6 +432,54 @@ def _undo(text: str, session_id: str) -> MarkedFileAsk | None:
     return MarkedFileAsk("undo", intent="workspace.rollback_last_change", workspace=folder, arguments={})
 
 
+def _undo_move(record: dict[str, Any]) -> MarkedFileAsk:
+    """The move back of a file VOOL moved between two marked folders: `machine.move_path` from where it
+    went to where it was, judged as a move the owner asked for (both places still marked, links
+    followed, the old place free), and through the same approval."""
+    move = dict(record.get("move") or {})
+    moved, original = str(move.get("destination") or ""), str(move.get("source") or "")
+    refused = "Nothing was moved back. " + _NOTHING_CHANGED
+    if not (os.path.isabs(moved) and os.path.isabs(original)):
+        return MarkedFileAsk("undo", refusal="I could not read this chat's change record. " + _NOTHING_CHANGED)
+    folder, name, refusal = _marked_file(moved)
+    if refusal:
+        return MarkedFileAsk("undo", refusal=f"The last change VOOL made in this chat moved a file to `{moved}`. "
+                             + refusal + refused)
+    parent = _real_folder(os.path.dirname(original))
+    final = os.path.join(parent, os.path.basename(original)) if parent else ""
+    if not parent or not os.path.isdir(parent) or not windows_write_gate.inside_flagged(parent) \
+            or not windows_write_gate.inside_flagged(final):
+        return MarkedFileAsk(
+            "undo",
+            refusal=(f"The last change VOOL made in this chat moved `{original}` to `{moved}`, and `{original}` is "
+                     "not in a folder you have marked now, so I won't move it back there. " + refused),
+        )
+    if os.path.lexists(final):
+        return MarkedFileAsk("undo", refusal=f"`{final}` already exists, so I won't move `{moved}` back over it. "
+                             + refused)
+    return MarkedFileAsk(
+        "undo", intent="machine.move_path", workspace=folder,
+        arguments={"source": os.path.join(folder, name), "destination": final},
+        undoes=str(record.get("mutation_id") or ""),
+    )
+
+
+def moved_back(ask: MarkedFileAsk, execution: Any, *, session_id: str) -> None:
+    """After an undo's move back ran: the move it undid, and the move back, are no longer left to undo."""
+    if not ask.undoes or not bool(getattr(execution, "ok", False)):
+        return
+    if str(getattr(execution, "status", "") or "") != "moved":
+        return
+    from core.execution.artifacts import mark_marked_move_undone
+
+    details = dict(getattr(execution, "details", {}) or {})
+    mark_marked_move_undone(
+        session_id=session_id, mutation_id=ask.undoes,
+        source=str(details.get("dest") or ask.arguments.get("destination") or ""),
+        destination=str(details.get("source") or ask.arguments.get("source") or ""),
+    )
+
+
 def marked_file_ask(text: str, *, source_context: dict[str, Any] | None, session_id: str = "") -> MarkedFileAsk | None:
     """What this turn asks of a file in a marked folder, or None for a turn this lane leaves alone:
     off Windows, a turn that is not the owner's own local one, and any other ask."""
@@ -336,7 +491,7 @@ def marked_file_ask(text: str, *, source_context: dict[str, Any] | None, session
         # at \x0b, \x0c, \x1c-\x1e, \x85, U+2028 and U+2029, not only at CR and LF.
         return None
     ledger_session = str((source_context or {}).get("session_id") or "").strip() or str(session_id or "").strip()
-    for reader in (lambda: _undo(body, ledger_session), lambda: _move(body), lambda: _edit(body)):
+    for reader in (lambda: _undo(body, ledger_session), lambda: _move(body), lambda: _edit(body), lambda: _write(body)):
         ask = reader()
         if ask is not None:
             return ask
@@ -352,4 +507,4 @@ def placed_context(ask: MarkedFileAsk, source_context: dict[str, Any] | None) ->
     return context
 
 
-__all__ = ["MarkedFileAsk", "marked_file_ask", "placed_context"]
+__all__ = ["MarkedFileAsk", "marked_file_ask", "moved_back", "placed_context"]

@@ -2028,7 +2028,7 @@ def _allowed_on_the_card(_reason: str) -> bool:
 
 
 def _machine_move_path(
-    arguments: dict[str, Any], *, workspace_root: Path | None = None
+    arguments: dict[str, Any], *, workspace_root: Path | None = None, session_id: str = ""
 ) -> RuntimeExecutionResult:
     from core.machine_file_ops import move_path
 
@@ -2076,6 +2076,8 @@ def _machine_move_path(
         allowed_roots=allowed_roots,
         **consent,
     )
+    if result.ok:
+        _record_marked_move(session_id, result.source, result.dest)
     return RuntimeExecutionResult(
         handled=True,
         ok=result.ok,
@@ -2090,6 +2092,63 @@ def _machine_move_path(
             ),
         },
     )
+
+
+def _in_marked_folder(path: Path) -> bool:
+    """On Windows, whether the file ``path`` really lies in a folder the owner marked now."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return False
+    try:
+        folder = os.path.realpath(str(path.parent))
+    except (OSError, ValueError):
+        return False
+    return windows_write_gate.inside_flagged(folder) and windows_write_gate.inside_flagged(
+        os.path.join(folder, path.name))
+
+
+def _journal_marked_machine_write(target: Path, *, session_id: str, before: bytes | None, after: bytes) -> None:
+    """The machine write of ``target`` in a marked folder, as one change in the chat's change ledger
+    placed in the file's own (real) folder, with the bytes that were on disk before and the bytes
+    written (the broker's, "\n" as "\r\n" where it translates). `workspace.rollback_last_change` in
+    that folder restores the earlier bytes, or removes a file the write created."""
+    folder = Path(os.path.realpath(str(target.parent)))
+    before_text = before.decode("utf-8", errors="replace") if before is not None else ""
+    record_workspace_mutation(
+        session_id=session_id,
+        workspace_root=folder,
+        intent="machine.write_file",
+        changes=[
+            {
+                "path": target.name,
+                "action": "updated" if before is not None else "created",
+                "existed_before": before is not None,
+                "existed_after": True,
+                "before_text": before_text,
+                "after_text": after.decode("utf-8", errors="replace"),
+                "after_hash": bytes_sha256(after),
+                "before_restorable": before is None or _is_utf8(before),
+            }
+        ],
+    )
+
+
+def _record_marked_move(session_id: str, source: str, dest: str) -> None:
+    """A file moved between two marked folders on Windows goes into the chat's change ledger, so
+    "undo that" can move it back (captest b58c5eb0, M3: the move landed through the broker's rename and
+    the undo lane found nothing to undo). Off Windows, or for anything else, nothing is recorded."""
+    try:
+        moved = Path(dest)
+        if not moved.is_file() or os.path.islink(moved):
+            return
+        if not (_in_marked_folder(Path(source)) and _in_marked_folder(moved)):
+            return
+        from core.execution.artifacts import record_marked_move
+
+        record_marked_move(session_id=session_id, source=str(source), destination=str(dest))
+    except (OSError, ValueError):
+        return
 
 
 def _operator_profile_tool(intent: str, arguments: dict[str, Any], source_context: dict[str, Any] | None) -> RuntimeExecutionResult:
@@ -3382,7 +3441,8 @@ def _dispatch_runtime_tool(
         if intent == "machine.host_state":
             return _machine_host_state(arguments)
         if intent == "machine.move_path":
-            return _covered(lambda: _machine_move_path(arguments, workspace_root=workspace_root))
+            return _covered(lambda: _machine_move_path(
+                arguments, workspace_root=workspace_root, session_id=_runtime_session_id(source_context)))
         if intent == "machine.read_file":
             return _read_machine_file(arguments)
         if intent == "machine.ensure_directory":
@@ -3392,6 +3452,7 @@ def _dispatch_runtime_tool(
                 lambda: _write_machine_file(
                     arguments,
                     reviewed_destination=_approved_destination_for(source_context, intent, arguments.get("path")),
+                    session_id=_runtime_session_id(source_context),
                 )
             )
         if intent == "pdf.extract_text":
@@ -5857,7 +5918,7 @@ def _ensure_machine_directory(arguments: dict[str, Any]) -> RuntimeExecutionResu
 
 
 def _write_machine_file(
-    arguments: dict[str, Any], *, reviewed_destination: dict[str, Any] | None = None
+    arguments: dict[str, Any], *, reviewed_destination: dict[str, Any] | None = None, session_id: str = ""
 ) -> RuntimeExecutionResult:
     if not policy_engine.get("filesystem.allow_write_workspace", False):
         return RuntimeExecutionResult(
@@ -5933,15 +5994,31 @@ def _write_machine_file(
     if not brokered:
         target.parent.mkdir(parents=True, exist_ok=True)
     already_present = target.exists()
+    # In a folder the owner marked on Windows the change goes into the chat's change ledger, so
+    # "undo that" restores it (captest b58c5eb0, M3: the write landed through the broker and the undo
+    # lane found nothing to undo). The earlier bytes are read now, before anything is written.
+    journaled = _in_marked_folder(target) and not os.path.islink(target)
+    before_bytes: bytes | None = None
+    if journaled and already_present:
+        try:
+            before_bytes = target.read_bytes() if target.is_file() else None
+        except OSError:
+            journaled = False
+        if before_bytes is None:
+            journaled = False
+    written = content.encode("utf-8")
     expected_hash = str(arguments.get("expected_hash") or "").strip().lower()
-    checked: bytes | None = None
+    # One read: the journal's earlier bytes are the bytes the hash check and the broker's `expect` use,
+    # so what the ledger restores is exactly what this write replaced.
+    checked: bytes | None = before_bytes
     if already_present and expected_hash:
         # A claimed prior-content hash is ENFORCED at the physical mutation: the write
         # refuses when the file on disk is not the bytes the caller claimed to replace.
         # Without this the hash would be classification evidence the mutation never checks.
         import hashlib
 
-        checked = target.read_bytes()
+        if checked is None:
+            checked = target.read_bytes()
         actual = hashlib.sha256(checked).hexdigest()
         if actual != expected_hash:
             return RuntimeExecutionResult(
@@ -5985,6 +6062,7 @@ def _write_machine_file(
         except Refused as refused:
             return _broker_refusal("machine.write_file", surface="machine", label=_home_relative_label(target),
                                    refused=refused)
+        written = data
     elif reviewed_destination is not None:
         # A reviewed destination is written inside its pinned parent directory, with its reviewed bytes
         # re-read there just before the rename (`pinned_atomic_write_text`).
@@ -6010,6 +6088,8 @@ def _write_machine_file(
     action = "updated" if already_present else "created"
     status = "updated" if already_present else "executed"
     line_count = len(content.splitlines()) if content else 0
+    if journaled:
+        _journal_marked_machine_write(target, session_id=session_id, before=before_bytes, after=written)
     return RuntimeExecutionResult(
         handled=True,
         ok=True,

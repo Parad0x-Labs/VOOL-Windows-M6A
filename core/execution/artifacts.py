@@ -793,6 +793,74 @@ def latest_workspace_mutation_for_session(session_id: str) -> dict[str, Any] | N
     return None
 
 
+def record_marked_move(*, session_id: str | None, source: str, destination: str) -> dict[str, Any]:
+    """Record, in the session's change ledger, a file VOOL moved between two folders the owner marked
+    on Windows, so "undo that" can move it back (`windows_marked_file_ops`). The record names no
+    ``workspace_root`` and holds no ``changes``: a workspace rollback never takes it (it matches no
+    root), and readers of the newest file change (`latest_workspace_mutation_for_session`) skip it.
+    Nothing is recorded without a session: there is no chat to undo it from."""
+    clean_session = str(session_id or "").strip()
+    if not clean_session or not str(source or "").strip() or not str(destination or "").strip():
+        return {}
+    record = {
+        "mutation_id": f"mutation-{uuid.uuid4().hex}",
+        "session_key": session_key_for_workspace(clean_session),
+        "workspace_root": "",
+        "intent": "machine.move_path",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "changes": [],
+        "move": {"source": str(source), "destination": str(destination)},
+        "rolled_back_at": None,
+    }
+    records = _load_mutation_records(record["session_key"])
+    records.append(record)
+    _store_mutation_records(record["session_key"], records)
+    return record
+
+
+def latest_marked_undo_record_for_session(session_id: str) -> dict[str, Any] | None:
+    """The newest un-rolled-back record of this session that "undo that" in a marked folder can act on:
+    a file change (as `latest_workspace_mutation_for_session`) or a move (`record_marked_move`)."""
+    clean_session = str(session_id or "").strip()
+    if not clean_session:
+        return None
+    records = _load_mutation_records(session_key_for_workspace(clean_session))
+    for index in range(len(records) - 1, -1, -1):
+        record = dict(records[index] or {})
+        if record.get("rolled_back_at"):
+            continue
+        if list(record.get("changes") or []) or isinstance(record.get("move"), dict):
+            return record
+    return None
+
+
+def mark_marked_move_undone(*, session_id: str | None, mutation_id: str, source: str, destination: str) -> None:
+    """After the move back of ``mutation_id`` landed: that move, and the move back itself (the newest
+    un-rolled-back move from ``destination`` to ``source``), are marked rolled back, so a second
+    "undo that" neither repeats nor reverses it."""
+    clean_session, clean_id = str(session_id or "").strip(), str(mutation_id or "").strip()
+    if not clean_session or not clean_id:
+        return
+    session_key = session_key_for_workspace(clean_session)
+    records = _load_mutation_records(session_key)
+    now = datetime.now(timezone.utc).isoformat()
+    reverse_marked = False
+    for index in range(len(records) - 1, -1, -1):
+        record = dict(records[index] or {})
+        if record.get("rolled_back_at"):
+            continue
+        move = record.get("move") if isinstance(record.get("move"), dict) else {}
+        is_original = str(record.get("mutation_id") or "") == clean_id
+        is_reverse = (not reverse_marked and not is_original and move
+                      and str(move.get("source") or "") == str(destination)
+                      and str(move.get("destination") or "") == str(source))
+        if is_original or is_reverse:
+            record["rolled_back_at"] = now
+            records[index] = record
+            reverse_marked = reverse_marked or bool(is_reverse)
+    _store_mutation_records(session_key, records)
+
+
 def mark_workspace_mutation_promoted(
     *,
     session_id: str | None,
