@@ -9,6 +9,7 @@ import core.policy_engine as policy_engine
 from core.machine_file_ops import FileOpResult, move_path
 from core.os_consent_gate import ConsentDeniedError, ConsentUnavailableError
 from core.runtime_execution_tools import execute_runtime_tool
+from tests._move_allowed_on_its_card import move_allowed_on_its_card
 
 _ALLOW = lambda reason: True  # noqa: E731 - test consent stub
 _DENY = lambda reason: False  # noqa: E731
@@ -106,8 +107,10 @@ def test_move_path_tool_dispatch_with_write_enabled_and_consent(tmp_path, monkey
         dst = tmp_path / "sub"
         dst.mkdir()
         target = dst / "doc.txt"
-        result = execute_runtime_tool(
-            "machine.move_path",
+        # The move is approved on its card and runs as the call that spends that Allow: on Windows the
+        # Allow is its consent and a bare dispatch is refused (captest R4-1b); elsewhere the OS prompt
+        # above is still asked.
+        result = move_allowed_on_its_card(
             {"source": str(src), "destination": str(target)},
             source_context={"workspace": str(tmp_path)},
         )
