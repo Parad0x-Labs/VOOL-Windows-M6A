@@ -180,8 +180,17 @@ def test_the_task_grant_decision_is_exact_only_for_its_own_fingerprint(workspace
 # --- (a) Windows only ------------------------------------------------------------------------------
 
 
-def test_off_windows_a_live_approved_scope_changes_nothing(workspace) -> None:
+@pytest.fixture
+def off_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A host that is not Windows, on any host. The spend path reads one seam, the job runner's own
+    platform check (`execution_gate.operator_approval_spend_applies`): on a real Windows runner it is
+    True unless it is turned off here."""
+    monkeypatch.setattr(job_runner, "_is_windows_platform", lambda: False)
+
+
+def test_off_windows_a_live_approved_scope_changes_nothing(off_windows, workspace) -> None:
     assert not job_runner._is_windows_platform()
+    assert execution_gate.operator_approval_spend_applies() is False
     cwd = str(workspace)
     before = _gate("python t.py", cwd)
     with execution_gate.operator_approved_call("sandbox.run_command"):
@@ -191,7 +200,7 @@ def test_off_windows_a_live_approved_scope_changes_nothing(workspace) -> None:
     assert before["decision"] == "advice_only" and before["reason"] == "Command requires explicit user approval."
 
 
-def test_off_windows_an_approved_command_is_asked_about_again_as_on_base(jobs, workspace, manual) -> None:
+def test_off_windows_an_approved_command_is_asked_about_again_as_on_base(off_windows, jobs, workspace, manual) -> None:
     session, turn = manual
     approved = {"command": "python t.py", "cwd": str(workspace)}
     asked = _run(approved, _context(session, turn, workspace))
