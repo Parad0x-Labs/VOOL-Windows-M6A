@@ -21,7 +21,8 @@ NEVER_LISTED = ("tests/test_windows_confinement_attacks.py",)
 #: Per limit: the exception types (module, qualified name) that are VOOL's refusal, and its sentence.
 LIMITS = {
     "git": ({("core.safe_git", "GitRefusedOnWindows"), ("core.repoops.identity", "WorkspaceError"),
-             ("core.project_archaeology", "ArchaeologyInputError"), ("core.user_rules", "_ScanIncomplete")},
+             ("core.project_archaeology", "ArchaeologyInputError"),
+             ("core.project_archaeology", "GitRefused"), ("core.user_rules", "_ScanIncomplete")},
             "VOOL doesn't run git on Windows in 0.7.1"),
     "plugin": ({("core.plugin_lifecycle", "LifecycleError"), ("core.plugin_executor", "ConfinementUnavailableError"),
                 ("core.mcp_client", "MCPRefusedOnWindows")},
