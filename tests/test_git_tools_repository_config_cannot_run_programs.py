@@ -99,8 +99,12 @@ def test_a_planted_hook_never_runs_when_status_reads_the_index(tmp_path: Path) -
     (repo / "notes.txt").write_text("two\n", encoding="utf-8")
     os.utime(repo / "notes.txt", None)
 
-    status = git_status_workspace({}, workspace_root=repo)
+    with windows_refusals.watch_git(tmp_path) as seen:
+        status = git_status_workspace({}, workspace_root=repo)
 
+    if windows_refusals.refused_tool_exactly(seen, status):
+        assert not marker.exists(), "git ran a hook planted in the repository"
+        return
     assert status["ok"] is True and "notes.txt" in status["response_text"]
     assert not marker.exists(), "git ran a hook planted in the repository"
 
@@ -131,9 +135,13 @@ def test_inherited_git_config_environment_cannot_inject_a_program(tmp_path: Path
     monkeypatch.setenv("GIT_CONFIG_KEY_0", "filter.injected.clean")
     monkeypatch.setenv("GIT_CONFIG_VALUE_0", _planted_program(tmp_path, marker))
 
-    status = git_status_workspace({}, workspace_root=repo)
-    diff = git_diff_workspace({}, workspace_root=repo)
+    with windows_refusals.watch_git(tmp_path) as seen:
+        status = git_status_workspace({}, workspace_root=repo)
+        diff = git_diff_workspace({}, workspace_root=repo)
 
+    if windows_refusals.refused_tool_exactly(seen, status, diff):
+        assert not marker.exists(), "an inherited GIT_CONFIG_* variable made git run a program"
+        return
     assert status["ok"] is True and diff["ok"] is True
     assert not marker.exists(), "an inherited GIT_CONFIG_* variable made git run a program"
 
@@ -154,8 +162,11 @@ def test_a_plain_repository_still_reports_status_and_diff(tmp_path: Path) -> Non
     repo, marker = _repo(tmp_path)
     (repo / "notes.txt").write_text("two\n", encoding="utf-8")
 
-    status = git_status_workspace({}, workspace_root=repo)
-    diff = git_diff_workspace({}, workspace_root=repo)
+    with windows_refusals.watch_git(tmp_path) as seen:
+        status = git_status_workspace({}, workspace_root=repo)
+        diff = git_diff_workspace({}, workspace_root=repo)
 
+    if windows_refusals.refused_tool_exactly(seen, status, diff):
+        return
     assert status["ok"] is True and status["status"] == "executed" and "notes.txt" in status["response_text"]
     assert diff["ok"] is True and "+two" in diff["response_text"]

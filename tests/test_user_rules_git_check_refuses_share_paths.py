@@ -24,7 +24,9 @@ from pathlib import Path
 import pytest
 
 from core import user_rules as ur
+from tests import _windows_refusals as windows_refusals
 from tests._nonlocal_touch_recorder import recorder, windows_host
+from tests.test_user_rules import _named, _unchecked
 
 GLOBAL_GIT_RULE = "add this to global rules: never push the words xxx or ffff to git"
 SHARES = ["\\\\attkr9\\s\\x", "//attkr9/s/x", "\\\\?\\UNC\\attkr9\\s\\x"]
@@ -130,10 +132,24 @@ def test_a_local_repository_message_file_and_reused_message_are_still_checked(ho
     message.write_text("ship ffff\n", encoding="utf-8")
     windows_host.on()
 
-    clean = ur.sandbox_git_check(["git", "-C", str(repo), "commit", "--allow-empty", "-m", "fine"], cwd=str(repo))
-    from_file = ur.sandbox_git_check(["git", "commit", "--allow-empty", "-F", "msg.txt"], cwd=str(repo))
-    reused = ur.sandbox_git_check(["git", "commit", "--allow-empty", "-C", "HEAD"], cwd=str(repo))
+    with windows_refusals.watch_git(repo) as seen:
+        clean = ur.sandbox_git_check(["git", "-C", str(repo), "commit", "--allow-empty", "-m", "fine"], cwd=str(repo))
+        from_file = ur.sandbox_git_check(["git", "commit", "--allow-empty", "-F", "msg.txt"], cwd=str(repo))
+        reused = ur.sandbox_git_check(["git", "commit", "--allow-empty", "-C", "HEAD"], cwd=str(repo))
 
+    # Windows 0.7.1 runs no git: the local message file is still read and its word named, but what the
+    # clean commit adds and the reused message both need git, so those checks fail closed.
+    if seen.active and windows_refusals.refused_exactly(
+        seen,
+        (clean.refusal.reason, _unchecked("commit")),
+        (clean.refusal.incomplete, True),
+        (from_file.refusal.reason, _named("commit", "ffff", "message")),
+        (from_file.refusal.incomplete, False),
+        (reused.refusal.reason,
+         _unchecked("commit", f"the reused message 'HEAD' could not be read: {windows_refusals.GIT_REFUSAL}")),
+        (reused.refusal.incomplete, True),
+    ):
+        return
     assert clean.refusal is None, clean
     for verdict in (from_file, reused):
         assert verdict.refusal is not None and not verdict.refusal.incomplete, verdict

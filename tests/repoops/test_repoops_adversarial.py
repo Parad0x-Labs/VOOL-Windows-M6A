@@ -559,5 +559,14 @@ def test_a_session_survives_a_restart_and_the_receipt_answers_from_the_journal(w
 
 def test_an_unknown_session_id_is_a_named_absence(world) -> None:
     root, _bare, _forge = world
-    refused = door("repo.receipt", {"repo_session_id": f"rs-{uuid.uuid4().hex[:12]}"}, context(root))
+    with windows_refusals.watch_git(root, _bare) as seen:
+        refused = door("repo.receipt", {"repo_session_id": f"rs-{uuid.uuid4().hex[:12]}"}, context(root))
+    # Windows 0.7.1 runs no git: the RepoOps door refuses for git before it looks the session up.
+    if windows_refusals.refused_exactly(
+        seen,
+        (refused.ok, False),
+        (refused.status, windows_refusals.GIT_GATE_STATUS),
+        (refused.response_text, windows_refusals.GIT_REFUSAL),
+    ):
+        return
     assert refused.status == "unknown_session"

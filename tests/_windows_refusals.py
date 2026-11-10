@@ -324,3 +324,176 @@ def assert_git_ask_answered_at_the_door(seen: Watch, result: dict, invocations) 
     assert not any("git_status" in str(step) for step in invocations.timeline), invocations.timeline
     assert result["response"] == GIT_REFUSAL, result["response"]
     assert seen.refused(result["response"])
+
+
+# ── exact forms (added beside the helpers above, which are unchanged) ─────────────────────────────
+
+
+def refused_exactly(seen: Watch, *pairs: tuple[object, object]) -> bool:
+    """A stricter `Watch.refused`. False where the limit does not apply: the row goes on to its own
+    expectation, unchanged.
+
+    Where it applies, each ``(actual, expected)`` pair is equal: a status or verdict field, or the
+    whole text the user reads (never a part of it). At least one pair is that whole text and carries
+    the limit's sentence. Then `seen.refused` holds for those texts: no process started for the limit
+    and nothing under the watched folders changed. Returns True, and the row ends there."""
+    if not seen.active:
+        return False
+    assert pairs, "a refused row must name what it compares"
+    texts = []
+    for actual, expected in pairs:
+        assert actual == expected, f"expected {expected!r}, got {actual!r}"
+        if isinstance(expected, str) and seen.sentence and seen.sentence in expected:
+            texts.append(actual)
+    assert texts, f"no pair is the whole {seen.what} refusal text"
+    assert seen.refused(*texts)
+    return True
+
+
+def assert_raised_in_core(excinfo, exc_type: type[BaseException], text: str) -> None:
+    """The refusal really was raised: exactly `exc_type` (not a subclass), its text is exactly `text`,
+    its innermost frame is in VOOL's core/ and it did not come from the git spawn guard (a test's own
+    git, not VOOL's)."""
+    assert excinfo.type is exc_type, f"expected {exc_type.__module__}.{exc_type.__qualname__}, got {excinfo.type!r}"
+    assert str(excinfo.value) == text, str(excinfo.value)
+    frames = list(excinfo.traceback)
+    assert frames, "the refusal has no traceback"
+    assert not any(entry.name == "_spawn_audit" for entry in frames), "raised by the git spawn guard"
+    innermost = str(frames[-1].path)
+    assert os.sep + "core" + os.sep in innermost, f"innermost frame is not in core/: {innermost}"
+
+
+def git_not_run(text: str = GIT_REFUSAL) -> str:
+    """The stderr of a git run VOOL refused before starting it (GitRunner / local_lifecycle `_run`)."""
+    return f"git was not run: {text}"
+
+
+def refused_git_result(seen: Watch, result) -> bool:
+    """`refused_exactly` for a GitRunner result (core/repoops/gitops.py GitResult) where git is refused:
+    not ok, status "failed", return code -1, no output, and stderr exactly `git_not_run()`."""
+    return refused_exactly(
+        seen,
+        (result.ok, False),
+        (result.status, "failed"),
+        (result.returncode, -1),
+        (result.stdout, ""),
+        (result.stderr, git_not_run()),
+    )
+
+
+def refused_tool_exactly(seen: Watch, *results: dict) -> bool:
+    """`refused_exactly` for VOOL tool results (dicts with ok, status and response_text): each one is
+    not ok, has exactly the limit's status, and its whole response_text is exactly the limit's sentence."""
+    pairs: list[tuple[object, object]] = []
+    for result in results:
+        pairs += [(result.get("ok"), False), (result.get("status"), seen.status),
+                  (result.get("response_text"), seen.sentence)]
+    return refused_exactly(seen, *pairs)
+
+
+#: The status a VOOL tool door answers when the Windows write gate refuses a git-backed call for git.
+GIT_GATE_STATUS = "windows_filesystem_authority_unavailable"
+
+
+def refuses_repo_session_exactly(world: tuple, ctx: dict | None = None) -> bool:
+    """`refuses_repo_session` with exact forms: where git is refused, `repo.session.open` is not ok,
+    its status is exactly GIT_GATE_STATUS, its whole text is exactly the git sentence, it executed
+    nothing, no git started, neither repository changed and the forge was sent nothing. Returns True
+    then, and the row ends; False where git runs, and the row arms its session as it always did."""
+    if not git_refused():
+        return False
+    from tests.repoops._harness import context, door
+
+    root, bare, forge = world
+    ctx = context(root) if ctx is None else ctx
+    with watch_git(root, bare) as seen:
+        opened = door(
+            "repo.session.open",
+            {"objective": "negative probe", "pull_request": "8", "provider": "github", "namespace": "o/r"},
+            ctx,
+        )
+    assert refused_exactly(
+        seen,
+        (opened.ok, False),
+        (opened.status, GIT_GATE_STATUS),
+        (opened.response_text, GIT_REFUSAL),
+        ((opened.details or {}).get("executed"), False),
+    )
+    assert forge.calls == [], forge.calls
+    return True
+
+
+def daemon_seams(folder: Path) -> dict[str, str]:
+    """env_extra that hands this process's forced Windows seams to a served daemon or other child.
+
+    A daemon decides git and plugins/MCP from its own platform, so a Linux run that forces a seam on
+    here must force it there too: a `sitecustomize.py` in `folder`, ahead of the checkout on the
+    child's PYTHONPATH. On Windows the child refuses by itself and a plugin line is not needed; with
+    no seam forced this is ``{}`` and the child's environment is what it always was."""
+    lines = []
+    if safe_git._REFUSE_GIT is True:
+        lines.append("import core.safe_git as _git_seam\n_git_seam._REFUSE_GIT = True\n")
+    if plugin_executor._WINDOWS_REFUSES_PLUGINS_AND_MCP and os.name != "nt":
+        lines.append("import core.plugin_executor as _plugin_seam\n_plugin_seam._WINDOWS_REFUSES_PLUGINS_AND_MCP = True\n")
+    if not lines:
+        return {}
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "sitecustomize.py").write_text("".join(lines), encoding="utf-8")
+    checkout = Path(__file__).resolve().parents[1]
+    return {"PYTHONPATH": f"{folder}{os.pathsep}{checkout}"}
+
+
+def served_lifecycle_post(base_url: str, action: str, plugin_id: str) -> tuple[int, dict]:
+    """POST /api/plugins/lifecycle once; the HTTP status and the JSON body, also for an error status."""
+    import json
+    from urllib.error import HTTPError
+    from urllib.request import Request, urlopen
+
+    request = Request(
+        f"{base_url}/api/plugins/lifecycle",
+        data=json.dumps({"action": action, "plugin_id": plugin_id}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=30) as response:
+            return response.status, json.loads(response.read().decode("utf-8"))
+    except HTTPError as error:
+        return error.code, json.loads(error.read().decode("utf-8"))
+
+
+def refuses_served_activation(base_url: str, plugin_id: str, *roots: Path) -> bool:
+    """For a served fixture that activates a pack through the daemon's lifecycle door (install,
+    verify, enable). Where plugins are refused: install and verify answer HTTP 200 ok (they start
+    nothing), enable answers HTTP 400 whose whole body is exactly
+    ``{"ok": False, "action": "enable", "plugin_id": plugin_id, "error": PLUGIN_REFUSAL}``, this
+    process starts no process and nothing under `roots` (the pack, its scratch, the workspace)
+    changes. Returns True then; False where plugins run, and the fixture activates as it always did."""
+    if not plugins_refused():
+        return False
+    with watch_plugins(*roots) as seen:
+        installed = served_lifecycle_post(base_url, "install", plugin_id)
+        verified = served_lifecycle_post(base_url, "verify", plugin_id)
+        enabled = served_lifecycle_post(base_url, "enable", plugin_id)
+    return refused_exactly(
+        seen,
+        (installed[0], 200),
+        (installed[1].get("ok"), True),
+        (verified[0], 200),
+        (verified[1].get("ok"), True),
+        (enabled[0], 400),
+        (enabled[1], {"ok": False, "action": "enable", "plugin_id": plugin_id, "error": PLUGIN_REFUSAL}),
+        (enabled[1]["error"], PLUGIN_REFUSAL),
+    )
+
+
+def watch_windows_answer(active: bool, sentence: str, what: str, *roots: Path,
+                         counts: Callable[[object, dict], bool] | None = None) -> contextlib.AbstractContextManager[Watch]:
+    """Around a call whose Windows answer is a fixed sentence and starts nothing, though it is none of
+    the three 0.7.1 refusals (a Windows-only fallback, or a capability row read from the host). Where
+    `active` (the module's own Windows switch) it records every process start (or, with `counts`,
+    every start of the kind the answer is about) and any change under `roots`, for `refused_exactly`
+    to check with `sentence`; elsewhere it records nothing."""
+    return _watch(active, sentence if active else "", "", what, counts or (lambda _args, _kwargs: True),
+                  tuple(Path(r) for r in roots))

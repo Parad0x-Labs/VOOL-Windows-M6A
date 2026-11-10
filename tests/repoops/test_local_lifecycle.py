@@ -54,6 +54,15 @@ def repo(tmp_path):
     return RepositoryWorkspace(root=str(root))
 
 
+def _refused_receipt(seen, receipt, read="git status"):
+    """Windows 0.7.1 runs no git: the receipt is refused with exactly the reason the lifecycle gives when
+    its first git read (`read`) was not run, no git started and nothing under the watched folder changed;
+    the row ends there. False off Windows."""
+    return windows_refusals.refused_exactly(
+        seen, (receipt.status, "refused"), (receipt.reason, f"{read} failed: {windows_refusals.git_not_run()}")
+    )
+
+
 def _fork(tokens=ALL_TOKENS):
     return PlatformRevocations().mint("ninja", tokens)
 
@@ -302,7 +311,13 @@ def test_switch_refuses_branch_checked_out_elsewhere(repo, tmp_path):
     ws = repo
     _git(ws.root, "branch", "feature")
     lc = LocalLifecycle(ws)
-    r = lc.create_worktree(_fork(), _broker(), str(tmp_path / "wt"), "feature")
+    with windows_refusals.watch_git(tmp_path) as seen:
+        r = lc.create_worktree(_fork(), _broker(), str(tmp_path / "wt"), "feature")
+    if seen.active:  # no worktree was made, so the switch is refused for git too, not as checked out elsewhere
+        with windows_refusals.watch_git(tmp_path) as seen_switch:
+            r2 = lc.switch_branch(_fork(), _broker(), "feature")
+        assert _refused_receipt(seen, r) and _refused_receipt(seen_switch, r2)
+        return
     assert r.status == "applied"
     r2 = lc.switch_branch(_fork(), _broker(), "feature")
     assert r2.status == "refused" and "checked_out_elsewhere" in r2.reason
@@ -325,6 +340,14 @@ def test_delete_unmerged_branch_requires_explicit_force(repo):
     _commit_all(ws.root, "orphan commit")
     _git(ws.root, "switch", "main")
     lc = LocalLifecycle(repo)
+    if windows_refusals.git_refused():
+        # Neither delete runs git: both are refused for git itself, not as unmerged, and nothing changes.
+        with windows_refusals.watch_git(ws.root) as seen:
+            r = lc.delete_local_branch(_fork(["git.delete_branch"]), _broker(), "orphan")
+        with windows_refusals.watch_git(ws.root) as seen_forced:
+            r2 = lc.delete_local_branch(_fork(["git.delete_branch"]), _broker(), "orphan", force_unmerged=True)
+        assert _refused_receipt(seen, r) and _refused_receipt(seen_forced, r2)
+        return
     r = lc.delete_local_branch(_fork(["git.delete_branch"]), _broker(), "orphan")
     assert r.status == "refused"            # git -d's definitive NO
     r2 = lc.delete_local_branch(_fork(["git.delete_branch"]), _broker(),
@@ -348,7 +371,10 @@ def test_worktree_create_verify_remove_clean_only(repo, tmp_path):
     _git(ws.root, "branch", "review")
     lc = LocalLifecycle(ws)
     wt = tmp_path / "review-wt"
-    r = lc.create_worktree(_fork(), _broker(), str(wt), "review")
+    with windows_refusals.watch_git(tmp_path) as seen:
+        r = lc.create_worktree(_fork(), _broker(), str(wt), "review")
+    if _refused_receipt(seen, r):  # nothing was created, so there is nothing to verify or remove
+        return
     assert r.status == "applied" and r.evidence["verified_in_listing"] is True
     assert (os.path.realpath(str(wt)), ) [0] == os.path.realpath(str(wt))
     assert any(p == os.path.realpath(str(wt)) for _b, p in list_worktrees(ws))

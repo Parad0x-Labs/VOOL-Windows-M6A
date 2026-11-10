@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from tests import _windows_refusals as windows_refusals
 from tests.repoops._forge_fixture import RecordedForge, github_pull_request
 from tests.repoops._harness import FIXED, build_repo, context, door, git, head, remote_ref
 
@@ -213,7 +214,22 @@ def test_the_lifecycle_console_reports_state_and_never_conflates_it_with_availab
     assert verified["stage"] == "verified"
     assert verified["available"] is False
 
-    enabled = _payload(_post("/api/plugins/lifecycle", {"action": "enable", "plugin_id": PLUGIN_ID}, root=tmp_path))
+    with windows_refusals.watch_plugins(tmp_path) as seen:
+        response = _post("/api/plugins/lifecycle", {"action": "enable", "plugin_id": PLUGIN_ID}, root=tmp_path)
+        enabled = _payload(response)
+        after = _payload(_get("/api/plugins/lifecycle"))
+    # Windows 0.7.1 starts no plugin: the enable is refused in the plugin sentence, the pack stays
+    # verified and nothing becomes available. Off Windows the console enables it, as always.
+    if seen.active and windows_refusals.refused_exactly(
+        seen,
+        (response.status, 400),
+        (enabled, {"ok": False, "action": "enable", "plugin_id": PLUGIN_ID, "error": windows_refusals.PLUGIN_REFUSAL}),
+        (enabled["error"], windows_refusals.PLUGIN_REFUSAL),
+        ([row.get("stage") for row in after["plugins"] if row.get("plugin_id") == PLUGIN_ID], ["verified"]),
+        (after["available"], []),
+    ):
+        reset_toolchain_state()
+        return
     assert enabled["available"] is True
 
     snapshot = _payload(_get("/api/plugins/lifecycle"))

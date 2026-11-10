@@ -18,6 +18,7 @@ from core.runtime_execution_tools import (
 )
 from core.tool_intent_executor import execute_tool_intent
 from core.tool_memo import invalidate_tool
+from tests import _windows_refusals as windows_refusals
 
 _UNSHARE_AVAILABLE = os.system("unshare -r true >/dev/null 2>&1") == 0
 
@@ -698,12 +699,25 @@ class RuntimeExecutionToolsTests(unittest.TestCase):
             "core.execution_gate.load_preferences",
             return_value=SimpleNamespace(autonomy_mode="hands_off"),
         ):
-            result = execute_runtime_tool(
-                "sandbox.run_command",
-                {"command": "git pull"},
-                source_context={"workspace": tmpdir},
-            )
+            with windows_refusals.watch_git(Path(tmpdir)) as seen:
+                result = execute_runtime_tool(
+                    "sandbox.run_command",
+                    {"command": "git pull"},
+                    source_context={"workspace": tmpdir},
+                )
             assert result is not None
+            # Windows 0.7.1 runs no git: `git pull` is refused for git by the write gate before the
+            # network policy is asked, and no git starts.
+            if seen.active and windows_refusals.refused_exactly(
+                seen,
+                (result.handled, True),
+                (result.ok, False),
+                (result.status, "windows_filesystem_authority_unavailable"),
+                (result.response_text, windows_refusals.GIT_REFUSAL),
+                (result.details["observation"]["status"], "windows_filesystem_authority_unavailable"),
+                (result.details["observation"]["reason"], windows_refusals.GIT_REFUSAL),
+            ):
+                return
             self.assertTrue(result.handled)
             self.assertFalse(result.ok)
             self.assertEqual(result.status, "blocked_by_policy")

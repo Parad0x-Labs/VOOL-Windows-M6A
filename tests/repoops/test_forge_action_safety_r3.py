@@ -9,6 +9,7 @@ import json
 
 import pytest
 
+from tests import _windows_refusals as windows_refusals
 from tests.repoops._harness import context, door
 from tests.repoops.test_forge_actions import (
     _armed_session,
@@ -41,6 +42,8 @@ def test_lost_claim_on_update_action_never_cancels_the_winners_reservation(world
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session_exactly(world, ctx):
+        return
     sid, sha, base = _armed_session(world, ctx)
     forge.route("GET /pulls/8", _pr_payload("8", base_sha=base, head_sha=sha, body="older"))
     action_hash = _plan(world, ctx, sid, action="update", number="8", body="recovery wording")
@@ -86,6 +89,8 @@ def test_lost_claim_does_not_flip_the_record_to_rearmable(world, monkeypatch) ->
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session_exactly(world, ctx):
+        return
     sid, sha, base = _armed_session(world, ctx)
     action_hash = _plan(world, ctx, sid, action="comment", number="17", subject="issue", body="lost claim words")
     assert _operator_authorizes(world, sid, action_hash)["ok"]
@@ -116,6 +121,8 @@ def test_novel_malformed_shapes_after_success_stay_unknown(world, kind, payload)
     conversion fails -- the outcome must stay unknown and ordinary re-arm must be refused."""
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session_exactly(world, ctx):
+        return
     sid, sha, base_sha = _armed_session(world, ctx)
     if kind == "create":
         args = {"action": "create", "base_ref": "main", "title": "shape probe", "body": "shape probe body"}
@@ -167,6 +174,8 @@ def test_plane_post_accept_processing_failure_stays_unknown(world, monkeypatch) 
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session_exactly(world, ctx):
+        return
     sid, sha, base = _armed_session(world, ctx)
     action_hash = _plan(world, ctx, sid, action="comment", number="17", subject="issue", body="processing probe")
     assert _operator_authorizes(world, sid, action_hash)["ok"]
@@ -197,6 +206,8 @@ def test_session_journal_failure_recovers_same_intent_exactly_once(world, monkey
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session_exactly(world, ctx):
+        return
     sid, sha, base = _armed_session(world, ctx)
     action_hash = _plan(world, ctx, sid, action="create", base_ref="main", title="recovery title", body="recovery body")
     assert _operator_authorizes(world, sid, action_hash)["ok"]
@@ -232,6 +243,8 @@ def test_known_unsent_state_survives_a_restart_and_recovers(world, monkeypatch) 
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session_exactly(world, ctx):
+        return
     sid, sha, base = _armed_session(world, ctx)
     comment_text = "restart recovery probe"
     action_hash = _plan(world, ctx, sid, action="comment", number="17", subject="issue", body=comment_text)
@@ -349,6 +362,8 @@ def test_actual_two_executor_contention_yields_exactly_one_post(world) -> None:
     import threading
 
     _root, _bare, forge = world
+    if windows_refusals.refuses_repo_session_exactly(world):
+        return
     ctx, sid, action_hash = _comment_session(world, "contention probe", 9700)
 
     results: list[dict] = []
@@ -389,6 +404,8 @@ def test_a_caller_arriving_while_the_winner_is_sending_is_refused_durably(world)
     from core.repoops import forge as forge_bridge
 
     _root, _bare, forge = world
+    if windows_refusals.refuses_repo_session_exactly(world):
+        return
     ctx, sid, action_hash = _comment_session(world, "overlap probe", 9711)
     entered, release = threading.Event(), threading.Event()
 
@@ -427,6 +444,8 @@ def test_a_caller_arriving_after_the_winner_journaled_replays_the_recorded_resul
     caller arrives after the winner journaled. It succeeds as a REPLAY of the recorded result -- the
     same comment id, `replayed: true` -- and sends nothing."""
     _root, _bare, forge = world
+    if windows_refusals.refuses_repo_session_exactly(world):
+        return
     ctx, sid, action_hash = _comment_session(world, "late caller probe", 9722)
     first = _captured(door("repo.pr.comment", {"repo_session_id": sid}, ctx))
     second = _captured(door("repo.pr.comment", {"repo_session_id": sid}, ctx))

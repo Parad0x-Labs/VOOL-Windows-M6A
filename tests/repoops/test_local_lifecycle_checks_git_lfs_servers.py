@@ -75,6 +75,15 @@ def _refused_on_windows(seen: windows_refusals.Watch, *answers) -> bool:
     return True
 
 
+def _refused_receipt(seen: windows_refusals.Watch, receipt, read: str) -> bool:
+    """Windows 0.7.1 runs no git: the receipt is refused with exactly the reason the lifecycle gives
+    when its first git read (`read`) was not run, no git started and nothing under the watched folder
+    changed; the row ends there. False off Windows."""
+    return windows_refusals.refused_exactly(
+        seen, (receipt.status, "refused"), (receipt.reason, f"{read} failed: {windows_refusals.git_not_run()}")
+    )
+
+
 def _lifecycle(repo: Path) -> tuple[LocalLifecycle, object, ExecutionBroker]:
     return LocalLifecycle(RepositoryWorkspace(root=str(repo))), PlatformRevocations().mint("ninja", TOKENS), \
         ExecutionBroker()
@@ -180,8 +189,11 @@ def test_a_worktree_of_an_ordinary_branch_is_still_added(repo, tmp_path) -> None
     target = tmp_path / "review-wt"
     lc, fork, broker = _lifecycle(repo)
 
-    receipt = lc.create_worktree(fork, broker, str(target), "review")
+    with windows_refusals.watch_git(tmp_path) as seen:
+        receipt = lc.create_worktree(fork, broker, str(target), "review")
 
+    if _refused_receipt(seen, receipt, "git status"):
+        return
     assert receipt.status == "applied", receipt
     assert (target / "a.txt").read_text() == "one\n"
 
@@ -190,7 +202,14 @@ def test_a_branch_naming_its_own_git_host_for_lfs_is_still_checked_out(repo, tmp
     _branch_with(repo, "feat", "[lfs]\n\turl = https://github.com/example/project.git/info/lfs\n")
     lc, fork, broker = _lifecycle(repo)
 
-    added = lc.create_worktree(fork, broker, str(tmp_path / "feat-wt"), "feat")
+    with windows_refusals.watch_git(tmp_path) as seen:
+        added = lc.create_worktree(fork, broker, str(tmp_path / "feat-wt"), "feat")
+    if seen.active:  # nothing was added, so there is no worktree to remove before the switch
+        with windows_refusals.watch_git(tmp_path) as seen_switch:
+            switched = lc.switch_branch(fork, broker, "feat")
+        assert _refused_receipt(seen, added, "git status")
+        assert _refused_receipt(seen_switch, switched, "git status")
+        return
     _git(repo, "worktree", "remove", str(tmp_path / "feat-wt"))
     switched = lc.switch_branch(fork, broker, "feat")
 
@@ -223,8 +242,11 @@ def test_a_branch_carrying_another_lfs_server_can_still_be_deleted(repo) -> None
     _branch_with(repo, "feat", HOSTILE)
     lc, fork, broker = _lifecycle(repo)
 
-    receipt = lc.delete_local_branch(fork, broker, "feat", force_unmerged=True)
+    with windows_refusals.watch_git(repo) as seen:
+        receipt = lc.delete_local_branch(fork, broker, "feat", force_unmerged=True)
 
+    if _refused_receipt(seen, receipt, "git status"):
+        return
     assert receipt.status == "applied", receipt
     assert "feat" not in _git(repo, "branch", "--list", "feat")
 
@@ -233,8 +255,11 @@ def test_switching_to_a_branch_only_the_remote_has_still_works(repo) -> None:
     _remote_only(repo, "rb", "")
     lc, fork, broker = _lifecycle(repo)
 
-    receipt = lc.switch_branch(fork, broker, "rb")
+    with windows_refusals.watch_git(repo) as seen:
+        receipt = lc.switch_branch(fork, broker, "rb")
 
+    if _refused_receipt(seen, receipt, "git status"):
+        return
     assert receipt.status == "applied", receipt
     assert _git(repo, "symbolic-ref", "--short", "HEAD") == "rb"
 
@@ -249,8 +274,11 @@ def test_a_root_commit_can_still_be_cherry_picked(repo) -> None:
     head = _git(repo, "rev-parse", "HEAD")
     lc, fork, broker = _lifecycle(repo)
 
-    receipt = lc.cherry_pick(fork, broker, sha, expected_head=head, expected_branch="main")
+    with windows_refusals.watch_git(repo) as seen:
+        receipt = lc.cherry_pick(fork, broker, sha, expected_head=head, expected_branch="main")
 
+    if _refused_receipt(seen, receipt, "git status"):
+        return
     assert receipt.status == "applied", receipt
     assert (repo / "c.txt").read_text() == "three\n"
 
@@ -262,8 +290,11 @@ def test_a_worktree_can_still_be_removed_while_the_work_tree_names_another_lfs_s
     (repo / ".lfsconfig").write_text(HOSTILE)  # untracked, in the main work tree only
     lc, fork, broker = _lifecycle(repo)
 
-    receipt = lc.remove_worktree(fork, broker, str(target))
+    with windows_refusals.watch_git(tmp_path) as seen:
+        receipt = lc.remove_worktree(fork, broker, str(target))
 
+    if _refused_receipt(seen, receipt, "git worktree list --porcelain"):
+        return
     assert receipt.status == "applied", receipt
     assert not target.exists()
 
@@ -275,8 +306,11 @@ def test_a_branch_of_a_remote_whose_name_has_a_slash_is_still_switched_to(repo) 
     _git(repo, "branch", "-D", "x")
     lc, fork, broker = _lifecycle(repo)
 
-    receipt = lc.switch_branch(fork, broker, "x")
+    with windows_refusals.watch_git(repo) as seen:
+        receipt = lc.switch_branch(fork, broker, "x")
 
+    if _refused_receipt(seen, receipt, "git status"):
+        return
     assert receipt.status == "applied", receipt
     assert _git(repo, "symbolic-ref", "--short", "HEAD") == "x"
 
