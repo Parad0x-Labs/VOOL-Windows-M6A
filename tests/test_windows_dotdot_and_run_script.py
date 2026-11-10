@@ -579,11 +579,18 @@ def test_a_mode_that_denies_the_command_still_denies_py_under_an_approved_scope(
             assert execution_gate.ExecutionGate.evaluate_command("py calc.py", cwd=cwd)["decision"] != "sandbox"
 
 
-def test_off_windows_py_is_still_not_a_sandbox_program(jobs, machine) -> None:
-    """Guard: the program list changes only where phase 1 pins the name (both Windows seams)."""
+def test_off_windows_py_is_still_not_a_sandbox_program(jobs, machine, monkeypatch) -> None:
+    """Guard: the program list changes only where phase 1 pins the name (both Windows seams). Both seams
+    are turned off here, so the row means "off Windows" on any host: on a real Windows runner
+    `_is_windows_platform()` and the command-line seam are True by themselves (run 42738441770)."""
     from core.effect_gateway import named_background_effect_scope
+    from sandbox import sandbox_runner
     from sandbox.sandbox_runner import SandboxRunner
 
+    monkeypatch.setattr(job_runner, "_is_windows_platform", lambda: False)
+    monkeypatch.setattr(network_guard, "_IS_WINDOWS", False)
+    assert not job_runner._is_windows_platform() and not network_guard._IS_WINDOWS
+    assert not sandbox_runner._windows_phase1_pins("py"), "the seam the program-list change reads is not off"
     runner = SandboxRunner(execution_gate.ExecutionGate(), str(machine["marked"]))
     with named_background_effect_scope("dotdot-run-script", source_context={"operating_mode": "auto", "workspace_root": str(machine["marked"])}):
         result = runner.run_command("py calc.py", cwd=str(machine["marked"]))
