@@ -24,7 +24,8 @@ the chat unbound so its workspace is the Desktop) and at the lane's own reader:
 
 The Windows decisions are driven on Linux through the gate's `_IS_WINDOWS` flag and the marked folders
 listed in VOOL_WINDOWS_DISPOSABLE_WORKSPACES, as the other marked-folder suites do. The move's live OS
-confirmation is answered through `os_consent_gate`'s test hook. Real `C:\\` spelling, NTFS junctions and
+confirmation (asked off Windows only; on Windows the Allow is the consent) is answered through
+`os_consent_gate`'s test hook. Real `C:\\` spelling, NTFS junctions and
 GetDriveTypeW are only exercised on a Windows host.
 """
 from __future__ import annotations
@@ -322,7 +323,11 @@ def test_undo_is_refused_once_the_folder_is_no_longer_marked(profile_env, machin
 # --- the served chat: the move ---------------------------------------------------------------------------
 
 
-def test_a_move_between_two_marked_folders_lands(profile_env, machine, consent) -> None:
+def test_a_move_between_two_marked_folders_lands(profile_env, machine, consent, monkeypatch) -> None:
+    from sandbox import job_runner
+
+    # Windows as the exact approval's spend reads it (the job runner's seam): the Allow is the consent.
+    monkeypatch.setattr(job_runner, "_is_windows_platform", lambda: True)
     source = machine["first"] / "hello Ä.txt"
     source.write_bytes(MIXED)
     agent = make_agent()
@@ -331,7 +336,7 @@ def test_a_move_between_two_marked_folders_lands(profile_env, machine, consent) 
     assert "outside the active workspace" not in first and "requires approval" in first, first
     assert not source.exists(), resumed
     assert (machine["second"] / "hello Ä.txt").read_bytes() == MIXED
-    assert len(consent) == 1  # the move's own live OS confirmation is still asked
+    assert consent == []  # on Windows the Allow on the card is the consent: no OS prompt (captest R4-1b)
     assert list(machine["workspace"].iterdir()) == []
 
 
