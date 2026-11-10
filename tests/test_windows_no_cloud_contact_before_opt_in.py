@@ -539,3 +539,61 @@ def test_a_provider_endpoint_on_this_machine_or_the_lan_is_not_cloud(profile_env
     for url in ("https://api.usepod.ai/v1/marketplace", "https://openrouter.ai/api/v1/models"):
         assert windows_cloud_gate.door_refusal(url, "", "keyless") is not None, url
     assert sockets == [], sockets
+
+
+REASONING_ID = "test/catalog-declared-one"
+LOCAL_LANE = "http://127.0.0.1:9/api/v1"
+CLOUD_LANE = "https://openrouter.ai/api/v1"
+
+
+def _seed_reasoning_cache() -> None:
+    from core.runtime_paths import active_data_dir
+
+    payload = {"data": [{
+        "id": REASONING_ID, "name": "Test Catalog Declared One", "context_length": 32768,
+        "pricing": {"prompt": "0.000001", "completion": "0.000002"},
+        "supported_parameters": ["reasoning", "include_reasoning", "max_tokens"],
+        "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]}}]}
+    path = active_data_dir() / "openrouter_models_cache.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "fetched_at": datetime.datetime.now(datetime.timezone.utc).isoformat(), "payload": payload}))
+
+
+def _byok_manifest(base_url: str):
+    from storage.model_provider_manifest import ModelProviderManifest
+
+    return ModelProviderManifest(
+        provider_name="openrouter-byok", model_name=REASONING_ID, source_type="http",
+        adapter_type="openai_compatible", license_name="Provider", license_reference="user-managed",
+        weight_location="external", runtime_dependency="remote-openai-compatible-provider",
+        capabilities=["summarize"], runtime_config={"base_url": base_url, "timeout_seconds": 5},
+        metadata={"cost_class": "paid_cloud"},
+    )
+
+
+def test_a_lane_on_this_machine_reads_its_cached_catalog_row_while_off(profile_env, windows, sockets):
+    """Cloud off on Windows: an OpenRouter-dialect lane whose endpoint is on this machine is not
+    cloud (the dispatch already lets it through), so its cached catalog facts -- a disk read, no
+    network -- still size its request. A cloud-host lane, or no lane at all, still reads nothing."""
+    from adapters.openai_compatible_adapter import OpenAICompatibleAdapter
+    from core import openrouter_catalog as oc
+    from core import windows_cloud_gate
+    from core.output_budget_policy import manifest_declares_reasoning
+
+    assert windows_cloud_gate.cloud_off() is True
+    _seed_reasoning_cache()
+    oc._CACHED_ROW_MEMO.clear()
+    try:
+        row = oc.cached_catalog_row(REASONING_ID, lane_base_url=LOCAL_LANE)
+        assert row is not None and "reasoning" in row.supported_parameters
+        assert oc.cached_catalog_row(REASONING_ID, lane_base_url=CLOUD_LANE) is None
+        assert oc.cached_catalog_row(REASONING_ID) is None
+
+        assert manifest_declares_reasoning(_byok_manifest(LOCAL_LANE)) is True
+        assert OpenAICompatibleAdapter(_byok_manifest(LOCAL_LANE))._declares_reasoning_support() is True
+        assert manifest_declares_reasoning(_byok_manifest(CLOUD_LANE)) is False
+        assert OpenAICompatibleAdapter(_byok_manifest(CLOUD_LANE))._declares_reasoning_support() is False
+    finally:
+        oc._CACHED_ROW_MEMO.clear()
+    assert _outbound(sockets) == []
