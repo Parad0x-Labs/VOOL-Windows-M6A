@@ -106,17 +106,10 @@ def windows_watcher_needs_opt_in() -> bool:
         return False
 
 
-def owner_watcher_url() -> str:
-    """The Hive watcher URL the owner set themselves (``VOOL_HIVE_WATCHER_URL``; "" = none)."""
-    return str(os.environ.get("VOOL_HIVE_WATCHER_URL") or "").strip()
-
-
 def watcher_contact_allowed() -> bool:
-    """True off Windows. On Windows only once the owner opted in by naming a watcher URL themselves:
-    the URL the shipped cluster manifests carry is never an opt-in."""
-    if not windows_watcher_needs_opt_in():
-        return True
-    return bool(owner_watcher_url())
+    """True off Windows. False on Windows for 0.7.1: there is no Hive opt-in on Windows yet, so
+    neither the shipped manifests' URL nor ``VOOL_HIVE_WATCHER_URL`` turns the watcher on (SA)."""
+    return not windows_watcher_needs_opt_in()
 
 
 @dataclass(frozen=True)
@@ -320,7 +313,8 @@ class HiveActivityTracker:
         hive_followups_enabled: bool,
         idle_research_assist: bool,
     ) -> str:
-        if not self.config.enabled or not hive_followups_enabled or not session_id:
+        # Windows: an empty footer, asked for nothing (the approval card renders as it is).
+        if not self.config.enabled or not watcher_contact_allowed() or not hive_followups_enabled or not session_id:
             return ""
 
         dashboard = self.fetch_dashboard()
@@ -561,7 +555,7 @@ class HiveActivityTracker:
         # Windows, before the owner opts in: the real transport refuses before the fetch door, whose
         # Local Only check would resolve the name. Covers a tracker built before the rule was read.
         if not watcher_contact_allowed():
-            raise RemoteFetchRefusedError("Hive watcher is off on this machine until the owner sets one")
+            raise RemoteFetchRefusedError("Hive watcher is off on Windows in this release")
 
         req = urllib.request.Request(url, method="GET")
         req.add_header("Content-Type", "application/json")
@@ -584,9 +578,12 @@ class HiveActivityTracker:
 
 
 def load_hive_activity_tracker_config() -> HiveActivityTrackerConfig:
-    # Windows: only the owner's own watcher URL configures the watcher; the shipped manifests'
-    # public URL is not read, so nothing reaches for it before the owner opts in.
-    watcher_url = owner_watcher_url() or ("" if windows_watcher_needs_opt_in() else _load_watcher_url_from_manifest())
+    # Windows (0.7.1): no watcher. Neither VOOL_HIVE_WATCHER_URL nor the shipped manifests are read,
+    # so nothing reaches for a watcher host. Off Windows: the env URL, else the manifest, as before.
+    if watcher_contact_allowed():
+        watcher_url = str(os.environ.get("VOOL_HIVE_WATCHER_URL") or "").strip() or _load_watcher_url_from_manifest()
+    else:
+        watcher_url = ""
     api_url = _watcher_api_url(watcher_url)
     enabled_raw = str(os.environ.get("VOOL_HIVE_FOLLOWUPS_ENABLED", "1")).strip().lower()
     bootstrap = _load_agent_bootstrap_tls()
