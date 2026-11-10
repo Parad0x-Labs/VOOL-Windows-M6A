@@ -394,6 +394,10 @@ def run_in_home(home: Path, script: str, *, env_extra: dict[str, str] | None = N
                 "VOOL_KEY_PASSPHRASE": "blackbox-served-rig", "VOOL_REGISTER_INSTALLED_OLLAMA_MODELS": "0"})
     env.update(env_extra or {})
     env.pop("PYTEST_CURRENT_TEST", None)
+    # This process's plugin/MCP switch crosses into the snippet (empty unless it is on).
+    from tests._windows_refusals import child_seams
+
+    script = child_seams() + script
     completed = subprocess.run([sys.executable, "-c", script], cwd=str(REPO_ROOT), env=env, capture_output=True, text=True, timeout=180)
     if completed.returncode != 0:
         raise RuntimeError(f"in-home script failed ({completed.returncode}):\n{completed.stdout}\n{completed.stderr}")

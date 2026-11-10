@@ -14,6 +14,7 @@ import pytest
 
 from core import plugin_lifecycle as lifecycle
 from core.owner_only import verify_owner_only
+from tests import _windows_refusals as windows_refusals
 from tests._toolchain_fixtures import PLUGIN_ID, make_plugin, reset_toolchain_state
 
 
@@ -88,8 +89,11 @@ def test_installed_is_not_available_and_verified_is_not_enabled(pack) -> None:
 
 def test_enable_before_verify_is_refused(pack) -> None:
     lifecycle.install(PLUGIN_ID, root=pack)
-    with pytest.raises(lifecycle.LifecycleError) as caught:
+    with windows_refusals.watch_plugins(pack) as seen, pytest.raises(lifecycle.LifecycleError) as caught:
         lifecycle.enable(PLUGIN_ID)
+    # Windows 0.7.1 starts no plugin, so enabling one is refused with that sentence before any other check.
+    if seen.refused(str(caught.value)):
+        return
     assert "verify" in str(caught.value)
 
 

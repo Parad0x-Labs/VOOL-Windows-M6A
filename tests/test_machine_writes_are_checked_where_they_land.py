@@ -47,6 +47,13 @@ def _env(*roots: Path) -> dict[str, str]:
     return {gate.ENV_VAR: os.pathsep.join(str(root) for root in roots)}
 
 
+def _flaggable(folder: Path, home: Path) -> Path:
+    """`folder` itself, or for the home its parent: the profile is never a write root on Windows
+    (b48178ea), so the narrowest folder that can be flagged for a place in the home itself is the one
+    that holds it (this test's own tmp_path)."""
+    return home.parent if folder == home else folder
+
+
 @pytest.fixture
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A user home outside the chat workspace, moved where the machine writer looks for it."""
@@ -101,7 +108,8 @@ def test_the_gate_checks_a_relative_machine_path_in_the_home_folder_it_lands_in(
     assert gate.refusal(intent, arguments, workspace, windows=True, environ=_env(workspace)), path
     assert gate.refusal(intent, arguments, workspace, windows=True, environ=_env(workspace, *neighbours)), path
     # Flagging the folder the path really lands in, and only that folder, lets the same call through.
-    assert gate.refusal(intent, arguments, workspace, windows=True, environ=_env(workspace, home / folder)) is None, path
+    assert gate.refusal(intent, arguments, workspace, windows=True,
+                        environ=_env(workspace, _flaggable(home / folder, home))) is None, path
 
 
 def test_a_machine_path_that_climbs_is_checked_where_it_climbs_to(home: Path, workspace: Path) -> None:
@@ -110,7 +118,7 @@ def test_a_machine_path_that_climbs_is_checked_where_it_climbs_to(home: Path, wo
     assert gate.refusal("machine.write_file", up_to_home, workspace, windows=True,
                         environ=_env(workspace, home / "Documents"))
     assert gate.refusal("machine.write_file", up_to_home, workspace, windows=True,
-                        environ=_env(workspace, home)) is None
+                        environ=_env(workspace, _flaggable(home, home))) is None
     out_of_home = {"path": os.sep.join(["..", "x.txt"]), "content": "x"}
     assert gate.refusal("machine.write_file", out_of_home, workspace, windows=True, environ=_env(workspace, home))
 
@@ -217,7 +225,7 @@ def test_an_operator_path_is_checked_where_its_variables_and_home_expand_to(
     assert gate.refusal("operator.move_path", climbs, None, windows=True, environ=_env(workspace, outside)) is None
     in_home = {"source_path": "~" + os.sep + "a.txt", "destination_path": "~" + os.sep + "Documents"}
     assert gate.refusal("operator.move_path", in_home, None, windows=True, environ=_env(workspace))
-    assert gate.refusal("operator.move_path", in_home, None, windows=True, environ=_env(home)) is None
+    assert gate.refusal("operator.move_path", in_home, None, windows=True, environ=_env(_flaggable(home, home))) is None
 
 
 def test_an_operator_path_must_still_be_absolute(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -311,8 +319,9 @@ def test_a_flagged_chat_workspace_no_longer_lets_a_write_into_the_real_documents
 def test_the_approval_ask_names_the_file_a_machine_write_changes(
     home: Path, workspace: Path, monkeypatch: pytest.MonkeyPatch, intent: str, path: str, lands_at: tuple
 ) -> None:
-    # Both folders are flagged, so on Windows the gate lets the call reach the approval ask.
-    monkeypatch.setenv(gate.ENV_VAR, os.pathsep.join([str(workspace), str(home)]))
+    # Both folders are flagged, so on Windows the gate lets the call reach the approval ask. The home's
+    # Documents folder is flagged, not the home: the profile is never a write root on Windows.
+    monkeypatch.setenv(gate.ENV_VAR, os.pathsep.join([str(workspace), str(home / "Documents")]))
     named = str(home.joinpath(*lands_at)) if path == "<home>" else path
 
     execution = _execute(intent, {"path": named, "content": "x"}, {"workspace": str(workspace), "operating_mode": "manual"})
@@ -325,7 +334,8 @@ def test_the_approval_ask_names_the_file_a_machine_write_changes(
 def test_the_approval_ask_for_a_code_task_step_names_the_file_its_machine_write_changes(
     home: Path, workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv(gate.ENV_VAR, os.pathsep.join([str(workspace), str(home)]))
+    # The home's Documents folder is flagged, not the home: the profile is never a write root on Windows.
+    monkeypatch.setenv(gate.ENV_VAR, os.pathsep.join([str(workspace), str(home / "Documents")]))
     step = {"task_id": "ct-landing", "intent": "machine.write_file", "arguments": {"path": IN_DOCUMENTS, "content": "x"}}
 
     execution = _execute("code.task.step", step, {"workspace": str(workspace), "operating_mode": "manual"})

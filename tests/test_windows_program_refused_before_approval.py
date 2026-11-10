@@ -30,8 +30,10 @@ import pytest
 from core import mode_permission_policy
 from core import runtime_execution_tools as rte
 from core import tool_intent_executor as executor
+from core import windows_write_gate as gate
 from core.hive_activity_tracker import HiveActivityTracker, HiveActivityTrackerConfig
 from sandbox import job_runner, network_guard
+from tests import _windows_refusals as windows_refusals
 
 #: Each program form the capability test sent (and the 0.7.1 limits name), with the program the
 #: refusal names.
@@ -127,7 +129,17 @@ def test_the_phase1_gate_refuses_every_program_but_python_and_pytest_in_plain_wo
     assert job_runner.windows_program_refusal([sys.executable, "-c", "pass"]) is None
 
 
-def test_off_windows_nothing_is_refused_early() -> None:
+def test_off_windows_nothing_is_refused_early(recorded) -> None:
+    if job_runner._is_windows_platform():
+        # A real Windows host is not off Windows: the 0.7.1 limit holds there, and the same calls
+        # refuse calc.exe in plain words before anything runs.
+        assert job_runner.windows_program_refusal(["calc.exe"]) == _plain("calc.exe")
+        early = rte.windows_program_refusal("sandbox.run_command", {"command": "calc.exe"})
+        assert early is not None and early.status == rte.WINDOWS_PROGRAM_STATUS, early
+        assert early.response_text == _plain("calc.exe")
+        assert rte.windows_program_check_applies("sandbox.run_command")
+        assert recorded == {"decisions": [], "approvals": [], "jobs": []}
+        return
     assert job_runner.windows_program_refusal(["calc.exe"]) is None
     assert rte.windows_program_refusal("sandbox.run_command", {"command": "calc.exe"}) is None
     assert not rte.windows_program_check_applies("sandbox.run_command")
@@ -162,8 +174,14 @@ def test_the_early_verdict_is_the_job_runners_gate_not_a_second_list(windows, mo
 def test_a_run_command_for_a_program_windows_never_runs_is_refused_before_any_approval(
     windows, workspace: Path, recorded, command: str
 ) -> None:
-    execution = _execute("sandbox.run_command", {"command": command}, workspace)
+    with windows_refusals.watch_git(workspace) as seen:
+        execution = _execute("sandbox.run_command", {"command": command}, workspace)
 
+    if REFUSED_COMMANDS[command] == "git" and seen.refused(execution.response_text):
+        # Windows 0.7.1 runs no git: the git refusal comes first, before the program check.
+        assert execution.ok is False and execution.status == gate.STATUS, (execution.status, execution.response_text)
+        assert recorded == {"decisions": [], "approvals": [], "jobs": []}
+        return
     assert execution.status == rte.WINDOWS_PROGRAM_STATUS, (execution.status, execution.response_text)
     assert execution.ok is False
     assert execution.response_text == _plain(REFUSED_COMMANDS[command])
@@ -249,15 +267,24 @@ FRONT_DOOR_PASSES = [
 def test_the_front_door_reads_a_run_request_and_asks_the_tool_calls_own_check(windows) -> None:
     from core.agent_runtime.windows_program_request import windows_program_request_refusal
 
-    answers = {text: windows_program_request_refusal(text) for text in FRONT_DOOR_REQUESTS}
+    with windows_refusals.watch_git() as seen:
+        answers = {text: windows_program_request_refusal(text) for text in FRONT_DOOR_REQUESTS}
 
-    assert answers == {text: _plain(program) for text, program in FRONT_DOOR_REQUESTS.items()}
+    expected = {text: _plain(program) for text, program in FRONT_DOOR_REQUESTS.items()}
+    if seen.refused(answers["run `git status`"]):
+        # Windows 0.7.1 runs no git: a git request is answered with the git sentence, not the program one.
+        expected["run `git status`"] = windows_refusals.GIT_REFUSAL
+    assert answers == expected
     assert {text: windows_program_request_refusal(text) for text in FRONT_DOOR_PASSES} == dict.fromkeys(FRONT_DOOR_PASSES, "")
 
 
 def test_off_windows_the_front_door_answers_no_run_request() -> None:
     from core.agent_runtime.windows_program_request import windows_program_request_refusal
 
+    if job_runner._is_windows_platform():
+        # A real Windows host is not off Windows: the front door answers the request with the limit.
+        assert windows_program_request_refusal("run calc.exe") == _plain("calc.exe")
+        return
     assert windows_program_request_refusal("run calc.exe") == ""
 
 

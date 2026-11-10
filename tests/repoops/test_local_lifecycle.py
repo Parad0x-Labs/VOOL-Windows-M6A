@@ -20,6 +20,7 @@ from core.repoops.local_lifecycle import (
     capture_snapshot,
     list_worktrees,
 )
+from tests import _windows_refusals as windows_refusals
 
 ALL_TOKENS = [
     "git.switch_branch", "git.delete_branch", "git.commit",
@@ -309,7 +310,11 @@ def test_switch_refuses_branch_checked_out_elsewhere(repo, tmp_path):
 
 def test_delete_current_branch_refused(repo):
     lc = LocalLifecycle(repo)
-    r = lc.delete_local_branch(_fork(), _broker(), "main")
+    with windows_refusals.watch_git(repo.root) as seen:
+        r = lc.delete_local_branch(_fork(), _broker(), "main")
+    if seen.refused(r.reason or ""):  # Windows 0.7.1 runs no git: refused with the git sentence
+        assert r.status == "refused", r
+        return
     assert r.status == "refused" and "current_branch" in r.reason
 
 

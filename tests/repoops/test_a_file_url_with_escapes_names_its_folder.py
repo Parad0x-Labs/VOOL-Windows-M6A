@@ -19,6 +19,7 @@ import pytest
 
 from core import windows_write_gate as gate
 from core.repoops.gitops import GitRunner
+from tests import _windows_refusals as windows_refusals
 
 _IDENTITY = {"GIT_AUTHOR_NAME": "fx", "GIT_AUTHOR_EMAIL": "fx@local",
              "GIT_COMMITTER_NAME": "fx", "GIT_COMMITTER_EMAIL": "fx@local"}
@@ -68,11 +69,20 @@ def _refs(git_dir: Path) -> str:
     return _git(git_dir, "for-each-ref", "--format=%(refname) %(objectname)")
 
 
+def _windows_refuses_git(world: dict[str, Path], url: str, *, push: bool = True) -> bool:
+    """On real Windows VOOL 0.7.1 runs no git at all, whatever the gate decides: the destination
+    check (and the push) answer the git sentence before any URL is read, no git starts and nothing
+    under the test's folders changes, and the row ends there. False where git runs."""
+    return windows_refusals.refuses_push(world["source"], url, world["marked"].parent, push=push)
+
+
 def test_a_push_to_an_escaped_file_url_inside_the_marked_folders_lands(world) -> None:
     destination = _bare(world["marked"] / "dest repo.git")
     url = destination.as_uri()
     assert "%20" in url
 
+    if _windows_refuses_git(world, url):
+        return
     assert GitRunner(root=world["source"]).push_destination_refusal(url) == ""
     code, err = _push(world["source"], url)
 
@@ -85,6 +95,8 @@ def test_a_push_to_an_escaped_file_url_outside_the_marked_folders_is_refused_as_
     url = destination.as_uri()
     before = _refs(destination)
 
+    if _windows_refuses_git(world, url):
+        return
     refusal = GitRunner(root=world["source"]).push_destination_refusal(url)
     code, err = _push(world["source"], url)
 
@@ -98,12 +110,16 @@ def test_an_escape_git_and_vool_could_read_differently_is_still_refused(world, e
     destination = _bare(world["marked"] / "dest.git")
     url = destination.as_uri() + "/x" + escape
 
+    if _windows_refuses_git(world, url, push=False):
+        return
     refusal = GitRunner(root=world["source"]).push_destination_refusal(url)
 
     assert "cannot tell which folder" in refusal, refusal
 
 
 def test_an_escaped_second_slash_that_would_name_a_share_is_refused(world) -> None:
+    if _windows_refuses_git(world, "file:///%2Fhost/share/r.git", push=False):
+        return
     refusal = GitRunner(root=world["source"]).push_destination_refusal("file:///%2Fhost/share/r.git")
 
     assert "cannot tell which folder" in refusal, refusal

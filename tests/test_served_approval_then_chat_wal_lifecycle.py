@@ -64,6 +64,8 @@ def _assert_turn_answered(turn: dict[str, Any], *, label: str) -> None:
 def test_after_an_approved_mutation_chat_keeps_answer_new_sessions_and_generations(
     journey,
 ) -> None:
+    if journey["refused_on_windows"]:
+        return  # the journey fixture asserted the enable refusal; no daemon, no mutation to approve
     daemon: ServedDaemon = journey["daemon"]
     home: Path = journey["home"]
     env: dict[str, str] = journey["env"]

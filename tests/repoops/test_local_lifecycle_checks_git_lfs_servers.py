@@ -20,6 +20,7 @@ from core.platform.broker import ExecutionBroker, PlatformRevocations
 from core.repoops import local_lifecycle
 from core.repoops.identity import RepositoryWorkspace
 from core.repoops.local_lifecycle import LocalLifecycle, capture_snapshot
+from tests import _windows_refusals as windows_refusals
 
 TOKENS = ["git.switch_branch", "git.delete_branch", "git.restore", "git.worktree", "git.cherry_pick"]
 HOSTILE = "[lfs]\n\turl = https://evil.example/lfs\n"
@@ -59,6 +60,21 @@ def _branch_with(repo: Path, branch: str, lfsconfig: str) -> str:
     return sha
 
 
+def _refused_on_windows(seen: windows_refusals.Watch, *answers) -> bool:
+    """Windows 0.7.1 runs no git: each run and receipt failed with the git sentence, no git started
+    and nothing under the watched folder changed, and the row ends there. False off Windows."""
+    if not seen.active:
+        return False
+    for answer in answers:
+        if isinstance(answer, subprocess.CompletedProcess):
+            assert answer.returncode != 0, answer
+            assert seen.refused(answer.stderr)
+        else:
+            assert answer.status != "applied", answer
+            assert seen.refused(answer.reason or "")
+    return True
+
+
 def _lifecycle(repo: Path) -> tuple[LocalLifecycle, object, ExecutionBroker]:
     return LocalLifecycle(RepositoryWorkspace(root=str(repo))), PlatformRevocations().mint("ninja", TOKENS), \
         ExecutionBroker()
@@ -69,10 +85,13 @@ def test_adding_a_worktree_of_a_branch_naming_another_lfs_server_is_refused(repo
     target = tmp_path / "feat-wt"
     lc, fork, broker = _lifecycle(repo)
 
-    receipt = lc.create_worktree(fork, broker, str(target), "feat")
-    # The receipt's reason is cut short after the long path, so the refusal is read where it is made.
-    direct = local_lifecycle._run(str(repo), "worktree", "add", str(target), "feat", mutating=True)
+    with windows_refusals.watch_git(tmp_path) as seen:
+        receipt = lc.create_worktree(fork, broker, str(target), "feat")
+        # The receipt's reason is cut short after the long path, so the refusal is read where it is made.
+        direct = local_lifecycle._run(str(repo), "worktree", "add", str(target), "feat", mutating=True)
 
+    if _refused_on_windows(seen, receipt, direct):
+        return
     assert receipt.status != "applied", receipt
     assert direct.returncode != 0 and "evil.example" in direct.stderr, direct.stderr
     assert not target.exists()
@@ -127,8 +146,11 @@ def test_a_worktree_of_a_branch_only_the_remote_has_is_checked_too(repo, tmp_pat
     _remote_only(repo, "rb", HOSTILE)
     target = tmp_path / "rb-wt"
 
-    proc = local_lifecycle._run(str(repo), "worktree", "add", str(target), "rb", mutating=True)
+    with windows_refusals.watch_git(tmp_path) as seen:
+        proc = local_lifecycle._run(str(repo), "worktree", "add", str(target), "rb", mutating=True)
 
+    if _refused_on_windows(seen, proc):
+        return
     assert proc.returncode != 0 and "evil.example" in proc.stderr, proc.stderr
     assert not target.exists()
 
@@ -139,9 +161,12 @@ def test_a_tag_of_the_same_name_does_not_hide_the_branch_from_the_check(repo, tm
     _branch_with(repo, "feat", HOSTILE)
     lc, fork, broker = _lifecycle(repo)
 
-    switched = lc.switch_branch(fork, broker, "feat")
-    added = local_lifecycle._run(str(repo), "worktree", "add", str(tmp_path / "feat-wt"), "feat", mutating=True)
+    with windows_refusals.watch_git(tmp_path) as seen:
+        switched = lc.switch_branch(fork, broker, "feat")
+        added = local_lifecycle._run(str(repo), "worktree", "add", str(tmp_path / "feat-wt"), "feat", mutating=True)
 
+    if _refused_on_windows(seen, switched, added):
+        return
     assert switched.status != "applied", switched
     assert not (repo / ".lfsconfig").exists()
     assert added.returncode != 0 and "evil.example" in added.stderr, added.stderr
@@ -260,9 +285,12 @@ def test_a_worktree_added_without_a_commit_is_refused(repo, tmp_path) -> None:
     # git guesses the branch from the folder's name, and "--" ends the arguments the check reads.
     _branch_with(repo, "feat", HOSTILE)
 
-    guessed = local_lifecycle._run(str(repo), "worktree", "add", str(tmp_path / "feat"), mutating=True)
-    dashed = local_lifecycle._run(str(repo), "worktree", "add", "--", str(tmp_path / "wt"), "feat", mutating=True)
+    with windows_refusals.watch_git(tmp_path) as seen:
+        guessed = local_lifecycle._run(str(repo), "worktree", "add", str(tmp_path / "feat"), mutating=True)
+        dashed = local_lifecycle._run(str(repo), "worktree", "add", "--", str(tmp_path / "wt"), "feat", mutating=True)
 
+    if _refused_on_windows(seen, guessed, dashed):
+        return
     assert guessed.returncode != 0 and "without an explicit commit" in guessed.stderr, guessed.stderr
     assert dashed.returncode != 0 and "without an explicit commit" in dashed.stderr, dashed.stderr
     assert not (tmp_path / "feat").exists() and not (tmp_path / "wt").exists()
@@ -273,8 +301,11 @@ def test_a_new_branch_from_a_local_start_point_ignores_a_remotes_branch_of_that_
     sha = _branch_with(repo, "theirs", HOSTILE)
     _git(repo, "update-ref", "refs/remotes/origin/main", sha)
 
-    proc = local_lifecycle._run(str(repo), "switch", "-c", "new", "main", mutating=True)
+    with windows_refusals.watch_git(repo) as seen:
+        proc = local_lifecycle._run(str(repo), "switch", "-c", "new", "main", mutating=True)
 
+    if _refused_on_windows(seen, proc):
+        return
     assert proc.returncode == 0, proc.stderr
     assert _git(repo, "symbolic-ref", "--short", "HEAD") == "new"
     assert not (repo / ".lfsconfig").exists()
@@ -287,8 +318,11 @@ def test_a_start_point_with_a_tag_of_the_same_name_still_checks_the_branch(repo,
     _git(repo, "tag", "feat")
     _branch_with(repo, "feat", HOSTILE)
 
-    proc = local_lifecycle._run(str(repo), *command, mutating=True)
+    with windows_refusals.watch_git(repo) as seen:
+        proc = local_lifecycle._run(str(repo), *command, mutating=True)
 
+    if _refused_on_windows(seen, proc):
+        return
     assert proc.returncode != 0 and "evil.example" in proc.stderr, proc.stderr
     assert not (repo / ".lfsconfig").exists()
 
@@ -301,8 +335,11 @@ def test_a_remote_branch_fetched_somewhere_unusual_is_checked_too(repo) -> None:
     _git(repo, "branch", "-D", "rb")
     _git(repo, "config", "--replace-all", "remote.origin.fetch", "+refs/heads/*:refs/hidden/*")
 
-    proc = local_lifecycle._run(str(repo), "switch", "rb", mutating=True)
+    with windows_refusals.watch_git(repo) as seen:
+        proc = local_lifecycle._run(str(repo), "switch", "rb", mutating=True)
 
+    if _refused_on_windows(seen, proc):
+        return
     assert proc.returncode != 0 and "evil.example" in proc.stderr, proc.stderr
     assert not (repo / ".lfsconfig").exists()
 
@@ -324,8 +361,11 @@ def test_a_tag_of_a_tree_ending_in_the_name_does_not_refuse_a_switch(repo) -> No
     tree = _git(repo, "rev-parse", "main^{tree}")
     _git(repo, "tag", "-a", "-m", "tree", "rel/dev", tree)
 
-    proc = local_lifecycle._run(str(repo), "switch", "dev", mutating=True)
+    with windows_refusals.watch_git(repo) as seen:
+        proc = local_lifecycle._run(str(repo), "switch", "dev", mutating=True)
 
+    if _refused_on_windows(seen, proc):
+        return
     assert proc.returncode == 0, proc.stderr
     assert _git(repo, "symbolic-ref", "--short", "HEAD") == "dev"
 
@@ -335,8 +375,11 @@ def test_switching_back_to_the_previous_branch_still_works(repo) -> None:
     _git(repo, "switch", "-q", "review")
     _git(repo, "switch", "-q", "main")
 
-    proc = local_lifecycle._run(str(repo), "switch", "-", mutating=True)
+    with windows_refusals.watch_git(repo) as seen:
+        proc = local_lifecycle._run(str(repo), "switch", "-", mutating=True)
 
+    if _refused_on_windows(seen, proc):
+        return
     assert proc.returncode == 0, proc.stderr
     assert _git(repo, "symbolic-ref", "--short", "HEAD") == "review"
 
@@ -344,8 +387,11 @@ def test_switching_back_to_the_previous_branch_still_works(repo) -> None:
 def test_switching_back_to_a_previous_branch_naming_another_lfs_server_is_refused(repo) -> None:
     _branch_with(repo, "feat", HOSTILE)
 
-    proc = local_lifecycle._run(str(repo), "switch", "-", mutating=True)
+    with windows_refusals.watch_git(repo) as seen:
+        proc = local_lifecycle._run(str(repo), "switch", "-", mutating=True)
 
+    if _refused_on_windows(seen, proc):
+        return
     assert proc.returncode != 0 and "evil.example" in proc.stderr, proc.stderr
     assert not (repo / ".lfsconfig").exists()
 
@@ -362,8 +408,11 @@ def test_a_remote_branch_filed_under_another_name_is_checked_despite_a_decoy(rep
     target = tmp_path / "rb-wt"
     argv = ("switch", "rb") if command == "switch" else ("worktree", "add", str(target), "rb")
 
-    proc = local_lifecycle._run(str(repo), *argv, mutating=True)
+    with windows_refusals.watch_git(tmp_path) as seen:
+        proc = local_lifecycle._run(str(repo), *argv, mutating=True)
 
+    if _refused_on_windows(seen, proc):
+        return
     assert proc.returncode != 0 and "evil.example" in proc.stderr, proc.stderr
     assert not (repo / ".lfsconfig").exists() and not target.exists()
 
@@ -374,8 +423,11 @@ def test_a_remote_branch_filed_under_another_name_is_still_switched_to(repo) -> 
     _git(repo, "update-ref", "-d", "refs/remotes/origin/rb")
     _git(repo, "config", "--replace-all", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/pre-*")
 
-    proc = local_lifecycle._run(str(repo), "switch", "rb", mutating=True)
+    with windows_refusals.watch_git(repo) as seen:
+        proc = local_lifecycle._run(str(repo), "switch", "rb", mutating=True)
 
+    if _refused_on_windows(seen, proc):
+        return
     assert proc.returncode == 0, proc.stderr
     assert _git(repo, "symbolic-ref", "--short", "HEAD") == "rb"
 
@@ -412,8 +464,11 @@ def test_a_root_commit_whose_lfsconfig_merges_into_one_naming_a_server_is_refuse
     _git(repo, "add", ".gitattributes", ".lfsconfig")
     _git(repo, "commit", "-qm", "union")
 
-    proc = local_lifecycle._run(str(repo), "cherry-pick", sha, mutating=True)
+    with windows_refusals.watch_git(repo) as seen:
+        proc = local_lifecycle._run(str(repo), "cherry-pick", sha, mutating=True)
 
+    if _refused_on_windows(seen, proc):
+        return
     # git before 2.45 takes no tree as merge-tree's base, so the check refuses without naming the server.
     assert proc.returncode != 0 and ("evil.example" in proc.stderr or "merge-tree failed" in proc.stderr), proc.stderr
     assert "evil.example" not in (repo / ".lfsconfig").read_text()
@@ -428,8 +483,11 @@ def test_a_file_is_still_unstaged_while_the_work_tree_names_another_lfs_server(r
     (repo / "a.txt").write_text("three\n")
     _git(repo, "add", "a.txt")
 
-    proc = local_lifecycle._run(str(repo), "restore", "--staged", "--", "a.txt", mutating=True)
+    with windows_refusals.watch_git(repo) as seen:
+        proc = local_lifecycle._run(str(repo), "restore", "--staged", "--", "a.txt", mutating=True)
 
+    if _refused_on_windows(seen, proc):
+        return
     assert proc.returncode == 0, proc.stderr
     assert _git(repo, "diff", "--cached", "--name-only") == ""
     assert (repo / "a.txt").read_text() == "three\n"
@@ -443,7 +501,10 @@ def test_restoring_the_work_tree_too_is_still_checked(repo, flags) -> None:
     _git(repo, "commit", "-qm", "lfs settings")
     (repo / "a.txt").write_text("changed\n")
 
-    proc = local_lifecycle._run(str(repo), "restore", *flags, "--", "a.txt", mutating=True)
+    with windows_refusals.watch_git(repo) as seen:
+        proc = local_lifecycle._run(str(repo), "restore", *flags, "--", "a.txt", mutating=True)
 
+    if _refused_on_windows(seen, proc):
+        return
     assert proc.returncode != 0 and "evil.example" in proc.stderr, proc.stderr
     assert (repo / "a.txt").read_text() == "changed\n"

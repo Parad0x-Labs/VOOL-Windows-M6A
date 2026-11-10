@@ -9,13 +9,14 @@ from __future__ import annotations
 import importlib
 import os
 import re
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from core import policy_engine
+from core import policy_engine, windows_write_gate
 from core.agent_runtime.fast_paths_machine import (
     maybe_handle_direct_machine_write_request,
 )
@@ -26,6 +27,7 @@ from core.runtime_execution_tools import (
     _safe_machine_roots,
     execute_runtime_tool,
 )
+from tests import _windows_disposable_tmp
 
 # ── Helpers ───────────────────────────────────────────────────────────
 
@@ -178,20 +180,66 @@ class TestA5_GateAllowsMechanismRejects(unittest.TestCase):
                                    "decision": "authorized",
                                    "reason": "Machine effect authorized.",
                                }):
+            outside = Path(tmpdir)
+            if _windows_disposable_tmp.running_on_windows():
+                # On Windows conftest marks this test's tempfile root as a disposable workspace, and
+                # tmpdir is made inside it, so a path under tmpdir is one VOOL may write. The outside
+                # path goes in a folder of the test's own, made next to that root, which nothing marks.
+                outside = Path(tempfile.mkdtemp(prefix="a5-outside-", dir=Path(tempfile.gettempdir()).parent))
+                self.addCleanup(shutil.rmtree, outside, True)
             # Path outside safe-machine roots -> mechanism rejects
             result = execute_runtime_tool(
                 "machine.write_file",
-                {"path": str(Path(tmpdir) / "outside_roots" / "A5_test.txt"),
+                {"path": str(outside / "outside_roots" / "A5_test.txt"),
                  "content": "mechanism should block"},
                 source_context={},
             )
             self.assertIsNotNone(result)
             self.assertFalse(result.ok)
-            # Mechanism rejects with not_allowed (safe-root containment)
-            self.assertEqual(result.status, "not_allowed")
+            if windows_write_gate.active():
+                # On Windows the write gate is asked at dispatch, before the handler's safe-root
+                # containment, and a folder nobody marked is outside it: the gate's own refusal.
+                self.assertEqual(result.status, windows_write_gate.STATUS)
+                self.assertEqual(
+                    result.response_text,
+                    "On Windows, VOOL changes files only inside folders explicitly marked as disposable "
+                    f"development workspaces ({windows_write_gate.ENV_VAR}) until its Windows filesystem "
+                    "protection is complete. This target is outside the marked folders; nothing was changed.",
+                )
+            else:
+                # Mechanism rejects with not_allowed (safe-root containment)
+                self.assertEqual(result.status, "not_allowed")
             # No mutation
-            marker = Path(tmpdir) / "outside_roots" / "A5_test.txt"
+            marker = outside / "outside_roots" / "A5_test.txt"
             self.assertFalse(marker.exists())
+
+    def test_mechanism_still_blocks_when_the_windows_gate_lets_the_write_through(self):
+        """Defense in depth beneath the Windows write gate: with the gate made to let the call through,
+        the handler's safe-root containment still refuses a folder outside every root, and nothing is
+        written. Off Windows the gate already lets every call through, so this is the row above."""
+        with tempfile.TemporaryDirectory() as tmpdir, \
+             mock.patch("core.runtime_execution_tools.Path.home", return_value=Path(tmpdir)), \
+             mock.patch.object(windows_write_gate, "refusal", return_value=None), \
+             mock.patch.object(ExecutionGate, "evaluate_machine_effect",
+                               return_value={
+                                   "decision": "authorized",
+                                   "reason": "Machine effect authorized.",
+                               }):
+            outside = Path(tmpdir)
+            if _windows_disposable_tmp.running_on_windows():
+                # The same unmarked folder as above: a marked one the machine writers may write.
+                outside = Path(tempfile.mkdtemp(prefix="a5-outside-", dir=Path(tempfile.gettempdir()).parent))
+                self.addCleanup(shutil.rmtree, outside, True)
+            result = execute_runtime_tool(
+                "machine.write_file",
+                {"path": str(outside / "outside_roots" / "A5_test.txt"),
+                 "content": "mechanism should block"},
+                source_context={},
+            )
+            self.assertIsNotNone(result)
+            self.assertFalse(result.ok)
+            self.assertEqual(result.status, "not_allowed")
+            self.assertFalse((outside / "outside_roots" / "A5_test.txt").exists())
 
 
 class TestA6_CanonicalPathIdentity(unittest.TestCase):

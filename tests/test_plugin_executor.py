@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from core import plugin_executor
+from tests import _windows_refusals as windows_refusals
 
 #: Prints exactly the environment the child received, one NAME=value per line.
 _PRINT_ENVIRONMENT = "import os\nfor k, v in os.environ.items(): print(f'{k}={v}')"
@@ -121,7 +122,10 @@ def test_a_plugin_reporting_failure_is_not_an_error(plugin: Path) -> None:
 
 
 def test_a_type_error_is_refused_before_the_handler_starts(plugin: Path) -> None:
-    result = _run(plugin, arguments={"jql": "x", "limit": "25"})
+    with windows_refusals.watch_plugins(plugin) as seen:
+        result = _run(plugin, arguments={"jql": "x", "limit": "25"})
+    if seen.refused_result(result):
+        return
     assert result.ok is False and result.status == "invalid_arguments"
     assert "integer" in result.error
 
@@ -133,7 +137,10 @@ def test_a_path_where_a_name_was_declared_is_refused(plugin: Path) -> None:
     exists to inspect, a whole-disk scan has already run — the check has to be pre-dispatch.
     """
 
-    result = _run(plugin, arguments={"jql": "x", "name": "~/Desktop/vool-w5x1"})
+    with windows_refusals.watch_plugins(plugin) as seen:
+        result = _run(plugin, arguments={"jql": "x", "name": "~/Desktop/vool-w5x1"})
+    if seen.refused_result(result):
+        return
     assert result.ok is False and result.status == "invalid_argument_shape"
     assert "bare name" in result.error
 
@@ -143,7 +150,10 @@ def test_a_path_where_a_name_was_declared_is_refused(plugin: Path) -> None:
     [("where", "just-a-name"), ("site", "not-a-url")],
 )
 def test_other_declared_shapes_are_checked(plugin: Path, field: str, value: str) -> None:
-    result = _run(plugin, arguments={"jql": "x", field: value})
+    with windows_refusals.watch_plugins(plugin) as seen:
+        result = _run(plugin, arguments={"jql": "x", field: value})
+    if seen.refused_result(result):
+        return
     assert result.ok is False and result.status == "invalid_argument_shape"
 
 
@@ -221,24 +231,30 @@ def test_the_scratch_dir_is_exported_when_given() -> None:
 def test_a_handler_pointing_outside_its_plugin_is_refused(plugin: Path) -> None:
     """`entry: "../../../bin/sh"` would run anything under the plugin's declared permissions."""
 
-    result = plugin_executor.run_plugin_tool(
-        intent="vool-jira.search_issues",
-        arguments={"jql": "x"},
-        handler={"kind": "subprocess", "entry": "../../../../bin/sh"},
-        schema=SCHEMA,
-        plugin_root=plugin,
-    )
+    with windows_refusals.watch_plugins(plugin) as seen:
+        result = plugin_executor.run_plugin_tool(
+            intent="vool-jira.search_issues",
+            arguments={"jql": "x"},
+            handler={"kind": "subprocess", "entry": "../../../../bin/sh"},
+            schema=SCHEMA,
+            plugin_root=plugin,
+        )
+    if seen.refused_result(result):
+        return
     assert result.ok is False and result.status == "handler_escaped"
 
 
 def test_a_missing_handler_is_reported_not_raised(plugin: Path) -> None:
-    result = plugin_executor.run_plugin_tool(
-        intent="vool-jira.search_issues",
-        arguments={"jql": "x"},
-        handler={"kind": "subprocess", "entry": "bin/nope"},
-        schema=SCHEMA,
-        plugin_root=plugin,
-    )
+    with windows_refusals.watch_plugins(plugin) as seen:
+        result = plugin_executor.run_plugin_tool(
+            intent="vool-jira.search_issues",
+            arguments={"jql": "x"},
+            handler={"kind": "subprocess", "entry": "bin/nope"},
+            schema=SCHEMA,
+            plugin_root=plugin,
+        )
+    if seen.refused_result(result):
+        return
     assert result.ok is False and result.status == "handler_missing"
 
 

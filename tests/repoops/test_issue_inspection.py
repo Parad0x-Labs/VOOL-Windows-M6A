@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests import _windows_refusals as windows_refusals
+
 
 @pytest.fixture
 def world(tmp_path, monkeypatch):
@@ -130,6 +132,8 @@ def test_issue_reads_through_the_github_adapter_at_the_door(world) -> None:
 
     root, bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid = _session_at_bind(world, ctx)
     forge.route("GET /issues/41", GITHUB_ISSUE_41)
 
@@ -150,6 +154,8 @@ def test_issue_comments_read_with_truncation_truth(world) -> None:
 
     root, bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid = _session_at_bind(world, ctx)
     forge.route("GET /issues/41", GITHUB_ISSUE_41)
     forge.route("GET /issues/41/comments", GITHUB_ISSUE_41_COMMENTS)
@@ -166,6 +172,8 @@ def test_issue_comments_truncated_listing_is_not_success(world) -> None:
 
     root, bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid = _session_at_bind(world, ctx)
     link = '<https://api.github.com/repos/o/r/issues/41/comments?per_page=100&page=2>; rel="next"'
     forge.route("GET /issues/41", GITHUB_ISSUE_41)
@@ -226,6 +234,8 @@ def test_missing_issue_is_a_typed_absence_not_an_error_guess(world) -> None:
 
     root, bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid = _session_at_bind(world, ctx)
     forge.route("GET /issues/41", {"message": "Not Found"}, status=404)
 
@@ -239,6 +249,8 @@ def test_issue_needs_a_number(world) -> None:
 
     root, bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid = _session_at_bind(world, ctx)
     read = door("repo.issue", {"repo_session_id": sid, "number": "  "}, ctx)
     assert read.ok is False

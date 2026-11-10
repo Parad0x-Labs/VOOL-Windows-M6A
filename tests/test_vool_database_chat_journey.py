@@ -58,6 +58,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
+from tests import _windows_refusals as windows_refusals
 from tests._blackbox_served_rig import REPO_ROOT, ServedDaemon, free_port, run_in_home
 from tests._vool_database_pack import DB_PLUGIN_ID, install_pack
 
@@ -363,23 +364,30 @@ def journey(tmp_path: Path):
     # Presence is not availability: through the EXISTING lifecycle's three acts, recorded in
     # the store under this home so the daemon — and a later restart of it — sees the same
     # installed+verified+enabled activation.
-    run_in_home(
-        home,
-        textwrap.dedent(
-            f"""
-            import sys
-            from pathlib import Path
-            sys.path.insert(0, {REPO_ROOT.as_posix()!r})
-            from core.plugin_lifecycle import enable, install, verify
-            pack = Path({plugins_root.as_posix()!r}) / "plugins" / "{DB_PLUGIN_ID}"
-            install("{DB_PLUGIN_ID}", root=pack, source="test-isolated")
-            verify("{DB_PLUGIN_ID}", root=pack)
-            enable("{DB_PLUGIN_ID}")
-            print("lifecycle: installed+verified+enabled")
-            """
-        ),
-        env_extra={"VOOL_PLUGINS_DIR": str(plugins_root), "VOOL_PLUGIN_SCRATCH_ROOT": str(scratch)},
+    activation = textwrap.dedent(
+        f"""
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, {REPO_ROOT.as_posix()!r})
+        from core.plugin_lifecycle import enable, install, verify
+        pack = Path({plugins_root.as_posix()!r}) / "plugins" / "{DB_PLUGIN_ID}"
+        install("{DB_PLUGIN_ID}", root=pack, source="test-isolated")
+        verify("{DB_PLUGIN_ID}", root=pack)
+        enable("{DB_PLUGIN_ID}")
+        print("lifecycle: installed+verified+enabled")
+        """
     )
+    activation_env = {"VOOL_PLUGINS_DIR": str(plugins_root), "VOOL_PLUGIN_SCRATCH_ROOT": str(scratch)}
+    # Windows 0.7.1 starts no plugin: the pack's enable step refuses in the plugin sentence, so no
+    # daemon is booted to serve it. The refusal is asserted here (the pack untouched, the scratch
+    # never made, the pack not enabled); the rows then end on `refused_on_windows`.
+    if windows_refusals.refuses_activation(home, activation, DB_PLUGIN_ID, plugins_root, scratch,
+                                           env_extra=activation_env):
+        yield windows_refusals.RefusedWorld(
+            refused_on_windows=True, home=home, plugins_root=plugins_root, scratch=scratch
+        )
+        return
+    run_in_home(home, activation, env_extra=activation_env)
     env = {
         "VOOL_ALWAYS_ON_CATALOG": "1",
         "VOOL_MODEL_LOAD_FLOOR_GB": "0.1",
@@ -397,12 +405,15 @@ def journey(tmp_path: Path):
         "db": scratch / "vool-database" / "databases" / "orders.sqlite",
         "scratch": scratch,
         "plugins_root": plugins_root,
+        "refused_on_windows": False,
     }
     yield world
     daemon.stop()
 
 
 def test_served_chat_seats_named_plugin_intents_and_gates_the_mutation(journey) -> None:
+    if journey["refused_on_windows"]:
+        return  # the fixture asserted the enable refusal; no daemon serves the pack's intents
     daemon: ServedDaemon = journey["daemon"]
     home: Path = journey["home"]
     db_path: Path = journey["db"]

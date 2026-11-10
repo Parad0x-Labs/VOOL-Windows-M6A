@@ -34,6 +34,7 @@ from core.task_router import classify, create_task_record, redact_text
 from core.tool_intent_executor import ToolIntentExecution
 from core.user_preferences import maybe_handle_preference_command
 from storage.migrations import run_migrations
+from tests import _windows_refusals as windows_refusals
 
 _REAL_GETADDRINFO = socket.getaddrinfo
 
@@ -4236,12 +4237,17 @@ class OpenClawToolingContextTests(unittest.TestCase):
             subprocess.run(["git", "add", "README.md"], cwd=repo, check=True, capture_output=True, text=True)
             subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True, text=True)
 
-            result = agent.run_once(
-                "what branch and commit are you running on right now?",
-                session_id_override="openclaw:api-branch-commit",
-                source_context={"surface": "api", "platform": "api", "workspace": str(repo), "workspace_root": str(repo)},
-            )
+            # aimed_at: the turn also reads VOOL's own build commit from its program folder (not this repo).
+            with windows_refusals.watch_git(repo, aimed_at=repo) as seen:
+                result = agent.run_once(
+                    "what branch and commit are you running on right now?",
+                    session_id_override="openclaw:api-branch-commit",
+                    source_context={"surface": "api", "platform": "api", "workspace": str(repo), "workspace_root": str(repo)},
+                )
 
+        if seen.refused(result["response"]):  # Windows 0.7.1 runs no git, and the reply says so
+            self.assertNotIn("training data", result["response"].lower())
+            return
         self.assertIn("Git summary: branch main @", result["response"])
         self.assertNotIn("I don't have access", result["response"])
         self.assertNotIn("training data", result["response"].lower())

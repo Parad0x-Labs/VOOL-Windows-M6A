@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from core.repoops.gitops import GitRunner, _push_transport
+from tests import _windows_refusals as windows_refusals
 from tests.repoops._harness import build_repo, context, door, git, head, remote_ref
 from tests.repoops.test_push_dispatch_authority_r5 import REF, _disk, _drive
 from tests.repoops.test_repoops_unknown_effect import world
@@ -124,6 +125,8 @@ def test_update_instead_on_a_checked_out_destination_refuses_the_push(tmp_path) 
     git(root, "commit", "-q", "-am", "change")
     runner = GitRunner(root=root)
 
+    if windows_refusals.refuses_push(root, "origin", tmp_path, check=False):
+        return
     code, _, err = runner.run(*runner.push_argv(remote="origin", ref="main", sha=runner.head()))
 
     assert code != 0 and "updateInstead" in err
@@ -162,6 +165,8 @@ def test_a_transport_whose_destination_vool_cannot_read_is_refused(tmp_path, url
     runner, root, bare = _runner_world(tmp_path)
     git(root, "remote", "set-url", "origin", url)
 
+    if windows_refusals.refuses_push(root, "origin", tmp_path, check=False, ref="pushed"):
+        return
     code, _, err = _push(runner)
 
     assert code != 0 and "VOOL pushes only over" in err, err
@@ -178,6 +183,8 @@ def test_a_remote_helper_chosen_by_vcs_is_refused(tmp_path, monkeypatch) -> None
     monkeypatch.setenv("PATH", f"{helpers}{os.pathsep}{os.environ.get('PATH', '')}")
     git(root, "config", "remote.origin.vcs", "fake")
 
+    if windows_refusals.refuses_push(root, "origin", tmp_path, check=False, ref="pushed"):
+        return
     code, _, err = _push(runner)
 
     # Refused either by the push destination check or by safe_git's repository-config check, which
@@ -190,6 +197,8 @@ def test_a_remote_helper_chosen_by_vcs_is_refused(tmp_path, monkeypatch) -> None
 def test_a_clean_local_bare_remote_still_pushes(tmp_path) -> None:
     runner, root, bare = _runner_world(tmp_path)
 
+    if windows_refusals.refuses_push(root, "origin", tmp_path, check=False, ref="pushed"):
+        return
     code, _, err = _push(runner)
 
     assert code == 0, err
@@ -202,6 +211,8 @@ def test_a_destination_whose_settings_run_nothing_still_pushes(tmp_path) -> None
     git(bare, "config", "gpg.format", "openpgp")
     git(bare, "config", "advice.ignoredHook", "false")  # toggles a message; names no program
 
+    if windows_refusals.refuses_push(root, "origin", tmp_path, check=False, ref="pushed"):
+        return
     code, _, err = _push(runner)
 
     assert code == 0, err
@@ -246,6 +257,8 @@ def test_network_remotes_are_not_checked_as_folders(tmp_path) -> None:
     runner, root, bare = _runner_world(tmp_path)
     git(root, "remote", "set-url", "origin", "https://example.invalid/o/r.git")
 
+    if windows_refusals.refuses_push(root, "origin", tmp_path, push=False):
+        return
     assert runner.push_destination_refusal("origin") == ""
 
 
