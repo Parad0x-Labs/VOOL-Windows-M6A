@@ -107,11 +107,41 @@ _TERMINATORS = ".?!;"
 # "8,500" / "$1,240" / "app.py" / "1.5" -- a terminator with an alphanumeric on both sides is inside
 # a token, not between two sentences.
 _INTRA_TOKEN_RE = re.compile(r"[\w]$")
+_PATH_SEPARATORS = "\\/"
+#: What may stand right before a path's own `.` or `..` name: nothing, a space, a separator, a quote.
+_PATH_NAME_OPENERS = frozenset(" \t\"'`(" + _PATH_SEPARATORS)
+
+
+def _is_path_dot(text: str, index: int) -> bool:
+    """Whether the `.` at ``index`` belongs to a path's `.` or `..` name rather than ending a sentence.
+
+    Captest round 2 (build a22771c2): "write hi to C:\\Users\\VOOLT\\VOOL Test\\Allowed Ä folder\\..\\y.txt"
+    was cut at the `..` into "write hi to …\\Allowed Ä folder\\." and "\\y.txt", and the second part was
+    served on its own as a read of `y.txt`: "There is no file at `y.txt`". A dot run of one or two
+    followed by a separator (`..\\y.txt`, `.\\calc.py`, `folder/../y.txt`) is a path name; so is a
+    `..` that stands as a name of its own (after a space or a separator, `in .. with`, `folder\\..`).
+    A longer run (`...`) and a dot after a word (`Done.`, `wait..`) still end a sentence."""
+    start = index
+    while start > 0 and text[start - 1] == ".":
+        start -= 1
+    end = index
+    while end < len(text) and text[end] == ".":
+        end += 1
+    run = end - start
+    if run > 2:
+        return False
+    following = text[end] if end < len(text) else ""
+    if following and following in _PATH_SEPARATORS:
+        return True
+    before = text[start - 1] if start > 0 else " "
+    return run == 2 and before in _PATH_NAME_OPENERS and (not following or following.isspace() or following in "\"'`),;:!?")
 
 
 def _is_boundary(text: str, index: int) -> bool:
     char = text[index]
     if char not in _TERMINATORS:
+        return False
+    if char == "." and _is_path_dot(text, index):
         return False
     if char == "." and _INTRA_TOKEN_RE.search(text[:index]) and index + 1 < len(text):
         following = text[index + 1]

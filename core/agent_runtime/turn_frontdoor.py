@@ -1890,6 +1890,27 @@ def handle_turn_frontdoor(
                 reason="write_root_unreachable",
             )
         }
+    # On Windows, a write or a move whose relative path climbs with `..` out of the chat's folder to a
+    # place outside every marked folder gets the same plain refusal, read from the typed text (the
+    # normalizer glues a lone `..` to the word before it) (captest round 2, build a22771c2).
+    from core.agent_runtime.write_root_honesty import climbing_relative_response, climbing_relative_target
+
+    climb_kind, climb_path, climb_leads_to = climbing_relative_target(
+        str(raw_user_input or effective_input), source_context=source_context
+    )
+    if climb_kind:
+        return {
+            "result": agent._fast_path_result(
+                session_id=session_id,
+                user_input=effective_input,
+                response=climbing_relative_response(
+                    climb_kind, climb_path, climb_leads_to, source_context=source_context
+                ),
+                confidence=0.95,
+                source_context=source_context,
+                reason="write_root_unreachable",
+            )
+        }
 
     web0_builder_result = None if (model_owns_judgement or action_forbidden) else agent._maybe_handle_web0_builder_fast_path(
         effective_input,

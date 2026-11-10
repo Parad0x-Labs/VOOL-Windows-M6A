@@ -171,8 +171,10 @@ class SandboxRunner:
             return {"error": f"Command line refused: {exc}", "status": "blocked_by_policy"}
         if not argv:
             return {"error": "Empty command.", "status": "blocked_by_policy"}
+        # Phase 1 pins a bare Python or pytest name to the interpreter running VOOL (Windows only).
+        pinned = _windows_phase1_pins(str(argv[0] or ""))
         try:
-            if _windows_phase1_pins(str(argv[0] or "")):
+            if pinned:
                 # A bare `python`/`python3`/`py`/`pytest` is never looked up on PATH on Windows: the
                 # job runner's phase-1 gate (`JobRunner._windows_phase1_argv`) runs it as the
                 # interpreter running VOOL, by its full path, and nothing else. A PATH hit is the
@@ -223,6 +225,12 @@ class SandboxRunner:
                 base_cmd = _base_command_name(str(argv[index] or "")) if index < len(argv) else "env"
                 break
         if base_cmd in self.ALLOWED_COMMANDS:
+            allowed = True
+        elif pinned and base_cmd == _base_command_name(str(argv[0] or "")):
+            # `py`, `py.exe` and `py.test` are names phase 1 runs (`_WINDOWS_PYTHON_NAMES`,
+            # `_WINDOWS_PYTEST_NAMES`) and the check before approval let through, but the list above
+            # never held them: an approved "py calc.py" was spent and then refused here, so nothing ran
+            # (captest round 2, C1). The name still runs only as phase 1 runs it, and only on Windows.
             allowed = True
 
         if not allowed:

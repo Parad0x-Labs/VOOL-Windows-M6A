@@ -635,6 +635,108 @@ def non_local_write_target(text: str, *, network_only: bool = False, look_up: bo
     return "", ""
 
 
+#: One word of a turn, or a quoted span, as a path a person types it.
+_TYPED_WORD_RE = re.compile(r"(?P<quote>[\"'`])(?P<quoted>[^\"'`\r\n<>|]+)(?P=quote)|(?<![^\s(])(?P<word>[^\s\"'`<>|]+)")
+#: A move verb just before a path: "move x.txt to ..\\y.txt" names the move's paths after it.
+_MOVE_INTENT_RE = re.compile(r"\b(?:move|mv|relocate)\b", re.IGNORECASE)
+
+
+def _relative_climbs(text: str) -> list[tuple[int, str]]:
+    """``(start, path)`` for every relative path ``text`` names that holds a `..` name, in order:
+    ``..``, ``..\\y.txt``, ``../y.txt``, ``sub\\..\\..\\y.txt``. A rooted path (a drive, ``\\``, ``/``
+    or ``~``) is the rooted readers' (`write_destinations`); a word with no `..` name is left alone."""
+    found: list[tuple[int, str]] = []
+    seps = _path_separators()
+    for match in _TYPED_WORD_RE.finditer(str(text or "")):
+        group = "quoted" if match.group("quoted") is not None else "word"
+        raw = match.group(group)
+        path = _clean_path(raw.lstrip("("))
+        if not path or path.startswith(("~", "/", "\\")) or re.match(r"^[A-Za-z]:", path) or "://" in path:
+            continue  # a rooted path, or a URL
+        if ".." not in re.split("[" + re.escape(seps) + "]", path):
+            continue
+        found.append((match.start(group), path))
+    return found
+
+
+def _chat_folder(source_context: dict[str, object] | None) -> str:
+    """The folder a relative path is placed from: the chat's own workspace, as the workspace tools
+    place it (`resolve_workspace_path`)."""
+    workspace = str(
+        (source_context or {}).get("workspace") or (source_context or {}).get("workspace_root") or ""
+    ).strip()
+    if not workspace:
+        try:
+            from core.runtime_paths import active_workspace_dir
+
+            workspace = str(active_workspace_dir())
+        except Exception:
+            workspace = ""
+    return workspace
+
+
+def _placed_from(folder: str, path: str) -> str:
+    """``path`` joined onto ``folder`` with its `..` names followed, by text: nothing is looked up.
+    Either separator the platform reads is a separator."""
+    native = path
+    for sep in _path_separators():
+        if sep != os.sep:
+            native = native.replace(sep, os.sep)
+    return os.path.normpath(os.path.join(folder, native))
+
+
+def climbing_relative_target(text: str, *, source_context: dict[str, object] | None) -> tuple[str, str, str]:
+    """On Windows, ``(kind, path, leads_to)`` for the first relative path with a `..` name that this
+    turn asks to write (``kind`` "write") or move (``kind`` "move"), placed from the chat's own folder,
+    that leads outside every marked folder; ``("", "", "")`` otherwise, and always off Windows.
+
+    Captest round 2 (build a22771c2): in a marked folder, "move x.txt to ..\\y.txt" and "write hi to
+    ..\\y.txt" were never refused as outside the marked folders. The rooted readers above take only a
+    full path, so a climb typed relative to the chat's folder reached the lanes, which place a relative
+    path from somewhere else (the machine writer from the home, the move tool from VOOL's working
+    folder) or not at all. The path is placed by text, as the chat's own workspace tools would place it;
+    a climb that stays inside a marked folder is left to the lanes and the gate, as before. This only
+    refuses: it never chooses a destination."""
+    from core import windows_write_gate
+
+    body = str(text or "")
+    if not windows_write_gate.active() or not body.strip():
+        return "", "", ""
+    climbs = _relative_climbs(body)
+    if not climbs:
+        return "", "", ""
+    folder = _chat_folder(source_context)
+    if not folder or windows_path_policy.refused_form(folder, network_only=True):
+        return "", "", ""
+    for start, path in climbs:
+        window = body[max(0, start - _WRITE_INTENT_WINDOW) : start]
+        if _MOVE_INTENT_RE.search(window) and not _USER_OWN_ACTION_RE.search(window):
+            kind = "move"
+        elif _write_intent_precedes(body, start):
+            kind = "write"
+        else:
+            continue
+        leads_to = _placed_from(folder, path)
+        if windows_write_gate.inside_flagged(leads_to):
+            continue
+        return kind, path, leads_to
+    return "", "", ""
+
+
+def climbing_relative_response(kind: str, path: str, leads_to: str, *, source_context: dict[str, object] | None) -> str:
+    """The plain refusal for `climbing_relative_target`: the move lane's sentence for a move, the
+    write-root sentence for a write, each naming where the `..` leads."""
+    from core import windows_write_gate
+
+    if kind == "move":
+        return (
+            f"I can't move that: `{path}` (that is `{leads_to}`) is outside the folders you marked as ones "
+            f"VOOL may change ({windows_write_gate.ENV_VAR}), and on Windows VOOL moves files only inside "
+            "them. Nothing was moved."
+        )
+    return unreachable_write_response(path, source_context=source_context, leads_to=leads_to)
+
+
 def _as_on_disk(root: Path | str) -> str:
     """A writable root as the owner knows it. The gate compares folders case-folded (``c:\\users\\...``);
     on Windows the final path of the folder carries its real spelling (``C:\\Users\\...``). Other
@@ -647,13 +749,19 @@ def _as_on_disk(root: Path | str) -> str:
         return str(root)
 
 
-def _climb_note(path: str) -> str:
+def _climb_note(path: str, *, leads_to: str = "") -> str:
     """For a path that climbs with `..`, where it really leads, as one sentence; "" otherwise.
 
     Captest B6 (2026-11-09): a write that used `..` to leave a marked folder wrote nothing, but the
-    answer did not say that the `..` was why."""
+    answer did not say that the `..` was why. A relative path is placed from the chat's folder by the
+    caller (``leads_to``), never from VOOL's own working folder."""
     if ".." not in re.split(r"[\\/]", str(path or "")):
         return ""
+    if leads_to:
+        return (
+            f"Its `..` climbs out of this chat's folder, so it leads to `{leads_to}`, which is outside every "
+            "folder you marked."
+        )
     try:
         leads_to = os.path.realpath(os.path.expanduser(path))
     except (OSError, ValueError):
@@ -661,7 +769,7 @@ def _climb_note(path: str) -> str:
     return f"Its `..` climbs out of the folder named before it, so it leads to `{leads_to}`, which is outside every folder you marked."
 
 
-def unreachable_write_response(path: str, *, source_context: dict[str, object] | None) -> str:
+def unreachable_write_response(path: str, *, source_context: dict[str, object] | None, leads_to: str = "") -> str:
     """The honest answer: name the path we were given, the roots we have, and the write we skipped."""
     roots = allowed_write_roots(source_context)
     from core import windows_write_gate
@@ -675,7 +783,7 @@ def unreachable_write_response(path: str, *, source_context: dict[str, object] |
                 "written on this turn."
             )
         listed = ", ".join(f"`{_as_on_disk(root)}`" for root in roots)
-        climb = _climb_note(path)
+        climb = _climb_note(path, leads_to=leads_to)
         if climb:
             return (
                 f"I can't write to `{path}`. {climb} On Windows I change files only inside the folders "
@@ -699,6 +807,8 @@ def unreachable_write_response(path: str, *, source_context: dict[str, object] |
 
 __all__ = [
     "allowed_write_roots",
+    "climbing_relative_response",
+    "climbing_relative_target",
     "named_full_paths",
     "non_local_write_target",
     "requested_rooted_paths",
