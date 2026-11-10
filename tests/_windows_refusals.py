@@ -311,3 +311,16 @@ def watch_cloud_model(model: str, *roots: Path) -> contextlib.AbstractContextMan
 
     return _watch(cloud_models_refused(), ollama_cloud_models.refusal_text(model), "", "Ollama cloud model",
                   lambda _args, _kwargs: True, tuple(Path(r) for r in roots))
+
+
+def assert_git_ask_answered_at_the_door(seen: Watch, result: dict, invocations) -> None:
+    """For a whole-agent turn that asks for git (such as "show git status"), driven inside
+    `watch_git(project, aimed_at=project)` where git is refused: the turn's front door answers the git
+    sentence itself (route deterministic:windows_git_refused), buys no inference, runs no git tool,
+    starts no git on the project and changes nothing there."""
+    assert invocations.count == 0, invocations.timeline
+    assert result["fast_path_hit"] is True and result["model_calls"] == 0, result
+    assert result.get("route") == "deterministic:windows_git_refused", result.get("route")
+    assert not any("git_status" in str(step) for step in invocations.timeline), invocations.timeline
+    assert result["response"] == GIT_REFUSAL, result["response"]
+    assert seen.refused(result["response"])

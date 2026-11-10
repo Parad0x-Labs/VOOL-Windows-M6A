@@ -43,6 +43,7 @@ from unittest import mock
 
 import pytest
 
+from tests import _windows_refusals as windows_refusals
 from tests.semantic_phase0._fixtures import (
     block_outbound_network,
     keep_the_checkout_clean,
@@ -200,6 +201,12 @@ def test_a_deterministic_local_operation_enters_no_provider_call(
     `arbiter_is_reachable` is not decoration: without it the arbiter fails open at its tag probe and
     a zero-call assertion would pass on a turn where nothing could have been called anyway.
     """
+    if family == "git_status" and windows_refusals.git_refused():
+        # Windows 0.7.1 runs no git: the front door answers a git ask with the git sentence itself.
+        with windows_refusals.watch_git(project, aimed_at=project) as seen:
+            result = _drive(make_agent_module, project, text, session=_session_for(text))
+        windows_refusals.assert_git_ask_answered_at_the_door(seen, result, invocations)
+        return
     result = _drive(make_agent_module, project, text, session=_session_for(text))
 
     assert invocations.count == 0, (
