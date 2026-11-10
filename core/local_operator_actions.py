@@ -149,6 +149,41 @@ def windows_write_refusal(intent: OperatorActionIntent, *, session_id: str | Non
     return windows_write_gate.refusal("operator.cleanup_temp_files", {"target_path": intent.target_path}, None)
 
 
+def windows_move_scope_refusal(intent: OperatorActionIntent) -> str | None:
+    """On Windows, the move handler's own scope refusal for this move, asked before the permission
+    decision; None when the handler's scope takes it, and always off Windows.
+
+    The handler accepts a source and a destination only under the user's home, the temp folder or
+    VOOL's data folder (`validate_move_scope`), whatever the write gate allows. A move between two
+    marked folders outside those (a marked `D:\\Work`, or a test runner's `D:\\a\\_temp`) passed
+    the gate, was offered a card, and was then refused "I won't move protected or out-of-scope paths"
+    after the owner's Allow. Asked here first, with the paths the handler reads from this call, the
+    same refusal comes before any card. Nothing is allowed that the handler refuses, and nothing the
+    handler allows is refused: it is the handler's own check. Only a call `windows_write_refusal`
+    let through reaches this, so a share or a remote spelling is never looked up here."""
+    from core import windows_write_gate
+
+    if intent.kind != "move_path" or intent.approval_requested or not windows_write_gate.active():
+        return None
+    try:
+        parsed = _parse_move_request(
+            intent.raw_text, fallback_source=intent.target_path, fallback_destination=intent.destination_path
+        )
+    except Exception:  # unreadable: the handler answers it with nothing changed
+        return None
+    if not parsed:
+        return None
+    source = Path(str(parsed["source_path"])).expanduser()
+    destination_dir = Path(str(parsed["destination_dir"])).expanduser()
+    try:
+        error = _validate_move_scope(source, destination_dir)
+    except (OSError, ValueError):
+        return None  # the handler meets the same error and answers it, with nothing moved
+    if not error:
+        return None
+    return error + " Nothing was moved."
+
+
 def _paths_a_move_names(text: str) -> list[str]:
     """The full local paths a move request names, read whole (quoted, or through folders with spaces)."""
     from core.agent_runtime.write_root_honesty import named_full_paths
@@ -1923,6 +1958,16 @@ def _load_pending_action(*, session_id: str, action_kind: str, action_id: str | 
         session_id=session_id,
         action_kind=action_kind,
         action_id=action_id,
+        get_connection_fn=get_connection,
+    )
+
+
+def _close_pending_action(*, session_id: str, action_kind: str, action_id: str) -> bool:
+    return operator_approvals.close_pending_action(
+        action_id,
+        session_id=session_id,
+        action_kind=action_kind,
+        now_fn=_utcnow,
         get_connection_fn=get_connection,
     )
 

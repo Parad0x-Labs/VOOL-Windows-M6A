@@ -917,10 +917,18 @@ def _windows_write_refusal(
     if intent in _MUTATING_OPERATOR_INTENTS:
         from core.local_operator_actions import windows_write_refusal as operator_refusal
 
-        reason = operator_refusal(_build_operator_action_intent(intent.split(".", 1)[1], arguments))
+        operator_intent = _build_operator_action_intent(intent.split(".", 1)[1], arguments)
+        reason = operator_refusal(operator_intent)
+        status = windows_write_gate.STATUS
+        if not reason:
+            # The move handler's own scope check, asked before the card rather than after the Allow.
+            from core.local_operator_actions import windows_move_scope_refusal
+
+            reason = windows_move_scope_refusal(operator_intent)
+            status = "blocked"
         if not reason:
             return None
-        status, text = windows_write_gate.STATUS, reason
+        text = reason
         details = {
             "executed": False,
             "observation": _tool_observation(
@@ -1790,20 +1798,37 @@ def _execute_tool_intent_impl(
         )
         return execution
     if intent in _READ_ONLY_OPERATOR_INTENTS | _MUTATING_OPERATOR_INTENTS:
-        execution = _dispatch_with_claim(
-            lambda: _with_blackbox_coverage(
-                intent,
-                arguments,
-                source_context=source_context,
-                dispatch=lambda: _execute_operator_tool(
+        # An allow that is the operator's exact approval of this call is carried to the operator
+        # handler, which would otherwise store a preview and ask again in text ("approve move <id>"),
+        # leaving the approved call a preview with no approval id. Only this dispatch carries it, and
+        # only the handlers `execute_operator_tool` lists may claim it, once. Windows only for 0.7.1.
+        import contextlib
+
+        from core.execution_gate import operator_approval_spend_applies, operator_approved_call
+
+        approved_scope = (
+            operator_approved_call(intent)
+            if permission is not None
+            and permission.effect is PermissionEffect.ALLOW
+            and bool(getattr(permission, "exact_approval", False))
+            and operator_approval_spend_applies()
+            else contextlib.nullcontext()
+        )
+        with approved_scope:
+            execution = _dispatch_with_claim(
+                lambda: _with_blackbox_coverage(
                     intent,
                     arguments,
-                    task_id=task_id,
-                    session_id=session_id,
                     source_context=source_context,
-                ),
+                    dispatch=lambda: _execute_operator_tool(
+                        intent,
+                        arguments,
+                        task_id=task_id,
+                        session_id=session_id,
+                        source_context=source_context,
+                    ),
+                )
             )
-        )
         _maybe_store_tool_receipt(
             execution,
             receipt_key=receipt_key,
