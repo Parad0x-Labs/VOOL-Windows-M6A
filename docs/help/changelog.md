@@ -14,7 +14,9 @@ The first Windows download, `VOOL-Setup.exe`, for Windows 10 22H2 and Windows 11
   check it against `SHA256SUMS`, then at SmartScreen use **More info → Run anyway**.
 * **You choose the folders VOOL may change**, in **Settings → Folders VOOL may change (Windows)**.
 * **Offline by default.** VOOL works offline by default. Ollama's cloud models are refused. A
-  cloud provider is used only if you add your own key in Settings and turn it on.
+  cloud provider is used only after you add your own key in Settings. Saving an OpenRouter key
+  turns cloud on; for other providers, also choose an Auto fallback model. To turn cloud off
+  again, type `cloud off` or remove your key in Settings.
 * **Windows limits.** VOOL runs Python scripts, pytest, unittest and compileall in its Windows
   sandbox. It refuses git, pip, npm, node, ruff and any other program, and does not start plugins
   or MCP servers or read PDF or 7z files. Use WSL2/Linux for those. The full list is on the

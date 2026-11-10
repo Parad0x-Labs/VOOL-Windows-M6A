@@ -11,7 +11,7 @@ Windows 11, 64-bit.
 ### Added
 - **Windows installer.** A per-user Inno Setup installer (`%LOCALAPPDATA%\Programs\VOOL`) that never asks for administrator rights. It bundles VOOL's own Python, the local-model runner and the Windows broker, so nothing else needs installing.
 - **Folders VOOL may change.** On Windows, VOOL changes files only inside folders you mark as disposable, in **Settings → Folders VOOL may change (Windows)**. Marking asks Windows to confirm the folder. A new mark is used after VOOL restarts; unmarking takes effect at once. Outside a marked folder, VOOL refuses a write before asking you to approve it. You can't mark a whole drive, your user folder itself, or a folder that holds your temp or app-data folders; mark a folder inside them instead.
-- **Offline by default.** VOOL works offline by default. Ollama's cloud models are refused. A cloud provider is used only if you add your own key in Settings and turn it on. Otherwise VOOL goes online only when you ask it to: to download its model, or when you turn on web access. VOOL's bundled Ollama answers only on this computer. If you run the bundled ollama command yourself, it can download a cloud model's listing, but VOOL refuses it and starts Ollama with cloud models turned off.
+- **Offline by default.** VOOL works offline by default. Ollama's cloud models are refused. A cloud provider is used only after you add your own key in Settings. Saving an OpenRouter key turns cloud on; for other providers, also choose an Auto fallback model. To turn cloud off again, type `cloud off` or remove your key in Settings. Otherwise VOOL goes online only when you ask it to: to download its model, or when you turn on web access. VOOL's bundled Ollama answers only on this computer. If you run the bundled ollama command yourself, it can download a cloud model's listing, but VOOL refuses it and starts Ollama with cloud models turned off.
 - **Owner-only secrets.** Secrets on disk are locked to your Windows account, and VOOL refuses to store one where that lock can't be set.
 - **No console windows.** Background tools no longer flash a window on every turn.
 
@@ -31,6 +31,7 @@ Windows 11, 64-bit.
 - A move to a network share gets a vague answer instead of a plain refusal; nothing is opened or moved.
 - Asking in chat to download a cloud model gets a vague answer; nothing is downloaded.
 - Give full paths when you ask VOOL to move a file.
+- With cloud off, the Test button for a stored key and `cloud test` say cloud models are off.
 - Minor: `vool://` links, focus on a second launch, the `/stopall` text, reminders and the rules list.
 
 ### Planned
