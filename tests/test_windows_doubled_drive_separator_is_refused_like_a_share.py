@@ -57,7 +57,9 @@ def lookups(monkeypatch) -> list[str]:
 
 @pytest.mark.parametrize("path", DOUBLED)
 def test_the_rule_names_each_spelling_on_windows_only(path: str, windows_host) -> None:
-    assert windows_path_policy.refused_doubled_drive(path) == ""
+    if not windows_path_policy._IS_WINDOWS:
+        # Off Windows the rule is off. On a Windows host it is already on, so this half does not apply.
+        assert windows_path_policy.refused_doubled_drive(path) == ""
     windows_host.on()
     assert windows_path_policy.refused_doubled_drive(path) == "unc"
     for local in ("C:/attkr9/s/x", "C:\\attkr9\\s", "C:attkr9", "//attkr9/s"):
