@@ -262,6 +262,12 @@ _REPLACE_ALL_BEFORE_RE = re.compile(
     _LEAD + r"replace\s+(?:all\s+)?(?:the\s+)?(?:contents?|text)\s+(?:of|in)(?:\s+the\s+file)?" + _OPEN_QUOTE,
     re.IGNORECASE,
 )
+#: overwrite (the file | the contents of) <file> with (the text) X (hardware captest, 0.7.1: this went to the
+#: model, which answered "Let me do that now." and wrote nothing). Read as "replace the contents of".
+_OVERWRITE_BEFORE_RE = re.compile(
+    _LEAD + r"overwrite(?:\s+(?:the\s+)?(?:file|contents?\s+of(?:\s+the\s+file)?))?" + _OPEN_QUOTE,
+    re.IGNORECASE,
+)
 _REPLACE_ALL_AFTER_RE = re.compile(
     r"\A[\"'`]?\s*,?\s+with\s+(?:the\s+)?(?:text\s+)?(?:[\"'`\u201c\u2018](?P<q>[^\"'`\u201c\u201d\u2018\u2019\r\n]*)"
     r"[\"'`\u201d\u2019]|(?P<bare>[^\"'`\r\n]+?))\s*[.!]?\s*\Z",
@@ -294,8 +300,9 @@ def _write(text: str) -> MarkedFileAsk | None:
         if found:
             kind, value, tail = found_kind, _text_of(found), _PATH_TAIL_RE.match(after)
             break
-    if not kind and _REPLACE_ALL_BEFORE_RE.match(before):
-        kind = "overwrite"
+    replaces = False
+    if not kind and (_REPLACE_ALL_BEFORE_RE.match(before) or _OVERWRITE_BEFORE_RE.match(before)):
+        kind, replaces = "overwrite", True
         tail = _REPLACE_ALL_AFTER_RE.match(after)
         value = _text_of(tail) if tail else None
     if not kind:
@@ -319,7 +326,20 @@ def _write(text: str) -> MarkedFileAsk | None:
     except (OSError, ValueError):
         present = False
     if not present:
-        return None
+        if not replaces:
+            return None
+        # "replace the contents of" or "overwrite" a file that is not there: said plainly here rather than
+        # left to the model, which promised the write and made none (hardware captest, 0.7.1).
+        parent = _real_folder(os.path.dirname(named))
+        if not parent or not windows_write_gate.inside_flagged(parent) or not windows_write_gate.inside_flagged(
+            os.path.join(parent, os.path.basename(named))
+        ):
+            return MarkedFileAsk("write", refusal=_NOT_MARKED.format(path=named) + _NOTHING_CHANGED)
+        return MarkedFileAsk(
+            "write",
+            refusal=f"There is no file at `{named}` to replace. To make it, say \"write the text {value} to {named}\". "
+            + _NOTHING_CHANGED,
+        )
     folder, name, refusal = _marked_file(named)
     if refusal:
         return MarkedFileAsk("write", refusal=refusal + _NOTHING_CHANGED)
@@ -498,6 +518,21 @@ def marked_file_ask(text: str, *, source_context: dict[str, Any] | None, session
     return None
 
 
+def names_a_file_path(text: str) -> bool:
+    """On Windows, whether a message names a full path to a file or folder: such a message is about that
+    path, so the memory command does not read it as a correction of a remembered value (hardware captest,
+    0.7.1: "replace the contents of C:\\Users\\Satoshi\\VOOL HW Test\\m3b.txt with the text v2" was stored as
+    "Current corrected value: VOOL HW", and the file was left as it was). Off Windows, always False."""
+    if not windows_write_gate.active():
+        return False
+    from core.agent_runtime import write_root_honesty as paths
+
+    try:
+        return bool(list(paths._destination_candidates(str(text or ""), typed_shares=True)))
+    except Exception:  # a message this reader cannot read is left to the memory command, as before
+        return False
+
+
 def placed_context(ask: MarkedFileAsk, source_context: dict[str, Any] | None) -> dict[str, Any]:
     """The source context for the ask's one call: the chat's own, with its workspace set to the folder
     the call acts in."""
@@ -507,4 +542,4 @@ def placed_context(ask: MarkedFileAsk, source_context: dict[str, Any] | None) ->
     return context
 
 
-__all__ = ["MarkedFileAsk", "marked_file_ask", "moved_back", "placed_context"]
+__all__ = ["MarkedFileAsk", "marked_file_ask", "moved_back", "names_a_file_path", "placed_context"]

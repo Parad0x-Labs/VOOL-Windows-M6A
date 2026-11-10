@@ -1168,6 +1168,91 @@ def _strip_unbacked_file_promises(
     return guarded
 
 
+#: Windows, hardware captest (0.7.1): "overwrite <file> with the text v2" reached the model, which answered
+#: "I'll overwrite the file ... Let me do that now." on a turn where no tool ran, so the owner waited for a
+#: write that never came. A promise to change a file (overwrite, write, replace, edit, append, update), and
+#: the "let me do that now" that goes with it, is dropped when nothing ran on the turn. An offer ("if you
+#: want, I'll edit the file") and a plan for a later step stay. Only on Windows (`windows_write_gate`).
+_FILE_CHANGE_PROMISE_RE = re.compile(
+    r"\b(?:i['’]?ll|i\s+will|let\s+me|i['’]?m\s+going\s+to|i\s+am\s+going\s+to)\s+(?:now\s+)?(?:go\s+ahead\s+and\s+)?"
+    r"(?:overwrite|write|rewrite|replace|update|edit|modify|change|append)\s+(?:(?:to|in|into)\s+)?"
+    r"(?:(?:the|this|that|your)\s+)?(?:(?:contents?|text)\s+(?:of|in)\s+(?:(?:the|this|that|your)\s+)?)?"
+    r"(?:files?\b|[`\"']?(?:[A-Za-z]:)?[\\/]|[`\"']?[\w-]+\.[A-Za-z0-9]{1,8}\b)",
+    re.IGNORECASE,
+)
+_DO_IT_NOW_RE = re.compile(
+    r"\blet\s+me\s+(?:do|handle|take\s+care\s+of)\s+(?:that|it|this)(?:\s+(?:now|right\s+away|for\s+you))*\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
+_HONEST_NO_FILE_CHANGE_RESPONSE = (
+    "I did not change any file on this turn: no write ran. To change a file in a folder you marked, say "
+    "\"write the text <text> to <full path>\", and I'll ask you to approve it."
+)
+_UNBACKED_FILE_CHANGE_NOTE = "(No file was changed on this turn: no write ran.)"
+
+
+def _turn_ran_any_tool(*, session_id: str | None, source_context: dict[str, object] | None) -> bool:
+    """Whether this turn has any tool record at all (run, refused or waiting on approval)."""
+    if list((source_context or {}).get("tool_receipts") or []):
+        return True
+    try:
+        from core.execution_truth import KIND_TOOL, facts_for_turn, resolve_turn_key
+
+        turn_key = resolve_turn_key(dict(source_context or {}), None)
+        return any(fact.in_category(KIND_TOOL)
+                   for fact in facts_for_turn(turn_key, session_id=str(session_id or "").strip()))
+    except Exception:
+        return True  # an unreadable record is not taken as "nothing ran": the reply is left alone
+
+
+def _strip_unbacked_file_change_promises(
+    output: dict[str, Any],
+    *,
+    session_id: str | None,
+    source_context: dict[str, object] | None,
+) -> dict[str, Any]:
+    """On Windows: drop a promise to change a file that no tool on this turn is changing, and say so."""
+    from core import windows_write_gate
+
+    response = str(output.get("response") or "")
+    if not windows_write_gate.active() or not response.strip() or not _FILE_CHANGE_PROMISE_RE.search(response):
+        return output
+    if str(output.get("mode") or output.get("mode_override") or "").strip().lower() == "tool_executed":
+        return output
+    if _turn_ran_any_tool(session_id=session_id, source_context=source_context):
+        return output
+    kept_lines: list[str] = []
+    removed: list[str] = []
+    for line in response.split("\n"):
+        sentences = _SENTENCE_SPLIT_RE.split(line)
+        survivors = []
+        promised_here = False
+        for sentence in sentences:
+            if (_FILE_CHANGE_PROMISE_RE.search(sentence) and not _CONDITIONAL_OFFER_RE.search(sentence)
+                    and not _DEFERRED_PLAN_RE.search(sentence)):
+                removed.append(sentence.strip())
+                promised_here = True
+                continue
+            if (promised_here or removed) and _DO_IT_NOW_RE.search(sentence):
+                removed.append(sentence.strip())
+                continue
+            survivors.append(sentence)
+        if len(survivors) != len(sentences) and not "".join(survivors).strip():
+            continue  # the whole line was the promise
+        kept_lines.append(" ".join(part for part in survivors if part) if len(survivors) != len(sentences) else line)
+    if not removed:
+        return output
+    body = "\n".join(kept_lines).strip()
+    guarded = dict(output)
+    guarded["response"] = f"{body}\n\n{_UNBACKED_FILE_CHANGE_NOTE}" if body else _HONEST_NO_FILE_CHANGE_RESPONSE
+    guarded["action_honesty_validator"] = {
+        "applied": True,
+        "reason": "unbacked_file_change_promise_removed",
+        "removed": removed[:4],
+    }
+    return guarded
+
+
 def _turn_executed_a_spend(*, session_id: str | None, source_context: dict[str, object] | None) -> bool:
     """Whether this turn's execution record shows a wallet-spend lane actually ran.
 
@@ -1923,6 +2008,7 @@ def enforce_final_action_honesty(
         output["route_reason"] = "fabricated_progress_blocked"
         return output
     if not claim_kind:
+        output = _strip_unbacked_file_change_promises(output, session_id=session_id, source_context=source_context)
         return _strip_unbacked_file_promises(output, session_id=session_id, source_context=source_context)
     # NOT gated on this turn's prompt. Whether "the files were deleted" is TRUE depends on whether a
     # tool actually ran -- not on what the user happened to type. The old gate required an action
