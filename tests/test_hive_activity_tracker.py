@@ -89,11 +89,26 @@ def test_build_chat_footer_surfaces_new_available_research_and_respects_snooze()
 def test_load_hive_activity_tracker_config_uses_live_default_timeout_budget(monkeypatch) -> None:
     monkeypatch.delenv("VOOL_HIVE_WATCH_TIMEOUT_SECONDS", raising=False)
     monkeypatch.delenv("VOOL_HIVE_WATCHER_URL", raising=False)
-    monkeypatch.setattr("core.hive_activity_tracker._load_watcher_url_from_manifest", lambda: "https://watch.example.test")
+    manifest_reads: list[str] = []
+
+    def manifest() -> str:
+        manifest_reads.append("read")
+        return "https://watch.example.test"
+
+    monkeypatch.setattr("core.hive_activity_tracker._load_watcher_url_from_manifest", manifest)
     monkeypatch.setattr("core.hive_activity_tracker._load_agent_bootstrap_tls", lambda: {})
 
     cfg = load_hive_activity_tracker_config()
 
+    from core import windows_cloud_gate
+
+    if windows_cloud_gate.active():
+        # Windows 0.7.1: no Hive watcher before an opt-in; the shipped manifest is not read.
+        assert manifest_reads == []
+        assert cfg.enabled is False
+        assert cfg.watcher_api_url is None
+        assert cfg.timeout_seconds == 8
+        return
     assert cfg.enabled is True
     assert cfg.watcher_api_url == "https://watch.example.test/api/dashboard"
     assert cfg.timeout_seconds == 8

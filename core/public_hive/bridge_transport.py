@@ -32,6 +32,25 @@ class PublicHiveBridgeTransportMixin:
 
         return public_hive_write_enabled(self.config)
 
+    def _refuse_before_opt_in(self) -> None:
+        """Windows: no public Hive request (VoolBook post sync, topic reads or writes) until the
+        owner turned the public Hive on (``VOOL_PUBLIC_HIVE_ENABLED``, so ``enabled()``).
+
+        Some callers send without asking ``enabled()`` first (``agent_runtime.voolbook``'s post
+        edit and delete sync), and ``topic_target_url`` is the first seed URL even while the bridge
+        is off. Refused here, before any name lookup or socket. Behind the Windows cloud gate's seam
+        (``core.windows_cloud_gate.active()``); off Windows nothing changes."""
+        try:
+            from core import windows_cloud_gate
+
+            refuse = windows_cloud_gate.active() and not self.enabled()
+        except Exception:
+            refuse = False
+        if refuse:
+            from core.remote_fetch_policy import RemoteFetchRefusedError
+
+            raise RemoteFetchRefusedError("public Hive is off on this machine until the owner turns it on")
+
     def _post_many(
         self,
         route: str,
@@ -39,12 +58,15 @@ class PublicHiveBridgeTransportMixin:
         payload: dict[str, Any],
         base_urls: tuple[str, ...],
     ) -> dict[str, Any]:
+        self._refuse_before_opt_in()
         return self._client.post_many(route, payload=payload, base_urls=base_urls)
 
     def _get_json(self, base_url: str, route: str) -> Any:
+        self._refuse_before_opt_in()
         return self._with_topic_failover(base_url, lambda candidate: self._client.get_json(candidate, route))
 
     def _post_json(self, base_url: str, route: str, payload: dict[str, Any]) -> dict[str, Any]:
+        self._refuse_before_opt_in()
         return self._with_topic_failover(base_url, lambda candidate: self._client.post_json(candidate, route, payload))
 
     def _auth_token_for_url(self, url: str) -> str | None:
