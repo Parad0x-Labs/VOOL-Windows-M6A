@@ -1223,6 +1223,15 @@ class JobRunner:
             granted = grant_key in _WINDOWS_GRANTED
         if not granted:
             if not windows_confinement.launcher_form(prefix[0], "grant", policy_path):
+                # A grant that failed partway can leave its ACEs on part of the roots. Revoke them
+                # once, best effort, while the policy file still exists (launcher_form logs a failed
+                # revoke's reason and never retries one). The revoke removes the write roots'
+                # capability ACEs, which another policy naming the same root shares, so every
+                # remembered grant is forgotten: the next job grants again instead of failing verify.
+                with contextlib.suppress(Exception):
+                    windows_confinement.launcher_form(prefix[0], "revoke", policy_path)
+                with _WINDOWS_STAGED_LOCK:
+                    _WINDOWS_GRANTED.clear()
                 shutil.rmtree(stage, ignore_errors=True)
                 raise KernelIsolationUnavailableError(
                     "Windows confinement could not grant this job's folders (the launcher's grant "
