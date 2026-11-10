@@ -26,13 +26,15 @@ Windows 11, 64-bit. Windows needs 16 GB of RAM. With less, VOOL refuses to load 
 
 ### Known issues on Windows
 - Moves work only between marked folders under your user folder, and moving between marked folders also needs the chat's own folder to be marked.
-- "create y.txt in .." asked from a subfolder of a marked folder writes y.txt into that subfolder, not its parent. It stays inside your marked folders.
-- Code tasks can stall when the model runs past its deadline. Plain python and pytest runs work.
+- A relative `..` path resolves from the chat's folder, not from a subfolder you named, and is refused when that lands outside your marked folders.
+- The chat's working-folder label shows `.` instead of the folder's name.
+- On a PC without a supported GPU, a code task takes about 8 to 11 minutes.
 - If you've set OLLAMA_HOST yourself, VOOL says its model isn't certified and won't chat. Unset OLLAMA_HOST and restart VOOL.
 - A move to a network share gets a vague answer instead of a plain refusal; nothing is opened or moved.
 - Asking in chat to download a cloud model gets a vague answer; nothing is downloaded.
 - Give full paths when you ask VOOL to move a file.
 - Starting a new chat sets the mode back to Manual. Pick Plan again after New chat.
+- The approval card for undoing a create or edit says 'No specific path reported' and 'May not be reversible', but undo restores the exact earlier file.
 - With cloud off, the Test button for a stored key and `cloud test` say cloud models are off.
 - Minor: `vool://` links, focus on a second launch, the `/stopall` text, reminders and the rules list.
 
