@@ -154,10 +154,11 @@ def test_off_windows_the_approval_card_still_asks_the_shipped_watcher(
     ("cloud_seam", "owner_url", "expected"),
     [
         (True, "", None),
-        (True, "https://watch.example.test", "https://watch.example.test/api/dashboard"),
+        (True, "https://watch.example.test", None),
         (False, "", "https://voolbook.com/api/dashboard"),
+        (False, "https://watch.example.test", "https://watch.example.test/api/dashboard"),
     ],
-    ids=["windows-fresh-profile", "windows-owner-opted-in", "off-windows-manifest"],
+    ids=["windows-fresh-profile", "windows-env-url-is-not-opt-in", "off-windows-manifest", "off-windows-env-url"],
 )
 def test_the_watcher_config_reads_the_shipped_manifest_only_off_windows(
     monkeypatch, fresh_profile, cloud_seam, owner_url, expected
@@ -192,6 +193,78 @@ def test_a_tracker_built_before_the_windows_rule_resolves_nothing(monkeypatch, f
 
     assert handled and details.get("watcher_status") in {"not_configured", "unreachable"}, details
     assert resolver.names == [], resolver.names
+
+
+class _FooterWatch:
+    """Every footer the card asks for, what it returned or raised, and every watcher transport call."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.footers: list[Any] = []
+        self.transport: list[str] = []
+        real_footer = hat.HiveActivityTracker.build_chat_footer
+        real_transport = hat.HiveActivityTracker._http_get_json
+
+        def footer(tracker, **kwargs):
+            try:
+                out = real_footer(tracker, **kwargs)
+            except BaseException as exc:
+                self.footers.append(exc)
+                raise
+            self.footers.append(out)
+            return out
+
+        def transport(tracker, url, *args, **kwargs):
+            self.transport.append(str(url))
+            return real_transport(tracker, url, *args, **kwargs)
+
+        monkeypatch.setattr(hat.HiveActivityTracker, "build_chat_footer", footer)
+        monkeypatch.setattr(hat.HiveActivityTracker, "_http_get_json", transport)
+
+
+@pytest.mark.parametrize("local_only", [False, True], ids=["cloud-off", "local-only"])
+def test_windows_an_env_watcher_url_is_not_an_opt_in(
+    tmp_path, monkeypatch, fresh_profile, windows, workspace, jobs, cleanup, local_only
+) -> None:
+    """0.7.1: on Windows VOOL_HIVE_WATCHER_URL does not turn the watcher on. No lookup, no fetch."""
+    monkeypatch.setenv("VOOL_HIVE_WATCHER_URL", "https://watch.example.test")
+    _local_only(monkeypatch, local_only)
+    served = _served(tmp_path, monkeypatch, workspace, jobs, cloud_seam=True)
+    resolver = _Resolver(monkeypatch)
+    watch = _FooterWatch(monkeypatch)
+
+    _run_command_allow_resume(served, workspace, "calc.py")
+
+    assert len(served.jobs) == 1, served.jobs
+    assert watch.transport == [], watch.transport
+    assert resolver.names == [], resolver.names
+
+
+_CONTACT_WORDS = ("hive", "watcher", "unavailable", "unreachable", "couldn't reach", "error", "traceback")
+
+
+@pytest.mark.parametrize("built", ["fresh", "before-the-rule"])
+def test_windows_the_approval_card_renders_with_an_empty_footer(
+    tmp_path, monkeypatch, fresh_profile, windows, workspace, jobs, cleanup, built
+) -> None:
+    """The card is the same card, with no footer: no error text and no line implying Hive contact.
+
+    "before-the-rule": the agent (and its tracker, with the shipped manifest URL) is built off the
+    seam and the seam is turned on after, so the footer is asked for with a watcher configured."""
+    served = _served(tmp_path, monkeypatch, workspace, jobs, cloud_seam=(built == "fresh"))
+    monkeypatch.setattr(ollama_cloud_models, "CLOUD_REFUSAL_ACTIVE", True)
+    resolver = _Resolver(monkeypatch)
+    watch = _FooterWatch(monkeypatch)
+    (workspace / "calc.py").write_text("print(6 * 7)\n", encoding="utf-8")
+    call = {"intent": "sandbox.run_command", "arguments": {"command": "python calc.py", "cwd": str(workspace)}}
+
+    card, _resumed, _token, _turn = served.ask_allow_resume("run python calc.py", call)
+
+    assert "requires approval" in card.lower(), card
+    lowered = card.lower()
+    assert not [word for word in _CONTACT_WORDS if word in lowered], card
+    assert all(footer == "" for footer in watch.footers), watch.footers
+    assert watch.transport == [] and resolver.names == [], (watch.transport, resolver.names)
+    assert len(served.jobs) == 1, served.jobs
 
 
 # --- the other public Hive door: the bridge VoolBook post sync sends through -------------------
