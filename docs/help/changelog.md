@@ -9,7 +9,7 @@ Entries are added as builds go out to testers. Newest first.
 ## 0.7.1-beta.2 for Windows — 2026-11-12
 
 The first Windows download, `VOOL-Setup.exe`, for Windows 10 22H2 and Windows 11, 64-bit.
-Windows needs 16 GB of RAM. With less, VOOL refuses to load its local model rather than freeze the PC, and chat answers that the model was blocked by the memory-safety gate.
+Windows needs 16 GB of RAM. With less, VOOL refuses to load its local model rather than freeze the PC, and chat answers that the model was blocked by the memory-safety gate. VOOL checks free memory when it loads the model (about 7 GB), so on a 16 GB PC with many apps open it may still refuse until you close some.
 
 * **Installs for your account only**, with no administrator prompt. It is not code-signed yet:
   check it against `SHA256SUMS`, then at SmartScreen use **More info → Run anyway**.

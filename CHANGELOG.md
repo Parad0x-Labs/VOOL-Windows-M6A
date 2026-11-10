@@ -6,7 +6,7 @@ history is not republished here.
 ## [0.7.1-beta.2] — Windows — 2026-11-12
 
 The first native Windows download: `VOOL-Setup.exe` with `SHA256SUMS`, for Windows 10 22H2 and
-Windows 11, 64-bit. Windows needs 16 GB of RAM. With less, VOOL refuses to load its local model rather than freeze the PC, and chat answers that the model was blocked by the memory-safety gate.
+Windows 11, 64-bit. Windows needs 16 GB of RAM. With less, VOOL refuses to load its local model rather than freeze the PC, and chat answers that the model was blocked by the memory-safety gate. VOOL checks free memory when it loads the model (about 7 GB), so on a 16 GB PC with many apps open it may still refuse until you close some.
 
 ### Added
 - **Windows installer.** A per-user Inno Setup installer (`%LOCALAPPDATA%\Programs\VOOL`) that never asks for administrator rights. It bundles VOOL's own Python, the local-model runner and the Windows broker, so nothing else needs installing.
