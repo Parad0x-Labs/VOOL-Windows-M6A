@@ -145,8 +145,15 @@ def test_a_plain_repository_with_worktree_config_on_still_commits(tmp_path: Path
     _git(repo, "config", "--worktree", "core.sparseCheckout", "false")
     (repo / "notes.txt").write_text("two\n", encoding="utf-8")
 
-    result = GitRunner(root=repo).commit(message="ordinary")
+    with windows_refusals.watch_git(tmp_path) as seen:
+        result = GitRunner(root=repo).commit(message="ordinary")
+        if seen.active:  # the config read starts git too, so it is refused before any start
+            with pytest.raises(safe_git.GitRefusedOnWindows) as keys:
+                safe_git.executable_local_config(repo)
 
+    if windows_refusals.refused_git_result(seen, result):
+        windows_refusals.assert_raised_in_core(keys, safe_git.GitRefusedOnWindows, windows_refusals.GIT_REFUSAL)
+        return
     assert result.ok is True, result.to_dict()
     assert safe_git.executable_local_config(repo) == []
 
@@ -207,8 +214,15 @@ def test_a_superproject_with_a_plain_submodule_still_commits(tmp_path: Path) -> 
     superproject, _sub, _marker = _superproject(tmp_path)
     (superproject / "notes.txt").write_text("two\n", encoding="utf-8")
 
-    result = GitRunner(root=superproject).commit(message="ordinary")
+    with windows_refusals.watch_git(tmp_path) as seen:
+        result = GitRunner(root=superproject).commit(message="ordinary")
+        if seen.active:  # the config read starts git too, so it is refused before any start
+            with pytest.raises(safe_git.GitRefusedOnWindows) as keys:
+                safe_git.executable_local_config(superproject)
 
+    if windows_refusals.refused_git_result(seen, result):
+        windows_refusals.assert_raised_in_core(keys, safe_git.GitRefusedOnWindows, windows_refusals.GIT_REFUSAL)
+        return
     assert result.ok is True, result.to_dict()
     assert safe_git.executable_local_config(superproject) == []
 
@@ -496,8 +510,12 @@ def test_a_branch_switch_never_rebuilds_a_submodule_from_its_git_folder(tmp_path
     marker = tmp_path / "MARKER"
     superproject, side = _submodule_rebuilt_on_switch(tmp_path, marker)
 
-    result = GitRunner(root=superproject).create_branch("next", start_point=side)
+    with windows_refusals.watch_git(tmp_path) as seen:
+        result = GitRunner(root=superproject).create_branch("next", start_point=side)
 
+    if windows_refusals.refused_git_result(seen, result):
+        assert not marker.exists(), "a recursive switch ran a filter named in a submodule's git folder"
+        return
     assert result.ok is True, result.to_dict()
     assert not marker.exists(), "a recursive switch ran a filter named in a submodule's git folder"
 

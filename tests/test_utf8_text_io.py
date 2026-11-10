@@ -73,13 +73,34 @@ def test_git_diff_reaches_the_user_as_utf8(tmp_path):
     _git(root, "add", "-A")
     _git(root, "commit", "-q", "-m", "init")
     (root / "a.txt").write_bytes(f"{TEXT}\n".encode())
-    got = _run_child("""
-        import json, sys
-        from pathlib import Path
-        from core.execution.git_tools import git_diff_workspace
-        out = git_diff_workspace({}, workspace_root=Path(sys.argv[1]))
-        print(json.dumps({"ok": out["ok"], "text": out["response_text"], "stdout": out["details"]["stdout"]}))
-    """, str(root))
+    # The child decides for itself whether git is refused; a run that forces the parent's test seam hands
+    # the same decision down (as test_run_git_decodes_commit_message_as_utf8 does). It records any git it starts.
+    with windows_refusals.watch_git(root) as seen:
+        got = _run_child("""
+            import json, subprocess, sys
+            from pathlib import Path
+            from core import safe_git
+            if sys.argv[2] != "None":
+                safe_git._REFUSE_GIT = sys.argv[2] == "True"
+            starts, real = [], subprocess.Popen
+            class Recording(real):
+                def __init__(self, args, *rest, **kwargs):
+                    if safe_git.is_git_command(args, kwargs.get("executable")):
+                        starts.append(repr(args))
+                    super().__init__(args, *rest, **kwargs)
+            subprocess.Popen = Recording
+            from core.execution.git_tools import git_diff_workspace
+            out = git_diff_workspace({}, workspace_root=Path(sys.argv[1]))
+            print(json.dumps({"ok": out["ok"], "text": out["response_text"], "stdout": out["details"]["stdout"],
+                              "status": out["status"], "git_refused_here": safe_git.git_refused_here(),
+                              "git_starts": starts}))
+        """, str(root), str(safe_git._REFUSE_GIT))
+    assert got["git_refused_here"] is seen.active, got
+    if windows_refusals.refused_exactly(
+        seen, (got["ok"], False), (got["status"], windows_refusals.GIT_STATUS), (got["text"], windows_refusals.GIT_REFUSAL),
+        (got["stdout"], ""), (got["git_starts"], []),
+    ):
+        return
     assert got["ok"] is True
     assert TEXT in got["stdout"]
     assert TEXT in got["text"]

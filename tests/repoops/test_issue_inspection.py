@@ -193,6 +193,8 @@ def test_gitlab_issue_reads_through_the_shared_contract(world) -> None:
 
     root, bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session_exactly(world, ctx):
+        return
     sha = head(root)
     base = git(root, "rev-parse", "HEAD~1").strip()
     forge.route("GET /merge_requests/7", gitlab_merge_request("7", base_sha=base, head_sha=sha))

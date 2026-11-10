@@ -22,6 +22,7 @@ import pytest
 
 from core import fs_links, git_write_redirects
 from core.repoops.gitops import GitRunner
+from tests import _windows_refusals as windows_refusals
 
 _IDENTITY = {"GIT_AUTHOR_NAME": "fx", "GIT_AUTHOR_EMAIL": "fx@local",
              "GIT_COMMITTER_NAME": "fx", "GIT_COMMITTER_EMAIL": "fx@local"}
@@ -95,8 +96,11 @@ def test_a_commit_writes_through_a_link_in_place_of_a_git_folder(repo: Path, tmp
     before = _files(outside)
 
     assert f"the repository's git folder holds a link ({folder})" in _named(repo)
-    result = GitRunner(root=repo).commit(message="through the link")
+    with windows_refusals.watch_git(tmp_path) as seen:
+        result = GitRunner(root=repo).commit(message="through the link")
 
+    if windows_refusals.refused_git_result(seen, result):
+        return  # no git ran, so nothing was written through the link (the watch saw no change under tmp_path)
     assert result.ok, result.to_dict()
     assert _files(outside) != before, f"git's commit did not write through the {kind} in place of .git/{folder}"
 
@@ -116,8 +120,12 @@ def test_a_commit_overwrites_the_file_a_link_at_commit_editmsg_stands_for(repo: 
         assert "a file in the repository's git folder (COMMIT_EDITMSG) is also another file's name" in said
     else:
         assert "the repository's git folder holds a link (COMMIT_EDITMSG)" in said
-    result = GitRunner(root=repo).commit(message="through the link")
+    with windows_refusals.watch_git(tmp_path) as seen:
+        result = GitRunner(root=repo).commit(message="through the link")
 
+    if windows_refusals.refused_git_result(seen, result):
+        assert precious.read_bytes() == b"precious\n"
+        return
     assert result.ok, result.to_dict()
     assert precious.read_bytes() != b"precious\n", f"git's commit did not write through the {kind} at COMMIT_EDITMSG"
     assert b"through the link" in precious.read_bytes()

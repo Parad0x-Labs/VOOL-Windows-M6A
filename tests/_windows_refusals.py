@@ -324,3 +324,100 @@ def assert_git_ask_answered_at_the_door(seen: Watch, result: dict, invocations) 
     assert not any("git_status" in str(step) for step in invocations.timeline), invocations.timeline
     assert result["response"] == GIT_REFUSAL, result["response"]
     assert seen.refused(result["response"])
+
+
+# ── exact forms (added beside the helpers above, which are unchanged) ─────────────────────────────
+
+
+def refused_exactly(seen: Watch, *pairs: tuple[object, object]) -> bool:
+    """A stricter `Watch.refused`. False where the limit does not apply: the row goes on to its own
+    expectation, unchanged.
+
+    Where it applies, each ``(actual, expected)`` pair is equal: a status or verdict field, or the
+    whole text the user reads (never a part of it). At least one pair is that whole text and carries
+    the limit's sentence. Then `seen.refused` holds for those texts: no process started for the limit
+    and nothing under the watched folders changed. Returns True, and the row ends there."""
+    if not seen.active:
+        return False
+    assert pairs, "a refused row must name what it compares"
+    texts = []
+    for actual, expected in pairs:
+        assert actual == expected, f"expected {expected!r}, got {actual!r}"
+        if isinstance(expected, str) and seen.sentence and seen.sentence in expected:
+            texts.append(actual)
+    assert texts, f"no pair is the whole {seen.what} refusal text"
+    assert seen.refused(*texts)
+    return True
+
+
+def assert_raised_in_core(excinfo, exc_type: type[BaseException], text: str) -> None:
+    """The refusal really was raised: exactly `exc_type` (not a subclass), its text is exactly `text`,
+    its innermost frame is in VOOL's core/ and it did not come from the git spawn guard (a test's own
+    git, not VOOL's)."""
+    assert excinfo.type is exc_type, f"expected {exc_type.__module__}.{exc_type.__qualname__}, got {excinfo.type!r}"
+    assert str(excinfo.value) == text, str(excinfo.value)
+    frames = list(excinfo.traceback)
+    assert frames, "the refusal has no traceback"
+    assert not any(entry.name == "_spawn_audit" for entry in frames), "raised by the git spawn guard"
+    innermost = str(frames[-1].path)
+    assert os.sep + "core" + os.sep in innermost, f"innermost frame is not in core/: {innermost}"
+
+
+def git_not_run(text: str = GIT_REFUSAL) -> str:
+    """The stderr of a git run VOOL refused before starting it (GitRunner / local_lifecycle `_run`)."""
+    return f"git was not run: {text}"
+
+
+def refused_git_result(seen: Watch, result) -> bool:
+    """`refused_exactly` for a GitRunner result (core/repoops/gitops.py GitResult) where git is refused:
+    not ok, status "failed", return code -1, no output, and stderr exactly `git_not_run()`."""
+    return refused_exactly(
+        seen,
+        (result.ok, False),
+        (result.status, "failed"),
+        (result.returncode, -1),
+        (result.stdout, ""),
+        (result.stderr, git_not_run()),
+    )
+
+
+def refused_tool_exactly(seen: Watch, *results: dict) -> bool:
+    """`refused_exactly` for VOOL tool results (dicts with ok, status and response_text): each one is
+    not ok, has exactly the limit's status, and its whole response_text is exactly the limit's sentence."""
+    pairs: list[tuple[object, object]] = []
+    for result in results:
+        pairs += [(result.get("ok"), False), (result.get("status"), seen.status),
+                  (result.get("response_text"), seen.sentence)]
+    return refused_exactly(seen, *pairs)
+
+
+#: The status a VOOL tool door answers when the Windows write gate refuses a git-backed call for git.
+GIT_GATE_STATUS = "windows_filesystem_authority_unavailable"
+
+
+def refuses_repo_session_exactly(world: tuple, ctx: dict | None = None) -> bool:
+    """`refuses_repo_session` with exact forms: where git is refused, `repo.session.open` is not ok,
+    its status is exactly GIT_GATE_STATUS, its whole text is exactly the git sentence, it executed
+    nothing, no git started, neither repository changed and the forge was sent nothing. Returns True
+    then, and the row ends; False where git runs, and the row arms its session as it always did."""
+    if not git_refused():
+        return False
+    from tests.repoops._harness import context, door
+
+    root, bare, forge = world
+    ctx = context(root) if ctx is None else ctx
+    with watch_git(root, bare) as seen:
+        opened = door(
+            "repo.session.open",
+            {"objective": "negative probe", "pull_request": "8", "provider": "github", "namespace": "o/r"},
+            ctx,
+        )
+    assert refused_exactly(
+        seen,
+        (opened.ok, False),
+        (opened.status, GIT_GATE_STATUS),
+        (opened.response_text, GIT_REFUSAL),
+        ((opened.details or {}).get("executed"), False),
+    )
+    assert forge.calls == [], forge.calls
+    return True

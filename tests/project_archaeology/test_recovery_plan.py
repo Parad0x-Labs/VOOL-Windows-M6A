@@ -32,6 +32,7 @@ from pathlib import Path
 
 import pytest
 
+from tests import _windows_refusals as windows_refusals
 from tests.project_archaeology.conftest import (
     SECRET_TOKEN,
     WITHHELD_TEXT,
@@ -59,6 +60,20 @@ GIT_READONLY_VERBS = {
     "status", "log", "show", "cat-file", "rev-parse", "branch", "diff",
     "stash list", "fsck", "config --list",
 }
+
+
+def _git_store_refused(seen: windows_refusals.Watch, out: dict) -> bool:
+    """Windows 0.7.1 runs no git: the plan read no git store, says exactly why in its truncation
+    reasons, holds no git evidence, started no git and changed nothing in the repository. The row ends
+    there. False off Windows (the expression is not evaluated there)."""
+    return seen.active and windows_refusals.refused_exactly(
+        seen,
+        (out["limits"]["truncation_reasons"], [f"git reader failed: {windows_refusals.GIT_REFUSAL}"]),
+        (out["limits"]["truncation_reasons"][0], f"git reader failed: {windows_refusals.GIT_REFUSAL}"),
+        ([row["store"] for row in out["stores_read"] if row["store"] == "git"], []),
+        ([item for item in out["results"] if item["store"] == "git"], []),
+        (out["execution"], "none"),
+    )
 
 
 def _import_pa():
@@ -170,9 +185,16 @@ def test_recovery_plan_src_config_py_spans_TWO_stores_blackbox_AND_git_with_sha_
     pa = _import_pa()
     repo = corpus["git"]["repo"]
     sha_b = corpus["git"]["sha_b"]
-    out = pa.recovery_plan(path="src/config.py", workspace_root=str(repo))
+    with windows_refusals.watch_git(repo) as seen:
+        out = pa.recovery_plan(path="src/config.py", workspace_root=str(repo))
     plan = _assert_envelope(pa, out)
     assert plan["recoverable"] is True
+    if _git_store_refused(seen, out):
+        # Without git the journal still holds the edit, so the plan stands on the blackbox alone.
+        blackbox_items = [i for i in out["results"] if i["store"] == "blackbox"]
+        assert any(i["effect_id"] == "eff-config-08" for i in blackbox_items), out["results"]
+        assert all(sha_b != i["hash"] for i in out["results"]), out["results"]
+        return
 
     git_items = [i for i in out["results"] if i["store"] == "git"]
     assert git_items and any(i["hash"] == sha_b for i in git_items), (
@@ -197,8 +219,21 @@ def test_recovery_plan_BY_commit_sha_plans_git_object_recovery(corpus) -> None:
     pa = _import_pa()
     repo = corpus["git"]["repo"]
     sha_b = corpus["git"]["sha_b"]
-    out = pa.recovery_plan(reference=sha_b, workspace_root=str(repo))
+    with windows_refusals.watch_git(repo) as seen:
+        out = pa.recovery_plan(reference=sha_b, workspace_root=str(repo))
     plan = _assert_envelope(pa, out)
+    if seen.active:
+        # The commit is only in git, which was not read: nothing is claimed recoverable, and the plan
+        # names the git limit first.
+        assert windows_refusals.refused_exactly(
+            seen,
+            (out["results"], []),
+            (plan["recoverable"], False),
+            (plan["steps"], []),
+            (plan["notes"], [windows_refusals.GIT_REFUSAL, "the reference resolved outside the blackbox journal"]),
+            (plan["notes"][0], windows_refusals.GIT_REFUSAL),
+        )
+        return
     git_items = [i for i in out["results"] if i["store"] == "git"]
     assert git_items and git_items[0]["hash"] == sha_b, out["results"]
     assert plan["recoverable"] is True
@@ -334,8 +369,12 @@ def test_git_safety_recovery_plan_invokes_ONLY_read_only_git_verbs(corpus, monke
 
     monkeypatch.setattr(subprocess, "run", _recording_run)
 
-    out = pa.recovery_plan(path="src/config.py", workspace_root=str(repo))
+    with windows_refusals.watch_git(repo) as seen:
+        out = pa.recovery_plan(path="src/config.py", workspace_root=str(repo))
     plan = _assert_envelope(pa, out)
+    if _git_store_refused(seen, out):
+        assert calls == [], calls  # no git verb at all, read-only or not
+        return
     assert out["execution"] == "none"
 
     assert calls, "a git source was in play; recovery_plan must have probed git read-only"
@@ -446,9 +485,12 @@ def test_stores_read_is_TRUTHFUL_git_absent_until_a_workspace_root_is_given(blac
     assert "git" not in stores, "no workspace root was given; git cannot have been scanned"
     assert "workspace" not in stores, "no workspace root was given; no tree can have been walked"
 
-    with_git = pa.recovery_plan(
-        path="src/config.py", workspace_root=str(corpus["git"]["repo"])
-    )
+    with windows_refusals.watch_git(corpus["git"]["repo"]) as seen:
+        with_git = pa.recovery_plan(
+            path="src/config.py", workspace_root=str(corpus["git"]["repo"])
+        )
     _assert_envelope(pa, with_git)
+    if _git_store_refused(seen, with_git):  # a workspace root is given, but git is not run to read it
+        return
     stores_now = {row["store"] for row in with_git["stores_read"]}
     assert "git" in stores_now, with_git["stores_read"]

@@ -523,8 +523,12 @@ def test_vool_commits_run_no_automatic_housekeeping(tmp_path: Path, strategy: st
     repo = _auto_housekeeping_repo(tmp_path, strategy)
     before = _loose_objects(repo)
 
-    result = GitRunner(root=repo).commit(message="no housekeeping")
+    with windows_refusals.watch_git(tmp_path) as seen:
+        result = GitRunner(root=repo).commit(message="no housekeeping")
 
+    if windows_refusals.refused_git_result(seen, result):
+        assert _loose_objects(repo) == before
+        return
     assert result.ok is True, result.to_dict()
     assert _loose_objects(repo) >= before, "VOOL's commit ran automatic housekeeping"
 
