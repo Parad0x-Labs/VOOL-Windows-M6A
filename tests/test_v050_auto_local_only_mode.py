@@ -807,14 +807,25 @@ class TestNegativeControls:
         )
         assert ranked and ranked[0].model_name == "qwen3:8b"
 
-    def test_the_cloud_transport_works_normally_outside_the_ambient_scope(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_the_cloud_transport_works_normally_outside_the_ambient_scope(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         """Proves the transport check is scoped, not a permanent kill switch."""
         from core.cloud_transport import PolicyBoundCloudTransport
+        from tests import _windows_cloud_optin as cloud_rule
 
         monkeypatch.setattr("core.policy_engine.get", lambda key, default=None: True if key == "network.outbound_enabled" else default)
         monkeypatch.setattr("core.policy_engine.local_only_mode", lambda: False)
         transport = PolicyBoundCloudTransport(allowed_hosts=("openrouter.ai",))
-        assert transport._network_allowed() is True
+        if cloud_rule.cloud_gate_active():
+            # Windows 0.7.1 (core/windows_cloud_gate.py): with no stored key and no consent the
+            # background-outbound switch does not open the cloud transport; it opens no socket and
+            # says cloud is off. Checked on a fresh profile, so no earlier row's key can stand in.
+            with cloud_rule.fresh_profile(tmp_path / "fresh-profile"):
+                cloud_rule.assert_cloud_transport_closed(
+                    monkeypatch, "openrouter.ai", "https://openrouter.ai/api/v1/chat/completions")
+        else:
+            assert transport._network_allowed() is True
 
         with mode.local_only_egress_scope(True):
             assert transport._network_allowed() is False
