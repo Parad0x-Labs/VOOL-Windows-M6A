@@ -1104,3 +1104,136 @@ def pytest_sessionfinish(session, exitstatus):
     if problems:
         print(f"\n{limits.LIST.name}: " + "; ".join(problems))
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+# ---- DIAGNOSTIC BRANCH ONLY (never merged): marked-move-after-allow rows + 82 nearby files on windows-latest,
+# with a before/after listing of the user profile and the checkout to count touches outside the test folders.
+import os as _diag_os
+
+_DIAG_KEEP = (
+    "tests/test_windows_marked_move_after_allow.py::",
+    "tests/test_a_tired_of_it_take_back_removes_the_rule.py::",
+    "tests/test_approval_boundary_formalized.py::",
+    "tests/test_approval_continuation_batch.py::",
+    "tests/test_approval_destination_binding_r5.py::",
+    "tests/test_approval_policy_version_repair.py::",
+    "tests/test_approval_retry_wiring_repair.py::",
+    "tests/test_approved_destination_identity_r6.py::",
+    "tests/test_approved_patch_applies_each_section_once.py::",
+    "tests/test_attempt_approval_continuation.py::",
+    "tests/test_browser_profile_never_the_operators.py::",
+    "tests/test_bug_report_approval.py::",
+    "tests/test_cloud_broker.py::",
+    "tests/test_cloud_broker_epoch.py::",
+    "tests/test_cloud_broker_output_budget.py::",
+    "tests/test_coding_approval_workflow_repairs.py::",
+    "tests/test_execution_operator_tools.py::",
+    "tests/test_incidental_ago_aside_is_removed_not_the_answer.py::",
+    "tests/test_incidental_time_is_removed_not_the_answer.py::",
+    "tests/test_machine_move_path.py::",
+    "tests/test_manual_mode_approval_is_actionable.py::",
+    "tests/test_manual_mode_approval_served_order.py::",
+    "tests/test_memory_off_removes_the_transcript_capsule.py::",
+    "tests/test_mixed_approval_batch_authority.py::",
+    "tests/test_notification_observed_approval_truth.py::",
+    "tests/test_only_proven_findings_move_the_score.py::",
+    "tests/test_operator_actions.py::",
+    "tests/test_operator_approval_polarity.py::",
+    "tests/test_operator_approval_words.py::",
+    "tests/test_operator_binder_binds_only_what_the_request_reads.py::",
+    "tests/test_operator_class_new_wording_2026_09_07.py::",
+    "tests/test_operator_profile_memory.py::",
+    "tests/test_operator_profile_sabotage.py::",
+    "tests/test_operator_profile_served.py::",
+    "tests/test_operator_profile_ui.py::",
+    "tests/test_planned_tasks_report_approval_and_failure_distinctly.py::",
+    "tests/test_project_approval_scope_and_resume.py::",
+    "tests/test_public_read_only_retrieval_skips_manual_approval.py::",
+    "tests/test_runtime_execution_operator_phase1.py::",
+    "tests/test_sandbox_cwd_refused_before_approval.py::",
+    "tests/test_scripted_answers_removed_served.py::",
+    "tests/test_served_approval_then_chat_wal_lifecycle.py::",
+    "tests/test_the_offered_cleanup_approval_reply_runs_that_cleanup.py::",
+    "tests/test_tool_intent_executor.py::",
+    "tests/test_toolsmith_move_path_containment.py::",
+    "tests/test_windows_approval_resource_paths.py::",
+    "tests/test_windows_approval_wording.py::",
+    "tests/test_windows_approved_python_job_narrowed.py::",
+    "tests/test_windows_approved_python_job_runs_once.py::",
+    "tests/test_windows_captest_edit_undo_move.py::",
+    "tests/test_windows_code_asks_in_a_marked_folder.py::",
+    "tests/test_windows_code_asks_marked_folder_conditions.py::",
+    "tests/test_windows_marked_code_folder_looks_nothing_up_off_a_code_ask.py::",
+    "tests/test_windows_marked_folder_edit_anchor_and_resend.py::",
+    "tests/test_windows_marked_folder_edit_undo_move.py::",
+    "tests/test_windows_marked_folder_unicode_line_breaks.py::",
+    "tests/test_windows_marked_folder_writes.py::",
+    "tests/test_windows_marked_root_too_wide.py::",
+    "tests/test_windows_move_approval_is_gated_on_the_pending_preview.py::",
+    "tests/test_windows_program_refused_before_approval.py::",
+    "tests/test_windows_uninstall_removes_program_files.py::",
+    "tests/test_windows_write_gate.py::",
+    "tests/test_windows_write_gate_before_approval.py::",
+    "tests/test_windows_write_gate_flagged_roots_match_the_broker.py::",
+    "tests/test_windows_write_gate_judges_home_and_relative_spellings.py::",
+    "tests/test_windows_write_gate_refuses_share_spellings_before_any_lookup.py::",
+    "tests/windows_broker/test_blackbox_rollback_broker.py::",
+    "tests/windows_broker/test_broker_banner.py::",
+    "tests/windows_broker/test_broker_report.py::",
+    "tests/windows_broker/test_brokered_moves.py::",
+    "tests/windows_broker/test_client_fake_server.py::",
+    "tests/windows_broker/test_client_windows.py::",
+    "tests/windows_broker/test_confine_shipping.py::",
+    "tests/windows_broker/test_no_imports.py::",
+    "tests/windows_broker/test_one_flagged_list.py::",
+    "tests/windows_broker/test_outcome_unknown_and_a6.py::",
+    "tests/windows_broker/test_patch_batches.py::",
+    "tests/windows_broker/test_process.py::",
+    "tests/windows_broker/test_protocol_fake_server.py::",
+    "tests/windows_broker/test_rollback_batches.py::",
+    "tests/windows_broker/test_session_does_not_outlive_its_test.py::",
+    "tests/windows_broker/test_shipping.py::",
+    "tests/windows_broker/test_single_writes.py::",
+)
+_DIAG_SKIP_PARTS = ("__pycache__", ".pytest_cache", ".ruff_cache")
+
+
+def _diag_listing():
+    roots = [_diag_os.path.expanduser("~"), str(_diag_os.path.dirname(_diag_os.path.dirname(_diag_os.path.abspath(__file__))))]
+    temp = _diag_os.path.normcase(_diag_os.path.abspath(_diag_os.environ.get("TEMP", "/tmp")))
+    seen = {}
+    for root in roots:
+        for here, dirs, names in _diag_os.walk(root):
+            norm = _diag_os.path.normcase(_diag_os.path.abspath(here))
+            if norm.startswith(temp) or any(p in here for p in _DIAG_SKIP_PARTS):
+                dirs[:] = []
+                continue
+            for name in names + [d + _diag_os.sep for d in dirs]:
+                path = _diag_os.path.join(here, name)
+                try:
+                    st = _diag_os.lstat(path.rstrip(_diag_os.sep))
+                except OSError:
+                    continue
+                seen[path] = (st.st_size, st.st_mtime_ns)
+    return seen
+
+
+def pytest_collection_modifyitems(session, config, items):
+    keep = [item for item in items if item.nodeid.replace("\\", "/").startswith(_DIAG_KEEP)]
+    deselected = [item for item in items if item not in keep]
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+    items[:] = keep
+    config._diag_before = _diag_listing() if keep else None
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    before = getattr(config, "_diag_before", None)
+    if before is None:
+        return
+    after = _diag_listing()
+    changed = sorted(p for p in set(before) | set(after) if before.get(p) != after.get(p))
+    terminalreporter.write_line(f"DIAG-TOUCH count={len(changed)} listed={len(after)}")
+    for path in changed[:200]:
+        kind = "new" if path not in before else ("gone" if path not in after else "changed")
+        terminalreporter.write_line(f"DIAG-TOUCH {kind} {path}")
