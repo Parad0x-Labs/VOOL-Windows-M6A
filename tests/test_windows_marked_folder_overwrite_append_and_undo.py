@@ -300,11 +300,20 @@ def test_the_brokered_machine_write_records_the_bytes_the_broker_wrote(tmp_path,
 
 
 def test_a_machine_write_outside_the_marks_records_nothing(tmp_path, monkeypatch) -> None:
+    """On Windows, with marks that leave this folder out. (The Windows suite marks each test's own
+    tmp_path, so the folder is unmarked here explicitly: only a sibling folder is marked.)"""
     from core import runtime_execution_tools as tools
     from core.execution.artifacts import latest_workspace_mutation_for_session
+    from core.windows_broker import session
 
     folder = (tmp_path / "plain").resolve()
     folder.mkdir()
+    marked = (tmp_path / "marked").resolve()
+    marked.mkdir()
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    monkeypatch.setenv(gate.ENV_VAR, str(marked))
+    monkeypatch.setattr(session, "_host", None)
+    assert gate.active() and not gate.inside_flagged(str(folder))
     monkeypatch.setattr(tools, "_resolve_machine_directory", lambda raw, write=False: folder / str(raw))
     monkeypatch.setattr(tools.ExecutionGate, "evaluate_machine_effect", staticmethod(lambda **kw: {"decision": "authorized"}))
     result = tools._write_machine_file({"path": "a.txt", "content": "hi"}, session_id="r5-plain")
@@ -379,7 +388,8 @@ def test_undo_after_a_move_between_marked_folders_moves_it_back(profile_env, mac
     assert not source.exists() and moved.read_bytes() == b"move me\r\n", resumed
     first, resumed, card = _allow(agent, "undo that", session, machine["workspace"], "machine.move_path")
     assert "no change VOOL made in a marked folder" not in first and "requires approval" in first, first
-    assert str(moved) in str(card.get("affected_resources")) and str(source) in str(card.get("affected_resources")), card
+    shown = [str(item) for item in card.get("affected_resources") or []]
+    assert str(moved) in shown and str(source) in shown, card
     assert source.read_bytes() == b"move me\r\n" and not moved.exists(), resumed
     assert windows_move == []  # the Allow is the consent on Windows
     again, turn_id = _chat(agent, "undo that", session, machine["workspace"])
