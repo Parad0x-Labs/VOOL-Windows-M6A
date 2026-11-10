@@ -84,6 +84,41 @@ def _contains_phrase_marker(text: str, markers: tuple[str, ...]) -> bool:
     return any(re.search(rf"\b{re.escape(marker)}\b", lowered) for marker in markers)
 
 
+def windows_watcher_needs_opt_in() -> bool:
+    """Windows: the Hive watcher is off until the owner opts in (ship rule M5, no network before opt-in).
+
+    Capability test (fresh Windows 11 VM, no keys, cloud never on): every ``sandbox.run_command``
+    approval card was decorated with a Hive footer (``build_chat_footer``), which fetched the
+    watcher dashboard named by the shipped ``config/meet_clusters/*/cluster_manifest.json``
+    (``https://voolbook.com``). The fetch door's Local Only check resolved the name
+    (``auto_local_only_mode.endpoint_is_local``), so the pcap showed an A + AAAA query for
+    voolbook.com per approval (NXDOMAIN, no TCP); without Local Only the request itself would
+    resolve and dial.
+
+    Behind the same seam as the Windows cloud gate (``core.windows_cloud_gate.active()``, i.e.
+    ``core.ollama_cloud_models.active()``). Off Windows nothing changes.
+    """
+    try:
+        from core import windows_cloud_gate
+
+        return bool(windows_cloud_gate.active())
+    except Exception:
+        return False
+
+
+def owner_watcher_url() -> str:
+    """The Hive watcher URL the owner set themselves (``VOOL_HIVE_WATCHER_URL``; "" = none)."""
+    return str(os.environ.get("VOOL_HIVE_WATCHER_URL") or "").strip()
+
+
+def watcher_contact_allowed() -> bool:
+    """True off Windows. On Windows only once the owner opted in by naming a watcher URL themselves:
+    the URL the shipped cluster manifests carry is never an opt-in."""
+    if not windows_watcher_needs_opt_in():
+        return True
+    return bool(owner_watcher_url())
+
+
 @dataclass(frozen=True)
 class HiveActivityTrackerConfig:
     enabled: bool = True
@@ -521,7 +556,12 @@ class HiveActivityTracker:
         return "\n".join(line for line in lines if line.strip())
 
     def _http_get_json(self, url: str, timeout_seconds: int, context: ssl.SSLContext | None) -> dict[str, Any]:
-        from core.remote_fetch_policy import open_remote
+        from core.remote_fetch_policy import RemoteFetchRefusedError, open_remote
+
+        # Windows, before the owner opts in: the real transport refuses before the fetch door, whose
+        # Local Only check would resolve the name. Covers a tracker built before the rule was read.
+        if not watcher_contact_allowed():
+            raise RemoteFetchRefusedError("Hive watcher is off on this machine until the owner sets one")
 
         req = urllib.request.Request(url, method="GET")
         req.add_header("Content-Type", "application/json")
@@ -544,7 +584,9 @@ class HiveActivityTracker:
 
 
 def load_hive_activity_tracker_config() -> HiveActivityTrackerConfig:
-    watcher_url = str(os.environ.get("VOOL_HIVE_WATCHER_URL") or "").strip() or _load_watcher_url_from_manifest()
+    # Windows: only the owner's own watcher URL configures the watcher; the shipped manifests'
+    # public URL is not read, so nothing reaches for it before the owner opts in.
+    watcher_url = owner_watcher_url() or ("" if windows_watcher_needs_opt_in() else _load_watcher_url_from_manifest())
     api_url = _watcher_api_url(watcher_url)
     enabled_raw = str(os.environ.get("VOOL_HIVE_FOLLOWUPS_ENABLED", "1")).strip().lower()
     bootstrap = _load_agent_bootstrap_tls()
