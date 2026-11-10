@@ -17,8 +17,9 @@ both hold:
   ``core.cloud_transport`` already reads before a model call. Saving an OpenRouter key in
   Settings sets ``free_cloud_enabled`` (``registry_authorities.bind_saved_cloud_key``);
   ``cloud ask`` / ``cloud auto``, ``cloud model auto`` and the Settings "Auto fallback" picker set it too.
-  A cloud model the owner pinned by name (``model``) counts as well: a confirmed paid pin turns the
-  free lane off on purpose, and must not close the gate on the model it just chose. ``cloud off``
+  A cloud model the owner pinned by name counts as well (``owner_pin``): a confirmed paid pin turns
+  the free lane off on purpose, and must not close the gate on the model it just chose. Only the
+  owner's own pin counts, never one a council seat, an agent turn or a model wrote. ``cloud off``
   clears the pin with the free lane.
 
 Without both, every gated caller answers locally, with ``OFF_TEXT``, and opens no socket.
@@ -104,21 +105,66 @@ def cloud_key_stored() -> bool:
 
 def owner_turned_cloud_on() -> bool:
     """The cloud routing consent: free cloud on, escalation ``ask`` / ``auto``, or a cloud model the
-    owner pinned by name (``model``).
+    owner pinned by name.
 
-    The pin counts because it is the owner's own act naming a cloud model (owner-local only, and a
-    paid one only with their spend confirmation), and because that same act turns the free lane off
-    on purpose (``cloud_model_control.set_cloud_model``): without it, confirming a paid pin in
-    Settings would close the gate on the model just chosen. ``cloud off`` clears the pin with the
-    rest (``fast_command_surface.maybe_handle_cloud_command``)."""
+    The pin counts because it is the owner's own act naming a cloud model (a paid one only with
+    their spend confirmation), and because that same act turns the free lane off on purpose
+    (``cloud_model_control.set_cloud_model``): without it, confirming a paid pin in Settings would
+    close the gate on the model just chosen. Only the owner's pin counts: ``policy.model`` must be
+    the pin ``record_owner_pin`` noted for an owner write. A pin written by anything else (a
+    council's seat pin, any other writer of the policy file) is not consent. ``cloud off`` clears
+    both (``fast_command_surface.maybe_handle_cloud_command``)."""
     try:
         from core.cloud_escalation_policy import MODE_ASK, MODE_AUTO, load_policy
 
         policy = load_policy()
-        pinned = str(policy.model or "").strip().lower() not in {"", "auto"}
-        return bool(policy.free_cloud_enabled) or policy.mode in {MODE_ASK, MODE_AUTO} or pinned
+        if bool(policy.free_cloud_enabled) or policy.mode in {MODE_ASK, MODE_AUTO}:
+            return True
+        pinned = _canonical_pin(policy.model)
+        return bool(pinned) and pinned == owner_pin()
     except Exception:
         return False
+
+
+_OWNER_PIN_FILE = "windows_cloud_owner_pin.json"
+
+
+def _canonical_pin(model: str) -> str:
+    pin = str(model or "").strip().lower()
+    return "" if pin in {"", "auto", "default", "reset"} else pin
+
+
+def owner_pin() -> str:
+    """The cloud model the owner last pinned themselves ("" = none). Names only, no secret."""
+    try:
+        from core.runtime_paths import data_path
+
+        path = data_path(_OWNER_PIN_FILE)
+        if not path.exists():
+            return ""
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return _canonical_pin(data.get("model", "")) if isinstance(data, dict) else ""
+    except Exception:
+        return ""
+
+
+def record_owner_pin(model: str) -> None:
+    """Note ``model`` as the owner's own pin ("" clears it). Called only by the owner's pin write:
+    ``set_cloud_model`` from the Settings route or a command the owner typed, never with a council's
+    capability. Best effort: a failed write leaves no owner pin, which fails closed."""
+    try:
+        from core.runtime_paths import data_path
+
+        path = data_path(_OWNER_PIN_FILE)
+        pin = _canonical_pin(model)
+        if not pin:
+            if path.exists():
+                path.unlink()
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"model": pin}), encoding="utf-8")
+    except Exception:
+        pass
 
 
 def cloud_contact_allowed() -> bool:
@@ -274,6 +320,8 @@ __all__ = [
     "door_refusal",
     "is_cloud_provider_request",
     "owner_key_check",
+    "owner_pin",
     "owner_turned_cloud_on",
+    "record_owner_pin",
     "refuse_cloud_contact",
 ]

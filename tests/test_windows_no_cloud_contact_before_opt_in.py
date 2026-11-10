@@ -665,3 +665,41 @@ def test_chat_page_serves_its_bootstrap_verbatim_and_states_auto_is_free_only_wh
     assert "free cloud only if needed" not in bootstrap
     assert "Auto never selects a paid model" in html
     assert _outbound(sockets) == []
+
+
+def test_a_model_issued_pin_attempt_leaves_cloud_off(profile_env, windows, sockets):
+    """Only the owner's own pin is cloud consent. A key is stored but cloud is not turned on; a turn
+    an agent wrote (owner-local by transport, ``turn_author`` "agent") asks to pin a paid cloud model
+    and to turn cloud on, and a pin lands in the policy file from a writer that is not the owner (a
+    council seat pin's shape). cloud_off() stays True through all of it."""
+    from core import cloud_escalation_policy as cep
+    from core import windows_cloud_gate
+    from tests.operator_profile_rig import body_json, chat_body, served_post
+
+    _store_openrouter_key()
+    _seed_cache(profile_env)
+    assert windows_cloud_gate.cloud_off() is True
+    agent = make_agent()
+    for text in (f"cloud model {PAID_ID} --paid", f"switch to {PAID_ID}", "cloud auto"):
+        body = {**chat_body(text, "agent-authored-pin"), "turn_author": "agent"}
+        response = served_post(agent, "/api/chat", body)
+        assert int(response.status) == 200, body_json(response)
+        assert cep.load_policy().model == "", text
+        assert windows_cloud_gate.cloud_off() is True, text
+    cep.save_policy(cep.CloudEscalationPolicy(mode=cep.MODE_OFF, free_cloud_enabled=False, model=PAID_ID))
+    assert windows_cloud_gate.owner_pin() == ""
+    assert windows_cloud_gate.cloud_off() is True
+    assert _outbound(sockets) == [], _outbound(sockets)
+
+
+def test_the_cloud_transport_says_cloud_is_off_and_opens_nothing_before_opt_in(profile_env, windows, sockets):
+    from core import cloud_escalation_policy as cep
+    from core.cloud_transport import CloudTransportError, PolicyBoundCloudTransport
+
+    cep.set_free_cloud_enabled(True)  # consent saved, no key stored
+    transport = PolicyBoundCloudTransport(allowed_hosts=("openrouter.ai",))
+    assert transport._network_allowed() is False
+    with pytest.raises(CloudTransportError) as refused:
+        transport.request_json(method="POST", url="https://openrouter.ai/api/v1/chat/completions", body={})
+    assert str(refused.value) == "cloud_network_disabled_by_policy: " + OFF_TEXT
+    assert sockets == [], sockets
