@@ -3062,9 +3062,15 @@ def _approval_effect_summary(actions: tuple[PermissionAction, ...]) -> str:
 
 def _affected_resources(arguments: dict[str, Any]) -> list[str]:
     resources: list[str] = []
-    # A move names its two paths as `source` and `destination` (`machine.move_path`): without them its
-    # card read "No specific path reported" for a move between two named folders (captest R4-1b).
-    for key in ("path", "paths", "cwd", "source", "destination", "resource", "url", "recipient", "channel", "target"):
+    # On Windows a move names its two paths as `source` and `destination` (`machine.move_path`): without
+    # them its card read "No specific path reported" for a move between two named folders (captest
+    # R4-1b). Off Windows the card is left exactly as it was.
+    from core import windows_write_gate
+
+    keys = ("path", "paths", "cwd", "resource", "url", "recipient", "channel", "target")
+    if windows_write_gate.active():
+        keys = ("path", "paths", "cwd", "source", "destination", "resource", "url", "recipient", "channel", "target")
+    for key in keys:
         value = arguments.get(key)
         if isinstance(value, list):
             resources.extend(str(item) for item in value[:12] if str(item).strip())
@@ -3089,7 +3095,10 @@ def _affected_resources_display(
     home. Placed under the chat workspace, the ask named "<workspace>/Documents/x.txt" while the
     write changed the real Documents folder.
     """
-    if str(intent or "").strip() == "machine.move_path":
+    from core import windows_write_gate
+
+    if str(intent or "").strip() == "machine.move_path" and windows_write_gate.active():
+        # Windows only: off Windows the card is built as before, with nothing resolved.
         return _machine_move_display(arguments)
     machine = str(intent or "").strip() in {"machine.write_file", "machine.ensure_directory"}
     root = _trusted_write_root(source_context).rstrip("/")

@@ -7767,10 +7767,22 @@ def _windows_move_card_refusal(intent: str, arguments: dict[str, Any]) -> Runtim
 
     if intent != "machine.move_path" or not windows_write_gate.active():
         return None
+    from core import windows_known_folders
     from core.machine_file_ops import _canonicalize
 
     raw_source = str((arguments or {}).get("source") or "").strip()
     raw_destination = str((arguments or {}).get("destination") or "").strip()
+    # A council seat reaches this without the write gate's own refusal, and a mapped network drive
+    # (`Z:`) is no share spelling, so resolving it could already be the SMB connection: a path on a
+    # drive Windows does not call local is refused before anything resolves either path.
+    # Only a drive letter is asked about: a share or device spelling is never handed to GetDriveTypeW
+    # (that would be the lookup), and `_canonicalize` refuses it on its spelling alone.
+    for raw in (raw_source, raw_destination):
+        drive = re.match(r"^[A-Za-z]:", raw)
+        if drive and windows_known_folders._drive_is_remote(drive.group(0).upper()) is not False:
+            return _move_card_refused(
+                intent, f"`{raw}` is not on a local drive, so I don't look it up. Nothing was moved."
+            )
     source = _canonicalize(raw_source) if raw_source else None
     destination = _canonicalize(raw_destination) if raw_destination else None
     if source is None or destination is None:
@@ -7783,6 +7795,10 @@ def _windows_move_card_refusal(intent: str, arguments: dict[str, Any]) -> Runtim
         if not taken:
             return None
         reason = f"`{destination}` already exists. Nothing was moved."
+    return _move_card_refused(intent, reason)
+
+
+def _move_card_refused(intent: str, reason: str) -> RuntimeExecutionResult:
     return RuntimeExecutionResult(
         handled=True,
         ok=False,
