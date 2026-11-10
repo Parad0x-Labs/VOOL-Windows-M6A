@@ -325,7 +325,15 @@ def set_cloud_model(
     def _save(model_value: str) -> bool:
         cep.save_policy(replace(cep.load_policy(), model=model_value, provider=prov))
         p = cep.load_policy()
-        return p.model == model_value and p.provider == (prov if prov in PROVIDERS else "")
+        saved = p.model == model_value and p.provider == (prov if prov in PROVIDERS else "")
+        if saved and not council_capability:
+            # Windows: this is the owner's own pin (owner-local, no council capability), which the
+            # cloud gate counts as turning cloud on. A council's seat pin is never noted.
+            from core import windows_cloud_gate
+
+            if windows_cloud_gate.active():
+                windows_cloud_gate.record_owner_pin(model_value)
+        return saved
 
     if arg.lower() == "auto":
         # `auto` means "follow the live FREE catalog". Only OpenRouter publishes one, so for a
