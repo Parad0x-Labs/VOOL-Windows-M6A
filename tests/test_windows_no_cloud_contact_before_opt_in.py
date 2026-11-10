@@ -520,3 +520,22 @@ def test_off_windows_cloud_off_command_is_unchanged(profile_env, off_windows, so
     assert cep.load_policy().mode == cep.MODE_OFF
     assert cep.load_policy().free_cloud_enabled is True
     assert OFF_TEXT not in reply["text"]
+
+
+def test_a_provider_endpoint_on_this_machine_or_the_lan_is_not_cloud(profile_env, windows, sockets, monkeypatch):
+    """A UsePod origin or custom endpoint the owner points at their own hardware is local: the
+    Windows rule does not refuse it (IM Windows run 42783582031: a loopback UsePod stub's price feed
+    was cut). A public provider host is still refused, and deciding that resolves no name."""
+    from core import cloud_providers, windows_cloud_gate
+    from core.usepod import discovery
+
+    monkeypatch.setattr(discovery, "configured_origin", lambda: "http://127.0.0.1:8123")
+    monkeypatch.setattr(cloud_providers, "custom_base_url", lambda: "http://192.168.1.5:1234/v1")
+    assert windows_cloud_gate.cloud_off() is True
+    for url in ("http://127.0.0.1:8123/v1/marketplace", "http://localhost:8123/v1/models",
+                "http://192.168.1.5:1234/v1/models", "http://[::1]:8123/v1/models"):
+        assert windows_cloud_gate.is_cloud_provider_request(url) is False, url
+        assert windows_cloud_gate.door_refusal(url, "usepod", "keyless") is None, url
+    for url in ("https://api.usepod.ai/v1/marketplace", "https://openrouter.ai/api/v1/models"):
+        assert windows_cloud_gate.door_refusal(url, "", "keyless") is not None, url
+    assert sockets == [], sockets
