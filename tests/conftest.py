@@ -1114,3 +1114,76 @@ def pytest_collection_modifyitems(config, items):
     from tests import _windows_cloud_optin
 
     _windows_cloud_optin.apply(items)
+
+
+# ---- DIAGNOSTIC BRANCH ONLY (never merged): cloud-off-before-opt-in + openrouter/cloud_/routing_mode/provider files on windows-latest,
+# with a before/after listing of the user profile and the checkout to count touches outside the test folders.
+import os as _diag_os
+
+_DIAG_KEEP = (
+    'tests/test_windows_run_command_approval_resolves_no_voolbook.py::',
+    'tests/test_hive_activity_tracker.py::',
+    'tests/test_windows_approved_python_job_runs_once.py::',
+    'tests/test_windows_no_cloud_contact_before_opt_in.py::',
+    'tests/test_local_only_zero_public_egress.py::',
+    'tests/acceptance/test_voolbook_profile_provenance_real.py::',
+    'tests/test_agent_runtime_public_hive_support.py::',
+    'tests/test_agent_runtime_voolbook.py::',
+    'tests/test_public_hive_auth_cli.py::',
+    'tests/test_public_hive_bridge.py::',
+    'tests/test_public_hive_bridge_helper_splits.py::',
+    'tests/test_public_hive_bridge_topics_split.py::',
+    'tests/test_public_hive_quotas.py::',
+    'tests/test_public_hive_writes.py::',
+    'tests/test_voolbook_api.py::',
+    'tests/test_voolbook_does_not_claim_a_correction.py::',
+    'tests/test_voolbook_identity.py::',
+    'tests/test_voolbook_intent.py::',
+    'tests/test_voolbook_pending_cannot_hijack_a_new_task.py::',
+    'tests/test_voolbook_store.py::',
+)
+_DIAG_SKIP_PARTS = ("__pycache__", ".pytest_cache", ".ruff_cache")
+
+
+def _diag_listing():
+    roots = [_diag_os.path.expanduser("~"), str(_diag_os.path.dirname(_diag_os.path.dirname(_diag_os.path.abspath(__file__))))]
+    temp = _diag_os.path.normcase(_diag_os.path.abspath(_diag_os.environ.get("TEMP", "/tmp")))
+    seen = {}
+    for root in roots:
+        for here, dirs, names in _diag_os.walk(root):
+            norm = _diag_os.path.normcase(_diag_os.path.abspath(here))
+            if norm.startswith(temp) or any(p in here for p in _DIAG_SKIP_PARTS):
+                dirs[:] = []
+                continue
+            for name in names + [d + _diag_os.sep for d in dirs]:
+                path = _diag_os.path.join(here, name)
+                try:
+                    st = _diag_os.lstat(path.rstrip(_diag_os.sep))
+                except OSError:
+                    continue
+                seen[path] = (st.st_size, st.st_mtime_ns)
+    return seen
+
+
+def pytest_collection_modifyitems(session, config, items):
+    from tests import _windows_cloud_optin as _diag_optin
+
+    _diag_optin.apply(items)  # the car's own hook, which this diagnostic one would otherwise shadow
+    keep = [item for item in items if item.nodeid.replace("\\", "/").startswith(_DIAG_KEEP)]
+    deselected = [item for item in items if item not in keep]
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+    items[:] = keep
+    config._diag_before = _diag_listing() if keep else None
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    before = getattr(config, "_diag_before", None)
+    if before is None:
+        return
+    after = _diag_listing()
+    changed = sorted(p for p in set(before) | set(after) if before.get(p) != after.get(p))
+    terminalreporter.write_line(f"DIAG-TOUCH count={len(changed)} listed={len(after)}")
+    for path in changed[:200]:
+        kind = "new" if path not in before else ("gone" if path not in after else "changed")
+        terminalreporter.write_line(f"DIAG-TOUCH {kind} {path}")
