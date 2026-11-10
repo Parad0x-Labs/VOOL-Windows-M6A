@@ -216,11 +216,6 @@ _GRANT_SENTENCE = (
             "Write root C:\\m\\proj lies inside write root C:\\m.",
         ),
         (
-            "VOOLCONFINE-REFUSED: grant failed (entry_vanished): Cannot open 'x.cpython-312.pyc.2716' (NTSTATUS 0xc0000034).\n",
-            "entry_vanished",
-            "Cannot open 'x.cpython-312.pyc.2716' (NTSTATUS 0xc0000034).",
-        ),
-        (
             "VOOLCONFINE-REFUSED: grant failed (reparse_point): Root C:\\Users\\VOOLT\\OneDrive\\x is a reparse point.\n",
             "reparse_point",
             "Root C:\\Users\\VOOLT\\OneDrive\\x is a reparse point.",
@@ -229,7 +224,7 @@ _GRANT_SENTENCE = (
          "grant failed: The process cannot access the file."),
         ("", "no_reason", ""),
     ],
-    ids=["nested", "vanished", "reparse", "no-code", "silent"],
+    ids=["nested", "reparse", "no-code", "silent"],
 )
 def test_a_failed_grant_logs_the_launchers_reason_and_keeps_the_sentence(
     windows, tmp_path, caplog, stderr, code, message
@@ -323,3 +318,180 @@ def test_off_windows_the_confinement_branch_never_runs(tmp_path, monkeypatch, ca
     assert runner._windows_confine_prefix(["python", "calc.py"], (proj,)) is None
     assert runner.policy.writable_roots == (proj,)
     assert _forms(launcher) == [] and _confine_warnings(caplog) == []
+
+
+# --- a transient grant refusal is retried -----------------------------------------------------
+
+#: A launcher whose grant form fails with REFUSAL for its first FAILS calls (every call when FAILS is
+#: None), then succeeds. Each grant or revoke call appends its form name to calls.log; SLEEP makes a
+#: form outlive the caller's timeout. The run form runs the child, as the fake above does.
+_COUNTING_FAKE = r'''#!{python}
+import json, os, subprocess, sys, time
+FORM_REFUSAL = {refusal!r}
+FAILS = {fails!r}
+FAILING_FORM = {failing_form!r}
+SLEEP = {sleep!r}
+args = sys.argv[1:]
+here = os.path.dirname(os.path.abspath(__file__))
+if args and args[0] in ("grant", "revoke"):
+    log = os.path.join(here, "calls.log")
+    with open(log, "a", encoding="utf-8") as f:
+        f.write(args[0] + "\n")
+    if SLEEP:
+        time.sleep(SLEEP)
+    calls = open(log, encoding="utf-8").read().split().count(args[0])
+    if args[0] == FAILING_FORM and (FAILS is None or calls <= FAILS):
+        sys.stderr.write(FORM_REFUSAL)
+        sys.exit(125)
+    sys.exit(0)
+if args and args[0] == "scan":
+    sys.exit(0)
+status = os.path.join(os.path.dirname(args[1]), "status.json")
+def record(**fields):
+    with open(status, "w", encoding="utf-8") as f:
+        json.dump(dict(schema={schema!r}, **fields), f)
+record(child_started=True)
+rc = subprocess.call(args[3:])
+record(child_started=True, timed_out=False, exit_code=rc, new_repositories=[], repositories_scanned=True)
+sys.exit(rc)
+'''
+
+_TRANSIENT = {
+    "entry_vanished": "Cannot open 'x.cpython-312.pyc.2716' (NTSTATUS 0xc0000034).",
+    "in_use": "Cannot open 'calc.py' (NTSTATUS 0xc0000043).",
+    "root_open_failed": "Cannot open C:\\w: The process cannot access the file (Win32 error 32)",
+}
+
+
+def _counting_launcher(
+    folder: Path, *, code: str, message: str, fails: int | None, form: str = "grant", sleep: float = 0
+) -> Path:
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / "VoolConfine-counting"
+    refusal = f"VOOLCONFINE-REFUSED: {form} failed ({code}): {message}\n" if code else ""
+    path.write_text(
+        _COUNTING_FAKE.format(
+            python=sys.executable, schema=_STATUS, refusal=refusal, fails=fails, failing_form=form, sleep=sleep
+        ),
+        encoding="utf-8",
+    )
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    return path
+
+
+def _calls(launcher: Path) -> list[str]:
+    log = launcher.parent / "calls.log"
+    return log.read_text(encoding="utf-8").split() if log.exists() else []
+
+
+@pytest.fixture
+def waits(monkeypatch) -> list[float]:
+    """The retry waits, recorded instead of slept."""
+    slept: list[float] = []
+    monkeypatch.setattr(wc, "_sleep", slept.append)
+    return slept
+
+
+@pytest.mark.parametrize("code", sorted(_TRANSIENT))
+def test_a_transient_grant_refusal_is_retried_and_the_job_runs(windows, tmp_path, caplog, waits, code) -> None:
+    marks = _marks(tmp_path)
+    launcher = _counting_launcher(tmp_path / "bin", code=code, message=_TRANSIENT[code], fails=1)
+    _use(windows, launcher)
+    proj = marks["proj"].resolve()
+    caplog.set_level(logging.WARNING, logger=wc.__name__)
+
+    result = SandboxRunner(ExecutionGate(), str(proj)).job_runner.run(["python", "calc.py"], cwd=proj)
+
+    assert result.returncode == 0 and result.stdout.strip() == "5", (result.stdout, result.stderr)
+    assert _calls(launcher) == ["grant", "grant"]
+    assert waits == [0.5]
+    assert _confine_warnings(caplog) == [
+        f"VoolConfine grant failed: exit 125, reason {code}: {_TRANSIENT[code]} (attempt 1 of 3, retrying in 0.5 s)",
+        "VoolConfine grant succeeded on attempt 2 of 3",
+    ]
+
+
+def test_a_grant_that_succeeds_on_the_third_attempt_waits_both_delays(windows, tmp_path, caplog, waits) -> None:
+    launcher = _counting_launcher(tmp_path / "bin", code="in_use", message=_TRANSIENT["in_use"], fails=2)
+    policy = tmp_path / "policy.json"
+    policy.write_text("{}", encoding="utf-8")
+    caplog.set_level(logging.WARNING, logger=wc.__name__)
+
+    assert wc.launcher_form(launcher, "grant", policy) is True
+
+    assert _calls(launcher) == ["grant"] * 3 and waits == [0.5, 1.5]
+    assert _confine_warnings(caplog)[-1] == "VoolConfine grant succeeded on attempt 3 of 3"
+
+
+def test_a_transient_grant_refusal_gives_up_after_three_attempts(windows, tmp_path, caplog, waits) -> None:
+    """The captest's calc.py shape: a grant that keeps failing refuses the job with the same sentence."""
+    marks = _marks(tmp_path)
+    message = _TRANSIENT["entry_vanished"]
+    launcher = _counting_launcher(tmp_path / "bin", code="entry_vanished", message=message, fails=None)
+    _use(windows, launcher)
+    proj = marks["proj"].resolve()
+    caplog.set_level(logging.WARNING, logger=wc.__name__)
+
+    with pytest.raises(jr.KernelIsolationUnavailableError) as raised:
+        SandboxRunner(ExecutionGate(), str(proj)).job_runner.run(["python", "calc.py"], cwd=proj)
+
+    assert str(raised.value) == _GRANT_SENTENCE
+    assert _calls(launcher) == ["grant"] * 3
+    assert waits == [0.5, 1.5]
+    assert _confine_warnings(caplog) == [
+        f"VoolConfine grant failed: exit 125, reason entry_vanished: {message} (attempt 1 of 3, retrying in 0.5 s)",
+        f"VoolConfine grant failed: exit 125, reason entry_vanished: {message} (attempt 2 of 3, retrying in 1.5 s)",
+        f"VoolConfine grant failed: exit 125, reason entry_vanished: {message} (attempt 3 of 3, giving up)",
+    ]
+    assert not jr._WINDOWS_STAGED
+
+
+@pytest.mark.parametrize(
+    ("code", "message", "logged"),
+    [
+        ("nested_write_roots", "Write root C:\\m\\p lies inside write root C:\\m.", "nested_write_roots"),
+        ("repo_appeared", "Repository layouts appeared under an already granted write root", "repo_appeared"),
+        ("access_denied", "Cannot change the DACL of C:\\w\\.git, which must be denied write.", "access_denied"),
+        ("", "", "no_reason"),
+    ],
+    ids=["nested", "repo-appeared", "access-denied", "no-reason"],
+)
+def test_a_grant_refusal_that_is_not_transient_is_not_retried(
+    windows, tmp_path, caplog, waits, code, message, logged
+) -> None:
+    launcher = _counting_launcher(tmp_path / "bin", code=code, message=message, fails=None)
+    policy = tmp_path / "policy.json"
+    policy.write_text("{}", encoding="utf-8")
+    caplog.set_level(logging.WARNING, logger=wc.__name__)
+
+    assert wc.launcher_form(launcher, "grant", policy) is False
+
+    assert _calls(launcher) == ["grant"] and waits == []
+    assert _confine_warnings(caplog) == [f"VoolConfine grant failed: exit 125, reason {logged}: {message}"]
+
+
+def test_a_grant_that_times_out_is_not_retried(windows, tmp_path, caplog, waits) -> None:
+    launcher = _counting_launcher(
+        tmp_path / "bin", code="entry_vanished", message=_TRANSIENT["entry_vanished"], fails=None, sleep=5
+    )
+    policy = tmp_path / "policy.json"
+    policy.write_text("{}", encoding="utf-8")
+    caplog.set_level(logging.WARNING, logger=wc.__name__)
+
+    assert wc.launcher_form(launcher, "grant", policy, timeout=0.5) is False
+
+    assert _calls(launcher) == ["grant"] and waits == []
+    assert _confine_warnings(caplog) == ["VoolConfine grant did not finish (TimeoutExpired), so it counts as failed"]
+
+
+def test_a_revoke_is_never_retried_even_for_a_transient_reason(windows, tmp_path, caplog, waits) -> None:
+    message = _TRANSIENT["entry_vanished"]
+    launcher = _counting_launcher(tmp_path / "bin", code="entry_vanished", message=message, fails=None, form="revoke")
+    policy = tmp_path / "policy.json"
+    policy.write_text("{}", encoding="utf-8")
+    caplog.set_level(logging.WARNING, logger=wc.__name__)
+
+    assert wc.launcher_form(launcher, "revoke", policy) is False
+
+    assert _calls(launcher) == ["revoke"] and waits == []
+    assert _confine_warnings(caplog) == [f"VoolConfine revoke failed: exit 125, reason entry_vanished: {message}"]
