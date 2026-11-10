@@ -32,6 +32,7 @@ Windows 11, 64-bit. Windows needs 16 GB of RAM. With less, VOOL refuses to load 
 - A move to a network share gets a vague answer instead of a plain refusal; nothing is opened or moved.
 - Asking in chat to download a cloud model gets a vague answer; nothing is downloaded.
 - Give full paths when you ask VOOL to move a file.
+- Starting a new chat sets the mode back to Manual. Pick Plan again after New chat.
 - With cloud off, the Test button for a stored key and `cloud test` say cloud models are off.
 - Minor: `vool://` links, focus on a second launch, the `/stopall` text, reminders and the rules list.
 
