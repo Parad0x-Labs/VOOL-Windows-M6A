@@ -76,27 +76,32 @@ def _windows_seams(monkeypatch, *, job_runner_windows: bool = True) -> None:
 
 @pytest.fixture()
 def machine(tmp_path_factory, monkeypatch) -> dict[str, Path]:
-    """The chat's (unmarked) Desktop, two marked folders with spaces and `Ä` outside Desktop,
-    Documents and Downloads, and an unmarked folder next to them."""
+    """The chat's (unmarked) Desktop, two marked folders with spaces and `Ä` in the user's home outside
+    Desktop, Documents and Downloads (as on the VM: `C:\\Users\\VOOLT\\VOOL Test\\…`), an unmarked folder
+    next to them, and the system temp folder elsewhere (on a Windows runner `%TEMP%` does not hold the
+    test folders, which the move handler's scope would otherwise accept as temp)."""
     root = tmp_path_factory.mktemp("machine").resolve()
     home = root / "home"
     for name in ("Desktop", "Documents", "Downloads"):
         (home / name).mkdir(parents=True)
     workspace = root / "OneDrive" / "Desktop"
     workspace.mkdir(parents=True)
-    first = root / "profile" / "VOOL Test" / "Marked A Ä"
-    second = root / "profile" / "VOOL Test" / "Marked B"
-    unmarked = root / "profile" / "VOOL Test" / "Other folder"
+    first = home / "VOOL Test" / "Marked A Ä"
+    second = home / "VOOL Test" / "Marked B"
+    unmarked = home / "VOOL Test" / "Other folder"
     for folder in (first, second, unmarked):
         folder.mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
+    import tempfile
+    (root / "SystemTemp").mkdir()
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(root / "SystemTemp"))
     local_drive = ntpath.splitdrive(str(root))[0].upper()
     monkeypatch.setattr(windows_known_folders, "_drive_is_remote",
                         lambda drive: False if str(drive or "").upper().rstrip("\\/") == local_drive else None)
     _windows_seams(monkeypatch)
     monkeypatch.setenv(gate.ENV_VAR, os.pathsep.join([str(first), str(second)]))
-    return {"home": home, "workspace": workspace, "first": first, "second": second, "unmarked": unmarked}
+    return {"root": root, "home": home, "workspace": workspace, "first": first, "second": second, "unmarked": unmarked}
 
 
 class _Model:
@@ -205,7 +210,10 @@ def _pending_previews(session_hint: str = "") -> list[dict]:
     return [dict(row) for row in rows if session_hint in str(dict(row).get("session_id") or "")]
 
 
-TEXT = "move hello.txt from {a} to {b}"
+#: The owner's words name no path. Words with a full drive-letter path are read on Windows by the operator
+#: lane's own parser at the front door (never on Linux, where `/tmp/...` is not read there), and never
+#: reach the model; the model's call carries the paths.
+TEXT = "move hello.txt from the Marked A folder to the Marked B folder"
 
 
 # --- the served chat: Allow moves the file --------------------------------------------------------------
@@ -238,7 +246,7 @@ def test_after_allow_a_move_naming_the_destination_file_lands_there(profile_env,
     sub = machine["second"] / "kept"
     sub.mkdir()
     agent = _agent(monkeypatch, _Model(_move_call(source, sub)))
-    text = "please move my notes file into the kept folder"
+    text = "please move my notes file into the kept folder"  # names no path
     _first, turn_id, token = _ask(agent, text, "r2-move-sub", machine["workspace"])
     resumed = _allow_and_resend(agent, text, "r2-move-sub", machine["workspace"], turn_id, token)
     assert not source.exists() and (sub / "notes Ä.txt").read_bytes() == b"hi\n", resumed
@@ -284,7 +292,7 @@ def test_a_move_out_of_the_marked_folders_is_refused_before_any_card(profile_env
     source.write_bytes(b"hi\n")
     destination = machine["unmarked"] if where == "unmarked" else machine["home"] / "Documents"
     agent = _agent(monkeypatch, _Model(_move_call(source, destination)))
-    reply, turn_id = _chat(agent, f"move hello.txt from {machine['first']} to {destination}", f"r2-out-{where}",
+    reply, turn_id = _chat(agent, f"move hello.txt from the Marked A folder to {where}", f"r2-out-{where}",
                            machine["workspace"])
     assert _approvals(turn_id) == [], reply
     assert source.exists() and not (destination / "hello.txt").exists()
@@ -299,6 +307,26 @@ def test_plan_mode_still_refuses_the_move_with_no_card(profile_env, machine, mon
                            machine["workspace"], mode="plan")
     assert _approvals(turn_id) == [], reply
     assert source.exists() and not (machine["second"] / "hello.txt").exists()
+
+
+def test_a_move_between_marked_folders_the_move_handler_does_not_take_is_refused_before_any_card(
+        profile_env, machine, monkeypatch) -> None:
+    """Two marked folders outside the user's home (a marked `D:\\Work`): the write gate allows them, but
+    the move handler takes a source and destination only under the home, the temp folder or VOOL's
+    data folder. Its own refusal comes before any card, not after the owner's Allow."""
+    work = machine["root"] / "Work"
+    left, right = work / "Marked C", work / "Marked D"
+    for folder in (left, right):
+        folder.mkdir(parents=True)
+    monkeypatch.setenv(gate.ENV_VAR, os.pathsep.join([str(machine["first"]), str(machine["second"]), str(left), str(right)]))
+    source = left / "hello.txt"
+    source.write_bytes(b"hi\n")
+    agent = _agent(monkeypatch, _Model(_move_call(source, right)))
+    reply, turn_id = _chat(agent, "move hello.txt from the Marked C folder to the Marked D folder", "r2-out-of-home",
+                           machine["workspace"])
+    assert _approvals(turn_id) == [], reply
+    assert source.exists() and not (right / "hello.txt").exists()
+    assert _pending_previews() == []
 
 
 # --- an approval runs only its own call ------------------------------------------------------------------
