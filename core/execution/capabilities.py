@@ -16,12 +16,7 @@ from core.execution.constants import (
     _WEB_TOOL_INTENTS,
 )
 from core.execution.mcp_bridge import mcp_tool_specs
-from core.hive_activity_tracker import (
-    HIVE_OFF_ON_WINDOWS_STATE,
-    HIVE_OFF_ON_WINDOWS_TEXT,
-    load_hive_activity_tracker_config,
-    windows_watcher_needs_opt_in,
-)
+from core.hive_activity_tracker import load_hive_activity_tracker_config
 from core.local_operator_actions import list_operator_tools, operator_capability_ledger
 from core.public_hive_bridge import load_public_hive_bridge_config, public_hive_write_enabled
 from core.runtime_execution_tools import runtime_execution_capability_ledger, runtime_execution_tool_specs
@@ -73,12 +68,6 @@ def runtime_capability_ledger(
         and public_hive_cfg.topic_target_url
         and public_hive_write_enabled_fn(public_hive_cfg)
     )
-    # Windows (0.7.1): no Hive watcher, and no public Hive until the owner turns it on. A Hive
-    # capability with no route is then off by policy, said as such: not "unavailable" (which reads
-    # as "not configured") and not "unreachable" (which implies a contact was tried).
-    windows_hive_off = windows_watcher_needs_opt_in()
-    hive_read_off_on_windows = windows_hive_off and not hive_read_intents
-    hive_write_off_on_windows = windows_hive_off and not (public_hive_cfg.enabled and public_hive_cfg.topic_target_url)
     web_enabled = bool(allow_web_fallback_fn())
     browser_enabled = bool(allow_browser_fallback_fn()) and bool(policy_engine.browser_runtime_enabled())
     web_intents = sorted(item for item in _WEB_TOOL_INTENTS if item != "browser.render")
@@ -112,13 +101,7 @@ def runtime_capability_ledger(
             "claim": "list live Hive tasks and read research queues, packets, and artifact search results",
             "supported": hive_read_supported,
             "support_level": "partial" if hive_read_intents else "unsupported",
-            "availability_state": (
-                hive_reachability
-                if hive_read_intents
-                else HIVE_OFF_ON_WINDOWS_STATE
-                if hive_read_off_on_windows
-                else "unavailable"
-            ),
+            "availability_state": hive_reachability if hive_read_intents else "unavailable",
             "partial_reason": (
                 "A Hive read route is configured, but live reachability has not been verified in this process."
                 if hive_reachability == "configured_unverified"
@@ -126,12 +109,7 @@ def runtime_capability_ledger(
                 if hive_reachability == "unreachable"
                 else ""
             ),
-            "unsupported_reason": (
-                HIVE_OFF_ON_WINDOWS_TEXT
-                if hive_read_off_on_windows
-                else "Live Hive read actions are not configured on this runtime."
-            ),
-            **({"gap_kind": HIVE_OFF_ON_WINDOWS_STATE} if hive_read_off_on_windows else {}),
+            "unsupported_reason": "Live Hive read actions are not configured on this runtime.",
             "intents": [
                 "hive.list_available",
                 "hive.list_research_queue",
@@ -146,12 +124,7 @@ def runtime_capability_ledger(
             "surface": "hive",
             "claim": "create, claim, update, and submit real Hive topics or tasks",
             "supported": hive_write_supported,
-            "unsupported_reason": (
-                HIVE_OFF_ON_WINDOWS_TEXT
-                if hive_write_off_on_windows
-                else "Live Hive write actions are not enabled on this runtime."
-            ),
-            **({"gap_kind": HIVE_OFF_ON_WINDOWS_STATE} if hive_write_off_on_windows else {}),
+            "unsupported_reason": "Live Hive write actions are not enabled on this runtime.",
             "intents": [
                 "hive.research_topic",
                 "hive.create_topic",
@@ -301,7 +274,7 @@ def capability_truth_for_request(
             "requested_label": "delegate to other agents and merge their outputs",
             "support_level": "unsupported",
             "gap_kind": "future_unsupported",
-            "reason": _swarm_reason(all_entries),
+            "reason": "Real multi-agent delegation and merge synthesis are not wired on this runtime yet.",
             "nearby_alternatives": _combine_alternative_text(
                 _nearby_alternatives_from_capability_ids(["hive.read", "hive.write"], all_entries)
             ),
@@ -341,17 +314,6 @@ def capability_truth_for_request(
     if any(lowered.strip().startswith(prefix) for prefix in _CAPABILITY_QUERY_PREFIXES):
         return None
     return None
-
-
-def _swarm_reason(entries: list[dict[str, Any]]) -> str:
-    """Why delegation and merge are not offered; on Windows, plainly that the Hive is off too."""
-    reason = "Real multi-agent delegation and merge synthesis are not wired on this runtime yet."
-    hive_off = any(
-        str(entry.get("capability_id") or "").strip() in {"hive.read", "hive.write"}
-        and str(entry.get("gap_kind") or "").strip() == HIVE_OFF_ON_WINDOWS_STATE
-        for entry in list(entries or [])
-    )
-    return f"{reason} {HIVE_OFF_ON_WINDOWS_TEXT}" if hive_off else reason
 
 
 def render_capability_truth_response(report: dict[str, Any] | None) -> str:

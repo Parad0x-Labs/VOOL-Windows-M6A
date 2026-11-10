@@ -148,9 +148,6 @@ CAPABILITY_TRUTH_CASES = (
         "label": "swarm_future",
         "prompt": "can you delegate to other agents and merge helper outputs?",
         "expected": ("not wired on this runtime yet", "hive"),
-        # Windows 0.7.1 (the seam only): the Hive is off until the owner opts in, and the answer
-        # says so plainly instead of offering it.
-        "windows_expected": ("not wired on this runtime yet", "the hive is off on windows in this release."),
     },
     {
         "label": "impossible",
@@ -696,13 +693,6 @@ def _run_capability_truth_case(make_agent, case: dict[str, object]) -> tuple[boo
             source_context={"surface": "openclaw", "platform": "openclaw"},
         )
     lowered = result["response"].lower()
-    from core import windows_cloud_gate
-
-    if windows_cloud_gate.active() and "windows_expected" in case:
-        ok = result["model_execution"]["used_model"] is False and all(
-            marker in lowered for marker in [str(item).lower() for item in tuple(case["windows_expected"])]
-        )
-        return ok, f"{case['label']}: response={result['response']!r}"
     ok = result["model_execution"]["used_model"] is False and all(
         marker in lowered for marker in [str(item).lower() for item in tuple(case["expected"])]
     )

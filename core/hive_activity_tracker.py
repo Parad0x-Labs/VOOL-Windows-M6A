@@ -106,17 +106,6 @@ def windows_watcher_needs_opt_in() -> bool:
         return False
 
 
-#: What VOOL says on Windows (0.7.1) wherever the Hive would be offered: no Hive watcher, no public
-#: Hive request before the owner opts in (``windows_watcher_needs_opt_in``). The capability ledger's
-#: ``hive.read`` entry, a Hive or swarm capability question, and a ``hive.list_available`` call all
-#: answer with it, locally.
-HIVE_OFF_ON_WINDOWS_TEXT = "The Hive is off on Windows in this release."
-
-#: The ledger's ``availability_state`` (and ``gap_kind``) for a Hive capability that the Windows
-#: rule turns off: off by policy, which is neither "unavailable" (not configured) nor "unreachable".
-HIVE_OFF_ON_WINDOWS_STATE = "off_on_windows"
-
-
 def watcher_contact_allowed() -> bool:
     """True off Windows. False on Windows for 0.7.1: there is no Hive opt-in on Windows yet, so
     neither the shipped manifests' URL nor ``VOOL_HIVE_WATCHER_URL`` turns the watcher on (SA)."""

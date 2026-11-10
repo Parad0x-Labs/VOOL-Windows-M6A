@@ -21,12 +21,6 @@ def failed_hive_execution(intent: str, result: dict[str, Any], fallback: str) ->
     )
 
 
-def _hive_off_on_windows() -> bool:
-    from core.hive_activity_tracker import windows_watcher_needs_opt_in
-
-    return windows_watcher_needs_opt_in()
-
-
 def execute_hive_list_available(
     hive_activity_tracker: Any,
     arguments: dict[str, Any],
@@ -54,8 +48,7 @@ def execute_hive_list_available(
         return ToolIntentExecution(
             handled=True,
             ok=False,
-            # Windows: off by policy, answered here with no lookup (core.hive_activity_tracker).
-            status="disabled" if _hive_off_on_windows() else "not_configured",
+            status="not_configured",
             response_text=response,
             user_safe_response_text=response,
             mode="tool_failed",
