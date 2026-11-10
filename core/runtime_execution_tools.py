@@ -2019,6 +2019,14 @@ def _machine_host_state(arguments: dict[str, Any]) -> RuntimeExecutionResult:
     )
 
 
+_MOVE_NEEDS_ALLOW = "Moving files needs your Allow on the card; nothing was moved."
+
+
+def _allowed_on_the_card(_reason: str) -> bool:
+    """The consent of a move the owner allowed on its card (Windows only, `_machine_move_path`)."""
+    return True
+
+
 def _machine_move_path(
     arguments: dict[str, Any], *, workspace_root: Path | None = None
 ) -> RuntimeExecutionResult:
@@ -2037,10 +2045,36 @@ def _machine_move_path(
     # outside Desktop, Documents and Downloads was refused here (captest R1-4). The Windows write
     # gate checks both paths again before this runs.
     allowed_roots.extend(_marked_machine_roots())
+    # On Windows the owner's Allow on the card is this move's consent: the call that spent the live
+    # token claims the authorized boundary's scope once, and no OS prompt follows. That prompt (Windows
+    # Hello, or CredUI with no parent window, from a backend started without one) never reached the
+    # owner and the approved turn waited on it (captest R4-1b, build 5f97b517). Any other call on
+    # Windows (Auto, a direct dispatch, a task grant) is refused here, before anything moves, and the
+    # prompt is never opened. Every other check `move_path` makes still runs. Off Windows: unchanged.
+    from core.execution_gate import claim_operator_approved_call, operator_approval_spend_applies
+
+    consent: dict[str, Any] = {}
+    if operator_approval_spend_applies():
+        if not claim_operator_approved_call({"machine.move_path"}):
+            return RuntimeExecutionResult(
+                handled=True,
+                ok=False,
+                status="blocked_by_mode",
+                response_text=_MOVE_NEEDS_ALLOW,
+                details={
+                    "executed": False,
+                    "observation": _tool_observation(
+                        intent="machine.move_path", tool_surface="machine", ok=False, status="blocked_by_mode",
+                        reason=_MOVE_NEEDS_ALLOW,
+                    ),
+                },
+            )
+        consent["consent_fn"] = _allowed_on_the_card
     result = move_path(
         str((arguments or {}).get("source") or ""),
         str((arguments or {}).get("destination") or ""),
         allowed_roots=allowed_roots,
+        **consent,
     )
     return RuntimeExecutionResult(
         handled=True,
@@ -7718,7 +7752,65 @@ def windows_write_refusal_before_decision(
 
         if binding_for_context(source_context) is None:
             return refusal
+    move_refusal = _windows_move_card_refusal(intent, arguments)
+    if move_refusal is not None:
+        return move_refusal
     return windows_program_refusal(intent, arguments)
+
+
+def _windows_move_card_refusal(intent: str, arguments: dict[str, Any]) -> RuntimeExecutionResult | None:
+    """On Windows, a `machine.move_path` whose card could not name both its source and the final place
+    it lands (a path missing or unresolvable), or that lands on something already there, refused
+    before the card: the Allow is the move's consent there, so it is asked only for a move the owner
+    can see whole. None off Windows and for any other intent."""
+    from core import windows_write_gate
+
+    if intent != "machine.move_path" or not windows_write_gate.active():
+        return None
+    from core import windows_known_folders
+    from core.machine_file_ops import _canonicalize
+
+    raw_source = str((arguments or {}).get("source") or "").strip()
+    raw_destination = str((arguments or {}).get("destination") or "").strip()
+    # A council seat reaches this without the write gate's own refusal, and a mapped network drive
+    # (`Z:`) is no share spelling, so resolving it could already be the SMB connection: a path on a
+    # drive Windows does not call local is refused before anything resolves either path.
+    # Only a drive letter is asked about: a share or device spelling is never handed to GetDriveTypeW
+    # (that would be the lookup), and `_canonicalize` refuses it on its spelling alone.
+    for raw in (raw_source, raw_destination):
+        drive = re.match(r"^[A-Za-z]:", raw)
+        if drive and windows_known_folders._drive_is_remote(drive.group(0).upper()) is not False:
+            return _move_card_refused(
+                intent, f"`{raw}` is not on a local drive, so I don't look it up. Nothing was moved."
+            )
+    source = _canonicalize(raw_source) if raw_source else None
+    destination = _canonicalize(raw_destination) if raw_destination else None
+    if source is None or destination is None:
+        reason = "Name the file to move and where it goes, each by its full path. Nothing was moved."
+    else:
+        try:
+            taken = destination.exists()
+        except OSError:
+            taken = False
+        if not taken:
+            return None
+        reason = f"`{destination}` already exists. Nothing was moved."
+    return _move_card_refused(intent, reason)
+
+
+def _move_card_refused(intent: str, reason: str) -> RuntimeExecutionResult:
+    return RuntimeExecutionResult(
+        handled=True,
+        ok=False,
+        status="blocked",
+        response_text=reason,
+        details={
+            "executed": False,
+            "observation": _tool_observation(
+                intent=intent, tool_surface="machine", ok=False, status="blocked", reason=reason
+            ),
+        },
+    )
 
 
 #: Intents that start the program a command line names: `sandbox.run_command` its `command`, the

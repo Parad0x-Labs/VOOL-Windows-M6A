@@ -3323,7 +3323,7 @@
         "destination",
         "source"
       ],
-      "description": "Move or rename a file or folder on this machine. Destructive: refuses protected system and wallet locations and requires a live OS confirmation (Windows Hello / credential prompt) before moving.",
+      "description": "Move or rename a file or folder on this machine. Destructive: refuses protected system and wallet locations and requires the owner's confirmation before moving: on Windows the owner's Allow on the approval card for this exact call (no other call moves anything there), elsewhere a live OS confirmation (Touch ID / device password, or the desktop's prompt).",
       "native_name": "machine__move_path",
       "native_parameters": {
         "additionalProperties": false,
