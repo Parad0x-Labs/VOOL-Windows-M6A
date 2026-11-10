@@ -42,7 +42,9 @@ def repo(tmp_path: Path) -> Path:
     root = tmp_path / "repo"
     root.mkdir()
     _real_git("init", "-q", cwd=root)
-    (root / "a.txt").write_text("one\n", encoding="utf-8")
+    # LF bytes on every host: write_text would write CRLF on Windows, and VOOL patches only a file
+    # with no carriage return in it (it refuses a CRLF file whole).
+    (root / "a.txt").write_bytes(b"one\n")
     _real_git("add", "a.txt", cwd=root)
     _real_git("commit", "-q", "-m", "first", cwd=root)
     return root

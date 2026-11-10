@@ -65,8 +65,13 @@ def test_words_after_the_folder_are_not_taken_into_its_name(machine) -> None:
     marked = machine["marked"]
     # "with" would only make up a new name, so the path ends at the folder that exists.
     assert write_root_honesty.write_destinations(f"save {marked} with the text hi") == [str(marked)]
-    # Nothing on disk to extend through: the path ends at the space, as before.
-    assert write_root_honesty.write_destinations("create /nowhere/VOOL Test/x.txt") == ["/nowhere/VOOL"]
+    # Nothing on disk to extend through: the path ends at the space, as before. The missing folder is
+    # a full path on this host (a POSIX "/nowhere" is not one on Windows, where it has no drive).
+    nowhere = machine["workspace"].parent / "nowhere"
+    assert not nowhere.exists()
+    assert write_root_honesty.write_destinations(f"create {nowhere}{os.sep}VOOL Test{os.sep}x.txt") == [
+        f"{nowhere}{os.sep}VOOL"
+    ]
 
 
 # --- 2. a marked folder anywhere is a root chat may write --------------------------------------
