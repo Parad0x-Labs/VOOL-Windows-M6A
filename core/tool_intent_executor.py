@@ -917,10 +917,18 @@ def _windows_write_refusal(
     if intent in _MUTATING_OPERATOR_INTENTS:
         from core.local_operator_actions import windows_write_refusal as operator_refusal
 
-        reason = operator_refusal(_build_operator_action_intent(intent.split(".", 1)[1], arguments))
+        operator_intent = _build_operator_action_intent(intent.split(".", 1)[1], arguments)
+        reason = operator_refusal(operator_intent)
+        status = windows_write_gate.STATUS
+        if not reason:
+            # The move handler's own scope check, asked before the card rather than after the Allow.
+            from core.local_operator_actions import windows_move_scope_refusal
+
+            reason = windows_move_scope_refusal(operator_intent)
+            status = "blocked"
         if not reason:
             return None
-        status, text = windows_write_gate.STATUS, reason
+        text = reason
         details = {
             "executed": False,
             "observation": _tool_observation(
