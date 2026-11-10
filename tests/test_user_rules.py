@@ -784,7 +784,7 @@ def test_a_message_read_from_a_file_or_an_old_commit_is_checked(home, tmp_path):
         (["git", "tag", "-a", "v1", "-F", str(banned)], _named("tag", "ffff", "message")),
         (["git", "commit", "--allow-empty", "-F", str(clean)], _unchecked("commit")),
         (["git", "commit", "--allow-empty", "-F", str(tmp_path / "gone.txt")],
-         _unchecked("commit", f"the message file '{tmp_path / 'gone.txt'}' could not be read")),
+         _unchecked("commit", f"the message file {str(tmp_path / 'gone.txt')!r} could not be read")),
         (["git", "commit", "--allow-empty", "-F", "-"], _unchecked("commit", "the message comes from standard input")),
     ]):
         assert _windows_git_checks(
