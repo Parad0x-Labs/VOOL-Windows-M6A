@@ -365,10 +365,11 @@ def apply_unified_diff_workspace(
             "details": {"paths": []},
         }
     if reviewed_destinations is not None:
-        # An approved code-task patch: only its reviewed destinations, written pinned.
+        # An approved code-task patch: only its reviewed destinations, written pinned. The files it
+        # changes are the ones the review listed (`patch_review_paths`, the engine's own parse).
         return _apply_protected_unified_diff(
             patch_text=patch_text,
-            touched_paths=touched_paths,
+            touched_paths=patch_review_paths(patch_text),
             workspace_root=workspace_root,
             session_id=session_id,
             reviewed_destinations=list(reviewed_destinations),
@@ -391,12 +392,13 @@ def apply_unified_diff_workspace(
         # `git apply` places a git-format patch's paths from the work tree's top, which the
         # repository's own config can move, and GNU patch and the engine below write as they go;
         # either can change files VOOL did not compare, and then report `no_change`.
-        destinations = _destinations_as_found(patch_text, touched_paths, workspace_root=workspace_root)
+        written_paths = patch_review_paths(patch_text)
+        destinations = _destinations_as_found(patch_text, written_paths, workspace_root=workspace_root)
         if isinstance(destinations, dict):
             return destinations
         return _apply_protected_unified_diff(
             patch_text=patch_text,
-            touched_paths=touched_paths,
+            touched_paths=written_paths,
             workspace_root=workspace_root,
             session_id=session_id,
             reviewed_destinations=destinations,
@@ -691,6 +693,14 @@ def _destinations_as_found(patch_text: str, touched_paths: list[str], *, workspa
         for index, line in enumerate(lines[:-1])
         if line.startswith("--- ") and _header_name(line[4:]) == "/dev/null" and lines[index + 1].startswith("+++ ")
     }
+    with contextlib.suppress(ValueError):
+        # The engine's own parse, when it reads the patch: a removed `-- /dev/null` line followed by an
+        # added `++ x` line is content, not the creation of `x`.
+        created = {
+            _section_target(old_raw, new_raw)
+            for old_raw, new_raw, _hunks in _parse_unified_diff(_protected_patch_text(patch_text)[0])
+            if old_raw == "/dev/null"
+        }
     rows: list[dict[str, Any]] = []
     for relative in touched_paths:
         target = resolve_workspace_path(relative, workspace_root=workspace_root, write=True)
@@ -1292,6 +1302,8 @@ def _classify_patch_apply_failure(errors: list[str]) -> str:
     """
     combined = " ".join(str(item or "") for item in errors)
     lowered = combined.lower()
+    if "do not match the line counts" in lowered:
+        return "unsupported_patch"
     if "malformed unified diff" in lowered or "unsupported unified diff line" in lowered or "overlapping hunks" in lowered:
         return "invalid_patch_syntax"
     if "context mismatch" in lowered or "removal mismatch" in lowered:
@@ -1308,14 +1320,33 @@ def _normalize_patch_path(raw_path: str) -> str:
     return clean
 
 
-def _apply_unified_diff_python(patch_text: str, *, workspace_root: Path, sink: Any = None, source: Any = None) -> None:
-    # ``sink(path, text)`` receives each rendered file in patch order instead of the write (``None``
-    # text for a deletion); without one, each file is written or removed as it is rendered.
-    # ``source(path)`` supplies a file's current text instead of a read of the path ("" for a file that
-    # does not exist); the protected writer renders from the bytes it verified.
+def _starts_next_file(lines: list[str], index: int, old_left: int, new_left: int) -> bool:
+    """Whether the `--- ` line at ``index``, inside a hunk with ``old_left``/``new_left`` lines still to
+    read, is the next file's header rather than a removed line that starts with `-- `.
+
+    A hunk with no old lines left has no removal to read, so the line is a header (one without its `+++`
+    is then refused as malformed). While old lines are left it is a removal, except where it opens a
+    whole `---`/`+++`/`@@` section and the hunk claimed more lines than it holds: the hunk then ends there
+    and, on Windows, is refused for its counts (`unsupported_patch`), naming that hunk. A removal and an
+    addition that close the hunk exactly (one old and one new line left) stay content even when the next
+    hunk's `@@` follows them."""
+    if old_left <= 0:
+        return True
+    opens_a_section = (
+        index + 2 < len(lines) and lines[index + 1].startswith("+++ ") and lines[index + 2].startswith("@@ ")
+    )
+    return opens_a_section and not (old_left == 1 and new_left == 1)
+
+
+def _parse_unified_diff(patch_text: str) -> list[tuple[str, str, list[tuple[int, list[str]]]]]:
+    """The patch as VOOL's own engine reads it: one ``(old_name, new_name, hunks)`` per file section, each
+    hunk ``(old_start, lines)`` with its body lines read by the `@@` counts. Raises ValueError for a diff
+    the engine refuses. The engine renders from this result and nothing else, and
+    `patch_written_paths` reads the files it names from the same result, so what a review shows is what
+    the engine writes."""
     lines = str(patch_text or "").splitlines()
+    sections: list[tuple[str, str, list[tuple[int, list[str]]]]] = []
     index = 0
-    applied_any = False
     while index < len(lines):
         line = lines[index]
         if not line.startswith("--- "):
@@ -1327,19 +1358,8 @@ def _apply_unified_diff_python(patch_text: str, *, workspace_root: Path, sink: A
             raise ValueError("Malformed unified diff: missing `+++` header.")
         new_raw = _header_name(lines[index][4:])
         index += 1
-        target_raw = new_raw if new_raw != "/dev/null" else old_raw
-        target_path = resolve_workspace_path(_normalize_patch_path(target_raw), workspace_root=workspace_root, write=True)
-        if source is not None:
-            before_lines = str(source(target_path) or "").splitlines(keepends=True)
-        else:
-            before_lines = (
-                target_path.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
-                if target_path.exists() and target_path.is_file()
-                else []
-            )
+        hunks: list[tuple[int, list[str]]] = []
         cursor = 0
-        rendered: list[str] = []
-        saw_hunk = False
         while index < len(lines):
             current = lines[index]
             if current.startswith("--- "):
@@ -1350,20 +1370,105 @@ def _apply_unified_diff_python(patch_text: str, *, workspace_root: Path, sink: A
             match = _HUNK_HEADER_RE.match(current)
             if not match:
                 raise ValueError(f"Malformed unified diff hunk header: {current}")
-            saw_hunk = True
             old_start = max(0, int(match.group("old_start") or "0") - 1)
             if old_start < cursor:
                 raise ValueError("Malformed unified diff: overlapping hunks are not supported.")
-            rendered.extend(before_lines[cursor:old_start])
-            cursor = old_start
+            # The hunk's body is read by its counts (1 when a count is left out): while it still has old
+            # lines to read, a `--- ` line is a removed line that starts with `-- `, not the next header.
+            old_left = int(match.group("old_count")) if match.group("old_count") is not None else 1
+            new_left = int(match.group("new_count")) if match.group("new_count") is not None else 1
             index += 1
+            body: list[str] = []
             while index < len(lines):
                 hunk_line = lines[index]
-                if hunk_line.startswith("@@ ") or hunk_line.startswith("--- "):
+                if hunk_line.startswith("@@ "):
+                    break
+                if hunk_line.startswith("--- ") and _starts_next_file(lines, index, old_left, new_left):
                     break
                 if hunk_line == r"\ No newline at end of file":
                     index += 1
                     continue
+                prefix = hunk_line[:1]
+                if prefix == " ":
+                    old_left -= 1
+                    new_left -= 1
+                elif prefix == "-":
+                    old_left -= 1
+                elif prefix == "+":
+                    new_left -= 1
+                else:
+                    raise ValueError(f"Unsupported unified diff line: {hunk_line}")
+                body.append(hunk_line)
+                index += 1
+            if (old_left or new_left) and windows_write_gate.active():
+                # Windows only in 0.7.1: VOOL's engine is the only one there. Off Windows the hunk is
+                # read as far as it goes, as before (and `git apply --recount` recounts it).
+                raise ValueError(
+                    "Unsupported unified diff: a hunk's lines do not match the line counts in its `@@` "
+                    f"header ({current})."
+                )
+            cursor = old_start + sum(1 for hunk_line in body if hunk_line[:1] in (" ", "-"))
+            hunks.append((old_start, body))
+        if not hunks:
+            raise ValueError("Malformed unified diff: no hunks were found.")
+        sections.append((old_raw, new_raw, hunks))
+    if not sections:
+        raise ValueError("Malformed unified diff: no file headers were found.")
+    return sections
+
+
+def _section_target(old_raw: str, new_raw: str) -> str:
+    return _normalize_patch_path(new_raw if new_raw != "/dev/null" else old_raw)
+
+
+def patch_written_paths(patch_text: str) -> list[str]:
+    """The workspace paths VOOL's own engine changes for this patch, in patch order, once each: the
+    files a review of the patch names. Read from the engine's own parse (`_parse_unified_diff`), so a
+    removed `-- x` line is never listed as a file. Raises ValueError for a diff the engine refuses."""
+    paths: list[str] = []
+    for old_raw, new_raw, _hunks in _parse_unified_diff(patch_text):
+        target = _section_target(old_raw, new_raw)
+        if target and target not in paths:
+            paths.append(target)
+    return paths
+
+
+def patch_review_paths(patch_text: str) -> list[str]:
+    """The files a review of this patch lists, and the only files the protected writer may change for
+    it: the paths VOOL's own engine writes, read from the patch as the protected writer renders it
+    (`_protected_patch_text`). A patch the engine refuses, or one carrying a header the protected writer
+    does not apply, lists every name its headers could mean (`_extract_patch_paths`); it is refused at
+    apply, before any byte moves."""
+    renderable, unsupported = _protected_patch_text(patch_text)
+    if not unsupported:
+        try:
+            return patch_written_paths(renderable)
+        except ValueError:
+            pass
+    return _extract_patch_paths(patch_text)
+
+
+def _apply_unified_diff_python(patch_text: str, *, workspace_root: Path, sink: Any = None, source: Any = None) -> None:
+    # ``sink(path, text)`` receives each rendered file in patch order instead of the write (``None``
+    # text for a deletion); without one, each file is written or removed as it is rendered.
+    # ``source(path)`` supplies a file's current text instead of a read of the path ("" for a file that
+    # does not exist); the protected writer renders from the bytes it verified.
+    for old_raw, new_raw, hunks in _parse_unified_diff(patch_text):
+        target_path = resolve_workspace_path(_section_target(old_raw, new_raw), workspace_root=workspace_root, write=True)
+        if source is not None:
+            before_lines = str(source(target_path) or "").splitlines(keepends=True)
+        else:
+            before_lines = (
+                target_path.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+                if target_path.exists() and target_path.is_file()
+                else []
+            )
+        cursor = 0
+        rendered: list[str] = []
+        for old_start, body_lines in hunks:
+            rendered.extend(before_lines[cursor:old_start])
+            cursor = old_start
+            for hunk_line in body_lines:
                 prefix = hunk_line[:1]
                 body = hunk_line[1:]
                 if prefix == " ":
@@ -1375,13 +1480,8 @@ def _apply_unified_diff_python(patch_text: str, *, workspace_root: Path, sink: A
                     if cursor >= len(before_lines) or before_lines[cursor].rstrip("\n") != body:
                         raise ValueError(f"Unified diff removal mismatch for `{target_path.name}`.")
                     cursor += 1
-                elif prefix == "+":
-                    rendered.append(body + "\n")
                 else:
-                    raise ValueError(f"Unsupported unified diff line: {hunk_line}")
-                index += 1
-        if not saw_hunk:
-            raise ValueError("Malformed unified diff: no hunks were found.")
+                    rendered.append(body + "\n")
         rendered.extend(before_lines[cursor:])
         if sink is not None:
             sink(target_path, None if new_raw == "/dev/null" else "".join(rendered))
@@ -1390,6 +1490,3 @@ def _apply_unified_diff_python(patch_text: str, *, workspace_root: Path, sink: A
                 target_path.unlink()
         else:
             atomic_write_text(target_path, "".join(rendered))
-        applied_any = True
-    if not applied_any:
-        raise ValueError("Malformed unified diff: no file headers were found.")

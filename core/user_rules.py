@@ -1382,6 +1382,9 @@ def git_outbound_refusal(repo_root: str | Path, operation: str, **content: Any) 
 
 _GIT_GLOBAL_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env"}
 _GIT_OUTBOUND = {"commit", "tag", "push", "merge", "branch", "switch", "checkout", "notes", "am", "cherry-pick", "revert"}
+#: Subcommands whose check reads the repository through git (a commit's staged change, a push's
+#: commits); where git is refused that part cannot be read, so the check is incomplete.
+_GIT_READS_CONTENT = frozenset({"commit", "push"})
 
 
 def _git_subcommand(argv: list[str]) -> tuple[str, list[str], str]:
@@ -1674,6 +1677,9 @@ def sandbox_git_check(argv: list[str], *, cwd: str = "") -> GitRuleVerdict:
     try:
         message = _message_sources(sub, rest, root if in_repo else (root or None))
     except _Unreadable as exc:
+        cause = exc.__cause__
+        if isinstance(cause, _ScanIncomplete) and str(cause) == safe_git.GIT_REFUSED_TEXT:
+            return _incomplete(f"{exc}: {cause}")  # say why: git is refused here, not a missing commit
         return _incomplete(str(exc))
     positional = _positional(sub, rest)
     names: list[str] = []
@@ -1687,7 +1693,13 @@ def sandbox_git_check(argv: list[str], *, cwd: str = "") -> GitRuleVerdict:
         for token in _push_refspecs(rest):
             hits += find_banned_terms(token.lstrip("+"), written, target=TARGET_GIT, where="push ref")
     verdict = _classify(sub, hits, resolution)
-    if verdict.refusal is not None or not in_repo:
+    if verdict.refusal is not None:
+        return verdict
+    if sub in _GIT_READS_CONTENT and safe_git.git_refused_here():
+        # Windows: no git runs, so what this commit adds or this push sends cannot be read, and
+        # neither can whether `root` is a repository at all. Unread is not clean (fails closed).
+        return _incomplete(safe_git.GIT_REFUSED_TEXT)
+    if not in_repo:
         return verdict
     content = GitRuleVerdict()
     if sub == "commit":

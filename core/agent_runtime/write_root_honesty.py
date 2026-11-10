@@ -133,7 +133,15 @@ _SAFE_MACHINE_ROOT_NAMES = ("Desktop", "Downloads", "Documents")
 
 
 def _clean_path(candidate: str) -> str:
-    return str(candidate or "").strip().rstrip(".,;:!?)").strip()
+    """The path without the sentence punctuation after it. A trailing `..` is the parent folder, not
+    punctuation: stripped, "create x.txt in <marked>\\.." was read as the marked folder itself and the
+    file was written there instead of in the parent the user named (captest B6, 2026-11-09). `x\\...`
+    is that climb and a full stop."""
+    text = str(candidate or "").strip()
+    cleaned = text.rstrip(".,;:!?)")
+    if (not cleaned or cleaned.endswith(("/", "\\"))) and text[len(cleaned):].startswith(".."):
+        return cleaned + ".."
+    return cleaned.strip()
 
 
 def _is_url_authority(text: str, start: int) -> bool:
@@ -222,7 +230,7 @@ def typed_path_kind(text: str, start: int, candidate: str) -> str:
     full path. Nothing else rescues a candidate: a share is what a lookup of the candidate itself
     would reach, whatever was typed before it.
     """
-    kind = windows_path_policy.refused_form(candidate)
+    kind = windows_path_policy.refused_form(candidate) or windows_path_policy.refused_doubled_drive(candidate)
     if kind == "root_relative" and drive_left_behind(text, start, candidate):
         return ""
     return kind
@@ -365,7 +373,11 @@ def _spaces_may_extend(candidate: str) -> bool:
     """Only a full local path is extended, and only by looking at what exists: never a share, a
     device, a root-relative path or a mapped network drive on Windows (looking a share up is already
     the SMB connection), and never a ``~`` path."""
-    if not candidate or windows_path_policy.refused_form(candidate):
+    if (
+        not candidate
+        or windows_path_policy.refused_form(candidate)
+        or windows_path_policy.refused_doubled_drive(candidate)
+    ):
         return False
     if re.match(r"^[A-Za-z]:[\\/]", candidate):
         # A mapped network drive is a share under a letter: looking it up is the SMB connection.
@@ -405,6 +417,65 @@ def _spaced_component_state(path: str) -> str:
     return ""
 
 
+def _marked_spellings() -> list[str]:
+    """On Windows, every spelling of a marked folder: as the owner listed it (the variable and the
+    owner's own list) and as the gate resolved it (final path, case-folded). Off Windows, or when none
+    can be read, none. A spelling naming a share or a device is left out."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return []
+    spellings: list[str] = []
+    with contextlib.suppress(Exception):
+        spellings.extend(str(root) for root in windows_write_gate.flagged_roots())
+    with contextlib.suppress(Exception):
+        spellings.extend(os.environ.get(windows_write_gate.ENV_VAR, "").split(os.pathsep))
+    with contextlib.suppress(Exception):
+        spellings.extend(str(folder) for folder in windows_write_gate._store_start_folders())
+    kept: list[str] = []
+    for spelling in spellings:
+        spelling = str(spelling or "").strip().rstrip("\\/")
+        if len(spelling) >= 3 and not windows_path_policy.refused_form(spelling) and spelling not in kept:
+            kept.append(spelling)
+    return kept
+
+
+def _fold(text: str) -> str:
+    """Case-folded with either separator as `\\`, one character for one, so positions still match."""
+    return "".join(low if len(low := char.lower()) == 1 else char for char in text.replace("/", "\\"))
+
+
+# After a marked folder: a separator, a space, a quote, or sentence punctuation that ends the word.
+# "<marked>.backup" is another folder, so a `.` followed by more of a name does not end it.
+_MARKED_FOLDER_END_RE = re.compile(r"[\\/\s\"'`]|[.,;:!?)]+(?=[\s\"'`]|$)")
+_REST_OF_WORD_RE = re.compile(r"[^\s`'\"<>|]*")
+
+
+def _marked_folder_typed_at(text: str, start: int) -> int:
+    """Where the path typed at ``start`` ends when it begins with a marked folder named whole, or
+    ``start`` when it does not.
+
+    Compared as text, case-folded and with either separator, against the folders the owner marked: no
+    lookup at all, so it does not depend on the drive type, on what the disk walk can read, or on how
+    the file system folds the case of `Ä`. Windows CI at 396445b1 answered "create hello.txt in
+    <tmp>\\VOOL Test\\Allowed Ä folder" with "outside every folder" while Linux passed. The folder
+    must end at a separator, a space, a quote or sentence punctuation, never inside a longer name; the
+    rest of that word (`\\hello.txt`) is part of the path."""
+    best = start
+    folded = _fold(text)
+    for spelling in _marked_spellings():
+        wanted = _fold(spelling)
+        stop = start + len(wanted)
+        if folded[start:stop] != wanted:
+            continue
+        if stop < len(text) and not _MARKED_FOLDER_END_RE.match(text, stop):
+            continue
+        if stop < len(text) and text[stop] in "\\/":
+            stop = _REST_OF_WORD_RE.match(text, stop).end()
+        best = max(best, stop)
+    return best
+
+
 def _extend_through_spaces(text: str, start: int, end: int) -> int:
     """Where an unquoted path typed at ``start`` really ends, when it names a folder with spaces.
 
@@ -413,6 +484,8 @@ def _extend_through_spaces(text: str, start: int, end: int) -> int:
     spaced component it gains is a folder or file that exists (or, while still being read, starts
     the name of one), and it ends after the longest extension that named something on disk. A word
     that would only make up a new name ("... folder with") is never taken in."""
+    # A marked folder typed whole is read whole first, without a lookup (`_marked_folder_typed_at`).
+    end = max(end, _marked_folder_typed_at(text, start))
     if not _spaces_may_extend(_clean_path(text[start:end])):
         return end
     best, pos = end, end
@@ -429,11 +502,12 @@ def _extend_through_spaces(text: str, start: int, end: int) -> int:
     return best
 
 
-def _rooted_candidates(body: str, *, typed_shares: bool = False) -> list[tuple[int, str]]:
+def _rooted_candidates(body: str, *, typed_shares: bool = False, look_up: bool = True) -> list[tuple[int, str]]:
     """``(start, raw path)`` for every rooted path in ``body``, quoted or not, in order. A URL's
     authority section is never one. With ``typed_shares``, a share, device or NT path typed with
     backslashes is a candidate too, quoted or not (`_TYPED_SHARE_RE`), taken as typed (never
-    extended through spaces)."""
+    extended through spaces). Without ``look_up``, no unquoted path is extended through spaces either,
+    so nothing on disk is looked at."""
     found: list[tuple[int, str]] = []
     quoted: list[tuple[int, int]] = []
     for match in _QUOTED_ROOTED_PATH_RE.finditer(body):
@@ -443,7 +517,8 @@ def _rooted_candidates(body: str, *, typed_shares: bool = False) -> list[tuple[i
         start = match.start()
         if _is_url_authority(body, start) or any(low <= start < high for low, high in quoted):
             continue
-        found.append((start, body[start : _extend_through_spaces(body, start, match.end())]))
+        end = _extend_through_spaces(body, start, match.end()) if look_up else match.end()
+        found.append((start, body[start:end]))
     if typed_shares:
         starts = {start for start, _raw in found}
         found.extend(
@@ -454,12 +529,14 @@ def _rooted_candidates(body: str, *, typed_shares: bool = False) -> list[tuple[i
     return sorted(found)
 
 
-def _destination_candidates(body: str, *, typed_shares: bool = False) -> Iterator[tuple[int, str]]:
+def _destination_candidates(
+    body: str, *, typed_shares: bool = False, look_up: bool = True
+) -> Iterator[tuple[int, str]]:
     """``(start, path)`` for every rooted candidate in ``body`` that is not payload, in order. With
     ``typed_shares``, a share, device or NT path typed with backslashes is a candidate too, quoted or
     not (`_TYPED_SHARE_RE`)."""
     fence_spans = _fenced_spans(body)
-    candidate_matches = _rooted_candidates(body, typed_shares=typed_shares)
+    candidate_matches = _rooted_candidates(body, typed_shares=typed_shares, look_up=look_up)
     content_spans = _content_marker_spans(body, [start for start, _raw in candidate_matches])
     for start, raw in candidate_matches:
         candidate = _clean_path(raw)
@@ -479,6 +556,20 @@ def write_destinations(text: str) -> list[str]:
     found: list[str] = []
     for start, candidate in _destination_candidates(body):
         if typed_path_kind(body, start, candidate) or not _write_intent_precedes(body, start):
+            continue
+        if candidate not in found:
+            found.append(candidate)
+    return found
+
+
+def named_full_paths(text: str) -> list[str]:
+    """Every full local path ``text`` names, in order, read as `write_destinations` reads them (quoted,
+    or through folders with spaces) but with no verb needed: a move names its source and destination
+    after one verb. Shares, devices and paths in dictated content are left out."""
+    body = str(text or "")
+    found: list[str] = []
+    for start, candidate in _destination_candidates(body):
+        if typed_path_kind(body, start, candidate):
             continue
         if candidate not in found:
             found.append(candidate)
@@ -506,17 +597,19 @@ def unreachable_write_target(text: str, *, source_context: dict[str, object] | N
     return ""
 
 
-def non_local_write_target(text: str, *, network_only: bool = False) -> tuple[str, str]:
+def non_local_write_target(text: str, *, network_only: bool = False, look_up: bool = True) -> tuple[str, str]:
     """On Windows, the first path this turn asks us to write that names a share, a device or no full
     local folder (only a share or a device, with ``network_only``), with its kind; ``("", "")``
     otherwise, and always off Windows. Nothing is looked up. A share or device typed with backslashes
     (`\\\\host\\s\\x`, `\\\\?\\C:\\x`), quoted or not, is found as typed. A block comment opened
     against its text (``/*eslint-disable*/``) is not one. A path named after one this passes over is
-    judged by the verb before that one too.
+    judged by the verb before that one too. Without ``look_up``, a local path typed through folders
+    with spaces is not extended by looking at what exists (`_extend_through_spaces`): that never
+    changes whether a path is a share or a device, so a ``network_only`` reading needs no lookup.
     """
     body = str(text or "")
     passed_start = -1
-    for start, candidate in _destination_candidates(body, typed_shares=windows_path_policy.active()):
+    for start, candidate in _destination_candidates(body, typed_shares=windows_path_policy.active(), look_up=look_up):
         if not candidate.strip("/\\*"):
             # A bare `//`, `///`, `/*` or `/**` (a code comment's marker in the text to write) names no
             # host and no folder as typed, so it is not answered here. The input normalizer can still
@@ -554,6 +647,20 @@ def _as_on_disk(root: Path | str) -> str:
         return str(root)
 
 
+def _climb_note(path: str) -> str:
+    """For a path that climbs with `..`, where it really leads, as one sentence; "" otherwise.
+
+    Captest B6 (2026-11-09): a write that used `..` to leave a marked folder wrote nothing, but the
+    answer did not say that the `..` was why."""
+    if ".." not in re.split(r"[\\/]", str(path or "")):
+        return ""
+    try:
+        leads_to = os.path.realpath(os.path.expanduser(path))
+    except (OSError, ValueError):
+        return "Its `..` climbs out of the folder named before it, to a place I can't place exactly."
+    return f"Its `..` climbs out of the folder named before it, so it leads to `{leads_to}`, which is outside every folder you marked."
+
+
 def unreachable_write_response(path: str, *, source_context: dict[str, object] | None) -> str:
     """The honest answer: name the path we were given, the roots we have, and the write we skipped."""
     roots = allowed_write_roots(source_context)
@@ -568,6 +675,12 @@ def unreachable_write_response(path: str, *, source_context: dict[str, object] |
                 "written on this turn."
             )
         listed = ", ".join(f"`{_as_on_disk(root)}`" for root in roots)
+        climb = _climb_note(path)
+        if climb:
+            return (
+                f"I can't write to `{path}`. {climb} On Windows I change files only inside the folders "
+                f"you marked: {listed}. Nothing was written on this turn."
+            )
         return (
             f"I can't write to `{path}` -- that path is outside every folder this build can write to, "
             f"and I'm not going to put the file somewhere else and report it as done. On Windows I can "
@@ -586,6 +699,7 @@ def unreachable_write_response(path: str, *, source_context: dict[str, object] |
 
 __all__ = [
     "allowed_write_roots",
+    "named_full_paths",
     "non_local_write_target",
     "requested_rooted_paths",
     "typed_path_kind",

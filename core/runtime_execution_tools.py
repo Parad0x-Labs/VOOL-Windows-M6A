@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:  # annotation-only: the refusal type is imported lazily at the doors
     from core.effect_budget import EffectBudgetRefusedError
 
+import contextlib
 import json
 import os
 import platform
@@ -2031,6 +2032,11 @@ def _machine_move_path(
     allowed_roots = list(_safe_machine_roots())
     if workspace_root is not None:
         allowed_roots.append(workspace_root)
+    # On Windows the folders the owner marked are the places VOOL may change, wherever they are, as
+    # for machine.write_file (`_marked_folder_machine_target`): a move between two marked folders
+    # outside Desktop, Documents and Downloads was refused here (captest R1-4). The Windows write
+    # gate checks both paths again before this runs.
+    allowed_roots.extend(_marked_machine_roots())
     result = move_path(
         str((arguments or {}).get("source") or ""),
         str((arguments or {}).get("destination") or ""),
@@ -4707,6 +4713,19 @@ def _marked_folder_machine_target(raw_path: str | None) -> Path | None:
     except (OSError, RuntimeError, ValueError):
         return None
     return candidate if windows_write_gate.inside_flagged(str(candidate)) else None
+
+
+def _marked_machine_roots() -> list[Path]:
+    """On Windows, the folders the owner marked (core/windows_write_gate.py); none off Windows or
+    when they cannot be read."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return []
+    try:
+        return [Path(root) for root in windows_write_gate.flagged_roots()]
+    except Exception:  # an unknown state adds no folder
+        return []
 
 
 def _resolve_machine_directory(raw_path: str | None, *, write: bool = False) -> Path:
@@ -7788,6 +7807,13 @@ def windows_program_refusal(intent: str, arguments: dict[str, Any]) -> RuntimeEx
     )
 
 
+#: The calls whose handler runs exactly one sandbox command derived from the call's arguments, so an
+#: exact approval of the call is an approval of that command (`_run_command`, `_run_validation`).
+_OPERATOR_APPROVED_COMMAND_INTENTS = frozenset(
+    {"sandbox.run_command", "workspace.run_tests", "workspace.run_lint", "workspace.run_formatter"}
+)
+
+
 def _run_command(
     arguments: dict[str, Any], *, workspace_root: Path, source_context: dict[str, Any] | None = None
 ) -> RuntimeExecutionResult:
@@ -7834,10 +7860,20 @@ def _run_command(
         network_isolation_mode=_trusted_local_network_mode(command, arguments=arguments),
         **({"read_roots": tuple(Path(root) for root in proof_reads)} if proof_reads else {}),
     )
+    # The call the operator approved exactly runs this one command in this one folder: the sandbox
+    # gate lets exactly that through, once, instead of asking about it again (core.execution_gate).
+    from core.execution_gate import claim_operator_approved_call, operator_approved_command
+
+    approved = (
+        operator_approved_command(command, cwd=str(cwd))
+        if claim_operator_approved_call(_OPERATOR_APPROVED_COMMAND_INTENTS)
+        else contextlib.nullcontext()
+    )
     # The operator's stop button reaches INTO the command: the turn's cancel signal (and, for a
     # code task step, the task's own) is polled by the job runner while the child runs, so a
     # cancellation kills the process instead of waiting for it to finish.
-    result = runner.run_command(command, cwd=str(cwd), cancel_event=_cancel_token_from(source_context))
+    with approved:
+        result = runner.run_command(command, cwd=str(cwd), cancel_event=_cancel_token_from(source_context))
     relative_cwd = _relative_path(cwd, workspace_root=workspace_root)
     status = str(result.get("status") or ("blocked_by_policy" if result.get("error") else ""))
     if status and status != "executed":

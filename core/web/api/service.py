@@ -765,9 +765,12 @@ def _runtime_model_catalog(
     catalog: list[dict[str, str]] = []
     seen: set[str] = set()
 
+    from core.ollama_cloud_models import refuses_cloud_name
+
     def _add(model_id: str, *, owned_by: str) -> None:
         normalized = str(model_id or "").strip()
-        if not normalized or normalized in seen:
+        # An Ollama cloud model is never listed on /api/tags or /v1/models (core.ollama_cloud_models).
+        if not normalized or normalized in seen or refuses_cloud_name(normalized):
             return
         seen.add(normalized)
         catalog.append({"id": normalized, "owned_by": str(owned_by or "vool-runtime").strip() or "vool-runtime"})
@@ -784,6 +787,27 @@ def _runtime_model_catalog(
         if provider_id:
             _add(provider_id, owned_by=owned_by)
     return catalog
+
+
+def _ollama_cloud_model_refusal(model: Any, runtime: RuntimeServices, *, check_store: bool = False) -> ApiResponse | None:
+    """A plain 400 refusal when ``model`` names an Ollama cloud model, else None.
+
+    ``check_store`` also reads Ollama's model store on disk for a cloud stub (remote_host /
+    remote_model) or an unreadable entry; the chat door checks the name only, every turn.
+    """
+    from core.ollama_cloud_models import REASON, is_cloud_model, refusal_text, refuses_cloud_name
+
+    name = str(model or "").strip() if isinstance(model, str) else ""
+    if not name:
+        return None
+    cloud = is_cloud_model(name) if check_store else refuses_cloud_name(name)
+    if not cloud:
+        return None
+    message = refusal_text(name)
+    return apply_runtime_headers(
+        json_response(400, {"ok": False, "error": message, "reason": REASON, "message": message, "model": name}),
+        runtime,
+    )
 
 
 def _ollama_tag_parameter_size(model_id: str, *, model_name: str, runtime: RuntimeServices) -> str:
@@ -3250,6 +3274,13 @@ def dispatch_post(
 
     clear_active_set()
 
+    if normalized_path in {"/api/chat", "/v1/chat/completions", "/api/generate"} and isinstance(body, dict):
+        # A turn that names an Ollama cloud model is refused at the door, in plain words, before
+        # any routing, recording or model call (core.ollama_cloud_models).
+        cloud_refusal = _ollama_cloud_model_refusal(body.get("model"), runtime)
+        if cloud_refusal is not None:
+            return cloud_refusal
+
     # C3b COUNCIL MODEL-PIN FENCE — the earliest point in the ONE chat ingress.
     # A council owns the machine's global composer pin for the length of a run, so an
     # ordinary turn resolving its model in that window is answered by whichever seat is
@@ -4332,6 +4363,9 @@ def _dispatch_post_inner(
             return apply_runtime_headers(
                 json_response(400, {"error": "provider_name and model_name are required"}), runtime
             )
+        cloud_refusal = _ollama_cloud_model_refusal(requested_model, runtime, check_store=True)
+        if cloud_refusal is not None:
+            return cloud_refusal
         try:
             timeout_seconds = float(body.get("timeout_seconds") or 90.0)
         except (TypeError, ValueError):
@@ -4433,6 +4467,9 @@ def _dispatch_post_inner(
         model_name = str(body.get("model_name") or "").strip()
         if not model_name:
             return apply_runtime_headers(json_response(400, {"error": "model_name is required"}), runtime)
+        cloud_refusal = _ollama_cloud_model_refusal(model_name, runtime, check_store=True)
+        if cloud_refusal is not None:
+            return cloud_refusal
         from core.local_model_policy import resolve_local_model_policy
         from core.web.api.runtime import (
             installed_ollama_model_names,

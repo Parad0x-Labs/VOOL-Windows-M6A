@@ -29,6 +29,22 @@ def _base_command_name(raw: str) -> str:
     return name
 
 
+def _windows_phase1_pins(program: str) -> bool:
+    """Whether, on Windows, `program` is a bare name the job runner's phase 1 pins to the interpreter
+    running VOOL (`_WINDOWS_PYTHON_NAMES`, `_WINDOWS_PYTEST_NAMES`, any case, `.exe` allowed)."""
+    from sandbox import job_runner
+
+    # Both seams: the command line is read by the Windows rules, AND the job runner takes its Windows
+    # branch, where every job passes `_windows_confine_prefix`. Otherwise the name is looked up as before.
+    if not (network_guard._IS_WINDOWS and job_runner._is_windows_platform()):
+        return False
+    if not program or any(sep in program for sep in ("\\", "/", ":")):
+        return False
+    name = program.lower()
+    stem = name[:-4] if name.endswith(".exe") else name
+    return stem in job_runner._WINDOWS_PYTHON_NAMES or stem in job_runner._WINDOWS_PYTEST_NAMES
+
+
 _FIND_LAUNCHING_PRIMARIES = frozenset({"-exec", "-execdir", "-ok", "-okdir"})
 _RG_LAUNCHING_OPTIONS = ("--pre", "--hostname-bin")
 
@@ -156,13 +172,22 @@ class SandboxRunner:
         if not argv:
             return {"error": "Empty command.", "status": "blocked_by_policy"}
         try:
-            # On Windows the program that actually runs must be an .exe outside the workspace: a .cmd
-            # or .bat found through PATHEXT would run through cmd.exe, which re-reads the line, and a
-            # program planted in the workspace would run as the whitelisted name. The checked
-            # absolute path is what is spawned, so Windows cannot search again. Off Windows, a no-op.
-            program = require_windows_exe(
-                str(argv[0] or ""), refuse_under=(str(self.workspace), str(target_cwd))
-            )
+            if _windows_phase1_pins(str(argv[0] or "")):
+                # A bare `python`/`python3`/`py`/`pytest` is never looked up on PATH on Windows: the
+                # job runner's phase-1 gate (`JobRunner._windows_phase1_argv`) runs it as the
+                # interpreter running VOOL, by its full path, and nothing else. A PATH hit is the
+                # Store's `python.exe` alias or another Python, which that gate refuses, so the
+                # approved `python t.py` was refused (or "not found") after its approval.
+                program = str(argv[0])
+            else:
+                # On Windows the program that actually runs must be an .exe outside the workspace: a
+                # .cmd or .bat found through PATHEXT would run through cmd.exe, which re-reads the
+                # line, and a program planted in the workspace would run as the whitelisted name.
+                # The checked absolute path is what is spawned, so Windows cannot search again. Off
+                # Windows, a no-op.
+                program = require_windows_exe(
+                    str(argv[0] or ""), refuse_under=(str(self.workspace), str(target_cwd))
+                )
         except ValueError as exc:
             return {"error": f"Command line refused: {exc}", "status": "blocked_by_policy"}
         argv = [program, *argv[1:]]

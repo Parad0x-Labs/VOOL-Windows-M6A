@@ -49,6 +49,9 @@ def detect_ollama_binary() -> str:
 
 
 def _ollama_api_url() -> str:
+    pinned = str(os.environ.get("VOOL_BUNDLE_OLLAMA_URL") or "").strip()  # the bundle supervisor's pin wins
+    if pinned:
+        return pinned if pinned.startswith(("http://", "https://")) else f"http://{pinned}"
     raw = str(os.environ.get("VOOL_RAW_OLLAMA_API_URL") or "").strip()
     if raw:
         return raw

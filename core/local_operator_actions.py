@@ -103,6 +103,22 @@ def windows_write_refusal(intent: OperatorActionIntent, *, session_id: str | Non
         # C:\...\hello.txt into it" was refused with the gate's internal "operator.move_path names no
         # destination_path, so its target cannot be checked" (Windows 0.7.1-beta, B12) before the
         # handler could say what the move needs.
+        # The paths as written, judged by their spelling first: a share, device, doubled-separator or
+        # network-drive path is refused before `Path` folds its spelling and before the gate resolves
+        # it (on Windows resolving `\\host\share` is already the SMB connection; RECONCILE-351 F1).
+        try:
+            written = operator_storage.move_request_values(
+                intent.raw_text,
+                fallback_source=intent.target_path,
+                fallback_destination=intent.destination_path,
+                extract_quoted_values_fn=_extract_quoted_values,
+            )
+        except Exception:  # an unreadable request: judge this turn's own paths, as before
+            written = (intent.target_path, intent.destination_path)
+        for key, value in zip(("source_path", "destination_path"), written, strict=True):
+            kind = windows_write_gate.refused_spelling(value)
+            if kind:
+                return windows_write_gate.spelling_refusal_text(value, kind, what=key, nothing="moved")
         # Read exactly as `_parse_move_request` reads it, but with environment variables left for the
         # gate to expand once, as it expands every operator path (the handler expands them once too).
         try:
@@ -117,13 +133,58 @@ def windows_write_refusal(intent: OperatorActionIntent, *, session_id: str | Non
         except Exception:  # an unreadable request: judge this turn's own paths, as before
             return windows_write_gate.refusal("operator.move_path", arguments, None)
         if parsed is None:
-            return None
-        return windows_write_gate.refusal(
+            # The handler would answer "I need a quoted source path", which reads as "try again with
+            # quotes" even when a path the request names lies outside the marked folders, where no
+            # move can run (captest round 1, R1-5). Such a request gets the plain refusal instead.
+            return _move_outside_marked_refusal(_paths_a_move_names(intent.raw_text))
+        refused = windows_write_gate.refusal(
             "operator.move_path",
             {"source_path": parsed.get("source_path"), "destination_path": parsed.get("destination_dir")},
             None,
         )
+        if refused:
+            named = _move_outside_marked_refusal([str(parsed.get("source_path") or ""), str(parsed.get("destination_dir") or "")])
+            return named or refused
+        return None
     return windows_write_gate.refusal("operator.cleanup_temp_files", {"target_path": intent.target_path}, None)
+
+
+def _paths_a_move_names(text: str) -> list[str]:
+    """The full local paths a move request names, read whole (quoted, or through folders with spaces)."""
+    from core.agent_runtime.write_root_honesty import named_full_paths
+
+    try:
+        return named_full_paths(text)
+    except Exception:  # an unreadable request names nothing this check can judge
+        return []
+
+
+def _move_outside_marked_refusal(paths: list[str]) -> str | None:
+    """On Windows, a plain refusal naming the first of ``paths`` that lies outside every marked folder,
+    or None when each lies inside one (or none is a full path). Each is placed as the gate places an
+    operator path: ``~`` and environment variables expanded, then resolved, so `..` is followed."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return None
+    for path in paths:
+        if not path or not path.strip():
+            continue
+        expanded = os.path.expanduser(os.path.expandvars(path.strip()))
+        if not os.path.isabs(expanded):
+            continue
+        if windows_write_gate.inside_flagged(expanded):
+            continue
+        try:
+            leads_to = os.path.realpath(expanded)
+        except (OSError, ValueError):
+            leads_to = expanded
+        where = f"`{path}`" if os.path.normcase(leads_to) == os.path.normcase(expanded) else f"`{path}` (that is `{leads_to}`)"
+        return (
+            f"I can't move that: {where} is outside the folders you marked as ones VOOL may change "
+            f"({windows_write_gate.ENV_VAR}), and on Windows VOOL moves files only inside them. Nothing was moved."
+        )
+    return None
 
 
 def dispatch_operator_action(
@@ -142,6 +203,19 @@ def dispatch_operator_action(
         refused = operator_handlers.non_local_path_refusal(intent.kind, intent.target_path, intent.destination_path)
         if refused is not None:
             return refused
+        # Where the Windows write gate is on, its spelling rule too (a doubled separator after the
+        # drive, a mapped or unknown drive), before the disk-usage handler stats the path. A move and
+        # a clean-up are judged by the gate itself in `windows_write_refusal` below.
+        if intent.kind == "inspect_disk_usage":
+            from core import windows_write_gate
+
+            kind = windows_write_gate.refused_spelling(intent.target_path)
+            if kind:
+                return OperatorActionResult(
+                    ok=False, status=windows_write_gate.STATUS,
+                    response_text=windows_write_gate.spelling_refusal_text(intent.target_path, kind, nothing="looked up"),
+                    details={"kind": intent.kind},
+                )
     if intent.kind in {"schedule_reminder", "list_reminders", "cancel_reminder", "move_reminder",
                        "cancel_calendar_event", "move_calendar_event",
                        "check_availability", "list_calendars", "inspect_calendar_event",

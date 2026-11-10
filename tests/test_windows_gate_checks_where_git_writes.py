@@ -67,13 +67,15 @@ _GIT_STARTS: list = []
 
 @contextlib.contextmanager
 def _as_before_0_7_1():
-    """The gate off, as when the session was opened before 0.7.1 or on another platform."""
-    saved = gate._IS_WINDOWS
-    gate._IS_WINDOWS = False
+    """The gate and core/safe_git.py's git refusal off, as when the session was opened before 0.7.1 or
+    on another platform. On a real Windows host safe_git refuses git from the platform itself, so the
+    gate's seam alone would leave repo.session.open refused there."""
+    saved_gate, saved_git = gate._IS_WINDOWS, safe_git._REFUSE_GIT
+    gate._IS_WINDOWS, safe_git._REFUSE_GIT = False, False
     try:
         yield
     finally:
-        gate._IS_WINDOWS = saved
+        gate._IS_WINDOWS, safe_git._REFUSE_GIT = saved_gate, saved_git
 
 
 @contextlib.contextmanager
@@ -511,7 +513,8 @@ def test_a_marked_repository_whose_config_names_a_program_is_refused_before_appr
 
     _assert_refused_before_approval(execution, world)
     # Before 0.7.1 the refusal gave the runner's words naming core.sshCommand; git is not asked now.
-    assert "core.sshcommand" in GitRunner(root=repo)._repository_refusal(mutating=False).lower()
+    with _as_before_0_7_1():
+        assert "core.sshcommand" in GitRunner(root=repo)._repository_refusal(mutating=False).lower()
     assert _state(repo) == before
     assert _journal_steps(session) == {}
 

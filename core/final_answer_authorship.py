@@ -661,7 +661,10 @@ def local_manifest_authorship_certified(manifest: Any) -> bool:
     """
     try:
         from core.local_model_tool_certification import certification_applies
+        from core.ollama_cloud_models import manifest_is_ollama_cloud
 
+        if manifest_is_ollama_cloud(manifest):
+            return False  # an Ollama cloud model is never a certified author
         if not certification_applies(manifest):
             return True
         # Through the fence's own verdict cache: ``certification_status`` reads the backend identity

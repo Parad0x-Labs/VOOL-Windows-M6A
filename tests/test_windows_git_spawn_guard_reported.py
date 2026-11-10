@@ -26,6 +26,7 @@ def test_the_state_is_read_from_the_hook_not_from_a_flag(monkeypatch) -> None:
         assert safe_git.spawn_guard_state()["armed"] is False
         assert safe_git.spawn_guard_state()["status"] == "unarmed"
     monkeypatch.setattr(safe_git, "_GUARD_INSTALLED", False)
+    monkeypatch.setattr(safe_git, "_GUARD_ARMED", safe_git._GUARD_ARMED)  # disarmed again after the row
     safe_git.install_spawn_guard()
     state = safe_git.spawn_guard_state()
     assert state["hook_live"] is True and state["armed"] is True and state["status"] == "armed"

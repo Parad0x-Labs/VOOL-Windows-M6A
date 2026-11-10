@@ -792,7 +792,13 @@ def maybe_handle_direct_machine_write_request(
             execution=execution,
             reason="machine_write_fast_path",
         )
-    marked_write = _extract_marked_folder_write_target(user_input)
+    # Read from what the user typed (`verbatim_request_text`): on the resend after an approval the text
+    # here is the input normalizer's, which read `hiÄ.txt` as `hi Ä. txt`, so the approved write was
+    # never run (Security Architect review of R1-4, 9 Nov 2026).
+    from core.execution.write_demand import verbatim_request_text
+
+    typed_input = verbatim_request_text(source_context, user_input) or user_input
+    marked_write = _extract_marked_folder_write_target(typed_input)
     if marked_write is not None:
         execution = execute_authorized_runtime_tool(
             "machine.write_file",
@@ -811,7 +817,7 @@ def maybe_handle_direct_machine_write_request(
             reason="machine_write_fast_path",
             response_text=_read_back_reply(execution, marked_write),
         )
-    unserved = _marked_destination_outside_workspace(user_input, source_context=source_context)
+    unserved = _marked_destination_outside_workspace(typed_input, source_context=source_context)
     if unserved:
         # The builder and the workspace lanes join what they write onto the chat's workspace, so a
         # turn they took here would land somewhere other than the marked folder it names.

@@ -42,6 +42,12 @@ def is_code_ask(text: str) -> bool:
     from core.agent_runtime import write_root_honesty as paths
 
     body = str(text or "")
+    # Lexical first: reading the paths out of the text extends them through spaces by looking at
+    # what exists, and this runs on every owner-local turn. A text with no code word anywhere,
+    # paths included, is no code ask, and nothing it names is looked up (CI 42676239859: the
+    # heartbeat poll "Read C://attkr9/s/HEARTBEAT.md ..." was stat'ed and its folder listed here).
+    if not _CODE_ASK_RE.search(body):
+        return False
     for start, raw in reversed(paths._rooted_candidates(body)):
         if paths._clean_path(raw).lower().endswith(".py"):
             return True  # a Python file named by its full path
@@ -54,8 +60,10 @@ def _on_a_local_drive(candidate: str) -> bool:
     letter only when Windows calls that drive local (a mapped network drive is a share under a
     letter, and looking it up is already the SMB connection; a type Windows cannot name counts as
     remote). On Windows a path with no drive letter is never local here."""
-    from core import windows_known_folders
+    from core import windows_known_folders, windows_path_policy
 
+    if windows_path_policy.refused_doubled_drive(candidate):
+        return False  # `C://host/s` is read as the share `//host/s`: never looked up
     drive = ntpath.splitdrive(str(candidate or ""))[0]
     if re.fullmatch(r"[A-Za-z]:", drive):
         return windows_known_folders._drive_is_remote(drive) is False

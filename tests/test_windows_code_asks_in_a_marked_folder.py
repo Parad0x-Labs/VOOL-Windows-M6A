@@ -17,6 +17,8 @@ would run, which is what this change decides.
 """
 from __future__ import annotations
 
+import ntpath
+
 import json
 import uuid
 from pathlib import Path
@@ -258,7 +260,13 @@ def test_the_served_chat_runs_the_job_in_the_marked_folder(machine, tmp_path, mo
     reply = _served_turn(machine, tmp_path, monkeypatch, text=text.format(folder=folder), call=call, mode="auto")
     assert "outside the active workspace" not in reply, reply
     assert [(workspace, cwd) for workspace, cwd, _command in _Recorder.jobs] == [(folder, folder)]
-    assert command in _Recorder.jobs[0][2]
+    # On a Windows host run_tests names the interpreter by its full path
+    # (C:\\...\\python.exe -m pytest -q): the program must still be Python, the arguments unchanged.
+    program, _, rest = command.partition(" ")
+    ran = _Recorder.jobs[0][2].strip()
+    assert ran.endswith(f" {rest}"), (command, ran)
+    ran_program = ran[: -len(rest) - 1].strip().strip('"')
+    assert ntpath.basename(ran_program).lower() in {program, f"{program}.exe"}, (command, ran)
     assert list(machine["workspace"].iterdir()) == []
 
 

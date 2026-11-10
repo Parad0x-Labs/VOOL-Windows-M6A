@@ -661,7 +661,14 @@ def _stream_ollama_pull(
     a callable that wakes this read from another thread (``_wake_pull_read``), so a Cancel does not
     wait for Ollama's next line; whatever the woken read then raises or returns, a pull whose
     ``cancelled`` answers True ends as ``ModelPullCancelled``, never as a failure or a success.
+
+    An Ollama cloud model (core.ollama_cloud_models: a cloud name, or a stub in the model store
+    naming remote_host / remote_model, or a store entry that cannot be read) is refused here with
+    ``CloudModelRefused`` before Ollama is contacted. Every VOOL pull goes through this function.
     """
+    from core.ollama_cloud_models import refuse_cloud_model
+
+    refuse_cloud_model(model_tag)
     body = json.dumps({"model": model_tag, "stream": True}).encode("utf-8")
     request = urllib.request.Request(
         f"{progress.base_url}/api/pull",
@@ -743,6 +750,12 @@ def _stream_ollama_pull(
 def ensure_ollama_model(model_tag: str | None = None, *, progress: ModelPullProgress | None = None) -> None:
     active_model = str(model_tag or "").strip() or default_runtime_model_tag()
     tracker = progress if progress is not None else ModelPullProgress(active_model)
+    from core.ollama_cloud_models import is_cloud_model, refusal_text
+
+    if is_cloud_model(active_model):  # refused before any request to Ollama
+        tracker.update(status="failed", detail=refusal_text(active_model))
+        logger.warning("Refused to pull Ollama cloud model '%s'.", active_model)
+        return
     if ollama_model_installed(active_model, env={"VOOL_RAW_OLLAMA_API_URL": tracker.base_url}):
         tracker.update(status="ready", percent=100, detail="already installed")
         return
@@ -786,6 +799,13 @@ def start_ollama_model_pull(model_tag: str | None = None, *, env: dict[str, str]
         selected_env = {**selected_env, "VOOL_ALLOW_OLLAMA_TAGS_FOR_DEFAULT": "0", "VOOL_REGISTER_INSTALLED_OLLAMA_MODELS": "0"}
     active_model = str(model_tag or "").strip() or default_runtime_model_tag(env=selected_env)
     progress = ModelPullProgress(active_model, env=selected_env)
+    from core.ollama_cloud_models import is_cloud_model, refusal_text
+
+    if is_cloud_model(active_model, env=selected_env):
+        # An Ollama cloud model is never pulled, looked up or prepared: no thread, no Ollama traffic.
+        progress.update(status="failed", detail=refusal_text(active_model))
+        progress.finish()
+        return progress
     if not local_enabled:
         progress.update(status="skipped", detail="local models disabled by policy")
         progress.finish()

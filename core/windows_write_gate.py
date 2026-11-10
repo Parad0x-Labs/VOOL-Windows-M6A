@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import json
 import logging
+import ntpath
 import os
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -86,13 +88,196 @@ def _skip(part: str, reason: str) -> None:
         logger.warning("%s entry \"%s\" is not flagged: %s. The other entries stay flagged.", ENV_VAR, part, reason)
 
 
-def _windows_root(part: str) -> str | None:
+#: Environment variables naming folders a marked root may not be, nor hold: as a write root it
+#: would open the user's whole profile, the temp folders or the per-user app data (VOOL's own
+#: install and home live in LOCALAPPDATA).
+_PROFILE_VARS = ("USERPROFILE",)
+_HELD_VARS = ("TEMP", "TMP", "LOCALAPPDATA")
+
+
+#: A drive letter followed by two separators: `C://host/s`, `C:\\\\host\\s`, `C:/\\x`, `C:\\/x`.
+_DOUBLED_DRIVE_SEPARATOR_RE = re.compile(r"^[\"'`]?[A-Za-z]:[\\/]{2}")
+_DRIVE_RE = re.compile(r"[A-Za-z]:")
+#: What `_refused_spelling` answers besides `windows_path_policy.NETWORK_KINDS` and `root_relative`.
+DOUBLED_DRIVE = "doubled_drive_separator"
+REMOTE_DRIVE = "remote_drive"
+RELATIVE_OFF_LOCAL = "relative_off_local_drive"
+#: Whether this host spells paths as Windows does (patched by tests). There a root-relative path
+#: (`\\x`) lands on whatever drive is current, which is not the place anyone reviewed, so it is
+#: refused. Off Windows every POSIX full path (the marked folders too) spells as root-relative.
+_NT_SPELLING = os.name == "nt"
+
+
+def _spellings(stripped: str) -> list[str]:
+    """`stripped` as written and as a caller may expand it: `%VAR%` and `$VAR`, then `~` (a redirected
+    profile, `USERPROFILE=\\\\server\\home\\me`, puts `~\\x` on that share). Reads only the environment."""
+    found: list[str] = []
+    for spelled in (stripped, ntpath.expandvars(stripped), os.path.expandvars(stripped)):
+        variants = [spelled, ntpath.expanduser(spelled), os.path.expanduser(spelled)]
+        if spelled == "~" or spelled.startswith(("~\\", "~/")):
+            # How the machine tools place `~\\rest`: the home folder joined with `rest`.
+            variants.append(os.path.expanduser("~") + "\\" + spelled[2:])
+        found.extend(variant.strip() for variant in variants)
+    return list(dict.fromkeys(found))
+
+
+def _drive_refusal(drive: str) -> str:
+    """REMOTE_DRIVE unless Windows calls the drive letter `drive` (`C:`) local; an unknown type is remote."""
+    from core import windows_known_folders
+
+    try:
+        local = windows_known_folders._drive_is_remote(drive.upper()) is False
+    except Exception:  # an unknown drive type counts as remote (fail closed)
+        local = False
+    return "" if local else REMOTE_DRIVE
+
+
+def _refused_spelling(value: Any, *, anchor: str | None = None) -> str:
+    """Why the gate refuses `value` by its spelling alone, before anything resolves, stats or lists
+    it, or "" when it may be looked up:
+
+    - a share, a device path or an NT object path (`windows_path_policy.classify`, network tier);
+    - a drive path with a doubled separator right after the colon (`C://host/s`, `C:\\\\host\\s`),
+      which a reader of the text from its first separator takes for the share `//host/s`;
+    - on a Windows host (`_NT_SPELLING`), a root-relative path (`\\x`), which lands on whatever
+      drive is current;
+    - a path on a drive Windows does not call local (`windows_known_folders._drive_is_remote` is
+      not False: a mapped network drive is a share under a letter, and a drive type Windows cannot
+      name counts as remote), a drive-relative one (`Z:x`) included;
+    - a relative path (`x\\y`) read from a folder that is itself refused here: `anchor`, the folder
+      the caller places it in, by default the working directory (RELATIVE_OFF_LOCAL).
+
+    Each is judged as written and as expanded (`_spellings`: `%VAR%`, `$VAR`, `~`). On Windows looking
+    any of these up is already the SMB connection, and the user's NTLM hash sent to whoever answers,
+    so every check here runs before `_inside`, `_landing` or a root's own checks reach the filesystem
+    (RECONCILE-351 F1). Asked only where the gate is on."""
+    text = windows_path_policy._text(value)
+    if text is None:
+        return ""
+    stripped = text.strip()
+    if not stripped:
+        return ""
+    for spelled in _spellings(stripped):
+        kind = windows_path_policy.classify(spelled, network_only=True)
+        if kind:
+            return kind
+        if _DOUBLED_DRIVE_SEPARATOR_RE.match(spelled):
+            return DOUBLED_DRIVE
+        unquoted = spelled.lstrip("\"'`")
+        if _NT_SPELLING and unquoted[:1] in ("\\", "/"):
+            return "root_relative"
+        drive = ntpath.splitdrive(unquoted)[0]
+        if _DRIVE_RE.fullmatch(drive):
+            kind = _drive_refusal(drive)
+            if kind:
+                return kind
+        elif not drive and unquoted[:1] not in ("\\", "/", "~") and anchor != "":
+            # A relative path lands in the folder it is read from, judged as that folder is (never
+            # itself as a relative path again).
+            try:
+                folder = os.getcwd() if anchor is None else anchor
+            except OSError:  # no working directory to place it in: fail closed
+                return RELATIVE_OFF_LOCAL
+            if _refused_spelling(folder, anchor=""):
+                return RELATIVE_OFF_LOCAL
+    return ""
+
+
+def refused_spelling(value: Any, *, windows: bool | None = None) -> str:
+    """Where the gate is on (`active`), the kind `_refused_spelling` gives `value`; otherwise "".
+    For a lane that reads a path out of a message and must refuse it before its own first lookup."""
+    if not active(windows=windows):
+        return ""
+    return _refused_spelling(value)
+
+
+def spelling_refusal_text(value: Any, kind: str, *, what: str = "path", nothing: str = "changed") -> str:
+    """The sentence the gate refuses a `_refused_spelling` kind with, naming `value` as written."""
+    text = windows_path_policy._text(value)
+    shown = re.sub(r"[\r\n\v\f\x1c\x1d\x1e\x85\u2028\u2029]", " ",
+                   (str(value) if text is None else text).replace("`", ""))[:120]
+    if kind == DOUBLED_DRIVE:
+        form = "a drive path with a doubled separator, which reads as a share"
+    elif kind == REMOTE_DRIVE:
+        form = "a drive Windows does not call local (a mapped network drive is a share under a letter)"
+    elif kind == RELATIVE_OFF_LOCAL:
+        form = "a relative path, and the folder it would be read from is not on a local drive"
+    elif kind == "root_relative":
+        form = "a path with no drive, which lands on whatever drive is current"
+    else:
+        form = "a share or a device path"
+    return (
+        f"On Windows, VOOL does not look up the {what} `{shown}`: it is {form}, and looking it up already "
+        f"connects to it. Nothing was {nothing}."
+    )
+
+
+def _resolved_norm(value: str) -> str:
+    """`value` as the gate compares it: resolved (junctions and links followed) and normcased.
+    A share, device, doubled-separator or network-drive spelling is never resolved, since resolving
+    it is the SMB connection."""
+    if _refused_spelling(value):
+        return os.path.normcase(value)
+    return os.path.normcase(os.path.realpath(value))
+
+
+def _holds_path(folder: str, other: str) -> bool:
+    """Whether `folder` is `other` or an ancestor of it (both already resolved and normcased)."""
+    try:
+        return os.path.commonpath([folder, other]) == folder
+    except ValueError:  # different drives, or one relative
+        return False
+
+
+def _too_wide(resolved: str) -> str:
+    """Why the resolved, normcased folder `resolved` is too wide to be a write root, or '': a drive
+    root, the user profile itself, or a folder that is or holds TEMP, TMP or LOCALAPPDATA (a folder
+    inside them, such as the test harness's own temp folders, is fine).
+    Each named folder is resolved too, so a junction on either side is judged by its target. A
+    named folder that cannot be resolved makes the root too wide (unknown states fail closed)."""
+    env = os.environ
+    if not os.path.splitdrive(resolved)[1].strip("\\/"):
+        return "it is a whole drive"
+    named: list[tuple[str, str]] = [(name, str(env.get(name) or "").strip()) for name in (*_PROFILE_VARS, *_HELD_VARS)]
+    named.append(("the user's home", os.path.expanduser("~")))
+    for name, value in named:
+        if not value or not os.path.isabs(value):
+            continue
+        try:
+            other = _resolved_norm(value)
+        except (OSError, ValueError):
+            return f"{name} cannot be resolved, so the folder cannot be checked against it"
+        if name in _HELD_VARS:
+            if _holds_path(resolved, other):
+                return f"it is or holds the {name} folder"
+        elif resolved == other:
+            # A folder above the profile is skipped too on a real Windows profile, where it
+            # also holds LOCALAPPDATA (inside the profile), by the rule above.
+            return "it is the user profile"
+    return ""
+
+
+def wide_root_reason(part: str) -> str:
+    """Why the folder `part` names may never be a write root on Windows (`_too_wide`), or ''. For
+    the broker's list and the owner's list, which read entries outside `_windows_root`."""
+    raw = str(part or "").strip()
+    if not raw or "\x00" in raw:
+        return "it is not a folder path"
+    try:
+        return _too_wide(_resolved_norm(raw))
+    except (OSError, ValueError):
+        return "it cannot be resolved"
+
+
+def _windows_root(part: str, *, wide: bool = True) -> str | None:
     """The flagged root `part` gives on Windows, or None (with a warning) for an entry the broker
     refuses too (Phase C picks 1, 5 and 10, owner 2026-10-23). A share or device path is judged by its
     spelling before anything opens it, because checking whether a share is a folder connects to it.
     On Linux CI every POSIX root spells as root-relative, so the full spelling rule applies only on
-    a real Windows host."""
-    kind = windows_path_policy.classify(part, network_only=True) or (
+    a real Windows host. A drive root, the user profile and a folder holding TEMP, TMP or
+    LOCALAPPDATA are skipped too, judged after resolving (`_too_wide`); `wide=False` leaves that
+    to the caller (the owner's list judges marks with its own rules, core/windows_disposable_store.py)."""
+    kind = _refused_spelling(part) or (
         windows_path_policy.classify(part) if os.name == "nt" else ""
     )
     if kind:
@@ -111,7 +296,16 @@ def _windows_root(part: str) -> str | None:
     if windows_path_policy.classify(resolved, network_only=True):
         _skip(part, "it is on a network drive")
         return None
-    return os.path.normcase(resolved)
+    root = os.path.normcase(resolved)
+    if wide:
+        try:
+            too_wide = _too_wide(root)
+        except (OSError, ValueError):
+            too_wide = "it cannot be checked against the profile and temp folders"
+        if too_wide:
+            _skip(part, f"{too_wide}, which as a write root would open far more than a workspace")
+            return None
+    return root
 
 
 def flagged_roots(environ: dict[str, str] | None = None) -> list[str]:
@@ -133,7 +327,15 @@ def flagged_roots(environ: dict[str, str] | None = None) -> list[str]:
 
                 folders = [path for path in folders
                            if path in kept or ("*" not in gone and normalised(path) not in gone)]
-            return folders
+            # The broker's own checks refuse a volume root but not the profile or the temp folders.
+            kept_folders = []
+            for path in folders:
+                too_wide = wide_root_reason(path)
+                if too_wide:
+                    _skip(path, f"{too_wide}, which as a write root would open far more than a workspace")
+                else:
+                    kept_folders.append(path)
+            return kept_folders
     roots = _env_roots(os.environ if environ is None else environ)
     if environ is None and _IS_WINDOWS:
         # The owner's own list (core/windows_disposable_store.py): its entries as they were at this
@@ -217,10 +419,15 @@ def capability_report() -> dict[str, Any] | None:
     }
 
 
-def _inside(path: str, roots: list[str]) -> bool:
+def _inside(path: str, roots: list[str], *, lexical: bool | None = None) -> bool:
+    """Whether `path`, resolved, lies inside one of `roots`. Where the gate is on (`lexical`, by
+    default `active()`), a spelling `_refused_spelling` refuses is never inside, and is not resolved:
+    resolving a share is already the SMB connection."""
     # No file can have a path holding a NUL. POSIX realpath raises on one, but Windows realpath
     # returns it unresolved, so the text around the NUL would decide where it lies.
     if "\x00" in path:
+        return False
+    if (active() if lexical is None else lexical) and _refused_spelling(path):
         return False
     try:
         candidate = os.path.normcase(os.path.realpath(path))
@@ -539,6 +746,19 @@ def refusal(
             "complete: a cleanup also empties the system temp folders and a plan stored earlier, which "
             f"are not limited to the folders marked in {ENV_VAR}. Nothing was changed."
         )
+    # Every path the call names, judged by its spelling before anything places, resolves or stats it:
+    # `_landing` resolves a machine path, and `_inside` resolves every target.
+    if workspace_root and intent not in _LANDING_ONLY:
+        kind = _refused_spelling(workspace_root)
+        if kind:
+            return spelling_refusal_text(workspace_root, kind, what="folder this call works in")
+    for key in _GATED[intent]:
+        # A machine write places a relative path in the home folder (`anchor_machine_path`); every
+        # other keyed writer reads it from the working directory.
+        anchor = os.path.expanduser("~") if intent in _LANDING_ONLY else None
+        kind = _refused_spelling(arguments.get(key), anchor=anchor)
+        if kind:
+            return spelling_refusal_text(arguments.get(key), kind, what=key)
     roots = flagged_roots(environ)
     targets = [str(workspace_root)] if workspace_root and intent not in _LANDING_ONLY else []
     for key in _GATED[intent]:
@@ -552,7 +772,7 @@ def refusal(
                         "so its target cannot be checked")
             return f"{intent} names a {key} the gate cannot place exactly, so its target cannot be checked"
         targets.extend(landing)
-    if roots and targets and all(_inside(target, roots) for target in targets):
+    if roots and targets and all(_inside(target, roots, lexical=True) for target in targets):
         # Only once every place the arguments name is inside: the folders the call runs in, which
         # need a journal read (and for git, one git process).
         try:
@@ -561,7 +781,7 @@ def refusal(
             places = f"where this call writes could not be checked ({type(exc).__name__})"
         if isinstance(places, str):
             return f"{places}; nothing was changed."
-        outside = [(label, place) for label, place in places if not _inside(place, roots)]
+        outside = [(label, place) for label, place in places if not _inside(place, roots, lexical=True)]
         if not outside:
             return None
         label, place = outside[0]
@@ -577,4 +797,5 @@ def refusal(
     )
 
 
-__all__ = ["ENV_VAR", "STATUS", "active", "broker_report", "flagged_roots", "inside_flagged", "may_refuse", "refusal"]
+__all__ = ["DOUBLED_DRIVE", "ENV_VAR", "RELATIVE_OFF_LOCAL", "REMOTE_DRIVE", "STATUS", "active", "broker_report", "flagged_roots",
+           "inside_flagged", "may_refuse", "refusal", "refused_spelling", "spelling_refusal_text", "wide_root_reason"]
