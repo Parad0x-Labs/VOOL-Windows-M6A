@@ -137,6 +137,16 @@ def test_hive_unreachable_real_entrypoint_does_not_promote_ledger() -> None:
     assert result.status == "unreachable"
     ledger = _ledger_by_id(runtime_capability_ledger(hive_read_reachable_fn=lambda: result.ok))
     assert ledger["hive.read"]["supported"] is False
+    from core import windows_cloud_gate
+
+    if windows_cloud_gate.active():
+        # Windows 0.7.1 (the seam only): no Hive route before the owner opts in, so hive.read is
+        # off by policy, said as such, and never promoted.
+        assert ledger["hive.read"]["availability_state"] == "off_on_windows"
+        assert ledger["hive.read"]["unsupported_reason"] == "The Hive is off on Windows in this release."
+        assert ledger["hive.read"]["dispatchable_intents"] == []
+        assert "hive.read" not in [entry.get("public_tag") for entry in ledger.values() if entry.get("supported")]
+        return
     assert ledger["hive.read"]["availability_state"] == "unreachable"
     assert "hive.read" not in [entry.get("public_tag") for entry in ledger.values() if entry.get("supported")]
 
