@@ -20,6 +20,7 @@ from urllib.error import HTTPError
 
 import pytest
 
+from tests import _windows_refusals as windows_refusals
 from tests._blackbox_served_rig import REPO_ROOT, SEED_MANIFEST, ScriptedProvider, ServedDaemon, run_in_home
 from tests._toolchain_fixtures import PLUGIN_ID, calls_logged, make_plugin
 
@@ -117,6 +118,11 @@ def _seed_budget(home: Path, *rules: dict[str, Any]) -> None:
     assert "SEEDED" in out, out
 
 
+#: The rows with a Windows 0.7.1 expectation of their own: there the pack's served enable is refused
+#: in the plugin sentence, so the fixture asserts that refusal and the row ends on `refused_on_windows`.
+_WINDOWS_REPINNED = frozenset({"test_served_operator_command_dispatch_is_budgeted"})
+
+
 def _journal_entries(store_dir: Path) -> list[dict[str, Any]]:
     from storage.blackbox.journal import Journal
 
@@ -170,6 +176,7 @@ def served(tmp_path: Path, request):
     daemon = ServedDaemon(
         home,
         env_extra={
+            **windows_refusals.daemon_seams(tmp_path / "daemon-seams"),
             **env_extra,
             "OLLAMA_HOST": provider.base_url,
             "VOOL_OLLAMA_URL": provider.base_url,
@@ -186,6 +193,11 @@ def served(tmp_path: Path, request):
         run_in_home(home, SEED_MANIFEST.format(root=REPO_ROOT, base_url=provider.base_url, registered=[MODEL]))
         from urllib.request import Request, urlopen
 
+        if request.node.originalname in _WINDOWS_REPINNED and windows_refusals.refuses_served_activation(
+            daemon.base_url, PLUGIN_ID, plugin_dir, scratch_root, workspace
+        ):
+            yield windows_refusals.RefusedWorld(refused_on_windows=True, home=home, workspace=workspace)
+            return
         for act in ("install", "verify", "enable"):
             request_payload = Request(
                 f"{daemon.base_url}/api/plugins/lifecycle",
@@ -206,6 +218,7 @@ def served(tmp_path: Path, request):
             "mcp_cwd": mcp_cwd,
             "daemon": daemon,
             "provider": provider,
+            "refused_on_windows": False,
         }
     finally:
         daemon.stop()
@@ -371,6 +384,8 @@ class TestServedPluginBudgets:
         `execute_command` door the CLI and the model lane use — under a window-scoped
         `command` rule. The first real mutation runs; the second dispatch is refused by
         the budget before the handler, and the pack's lifecycle state proves it."""
+        if served["refused_on_windows"]:  # Windows 0.7.1: the fixture asserted the refused enable
+            return
         daemon: ServedDaemon = served["daemon"]
         home: Path = served["home"]
 

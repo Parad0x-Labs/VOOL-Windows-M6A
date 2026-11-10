@@ -421,3 +421,79 @@ def refuses_repo_session_exactly(world: tuple, ctx: dict | None = None) -> bool:
     )
     assert forge.calls == [], forge.calls
     return True
+
+
+def daemon_seams(folder: Path) -> dict[str, str]:
+    """env_extra that hands this process's forced Windows seams to a served daemon or other child.
+
+    A daemon decides git and plugins/MCP from its own platform, so a Linux run that forces a seam on
+    here must force it there too: a `sitecustomize.py` in `folder`, ahead of the checkout on the
+    child's PYTHONPATH. On Windows the child refuses by itself and a plugin line is not needed; with
+    no seam forced this is ``{}`` and the child's environment is what it always was."""
+    lines = []
+    if safe_git._REFUSE_GIT is True:
+        lines.append("import core.safe_git as _git_seam\n_git_seam._REFUSE_GIT = True\n")
+    if plugin_executor._WINDOWS_REFUSES_PLUGINS_AND_MCP and os.name != "nt":
+        lines.append("import core.plugin_executor as _plugin_seam\n_plugin_seam._WINDOWS_REFUSES_PLUGINS_AND_MCP = True\n")
+    if not lines:
+        return {}
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "sitecustomize.py").write_text("".join(lines), encoding="utf-8")
+    checkout = Path(__file__).resolve().parents[1]
+    return {"PYTHONPATH": f"{folder}{os.pathsep}{checkout}"}
+
+
+def served_lifecycle_post(base_url: str, action: str, plugin_id: str) -> tuple[int, dict]:
+    """POST /api/plugins/lifecycle once; the HTTP status and the JSON body, also for an error status."""
+    import json
+    from urllib.error import HTTPError
+    from urllib.request import Request, urlopen
+
+    request = Request(
+        f"{base_url}/api/plugins/lifecycle",
+        data=json.dumps({"action": action, "plugin_id": plugin_id}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=30) as response:
+            return response.status, json.loads(response.read().decode("utf-8"))
+    except HTTPError as error:
+        return error.code, json.loads(error.read().decode("utf-8"))
+
+
+def refuses_served_activation(base_url: str, plugin_id: str, *roots: Path) -> bool:
+    """For a served fixture that activates a pack through the daemon's lifecycle door (install,
+    verify, enable). Where plugins are refused: install and verify answer HTTP 200 ok (they start
+    nothing), enable answers HTTP 400 whose whole body is exactly
+    ``{"ok": False, "action": "enable", "plugin_id": plugin_id, "error": PLUGIN_REFUSAL}``, this
+    process starts no process and nothing under `roots` (the pack, its scratch, the workspace)
+    changes. Returns True then; False where plugins run, and the fixture activates as it always did."""
+    if not plugins_refused():
+        return False
+    with watch_plugins(*roots) as seen:
+        installed = served_lifecycle_post(base_url, "install", plugin_id)
+        verified = served_lifecycle_post(base_url, "verify", plugin_id)
+        enabled = served_lifecycle_post(base_url, "enable", plugin_id)
+    return refused_exactly(
+        seen,
+        (installed[0], 200),
+        (installed[1].get("ok"), True),
+        (verified[0], 200),
+        (verified[1].get("ok"), True),
+        (enabled[0], 400),
+        (enabled[1], {"ok": False, "action": "enable", "plugin_id": plugin_id, "error": PLUGIN_REFUSAL}),
+        (enabled[1]["error"], PLUGIN_REFUSAL),
+    )
+
+
+def watch_windows_answer(active: bool, sentence: str, what: str, *roots: Path,
+                         counts: Callable[[object, dict], bool] | None = None) -> contextlib.AbstractContextManager[Watch]:
+    """Around a call whose Windows answer is a fixed sentence and starts nothing, though it is none of
+    the three 0.7.1 refusals (a Windows-only fallback, or a capability row read from the host). Where
+    `active` (the module's own Windows switch) it records every process start (or, with `counts`,
+    every start of the kind the answer is about) and any change under `roots`, for `refused_exactly`
+    to check with `sentence`; elsewhere it records nothing."""
+    return _watch(active, sentence if active else "", "", what, counts or (lambda _args, _kwargs: True),
+                  tuple(Path(r) for r in roots))
