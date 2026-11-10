@@ -111,9 +111,37 @@ def test_runtime_capability_snapshot_exposes_feature_flags_and_capability_rows()
         "core.runtime_capabilities.build_install_profile_truth",
         return_value=install_profile,
     ):
-        snapshot = runtime_capability_snapshot(
-            _context(allow_workspace_writes=True, allow_sandbox_execution=True, allow_remote_only_without_backend=False)
-        )
+        from sandbox.job_runner import windows_sandbox_report
+        from tests import _windows_refusals as windows_refusals
+
+        # On Windows the sandbox row says what the sandbox runs on this host, read from the
+        # job runner's own report (which never starts its probe), never "implemented".
+        sandbox = windows_sandbox_report()
+        if sandbox is not None:
+            backend = str(sandbox.get("backend") or "launcher_missing")
+            runs = [] if backend in {"launcher_missing", "probe_failed"} else list(sandbox["confined_programs"])
+            refused = sorted(name for name, verdict in dict(sandbox.get("programs") or {}).items() if verdict != "confined")
+            refused_text = f" {', '.join(refused)} and every other program are refused." if refused else ""
+            if runs:
+                sandbox_state = "limited_by_platform"
+                sandbox_sentence = f"On Windows only {', '.join(runs)} run, confined by the Windows sandbox."
+                sandbox_reason = sandbox_sentence + refused_text + (
+                    " No sandbox job has run in this process yet." if backend == "not_probed" else "")
+            else:
+                sandbox_state = "unavailable_on_host"
+                sandbox_sentence = "The Windows sandbox launcher is missing or failed its check, so no command runs here."
+                sandbox_reason = sandbox_sentence + refused_text
+        def sandbox_job(args, _kwargs) -> bool:
+            # The sandbox's own processes: the VoolConfine launcher, its probe child, a Python or
+            # pytest job. The snapshot's hardware reads (nvidia-smi, ldconfig) are not the sandbox row.
+            words = " ".join(str(part) for part in (args if isinstance(args, (list, tuple)) else [args])).lower()
+            return any(word in words for word in ("voolconfine", "python", "pytest"))
+
+        with windows_refusals.watch_windows_answer(sandbox is not None, sandbox_sentence if sandbox is not None else "",
+                                                   "sandbox capability", counts=sandbox_job) as seen:
+            snapshot = runtime_capability_snapshot(
+                _context(allow_workspace_writes=True, allow_sandbox_execution=True, allow_remote_only_without_backend=False)
+            )
 
     assert snapshot["mode"] == "test"
     assert snapshot["feature_flags"]["local_only_mode"] is True
@@ -136,6 +164,13 @@ def test_runtime_capability_snapshot_exposes_feature_flags_and_capability_rows()
     assert snapshot["model_lane_defaults"]["explicit_only_models"][0]["model"] == "qwen3.5:35b-a3b"
     capabilities = {item["name"]: item for item in snapshot["capabilities"]}
     assert capabilities["workspace_write_tools"]["state"] == "implemented"
+    if seen.active and windows_refusals.refused_exactly(
+        seen,
+        (capabilities["sandbox_execution"]["state"], sandbox_state),
+        (capabilities["sandbox_execution"]["reason"], sandbox_reason),
+    ):
+        assert capabilities["remote_only_backend_fallback"]["state"] == "disabled_by_policy"
+        return
     assert capabilities["sandbox_execution"]["state"] == "implemented"
     assert capabilities["remote_only_backend_fallback"]["state"] == "disabled_by_policy"
 

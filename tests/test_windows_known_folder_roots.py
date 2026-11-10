@@ -174,8 +174,20 @@ def test_the_folder_lookup_fast_path_uses_the_moved_desktop(moved_desktop) -> No
 
 
 def test_write_root_honesty_counts_the_moved_desktop_as_reachable(moved_desktop) -> None:
+    from core import windows_write_gate
     from core.agent_runtime import write_root_honesty
+    from tests import _windows_refusals as windows_refusals
 
     _home, moved = moved_desktop
+    before = windows_refusals.tree_state(_home)
     roots = [Path(root).resolve() for root in write_root_honesty.allowed_write_roots({})]
+    if windows_write_gate.active():
+        # Windows (captest B3): the write roots are exactly the marked folders, wherever they are.
+        # This row marks nothing, so the moved Desktop is no write root; reading the roots changes
+        # nothing. Off Windows the moved Desktop is one of the roots, as always.
+        marked = {os.path.normcase(str(Path(root).resolve())) for root in windows_write_gate.flagged_roots()}
+        assert sorted(os.path.normcase(str(root)) for root in roots) == sorted(marked)
+        assert moved not in roots
+        assert windows_refusals.tree_state(_home) == before
+        return
     assert moved in roots
