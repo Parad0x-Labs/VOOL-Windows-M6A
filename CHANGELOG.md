@@ -3,7 +3,7 @@
 All notable changes to VOOL. Dates are YYYY-MM-DD. Earlier internal development
 history is not republished here.
 
-## [0.7.1-beta] — Windows — 2026-11-12
+## [0.7.1-beta.2] — Windows — 2026-11-12
 
 The first native Windows download: `VOOL-Setup.exe` with `SHA256SUMS`, for Windows 10 22H2 and
 Windows 11, 64-bit.

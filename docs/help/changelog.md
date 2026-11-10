@@ -6,7 +6,7 @@ description: Notable changes to VOOL.
 
 Entries are added as builds go out to testers. Newest first.
 
-## 0.7.1-beta for Windows — 2026-11-12
+## 0.7.1-beta.2 for Windows — 2026-11-12
 
 The first Windows download, `VOOL-Setup.exe`, for Windows 10 22H2 and Windows 11, 64-bit.
 
@@ -18,7 +18,7 @@ The first Windows download, `VOOL-Setup.exe`, for Windows 10 22H2 and Windows 11
 * **Windows limits.** VOOL runs Python scripts, pytest, unittest and compileall in its Windows
   sandbox. It refuses git, pip, npm, node, ruff and any other program, and does not start plugins
   or MCP servers or read PDF or 7z files. Use WSL2/Linux for those. The full list is on the
-  [Windows v0.7.1-beta release](https://github.com/Parad0x-Labs/VOOL-Windows-M6A/releases/tag/v0.7.1-beta).
+  [Windows v0.7.1-beta.2 release](https://github.com/Parad0x-Labs/VOOL-Windows-M6A/releases/tag/v0.7.1-beta.2).
 
 ## 0.7.0-beta — 2026-10-13
 
