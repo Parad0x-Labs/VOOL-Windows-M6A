@@ -711,12 +711,19 @@ COMPANION_WINDOW_FLAGS: dict = {
 }
 
 
+# core/ui_palette.py DARK_PALETTE_CSS --bg: what a new window shows before its page paints, instead
+# of pywebview's #FFFFFF (a white flash on every open). Six hex digits, as pywebview validates.
+WINDOW_BACKGROUND = "#141416"
+
+
 def _create_vool_window(webview_module: object, *args, **kwargs):
     """Open a VOOL window. The ONE place VOOL opens a titled window, so every window, including
     ones added later, gets the Windows chrome: a dark title bar with white caption buttons and
-    VOOL's icon (windows_chrome; a no-op elsewhere, and a styling failure never costs the window).
+    VOOL's icon (windows_chrome; a no-op elsewhere, and a styling failure never costs the window),
+    and opens on VOOL's dark background instead of a white flash.
     Only the frameless pet opens its own window (detach_companion), with its own policy.
     tests/test_every_vool_window_gets_windows_chrome.py fails on any other create_window call."""
+    kwargs.setdefault("background_color", WINDOW_BACKGROUND)
     created = webview_module.create_window(*args, **kwargs)
     if created is not None:
         with contextlib.suppress(Exception):
