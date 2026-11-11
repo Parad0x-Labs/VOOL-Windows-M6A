@@ -4,6 +4,11 @@
   builds before 20H1), which also makes the minimise, maximise and close glyphs white, plus the
   caption colour (35, Windows 11 only) set to VOOL's dark panel. Owner hand test, Windows 11: the
   title bar was plain white over VOOL's dark page.
+* VOOL's own logo instead of Python's: the window host is pythonw.exe, so pywebview's WinForms
+  form took pythonw's icon and the taskbar grouped the window under pythonw. The process claims a
+  stable explicit AppUserModelID (the installer's launcher shortcuts carry the same one), and the
+  window icon is the vool.ico the installer gives the desktop shortcut, installed next to the
+  window host ({app}\\vool.ico) and shipped in the source tree as installer/assets/vool.ico.
 
 The frameless pet has no title bar and its own window policy (``pet_native_windows``); nothing
 here is ever applied to it. Everything is presentation, Windows only, and a failure anywhere is a
@@ -14,12 +19,18 @@ from __future__ import annotations
 import contextlib
 import sys
 import threading
+from pathlib import Path
 
 DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1 = 19
 DWMWA_USE_IMMERSIVE_DARK_MODE = 20
 DWMWA_CAPTION_COLOR = 35
 # core/ui_palette.py DARK_PALETTE_CSS --panel: the colour of VOOL's own dark chrome.
 CAPTION_COLOR_HEX = "#1b1b1e"
+# The taskbar identity. vool.iss [Icons] gives the launcher shortcuts the same AppUserModelID.
+APP_USER_MODEL_ID = "Parad0xLabs.VOOL"
+ICON_FILENAME = "vool.ico"
+_HERE = Path(__file__).resolve().parent
+_ASSET_ICON = _HERE.parent / "assets" / ICON_FILENAME
 # How long a styler waits for pywebview to build the form behind a new window.
 HWND_WAIT_SECONDS = 10.0
 
@@ -33,6 +44,42 @@ def colorref(hex_colour: str) -> int:
     value = hex_colour.lstrip("#")
     red, green, blue = int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16)
     return (blue << 16) | (green << 8) | red
+
+
+def set_app_user_model_id(*, shell32: object = None, platform: str | None = None) -> bool:
+    """Claim VOOL's AppUserModelID for this process. Call before any window; never raises."""
+    if not is_windows(platform):
+        return False
+    try:
+        import ctypes
+
+        shell = shell32 if shell32 is not None else ctypes.WinDLL("shell32")
+        return int(shell.SetCurrentProcessExplicitAppUserModelID(ctypes.c_wchar_p(APP_USER_MODEL_ID))) == 0
+    except Exception:
+        return False
+
+
+def icon_path(here: object = None) -> str | None:
+    """VOOL's .ico: next to the window host when installed ({app}\\vool.ico, where the installer
+    puts the desktop shortcut's icon), else the source tree's installer/assets/vool.ico."""
+    folder = Path(here) if here is not None else Path(sys.argv[0] or ".").resolve().parent
+    for candidate in (folder / ICON_FILENAME, _ASSET_ICON):
+        with contextlib.suppress(OSError):
+            if candidate.is_file():
+                return str(candidate)
+    return None
+
+
+def start_icon_options(*, platform: str | None = None, here: object = None) -> dict:
+    """``webview.start`` keywords that give every pywebview form VOOL's icon (WinForms reads it
+    for each window it builds). Empty off Windows or when no icon is found; never raises."""
+    if not is_windows(platform):
+        return {}
+    try:
+        found = icon_path(here)
+    except Exception:
+        return {}
+    return {"icon": found} if found else {}
 
 
 def _dwmapi():

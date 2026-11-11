@@ -1785,6 +1785,9 @@ def main() -> int:
     notification_bridge = None
     owned_pid: dict[str, int | None] = {"pid": None}
     done = threading.Event()
+    # Windows: VOOL's own taskbar identity (the launcher shortcuts carry the same AppUserModelID),
+    # claimed before any window so the taskbar never groups VOOL under pythonw. No-op elsewhere.
+    windows_chrome.set_app_user_model_id()
     try:
         if not _single_instance():
             _log("another VOOL window is already open; not opening a second")
@@ -1864,6 +1867,8 @@ def main() -> int:
         menu = _settings_menu(api)
         # An ambient Qt override must not bypass the verified Cocoa datastore.
         start_options = {"gui": "cocoa"} if isolated_webkit else {}
+        # Windows: every pywebview form gets VOOL's icon instead of pythonw's. Empty elsewhere.
+        start_options.update(windows_chrome.start_icon_options())
         try:
             webview.start(_post_start_all, menu=menu, **start_options)
         except TypeError:
