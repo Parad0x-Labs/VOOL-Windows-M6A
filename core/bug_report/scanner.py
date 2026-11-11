@@ -91,6 +91,13 @@ def _dynamic_local_patterns() -> list[tuple[str, re.Pattern]]:
         value = os.environ.get(var, "")
         if value and len(value) >= 3 and re.fullmatch(r"[A-Za-z0-9._-]+", value):
             patterns.append(("local_username", re.compile(rf"(?<![A-Za-z0-9._-]){re.escape(value)}(?![A-Za-z0-9._-])")))
+    # Windows names the login in USERNAME (USER and LOGNAME are POSIX), and Windows account names
+    # ignore case, so "Satoshi" and "satoshi" are the same account.
+    windows_login = os.environ.get("USERNAME", "")
+    if (windows_login and len(windows_login) >= 3 and re.fullmatch(r"[A-Za-z0-9._-]+", windows_login)
+            and windows_login not in (os.environ.get("USER", ""), os.environ.get("LOGNAME", ""))):
+        patterns.append(("local_username", re.compile(
+            rf"(?i)(?<![A-Za-z0-9._-]){re.escape(windows_login)}(?![A-Za-z0-9._-])")))
     node = platform.node()
     if node and len(node) >= 3 and re.fullmatch(r"[A-Za-z0-9._-]+", node):
         patterns.append(("local_hostname", re.compile(rf"(?<![A-Za-z0-9._-]){re.escape(node)}(?![A-Za-z0-9._-])")))
