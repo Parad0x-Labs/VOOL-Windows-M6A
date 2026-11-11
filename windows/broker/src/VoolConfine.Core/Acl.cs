@@ -12,17 +12,20 @@ namespace VoolConfine.Core;
 /// write root and ReadCapabilities by the job read root, exactly as the policy spells them.
 /// </summary>
 public sealed record ConfinementSids(SecurityIdentifier Package, IReadOnlyDictionary<string, SecurityIdentifier> RootCapabilities,
-    IReadOnlyDictionary<string, SecurityIdentifier>? ReadCapabilities = null)
+    IReadOnlyDictionary<string, SecurityIdentifier>? ReadCapabilities = null,
+    IReadOnlyDictionary<string, SecurityIdentifier>? StatCapabilities = null)
 {
     /// <summary>
     /// The SIDs for a policy from the launcher's own derivation (VoolConfine.Core.Sids:
     /// <c>ConfinementSids.For(policy, Sids.Package(), Sids.RootCapability, Sids.ReadCapability)</c>), so they are derived once, in one place.
     /// </summary>
     public static ConfinementSids For(Policy policy, string packageSid, Func<string, string> rootCapabilitySid,
-        Func<string, string> readCapabilitySid) =>
+        Func<string, string> readCapabilitySid, Func<string, string>? statCapabilitySid = null) =>
         new(new SecurityIdentifier(packageSid),
             policy.WriteRoots.Distinct(StringComparer.Ordinal).ToDictionary(root => root, root => new SecurityIdentifier(rootCapabilitySid(root)), StringComparer.Ordinal),
-            policy.JobReadRoots.Distinct(StringComparer.Ordinal).ToDictionary(root => root, root => new SecurityIdentifier(readCapabilitySid(root)), StringComparer.Ordinal));
+            policy.JobReadRoots.Distinct(StringComparer.Ordinal).ToDictionary(root => root, root => new SecurityIdentifier(readCapabilitySid(root)), StringComparer.Ordinal),
+            statCapabilitySid is null ? null
+                : policy.StatOnlyPaths.Distinct(StringComparer.Ordinal).ToDictionary(path => path, path => new SecurityIdentifier(statCapabilitySid(path)), StringComparer.Ordinal));
 
     public SecurityIdentifier CapabilityFor(string root) =>
         RootCapabilities.TryGetValue(root, out var sid) ? sid
@@ -31,6 +34,10 @@ public sealed record ConfinementSids(SecurityIdentifier Package, IReadOnlyDictio
     public SecurityIdentifier ReadCapabilityFor(string root) =>
         ReadCapabilities is not null && ReadCapabilities.TryGetValue(root, out var sid) ? sid
         : throw new AclException("sid_missing", $"No capability SID was given for job read root {root}.");
+
+    public SecurityIdentifier StatCapabilityFor(string path) =>
+        StatCapabilities is not null && StatCapabilities.TryGetValue(path, out var sid) ? sid
+        : throw new AclException("sid_missing", $"No capability SID was given for stat-only path {path}.");
 }
 
 /// <summary>What a grant or revoke did. Skipped objects carry no grant, so a job gets no access to them.</summary>
@@ -484,6 +491,7 @@ public static class Acl
             WalkRevoke(Normalize(root), [sids.CapabilityFor(root), sids.Package], counts);
         foreach (var root in policy.JobReadRoots)
             WalkRevoke(Normalize(root), [sids.ReadCapabilityFor(root)], counts);
+        RevokeStatOnly(policy, sids, counts);
         if (includeShared)
         {
             foreach (var root in policy.ReadRoots) WalkRevoke(Normalize(root), [sids.Package], counts);
@@ -556,6 +564,76 @@ public static class Acl
         descriptor.GetBinaryForm(bytes, 0);
         AclNative.SetDacl(handle, bytes, (descriptor.ControlFlags & ControlFlags.DiscretionaryAclProtected) != 0, path);
         counts.Updated++;
+    }
+
+    // ---------------------------------------------------------------- stat-only paths
+
+    /// <summary>
+    /// Puts each stat-only path's one ACE in place (idempotent): an explicit allow of
+    /// <see cref="AclRules.StatOnlyMask"/> with no inheritance flags, for that path's stat capability,
+    /// on the folder itself. Nothing inside the folder is opened or changed, and SetKernelObjectSecurity
+    /// propagates nothing. Any other ACE of that capability there is replaced. The run form calls this
+    /// before the child starts and <see cref="RevokeStatOnly(Policy, ConfinementSids)"/> once its tree is gone.
+    /// </summary>
+    public static AclReport GrantStatOnly(Policy policy, ConfinementSids sids)
+    {
+        var counts = new Counts();
+        foreach (var policyPath in policy.StatOnlyPaths)
+        {
+            var path = Normalize(policyPath);
+            var sid = sids.StatCapabilityFor(policyPath);
+            using var handle = AclNative.OpenRoot(path, writeDac: true);
+            CheckRoot(handle, path);
+            var descriptor = new RawSecurityDescriptor(AclNative.GetDacl(handle, path), 0);
+            var acl = descriptor.DiscretionaryAcl
+                ?? throw new AclException("null_dacl", $"Stat-only path {path} has a NULL DACL (everyone has full access).");
+            if (AclRules.HasExactStatOnly(acl, sid)) { counts.Unchanged++; continue; }
+            AclRules.RemoveAll(acl, [sid]);
+            AclRules.Ensure(acl, AclRules.StatOnlyAllow(sid));
+            descriptor.DiscretionaryAcl = acl;
+            var bytes = new byte[descriptor.BinaryLength];
+            descriptor.GetBinaryForm(bytes, 0);
+            AclNative.SetDacl(handle, bytes, (descriptor.ControlFlags & ControlFlags.DiscretionaryAclProtected) != 0, path);
+            counts.Updated++;
+        }
+        VerifyStatOnly(policy, sids);
+        return counts.Report([]);
+    }
+
+    /// <summary>Throws unless each stat-only path holds exactly its one stat-only ACE (mask and flags) and no other for its capability.</summary>
+    public static void VerifyStatOnly(Policy policy, ConfinementSids sids)
+    {
+        foreach (var policyPath in policy.StatOnlyPaths)
+        {
+            var path = Normalize(policyPath);
+            var acl = ReadRootAcl(path);
+            if (!AclRules.HasExactStatOnly(acl, sids.StatCapabilityFor(policyPath)))
+                throw new AclException("grant_missing", $"Stat-only path {path} does not hold exactly its stat-only ACE.");
+        }
+    }
+
+    /// <summary>Takes every ACE of each stat-only path's capability off that path. A path that is gone is skipped.</summary>
+    public static AclReport RevokeStatOnly(Policy policy, ConfinementSids sids)
+    {
+        var counts = new Counts();
+        RevokeStatOnly(policy, sids, counts);
+        return counts.Report([]);
+    }
+
+    private static void RevokeStatOnly(Policy policy, ConfinementSids sids, Counts counts)
+    {
+        foreach (var policyPath in policy.StatOnlyPaths)
+        {
+            var path = Normalize(policyPath);
+            SafeFileHandle handle;
+            try { handle = AclNative.OpenRoot(path, writeDac: true); }
+            catch (AclException error) when (error.Code == "root_missing") { continue; }
+            using (handle)
+            {
+                if ((AclNative.GetAttributes(handle, path) & AclNative.FileAttributeReparsePoint) != 0) { counts.ReparsePoints++; continue; }
+                Strip(handle, path, [sids.StatCapabilityFor(policyPath)], counts);
+            }
+        }
     }
 
     // ---------------------------------------------------------------- the launcher's own folders

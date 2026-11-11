@@ -16,6 +16,10 @@ public static class Identity
     /// root carries it, so one workspace's read grant never reaches another workspace's job.</summary>
     public static string ReadCapabilityName(string root) => "vool.read." + RootHash(root);
 
+    /// <summary>The capability name a stat-only path's one ACE is granted to: only a job whose policy
+    /// names that path carries it, and the ACE gives it the folder's attributes and nothing else.</summary>
+    public static string StatCapabilityName(string path) => "vool.stat." + RootHash(path);
+
     static string RootHash(string root)
     {
         // ASCII-only upper-casing, matching the Python side ("ß" stays "ß" on both).

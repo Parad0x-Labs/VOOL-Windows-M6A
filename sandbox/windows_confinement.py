@@ -45,6 +45,7 @@ _KEYS = (
     "max_processes",
     "temp_dir",
     "status_path",
+    "stat_only_paths",
 )
 
 
@@ -110,6 +111,11 @@ class WindowsConfinementPolicy:
     job_read_roots: tuple[str, ...] = ()
     deny_write_paths: tuple[str, ...] = ()
     deny_all_paths: tuple[str, ...] = ()
+    #: Folders this job may stat and nothing more, for one run: the launcher's run form puts one
+    #: explicit, non-inherited FILE_READ_ATTRIBUTES | SYNCHRONIZE allow on each (for that folder's own
+    #: `vool.stat.<sha256>` capability) before the child starts and takes it off after the job. The
+    #: job runner names the folder above a pytest job's folder, which pytest 9.1.1 stats on every run.
+    stat_only_paths: tuple[str, ...] = ()
     deny_write_git: bool = True
     network: bool = False
     max_seconds: int = 120
@@ -129,6 +135,15 @@ class WindowsConfinementPolicy:
             _check_path(p, "deny_write_paths entry")
         for p in self.deny_all_paths:
             _check_path(p, "deny_all_paths entry")
+        every_root = (*self.write_roots, *self.read_roots, *self.job_read_roots)
+        for p in self.stat_only_paths:
+            text = _check_path(p, "stat_only_paths entry")
+            if len(text) == 3:
+                raise PolicyError(f"stat_only_paths entry must not be a volume root: {text!r}")
+            if any(_inside(text, root) for root in every_root):
+                raise PolicyError(f"stat_only_paths entry lies inside a root, which already reaches it: {text!r}")
+            if any(_inside(text, denied) for denied in self.deny_all_paths):
+                raise PolicyError(f"stat_only_paths entry lies inside a denied path: {text!r}")
         temp = _check_path(self.temp_dir, "temp_dir")
         if not any(_inside(temp, root) for root in roots):
             raise PolicyError("temp_dir must sit inside a write root")
@@ -145,8 +160,11 @@ class WindowsConfinementPolicy:
 
     def to_json(self) -> str:
         self.validate()
+        # Named only when there is one, so a policy with none reads byte for byte as before.
+        extra = {"stat_only_paths": list(self.stat_only_paths)} if self.stat_only_paths else {}
         return json.dumps(
             {
+                **extra,
                 "schema": SCHEMA,
                 "write_roots": list(self.write_roots),
                 "read_roots": list(self.read_roots),
@@ -180,7 +198,7 @@ class WindowsConfinementPolicy:
         missing = [key for key in ("write_roots", "temp_dir", "status_path") if key not in data]
         if missing:
             raise PolicyError(f"missing policy keys: {missing}")
-        for key in ("write_roots", "read_roots", "job_read_roots", "deny_write_paths", "deny_all_paths"):
+        for key in ("write_roots", "read_roots", "job_read_roots", "deny_write_paths", "deny_all_paths", "stat_only_paths"):
             value = data.get(key, [])
             if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
                 raise PolicyError(f"{key} must be a list of strings")
@@ -192,6 +210,7 @@ class WindowsConfinementPolicy:
             job_read_roots=tuple(data.get("job_read_roots", [])),
             deny_write_paths=tuple(data.get("deny_write_paths", [])),
             deny_all_paths=tuple(data.get("deny_all_paths", [])),
+            stat_only_paths=tuple(data.get("stat_only_paths", [])),
             deny_write_git=data.get("deny_write_git", True),
             network=data.get("network", False),
             max_seconds=data.get("max_seconds", 120),
@@ -265,6 +284,7 @@ def root_capability_name(root: str) -> str:
     trimmed = str(root).replace("/", "\\").rstrip("\\")
     normalized = "".join(chr(ord(c) - 32) if "a" <= c <= "z" else c for c in trimmed)
     return "vool.root." + hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
 
 
 def launcher_path(project_root: Path) -> Path | None:

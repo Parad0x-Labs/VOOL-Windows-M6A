@@ -133,6 +133,14 @@ Status file fields:
   entry (the workspace, the policy's own read roots) for the capability `vool.read.<sha256>` of
   that root. A job's token carries only its own, so job B can never read workspace A, even though
   A's grant stays on disk (Mac parity: the Seatbelt profile allows reads of this job's roots only).
+- **Stat-only grants (one capability per stat-only path, for one run).** On each `stat_only_paths`
+  entry the run form puts one explicit allow of `FILE_READ_ATTRIBUTES | SYNCHRONIZE` (`0x00100080`)
+  with no inheritance flags, for the capability `vool.stat.<sha256>` of that path, before the child
+  starts, and takes it off once the job's tree is gone (the revoke form takes it off too). The job
+  can stat that folder and nothing else: no listing, no read of anything inside it. VOOL names the
+  folder above a pytest job's folder here, because pytest 9.1.1 stats it on every run. A launcher
+  killed mid-run (timeout or cancel) leaves the ACE in place until the next run naming that folder
+  or a revoke form; it reaches only a job whose policy names that folder, and only as a stat.
 - **Shared profile storage.** Every job runs as the one profile, so it shares that profile's
   `%LOCALAPPDATA%\Packages\VOOL.Confine.v1\AC` folder (its `Temp` included) and its AppContainer
   registry hive with every other job, across workspaces. Nothing may rely on them, and nothing
@@ -216,6 +224,8 @@ Rules, all enforced by the launcher (126 if broken):
 - **`job_read_roots`.** Read and execute for this job only (a per-root read capability). A read root
   inside a write root is still writable through the write root's grant; to make it read-only (a
   workspace `.venv`), also list it in `deny_write_paths`.
+- **`stat_only_paths`.** Optional. Folders this job may stat only (see Identity). Never a volume root,
+  never inside a write, read or job read root (those reach it already), never inside a `deny_all_paths` entry.
 - **`deny_write_paths`.** Explicitly denied write, beating any inherited grant (code roots).
 - **`deny_all_paths`.** Denied read AND write, like the Mac's secret and state denies (VOOL runtime state, credentials).
 - **`deny_write_git`.** When true, every `.git` directory under a write root is denied write. A bare
