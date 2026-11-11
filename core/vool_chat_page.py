@@ -389,7 +389,6 @@ header a:hover { text-decoration:underline; }
   header .ver { display:none; }
   header .spacer { display:none; }
   header > button { white-space:nowrap; }
-  header #modelCtrl { flex:1 1 160px; min-width:min(160px,100%); }
   header #pinBtn, header #searchBtn, header #exportBtn, header #panelBtn, header #councilBtn { margin-left:0; padding-inline:7px; }
   header #searchBtn, header #exportBtn { flex:0 0 30px; width:30px; height:30px; padding:0; font-size:0; }
   header #searchBtn::before { content:'⌕'; font-size:18px; }
