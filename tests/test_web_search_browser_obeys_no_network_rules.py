@@ -8,16 +8,20 @@ the Windows seam with Edge in Program Files, spies on process creation, and runs
 `web_research` call. Nothing opens a socket: every name lookup fails, and the spy starts nothing.
 
 Private chat is not a row: it keeps a chat out of every store, and it does not refuse web search.
+
+The new checks are Windows-only, behind `core.windows_write_gate.active`. The off-Windows rows at the
+end show macOS and Linux keep the old veto-only behaviour unchanged.
 """
 from __future__ import annotations
 
 import socket
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
-from core import auto_local_only_mode, effect_gateway, policy_engine, windows_known_folders
+from core import auto_local_only_mode, effect_gateway, policy_engine, windows_known_folders, windows_write_gate
 from core import remote_fetch_policy as rfp
 from tools.browser import browser_render as br
 from tools.web import web_research
@@ -32,6 +36,7 @@ def windows_edge(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, o
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("ALLOW_BROWSER_FALLBACK", "1")
     monkeypatch.setattr(br.sys, "platform", "win32")
+    monkeypatch.setattr(windows_write_gate, "_IS_WINDOWS", True)
     program_files = tmp_path / "Program Files (x86)"
     exe = program_files.joinpath(*_EDGE)
     exe.parent.mkdir(parents=True)
@@ -152,6 +157,35 @@ def test_windows_edge_argv_asks_for_no_component_update_or_sync(windows_edge: di
     assert "--disable-component-update" in argv
     assert "--disable-sync" in argv
     assert "--no-sandbox" not in argv
+
+
+def test_off_windows_the_new_checks_answer_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(windows_write_gate, "_IS_WINDOWS", False)
+    monkeypatch.setattr(policy_engine, "local_only_mode", lambda: True)
+    with rfp.remote_fetch_policy_scope({"local_only_mode": True}):
+        assert rfp.browser_navigation_refusal("https://duckduckgo.com/?q=x") is None
+
+
+def test_off_windows_the_render_door_behaves_as_before_under_local_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The old behaviour, kept: only the explicit veto stops the browser off Windows. The macOS and
+    # Linux gap is reported for its own review, not changed by the Windows port.
+    monkeypatch.setattr(windows_write_gate, "_IS_WINDOWS", False)
+    monkeypatch.setenv("PLAYWRIGHT_ENABLED", "1")
+    # No Playwright, as on an installed VOOL: browser_render then drives the same chrome engine.
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", None)
+    rendered_with: list[str] = []
+    monkeypatch.setattr(br, "_chrome_render_unchecked", lambda url, **_kw: rendered_with.append(url) or {"status": "ok", "final_url": url})
+    with rfp.remote_fetch_policy_scope({"local_only_mode": True}):
+        assert br.chrome_render("https://example.com/a")["status"] == "ok"
+        assert br.browser_render("https://example.com/b")["status"] == "ok"
+    assert rendered_with == ["https://example.com/a", "https://example.com/b"]
+
+
+def test_off_windows_the_explicit_veto_still_refuses(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(windows_write_gate, "_IS_WINDOWS", False)
+    monkeypatch.setattr(br, "_chrome_render_unchecked", lambda url, **_kw: pytest.fail("the veto was bypassed"))
+    with rfp.remote_fetch_policy_scope({"allow_remote_fetch": False}):
+        assert br.chrome_render("https://example.com/a")["status"] == "remote_fetch_disabled"
 
 
 @pytest.mark.parametrize("platform", ["darwin", "linux"])
