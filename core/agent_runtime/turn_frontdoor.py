@@ -2120,6 +2120,19 @@ def handle_turn_frontdoor(
     if pdf_read is not None:
         return {"result": pdf_read}
 
+    # Windows has no Apple Notes. A request for it is answered here in one fixed sentence instead of
+    # reaching the model, which has no Notes tool there (measured: 263 s of provider failures).
+    from core.agent_runtime.fast_paths_apple_notes_windows import maybe_refuse_apple_notes_on_windows
+
+    apple_notes_on_windows = maybe_refuse_apple_notes_on_windows(
+        agent,
+        effective_input,
+        session_id=session_id,
+        source_context=source_context,
+    )
+    if apple_notes_on_windows is not None:
+        return {"result": apple_notes_on_windows}
+
     # The mirror of the lane above. `web.fetch` works when called directly and nothing routed a URL
     # to it, so "fetch https://example.com and tell me what the page says" was answered by the
     # machine file-read lane ("I can only read files inside: ~/Desktop, ~/Downloads, ~/Documents")
