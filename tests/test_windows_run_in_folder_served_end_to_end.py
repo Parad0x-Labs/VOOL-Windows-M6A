@@ -110,7 +110,9 @@ class _Chat:
     """The VOOL window's chat against the served app. The model is never needed: asked, it answers in
     prose with no tool call, so a reply that holds the job's output came from the job."""
 
-    def __init__(self, machine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, workspace: Path) -> None:
+    def __init__(
+        self, machine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, workspace: Path, model_says: str = "Done."
+    ) -> None:
         from apps import vool_api_server
         from apps.vool_agent import VoolAgent
         from core import runtime_paths
@@ -133,7 +135,7 @@ class _Chat:
             return ModelExecutionDecision(
                 source="provider_execution", task_hash=f"t{self.model_rounds}", provider_id="ollama-local:test",
                 provider_name="ollama-local", model_name="test",
-                structured_output={"intent": "respond.direct", "arguments": {"message": "Done."}},
+                structured_output={"intent": "respond.direct", "arguments": {"message": model_says}},
                 confidence=0.8, trust_score=0.84, used_model=True, validation_state="valid",
             )
 
@@ -176,8 +178,8 @@ class _Chat:
 def chat(machine, tmp_path, monkeypatch):
     from core import runtime_paths
 
-    def open_chat(workspace: Path) -> _Chat:
-        return _Chat(machine, tmp_path, monkeypatch, workspace=workspace)
+    def open_chat(workspace: Path, **kwargs: Any) -> _Chat:
+        return _Chat(machine, tmp_path, monkeypatch, workspace=workspace, **kwargs)
 
     try:
         yield open_chat
@@ -268,6 +270,74 @@ def test_an_unmarked_folder_is_still_refused_before_any_card(machine, chat, jobs
 
     assert talk.pending() == [] and jobs == [], reply
     assert "Nothing was run" in reply and str(other) in reply, reply
+
+
+# --- only the run-request ending lets a traceback through the chat sanitizer -----------------------------
+
+#: A reply in the run-request answer's exact shape carrying one of VOOL's own tracebacks.
+_LOOKALIKE = (
+    "`python calc.py` ran and failed (exit code 1).\n\nCommand failed in `proj`:\n$ python calc.py\n"
+    "- Exit code: 1\n- Stderr:\nTraceback (most recent call last):\n"
+    '  File "C:\\Program Files\\VOOL\\core\\agent_runtime\\agent.py", line 2847, in _run_once_inner\n'
+    "KeyError: 'session_state'"
+)
+
+
+@pytest.mark.parametrize(
+    "details",
+    [
+        {"tool_name": "sandbox.run_command", "tool_validation": "model"},
+        {"tool_name": "sandbox.run_command", "render_mode": "windows_run_request_output"},
+        {"tool_name": "sandbox.run_command", "loop_stop_reason": "windows_run_request_answered"},
+    ],
+    ids=["model-reply", "render-mode-only", "stop-reason-only"],
+)
+def test_a_model_reply_shaped_like_a_run_answer_is_still_sanitized(machine, chat, details) -> None:
+    """The exemption is the loop's run-request ending (its render mode AND stop reason), not the reply's
+    shape: on Windows, a reply in the same shape with a VOOL traceback in it, returned through the builder
+    every tool-loop answer returns through, is still replaced. With the ending's details the same text is
+    the owner's job output and is kept."""
+    talk = chat(machine["desktop"])
+
+    def answered(with_details: dict[str, Any]) -> str:
+        result = talk.agent._action_fast_path_result(
+            task_id=f"task-{uuid.uuid4().hex[:10]}", session_id=talk.session, user_input="run python calc.py",
+            response=_LOOKALIKE, confidence=0.6, source_context={}, reason="model_tool_intent_command_failed",
+            success=False, details=dict(with_details), mode_override="tool_failed", task_outcome="failed",
+        )
+        return str(result.get("response") or "")
+
+    reply = answered(details)
+    assert "Traceback" not in reply and "session_state" not in reply and "agent.py" not in reply, reply
+    ending = {**details, "render_mode": "windows_run_request_output", "loop_stop_reason": "windows_run_request_answered"}
+    kept = answered(ending)
+    assert "KeyError: 'session_state'" in kept, kept
+
+
+def test_the_sanitizer_lets_a_traceback_through_only_for_the_marked_run_answer(machine, monkeypatch) -> None:
+    """At the sanitizer: the same text is kept only with the run-request ending's mark, and only on Windows;
+    the mark alone does not pass a bare traceback."""
+    from apps.vool_agent import VoolAgent
+    from core.agent_runtime.research_tool_loop_facade import is_windows_run_request_output
+
+    agent = VoolAgent(backend_name="test-backend", device="run-in-folder-e2e", persona_id="default")
+    failed = agent.ResponseClass.TASK_FAILED_USER_SAFE
+
+    def shown(text: str, **mark: bool) -> str:
+        return agent._sanitize_user_chat_text(text, response_class=failed, **mark)
+
+    assert "Traceback" not in shown(_LOOKALIKE), "unmarked: a model-written reply"
+    assert "KeyError: 'session_state'" in shown(_LOOKALIKE, windows_run_request_output=True)
+    bare = 'Traceback (most recent call last):\n  File "agent.py", line 1, in run\nKeyError: \'x\''
+    assert "Traceback" not in shown(bare, windows_run_request_output=True)
+    ending = {"render_mode": "windows_run_request_output", "loop_stop_reason": "windows_run_request_answered"}
+    assert is_windows_run_request_output(ending)
+    assert not is_windows_run_request_output({"render_mode": "windows_run_request_output"})
+    assert not is_windows_run_request_output({"loop_stop_reason": "windows_run_request_answered"})
+    assert not is_windows_run_request_output(None)
+    monkeypatch.setattr(gate, "_IS_WINDOWS", False)
+    assert not is_windows_run_request_output(ending)
+    assert "Traceback" not in shown(_LOOKALIKE, windows_run_request_output=True), "off Windows"
 
 
 # --- off Windows nothing changes ---------------------------------------------------------------------------
