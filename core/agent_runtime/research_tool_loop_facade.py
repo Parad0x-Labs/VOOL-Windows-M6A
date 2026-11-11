@@ -481,6 +481,22 @@ def is_windows_run_request_answer(text: str) -> bool:
     return windows_write_gate.active() and bool(_WINDOWS_RUN_ANSWER_RE.match(str(text or "").strip()))
 
 
+def is_windows_run_request_output(details: dict | None) -> bool:
+    """On Windows, whether a tool-loop result's ``details`` are the run-request answer's own: the
+    ``render_mode`` and ``loop_stop_reason`` that only the loop's run-request ending sets
+    (`windows_run_request_answered`). A model-written reply never carries them, so text shaped like
+    the answer is not enough for the chat sanitizer to let a traceback through. Always False off
+    Windows."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active() or not isinstance(details, dict):
+        return False
+    return (
+        details.get("render_mode") == "windows_run_request_output"
+        and details.get("loop_stop_reason") == "windows_run_request_answered"
+    )
+
+
 def windows_run_request_answer(step: dict) -> str:
     """The reply to a Windows run request whose job ran: one written line, then the job's own text
     (the folder, the command, the exit code and what it printed)."""

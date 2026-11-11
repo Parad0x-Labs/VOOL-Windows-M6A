@@ -260,6 +260,10 @@ class ChatTurnResult:
     workflow_summary: str = ""
     debug_origin: str | None = None
     allow_planner_style: bool = False
+    #: Set only by `action_fast_path_result` for the tool loop's Windows run-request answer
+    #: (`is_windows_run_request_output`): what the owner's job printed, which the chat sanitizer
+    #: does not take for a VOOL traceback.
+    windows_run_request_output: bool = False
 
 
 def _record_conductor_demand_receipts(plan: Any, outcomes: Any, *, request: str) -> None:

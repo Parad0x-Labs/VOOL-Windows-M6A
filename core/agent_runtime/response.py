@@ -707,11 +707,14 @@ def _validate_final_chat_output(
 
 
 def shape_user_facing_text(agent: Any, result: Any, *, preserve_source_format: bool = False) -> str:
+    # Passed only when set, so an agent whose `_sanitize_user_chat_text` predates it still works.
+    run_output = {"windows_run_request_output": True} if getattr(result, "windows_run_request_output", False) else {}
     text = (
         sanitize_user_chat_text(agent, result.text, response_class=result.response_class,
-            allow_planner_style=result.allow_planner_style, preserve_source_format=True)
+            allow_planner_style=result.allow_planner_style, preserve_source_format=True, **run_output)
         if preserve_source_format else agent._sanitize_user_chat_text(
             result.text, response_class=result.response_class, allow_planner_style=result.allow_planner_style,
+            **run_output,
         )
     )
     if result.response_class == agent.ResponseClass.TASK_STARTED:
@@ -787,6 +790,7 @@ def sanitize_user_chat_text(
     response_class: Any,
     allow_planner_style: bool = False,
     preserve_source_format: bool = False,
+    windows_run_request_output: bool = False,
 ) -> str:
     base_text = str(text or "").strip()
     # A model may not stamp its own guesses "verified". The runtime has never awarded that label --
@@ -847,7 +851,11 @@ def sanitize_user_chat_text(
         return "I couldn't resolve that cleanly."
     from core.agent_runtime.research_tool_loop_facade import is_windows_run_request_answer
 
-    if looks_like_runtime_traceback(sanitized) and not is_windows_run_request_answer(sanitized):
+    # A traceback in a Windows run request's answer is the owner's program output, not VOOL's. Keyed on
+    # the turn result the loop's run-request ending marks (`is_windows_run_request_output`), with the
+    # answer's shape as a second check: a model-written reply in the same shape is still sanitized.
+    owners_job_output = windows_run_request_output and is_windows_run_request_answer(sanitized)
+    if looks_like_runtime_traceback(sanitized) and not owners_job_output:
         if response_class in {agent.ResponseClass.TASK_FAILED_USER_SAFE, agent.ResponseClass.SYSTEM_ERROR_USER_SAFE}:
             return "I hit an internal failure while handling that request."
         return "I couldn't resolve that cleanly."
