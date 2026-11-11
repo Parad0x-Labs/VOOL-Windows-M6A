@@ -196,7 +196,8 @@ def test_startx402_consent_exception_keeps_spending_frozen(monkeypatch) -> None:
 
 def test_stopall_launches_the_detached_hard_stop() -> None:
     hits = []
-    result = maybe_handle_agent_brake("/stopall", "s", stopall_fn=lambda: hits.append(1) or True)
+    maybe_handle_agent_brake("/stopall", "s", stopall_fn=lambda: hits.append(1) or True)
+    result = maybe_handle_agent_brake("/stopall confirm", "s", stopall_fn=lambda: hits.append(1) or True)
     assert result is not None and result["success"] and result["intent"] == "agent_brake_stopall"
     assert hits == [1]
 
@@ -240,7 +241,8 @@ def test_stopall_variants_all_fire() -> None:
     for phrase in ("/stopall", "stop all vool", "kill vool", "stop everything",
                    "shut down vool", "shutdown vool", "kill everything"):
         hits = []
-        result = maybe_handle_agent_brake(phrase, "s", stopall_fn=lambda h=hits: h.append(1) or True)
+        maybe_handle_agent_brake(phrase, "s", stopall_fn=lambda h=hits: h.append(1) or True)
+        result = maybe_handle_agent_brake("/stopall confirm", "s", stopall_fn=lambda h=hits: h.append(1) or True)
         assert result is not None and result["intent"] == "agent_brake_stopall", f"missed: {phrase!r}"
         assert hits, f"did not launch: {phrase!r}"
 

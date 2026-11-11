@@ -88,7 +88,8 @@ def test_stopall_without_a_supervisor_does_not_claim_a_shutdown_it_did_not_start
 @pytest.mark.parametrize("windows", (True, False))
 def test_the_fallback_names_something_this_platform_has(monkeypatch, windows) -> None:
     monkeypatch.setattr(vool_agent_brake, "_is_windows", lambda: windows)
-    reply = vool_agent_brake.maybe_handle_agent_brake("/stopall", "s", stopall_fn=lambda: False)
+    vool_agent_brake.maybe_handle_agent_brake("/stopall", "s", stopall_fn=lambda: False)
+    reply = vool_agent_brake.maybe_handle_agent_brake("/stopall confirm", "s", stopall_fn=lambda: False)
     assert reply is not None and reply["success"] is False
     text = reply["response"]
     if windows:
@@ -100,6 +101,7 @@ def test_the_fallback_names_something_this_platform_has(monkeypatch, windows) ->
 
 def test_the_windows_success_reply_names_the_start_menu(monkeypatch) -> None:
     monkeypatch.setattr(vool_agent_brake, "_is_windows", lambda: True)
-    reply = vool_agent_brake.maybe_handle_agent_brake("/stopall", "s", stopall_fn=lambda: True)
+    vool_agent_brake.maybe_handle_agent_brake("/stopall", "s", stopall_fn=lambda: True)
+    reply = vool_agent_brake.maybe_handle_agent_brake("/stopall confirm", "s", stopall_fn=lambda: True)
     assert reply is not None and reply["success"] is True
     assert "Start menu" in reply["response"]
