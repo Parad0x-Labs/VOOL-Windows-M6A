@@ -489,6 +489,35 @@ def _windows_program_turn(
     }
 
 
+def _windows_archive_read_turn(
+    agent: Any,
+    text: str,
+    *,
+    session_id: str,
+    user_input: str,
+    source_context: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """The answer to a Windows read of a 7z or RAR archive no reader opens there; None otherwise."""
+    from core.agent_runtime.windows_archive_read import windows_archive_read_refusal
+
+    try:
+        response = windows_archive_read_refusal(text, source_context=source_context)
+    except Exception:  # an unknown state answers nothing here: the other lanes see the turn as before
+        response = ""
+    if not response:
+        return None
+    return {
+        "result": agent._fast_path_result(
+            session_id=session_id,
+            user_input=user_input,
+            response=response,
+            confidence=0.95,
+            source_context=source_context,
+            reason="windows_archive_unreadable",
+        )
+    }
+
+
 def _windows_marked_file_turn(
     agent: Any,
     text: str,
@@ -1915,6 +1944,19 @@ def handle_turn_frontdoor(
     )
     if program_turn is not None:
         return program_turn
+    # On Windows, a read of a 7z or RAR archive, which no reader opens there (its decoder runs only
+    # confined), is answered here in the readers' own words, instead of by the operator lane as a move
+    # into `archive_outbox`, the machine read lane's folder list, or the model's guess
+    # (core.agent_runtime.windows_archive_read, claims sweep).
+    archive_turn = _windows_archive_read_turn(
+        agent,
+        raw_user_input,
+        session_id=session_id,
+        user_input=effective_input,
+        source_context=source_context,
+    )
+    if archive_turn is not None:
+        return archive_turn
     # On Windows, an edit, an undo of it, or a move of a file the owner names inside a marked folder
     # runs there, through the normal approval and the write gate, instead of in the chat's own
     # workspace (an unbound chat's Desktop) (core.windows_marked_file_ops, captest R1-4).

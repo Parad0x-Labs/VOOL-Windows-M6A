@@ -63,7 +63,7 @@ _NOT_LOCAL = (
 class MarkedFileAsk:
     """What the lane does with a turn: one tool call placed in ``workspace``, or a plain refusal."""
 
-    kind: str  # "edit", "write", "undo" or "move"
+    kind: str  # "edit", "write", "undo", "move" or "patch"
     intent: str = ""
     arguments: dict[str, Any] = field(default_factory=dict)
     workspace: str = ""
@@ -368,6 +368,79 @@ def _write(text: str) -> MarkedFileAsk | None:
     )
 
 
+#: The first line of a patch request: "apply this patch", "apply the following unified diff to calc.py:",
+#: "patch calc.py with this:" (claims sweep, Windows). Anchored at the message's start, as every reader
+#: here is, so a pasted diff with no request before it is never read as one.
+_PATCH_VERB_RE = re.compile(
+    r"(?:apply|use)\b[^\n]{0,80}?\b(?:patch|diff)(?:es)?\b[^\n]*\Z|patch\b[^\n]*\Z", re.IGNORECASE
+)
+#: A diff in a fenced block, tagged diff, patch, udiff or nothing.
+_FENCED_PATCH_RE = re.compile(r"```(?:diff|patch|udiff)?[ \t]*\n(?P<patch>.*?)\n?```", re.IGNORECASE | re.DOTALL)
+
+
+def _patch_text(rest: str) -> str:
+    """The unified diff the lines after a patch request carry: one fenced block, or the lines themselves.
+    ``""`` when they carry no complete one (a `---` line, a `+++` line and a hunk)."""
+    fenced = list(_FENCED_PATCH_RE.finditer(rest))
+    if fenced:
+        if len(fenced) != 1 or rest[:fenced[0].start()].strip() or rest[fenced[0].end():].strip():
+            return ""  # a request is its one diff: prose or a second block around it is not read
+        patch = fenced[0].group("patch")
+    else:
+        patch = rest.strip("\n")
+    lines = patch.splitlines()
+    if not lines or not lines[0].startswith(("--- ", "diff ")):
+        return ""
+    if not any(line.startswith("+++ ") for line in lines) or not any(line.startswith("@@ ") for line in lines):
+        return ""
+    return patch if patch.endswith("\n") else patch + "\n"
+
+
+def _patch(body: str, source_context: dict[str, Any] | None) -> MarkedFileAsk | None:
+    """A unified diff the owner asks to apply, in the chat's own folder or in the folder the request names
+    first ("in <folder>, apply this patch:"), when that folder is inside a marked folder: one
+    `workspace.apply_unified_diff` placed there. Claims sweep (Windows): the pasted patch went to the model,
+    which said "patched" and changed nothing. The diff's own paths are read by the patch tool, relative to
+    that folder, and every gate (approval, the write gate, the patch tool's own path checks) decides them."""
+    first, _newline, rest = body.partition("\n")
+    lead = _LEAD_RE.match(first)
+    pos = lead.end() if lead else 0
+    named = ""
+    if not _PATCH_VERB_RE.match(first, pos):
+        folder_first = _FOLDER_FIRST_RE.match(first, pos)
+        if folder_first is None:
+            return None
+        found = next(((start, path) for start, path in _candidates(first) if start == folder_first.end()), None)
+        if found is None:
+            return None
+        start, named = found
+        after = re.compile(r"[\"'`]?\s*,?\s*").match(first, start + len(named))
+        if after is None or not _PATCH_VERB_RE.match(first, after.end()):
+            return None
+        if not _local(first, start, named):
+            return MarkedFileAsk("patch", refusal=_NOT_LOCAL.format(path=named) + _NOTHING_CHANGED)
+    patch = _patch_text(rest)
+    if not patch:
+        return None
+    if named:
+        try:
+            is_dir = os.path.isdir(named) and not _is_link(named)
+        except (OSError, ValueError):
+            is_dir = False
+        if not is_dir:
+            return MarkedFileAsk("patch", refusal=f"There is no folder at `{named}`. " + _NOTHING_CHANGED)
+        folder = _real_folder(named)
+    else:
+        context = source_context or {}
+        own = str(context.get("workspace") or context.get("workspace_root") or "").strip()
+        if not own:
+            return None  # no folder of its own: the chat's workspace lanes read it, as before
+        named, folder = own, _real_folder(own)
+    if not folder or not windows_write_gate.inside_flagged(folder):
+        return MarkedFileAsk("patch", refusal=_NOT_MARKED.format(path=named) + _NOTHING_CHANGED)
+    return MarkedFileAsk("patch", intent="workspace.apply_unified_diff", workspace=folder, arguments={"patch": patch})
+
+
 def _first_unlookable(body: str, candidates: list[tuple[int, str]]) -> str:
     for start, path in candidates:
         if not _local(body, start, path):
@@ -506,6 +579,9 @@ def marked_file_ask(text: str, *, source_context: dict[str, Any] | None, session
     if not windows_write_gate.active() or not _owner_local(source_context):
         return None
     body = str(text or "")
+    if "\n" in body.strip():
+        # The one ask that carries several lines: a patch, with its request on the first line.
+        return _patch(body.strip().replace("\r\n", "\n"), source_context)
     if not body.strip() or len(body.strip().splitlines()) > 1:
         # A request is one line; a paste of several is never read as one. `splitlines` also breaks
         # at \x0b, \x0c, \x1c-\x1e, \x85, U+2028 and U+2029, not only at CR and LF.
@@ -516,6 +592,25 @@ def marked_file_ask(text: str, *, source_context: dict[str, Any] | None, session
         if ask is not None:
             return ask
     return None
+
+
+def carries_a_patch_request(text: str) -> bool:
+    """On Windows, whether a message is a patch request (`_patch`): a request to apply a patch on its first
+    line, then one complete unified diff. Read from the words alone, with nothing looked up. Its lines are
+    one diff, so the turn is not split into a request per line. Off Windows, always False."""
+    if not windows_write_gate.active():
+        return False
+    body = str(text or "").strip().replace("\r\n", "\n")
+    first, newline, rest = body.partition("\n")
+    if not newline:
+        return False
+    lead = _LEAD_RE.match(first)
+    pos = lead.end() if lead else 0
+    folder_first = _FOLDER_FIRST_RE.match(first, pos)
+    verb = _PATCH_VERB_RE.match(first, pos) or (
+        folder_first is not None and re.search(r"[\s,](?:" + _PATCH_VERB_RE.pattern + ")", first[folder_first.end():], re.IGNORECASE)
+    )
+    return bool(verb) and bool(_patch_text(rest))
 
 
 def names_a_file_path(text: str) -> bool:
@@ -544,4 +639,4 @@ def placed_context(ask: MarkedFileAsk, source_context: dict[str, Any] | None) ->
     return context
 
 
-__all__ = ["MarkedFileAsk", "marked_file_ask", "moved_back", "names_a_file_path", "placed_context"]
+__all__ = ["MarkedFileAsk", "carries_a_patch_request", "marked_file_ask", "moved_back", "names_a_file_path", "placed_context"]

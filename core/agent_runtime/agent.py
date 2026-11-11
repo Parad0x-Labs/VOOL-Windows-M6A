@@ -3003,6 +3003,18 @@ class VoolAgent(
                 return None
         except Exception:
             pass
+        # And on Windows for a patch request ("apply this patch to calc.py" and the diff under it): its
+        # lines are one unified diff, not separate requests. Claims sweep: the diff's `---`/`+++` and
+        # hunk lines were carved into units and answered one by one, and the patch was never applied.
+        # The front door's marked-folder lane applies it (core.windows_marked_file_ops). Off Windows
+        # this is always False.
+        try:
+            from core.windows_marked_file_ops import carries_a_patch_request
+
+            if carries_a_patch_request(str(raw_input or effective_input)):
+                return None
+        except Exception:
+            pass
         # --------------------------------------------------------------------
         # PHASE 1 — PRE-DISPATCH ELIGIBILITY. Nothing here may leave side
         # effects: no unit has been handed to a lane, so declining is free.
