@@ -1,13 +1,14 @@
 """Settings > Notifications on Windows (bug B10).
 
 This port has no Windows notification backend: the window host's bridge starts only on darwin
-(installer/bundle/native_notifications.py start_for_host) and the status route reports supported:false there, and the
-lock-screen choice only shapes requests handed to that bridge (core/operator/native_notifications.py _content). So the
-Windows panel must not show macOS text or the lock-screen picker, while the macOS panel stays exactly as it was.
+(installer/bundle/native_notifications.py start_for_host), and the lock-screen choice only shapes requests handed to
+that bridge (core/operator/native_notifications.py _content). So the Windows panel must not show macOS text or the
+lock-screen picker. The page itself is the same on every host (a non-Mac host gets the Mac's page apart from named
+words, tests/test_windows_settings_local_card.py): the status route reports bell_only_windows and the one script
+decides from that.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import shutil
@@ -18,10 +19,9 @@ import pytest
 
 from core import notification_settings_fragment as fragment
 from core.i18n.catalog import catalog_for
+from core.operator import native_notifications as status_route
 from installer.bundle import native_notifications as bridge
 
-# sha256 of the panel's render at 379e57f7, before the Windows variant existed: the macOS output must not move.
-MAC_RENDER_SHA256 = "74ac19b81364d972511f5fa15e5534b7806bf21350f30f3a8626116711fe1c7c"
 WINDOWS_KEYS = ("vns.title.prefs.windows", "vns.saved.quiet.windows", "vns.why.windows")
 
 
@@ -29,28 +29,24 @@ def _panel_script(html: str) -> str:
     return re.match(r"<style>.*?</style><script>(.*?)</script>", html, re.DOTALL).group(1)
 
 
-def test_mac_render_is_unchanged():
-    html = fragment.render_notification_settings_fragment(windows=False)
-    assert hashlib.sha256(html.encode("utf-8")).hexdigest() == MAC_RENDER_SHA256
+def test_the_panel_is_the_same_on_every_host(monkeypatch):
+    rendered = {}
+    for host in ("darwin", "win32", "linux"):
+        monkeypatch.setattr(sys, "platform", host)
+        rendered[host] = fragment.render_notification_settings_fragment()
+    assert rendered["darwin"] == rendered["win32"] == rendered["linux"]
 
 
-def test_default_follows_the_host_check(monkeypatch):
-    monkeypatch.setattr(sys, "platform", "win32")
-    assert fragment.render_notification_settings_fragment() == fragment.render_notification_settings_fragment(windows=True)
-    monkeypatch.setattr(sys, "platform", "darwin")
-    assert fragment.render_notification_settings_fragment() == fragment.render_notification_settings_fragment(windows=False)
+@pytest.mark.parametrize("host,flag", [("win32", True), ("darwin", False), ("linux", False)])
+def test_the_status_route_says_when_the_bell_is_the_only_surface(monkeypatch, host, flag):
+    monkeypatch.setattr(sys, "platform", host)
+    assert status_route.bridge_status()["bell_only_windows"] is flag
 
 
 def test_windows_has_no_notification_bridge(monkeypatch):
     """The premise: no OS channel exists on Windows, so a lock-screen choice there would be a dead control."""
     monkeypatch.setattr(sys, "platform", "win32")
     assert bridge.start_for_host(api_origin="http://127.0.0.1:1") is None
-
-
-def test_windows_variant_fails_loudly_if_the_mac_script_drifts(monkeypatch):
-    monkeypatch.setattr(fragment, "_JS", fragment._JS.replace(fragment._WIN_LOCK_END, ""))
-    with pytest.raises(RuntimeError):
-        fragment.render_notification_settings_fragment(windows=True)
 
 
 def test_windows_keys_exist_in_every_locale_and_name_no_mac():
@@ -71,7 +67,7 @@ global.window = globalThis; global.document = {createElement: el, documentElemen
   querySelectorAll(){ return []; }, addEventListener(){}};
 global.setInterval = function(){ return 0; };
 const prefs = {native_notifications: true, quiet_hours: {enabled: false}, sound: true, lock_screen: 'title_only', late_grace_minutes: 5};
-const native = {ok: true, supported: input.supported, connected: true, authorization: 'authorized', explanation: 'MAC-EXPLANATION', requests: []};
+const native = {ok: true, supported: input.supported, bell_only_windows: input.bell_only, connected: true, authorization: 'authorized', explanation: 'MAC-EXPLANATION', requests: []};
 global.fetch = function(url){ return Promise.resolve({ok: true, status: 200, json(){
   return Promise.resolve(url.indexOf('preferences') >= 0 ? {ok: true, preferences: prefs} : native); }}); };
 if (input.messages) global.VOOLT = function(key){ return Object.prototype.hasOwnProperty.call(input.messages, key) ? input.messages[key] : key; };
@@ -84,12 +80,14 @@ setTimeout(() => { process.stdout.write(JSON.stringify(walk(host, []))); }, 50);
 
 
 def _painted(*, windows: bool, supported: bool, locale: str | None = None) -> list[str]:
+    """Paint the one panel script with the status the route sends on that host."""
     node = shutil.which("node")
     if node is None:
         pytest.fail("node is required to run the panel script")
     payload = {
-        "panel": _panel_script(fragment.render_notification_settings_fragment(windows=windows)),
+        "panel": _panel_script(fragment.render_notification_settings_fragment()),
         "supported": supported,
+        "bell_only": windows,
         "messages": catalog_for(locale).client_bundle()["messages"] if locale else None,
     }
     out = subprocess.run([node, "-e", _DOM_HARNESS], input=json.dumps(payload), capture_output=True, text=True,

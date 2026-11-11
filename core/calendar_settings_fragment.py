@@ -11,8 +11,6 @@ Namespace ``window.VoolCalendarSettings``; prefix ``vcs-``.
 """
 from __future__ import annotations
 
-import sys
-
 _CSS = """
 .vcs-root{display:flex;flex-direction:column;gap:10px}
 .vcs-note,.vcs-detail{font-size:12px;color:var(--muted,#9aa1af)}
@@ -195,7 +193,10 @@ function mountInto(host){
     var form = h('form', 'vcs-form');
     var sourceRow = h('label', 'vcs-field'); sourceRow.appendChild(h('span', null, CT('vcs.add.source', 'Source')));
     var providerSelect = h('select', 'vcs-input'); providerSelect.setAttribute('aria-label', CT('vcs.add.source_aria', 'Calendar source'));
-    Object.keys(providers).forEach(function(key){ var option = h('option', null, providers[key].label); option.value = key; providerSelect.appendChild(option); });
+    // The Source list offers what this host can read (view.offered_providers): EventKit only on a Mac. The page is
+    // the same on every host; the server decides the list.
+    var offered = Array.isArray(view.offered_providers) ? view.offered_providers.filter(function(key){ return providers[key]; }) : Object.keys(providers);
+    offered.forEach(function(key){ var option = h('option', null, providers[key].label); option.value = key; providerSelect.appendChild(option); });
     sourceRow.appendChild(providerSelect);
     var capability = h('div', 'vcs-detail');
     var nameRow = h('label', 'vcs-field'); nameRow.appendChild(h('span', null, CT('vcs.add.name', 'Name in VOOL')));
@@ -243,18 +244,9 @@ window.VoolCalendarSettings = Object.freeze({mountInto: mountInto});
 """
 
 
-# Apple Calendar (EventKit) reads calendars only on macOS, so off a Mac the Source list leaves it out. The account
-# API still lists it (core/operator/calendar_accounts.py); only this page's offer depends on the platform.
-_PROVIDER_OPTIONS = "Object.keys(providers).forEach(function(key){"
-_PROVIDER_OPTIONS_NO_EVENTKIT = "Object.keys(providers).filter(function(key){ return key !== 'eventkit'; }).forEach(function(key){"
-
-
 def render_calendar_settings_fragment() -> str:
     """The calendar accounts panel, mounted by the Settings page's Calendars group."""
-    js = _JS
-    if sys.platform != "darwin":
-        js = js.replace(_PROVIDER_OPTIONS, _PROVIDER_OPTIONS_NO_EVENTKIT, 1)
-    return "<style>" + _CSS + "</style><script>" + js + "</script>"
+    return "<style>" + _CSS + "</style><script>" + _JS + "</script>"
 
 
 __all__ = ["render_calendar_settings_fragment"]
