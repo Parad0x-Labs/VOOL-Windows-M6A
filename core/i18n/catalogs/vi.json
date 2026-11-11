@@ -157,6 +157,7 @@
     "activity.ledger.model_routing_failed": "Định tuyến thất bại",
     "activity.ledger.model_routing_started": "Đang định tuyến tới mô hình",
     "activity.ledger.model_verification_receipt": "Biên lai danh tính mô hình",
+    "activity.ledger.model_no_tool_selected": "Đã trả lời mà không dùng công cụ",
     "activity.ledger.scope_resolved": "Phạm vi",
     "activity.ledger.stale_result_rejected": "Kết quả cũ bị từ chối",
     "activity.ledger.task_classified": "Đã phân loại",
@@ -1782,6 +1783,8 @@
     "chat.toast_project_failed": "Không thể đưa cuộc trò chuyện này vào dự án — nó KHÔNG tách biệt. Thử lại.",
     "chat.toast_try_once_grant": "Đã thử “{label}” đúng một lượt — giờ đã quay về mô hình thường của bạn.",
     "chats.project_note": "Các trò chuyện trong một dự án làm việc trong thư mục ấy và giữ tách biệt — cả tệp lẫn bộ nhớ — khỏi các dự án khác.",
+    "chats.project_empty": "Chưa có cuộc trò chuyện nào.",
+    "chats.project_new_chat": "Trò chuyện mới tại đây",
     "palette.hint_activity": "hoạt động",
     "palette.hint_esc_stop": "dừng",
     "palette.hint_new_chat": "trò chuyện mới",
@@ -1918,7 +1921,7 @@
     "fault.wallet_payment_channel_off.action": "Chỉ bật một kênh thanh toán trong cài đặt Tiền điện tử nếu bạn muốn thanh toán qua kênh đó; trần chi tiêu và sự chấp thuận của bạn áp dụng trên mọi kênh.",
     "fault.wallet_x402_sdk_unavailable.message": "Bản dựng này không trả được các đề nghị x402 trên Base qua x402 Foundation SDK: phần bổ sung tùy chọn x402 chưa cài trên máy này. Chưa ký hay gửi gì. Mọi chức năng ví khác chạy không cần nó; sau khi cài, thử lại."
   },
-  "source_catalog_sha256": "6b453a1710dc06461a3885df9f48775b3c2abc0e9ae820ef9be5f2e3c15845c9",
+  "source_catalog_sha256": "c1e4ef58f6f34f114ab72b3a62fcd96b62716ce936fe1c66a7376f2ad4e29797",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1926,6 +1929,7 @@
     "generated_at": "2026-09-04T14:20:28Z",
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
     "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
-    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)"
+    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
+    "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)"
   }
 }

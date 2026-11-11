@@ -157,6 +157,7 @@
     "activity.ledger.model_routing_failed": "路由失败",
     "activity.ledger.model_routing_started": "正在路由到模型",
     "activity.ledger.model_verification_receipt": "模型身份收据",
+    "activity.ledger.model_no_tool_selected": "未使用工具即作答",
     "activity.ledger.scope_resolved": "范围",
     "activity.ledger.stale_result_rejected": "过期结果被拒绝",
     "activity.ledger.task_classified": "已分类",
@@ -1782,6 +1783,8 @@
     "chat.toast_project_failed": "无法将此聊天放入项目 — 它并未被隔离。请重试。",
     "chat.toast_try_once_grant": "已用“{label}”运行一轮 — 现已恢复你的常用模型。",
     "chats.project_note": "项目里的聊天在所属文件夹中工作，文件和记忆都与其他项目保持隔离。",
+    "chats.project_empty": "还没有聊天。",
+    "chats.project_new_chat": "在此新建聊天",
     "palette.hint_activity": "活动",
     "palette.hint_esc_stop": "停止",
     "palette.hint_new_chat": "新建聊天",
@@ -1918,7 +1921,7 @@
     "fault.wallet_payment_channel_off.action": "只有在希望通过某个支付通道付款时，才在加密设置中打开它；上限和你的批准在每个通道上都适用。",
     "fault.wallet_x402_sdk_unavailable.message": "此构建无法通过 x402 Foundation SDK 支付 Base 上的 x402 报价：这台机器上没有安装可选的 x402 扩展。没有签名或发送任何内容。钱包的其他所有功能没有它也能工作；安装之后请重试。"
   },
-  "source_catalog_sha256": "6b453a1710dc06461a3885df9f48775b3c2abc0e9ae820ef9be5f2e3c15845c9",
+  "source_catalog_sha256": "c1e4ef58f6f34f114ab72b3a62fcd96b62716ce936fe1c66a7376f2ad4e29797",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1926,6 +1929,7 @@
     "generated_at": "2026-09-04T14:20:28Z",
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
     "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
-    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)"
+    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
+    "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)"
   }
 }

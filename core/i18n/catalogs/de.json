@@ -157,6 +157,7 @@
     "activity.ledger.model_routing_failed": "Auswahl fehlgeschlagen",
     "activity.ledger.model_routing_started": "Modell wird gewählt",
     "activity.ledger.model_verification_receipt": "Modellidentitätsnachweis",
+    "activity.ledger.model_no_tool_selected": "Ohne Werkzeug beantwortet",
     "activity.ledger.scope_resolved": "Geltungsbereich",
     "activity.ledger.stale_result_rejected": "Veraltetes Ergebnis verworfen",
     "activity.ledger.task_classified": "Klassifiziert",
@@ -1782,6 +1783,8 @@
     "chat.toast_project_failed": "Dieser Chat ließ sich nicht ins Projekt verschieben — er ist NICHT isoliert. Versuche es erneut.",
     "chat.toast_try_once_grant": "„{label}“ lief einen Zug lang — jetzt ist wieder dein normales Modell aktiv.",
     "chats.project_note": "Chats in einem Projekt arbeiten in diesem Ordner und bleiben isoliert — Dateien und Gedächtnis — von anderen Projekten.",
+    "chats.project_empty": "Noch keine Chats.",
+    "chats.project_new_chat": "Neuer Chat hier",
     "palette.hint_activity": "Aktivität",
     "palette.hint_esc_stop": "Stopp",
     "palette.hint_new_chat": "neuer Chat",
@@ -1918,7 +1921,7 @@
     "fault.wallet_payment_channel_off.action": "Schalte einen Zahlungskanal in den Krypto-Einstellungen nur ein, wenn Zahlungen darüber laufen sollen; die Obergrenze und deine Freigabe gelten auf jedem Kanal.",
     "fault.wallet_x402_sdk_unavailable.message": "Dieser Build kann keine x402-Angebote auf Base über das x402 Foundation SDK bezahlen: Die optionale Erweiterung x402 ist auf diesem Rechner nicht installiert. Es wurde nichts signiert oder gesendet. Jede andere Wallet-Funktion läuft ohne sie; nach der Installation versuche es erneut."
   },
-  "source_catalog_sha256": "6b453a1710dc06461a3885df9f48775b3c2abc0e9ae820ef9be5f2e3c15845c9",
+  "source_catalog_sha256": "c1e4ef58f6f34f114ab72b3a62fcd96b62716ce936fe1c66a7376f2ad4e29797",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1926,6 +1929,7 @@
     "generated_at": "2026-09-04T14:20:28Z",
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
     "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
-    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)"
+    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
+    "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)"
   }
 }
