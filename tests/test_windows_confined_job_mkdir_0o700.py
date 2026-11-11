@@ -312,7 +312,13 @@ OUTSIDE_TEST = '''import os, tempfile, pytest
 
 
 def test_a_folder_outside_the_write_root_is_still_denied():
-    with pytest.raises(PermissionError):
+    # CPython 3.12 on Windows (Lib/tempfile.py mkdtemp, v3.12.10 lines 379-391) treats a
+    # PermissionError as a name clash and retries while os.path.isdir(dir) and os.access(dir, W_OK)
+    # hold; os.access ignores ACLs, and TMP_MAX is 2147483647, so a denied mkdtemp loops for ever
+    # there (3.13 fixed it). Bounded here: it ends in PermissionError (POSIX, 3.13+) or, once the
+    # retries run out, FileExistsError (3.12 on Windows). Either way nothing is made.
+    tempfile.TMP_MAX = 5
+    with pytest.raises((PermissionError, FileExistsError)):
         tempfile.mkdtemp(dir=os.path.dirname(os.getcwd()))
     with pytest.raises(PermissionError):
         os.mkdir(os.path.join(os.path.dirname(os.getcwd()), "planted"), 0o700)
@@ -397,10 +403,13 @@ def test_every_folder_they_make_stays_in_the_jobs_temp_folder(windows, base):
 def test_a_mkdir_outside_the_write_root_is_still_denied(windows, base):
     proj = _tree(base)
     (proj / "test_outside.py").write_text(OUTSIDE_TEST, encoding="utf-8")
-    code, output, _, made = _run(base, proj, _vool_env(windows, proj))
+    env = _vool_env(windows, proj)
+    outside_before = sorted(entry.name for entry in proj.parent.iterdir())
+    code, output, _, made = _run(base, proj, env)
     assert code == 0, output
     assert "2 passed" in output, output
     assert not (proj.parent / "planted").exists()
+    assert sorted(entry.name for entry in proj.parent.iterdir()) == outside_before  # nothing made outside
     assert all(_inside(path, proj) for path in made), made
 
 
