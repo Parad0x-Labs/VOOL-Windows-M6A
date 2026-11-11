@@ -1405,6 +1405,7 @@
     "vns.saved.native_off": "オフ。macOSが保持しているものは取り下げられます。ベルはすべてのアラートを保持します。",
     "vns.saved.native_on": "オン。macOSがまだ許可していない場合、VOOLがmacOSに許可を求めます。",
     "vns.saved.quiet": "サイレント時間を保存しました。この間はmacOSへ問い合わせません。ベルはすべてのアラートを記録し続けます。",
+    "vns.saved.quiet.windows": "サイレント時間を保存しました。この間はサウンドを鳴らしません。ベルはすべてのアラートを記録し続けます。",
     "vns.saved.test": "ベルに送信し、macOSへ渡しました。VOOLはmacOSが受け取った時刻を記録します。バナーが表示されたかまでは分かりません。",
     "vns.status.failed": "うまくいきませんでした。",
     "vns.status.loading": "読み込み中…",
@@ -1415,8 +1416,10 @@
     "vns.status.working": "処理中…",
     "vns.title.mac": "macOS通知",
     "vns.title.prefs": "サイレント時間・サウンド・通知の表示内容",
+    "vns.title.prefs.windows": "サイレント時間・サウンド",
     "vns.toggle.native": "VOOLのアラートをmacOS通知にも送る",
     "vns.toggle.sound": "通知音",
+    "vns.why.windows": "ベルはVOOLのアラートをすべて保持します。VOOLはまだWindows通知を送信しません。",
     "vx.memory.empty": "まだ何も記憶していません。確認済みの事実は保存スコープ付きでここに届き、それぞれ忘れられます。",
     "vx.memory.forget": "忘れる",
     "vx.memory.forget_title": "この項目だけを忘れる",
@@ -1918,7 +1921,7 @@
     "fault.wallet_payment_channel_off.action": "支払いチャネルは、そのチャネルで支払いたい場合にだけ暗号設定でオンにしてください。上限とあなたの承認はどのチャネルでも適用されます。",
     "fault.wallet_x402_sdk_unavailable.message": "このビルドはx402 Foundation SDKを通じてBase上のx402オファーを支払えません：オプションのx402拡張がこのマシンにインストールされていません。署名も送信もされていません。他のウォレット機能はそれなしで動作します。導入後にもう一度お試しください。"
   },
-  "source_catalog_sha256": "6b453a1710dc06461a3885df9f48775b3c2abc0e9ae820ef9be5f2e3c15845c9",
+  "source_catalog_sha256": "7ece37b9bc040ab28640b14bea290bbdf1c30f491a460a5d04fa86d4e297e702",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1926,6 +1929,7 @@
     "generated_at": "2026-09-04T14:20:28Z",
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
     "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
-    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)"
+    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
+    "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)"
   }
 }

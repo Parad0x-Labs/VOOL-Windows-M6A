@@ -1405,6 +1405,7 @@
     "vns.saved.native_off": "꺼짐. macOS가 여전히 가진 것은 철회됩니다. 종은 모든 알림을 담습니다.",
     "vns.saved.native_on": "켜짐. macOS가 아직 허용하지 않았으면 VOOL이 macOS에 권한을 요청합니다.",
     "vns.saved.quiet": "방해 금지 시간이 저장되었습니다. 그동안 macOS에 요청하지 않으며, 종은 모든 알림을 계속 기록합니다.",
+    "vns.saved.quiet.windows": "방해 금지 시간이 저장되었습니다. 그동안 소리가 나지 않으며, 종은 모든 알림을 계속 기록합니다.",
     "vns.saved.test": "종으로 보내고 macOS에 전달했습니다. VOOL은 macOS가 수락한 시점만 기록합니다. 배너가 떴는지는 볼 수 없습니다.",
     "vns.status.failed": "작동하지 않았습니다.",
     "vns.status.loading": "불러오는 중…",
@@ -1415,8 +1416,10 @@
     "vns.status.working": "처리하는 중…",
     "vns.title.mac": "macOS 알림",
     "vns.title.prefs": "방해 금지 시간, 소리, 알림 표시 내용",
+    "vns.title.prefs.windows": "방해 금지 시간과 소리",
     "vns.toggle.native": "VOOL 알림을 macOS 알림으로도 보내기",
     "vns.toggle.sound": "알림 소리",
+    "vns.why.windows": "종은 모든 VOOL 알림을 보관합니다. VOOL은 아직 Windows 알림을 보내지 않습니다.",
     "vx.memory.empty": "아직 기억된 것이 없습니다. 확인된 사실이 저장 범위와 함께 여기에 오며, 각각 잊을 수 있습니다.",
     "vx.memory.forget": "잊기",
     "vx.memory.forget_title": "정확히 이 항목만 잊기",
@@ -1918,7 +1921,7 @@
     "fault.wallet_payment_channel_off.action": "그 채널로 결제하려는 경우에만 암호화폐 설정에서 결제 채널을 켜세요; 한도와 사용자 승인은 모든 채널에 적용됩니다.",
     "fault.wallet_x402_sdk_unavailable.message": "이 빌드는 x402 Foundation SDK를 통해 Base의 x402 제안을 결제할 수 없습니다: 선택적 x402 추가 요소가 이 기기에 설치되지 않았습니다. 서명되거나 보내진 것은 없습니다. 지갑의 다른 모든 기능은 없이도 작동합니다; 설치한 뒤 다시 시도하세요."
   },
-  "source_catalog_sha256": "6b453a1710dc06461a3885df9f48775b3c2abc0e9ae820ef9be5f2e3c15845c9",
+  "source_catalog_sha256": "7ece37b9bc040ab28640b14bea290bbdf1c30f491a460a5d04fa86d4e297e702",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1926,6 +1929,7 @@
     "generated_at": "2026-09-04T14:20:28Z",
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
     "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
-    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)"
+    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
+    "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)"
   }
 }

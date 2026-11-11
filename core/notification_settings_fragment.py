@@ -193,10 +193,47 @@ window.VoolNotificationSettings = Object.freeze({mountInto: mountInto});
 """
 
 
-def render_notification_settings_fragment() -> str:
-    """The alerts and macOS notifications panel, mounted by the Settings page's Notifications group."""
+# Windows: this port has no OS notification backend. The window host's bridge
+# (installer/bundle/native_notifications.py start_for_host) starts only on darwin and the status route reports
+# supported:false, so the macOS box above already paints nothing. What is left is macOS text the Windows panel would
+# still show: the bridge's macOS explanation, the "what notifications show" title, the quiet-hours saved line ("macOS
+# is not asked") and the lock-screen picker, whose preference only shapes requests handed to the macOS bridge
+# (core/operator/native_notifications.py _content). On Windows those are served from ".windows" catalog keys or left
+# out; quiet hours and sound stay, because they gate the in-page chime (core/operator/notification_audio.py). The
+# script above is the macOS one, byte for byte.
+_WIN_WHY_OLD = "why.textContent = native.explanation || '';"
+_WIN_WHY_NEW = "why.textContent = NT('vns.why.windows', 'The bell keeps every VOOL alert. VOOL does not send Windows notifications yet.');"
+_WIN_TITLE_OLD = "NT('vns.title.prefs', 'Quiet hours, sound and what notifications show')"
+_WIN_TITLE_NEW = "NT('vns.title.prefs.windows', 'Quiet hours and sound')"
+_WIN_QUIET_OLD = "NT('vns.saved.quiet', 'Quiet hours saved. During them macOS is not asked; the bell still records every alert.')"
+_WIN_QUIET_NEW = "NT('vns.saved.quiet.windows', 'Quiet hours saved. During them no sound plays; the bell still records every alert.')"
+_WIN_LOCK_START = "    var lockRow = h('label', 'vns-row');"
+_WIN_LOCK_END = "    lockRow.appendChild(lock); prefBox.appendChild(lockRow);\n"
+
+
+def _windows_js() -> str:
+    """The panel's script on Windows: the macOS script with its macOS-only text swapped and the lock-screen row left
+    out. Raises if the macOS script no longer carries exactly the pieces this variant replaces."""
+    js = _JS
+    for old in (_WIN_WHY_OLD, _WIN_TITLE_OLD, _WIN_QUIET_OLD, _WIN_LOCK_START, _WIN_LOCK_END):
+        if js.count(old) != 1:
+            raise RuntimeError("the notification settings script changed; update its Windows variant")
+    js = js.replace(_WIN_WHY_OLD, _WIN_WHY_NEW, 1).replace(_WIN_TITLE_OLD, _WIN_TITLE_NEW, 1)
+    js = js.replace(_WIN_QUIET_OLD, _WIN_QUIET_NEW, 1)
+    start = js.index(_WIN_LOCK_START)
+    end = js.index(_WIN_LOCK_END, start) + len(_WIN_LOCK_END)
+    return js[:start] + js[end:]
+
+
+def render_notification_settings_fragment(*, windows: bool | None = None) -> str:
+    """The alerts and macOS notifications panel, mounted by the Settings page's Notifications group. On Windows
+    (core.generated_files.host_is_windows unless ``windows`` is given) it is the alerts panel without macOS text."""
     from core.notification_audio import audio_script
-    return "<style>" + _CSS + "</style><script>" + _JS + "</script>" + audio_script()
+    if windows is None:
+        from core.generated_files import host_is_windows
+        windows = host_is_windows()
+    js = _windows_js() if windows else _JS
+    return "<style>" + _CSS + "</style><script>" + js + "</script>" + audio_script()
 
 
 __all__ = ["render_notification_settings_fragment"]

@@ -822,6 +822,54 @@ def _create_vool_window(webview_module: object, *args, **kwargs):
     return created
 
 
+def _save_dialog_directory() -> str:
+    """Where a Windows save dialog opens: the user's Downloads folder when it exists, so a save
+    does not start in the profile root. Other platforms keep the dialog's own default."""
+    if sys.platform != "win32":
+        return ""
+    downloads = Path.home() / "Downloads"
+    return str(downloads) if downloads.is_dir() else ""
+
+
+def _deliver_without_overwrite(body: bytes, destination: Path, prefix: str) -> None:
+    """Write ``body`` to ``destination`` without ever replacing an existing file.
+
+    The bytes are staged in a temporary file beside the destination and hard-linked into place,
+    so the destination appears whole or not at all. FAT and exFAT drives (most USB sticks) and
+    many network shares cannot hard-link; there the destination is created exclusively instead
+    (still never overwriting) and removed again if the write does not finish.
+    Raises FileExistsError when the destination already exists."""
+    linked = False
+    with tempfile.NamedTemporaryFile(dir=destination.parent, prefix=prefix, delete=False) as handle:
+        temporary = Path(handle.name)
+        try:
+            handle.write(body)
+            handle.flush()
+            os.fsync(handle.fileno())
+            try:
+                os.link(temporary, destination)
+                linked = True
+            except FileExistsError:
+                raise
+            except OSError as exc:
+                _log(f"save: no hard link on this volume ({exc!r}); writing the file directly")
+        finally:
+            # Windows cannot unlink a file that still has an open handle.
+            handle.close()
+            temporary.unlink(missing_ok=True)
+    if linked:
+        return
+    with open(destination, "xb") as direct:
+        try:
+            direct.write(body)
+            direct.flush()
+            os.fsync(direct.fileno())
+        except BaseException:
+            direct.close()
+            destination.unlink(missing_ok=True)
+            raise
+
+
 class _WindowApi:
     """Bridge exposed to the VOOL page as ``window.pywebview.api`` (native window only).
 
@@ -1277,6 +1325,58 @@ class _WindowApi:
             except (ValueError, AttributeError):
                 message = "The file is not available"
             return {"ok": False, "error": "deliverable_unavailable", "message": message}
+        except FileExistsError:
+            return {"ok": False, "error": "destination_exists", "message": "Choose a new filename; the existing file was not changed."}
+        except Exception as exc:
+            return {"ok": False, "error": type(exc).__name__}
+
+    def save_session_bundle(self, bundle_path: str, session_id: str = "") -> dict:
+        """Save an exported chat bundle (.voolsession) to a place the user picks.
+
+        The page names only the bundle the export route just wrote; the server's download route
+        decides whether that path is inside session_bundles and supplies the bytes, and nothing
+        existing on disk is overwritten. pywebview cancels page downloads, so without this the
+        export wrote its bundle under the data folder and the user got no file."""
+        import re
+        from urllib.parse import urlencode
+
+        if self._window is None or self._webview is None:
+            return {"ok": False, "error": "no_window"}
+        if not isinstance(bundle_path, str) or not 0 < len(bundle_path) <= 4096 or not bundle_path.endswith(".voolsession"):
+            return {"ok": False, "error": "invalid_bundle_identity"}
+        if not isinstance(session_id, str) or len(session_id) > 512:
+            return {"ok": False, "error": "invalid_bundle_identity"}
+        limit = 256 * 1024 * 1024
+
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *args, **kwargs):
+                return None
+        try:
+            url = _API_ORIGIN + "/api/session/bundle/download?" + urlencode({"path": bundle_path})
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+            with opener.open(url, timeout=60) as response:
+                if response.headers.get_content_type() != "application/octet-stream":
+                    return {"ok": False, "error": "invalid_bundle_response"}
+                body = response.read(limit + 1)
+            if len(body) > limit:
+                return {"ok": False, "error": "bundle_too_large",
+                        "message": "The bundle exceeds the native save size limit; nothing was saved."}
+            stem = re.sub(r"[^A-Za-z0-9_-]", "_", session_id or "chat")[:64] or "chat"
+            result = self._window.create_file_dialog(self._webview.SAVE_DIALOG, directory=_save_dialog_directory(),
+                                                     save_filename=stem + ".voolsession",
+                                                     file_types=("VOOL chat bundles (*.voolsession)",))
+            if not result:
+                return {"ok": False, "cancelled": True}
+            destination = Path(result[0] if isinstance(result, (list, tuple)) else result)
+            _deliver_without_overwrite(body, destination, ".vool-bundle-")
+            return {"ok": True}
+        except urllib.error.HTTPError as exc:
+            try:
+                refusal = json.loads(exc.read(4096))
+                message = str(refusal.get("message") or refusal.get("error") or "The bundle is not available")
+            except (ValueError, AttributeError):
+                message = "The bundle is not available"
+            return {"ok": False, "error": "bundle_unavailable", "message": message}
         except FileExistsError:
             return {"ok": False, "error": "destination_exists", "message": "Choose a new filename; the existing file was not changed."}
         except Exception as exc:

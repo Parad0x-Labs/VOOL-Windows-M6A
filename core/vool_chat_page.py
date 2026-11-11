@@ -2924,7 +2924,14 @@ async function deleteProject(pid) {
 }
 async function revealProject(pid) {
   if (!_serverProjects[pid]) return;
-  try { await fetch('/api/projects/reveal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: pid }) }); } catch (e) {}
+  let ok = false;
+  try {
+    const r = await fetch('/api/projects/reveal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: pid }) });
+    const d = await r.json().catch(() => ({}));
+    ok = !!(r.ok && d && d.ok);
+  } catch (e) { ok = false; }
+  // The server opens the folder itself; say so when it could not, instead of doing nothing.
+  if (!ok) toast('Could not show this project\u2019s folder. Check that it still exists' + (String((_serverProjects[pid] || {}).root || '').indexOf(',') >= 0 ? ' (File Explorer cannot select a folder whose path contains a comma).' : '.'));
 }
 async function assignSession(sid, pid) {
   let ok = false;
@@ -8280,6 +8287,17 @@ if (composerFooterEl && typeof composerFooterEl.addEventListener === 'function')
     if (text.length >= docThreshold()) { e.preventDefault(); addPastedDocument(text, displayedChat, { source: 'drop' }); }
   });
 }
+// A file dropped anywhere else in the window must not replace the app with that file: the window
+// would navigate to it and there is no way back. Only the message box takes files.
+if (typeof document.addEventListener === 'function') {
+  const dropCarriesFiles = (dt) => { const t = dt && dt.types; if (!t) return false; return typeof t.contains === 'function' ? t.contains('Files') : Array.prototype.indexOf.call(t, 'Files') >= 0; };
+  document.addEventListener('dragover', (e) => { if (!e.defaultPrevented && dropCarriesFiles(e.dataTransfer)) { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'none'; } });
+  document.addEventListener('drop', (e) => {
+    if (e.defaultPrevented || !dropCarriesFiles(e.dataTransfer)) return;
+    e.preventDefault();
+    toast('Drop files on the message box to attach them.');
+  });
+}
 if (inputEl && typeof inputEl.addEventListener === 'function') {
   inputEl.addEventListener('paste', (e) => {
     const files = e.clipboardData && e.clipboardData.files ? Array.from(e.clipboardData.files) : [];
@@ -11638,10 +11656,19 @@ if (sbExportBtn) sbExportBtn.addEventListener('click', async () => {
     const d = await r.json();
     if (!d.ok) { sbStatus(sbExportStatus, d.error || 'Export refused.', true); return; }
     sbPass && (sbPass.value = ''); sbPass2 && (sbPass2.value = '');
-    const a = document.createElement('a');
-    a.href = '/api/session/bundle/download?path=' + encodeURIComponent(d.path);
-    a.download = (d.session_id || 'chat').replace(/[^a-z0-9_-]/gi, '_') + '.voolsession';
-    document.body.appendChild(a); a.click(); a.remove();
+    const nativeApi = window.pywebview && window.pywebview.api;
+    if (nativeApi) {
+      // The desktop window cancels page downloads: the native save dialog delivers the file.
+      if (typeof nativeApi.save_session_bundle !== 'function') { sbStatus(sbExportStatus, 'This app build cannot save chat bundles. Update the app and try again.', true); return; }
+      const saved = await nativeApi.save_session_bundle(String(d.path || ''), String(d.session_id || displayedChat));
+      if (!saved || (!saved.ok && saved.cancelled)) { sbStatus(sbExportStatus, 'Not saved: the save was cancelled.', true); return; }
+      if (!saved.ok) { sbStatus(sbExportStatus, 'Not saved: ' + (saved.message || saved.error || 'the bundle could not be written.'), true); return; }
+    } else {
+      const a = document.createElement('a');
+      a.href = '/api/session/bundle/download?path=' + encodeURIComponent(d.path);
+      a.download = (d.session_id || 'chat').replace(/[^a-z0-9_-]/gi, '_') + '.voolsession';
+      document.body.appendChild(a); a.click(); a.remove();
+    }
     sbStatus(sbExportStatus, d.encrypted ? 'Saved: signed + encrypted bundle (' + d.counts.turns + ' turns).' : 'Saved: signed, UNENCRYPTED bundle (' + d.counts.turns + ' turns).', !d.encrypted);
     sbRenderExportPreview();
   } catch (e) { sbStatus(sbExportStatus, 'Export failed: ' + (e && e.message || e), true); }

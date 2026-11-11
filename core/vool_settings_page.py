@@ -1656,10 +1656,19 @@ function widgetBundleExport(stack) {
       const d = await bundlePost('/api/session/bundle/export', { session_id: sid, passphrase: passphrase });
       if (!d.ok) { say(d.error || 'Export refused.', true); exportBtn.disabled = false; return; }
       pass.value = ''; pass2.value = '';
-      const a = document.createElement('a');
-      a.href = '/api/session/bundle/download?path=' + encodeURIComponent(d.path);
-      a.download = String(d.session_id || 'chat').replace(/[^a-z0-9_-]/gi, '_') + '.voolsession';
-      document.body.appendChild(a); a.click(); a.remove();
+      const nativeApi = window.pywebview && window.pywebview.api;
+      if (nativeApi) {
+        // The desktop window cancels page downloads: the native save dialog delivers the file.
+        if (typeof nativeApi.save_session_bundle !== 'function') { say('This app build cannot save chat bundles. Update the app and try again.', true); exportBtn.disabled = false; return; }
+        const saved = await nativeApi.save_session_bundle(String(d.path || ''), String(d.session_id || sid));
+        if (!saved || (!saved.ok && saved.cancelled)) { say('Not saved: the save was cancelled.', true); exportBtn.disabled = false; return; }
+        if (!saved.ok) { say('Not saved: ' + (saved.message || saved.error || 'the bundle could not be written.'), true); exportBtn.disabled = false; return; }
+      } else {
+        const a = document.createElement('a');
+        a.href = '/api/session/bundle/download?path=' + encodeURIComponent(d.path);
+        a.download = String(d.session_id || 'chat').replace(/[^a-z0-9_-]/gi, '_') + '.voolsession';
+        document.body.appendChild(a); a.click(); a.remove();
+      }
       say(d.encrypted ? 'Saved: signed + encrypted bundle (' + d.counts.turns + ' turns).' : 'Saved: signed, UNENCRYPTED bundle (' + d.counts.turns + ' turns).', !d.encrypted);
       renderPreview();
     } catch (e) { say('Export failed: ' + (e && e.message ? e.message : e), true); }

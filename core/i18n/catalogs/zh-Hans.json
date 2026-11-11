@@ -1405,6 +1405,7 @@
     "vns.saved.native_off": "已关闭。macOS 仍持有的内容会被撤回；铃铛保留每条提醒。",
     "vns.saved.native_on": "已开启。若 macOS 尚未授权，VOOL 会向 macOS 请求。",
     "vns.saved.quiet": "免打扰时段已保存。其间不再请求 macOS；铃铛仍会记录每条提醒。",
+    "vns.saved.quiet.windows": "免打扰时段已保存。其间不播放声音；铃铛仍会记录每条提醒。",
     "vns.saved.test": "已发到铃铛并转交 macOS。VOOL 会记录 macOS 何时接收；但无法看到横幅是否出现。",
     "vns.status.failed": "刚才没有成功。",
     "vns.status.loading": "加载中…",
@@ -1415,8 +1416,10 @@
     "vns.status.working": "处理中…",
     "vns.title.mac": "macOS 通知",
     "vns.title.prefs": "免打扰时段、声音与通知显示内容",
+    "vns.title.prefs.windows": "免打扰时段与声音",
     "vns.toggle.native": "同时把 VOOL 提醒发到 macOS 通知",
     "vns.toggle.sound": "通知声音",
+    "vns.why.windows": "铃铛会保留每条 VOOL 提醒。VOOL 暂不发送 Windows 通知。",
     "vx.memory.empty": "还没有记住任何内容——确认过的事实会连同其存储范围出现在这里，每一条都可以被遗忘。",
     "vx.memory.forget": "遗忘",
     "vx.memory.forget_title": "只遗忘这一条",
@@ -1918,7 +1921,7 @@
     "fault.wallet_payment_channel_off.action": "只有在希望通过某个支付通道付款时，才在加密设置中打开它；上限和你的批准在每个通道上都适用。",
     "fault.wallet_x402_sdk_unavailable.message": "此构建无法通过 x402 Foundation SDK 支付 Base 上的 x402 报价：这台机器上没有安装可选的 x402 扩展。没有签名或发送任何内容。钱包的其他所有功能没有它也能工作；安装之后请重试。"
   },
-  "source_catalog_sha256": "6b453a1710dc06461a3885df9f48775b3c2abc0e9ae820ef9be5f2e3c15845c9",
+  "source_catalog_sha256": "7ece37b9bc040ab28640b14bea290bbdf1c30f491a460a5d04fa86d4e297e702",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1926,6 +1929,7 @@
     "generated_at": "2026-09-04T14:20:28Z",
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
     "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
-    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)"
+    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
+    "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)"
   }
 }
