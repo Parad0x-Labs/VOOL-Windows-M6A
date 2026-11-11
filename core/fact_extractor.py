@@ -3,8 +3,10 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import logging
 import re
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
@@ -193,6 +195,63 @@ def _fact_grounded(fact: ExtractedFact, user_text: str) -> bool:
 _MAX_CONCURRENT_EXTRACTIONS = 2
 _EXTRACTION_SLOTS = threading.BoundedSemaphore(_MAX_CONCURRENT_EXTRACTIONS)
 
+_LOG = logging.getLogger(__name__)
+
+#: Whether the extractor's model is installed, per (Ollama URL, model): (checked until, installed).
+#: The extractor runs after EVERY turn. A home without its small model (a Windows install that
+#: pulled only qwen3:8b) answered each of those posts with 404 "model not found", which the
+#: extractor swallowed, so the LLM pass never ran and nothing said why. The inventory is read once
+#: per window instead; while the model is missing only the rule-based facts are extracted and the
+#: model is never asked, and the skip is logged once.
+_MODEL_PRESENCE: dict[tuple[str, str], tuple[float, bool]] = {}
+_MODEL_PRESENCE_LOCK = threading.Lock()
+_MODEL_PRESENCE_TTL_SECONDS = 300.0
+#: An empty inventory may be Ollama still starting: look again sooner.
+_MODEL_ABSENT_UNKNOWN_TTL_SECONDS = 30.0
+_MISSING_MODEL_LOGGED: set[tuple[str, str]] = set()
+
+
+def _model_key(name: str) -> str:
+    name = str(name or "").strip().lower()
+    return name if ":" in name else name + ":latest"
+
+
+def _remember_model_presence(url: str, model: str, installed: bool, ttl: float) -> None:
+    key = (url, _model_key(model))
+    with _MODEL_PRESENCE_LOCK:
+        _MODEL_PRESENCE[key] = (time.monotonic() + ttl, installed)
+        if installed:
+            _MISSING_MODEL_LOGGED.discard(key)
+            return
+        first = key not in _MISSING_MODEL_LOGGED
+        _MISSING_MODEL_LOGGED.add(key)
+    if first:
+        _LOG.info("fact extraction: model %s is not installed in Ollama; extracting rule-based facts only", model)
+
+
+def _extractor_model_installed(url: str, model: str) -> bool:
+    key = (url, _model_key(model))
+    with _MODEL_PRESENCE_LOCK:
+        cached = _MODEL_PRESENCE.get(key)
+    if cached is not None and cached[0] > time.monotonic():
+        return cached[1]
+    from core.local_ollama_inventory import installed_ollama_model_names
+
+    try:
+        names = installed_ollama_model_names(base_url=url, timeout_seconds=1.5)
+    except Exception:
+        names = ()
+    installed = key[1] in {_model_key(name) for name in names}
+    ttl = _MODEL_PRESENCE_TTL_SECONDS if (installed or names) else _MODEL_ABSENT_UNKNOWN_TTL_SECONDS
+    _remember_model_presence(url, model, installed, ttl)
+    return installed
+
+
+def reset_model_presence_for_tests() -> None:
+    with _MODEL_PRESENCE_LOCK:
+        _MODEL_PRESENCE.clear()
+        _MISSING_MODEL_LOGGED.clear()
+
 
 
 def _direct_lane_num_ctx(model_tag: str) -> int:
@@ -344,6 +403,8 @@ class FactExtractor:
     def _call_model(self, conversation: str) -> str:
         if self._model_client is not None:
             return str(self._model_client(conversation) or "")
+        if not _extractor_model_installed(self._ollama_url, self._model):
+            return ""
         payload = {
             "model": self._model,
             "messages": [
@@ -389,6 +450,10 @@ class FactExtractor:
                 json=permit.consume(),
                 timeout=30.0,
             )
+            if response.status_code == 404:
+                # Removed since the inventory was read: stop asking until it is read again.
+                _remember_model_presence(self._ollama_url, self._model, False, _MODEL_PRESENCE_TTL_SECONDS)
+                return ""
             response.raise_for_status()
             data = response.json()
         except Exception:
