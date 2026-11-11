@@ -194,6 +194,10 @@ def make_tree_owner_only(path: str | os.PathLike[str]) -> OwnerOnlyReport:
 _SEAL_SECRETS: bool = _WINDOWS
 
 
+#: What a save says when its secret file could not be made private, so nothing was written.
+OWNER_ONLY_SAVE_REFUSED = "VOOL couldn't make this file private to your account, so the key wasn't saved."
+
+
 def seals_secrets() -> bool:
     """Whether this process seals secret files (on Windows, or when a test switches it on)."""
     return _SEAL_SECRETS

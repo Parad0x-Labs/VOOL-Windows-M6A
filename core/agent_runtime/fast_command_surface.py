@@ -406,8 +406,12 @@ def _seal_cloud_key(secret: str, provider_id: str = "openrouter") -> str:
             "That does not look like a complete API key, so I did not store anything. Paste the "
             "whole key as `cloud key <your-key>` (an OpenRouter key starts with `sk-or-`, others vary)."
         )
+    from core.owner_only import OWNER_ONLY_SAVE_REFUSED, OwnerOnlyUnavailable
+
     try:
         credential_store.store_credential(slot, secret, label=label)
+    except OwnerOnlyUnavailable:
+        return OWNER_ONLY_SAVE_REFUSED + " Keep VOOL's data folder on a local NTFS drive, then try again."
     except Exception:
         return (
             "I could not save the cloud key just now, so nothing was stored. Check that VOOL can "

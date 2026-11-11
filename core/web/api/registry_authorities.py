@@ -574,6 +574,7 @@ def set_credentials_authority(body: dict, headers: dict, runtime, client_host: s
     # is never sent over plaintext; it is persisted so the lane survives a restart.
     # C15: the store is the explicit secure-storage door. One bounded attempt; a failure
     # comes back TYPED (code + recovery instruction) and is never retried here.
+    from core.owner_only import OWNER_ONLY_SAVE_REFUSED, OwnerOnlyUnavailable
     from core.unattended_preflight import SecureStorageError
 
     try:
@@ -610,6 +611,20 @@ def set_credentials_authority(body: dict, headers: dict, runtime, client_host: s
                     "error": str(exc),
                     "secure_storage_code": exc.code,
                     "recovery": exc.recovery,
+                },
+            ),
+            runtime,
+        )
+    except OwnerOnlyUnavailable:
+        # Windows: the key file could not be made private to this account, so nothing was written
+        # (core.owner_only.write_private_file). One plain sentence, never a traceback or a "Saved".
+        return apply_runtime_headers(
+            json_response(
+                503,
+                {
+                    "error": OWNER_ONLY_SAVE_REFUSED,
+                    "secure_storage_code": "owner_only_unavailable",
+                    "recovery": "Keep VOOL's data folder on a local NTFS drive, then save the key again.",
                 },
             ),
             runtime,
