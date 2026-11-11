@@ -271,6 +271,51 @@ def test_a_correction_whose_subject_is_a_file_path_is_not_a_memory_correction(pr
         _assert_no_memory_written(before, response)
 
 
+def test_a_share_or_a_mapped_drive_is_never_looked_up_and_is_not_a_memory_correction(
+    profile_env, machine, monkeypatch
+) -> None:
+    """Whether a message names a path is answered from its spelling alone: no stat, no lookup of a share
+    or of a drive Windows does not call local, and the message is still not a memory correction."""
+    from core import windows_known_folders
+    from core import windows_marked_file_ops as marked
+    from core.agent_runtime import write_root_honesty
+    from core.persistent_memory import maybe_handle_memory_command
+
+    monkeypatch.setattr(marked, "_ON_WINDOWS", True)
+    monkeypatch.setattr(write_root_honesty, "_ON_WINDOWS", True)
+    session = _chat_memory("mem-share")
+    _memory_state()  # the store and its projection made before the spy, from their templates
+    looked_up: list[str] = []
+
+    def _remote(drive):
+        looked_up.append(f"_drive_is_remote({drive})")
+        return True
+
+    monkeypatch.setattr(windows_known_folders, "_drive_is_remote", _remote)
+
+    def _watch(owner, name):
+        real = getattr(owner, name)
+
+        def _call(path, *args, **kwargs):
+            if str(path).upper().startswith(("Z:", "\\\\", "//")):
+                looked_up.append(f"{name}({path})")
+            return real(path, *args, **kwargs)
+        return _call
+
+    for name in ("exists", "lexists", "isdir", "isfile", "islink", "realpath"):
+        monkeypatch.setattr(os.path, name, _watch(os.path, name))
+    for name in ("stat", "lstat", "scandir", "listdir"):
+        monkeypatch.setattr(os, name, _watch(os, name))
+    for path in ("\\\\host\\share\\x.txt", "\\\\host\\share\\VOOL HW Test\\x.txt", "Z:\\VOOL HW Test\\x.txt"):
+        text = f"replace the contents of {path} with v2"
+        assert marked.names_a_file_path(text) is True, text
+        before = _memory_state()
+        handled, response = maybe_handle_memory_command(text, session_id=session)
+        assert (handled, response) == (False, ""), (text, response)
+        _assert_no_memory_written(before, response)
+    assert looked_up == [], looked_up
+
+
 def test_a_real_correction_is_still_a_memory_correction_on_windows(profile_env, machine) -> None:
     from core.context_scope import CurrentTurnCorrection, current_turn_corrections
     from core.persistent_memory import maybe_handle_memory_command
