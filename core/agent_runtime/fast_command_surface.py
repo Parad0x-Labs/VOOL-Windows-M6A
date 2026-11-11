@@ -695,7 +695,16 @@ def maybe_handle_cloud_diagnostics_intent(user_input: str, *, owner_local: bool 
     for cred in creds:
         label = f" — {cred['label']}" if cred.get("label") else ""
         lines.append(f"- {cred.get('name')}{label}  ({cred.get('masked_suffix') or 'empty'})")
-    lines.append("`cloud key forget` erases one. Keys live in the OS secret store — never in logs, the DB, or exports.")
+    if diag.get("backend") == "keychain":
+        stored = "Keys live in the macOS Keychain"
+    else:
+        # The vault's sealing key sits in the same user profile (core.secret_storage
+        # account-file-permissions class): never call it the OS secret store.
+        stored = (
+            "Keys live in VOOL's encrypted local vault in your user profile, protected by your "
+            "account's file permissions, not by the OS secret store"
+        )
+    lines.append(f"`cloud key forget` erases one. {stored} — never in logs, the DB, or exports.")
     return "\n".join(lines)
 
 

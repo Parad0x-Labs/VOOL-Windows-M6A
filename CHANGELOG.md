@@ -23,6 +23,7 @@ Windows 11, 64-bit. Windows needs 16 GB of RAM. With less, VOOL refuses to load 
 - **Network locations are refused.** VOOL refuses paths that name a network share or a device, and never writes to a mapped network drive.
 - The installer is **not code-signed yet**. SmartScreen shows **Windows protected your PC**; check the file against `SHA256SUMS` first, then use **More info → Run anyway**.
 - VOOL does not send Windows notifications yet; alerts stay in its own bell.
+- **API keys are kept in VOOL's encrypted vault in your user profile**, protected by your Windows account's file permissions, not by Windows Credential Manager. Anyone who can read your Windows profile can read them. Type `cloud diagnostics` to see which keys are stored.
 
 ### Known issues on Windows
 - Moves work only between marked folders under your user folder, and moving between marked folders also needs the chat's own folder to be marked.
