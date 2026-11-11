@@ -14,7 +14,7 @@ from typing import Any
 
 from core import policy_engine, windows_path_policy
 from core.process_liveness import system_taskkill
-from core.remote_fetch_policy import note_remote_fetch_attempt, remote_fetch_forbidden
+from core.remote_fetch_policy import browser_navigation_refusal, note_remote_fetch_attempt, remote_fetch_forbidden
 from core.vool_browser.engine import CREDENTIAL_ISOLATION_FLAGS, find_windows_program_files_edge
 from tools.web.browser_identity import DESKTOP_ACCEPT_LANGUAGE, DESKTOP_USER_AGENT
 
@@ -270,6 +270,10 @@ def _chrome_argv(
     # escape hatch is an explicit test/container environment variable, which no
     # product launcher sets and which the production invariant test asserts is
     # absent from the default argv.
+    if sys.platform == "win32":
+        # Headless Edge otherwise checks for component updates and starts sync on its own,
+        # reaching Microsoft's servers beyond the page it was asked to render.
+        argv += ["--disable-component-update", "--disable-sync"]
     if os.environ.get(_TEST_ONLY_BROWSER_NO_SANDBOX_ENV, "").strip().lower() in {"1", "true", "yes"}:
         argv.append("--no-sandbox")
 
@@ -468,6 +472,10 @@ def chrome_render(
     note_remote_fetch_attempt(url)
     if remote_fetch_forbidden():
         return {"status": "remote_fetch_disabled", "final_url": url}
+    # Local Only and the permission gateway bind a browser exactly as they bind an HTTP request.
+    refusal = browser_navigation_refusal(url)
+    if refusal is not None:
+        return {"status": "egress_refused", "final_url": url, "error": refusal}
     return _chrome_render_unchecked(
         url,
         timeout_ms=timeout_ms,
@@ -503,6 +511,10 @@ def browser_render(
     note_remote_fetch_attempt(url)
     if remote_fetch_forbidden():
         return {"status": "remote_fetch_disabled", "final_url": url}
+    # Local Only and the permission gateway bind a browser exactly as they bind an HTTP request.
+    refusal = browser_navigation_refusal(url)
+    if refusal is not None:
+        return {"status": "egress_refused", "final_url": url, "error": refusal}
 
     env_enabled = str(os.getenv("PLAYWRIGHT_ENABLED", "")).lower()
     enabled = env_enabled in {"1", "true", "yes"} if env_enabled else policy_engine.playwright_enabled()

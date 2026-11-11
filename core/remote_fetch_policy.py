@@ -271,6 +271,63 @@ class RemoteFetchRefusedError(RuntimeError):
     """This turn is not permitted to reach the network, so no socket was opened."""
 
 
+def browser_navigation_refusal(url: str) -> str | None:
+    """Why a headless browser may not be started for *url* in this turn, or None when it may.
+
+    The browser is not an HTTP request, so it never passes `open_remote`. Its two doors in
+    `tools/browser/browser_render.py` asked only the explicit per-turn veto, so a Local Only turn,
+    or a turn the permission gateway denies the network, still started a browser that went to the
+    public web while every other provider in the same search was refused. This asks the same three
+    checks the HTTP door asks, in the same order, before any process is started:
+
+    * Local Only (operator selection, the ambient egress scope, or the machine's policy), decided by
+      the one `_local_only_egress_forbidden` check, so loopback and the LAN stay as they are;
+    * the explicit per-turn veto;
+    * the permission gateway's network-fetch decision, when a turn's ledger is open.
+
+    A refusal inside a turn leaves the same ``denied`` receipt the HTTP door leaves. Outside any
+    turn there is no ledger to write to, and only the first two checks apply, exactly as before.
+    """
+
+    from core.effect_gateway import current_effect_ledger
+
+    ledger = current_effect_ledger()
+    lo_forbidden, lo_reason = _local_only_egress_forbidden(_SCOPE_CONTEXT.get() or {}, url)
+    if lo_forbidden:
+        if ledger is not None:
+            with contextlib.suppress(RemoteFetchRefusedError):
+                _refuse_local_only(ledger, url, lo_reason)
+        return lo_reason
+    if remote_fetch_forbidden():
+        return "remote fetch is not permitted for this turn"
+    if ledger is None:
+        return None
+    from core.effect_gateway import (
+        DECISION_DENIED,
+        EFFECT_NETWORK_FETCH,
+        LIFECYCLE_DENIED,
+        EffectReceipt,
+        decide_network_fetch,
+    )
+
+    decision, reason = decide_network_fetch(_SCOPE_CONTEXT.get() or {})
+    if decision != DECISION_DENIED:
+        return None
+    ledger.open_effect(
+        EffectReceipt(
+            effect_class=EFFECT_NETWORK_FETCH,
+            decision=DECISION_DENIED,
+            lifecycle=LIFECYCLE_DENIED,
+            reason=reason,
+            host=_host_of(url),
+            mode=_active_mode_label(),
+            decided_by="mode_permission_policy.decide_tool_call",
+            recorded_at=_utcnow_iso(),
+        ),
+    )
+    return f"network fetch denied by the permission gateway: {reason}"
+
+
 def open_remote(
     request: Any,
     *,
@@ -1002,6 +1059,7 @@ __all__ = [
     "NO_ACTIVE_LEDGER_DENIAL",
     "CredentialRedirectRefusedError",
     "RemoteFetchRefusedError",
+    "browser_navigation_refusal",
     "effective_web_available",
     "explicit_remote_fetch_disabled",
     "local_only_active",
