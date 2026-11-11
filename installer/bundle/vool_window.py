@@ -1132,6 +1132,58 @@ class _WindowApi:
         except Exception as exc:
             return {"ok": False, "error": type(exc).__name__}
 
+    def save_session_bundle(self, bundle_path: str, session_id: str = "") -> dict:
+        """Save an exported chat bundle (.voolsession) to a place the user picks.
+
+        The page names only the bundle the export route just wrote; the server's download route
+        decides whether that path is inside session_bundles and supplies the bytes, and nothing
+        existing on disk is overwritten. pywebview cancels page downloads, so without this the
+        export wrote its bundle under the data folder and the user got no file."""
+        import re
+        from urllib.parse import urlencode
+
+        if self._window is None or self._webview is None:
+            return {"ok": False, "error": "no_window"}
+        if not isinstance(bundle_path, str) or not 0 < len(bundle_path) <= 4096 or not bundle_path.endswith(".voolsession"):
+            return {"ok": False, "error": "invalid_bundle_identity"}
+        if not isinstance(session_id, str) or len(session_id) > 512:
+            return {"ok": False, "error": "invalid_bundle_identity"}
+        limit = 256 * 1024 * 1024
+
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *args, **kwargs):
+                return None
+        try:
+            url = _API_ORIGIN + "/api/session/bundle/download?" + urlencode({"path": bundle_path})
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+            with opener.open(url, timeout=60) as response:
+                if response.headers.get_content_type() != "application/octet-stream":
+                    return {"ok": False, "error": "invalid_bundle_response"}
+                body = response.read(limit + 1)
+            if len(body) > limit:
+                return {"ok": False, "error": "bundle_too_large",
+                        "message": "The bundle exceeds the native save size limit; nothing was saved."}
+            stem = re.sub(r"[^A-Za-z0-9_-]", "_", session_id or "chat")[:64] or "chat"
+            result = self._window.create_file_dialog(self._webview.SAVE_DIALOG, directory=_save_dialog_directory(),
+                                                     save_filename=stem + ".voolsession",
+                                                     file_types=("VOOL chat bundles (*.voolsession)",))
+            if not result:
+                return {"ok": False, "cancelled": True}
+            destination = Path(result[0] if isinstance(result, (list, tuple)) else result)
+            _deliver_without_overwrite(body, destination, ".vool-bundle-")
+            return {"ok": True}
+        except urllib.error.HTTPError as exc:
+            try:
+                refusal = json.loads(exc.read(4096))
+                message = str(refusal.get("message") or refusal.get("error") or "The bundle is not available")
+            except (ValueError, AttributeError):
+                message = "The bundle is not available"
+            return {"ok": False, "error": "bundle_unavailable", "message": message}
+        except FileExistsError:
+            return {"ok": False, "error": "destination_exists", "message": "Choose a new filename; the existing file was not changed."}
+        except Exception as exc:
+            return {"ok": False, "error": type(exc).__name__}
+
     @staticmethod
     def _companion_payload(payload: object) -> dict[str, str]:
         """Allowlist the presentation-only values that may cross into the desktop window."""
