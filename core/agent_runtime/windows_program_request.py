@@ -137,6 +137,21 @@ def requested_command(text: str) -> str:
     return ""
 
 
+def windows_run_request_command(text: str) -> str:
+    """On Windows, the command line a whole-message run request names ("run python calc.py in <folder>"),
+    or "" when the message is not one, and always off Windows (the write gate's seam).
+
+    Hardware M4 round 3 (0.7.1): such a request is answered with what the command printed. The
+    bounded builder lane does not claim it (it answered "I completed 1 bounded builder step under
+    `generated/...`" without the output), and the tool loop ends on the run's own output with a
+    written line instead of asking the model for another round."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return ""
+    return requested_command(text)
+
+
 def windows_program_request_refusal(text: str, *, source_context: dict | None = None) -> str:
     """On Windows, the refusal a run request gets because its program never runs there, or because the
     folder it names to run in is outside the marked folders (`windows_run_folder_refusal`); "" when
@@ -197,4 +212,9 @@ def windows_run_folder_refusal(text: str, *, source_context: dict | None = None)
     )
 
 
-__all__ = ["requested_command", "windows_program_request_refusal", "windows_run_folder_refusal"]
+__all__ = [
+    "requested_command",
+    "windows_program_request_refusal",
+    "windows_run_folder_refusal",
+    "windows_run_request_command",
+]

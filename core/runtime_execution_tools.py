@@ -7406,10 +7406,11 @@ def _run_validation(
                 ),
             },
         )
+    relative_cwd = str(runtime_result.details.get("cwd") or ".")
     payload = render_validation_result(
         intent,
         command=command,
-        cwd=str(runtime_result.details.get("cwd") or "."),
+        cwd=relative_cwd,
         runner_result={
             "status": runtime_result.status,
             "stdout": runtime_result.details.get("stdout"),
@@ -7423,6 +7424,11 @@ def _run_validation(
             "workspace.run_formatter": "Validation formatter run",
         }[intent],
     )
+    named = _windows_named_folder_label(workspace_root, relative_cwd, source_context)
+    if named != relative_cwd:
+        payload["response_text"] = str(payload.get("response_text") or "").replace(
+            f" in `{relative_cwd}`:", f" in `{named}`:", 1
+        )
     details = dict(payload.get("details") or {})
     followup = _extract_command_failure_followup(
         stdout=str(details.get("stdout") or ""),
@@ -8138,7 +8144,7 @@ def _run_command(
             )
         )
     lines = [
-        f"Command {'failed' if command_failed else 'executed'} in `{relative_cwd}`:",
+        f"Command {'failed' if command_failed else 'executed'} in `{_windows_named_folder_label(cwd, relative_cwd, source_context)}`:",
         f"$ {command}",
         f"- Exit code: {returncode}",
     ]
@@ -8174,6 +8180,22 @@ def _run_command(
             ),
         },
     )
+
+
+def _windows_named_folder_label(cwd: Path, relative_cwd: str, source_context: dict[str, Any] | None) -> str:
+    """The folder a job's reply names. On Windows, in a turn placed in the marked folder the user named
+    (`core.windows_marked_code_folder`), that folder is the workspace, so its relative name is `.`:
+    the reply names the folder in full instead (hardware M4 round 3: "Command executed in `.`" for a
+    run in `C:\\...\\VOOL HW Test\\proj`). Everywhere else, the relative name as before."""
+    from core import windows_write_gate
+
+    if relative_cwd != "." or not windows_write_gate.active():
+        return relative_cwd
+    from core import windows_marked_code_folder
+
+    if str((source_context or {}).get("workspace_binding") or "") != windows_marked_code_folder.BINDING:
+        return relative_cwd
+    return str(cwd)
 
 
 def _trusted_local_network_mode(command: str, *, arguments: dict[str, Any]) -> str | None:

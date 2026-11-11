@@ -2059,6 +2059,10 @@ def action_fast_path_result(
         debug_origin=reason,
         allow_planner_style=explicit_planner_style_requested_fn(user_input),
     )
+    from core.agent_runtime.research_tool_loop_facade import is_windows_run_request_output
+
+    if is_windows_run_request_output(details):
+        turn_result.windows_run_request_output = True
     agent._apply_interaction_transition(session_id, turn_result)
     decorated_response = agent._decorate_chat_response(
         turn_result,

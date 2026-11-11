@@ -82,12 +82,14 @@ class ToolResultTextSurfaceMixin:
         *,
         response_class: Any,
         allow_planner_style: bool = False,
+        windows_run_request_output: bool = False,
     ) -> str:
         return agent_response_runtime.sanitize_user_chat_text(
             self,
             text,
             response_class=response_class,
             allow_planner_style=allow_planner_style,
+            windows_run_request_output=windows_run_request_output,
         )
 
     def _strip_runtime_preamble(self, text: str, *, allow_planner_style: bool = False) -> str:

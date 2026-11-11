@@ -431,6 +431,91 @@ def steps_that_ran(executed_steps: list[dict] | None) -> list[dict]:
     ]
 
 
+#: The calls that run one sandbox job from a command line (`_run_command`, `_run_validation`).
+_WINDOWS_RUN_ANSWER_INTENTS = frozenset(
+    {"sandbox.run_command", "workspace.run_tests", "workspace.run_lint", "workspace.run_formatter"}
+)
+#: A job that reached an outcome of its own: it exited (zero or not) or ran out of time.
+_WINDOWS_RUN_ANSWER_STATUSES = frozenset({"executed", "command_failed", "timed_out"})
+
+
+def windows_run_request_step(effective_input: str, executed_steps: list[dict] | None) -> dict | None:
+    """On Windows, the one job a whole-message run request ran, when that job is the turn's answer.
+
+    Hardware M4 round 3 (0.7.1): "run python calc.py in <marked folder>" ran and was answered "I
+    completed 1 bounded builder step under `generated/...`" with no output, and "run pytest in
+    <folder>", whose run exited non-zero, was answered "I wasn't able to turn that into a completed
+    action" with no output either. What the command printed is the answer to "run <command>": the
+    loop ends on it (`windows_run_request_answer`) instead of asking the model for another round.
+    None off Windows (the write gate's seam), for a turn that is not a run request, when anything
+    but exactly one such job ran, or when the job never started (a refusal keeps its own path)."""
+    from core.agent_runtime.windows_program_request import windows_run_request_command
+
+    if not windows_run_request_command(effective_input):
+        return None
+    ran = steps_that_ran(executed_steps)
+    if len(ran) != 1:
+        return None
+    step = ran[0]
+    if str(step.get("tool_name") or "") not in _WINDOWS_RUN_ANSWER_INTENTS:
+        return None
+    if str(step.get("status") or "") not in _WINDOWS_RUN_ANSWER_STATUSES:
+        return None
+    return step
+
+
+#: The reply `windows_run_request_answer` writes: its written line, then the job's own header line.
+_WINDOWS_RUN_ANSWER_RE = re.compile(
+    r"\A(?:`[^`\n]+`|The command) ran (?:and exited 0|and failed(?: \(exit code -?\d+\))?|out of time before it finished)\."
+    r"\n\n(?:Command (?:executed|failed)|Validation (?:test|lint|formatter) run) in `[^`\n]*`:\n\$ "
+)
+
+
+def is_windows_run_request_answer(text: str) -> bool:
+    """On Windows, whether ``text`` is a run request's answer (`windows_run_request_answer`). What the job
+    printed is the owner's own program output: a traceback in it is not one of VOOL's, so the chat
+    sanitizer must not swap the answer for "I hit an internal failure" (a failing unittest run prints
+    one). Always False off Windows."""
+    from core import windows_write_gate
+
+    return windows_write_gate.active() and bool(_WINDOWS_RUN_ANSWER_RE.match(str(text or "").strip()))
+
+
+def is_windows_run_request_output(details: dict | None) -> bool:
+    """On Windows, whether a tool-loop result's ``details`` are the run-request answer's own: the
+    ``render_mode`` and ``loop_stop_reason`` that only the loop's run-request ending sets
+    (`windows_run_request_answered`). A model-written reply never carries them, so text shaped like
+    the answer is not enough for the chat sanitizer to let a traceback through. Always False off
+    Windows."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active() or not isinstance(details, dict):
+        return False
+    return (
+        details.get("render_mode") == "windows_run_request_output"
+        and details.get("loop_stop_reason") == "windows_run_request_answered"
+    )
+
+
+def windows_run_request_answer(step: dict) -> str:
+    """The reply to a Windows run request whose job ran: one written line, then the job's own text
+    (the folder, the command, the exit code and what it printed)."""
+    details = dict(step.get("details") or {})
+    observation = dict(step.get("observation") or {})
+    command = str(details.get("command") or observation.get("command") or "").strip()
+    named = f"`{command}`" if command else "The command"
+    status = str(step.get("status") or "")
+    returncode = details.get("returncode", observation.get("returncode"))
+    if status == "timed_out":
+        lead = f"{named} ran out of time before it finished."
+    elif status == "executed":
+        lead = f"{named} ran and exited 0."
+    else:
+        lead = f"{named} ran and failed (exit code {returncode})." if returncode not in (None, "") else f"{named} ran and failed."
+    body = str(step.get("response_text") or "").strip()
+    return f"{lead}\n\n{body}" if body else lead
+
+
 class ResearchToolLoopFacadeMixin:
     def _collect_live_web_notes(
         self,
@@ -2190,6 +2275,10 @@ class ResearchToolLoopFacadeMixin:
             ):
                 loop_stop_reason = "tool_completed_turn"
                 break
+            # Windows: a run request's one job is the answer, whether it exited 0 or not.
+            if windows_run_request_step(effective_input, executed_steps) is not None:
+                loop_stop_reason = "windows_run_request_answered"
+                break
             # A refused step is not a terminal turn: the correction path or grounded synthesis
             # below still owns it. Finalization records failure when the turn actually ends.
             # Marking it failed here seals the checkpoint and discards a later approval pause,
@@ -2356,6 +2445,61 @@ class ResearchToolLoopFacadeMixin:
             return None
         if not loop_stop_reason and model_rounds >= max_rounds:
             loop_stop_reason = "step_budget_exhausted"
+
+        windows_run_step = (
+            windows_run_request_step(effective_input, executed_steps)
+            if loop_stop_reason == "windows_run_request_answered"
+            else None
+        )
+        if windows_run_step is not None:
+            run_ok = str(windows_run_step.get("status") or "") == "executed"
+            self._emit_runtime_event(
+                loop_source_context,
+                event_type="tool_loop_completed",
+                message="Returning the job's output: a run request is answered with what the command printed.",
+                step_count=len(executed_steps),
+                tool_name=str(windows_run_step.get("tool_name") or ""),
+                render_mode="windows_run_request_output",
+                status=str(windows_run_step.get("status") or ""),
+            )
+            if checkpoint_id:
+                self._record_runtime_tool_progress(
+                    checkpoint_id,
+                    executed_steps=executed_steps,
+                    loop_source_context=loop_source_context,
+                    seen_tool_payloads=seen_tool_payloads,
+                    pending_tool_payload=None,
+                    last_tool_payload=checkpoint_state.get("last_tool_payload"),
+                    last_tool_response=checkpoint_state.get("last_tool_response"),
+                    last_tool_name=str(windows_run_step.get("tool_name") or ""),
+                    task_class=str(classification.get("task_class") or "unknown"),
+                    status="running",
+                )
+            return enforce_code_task_completion({
+                "response": windows_run_request_answer(windows_run_step),
+                "confidence": 0.9 if run_ok else 0.6,
+                "success": run_ok,
+                "status": str(windows_run_step.get("status") or ""),
+                "mode": "tool_executed" if run_ok else "tool_failed",
+                "task_outcome": "success" if run_ok else "failed",
+                "details": {
+                    "tool_name": windows_run_step.get("tool_name"),
+                    "tool_provider": None,
+                    "tool_validation": "windows_run_request",
+                    "tool_steps": [step["tool_name"] for step in executed_steps],
+                    "step_count": len(executed_steps),
+                    "render_mode": "windows_run_request_output",
+                    "loop_stop_reason": loop_stop_reason,
+                    "max_rounds": max_rounds,
+                    "max_steps": max_rounds,
+                },
+                "learned_plan": None,
+                "workflow_summary": self._tool_intent_loop_workflow_summary(
+                    executed_steps=executed_steps,
+                    provider_id=None,
+                    validation_state="windows_run_request",
+                ),
+            }, executed_steps)
 
         # Steps ran, then the model's next step produced no usable reply: a refused call (the
         # local lane raises "required native tool call is missing" when the model answers in prose
