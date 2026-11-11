@@ -1927,6 +1927,25 @@ def handle_turn_frontdoor(
                 reason="write_root_unreachable",
             )
         }
+    # A read whose relative path climbs with `..` out of the chat's folder is refused the same plain
+    # way on Windows (owner decision D4, claims sweep 11 Nov 2026). After the write and move climbs,
+    # so a climb a write or a move names keeps their sentence.
+    from core.agent_runtime.read_path_honesty import climbing_relative_read, climbing_relative_read_response
+
+    read_climb_path, read_climb_leads_to = climbing_relative_read(
+        str(raw_user_input or effective_input), source_context=source_context
+    )
+    if read_climb_path:
+        return {
+            "result": agent._fast_path_result(
+                session_id=session_id,
+                user_input=effective_input,
+                response=climbing_relative_read_response(read_climb_path, read_climb_leads_to),
+                confidence=0.95,
+                source_context=source_context,
+                reason="read_climb_refused",
+            )
+        }
 
     web0_builder_result = None if (model_owns_judgement or action_forbidden) else agent._maybe_handle_web0_builder_fast_path(
         effective_input,
