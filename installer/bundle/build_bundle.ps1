@@ -93,6 +93,16 @@ if ($LASTEXITCODE -ne 0) { throw "Embedded Python setuptools/wheel bootstrap fai
     "eth-abi>=6.0" "eth-utils>=6.0" "eth-account>=0.13" `
     "x402[evm]==2.25.0" "web3==8.0.0"
 if ($LASTEXITCODE -ne 0) { throw "Embedded Python runtime dependency installation failed." }
+# pytest, so `workspace.run_tests` can run pytest in a marked folder: the sandbox runs `pytest` and
+# `python -m pytest` as this interpreter, and without it every run failed with "No module named
+# pytest". Each wheel is pinned by version and sha256 and installed with no dependency resolution
+# (tests/test_windows_bundle_ships_pytest.py keeps the file in step with pyproject and uv.lock).
+$PytestRequirements = Join-Path $PSScriptRoot "requirements-windows-pytest.txt"
+& $py -m pip install --no-warn-script-location -q --require-hashes --no-deps --only-binary=:all: `
+    -r $PytestRequirements
+if ($LASTEXITCODE -ne 0) { throw "Embedded Python pytest installation failed." }
+& $py -m pytest --version
+if ($LASTEXITCODE -ne 0) { throw "Embedded Python pytest does not start." }
 & $py -m pip check
 if ($LASTEXITCODE -ne 0) { throw "Embedded Python dependency check failed." }
 Remove-Item -LiteralPath $pipWheel -Force -ErrorAction SilentlyContinue
