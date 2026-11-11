@@ -32,6 +32,9 @@ def load_identity() -> dict:
     path = _identity_path()
     if not path.exists():
         return {}
+    from core import owner_only
+
+    owner_only.repair_private_file(path)  # an identity written before writes were sealed
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
@@ -62,8 +65,7 @@ def save_identity(
         "created_at": existing.get("created_at") or _now_iso(),
         "updated_at": _now_iso(),
     }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    _write_identity(path, data)
     return path
 
 
@@ -73,8 +75,20 @@ def force_rename(new_name: str) -> Path:
     existing = load_identity()
     existing["agent_name"] = new_name.strip()
     existing["updated_at"] = _now_iso()
-    path.write_text(json.dumps(existing, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    _write_identity(path, existing)
     return path
+
+
+def _write_identity(path: Path, data: dict) -> None:
+    text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    from core import owner_only
+
+    if owner_only.seals_secrets():
+        # Windows: a plain write inherits the folder's ACL. Sealed, or nothing is written.
+        owner_only.write_private_file(path, text)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
 
 
 # Installs bootstrapped before the VOOL rename persisted the old default as `agent_name`. Map that
