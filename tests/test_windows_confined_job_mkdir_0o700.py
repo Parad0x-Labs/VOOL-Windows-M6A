@@ -33,6 +33,7 @@ from __future__ import annotations
 import ast
 import importlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -64,6 +65,13 @@ VAR = "VOOL_WINDOWS_CONFINED_JOB"
 
 def _shim():
     return importlib.import_module("sandbox.windows_job_mkdir")
+
+
+@pytest.fixture(autouse=True)
+def _appcontainer_token(monkeypatch):
+    """Every row runs as if the process token were an AppContainer's (the shim's token check, which
+    is Windows-only, is mocked); the rows about the token check set their own answer."""
+    monkeypatch.setattr(_shim(), "_token_is_appcontainer", lambda: True, raising=False)
 
 
 # --- the variable ---------------------------------------------------------------------------
@@ -201,10 +209,20 @@ def test_the_shim_touches_nothing_but_mkdir():
     assert [key for key in after if after[key] is not before[key]] == ["mkdir"]
 
 
-def test_the_shim_source_cannot_switch_off_any_confinement():
-    """It imports only os, reads only its own variable, assigns only mkdir, and runs no process,
-    file, network, ctypes or dynamic code."""
+def _shim_tree() -> tuple[ast.Module, ast.FunctionDef | None]:
+    """The shim's AST without its token check, and the token check (`_token_is_appcontainer`)."""
     tree = ast.parse(SHIM.read_text(encoding="utf-8"))
+    token = next((n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_token_is_appcontainer"), None)
+    rest = ast.Module(body=[n for n in tree.body if n is not token], type_ignores=[])
+    return rest, token
+
+
+def test_the_shim_source_cannot_switch_off_any_confinement():
+    """Outside its one token check it imports only os, reads only its own variable, assigns only
+    mkdir, and runs no process, file, network, ctypes or dynamic code. (Updated on the security
+    review's condition: ctypes is allowed, but only inside `_token_is_appcontainer`; see
+    test_ctypes_serves_only_the_one_token_call.)"""
+    tree, _ = _shim_tree()
     imports = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -254,6 +272,10 @@ if grant.get("shim"):
     _spec = importlib.util.spec_from_file_location("vool_windows_job_mkdir", grant["shim"])
     _shim = importlib.util.module_from_spec(_spec)
     _spec.loader.exec_module(_shim)
+    if grant.get("appcontainer", True):
+        _shim._token_is_appcontainer = lambda: True  # the model's job runs in an AppContainer
+    else:
+        _shim._token_is_appcontainer = lambda: False
     _shim.install(nt=True)  # the bundle's .pth import, as on Windows
 atexit.register(lambda: print("VOOL-JOB-MADE " + json.dumps(made_all)))
 
@@ -297,7 +319,9 @@ def test_a_folder_outside_the_write_root_is_still_denied():
 '''
 
 
-def _run(base: Path, proj: Path, job_env: dict[str, str], *, shim: bool = True) -> tuple[int, str, list[str], list[str]]:
+def _run(
+    base: Path, proj: Path, job_env: dict[str, str], *, shim: bool = True, appcontainer: bool = True
+) -> tuple[int, str, list[str], list[str]]:
     job_dir = base / "job"
     job_dir.mkdir(exist_ok=True)
     job = job_dir / "confined_job.py"
@@ -306,7 +330,14 @@ def _run(base: Path, proj: Path, job_env: dict[str, str], *, shim: bool = True) 
     shutil.copyfile(SHIM, shim_copy)
     grant = job_dir / "grant.json"
     grant.write_text(
-        json.dumps({"run_folder": str(proj), "stat_only": [str(proj.parent)], "shim": str(shim_copy) if shim else ""}),
+        json.dumps(
+            {
+                "run_folder": str(proj),
+                "stat_only": [str(proj.parent)],
+                "shim": str(shim_copy) if shim else "",
+                "appcontainer": appcontainer,
+            }
+        ),
         encoding="utf-8",
     )
     temp = Path(job_env["TEMP"])
@@ -415,3 +446,162 @@ def test_the_shim_marks_its_wrapper_the_way_the_bundle_check_reads_it():
     fake, _ = _fake_os()
     _shim().install(environ={VAR: "1"}, module=fake, nt=True)
     assert getattr(fake.mkdir, "_vool_confined_job_mkdir", False) is True
+
+
+# --- the token check (security review condition): wrapped only inside an AppContainer -----------
+
+
+def test_the_variable_in_a_process_that_is_not_an_appcontainer_wraps_nothing(monkeypatch):
+    fake, _ = _fake_os()
+    before = fake.mkdir
+    monkeypatch.setattr(_shim(), "_token_is_appcontainer", lambda: False)
+    assert _shim().install(environ={VAR: "1"}, module=fake, nt=True) is False
+    assert fake.mkdir is before
+
+
+@pytest.mark.parametrize("error", [OSError("no token"), AttributeError("no windll"), ValueError("bad"), RuntimeError("x")])
+def test_a_token_check_that_raises_wraps_nothing(monkeypatch, error):
+    fake, _ = _fake_os()
+    before = fake.mkdir
+
+    def check():
+        raise error
+
+    monkeypatch.setattr(_shim(), "_token_is_appcontainer", check)
+    assert _shim().install(environ={VAR: "1"}, module=fake, nt=True) is False
+    assert fake.mkdir is before
+
+
+@pytest.mark.parametrize("answer", [None, 1, "yes", object()])
+def test_only_a_true_answer_counts_as_an_appcontainer(monkeypatch, answer):
+    fake, _ = _fake_os()
+    monkeypatch.setattr(_shim(), "_token_is_appcontainer", lambda: answer)
+    assert _shim().install(environ={VAR: "1"}, module=fake, nt=True) is False
+
+
+def test_an_appcontainer_token_and_the_variable_wrap_mkdir(monkeypatch):
+    fake, calls = _fake_os()
+    monkeypatch.setattr(_shim(), "_token_is_appcontainer", lambda: True)
+    assert _shim().install(environ={VAR: "1"}, module=fake, nt=True) is True
+    assert getattr(fake.mkdir, "_vool_confined_job_mkdir", False) is True
+    fake.mkdir("x", 0o700)
+    assert calls == [("x", 0o777, None)]
+
+
+@pytest.mark.parametrize(("environ", "nt"), [({}, True), ({VAR: "0"}, True), ({VAR: "1"}, False)])
+def test_the_token_is_never_asked_unless_windows_and_the_variable_say_so(monkeypatch, environ, nt):
+    """So VOOL's own process (no variable) never loads ctypes for it."""
+    asked: list[int] = []
+    monkeypatch.setattr(_shim(), "_token_is_appcontainer", lambda: asked.append(1) or True)
+    fake, _ = _fake_os()
+    assert _shim().install(environ=environ, module=fake, nt=nt) is False
+    assert asked == []
+
+
+def test_the_real_token_check_answers_false_in_an_unconfined_process():
+    """Unmocked, in this unconfined test process: off Windows there is no token API, on Windows the
+    token is not an AppContainer's. Either way the answer is False, and it never raises."""
+    code = "import sys; import sandbox.windows_job_mkdir as m; sys.exit(0 if m._token_is_appcontainer() is False else 1)"
+    done = subprocess.run([sys.executable, "-c", code], cwd=str(REPO), timeout=60)
+    assert done.returncode == 0
+
+
+def test_ctypes_serves_only_the_one_token_call():
+    """ctypes appears only in `_token_is_appcontainer`: it opens this process's token for query and
+    asks GetTokenInformation(TokenIsAppContainer = 29), and every error answers False."""
+    _, token = _shim_tree()
+    assert token is not None
+    imports = set()
+    for node in ast.walk(token):
+        if isinstance(node, ast.Import):
+            imports.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            imports.add(f"from {node.module}")
+    assert imports == {"ctypes", "from ctypes"}, imports
+    called = {
+        node.func.attr
+        for node in ast.walk(token)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }
+    assert called <= {"WinDLL", "GetCurrentProcess", "OpenProcessToken", "GetTokenInformation", "CloseHandle", "byref", "sizeof", "POINTER", "HANDLE", "DWORD"}, called
+    assert {"OpenProcessToken", "GetTokenInformation", "CloseHandle"} <= called
+    strings = {n.value for n in ast.walk(token) if isinstance(n, ast.Constant) and isinstance(n.value, str)} - {ast.get_docstring(token)}
+    assert strings == {"advapi32", "kernel32"}, strings
+    numbers = {n.value for n in ast.walk(token) if isinstance(n, ast.Constant) and isinstance(n.value, int) and not isinstance(n.value, bool)}
+    assert numbers <= {0, 0x0008, 29}, numbers  # TOKEN_QUERY and TokenIsAppContainer
+    assert 29 in numbers and 0x0008 in numbers
+    # The body is one try whose every handler answers False.
+    body = [n for n in token.body if not (isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant))]
+    assert len(body) == 1 and isinstance(body[0], ast.Try), ast.dump(token)[:200]
+    for handler in body[0].handlers:
+        assert isinstance(handler.type, ast.Name) and handler.type.id in ("Exception", "BaseException")
+        assert [ast.dump(n) for n in handler.body] == [ast.dump(ast.Return(value=ast.Constant(value=False)))]
+    # install() asks it only through the module name, so a mock (and the model) can answer it.
+    rest, _ = _shim_tree()
+    assert "_token_is_appcontainer" in {n.id for n in ast.walk(rest) if isinstance(n, ast.Name)}
+
+
+def test_outside_an_appcontainer_0o700_folders_stay_owner_only_in_the_model(windows, base):
+    """The variable is "1" but the token is not an AppContainer's: nothing is wrapped, the 0o700
+    folders stay owner-only and tmp_path errors exactly as without the shim."""
+    proj = _tree(base)
+    (proj / "test_fixtures.py").write_text(FIXTURE_TESTS, encoding="utf-8")
+    env = _vool_env(windows, proj)
+    assert env.get(VAR) == "1"
+    code, output, owner_only, _ = _run(base, proj, env, appcontainer=False)
+    assert code == 1, output
+    assert "PermissionError" in output, output
+    assert owner_only, output
+
+
+# --- VOOL's own process: the variable in its environment is logged ------------------------------
+
+
+def test_vools_server_logs_a_warning_when_its_own_environment_carries_the_variable(caplog):
+    from apps import vool_api_server as server
+
+    caplog.set_level(logging.WARNING, logger="vool.api")
+    assert server._warn_if_confined_job_variable_set({VAR: "1", "PATH": "x"}) is True
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING and VAR in r.getMessage()]
+    assert len(warnings) == 1, [r.getMessage() for r in caplog.records]
+
+
+@pytest.mark.parametrize("value", ["", "0", "anything"])
+def test_any_value_of_the_variable_is_logged(caplog, value):
+    from apps import vool_api_server as server
+
+    caplog.set_level(logging.WARNING, logger="vool.api")
+    assert server._warn_if_confined_job_variable_set({VAR: value}) is True
+    assert any(VAR in r.getMessage() for r in caplog.records if r.levelno == logging.WARNING)
+
+
+def test_no_warning_without_the_variable(caplog):
+    from apps import vool_api_server as server
+
+    caplog.set_level(logging.WARNING, logger="vool.api")
+    assert server._warn_if_confined_job_variable_set({"PATH": "x"}) is False
+    assert not [r for r in caplog.records if VAR in r.getMessage()]
+
+
+def test_the_bundle_build_expects_the_shim_off_with_the_variable_outside_an_appcontainer():
+    """The build is not an AppContainer, so with the variable set the shim must stay off and the
+    token check must answer False there; "on" is the Windows hardware check in the triage note."""
+    text = _build()
+    block = text[text.index('$env:VOOL_WINDOWS_CONFINED_JOB = "1"'):text.index("Remove-Item Env:VOOL_WINDOWS_CONFINED_JOB\n")]
+    assert "_token_is_appcontainer() is False" in block, block
+    assert "not getattr(os.mkdir, '_vool_confined_job_mkdir', False)" in block, block
+
+
+def test_server_startup_runs_the_check_once_logging_reaches_its_file():
+    """`main()` calls the check, after logging is routed to vool_api.log and before the app is made."""
+    source = (REPO / "apps" / "vool_api_server.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
+    calls = [
+        n for n in ast.walk(main)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "_warn_if_confined_job_variable_set"
+    ]
+    assert len(calls) == 1
+    routed = next(n for n in ast.walk(main) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "route_logging_to_file")
+    made = next(n for n in ast.walk(main) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "create_app")
+    assert routed.lineno < calls[0].lineno < made.lineno
