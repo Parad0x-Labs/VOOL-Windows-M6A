@@ -227,6 +227,52 @@ def _windows_stat_only_paths(program: list[str], cwd: Path | None) -> tuple[Path
     return () if parent == Path(cwd) else (parent,)
 
 
+#: What every confined Windows pytest job runs with, in `PYTEST_ADDOPTS` (the job's argv stays as it
+#: was). CPython 3.12.4 and later (gh-118486) make a folder asked for with mode 0o700 on Windows with a
+#: protected owner-only DACL (SYSTEM, Administrators, OWNER RIGHTS), and no ACE there names the job's
+#: capability. pytest's cache plugin makes its cache with `tempfile.mkdtemp(prefix="pytest-cache-files-",
+#: dir=<rootdir>)`, which asks for 0o700, so the job lost every right on the folder it had just made:
+#: the cache write failed, the folder stayed, and the next run's collection died listing it
+#: ("PermissionError: [WinError 5] ... proj\\pytest-cache-files-7i5mclpd", exit 2). The cache can never
+#: be written in the job, so the plugin is off; `--ignore-glob` (matched under the job's folder) keeps a
+#: leftover from an earlier run out of collection.
+_WINDOWS_PYTEST_ADDOPTS = ("-p", "no:cacheprovider", "--ignore-glob=pytest-cache-files-*")
+
+
+#: The variable that turns on the bundled Windows Python's mkdir shim (sandbox/windows_job_mkdir.py,
+#: shipped by build_bundle.ps1 into site-packages): inside a confined job, `os.mkdir(path, 0o700)`
+#: becomes a plain mkdir, so the folder inherits the write root's DACL instead of the owner-only one
+#: CPython gives 0o700 on Windows. Without it tmp_path, tmpdir, tmp_path_factory and
+#: tempfile.mkdtemp all made folders the job could not use. Only `_windows_job_environment` sets it.
+_WINDOWS_CONFINED_JOB_VAR = "VOOL_WINDOWS_CONFINED_JOB"
+
+
+def _windows_vool_interpreter(program: str) -> bool:
+    """Whether *program* is the interpreter running VOOL (or its base): the only program phase 1 runs."""
+    accepted = {os.path.normcase(str(Path(sys.executable).resolve()))}
+    base = getattr(sys, "_base_executable", "") or ""
+    if base:
+        accepted.add(os.path.normcase(str(Path(base).resolve())))
+    try:
+        return os.path.normcase(str(Path(program).resolve())) in accepted
+    except (OSError, ValueError):
+        return False
+
+
+def _windows_job_environment(program: list[str], env: dict[str, str]) -> dict[str, str]:
+    """*env* for the confined *program*. A Python job (VOOL's interpreter, the only program
+    `_windows_phase1_argv` lets through) gets `_WINDOWS_CONFINED_JOB_VAR=1`; a pytest job
+    (`<python> -m pytest`, the form phase 1 gives every pytest job) also gets
+    `_WINDOWS_PYTEST_ADDOPTS`. Anything else gets *env* as it is."""
+    if not program or not _windows_vool_interpreter(program[0]):
+        return env
+    env = {**env, _WINDOWS_CONFINED_JOB_VAR: "1"}
+    if program[1:3] != ["-m", "pytest"]:
+        return env
+    current = str(env.get("PYTEST_ADDOPTS") or "").strip()
+    return {**env, "PYTEST_ADDOPTS": " ".join([*_WINDOWS_PYTEST_ADDOPTS, current]).strip()}
+
+
 def _windows_path_text(path: Path | str) -> str:
     """A path as the Windows launcher's policy names it: absolute and resolved."""
     return str(Path(path).resolve())
@@ -868,6 +914,8 @@ class JobRunner:
                     "so it was stopped before it ran anything."
                 ) from None
 
+        # argv is `[launcher, --policy, <policy>, --, *program]` (`confinement_prefix`).
+        program = list(argv[4:]) if len(argv) > 4 and argv[3] == "--" else []
         outcome: dict[str, str] = {}
         result = self._run_wrapped(
             argv,
@@ -875,7 +923,7 @@ class JobRunner:
             cancel_event,
             creationflags=windows_confinement.launcher_creationflags(),
             outcome=outcome,
-            env_filter=windows_confinement.launcher_environment,
+            env_filter=lambda env: _windows_job_environment(program, windows_confinement.launcher_environment(env)),
             after_spawn=adopt,
         )
         # The cancel and timeout outcomes are the runner's own: it killed the launcher, so the
