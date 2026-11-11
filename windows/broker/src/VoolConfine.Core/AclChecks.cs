@@ -19,13 +19,21 @@ public sealed class AclChecks : IConfinementChecks
     public static Acl.HostPaths Host(string packageSid) =>
         new(Acl.Normalize(AppContext.BaseDirectory), Path.Combine(Sids.FolderPath(packageSid), "Temp"));
 
-    static ConfinementSids For(Policy policy, string packageSid) => ConfinementSids.For(policy, packageSid, Sids.RootCapability, Sids.ReadCapability);
+    static ConfinementSids For(Policy policy, string packageSid) =>
+        ConfinementSids.For(policy, packageSid, Sids.RootCapability, Sids.ReadCapability, Sids.StatCapability);
 
     public void VerifyAcls(Policy policy, string packageSid) => Checked(() =>
     {
         Acl.VerifyHost(Host(packageSid), new SecurityIdentifier(packageSid));
         Acl.Verify(policy, For(policy, packageSid));
+        Acl.VerifyStatOnly(policy, For(policy, packageSid));
     });
+
+    /// <summary>The run form, before VerifyAcls: this job's stat-only ACEs (one per stat_only_paths entry).</summary>
+    public void GrantStatOnly(Policy policy, string packageSid) => Checked(() => { Acl.GrantStatOnly(policy, For(policy, packageSid)); });
+
+    /// <summary>The run form, once the job's tree is gone: the same ACEs off again.</summary>
+    public void RevokeStatOnly(Policy policy, string packageSid) => Checked(() => { Acl.RevokeStatOnly(policy, For(policy, packageSid)); });
 
     /// <summary>
     /// Stateless: every repository layout under a write root carries the deny once Verify passed,
@@ -48,7 +56,7 @@ public sealed class AclChecks : IConfinementChecks
         stderr.WriteLine($"granted: {report.Updated} updated, {report.Unchanged} unchanged, {report.Repositories.Count} repositories denied write");
     });
 
-    /// <summary>The revoke form: exactly the policy's ACEs (shared ones stay for other workspaces). 0, or 125.</summary>
+    /// <summary>The revoke form: exactly the policy's ACEs, its stat-only ones included (shared ones stay for other workspaces). 0, or 125.</summary>
     public static int Revoke(Policy policy, TextWriter stderr) => Form(stderr, "revoke", () =>
     {
         var report = Acl.Revoke(policy, For(policy, Sids.Package()), includeShared: false);

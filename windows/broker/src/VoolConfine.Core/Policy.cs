@@ -34,10 +34,19 @@ public sealed record Policy(
 {
     public const string Schema = "vool.windows_confinement.v1";
 
+    /// <summary>
+    /// Folders this job may stat and nothing more: one explicit, non-inherited allow of
+    /// FILE_READ_ATTRIBUTES | SYNCHRONIZE on the folder itself, for that folder's own stat capability,
+    /// which only a job naming it carries. The run form puts it in place before the child starts and
+    /// takes it off once the job's tree is gone. No listing, no read of anything inside. The caller
+    /// names the parent of a pytest job's folder here, which pytest 9.1.1 stats on every run.
+    /// </summary>
+    public IReadOnlyList<string> StatOnlyPaths { get; init; } = [];
+
     static readonly HashSet<string> Keys =
     [
         "schema", "write_roots", "read_roots", "job_read_roots", "deny_write_paths", "deny_all_paths", "deny_write_git",
-        "network", "max_seconds", "memory_mb", "max_processes", "temp_dir", "status_path",
+        "network", "max_seconds", "memory_mb", "max_processes", "temp_dir", "status_path", "stat_only_paths",
     ];
 
     public static Policy Parse(string json)
@@ -59,6 +68,15 @@ public sealed record Policy(
             var jobRead = Paths(root, "job_read_roots", required: false);
             var deny = Paths(root, "deny_write_paths", required: false);
             var denyAll = Paths(root, "deny_all_paths", required: false);
+            var statOnly = Paths(root, "stat_only_paths", required: false);
+            foreach (var path in statOnly)
+            {
+                if (path.Length == 3) throw new PolicyException($"stat_only_paths entry must not be a volume root: {path}");
+                if (write.Concat(read).Concat(jobRead).Any(r => Inside(path, r)))
+                    throw new PolicyException($"stat_only_paths entry lies inside a root, which already reaches it: {path}");
+                if (denyAll.Any(d => Inside(path, d)))
+                    throw new PolicyException($"stat_only_paths entry lies inside a denied path: {path}");
+            }
             if (!root.TryGetProperty("temp_dir", out var tempEl) || tempEl.ValueKind != JsonValueKind.String)
                 throw new PolicyException("temp_dir is required");
             var temp = CheckPath(tempEl.GetString()!, "temp_dir");
@@ -70,7 +88,7 @@ public sealed record Policy(
             return new Policy(write, read, jobRead, deny, denyAll,
                 Bool(root, "deny_write_git", true), Bool(root, "network", false),
                 Positive(root, "max_seconds", 120), Positive(root, "memory_mb", 512), Positive(root, "max_processes", 64),
-                temp, status);
+                temp, status) { StatOnlyPaths = statOnly };
         }
     }
 

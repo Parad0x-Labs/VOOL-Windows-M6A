@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import contextvars
 import json
 import os
 import re
@@ -171,6 +172,10 @@ _WINDOWS_STAGED_LOCK = threading.Lock()
 #: again.
 _WINDOWS_GRANTED: set[str] = set()
 
+#: The working folder of the job `JobRunner.run` is wrapping right now, for the Windows policy: a
+#: pytest job there gets a stat-only right on the folder above it (see `_windows_stat_only_paths`).
+_JOB_CWD: contextvars.ContextVar[Path | None] = contextvars.ContextVar("vool_job_cwd", default=None)
+
 
 def _repository_layouts(roots: tuple[Path, ...]) -> tuple[set[str], bool]:
     """Every repository layout under *roots*, and whether the walk finished inside the scan cap.
@@ -204,6 +209,22 @@ def _forget_staged_at_exit() -> None:
 
 
 atexit.register(_forget_staged_at_exit)
+
+
+def _windows_stat_only_paths(program: list[str], cwd: Path | None) -> tuple[Path, ...]:
+    """The folders a Windows job may stat only: the folder above a pytest job's folder, one level.
+
+    pytest 9.1.1 stats the parent of the top folder it collects on every run
+    (`Session._collect_path(root)` asks for `root.parent`'s conftests and `_get_directory` calls
+    `parent.is_file()`), and the confined job holds no right there, so every run in a marked
+    subfolder ended "PermissionError: [WinError 5] Access is denied: '<the folder above>'", exit 2.
+    The stat is not loosened further: no grandparent (a package chain above the folder still
+    fails, a known limit), and no other job (a script, -c code, unittest, compileall) gets one.
+    """
+    if cwd is None or program[1:3] != ["-m", "pytest"]:
+        return ()
+    parent = Path(cwd).parent
+    return () if parent == Path(cwd) else (parent,)
 
 
 def _windows_path_text(path: Path | str) -> str:
@@ -767,7 +788,11 @@ class JobRunner:
                 "could not be checked for hard links. Refusing rather than reporting a "
                 "confinement that was not verified."
             )
-        argv = self._with_network_isolation(argv, allowed_roots)
+        cwd_token = _JOB_CWD.set(cwd_path)
+        try:
+            argv = self._with_network_isolation(argv, allowed_roots)
+        finally:
+            _JOB_CWD.reset(cwd_token)
         with _WINDOWS_STAGED_LOCK:
             staged = _WINDOWS_STAGED.pop(argv[2], None) if len(argv) > 3 and argv[1] == "--policy" else None
         if staged is None:
@@ -1196,7 +1221,11 @@ class JobRunner:
         if not usable:
             return None
         program = self._windows_phase1_argv(argv)
-        policy, stage = self._windows_policy(allowed_roots, deny_network=deny_network)
+        stat_only = _windows_stat_only_paths(program, _JOB_CWD.get())
+        if stat_only:
+            policy, stage = self._windows_policy(allowed_roots, deny_network=deny_network, stat_only=stat_only)
+        else:
+            policy, stage = self._windows_policy(allowed_roots, deny_network=deny_network)
         if policy is None or stage is None:
             return None
         policy_path = stage / "policy.json"
@@ -1290,7 +1319,7 @@ class JobRunner:
             "PowerShell included). It was not run."
         )
 
-    def _windows_policy(self, allowed_roots: tuple[Path, ...], *, deny_network: bool):
+    def _windows_policy(self, allowed_roots: tuple[Path, ...], *, deny_network: bool, stat_only: tuple[Path, ...] = ()):
         """The launcher policy for this job and the staging folder that holds its files.
 
         The staging folder is a fresh `mkdtemp` that must sit outside every writable root, so
@@ -1300,6 +1329,12 @@ class JobRunner:
         - a write root inside VOOL's code without the Mac's exemption, where an explicit allow ACE
           would beat the inherited deny;
         - a read or write root that contains VOOL's state or a credential folder.
+
+        `stat_only` (a pytest job's folder's parent, from `_windows_stat_only_paths`) is named in
+        `stat_only_paths` only when no root of this job already reaches it, it is not a volume root
+        and it does not sit in VOOL's state or a credential folder; otherwise it is left out and the
+        job runs as before. Holding such a folder (a home folder) is fine: the ACE is on the folder
+        itself and reaches nothing inside it.
         """
         from sandbox import windows_confinement
 
@@ -1377,6 +1412,15 @@ class JobRunner:
                 # is granted to it.
                 deny_all_paths=tuple(
                     dict.fromkeys(_windows_path_text(root) for root in sensitive if Path(root).exists())
+                ),
+                stat_only_paths=tuple(
+                    dict.fromkeys(
+                        _windows_path_text(path)
+                        for path in stat_only
+                        if not any(within(path, root) for root in (*write_roots, *read_roots))
+                        and not any(within(path, secret) for secret in sensitive)
+                        and path != path.parent
+                    )
                 ),
                 deny_write_git=True,
                 network=not deny_network,
