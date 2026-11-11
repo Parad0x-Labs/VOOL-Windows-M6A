@@ -650,6 +650,24 @@ def _serve_with_exclusive_listen_sockets(server: Any, *, host: str, port: int) -
             signal.signal(signal.SIGTERM, previous_sigterm)
 
 
+def _warn_if_confined_job_variable_set(environ: Any = None) -> bool:
+    """Log a WARNING when VOOL's own environment carries VOOL_WINDOWS_CONFINED_JOB.
+
+    Only the job runner sets it, in a confined Windows job's environment (sandbox/job_runner.py), to
+    turn on the bundled Python's mkdir shim (sandbox/windows_job_mkdir.py). The shim also requires an
+    AppContainer token, so VOOL itself is not changed by it; the warning says someone set it where it
+    does not belong. True when it warned."""
+    source = os.environ if environ is None else environ
+    if "VOOL_WINDOWS_CONFINED_JOB" not in source:
+        return False
+    logger.warning(
+        "VOOL_WINDOWS_CONFINED_JOB is set in VOOL's own environment (value %r). Only VOOL's job runner "
+        "sets it, for a confined Windows job; remove it from the user or system environment.",
+        str(source.get("VOOL_WINDOWS_CONFINED_JOB"))[:16],
+    )
+    return True
+
+
 def main() -> int:
     # Diagnosability law (F46): a served turn spent a measured ~97 s idle between
     # task_classified and model_routing — no events, no model call, no network — and the
@@ -707,6 +725,7 @@ def main() -> int:
             from core.runtime_paths import active_data_dir
 
             route_logging_to_file(active_data_dir() / "logs" / "vool_api.log")
+        _warn_if_confined_job_variable_set()
         app = create_app(runtime)
         import uvicorn
 
