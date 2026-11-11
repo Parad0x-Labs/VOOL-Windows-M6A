@@ -442,3 +442,103 @@ def test_the_recorder_flags_the_windows_landing_places(monkeypatch) -> None:
     assert [target for _, target in recorder.lookups] == [
         "C:\\usr\\bin\\python3.exe", "c:/bin/sh", "C:\\opt\\homebrew\\bin\\ffmpeg", "/usr/bin/x",
     ]
+
+
+# ---------------------------------------------------------------------------------------------
+# Apple Notes asked for in chat on Windows: the Mac-only answer, from the real front door, no model
+# ---------------------------------------------------------------------------------------------
+
+
+_APPLE_NOTES_REQUESTS = (
+    "make an Apple note called test",
+    "make me an apple note about the trip",
+    "add this to Apple Notes: call the bank",
+    "put call the bank in apple notes",
+    "new apple note: milk",
+)
+_NOT_APPLE_NOTES_REQUESTS = (
+    "what is Apple Notes?",
+    'save a note titled "Agenda" with: release checks',
+    "make a note called test",
+)
+#: Phrasings the operator parser claims: their own lane answers them, so this one stands down.
+_PARSER_CLAIMED_APPLE_NOTES = (
+    "create an apple note called groceries with milk",
+    "list my Apple notes",
+    'delete my Apple note "Plan"',
+)
+
+
+@pytest.mark.parametrize("text", _APPLE_NOTES_REQUESTS)
+def test_on_windows_an_apple_notes_request_gets_the_mac_only_answer(windows, text) -> None:
+    from core.agent_runtime.fast_paths_apple_notes_windows import (
+        WINDOWS_APPLE_NOTES_ANSWER,
+        maybe_refuse_apple_notes_on_windows,
+    )
+
+    result = maybe_refuse_apple_notes_on_windows(_FastPathAgent(), text, session_id="s", source_context={})
+    assert result is not None, text
+    assert result["response"] == WINDOWS_APPLE_NOTES_ANSWER
+    assert result["reason"] == "apple_notes_unavailable_on_windows"
+    windows.assert_untouched()
+
+
+@pytest.mark.parametrize("text", _NOT_APPLE_NOTES_REQUESTS + _PARSER_CLAIMED_APPLE_NOTES)
+def test_on_windows_a_message_this_lane_does_not_own_is_left_alone(windows, text) -> None:
+    from core.agent_runtime.fast_paths_apple_notes_windows import maybe_refuse_apple_notes_on_windows
+
+    assert maybe_refuse_apple_notes_on_windows(_FastPathAgent(), text, session_id="s", source_context={}) is None
+
+
+@pytest.mark.parametrize("text", _APPLE_NOTES_REQUESTS)
+def test_off_windows_the_apple_notes_lane_stands_down(off_windows, text) -> None:
+    from core.agent_runtime.fast_paths_apple_notes_windows import maybe_refuse_apple_notes_on_windows
+
+    assert maybe_refuse_apple_notes_on_windows(_FastPathAgent(), text, session_id="s", source_context={}) is None
+
+
+def _front_door(agent, text: str):
+    from types import SimpleNamespace as Namespace
+    from unittest import mock
+
+    with mock.patch.object(agent, "_startup_sequence_fast_path", return_value=None), mock.patch(
+        "core.agent_runtime.agent.maybe_handle_preference_command", return_value=(False, "")
+    ), mock.patch.object(agent, "_maybe_handle_credit_command", return_value=None), mock.patch.object(
+        agent, "_maybe_handle_workspace_audit_request", return_value=None
+    ):
+        return agent._handle_turn_frontdoor(
+            raw_user_input=text,
+            effective_input=text,
+            normalized_input=text,
+            source_surface="openclaw",
+            session_id="apple-notes-windows",
+            source_context={"surface": "openclaw", "_owner_local": True},
+            persona=mock.sentinel.persona,
+            interpreted=Namespace(understanding_confidence=0.8),
+        )
+
+
+def test_on_windows_the_front_door_answers_make_an_apple_note_without_a_model(windows) -> None:
+    """The phrasing measured on Windows 11 that reached qwen3:8b and failed after 263 s."""
+    from apps.vool_agent import VoolAgent
+    from core.agent_runtime.fast_paths_apple_notes_windows import WINDOWS_APPLE_NOTES_ANSWER
+
+    agent = VoolAgent(backend_name="test-backend", device="channel-test", persona_id="default")
+    outcome = _front_door(agent, "make an Apple note called test")
+    result = outcome.get("result")
+    assert result is not None, "the front door let an Apple Notes request fall through to a model"
+    assert str(result.get("response") or "") == WINDOWS_APPLE_NOTES_ANSWER
+    # The agent itself reads this Linux host's own files on the way in (zoneinfo, a PATH walk), so
+    # this row pins only what the Notes request could reach: nothing spawned, osascript never looked at.
+    assert windows.spawns == []
+    assert not [target for _, target in windows.lookups if "osascript" in target], windows.lookups
+
+
+def test_on_windows_a_parser_claimed_apple_notes_request_still_runs_nothing(windows) -> None:
+    """The operator lane's own Windows answer, for the phrasings this lane leaves to it."""
+    from core.operator import apple_notes
+
+    for text in _PARSER_CLAIMED_APPLE_NOTES:
+        outcome = apple_notes.run_notes_bridge(text)
+        assert outcome["reason"] == "osascript_unavailable", text
+    windows.assert_untouched()
