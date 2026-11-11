@@ -704,6 +704,19 @@ COMPANION_WINDOW_FLAGS: dict = {
 }
 
 
+def _create_vool_window(webview_module: object, *args, **kwargs):
+    """Open a VOOL window. The ONE place VOOL opens a titled window, so every window, including
+    ones added later, gets the Windows chrome: a dark title bar with white caption buttons and
+    VOOL's icon (windows_chrome; a no-op elsewhere, and a styling failure never costs the window).
+    Only the frameless pet opens its own window (detach_companion), with its own policy.
+    tests/test_every_vool_window_gets_windows_chrome.py fails on any other create_window call."""
+    created = webview_module.create_window(*args, **kwargs)
+    if created is not None:
+        with contextlib.suppress(Exception):
+            windows_chrome.style_native_window(created)
+    return created
+
+
 class _WindowApi:
     """Bridge exposed to the VOOL page as ``window.pywebview.api`` (native window only).
 
@@ -754,7 +767,8 @@ class _WindowApi:
                     return {"ok": True, "mode": "focused"}
                 except Exception:
                     self._settings_window = None   # it was really destroyed; fall through and rebuild
-            created = webview_module.create_window(
+            created = _create_vool_window(
+                webview_module,
                 "VOOL Settings",
                 url,
                 js_api=self,
@@ -763,7 +777,6 @@ class _WindowApi:
             if created is None:
                 raise RuntimeError("native settings window was not created")
             self._settings_window = created
-            windows_chrome.style_native_window(created)   # Windows: dark title bar; no-op elsewhere
             # Forget the handle when the window really closes, so the NEXT open builds a fresh one
             # instead of showing a destroyed object. Deliberately hooked to `closed` and NOT to
             # `closing`: a closing handler that returns False vetoes Cmd+Q as well as the red X --
@@ -825,7 +838,8 @@ class _WindowApi:
                     return {"ok": True, "mode": "focused"}
                 except Exception:
                     self._setup_window = None
-            created = webview_module.create_window(
+            created = _create_vool_window(
+                webview_module,
                 "VOOL Setup",
                 url,
                 js_api=self,
@@ -834,7 +848,6 @@ class _WindowApi:
             if created is None:
                 raise RuntimeError("native setup window was not created")
             self._setup_window = created
-            windows_chrome.style_native_window(created)   # Windows: dark title bar; no-op elsewhere
             with contextlib.suppress(Exception):
                 created.events.closed += self._on_setup_closed
             _log("setup window created")
@@ -1846,13 +1859,11 @@ def main() -> int:
         api = _WindowApi()
         _claim_macos_app_name()          # so the menu bar / Cmd-Tab say VOOL, not VOOL/Python
         _install_native_frame_authority()
-        window = webview.create_window(
-            "VOOL", URL, js_api=api, **_fit_to_work_area(1220, 860, (900, 640), _work_area()),
+        window = _create_vool_window(
+            webview, "VOOL", URL, js_api=api, **_fit_to_work_area(1220, 860, (900, 640), _work_area()),
         )
         if window is None:
             raise RuntimeError("pywebview returned no native window")
-        # Windows: a dark title bar with white caption glyphs, once the form exists. Not the pet.
-        windows_chrome.style_native_window(window)
         api.set_window(window, webview)
         _register_url_scheme_handler()   # catch vool://auth/<provider>/callback launches (macOS)
         runtime_lost = _start_runtime_watchdog(supervisor, window, done)

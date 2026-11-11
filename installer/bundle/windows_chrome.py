@@ -1,4 +1,4 @@
-"""Windows window chrome for VOOL's titled windows (main, Settings, Setup). Never the pet.
+"""Windows window chrome for every window VOOL opens (vool_window._create_vool_window). Never the pet.
 
 * A dark title bar: DWM's immersive dark mode attribute on the window's HWND (20; 19 on Windows 10
   builds before 20H1), which also makes the minimise, maximise and close glyphs white, plus the
@@ -31,6 +31,12 @@ APP_USER_MODEL_ID = "Parad0xLabs.VOOL"
 ICON_FILENAME = "vool.ico"
 _HERE = Path(__file__).resolve().parent
 _ASSET_ICON = _HERE.parent / "assets" / ICON_FILENAME
+WM_SETICON = 0x0080
+ICON_SMALL = 0
+ICON_BIG = 1
+IMAGE_ICON = 1
+LR_LOADFROMFILE = 0x0010
+SM_CXICON, SM_CYICON, SM_CXSMICON, SM_CYSMICON = 11, 12, 49, 50
 # How long a styler waits for pywebview to build the form behind a new window.
 HWND_WAIT_SECONDS = 10.0
 
@@ -82,6 +88,29 @@ def start_icon_options(*, platform: str | None = None, here: object = None) -> d
     return {"icon": found} if found else {}
 
 
+def set_window_icon(hwnd: object, path: str | None = None, *, user32: object = None) -> bool:
+    """Give ``hwnd`` the icon at ``path`` (VOOL's: ``icon_path()``), small (title bar) and big
+    (taskbar, Alt+Tab). No path, no icon. Never raises."""
+    try:
+        if not hwnd or int(hwnd) <= 0:
+            return False
+        if not path:
+            return False
+        import ctypes
+
+        api = user32 if user32 is not None else ctypes.WinDLL("user32")
+        done = 0
+        for which, cx, cy in ((ICON_SMALL, SM_CXSMICON, SM_CYSMICON), (ICON_BIG, SM_CXICON, SM_CYICON)):
+            handle = api.LoadImageW(None, ctypes.c_wchar_p(str(path)), IMAGE_ICON,
+                                    int(api.GetSystemMetrics(cx)), int(api.GetSystemMetrics(cy)), LR_LOADFROMFILE)
+            if handle:
+                api.SendMessageW(int(hwnd), WM_SETICON, which, handle)
+                done += 1
+        return done == 2
+    except Exception:
+        return False
+
+
 def _dwmapi():
     import ctypes
 
@@ -119,7 +148,8 @@ def _hwnd(pywebview_window: object, wait: float) -> int | None:
 
 def style_native_window(pywebview_window: object, *, platform: str | None = None,
                         background: bool = True, wait: float = HWND_WAIT_SECONDS) -> bool:
-    """Style one of VOOL's titled windows once its HWND exists. False off Windows; never raises.
+    """Dark title bar and VOOL's icon on one VOOL window once its HWND exists. False off Windows;
+    never raises.
 
     pywebview builds the form on its GUI thread, so by default this waits for the handle on a
     short daemon thread and the caller never blocks."""
@@ -127,10 +157,15 @@ def style_native_window(pywebview_window: object, *, platform: str | None = None
         return False
 
     def _apply() -> None:
+        hwnd = None
         with contextlib.suppress(Exception):
             hwnd = _hwnd(pywebview_window, wait)
-            if hwnd:
-                apply_dark_title_bar(hwnd)
+        if not hwnd:
+            return
+        with contextlib.suppress(Exception):
+            apply_dark_title_bar(hwnd)
+        with contextlib.suppress(Exception):
+            set_window_icon(hwnd, icon_path())
 
     try:
         if background:
