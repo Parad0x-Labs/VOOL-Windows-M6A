@@ -30,7 +30,7 @@ class _Response:
 @pytest.fixture
 def world(monkeypatch):
     fact_extractor.reset_model_presence_for_tests()
-    state = {"installed": ("qwen3:8b",), "inventory_reads": 0, "posts": [], "status": 200}
+    state = {"windows": True, "installed": ("qwen3:8b",), "inventory_reads": 0, "posts": [], "status": 200}
 
     def inventory(**kwargs):
         state["inventory_reads"] += 1
@@ -40,6 +40,7 @@ def world(monkeypatch):
         state["posts"].append(url)
         return _Response(state["status"], {"message": {"content": '{"facts": []}'}})
 
+    monkeypatch.setattr("sandbox.job_runner._is_windows_platform", lambda: state["windows"])
     monkeypatch.setattr("core.local_ollama_inventory.installed_ollama_model_names", inventory)
     monkeypatch.setattr(fact_extractor.requests, "post", post)
     yield state
@@ -104,3 +105,13 @@ def test_an_empty_inventory_is_rechecked_sooner(world, monkeypatch) -> None:
 def test_the_runtime_still_builds_the_extractor_with_its_default_model() -> None:
     # The runtime passes no model=, so the default is what must be checked against the inventory.
     assert FactExtractor(memory=_Memory())._model == "qwen3:0.6b"
+
+
+def test_off_windows_the_extractor_posts_as_before(world) -> None:
+    world["windows"] = False
+    world["status"] = 404
+    assert _extractor()._call_model("user: hello") == ""
+    assert _extractor()._call_model("user: hello") == ""
+    # no inventory read, and each turn still posts (the pre-change behaviour off Windows)
+    assert world["inventory_reads"] == 0
+    assert len(world["posts"]) == 2
