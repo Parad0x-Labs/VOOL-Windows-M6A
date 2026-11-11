@@ -211,6 +211,23 @@ _CORRECTION_RE = re.compile(
     r"^(?:correction|update|replace)\b(?P<body>.+)$",
     re.IGNORECASE,
 )
+
+
+def _correction_match(text: str) -> re.Match[str] | None:
+    """The memory correction ("correction: ...", "update ...", "replace ...") this message is, or None.
+
+    On Windows a message that names a full path is about that path, never a correction of a remembered
+    value: "replace the contents of C:\\Users\\Satoshi\\VOOL HW Test\\m3b.txt with the text v2" was stored as
+    "Current corrected value: VOOL HW" (hardware captest, 0.7.1), and the marked-folder write it asked
+    for never ran (core.windows_marked_file_ops). Off Windows this reads as before."""
+    match = _CORRECTION_RE.match(text)
+    if match is None:
+        return None
+    from core.windows_marked_file_ops import names_a_file_path
+
+    return None if names_a_file_path(text) else match
+
+
 _CORRECTION_VALUE_RE = re.compile(
     r"\b(?:"
     r"\d{4}-\d{2}-\d{2}"
@@ -1809,7 +1826,7 @@ def maybe_handle_memory_command(
         scope_command is not None
         or lowered in {"/memory", "what do you remember", "show memory"}
         or _memory_capture_match(text)
-        or _CORRECTION_RE.match(text)
+        or _correction_match(text)
         or _FORGET_RE.match(text)
         or _is_memory_recall_question(text)
     ):
@@ -1830,7 +1847,7 @@ def maybe_handle_memory_command(
             return False, ""
         if _capture_object_is_another_lanes_effect(capture_match.group("verb"), text):
             return False, ""
-    if capture_match or _CORRECTION_RE.match(text):
+    if capture_match or _correction_match(text):
         # Private chat (core.private_chat): nothing from a private chat is saved, an explicit
         # "remember" included. Said plainly instead of claiming a save that never happens.
         from core.private_chat import REPLY_REMEMBER_REFUSED, turn_is_private
@@ -1930,7 +1947,7 @@ def maybe_handle_memory_command(
             return False, ""
         return True, response
 
-    correction = _CORRECTION_RE.match(text)
+    correction = _correction_match(text)
     if correction:
         correction_body = str(correction.group("body") or "").lstrip(" :,;-")
         values = _correction_values(correction_body)
