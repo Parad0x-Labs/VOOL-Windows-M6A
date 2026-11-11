@@ -501,6 +501,8 @@ footer { background:linear-gradient(transparent,var(--chat) 24%); padding:10px 2
 #dictateBtn, #voiceModeBtn { background:var(--field); color:var(--ink); border:1px solid var(--border); border-radius:10px; padding:0 7px; cursor:pointer; font-size:15px; line-height:1; display:inline-flex; align-items:center; }
 #dictateBtn .mic-glyph, #voiceModeBtn .mic-glyph { font-size:15px; line-height:1; }
 #dictateBtn:disabled, #voiceModeBtn:disabled { opacity:.5; cursor:default; }
+/* A control that cannot do anything in this build is not shown as a faded pill in the message bar. */
+#dictateBtn:disabled, #voiceModeBtn:disabled { display:none; }
 #dictateBtn.recording { border-color:var(--warn); box-shadow:0 0 0 2px color-mix(in srgb, var(--warn) 35%, transparent); }
 #dictateBtn.transcribing { border-color:var(--accent); opacity:.75; }
 #dictateBtn.error { border-color:var(--bad); }
