@@ -103,6 +103,22 @@ $PytestRequirements = Join-Path $PSScriptRoot "requirements-windows-pytest.txt"
 if ($LASTEXITCODE -ne 0) { throw "Embedded Python pytest installation failed." }
 & $py -m pytest --version
 if ($LASTEXITCODE -ne 0) { throw "Embedded Python pytest does not start." }
+# The confined-job mkdir shim (sandbox\windows_job_mkdir.py; tests\test_windows_confined_job_mkdir_0o700.py).
+# CPython >= 3.12.4 makes a 0o700 folder owner-only on Windows, so a confined job lost every right on
+# the folders tmp_path, tmpdir and tempfile.mkdtemp made. The .pth imports it at every start; it acts
+# only when the job runner sets VOOL_WINDOWS_CONFINED_JOB=1 for a confined job, and then makes 0o700 a
+# plain mkdir. It must sit in site-packages: a confined job can read the interpreter's folder, not app.
+$sitePackages = Join-Path $pyDir "Lib\site-packages"
+Copy-Item -LiteralPath (Join-Path $RepoRoot "sandbox\windows_job_mkdir.py") -Destination (Join-Path $sitePackages "vool_windows_job_mkdir.py") -Force
+Set-Content -Path (Join-Path $sitePackages "vool_windows_job_mkdir.pth") -Value "import vool_windows_job_mkdir" -Encoding ascii
+Remove-Item Env:VOOL_WINDOWS_CONFINED_JOB -ErrorAction SilentlyContinue
+& $py -c "import os, sys; sys.exit(0 if 'vool_windows_job_mkdir' in sys.modules and not getattr(os.mkdir, '_vool_confined_job_mkdir', False) else 1)"
+if ($LASTEXITCODE -ne 0) { throw "The confined-job mkdir shim is not loaded, or is on without VOOL_WINDOWS_CONFINED_JOB." }
+$env:VOOL_WINDOWS_CONFINED_JOB = "1"
+& $py -c "import os, sys; sys.exit(0 if getattr(os.mkdir, '_vool_confined_job_mkdir', False) else 1)"
+$shimOn = $LASTEXITCODE
+Remove-Item Env:VOOL_WINDOWS_CONFINED_JOB
+if ($shimOn -ne 0) { throw "The confined-job mkdir shim does not turn on with VOOL_WINDOWS_CONFINED_JOB=1." }
 & $py -m pip check
 if ($LASTEXITCODE -ne 0) { throw "Embedded Python dependency check failed." }
 Remove-Item -LiteralPath $pipWheel -Force -ErrorAction SilentlyContinue
