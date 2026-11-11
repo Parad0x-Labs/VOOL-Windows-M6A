@@ -135,7 +135,9 @@ def _open_remote(request: Any, *, timeout: float):
     return _open_remote_door(request, timeout=timeout)
 
 
-def _provider_order() -> list[str]:
+def _configured_provider_order() -> list[str]:
+    """The search chain policy and the launcher env ask for, before any provider is dropped for
+    being unable to run here."""
     allowed = policy_engine.allowed_web_engines()
     allowed_set = set(allowed)
     env_raw = str(os.getenv("WEB_SEARCH_PROVIDER_ORDER", "")).strip()
@@ -151,12 +153,34 @@ def _provider_order() -> list[str]:
         chosen += [engine for engine in allowed if engine not in chosen]
     else:
         chosen = [item for item in policy_engine.web_provider_order() if item in allowed_set]
+    return chosen
+
+
+def _provider_order() -> list[str]:
+    chosen = _configured_provider_order()
     if "browser_search" in chosen and not _browser_search_available():
         # A machine with no Chromium-family browser must behave exactly as it did before this
         # provider existed: drop it from the chain rather than spend a turn on a provider that can
         # only answer `missing_dependency`.
         chosen = [item for item in chosen if item != "browser_search"]
     return _with_keyed_search_apis(_demote_instant_answer(chosen))
+
+
+def _browser_search_dropped_note() -> str | None:
+    """The note that says why browser_search is missing from a chain that asked for it, or None.
+
+    `_provider_order` drops the provider when it cannot run, which is right, but it used to do so
+    without a word: on every Windows machine the browser was never found, the answer came from the
+    scrapers this module says are served a decoy index, and nothing in the receipts showed that the
+    one provider measured to get real results had not run.
+    """
+    if "browser_search" not in _configured_provider_order():
+        return None
+    if not _should_try_browser():
+        return "browser_search_skipped:disabled_by_policy"
+    if _browser_search_available():
+        return None
+    return "browser_search_skipped:no_browser"
 
 
 def keyed_search_api_providers() -> tuple[str, ...]:
@@ -3111,6 +3135,9 @@ def web_research(
             notes.extend(extra_notes)
 
     if not hits:
+        dropped_note = _browser_search_dropped_note()
+        if dropped_note:
+            notes.append(dropped_note)
         for provider in _provider_order():
             if _remaining() <= 0:
                 notes.append("deadline_exhausted:search")

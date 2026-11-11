@@ -15,7 +15,7 @@ from typing import Any
 from core import policy_engine, windows_path_policy
 from core.process_liveness import system_taskkill
 from core.remote_fetch_policy import note_remote_fetch_attempt, remote_fetch_forbidden
-from core.vool_browser.engine import CREDENTIAL_ISOLATION_FLAGS
+from core.vool_browser.engine import CREDENTIAL_ISOLATION_FLAGS, find_windows_program_files_edge
 from tools.web.browser_identity import DESKTOP_ACCEPT_LANGUAGE, DESKTOP_USER_AGENT
 
 _CAPTCHA_RE = re.compile(
@@ -148,6 +148,17 @@ def find_browser_binary() -> str | None:
 
     if override and os.path.isfile(override) and os.access(override, os.X_OK):
         found = override
+
+    if found is None and sys.platform == "win32":
+        # Windows: only the Edge installed for every user under Program Files, the same lookup
+        # the browser lane uses. This used to fall through to the macOS paths and to Linux names
+        # on PATH, none of which exist on Windows, so every Windows machine answered None and web
+        # search lost its only non-decoy provider. The Playwright cache is not read here: on
+        # Windows it lives under the user's own AppData, which any program the user runs can
+        # replace, and its bundled Chromium is not kept up to date the way Edge is.
+        found = find_windows_program_files_edge()
+        _browser_binary_cache[cache_key] = found
+        return found
 
     if found is None:
         cache_dir = _playwright_cache_dir()
