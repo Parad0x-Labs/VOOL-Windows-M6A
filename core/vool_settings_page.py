@@ -1843,7 +1843,7 @@ function widgetDisposableFolders(stack) {
     const add = el('button', 'btn', T('settings.disposable.mark', 'Mark a folder…'));
     add.type = 'button';
     add.addEventListener('click', async () => {
-      const res = await window.pywebview.api.mark_disposable_folder();
+      const res = await window.pywebview.api.mark_disposable_folder('settings');
       if (res && res.ok) await redraw();
       else if (res && !res.cancelled) { status.className = 'state failed'; status.textContent = res.refused || res.error || ''; }
     });

@@ -891,14 +891,32 @@ class _WindowApi:
         window = self._window
         return bool(window is not None and window.create_confirmation_dialog(title, message))
 
+    def _dialog_owner(self, owner: object) -> tuple[object | None, bool]:
+        """The window a native dialog must belong to, and whether it is a secondary window.
+
+        pywebview's js_api does not say which window called, so the Setup and Settings pages name
+        their own window ("setup", "settings"). The word only picks one of the windows this bridge
+        already holds; it is never a path. Anything else, or a named window that is not open, is
+        the chat window, as before. A dialog owned by the chat window makes Windows raise the chat
+        window over Setup (owner hand test, Windows 11: Setup seemed to close on "Choose a folder")."""
+        window = None
+        if owner == "setup":
+            window = self._setup_window
+        elif owner == "settings":
+            window = self._settings_window
+        if window is not None:
+            return window, True
+        return self._window, False
+
     def mark_disposable_folder(self, _payload: object = None) -> dict:
         """Mark a folder VOOL may change on Windows (core/windows_disposable_store.py).
 
-        Takes nothing from the page: the folder comes from the OS folder picker, the consent from an
+        Takes no path from the page: the folder comes from the OS folder picker, the consent from an
         OS confirm dialog that names the folder as it really is (links and junctions followed), and
-        only then is it written to the owner-only list. Takes effect at VOOL's next start."""
+        only then is it written to the owner-only list. Takes effect at VOOL's next start. The only
+        thing the page may say is which of VOOL's own windows the picker belongs to."""
         try:
-            window = self._window
+            window, secondary = self._dialog_owner(_payload)
             if window is None:
                 return {"ok": False, "error": "no_window"}
             import webview
@@ -906,6 +924,8 @@ class _WindowApi:
             from core import windows_disposable_store as store
 
             result = window.create_file_dialog(webview.FOLDER_DIALOG)
+            if secondary:
+                _focus_window(window)
             if not result:
                 return {"ok": False, "cancelled": True}
             picked = str(result[0] if isinstance(result, (list, tuple)) else result)
@@ -944,15 +964,20 @@ class _WindowApi:
             reason = getattr(exc, "reason", "")
             return {"ok": False, "refused": reason} if reason else {"ok": False, "error": type(exc).__name__}
 
-    def pick_folder(self) -> dict:
-        """Open a native folder dialog. Returns {ok:True, path} or {ok:False, cancelled|error}."""
+    def pick_folder(self, owner: object = None) -> dict:
+        """Open a native folder dialog. Returns {ok:True, path} or {ok:False, cancelled|error}.
+
+        ``owner`` is "setup" from the Setup window (see ``_dialog_owner``); the chat page passes
+        nothing. A dialog owned by a secondary window brings that window back to the front after."""
         try:
-            window = self._window
+            window, secondary = self._dialog_owner(owner)
             if window is None:
                 return {"ok": False, "error": "no_window"}
             import webview
 
             result = window.create_file_dialog(webview.FOLDER_DIALOG)
+            if secondary:
+                _focus_window(window)
             if not result:
                 return {"ok": False, "cancelled": True}
             path = result[0] if isinstance(result, (list, tuple)) else result

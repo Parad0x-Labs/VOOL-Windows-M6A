@@ -536,7 +536,7 @@ function pickFolder() {
   return new Promise((resolve) => {
     try {
       if (window.pywebview && window.pywebview.api && window.pywebview.api.pick_folder) {
-        window.pywebview.api.pick_folder().then((res) => resolve(res && res.ok && res.path ? res.path : null)).catch(() => resolve(null));
+        window.pywebview.api.pick_folder('setup').then((res) => resolve(res && res.ok && res.path ? res.path : null)).catch(() => resolve(null));
         return;
       }
     } catch (e) {}
