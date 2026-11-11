@@ -371,12 +371,17 @@ def test_the_buttons_are_the_reserve_that_gives_way_not_the_input(matrix) -> Non
     """
     widest = matrix["1900x1200:panel-closed"]
     narrowest = matrix["360x780:panel-closed"]
-    assert narrowest["send"]["w"] < widest["send"]["w"], (
-        f"#send did not yield any width: {narrowest['send']['w']} vs {widest['send']['w']}"
-    )
-    assert narrowest["dictate"]["w"] < widest["dictate"]["w"], (
-        f"#dictateBtn did not yield any width: {narrowest['dictate']['w']} vs {widest['dictate']['w']}"
-    )
+    # Only buttons the composer actually shows are part of the reserve. A button that is
+    # not displayed (a disabled voice control in a build without voice) takes no width at
+    # any size, so it has nothing to yield. Send is always shown and always measured.
+    assert widest["send"] and widest["send"]["w"] > 0, "#send must be shown in the composer"
+    reserve = {"send": "#send", "dictate": "#dictateBtn"}
+    for key, selector in reserve.items():
+        if not widest[key] or widest[key]["w"] <= 0:
+            continue
+        assert narrowest[key]["w"] < widest[key]["w"], (
+            f"{selector} did not yield any width: {narrowest[key]['w']} vs {widest[key]['w']}"
+        )
     # The textarea is at its floor there, not below it and not collapsed.
     assert narrowest["input"]["w"] >= narrowest["inputMin"] - 1, narrowest
     assert narrowest["input"]["w"] > 0, narrowest
