@@ -150,3 +150,25 @@ def test_the_result_line_and_chosen_chat_outlive_a_pane_rebuild() -> None:
 def test_settings_still_rebuilds_its_pane_on_focus() -> None:
     """The fix keeps the rebuild (it picks up changes made elsewhere); it only stops losing state."""
     assert "window.addEventListener('focus', () => { reconcile(); });" in render_vool_settings_html()
+
+
+def test_the_saved_bundle_reports_where_it_went(windows) -> None:
+    api, _chat, settings, tmp_path = windows
+    api._settings_window = settings
+    result = api.save_session_bundle(_BUNDLE_PATH, "s", "settings")
+    assert result == {"ok": True, "path": str(tmp_path / "from-settings.voolsession")}
+
+
+@pytest.mark.parametrize("page", ["settings", "chat"])
+def test_both_export_lines_name_the_saved_path(page) -> None:
+    from core.vool_chat_page import render_vool_chat_html
+
+    html = render_vool_settings_html() if page == "settings" else render_vool_chat_html()
+    marker = "exportBtn.addEventListener('click'" if page == "settings" else "sbExportBtn.addEventListener('click'"
+    handler = html[html.index(marker):html.index(marker) + 5000]
+    assert "let where = '';" in handler
+    assert "if (typeof saved.path === 'string' && saved.path) where = ' to ' + saved.path;" in handler
+    assert "' turns)' + where + '.'" in handler
+    # The path is shown as text, never as markup.
+    saved_line = handler[handler.index("'Saved: signed"):]
+    assert "innerHTML" not in saved_line[:400]
