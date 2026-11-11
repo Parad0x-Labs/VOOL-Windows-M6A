@@ -776,7 +776,7 @@ def _settings_groups() -> list[dict]:
             # Crypto (Pilot): off by default, discoverable when off. The section is absent in the School edition by the
             # edition floor (core/product_edition.py), never by a scattered check here.
             "id": "calendars",
-            "icon": "\U0001f4c5",
+            "icon": "▦",
             "title": "Calendars",
             "blurb": "The calendars VOOL reads for your agenda and alerts, and where new events go.",
             "rows": [
@@ -796,7 +796,7 @@ def _settings_groups() -> list[dict]:
         },
         {
             "id": "notifications",
-            "icon": "\U0001f514",
+            "icon": "⚑",
             "title": "Notifications",
             "blurb": "Calendar alerts, reminders, quiet hours and macOS notifications.",
             "rows": [
@@ -1021,6 +1021,13 @@ body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 -apple-sy
 #uiLocaleSelect:focus { outline:none; border-color:var(--accent); }
 #uiLocaleSelect:disabled { opacity:.55; cursor:not-allowed; }
 #uiLocaleWrap .loc-note { font-size:11px; line-height:1.5; color:var(--muted); margin:6px 0 2px; }
+/* Keep the language block small so the menu below it stays visible at 150% scaling and in a small
+   window. The help sentence repeats the select's own title and accessible name, so it is not
+   painted twice; the honest coverage line stays, one line until the control is hovered or focused. */
+#uiLocaleWrap .loc-word .set-sub { display:none; }
+#uiLocaleWrap .loc-note[data-i18n-html="settings.language_help"] { display:none; }
+#uiLocaleWrap #uiLocaleCoverage { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#uiLocaleWrap:hover #uiLocaleCoverage, #uiLocaleWrap:focus-within #uiLocaleCoverage { white-space:normal; }
 #backRow { padding:12px 12px 4px; }
 #back { display:flex; align-items:center; gap:8px; width:100%; background:transparent; color:var(--muted); border:none; border-radius:8px; padding:6px 8px; font:inherit; font-size:13px; cursor:pointer; text-align:left; }
 #back:hover { color:var(--ink); background:var(--active); }
@@ -1037,7 +1044,7 @@ body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 -apple-sy
 /* Selection is the background plus the tinted icon below. No accent rail: the background alone
    would be indistinguishable from :hover, so the icon carries the difference instead. */
 .nav-item[aria-current="true"] { background:var(--active); color:var(--ink); }
-.nav-item .ico { flex:0 0 16px; width:16px; text-align:center; color:var(--muted); font-size:13px; }
+.nav-item .ico { flex:0 0 16px; width:16px; text-align:center; color:var(--muted); font-size:13px; font-variant-emoji:text; }
 .nav-item[aria-current="true"] .ico { color:var(--accent); }
 .nav-item .hits { margin-left:auto; color:var(--accent); font-size:11px; font-weight:700; }
 .nav-empty { color:var(--muted); font-size:12.5px; padding:10px 9px; }
@@ -4935,14 +4942,14 @@ def _locale_coverage_note(tag: str) -> str:
 
 
 # The always-discoverable app-language control, top-left of Settings (top of the side nav,
-# above search). Globe symbol + each language's own name (the picker fills the options from
+# above search). A plain language symbol ("文A", monochrome like the rest of the nav) + each language's own name (the picker fills the options from
 # the locale registry's endonyms — never flags, never English exonyms alone). This is the
 # APP UI language: it changes these screens only. The model ANSWER language keeps its own
 # existing Settings widget (General → Answer language) and dictation recognition keeps its
 # own control next to the microphone; the note under the select says so in the selected
 # language (settings.language_help, an existing catalog key).
 _LOCALE_BLOCK = """<div id="uiLocaleWrap">
-  <label class="loc-label" for="uiLocaleSelect"><span class="loc-globe" aria-hidden="true">&#127760;</span><span class="loc-word" data-i18n-html="settings.language_heading">Language <span class="set-sub">screens only &mdash; never the answer language</span></span></label>
+  <label class="loc-label" for="uiLocaleSelect"><span class="loc-globe" aria-hidden="true">文A</span><span class="loc-word" data-i18n-html="settings.language_heading">Language <span class="set-sub">screens only &mdash; never the answer language</span></span></label>
   <select id="uiLocaleSelect" aria-label="App language — these screens only, never the answer language" title="Choose the language of these screens and controls. It never changes the language VOOL answers in." data-i18n-aria-label="settings.language_select_aria" data-i18n-title="settings.language_select_title"></select>
   <p class="loc-note" data-i18n-html="settings.language_help">Choose the language of these screens and controls. It never changes the language VOOL answers in &mdash; that has its own setting.</p>
   <p class="loc-note" id="uiLocaleCoverage"></p>
