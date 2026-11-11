@@ -97,7 +97,7 @@ def test_the_helper_opens_then_styles_the_window(nw, monkeypatch) -> None:
     made: list = []
     module = types.SimpleNamespace(create_window=lambda *a, **k: made.append((a, k)) or "WINDOW")
     assert nw._create_vool_window(module, "VOOL Something", "http://x", width=1) == "WINDOW"
-    assert made == [(("VOOL Something", "http://x"), {"width": 1})]
+    assert made == [(("VOOL Something", "http://x"), {"width": 1, "background_color": nw.WINDOW_BACKGROUND})]
     assert styled == ["WINDOW"]
 
 
