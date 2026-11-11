@@ -1807,7 +1807,10 @@ def _a8_digest_key() -> bytes:
     cached = _a8_digest_key_cache
     if cached is not None and cached[0] == home_token:
         return cached[1]
+    from core import owner_only
+
     path = data_path("a8_digest_key.hex")
+    owner_only.repair_private_file(path)  # a key written before writes were sealed
     try:
         raw = path.read_text(encoding="utf-8").strip()
         key = bytes.fromhex(raw)
@@ -1815,10 +1818,14 @@ def _a8_digest_key() -> bytes:
             raise ValueError("stale short key")
     except Exception:
         key = secrets.token_bytes(32)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(key.hex(), encoding="utf-8")
-        tmp.replace(path)
+        if owner_only.seals_secrets():
+            # Windows: a plain write inherits the folder's ACL. Sealed, or nothing is written.
+            owner_only.write_private_file(path, key.hex())
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(key.hex(), encoding="utf-8")
+            tmp.replace(path)
     # ONE rebinding carrying identity and payload together: two separate
     # globals would let concurrent loaders across a home switch interleave
     # (key from one home, token from the other) and serve the wrong profile's

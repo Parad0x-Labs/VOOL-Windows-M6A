@@ -44,7 +44,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from core import os_file_lock, windows_sharing_retry
+from core import os_file_lock, owner_only, windows_sharing_retry
 
 GENESIS_PREV = ""
 _UNSIGNED_KEYS = frozenset({"entry_hash", "mac"})
@@ -105,6 +105,18 @@ def _fsync_directory(path: Path) -> None:
 def _atomic_write(path: Path, data: bytes, *, mode: int = 0o600) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    if owner_only.seals_secrets():
+        # Windows: os.chmod only flips the read-only bit, so the file would keep the folder's
+        # inherited ACL. The empty file is sealed owner-only before anything is written into it, or
+        # nothing is written.
+        os.close(fd)
+        try:
+            owner_only.require_owner_only(tmp_name)
+            fd = os.open(tmp_name, os.O_WRONLY | getattr(os, "O_BINARY", 0))
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_name)
+            raise
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(data)
@@ -174,6 +186,7 @@ class Journal:
         try:
             data = windows_sharing_retry.retried(Path.read_bytes, self.key_path)
             if len(data) >= 32:
+                owner_only.repair_private_file(self.key_path)  # a key written before writes were sealed
                 return data
         except FileNotFoundError:
             pass
