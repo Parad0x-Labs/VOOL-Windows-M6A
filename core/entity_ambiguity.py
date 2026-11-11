@@ -227,6 +227,15 @@ def single_plain_know_question(
 
     if _FILENAME_RE.search(message):
         return False
+    # A question that names a filesystem PATH is the file or folder lanes' material for the same
+    # reason. Captest on real Windows: "what files are in C:\Users\<you>\Documents\vool-test?" was
+    # adjudicated, the probe failed, and the folder was never listed. The shapes are the write-root
+    # finder's (drive, share, `~/`, POSIX-rooted; a URL's authority and a slash inside a word such as
+    # `1/2` or `and/or` are none), read without any disk lookup.
+    from core.agent_runtime.write_root_honesty import _clean_path, _rooted_candidates
+
+    if any(len(_clean_path(raw)) > 1 for _start, raw in _rooted_candidates(message, typed_shares=True, look_up=False)):
+        return False
     if not message or len(message) > 400:
         return False
     # Runtime facts have their own deterministic owner in the front door, which runs
