@@ -67,7 +67,7 @@ def test_the_id_is_claimed_before_any_window() -> None:
 
     main = inspect.getsource(nw.main)
     claimed = main.index("windows_chrome.set_app_user_model_id()")
-    assert claimed < main.index("webview.create_window(")
+    assert claimed < main.index("_create_vool_window(")
     assert claimed < main.index("_open_windows_browser_fallback(")
 
 

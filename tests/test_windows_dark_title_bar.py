@@ -145,10 +145,12 @@ def test_settings_and_setup_windows_are_styled(styled) -> None:
 def test_the_main_window_is_styled() -> None:
     from installer.bundle import vool_window as nw
 
+    # Opened through the one helper that styles every VOOL window (see
+    # tests/test_every_vool_window_gets_windows_chrome.py), before the GUI loop starts.
     main = inspect.getsource(nw.main)
-    created = main.index('webview.create_window(\n            "VOOL", URL')
-    styled = main.index("windows_chrome.style_native_window(window)")
-    assert created < styled < main.index("webview.start(")
+    helper = inspect.getsource(nw._create_vool_window)
+    assert "windows_chrome.style_native_window(" in helper
+    assert main.index('_create_vool_window(\n            webview, "VOOL", URL') < main.index("webview.start(")
 
 
 def test_the_frameless_pet_is_never_styled() -> None:
