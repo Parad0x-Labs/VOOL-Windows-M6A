@@ -1161,6 +1161,22 @@ def _inject_free_cloud_requirements(
         return source_context
 
 
+
+def _half_open_trial_eligible(manifest: Any) -> bool:
+    """Whether an open circuit on ``manifest`` may send one half-open trial: a local model on a
+    Windows host only. A cloud trial is a real, possibly paid call the breaker would otherwise hold
+    back, and other platforms keep their existing behaviour."""
+    from sandbox.job_runner import _is_windows_platform
+
+    if not _is_windows_platform():
+        return False
+    try:
+        from core.local_model_policy import manifest_is_local
+
+        return bool(manifest_is_local(manifest))
+    except Exception:
+        return False
+
 class MemoryFirstRouter:
     def __init__(self, registry: ModelRegistry | None = None, cloud_broker: Any | None = None) -> None:
         self.registry = registry or ModelRegistry()
@@ -2629,9 +2645,13 @@ class MemoryFirstRouter:
             context_manifest_id=context_manifest_id,
             context_manifest_trace_id=context_manifest_trace_id,
         )
-        # An open circuit admits one half-open trial (core.model_health.admit_provider_call): a
-        # fresh turn after a slow one asks the model again instead of failing without a call.
-        if circuit_is_open(manifest.provider_id) and not admit_provider_call(manifest.provider_id):
+        # On Windows an open circuit on a LOCAL model admits one half-open trial
+        # (core.model_health.admit_provider_call): a fresh turn after a slow one asks the model
+        # again instead of failing without a call. Cloud providers and other platforms keep the
+        # strict cooldown.
+        if circuit_is_open(manifest.provider_id) and not admit_provider_call(
+            manifest.provider_id, trial_eligible=_half_open_trial_eligible(manifest)
+        ):
             _emit_model_routing_event(
                 source_context,
                 "model.call_failed",

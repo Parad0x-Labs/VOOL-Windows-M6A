@@ -56,7 +56,9 @@ def circuit_is_open(provider_id: str) -> bool:
 # Half-open recovery. An open circuit used to refuse EVERY call until its cooldown ran out, so one
 # slow turn on the only local model (a long malformed tool call, then a timeout, with the GPU full)
 # made the user's next plain questions fail in milliseconds without the model ever being asked.
-# While the circuit is open, one trial call may now go through: never within a few seconds of the
+# While the circuit is open, one trial call may now go through (only where the caller allows it:
+# the router allows it for a local model on Windows, so a cloud provider -- where a trial is a
+# real, possibly paid call -- and every other platform keep the strict cooldown): never within a few seconds of the
 # last failure (so a turn's own immediate retries still fail fast), and never while another trial
 # is in flight (so a struggling provider is not hammered). The trial's own success closes the
 # circuit; its failure re-opens it as any failure does. A trial that ends with neither (a refusal
@@ -65,14 +67,17 @@ HALF_OPEN_MIN_SPACING_SECONDS: float = 5.0
 HALF_OPEN_TRIAL_LEASE_SECONDS: float = 180.0
 
 
-def admit_provider_call(provider_id: str) -> bool:
-    """True when a call to ``provider_id`` may be sent now: the circuit is closed, or it is open and
-    this caller has just taken the single half-open trial."""
+def admit_provider_call(provider_id: str, *, trial_eligible: bool = False) -> bool:
+    """True when a call to ``provider_id`` may be sent now: the circuit is closed, or it is open,
+    the caller says this provider may be trialled (``trial_eligible``), and this caller has just
+    taken the single half-open trial. Ineligible providers keep the strict cooldown."""
     with _HEALTH_LOCK:
         state = get_provider_health(provider_id)
         now = time.time()
         if state.circuit_open_until <= now:
             return True
+        if not trial_eligible:
+            return False
         started = state.half_open_trial_started_at
         if started is not None and now - started < HALF_OPEN_TRIAL_LEASE_SECONDS:
             return False

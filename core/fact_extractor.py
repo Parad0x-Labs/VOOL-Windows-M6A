@@ -247,6 +247,14 @@ def _extractor_model_installed(url: str, model: str) -> bool:
     return installed
 
 
+def _skip_missing_model_on_this_host() -> bool:
+    """The missing-model skip is Windows behaviour (the 0.7.1 port's seam); other hosts post as
+    they always did."""
+    from sandbox.job_runner import _is_windows_platform
+
+    return _is_windows_platform()
+
+
 def reset_model_presence_for_tests() -> None:
     with _MODEL_PRESENCE_LOCK:
         _MODEL_PRESENCE.clear()
@@ -403,7 +411,7 @@ class FactExtractor:
     def _call_model(self, conversation: str) -> str:
         if self._model_client is not None:
             return str(self._model_client(conversation) or "")
-        if not _extractor_model_installed(self._ollama_url, self._model):
+        if _skip_missing_model_on_this_host() and not _extractor_model_installed(self._ollama_url, self._model):
             return ""
         payload = {
             "model": self._model,
@@ -450,7 +458,7 @@ class FactExtractor:
                 json=permit.consume(),
                 timeout=30.0,
             )
-            if response.status_code == 404:
+            if response.status_code == 404 and _skip_missing_model_on_this_host():
                 # Removed since the inventory was read: stop asking until it is read again.
                 _remember_model_presence(self._ollama_url, self._model, False, _MODEL_PRESENCE_TTL_SECONDS)
                 return ""
