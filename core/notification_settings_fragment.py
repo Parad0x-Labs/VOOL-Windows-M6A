@@ -105,7 +105,11 @@ function mountInto(host){
       return load().then(function(){ if (!j.ok) say(j.detail || j.reason || NT('vns.status.failed', 'That did not work.'), true); else say(done); });
     }).catch(function(){ say(NT('notif.no_answer', 'VOOL did not answer; nothing was changed.'), true); });
   }
-  function paint(){ paintMac(); paintPrefs(); why.textContent = native.explanation || ''; }
+  // Windows has no OS notification bridge in this version: the status route says bell_only_windows and the panel
+  // drops its macOS text and the lock-screen picker (whose preference only shapes macOS requests). The script is the
+  // same on every host; the server decides.
+  function bellOnly(){ return !!(native && native.bell_only_windows === true); }
+  function paint(){ paintMac(); paintPrefs(); why.textContent = bellOnly() ? NT('vns.why.windows', 'The bell keeps every VOOL alert. VOOL does not send Windows notifications yet.') : (native.explanation || ''); }
   function paintMac(){
     macBox.textContent = '';
     if (native.supported === false) return;
@@ -143,7 +147,7 @@ function mountInto(host){
   }
   function paintPrefs(){
     prefBox.textContent = '';
-    prefBox.appendChild(h('div', 'vns-title', NT('vns.title.prefs', 'Quiet hours, sound and what notifications show')));
+    prefBox.appendChild(h('div', 'vns-title', bellOnly() ? NT('vns.title.prefs.windows', 'Quiet hours and sound') : NT('vns.title.prefs', 'Quiet hours, sound and what notifications show')));
     var quiet = prefs.quiet_hours || {};
     var quietRow = h('div', 'vns-row');
     var quietToggle = toggle(NT('vns.quiet.label', 'Quiet hours from'), quiet.enabled, null);
@@ -152,7 +156,8 @@ function mountInto(host){
     quietRow.appendChild(quietToggle); quietRow.appendChild(start); quietRow.appendChild(h('span', null, NT('vns.quiet.to', 'to'))); quietRow.appendChild(end);
     quietRow.appendChild(button(NT('vns.btn.save', 'Save'), function(){
       save({quiet_hours: {enabled: quietToggle.querySelector('input').checked, start: start.value, end: end.value}},
-           NT('vns.saved.quiet', 'Quiet hours saved. During them macOS is not asked; the bell still records every alert.'));
+           bellOnly() ? NT('vns.saved.quiet.windows', 'Quiet hours saved. During them no sound plays; the bell still records every alert.')
+                      : NT('vns.saved.quiet', 'Quiet hours saved. During them macOS is not asked; the bell still records every alert.'));
     }));
     prefBox.appendChild(quietRow);
     prefBox.appendChild(toggle(NT('vns.toggle.sound', 'Notification sound'), prefs.sound, function(on){
@@ -165,11 +170,13 @@ function mountInto(host){
         if (!played) say(NT('vns.sound.blocked', 'Sound playback is unavailable. Notifications remain in the bell.'), true);
       });
     }));
+    if (!bellOnly()) {
     var lockRow = h('label', 'vns-row'); lockRow.appendChild(h('span', null, NT('vns.lock.label', 'A macOS notification may show')));
     var lock = h('select', 'vns-input'); lock.setAttribute('aria-label', NT('vns.lock.aria', 'What a macOS notification may show'));
     lockOptions().forEach(function(pair){ var option = h('option', null, pair[1]); option.value = pair[0]; lock.appendChild(option); });
     lock.value = prefs.lock_screen; lock.addEventListener('change', function(){ save({lock_screen: lock.value}); });
     lockRow.appendChild(lock); prefBox.appendChild(lockRow);
+    }
     var lateRow = h('div', 'vns-row'); lateRow.appendChild(h('span', null, NT('vns.late.label', 'Show an alert that comes due late, up to')));
     var late = h('input', 'vns-input'); late.type = 'number'; late.min = '0'; late.max = '60'; late.value = String(prefs.late_grace_minutes);
     late.setAttribute('aria-label', NT('vns.late.aria', 'Minutes after an event started'));
@@ -193,47 +200,10 @@ window.VoolNotificationSettings = Object.freeze({mountInto: mountInto});
 """
 
 
-# Windows: this port has no OS notification backend. The window host's bridge
-# (installer/bundle/native_notifications.py start_for_host) starts only on darwin and the status route reports
-# supported:false, so the macOS box above already paints nothing. What is left is macOS text the Windows panel would
-# still show: the bridge's macOS explanation, the "what notifications show" title, the quiet-hours saved line ("macOS
-# is not asked") and the lock-screen picker, whose preference only shapes requests handed to the macOS bridge
-# (core/operator/native_notifications.py _content). On Windows those are served from ".windows" catalog keys or left
-# out; quiet hours and sound stay, because they gate the in-page chime (core/operator/notification_audio.py). The
-# script above is the macOS one, byte for byte.
-_WIN_WHY_OLD = "why.textContent = native.explanation || '';"
-_WIN_WHY_NEW = "why.textContent = NT('vns.why.windows', 'The bell keeps every VOOL alert. VOOL does not send Windows notifications yet.');"
-_WIN_TITLE_OLD = "NT('vns.title.prefs', 'Quiet hours, sound and what notifications show')"
-_WIN_TITLE_NEW = "NT('vns.title.prefs.windows', 'Quiet hours and sound')"
-_WIN_QUIET_OLD = "NT('vns.saved.quiet', 'Quiet hours saved. During them macOS is not asked; the bell still records every alert.')"
-_WIN_QUIET_NEW = "NT('vns.saved.quiet.windows', 'Quiet hours saved. During them no sound plays; the bell still records every alert.')"
-_WIN_LOCK_START = "    var lockRow = h('label', 'vns-row');"
-_WIN_LOCK_END = "    lockRow.appendChild(lock); prefBox.appendChild(lockRow);\n"
-
-
-def _windows_js() -> str:
-    """The panel's script on Windows: the macOS script with its macOS-only text swapped and the lock-screen row left
-    out. Raises if the macOS script no longer carries exactly the pieces this variant replaces."""
-    js = _JS
-    for old in (_WIN_WHY_OLD, _WIN_TITLE_OLD, _WIN_QUIET_OLD, _WIN_LOCK_START, _WIN_LOCK_END):
-        if js.count(old) != 1:
-            raise RuntimeError("the notification settings script changed; update its Windows variant")
-    js = js.replace(_WIN_WHY_OLD, _WIN_WHY_NEW, 1).replace(_WIN_TITLE_OLD, _WIN_TITLE_NEW, 1)
-    js = js.replace(_WIN_QUIET_OLD, _WIN_QUIET_NEW, 1)
-    start = js.index(_WIN_LOCK_START)
-    end = js.index(_WIN_LOCK_END, start) + len(_WIN_LOCK_END)
-    return js[:start] + js[end:]
-
-
-def render_notification_settings_fragment(*, windows: bool | None = None) -> str:
-    """The alerts and macOS notifications panel, mounted by the Settings page's Notifications group. On Windows
-    (core.generated_files.host_is_windows unless ``windows`` is given) it is the alerts panel without macOS text."""
+def render_notification_settings_fragment() -> str:
+    """The alerts and macOS notifications panel, mounted by the Settings page's Notifications group."""
     from core.notification_audio import audio_script
-    if windows is None:
-        from core.generated_files import host_is_windows
-        windows = host_is_windows()
-    js = _windows_js() if windows else _JS
-    return "<style>" + _CSS + "</style><script>" + js + "</script>" + audio_script()
+    return "<style>" + _CSS + "</style><script>" + _JS + "</script>" + audio_script()
 
 
 __all__ = ["render_notification_settings_fragment"]
