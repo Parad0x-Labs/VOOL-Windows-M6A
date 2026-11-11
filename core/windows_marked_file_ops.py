@@ -528,7 +528,9 @@ def names_a_file_path(text: str) -> bool:
     from core.agent_runtime import write_root_honesty as paths
 
     try:
-        return bool(list(paths._destination_candidates(str(text or ""), typed_shares=True)))
+        # Any candidate at all answers the question, so nothing is looked up on disk to read where a
+        # path through folders with spaces ends (a share or a mapped drive is never touched here).
+        return any(True for _ in paths._destination_candidates(str(text or ""), typed_shares=True, look_up=False))
     except Exception:  # a message this reader cannot read is left to the memory command, as before
         return False
 
