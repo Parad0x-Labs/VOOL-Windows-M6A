@@ -80,11 +80,52 @@ def configure_runtime_home(path: str | Path | None) -> None:
     _RUNTIME_HOME_ENV_LAST_SEEN = _VOOL_HOME_ENV_AT_OVERRIDE
 
 
+# The schema VOOL-Setup.exe's bundle_manifest.json carries (core/updater/windows.py
+# BUNDLE_MANIFEST_SCHEMA). Repeated here so home resolution never imports the updater.
+_WINDOWS_BUNDLE_MANIFEST_SCHEMA = "vool.bundle_manifest.v1"
+
+
+def _is_installed_windows_bundle(root: Path) -> bool:
+    """True when ``root`` is the ``app`` folder of a VOOL-Setup.exe install on Windows.
+
+    The layout is ``<install>\\app`` (this code), ``<install>\\python\\python.exe`` and
+    ``<install>\\bundle_manifest.json`` with the bundle schema -- the same three facts
+    ``core.updater.windows.looks_like_installed_bundle`` checks. A source checkout has none of them.
+    """
+    if sys.platform != "win32" or root.name.lower() != "app":
+        return False
+    install = root.parent
+    try:
+        manifest = json.loads((install / "bundle_manifest.json").read_text(encoding="utf-8-sig"))
+    except Exception:
+        return False
+    return (
+        isinstance(manifest, dict)
+        and manifest.get("schema") == _WINDOWS_BUNDLE_MANIFEST_SCHEMA
+        and (install / "python" / "python.exe").is_file()
+        and (root / "core").is_dir()
+    )
+
+
 def discover_installed_runtime_home(
     *,
     project_root: str | Path | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> Path | None:
     root = (Path(project_root).expanduser().resolve() if project_root is not None else PROJECT_ROOT.resolve())
+    receipt_home = _install_receipt_home(root)
+    if receipt_home is not None:
+        return receipt_home
+    # The Windows bundle writes no install receipt: its launcher and supervisor set VOOL_HOME from
+    # native_runtime_home(). Anything run straight with the bundled Python (the README's
+    # `python -m core.honesty_receipt demo`) has no VOOL_HOME, so without this it fell back to
+    # <install>\app\.vool_local -- a second, empty home inside the program folder.
+    if _is_installed_windows_bundle(root):
+        return native_runtime_home(env)
+    return None
+
+
+def _install_receipt_home(root: Path) -> Path | None:
     receipt_path = root / "install_receipt.json"
     try:
         payload = json.loads(receipt_path.read_text(encoding="utf-8"))
@@ -124,7 +165,7 @@ def active_vool_home(env: Mapping[str, str] | None = None) -> Path:
         return Path(env_home).expanduser().resolve()
     if _VOOL_HOME_OVERRIDE is not None and not explicit_env_home:
         return _VOOL_HOME_OVERRIDE.resolve()
-    installed_home = discover_installed_runtime_home()
+    installed_home = discover_installed_runtime_home(env=env_map)
     if installed_home is not None:
         return installed_home
     return VOOL_HOME.resolve()

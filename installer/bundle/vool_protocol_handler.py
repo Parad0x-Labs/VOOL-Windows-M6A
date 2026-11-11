@@ -92,6 +92,32 @@ def _post_callback(code: str, state: str) -> bool:
         return False
 
 
+# AllowSetForegroundWindow(ASFW_ANY): the DWORD -1.
+_ASFW_ANY = 0xFFFFFFFF
+
+
+def _pass_on_the_foreground() -> bool:
+    """Let VOOL's own window come to the front when this link starts or reopens it.
+
+    Windows lets only a process the user just started (this handler, launched by the browser or
+    the shell) take the foreground. VOOL's supervisor and window are three launches further down
+    (cmd, VOOL.cmd, pythonw), so their SetForegroundWindow was refused and the link seemed to do
+    nothing. ASFW_ANY hands this one-time right on; Windows ends it at the next user input.
+    Windows only; never fails the link. True when Windows accepted it."""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        allow = ctypes.windll.user32.AllowSetForegroundWindow
+        allow.argtypes = (wintypes.DWORD,)
+        allow.restype = wintypes.BOOL
+        return bool(allow(_ASFW_ANY))
+    except Exception:
+        return False
+
+
 def _start_bundle(root: Path) -> None:
     launcher = root / "VOOL.cmd"
     if not launcher.is_file():
@@ -100,6 +126,7 @@ def _start_bundle(root: Path) -> None:
         # Inside quotes cmd still expands %NAME% and ends the line at a line break.
         raise ValueError("the VOOL.cmd path holds a quote, % or line break cmd cannot keep")
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
+    _pass_on_the_foreground()
     subprocess.Popen(
         # A string, not a list: /s with doubled quotes keeps the path quoted even when it holds & or ( ).
         f'"{os.environ.get("ComSpec", "cmd.exe")}" /s /c ""{launcher}""',
