@@ -55,7 +55,13 @@ from core.local_model_policy import (
     ungated_local_manifest_for_request,
 )
 from core.local_ollama_inventory import is_text_generation_ollama_model
-from core.model_health import circuit_is_open, record_provider_failure, record_provider_success, should_probe_health
+from core.model_health import (
+    admit_provider_call,
+    circuit_is_open,
+    record_provider_failure,
+    record_provider_success,
+    should_probe_health,
+)
 from core.model_output_contracts import json_schema_for_mode
 from core.model_output_guard import reasoning_only_markers, scrub_foreign_markers, strip_reasoning_block
 from core.model_registry import ModelRegistry
@@ -2623,7 +2629,9 @@ class MemoryFirstRouter:
             context_manifest_id=context_manifest_id,
             context_manifest_trace_id=context_manifest_trace_id,
         )
-        if circuit_is_open(manifest.provider_id):
+        # An open circuit admits one half-open trial (core.model_health.admit_provider_call): a
+        # fresh turn after a slow one asks the model again instead of failing without a call.
+        if circuit_is_open(manifest.provider_id) and not admit_provider_call(manifest.provider_id):
             _emit_model_routing_event(
                 source_context,
                 "model.call_failed",
