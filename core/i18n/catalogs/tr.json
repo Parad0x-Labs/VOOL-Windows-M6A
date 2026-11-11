@@ -157,6 +157,7 @@
     "activity.ledger.model_routing_failed": "Yönlendirme başarısız",
     "activity.ledger.model_routing_started": "Modele yönlendiriliyor",
     "activity.ledger.model_verification_receipt": "Model kimlik makbuzu",
+    "activity.ledger.model_no_tool_selected": "Araç kullanmadan yanıtladı",
     "activity.ledger.scope_resolved": "Kapsam",
     "activity.ledger.stale_result_rejected": "Bayat sonuç reddedildi",
     "activity.ledger.task_classified": "Sınıflandırıldı",
@@ -1785,6 +1786,8 @@
     "chat.toast_project_failed": "Bu sohbet projeye taşınamadı — sohbet İZOLE DEĞİL. Tekrar deneyin.",
     "chat.toast_try_once_grant": "“{label}” bir tur boyunca denendi — şimdi her zamanki modelinize geri dönüldü.",
     "chats.project_note": "Bir proje içindeki sohbetler o klasörde çalışır ve — dosyalar ve bellek bakımından — diğer projelerden izole kalır.",
+    "chats.project_empty": "Henüz sohbet yok.",
+    "chats.project_new_chat": "Burada yeni sohbet",
     "palette.hint_activity": "etkinlik",
     "palette.hint_esc_stop": "durdur",
     "palette.hint_new_chat": "yeni sohbet",
@@ -1921,7 +1924,7 @@
     "fault.wallet_payment_channel_off.action": "Bir ödeme kanalını Kripto ayarlarında yalnızca ödemelerin onun üzerinden yapılmasını istiyorsanız açın; tavan ve sizin onayınız her kanalda geçerlidir.",
     "fault.wallet_x402_sdk_unavailable.message": "Bu yapı x402 Foundation SDK üzerinden Base'deki x402 tekliflerini ödeyemez: isteğe bağlı x402 eki bu makinede kurulu değil. Hiçbir şey imzalanmadı veya gönderilmedi. Cüzdanın diğer her işlevi onsuz çalışır; kurulunca tekrar deneyin."
   },
-  "source_catalog_sha256": "7ece37b9bc040ab28640b14bea290bbdf1c30f491a460a5d04fa86d4e297e702",
+  "source_catalog_sha256": "2bdb6cc10987aee1edfd1192676d9c5bcf92c2c37f6b96f28e91d46f65f41c3b",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1930,6 +1933,7 @@
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
     "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
-    "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)"
+    "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
+    "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)"
   }
 }

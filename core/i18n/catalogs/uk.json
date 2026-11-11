@@ -157,6 +157,7 @@
     "activity.ledger.model_routing_failed": "Спрямування не вдалося",
     "activity.ledger.model_routing_started": "Спрямування до моделі",
     "activity.ledger.model_verification_receipt": "Квитанція тотожності моделі",
+    "activity.ledger.model_no_tool_selected": "Відповідь без інструмента",
     "activity.ledger.scope_resolved": "Коло",
     "activity.ledger.stale_result_rejected": "Застарілий результат відхилено",
     "activity.ledger.task_classified": "Класифіковано",
@@ -1785,6 +1786,8 @@
     "chat.toast_project_failed": "Не вдалося додати цей чат до проєкту — він НЕ ізольований. Спробуйте ще раз.",
     "chat.toast_try_once_grant": "Один хід виконано моделлю «{label}» — тепер знову ваша звичайна модель.",
     "chats.project_note": "Чати всередині проєкту працюють у його теці та залишаються ізольованими — і файли, і пам'ять — від інших проєктів.",
+    "chats.project_empty": "Чатів ще немає.",
+    "chats.project_new_chat": "Новий чат тут",
     "palette.hint_activity": "активність",
     "palette.hint_esc_stop": "стоп",
     "palette.hint_new_chat": "новий чат",
@@ -1921,7 +1924,7 @@
     "fault.wallet_payment_channel_off.action": "Вмикайте платіжний канал у налаштуваннях Крипто, лише якщо хочете платити через нього; ліміт і ваше схвалення діють на кожному каналі.",
     "fault.wallet_x402_sdk_unavailable.message": "Ця збірка не вміє оплачувати пропозиції x402 у мережі Base через x402 Foundation SDK: необов'язковий додаток x402 не встановлено на цій машині. Нічого не підписано і не надіслано. Усі інші функції гаманця працюють без нього; після встановлення повторіть."
   },
-  "source_catalog_sha256": "7ece37b9bc040ab28640b14bea290bbdf1c30f491a460a5d04fa86d4e297e702",
+  "source_catalog_sha256": "2bdb6cc10987aee1edfd1192676d9c5bcf92c2c37f6b96f28e91d46f65f41c3b",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1930,6 +1933,7 @@
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
     "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
-    "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)"
+    "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
+    "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)"
   }
 }

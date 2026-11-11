@@ -157,6 +157,7 @@
     "activity.ledger.model_routing_failed": "ルーティング失敗",
     "activity.ledger.model_routing_started": "モデルへルーティング中",
     "activity.ledger.model_verification_receipt": "モデル識別レシート",
+    "activity.ledger.model_no_tool_selected": "ツールを使わずに回答",
     "activity.ledger.scope_resolved": "スコープ",
     "activity.ledger.stale_result_rejected": "古い結果を拒否",
     "activity.ledger.task_classified": "分類済み",
@@ -1785,6 +1786,8 @@
     "chat.toast_project_failed": "このチャットをプロジェクトへ移動できませんでした — 隔離されていません。もう一度お試しください。",
     "chat.toast_try_once_grant": "1ターンだけ「{label}」を試しました — 今は通常のモデルに戻っています。",
     "chats.project_note": "プロジェクト内のチャットはそのフォルダーで動作し、ファイルとメモリーは他のプロジェクトから隔離されます。",
+    "chats.project_empty": "まだチャットはありません。",
+    "chats.project_new_chat": "ここで新しいチャット",
     "palette.hint_activity": "アクティビティ",
     "palette.hint_esc_stop": "停止",
     "palette.hint_new_chat": "新規チャット",
@@ -1921,7 +1924,7 @@
     "fault.wallet_payment_channel_off.action": "支払いチャネルは、そのチャネルで支払いたい場合にだけ暗号設定でオンにしてください。上限とあなたの承認はどのチャネルでも適用されます。",
     "fault.wallet_x402_sdk_unavailable.message": "このビルドはx402 Foundation SDKを通じてBase上のx402オファーを支払えません：オプションのx402拡張がこのマシンにインストールされていません。署名も送信もされていません。他のウォレット機能はそれなしで動作します。導入後にもう一度お試しください。"
   },
-  "source_catalog_sha256": "7ece37b9bc040ab28640b14bea290bbdf1c30f491a460a5d04fa86d4e297e702",
+  "source_catalog_sha256": "2bdb6cc10987aee1edfd1192676d9c5bcf92c2c37f6b96f28e91d46f65f41c3b",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1930,6 +1933,7 @@
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
     "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
-    "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)"
+    "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
+    "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)"
   }
 }

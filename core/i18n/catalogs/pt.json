@@ -157,6 +157,7 @@
     "activity.ledger.model_routing_failed": "O roteamento falhou",
     "activity.ledger.model_routing_started": "Roteando para um modelo",
     "activity.ledger.model_verification_receipt": "Recibo de identidade do modelo",
+    "activity.ledger.model_no_tool_selected": "Respondeu sem uma ferramenta",
     "activity.ledger.scope_resolved": "Escopo",
     "activity.ledger.stale_result_rejected": "Resultado velho rejeitado",
     "activity.ledger.task_classified": "Classificada",
@@ -1785,6 +1786,8 @@
     "chat.toast_project_failed": "Não foi possível colocar esta conversa no projeto — ela NÃO está isolada. Tente novamente.",
     "chat.toast_try_once_grant": "“{label}” rodou por um turno — a conversa já voltou ao seu modelo normal.",
     "chats.project_note": "Os chats dentro de um projeto trabalham nessa pasta e ficam isolados — arquivos e memória — dos outros projetos.",
+    "chats.project_empty": "Ainda não há chats.",
+    "chats.project_new_chat": "Novo chat aqui",
     "palette.hint_activity": "atividade",
     "palette.hint_esc_stop": "parar",
     "palette.hint_new_chat": "novo chat",
@@ -1921,7 +1924,7 @@
     "fault.wallet_payment_channel_off.action": "Ligue um canal de pagamento nos ajustes de Cripto só se quiser que pagamentos passem por ele; o teto e a sua aprovação valem em todos os canais.",
     "fault.wallet_x402_sdk_unavailable.message": "Esta versão não consegue pagar ofertas x402 na Base pelo x402 Foundation SDK: o extra opcional x402 não está instalado nesta máquina. Nada foi assinado ou enviado. Toda outra função da carteira funciona sem ele; com ele instalado, tente de novo."
   },
-  "source_catalog_sha256": "7ece37b9bc040ab28640b14bea290bbdf1c30f491a460a5d04fa86d4e297e702",
+  "source_catalog_sha256": "2bdb6cc10987aee1edfd1192676d9c5bcf92c2c37f6b96f28e91d46f65f41c3b",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1930,6 +1933,7 @@
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
     "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
-    "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)"
+    "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
+    "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)"
   }
 }

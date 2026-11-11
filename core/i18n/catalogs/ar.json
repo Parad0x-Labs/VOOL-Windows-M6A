@@ -157,6 +157,7 @@
     "activity.ledger.model_routing_failed": "فشل التوجيه",
     "activity.ledger.model_routing_started": "يوجَّه إلى نموذج",
     "activity.ledger.model_verification_receipt": "إيصال هوية النموذج",
+    "activity.ledger.model_no_tool_selected": "أجاب دون أداة",
     "activity.ledger.scope_resolved": "النطاق",
     "activity.ledger.stale_result_rejected": "رُفض نتيجة قديمة",
     "activity.ledger.task_classified": "صُنّفت",
@@ -1785,6 +1786,8 @@
     "chat.toast_project_failed": "تعذّر وضع هذه المحادثة في المشروع — إنها ليست معزولة إطلاقًا. حاول مجددًا.",
     "chat.toast_try_once_grant": "جُرِّب «{label}» لدور واحد — عدت الآن إلى نموذجك المعتاد.",
     "chats.project_note": "تعمل المحادثات داخل المشروع في ذلك المجلد وتبقى معزولة — ملفات وذاكرة — عن المشاريع الأخرى.",
+    "chats.project_empty": "لا توجد محادثات بعد.",
+    "chats.project_new_chat": "محادثة جديدة هنا",
     "palette.hint_activity": "النشاط",
     "palette.hint_esc_stop": "إيقاف",
     "palette.hint_new_chat": "محادثة جديدة",
@@ -1921,7 +1924,7 @@
     "fault.wallet_payment_channel_off.action": "شغّل قناة دفع في إعدادات العملات المشفرة فقط إن أردت أن تتم الدفعات عبرها؛ الحد الأقصى وموافقتك يسريان على كل قناة.",
     "fault.wallet_x402_sdk_unavailable.message": "لا يستطيع هذا الإصدار دفع عروض x402 على Base عبر x402 Foundation SDK: الإضافة الاختيارية x402 غير مثبتة على هذه الآلة. لم يوقَّع أو يُرسل شيء. كل وظائف المحفظة الأخرى تعمل بدونها؛ بعد تثبيتها أعد المحاولة."
   },
-  "source_catalog_sha256": "7ece37b9bc040ab28640b14bea290bbdf1c30f491a460a5d04fa86d4e297e702",
+  "source_catalog_sha256": "2bdb6cc10987aee1edfd1192676d9c5bcf92c2c37f6b96f28e91d46f65f41c3b",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1930,6 +1933,7 @@
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
     "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
-    "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)"
+    "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
+    "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)"
   }
 }

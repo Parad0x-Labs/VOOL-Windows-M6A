@@ -157,6 +157,7 @@
     "activity.ledger.model_routing_failed": "रूटिंग विफल",
     "activity.ledger.model_routing_started": "मॉडल की ओर रूट हो रहा",
     "activity.ledger.model_verification_receipt": "मॉडल पहचान रसीद",
+    "activity.ledger.model_no_tool_selected": "बिना टूल के उत्तर दिया",
     "activity.ledger.scope_resolved": "दायरा",
     "activity.ledger.stale_result_rejected": "पुराना परिणाम अस्वीकृत",
     "activity.ledger.task_classified": "वर्गीकृत",
@@ -1785,6 +1786,8 @@
     "chat.toast_project_failed": "यह चैट प्रोजेक्ट में नहीं ले जाई जा सकी — यह अलग-अलग है ही नहीं। दोबारा कोशिश करें।",
     "chat.toast_try_once_grant": "एक मोड़ के लिए “{label}” आज़माया गया — अब आपका सामान्य मॉडल वापस चल रहा है।",
     "chats.project_note": "प्रोजेक्ट के भीतर की चैट उसी फ़ोल्डर में काम करती हैं और दूसरे प्रोजेक्टों से — फ़ाइलों और स्मृति दोनों में — अलग-अलग रहती हैं।",
+    "chats.project_empty": "अभी कोई चैट नहीं।",
+    "chats.project_new_chat": "यहाँ नई चैट",
     "palette.hint_activity": "गतिविधि",
     "palette.hint_esc_stop": "रोकें",
     "palette.hint_new_chat": "नई चैट",
@@ -1921,7 +1924,7 @@
     "fault.wallet_payment_channel_off.action": "क्रिप्टो सेटिंग्स में भुगतान चैनल तभी चालू करें जब आप उसके ज़रिए भुगतान चाहते हों; सीमा और आपकी मंज़ूरी हर चैनल पर लागू होती है।",
     "fault.wallet_x402_sdk_unavailable.message": "यह बिल्ड x402 Foundation SDK के ज़रिए Base पर x402 ऑफ़र का भुगतान नहीं कर सकता: वैकल्पिक x402 ऐड-ऑन इस मशीन पर नहीं है। कुछ हस्ताक्षरित या भेजा नहीं गया। वॉलेट की बाकी हर सुविधा इसके बिना चलती है; इसे लगाने पर दोबारा कोशिश करें।"
   },
-  "source_catalog_sha256": "7ece37b9bc040ab28640b14bea290bbdf1c30f491a460a5d04fa86d4e297e702",
+  "source_catalog_sha256": "2bdb6cc10987aee1edfd1192676d9c5bcf92c2c37f6b96f28e91d46f65f41c3b",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1930,6 +1933,7 @@
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
     "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
-    "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)"
+    "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
+    "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)"
   }
 }

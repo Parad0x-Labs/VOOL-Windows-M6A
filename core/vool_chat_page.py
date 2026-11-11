@@ -293,6 +293,7 @@ code { background:var(--bg); border:1px solid var(--border); border-radius:5px; 
 #sessions .arch-head { color:var(--muted); font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; padding:12px 10px 4px; cursor:pointer; user-select:none; }
 #sessions .arch-head:hover { color:var(--ink); }
 #sessions .side-empty { color:var(--muted); font-size:12px; padding:8px 10px; }
+#sessions .proj-empty-new { background:none; border:0; padding:0; color:var(--accent); font:inherit; text-decoration:underline; cursor:pointer; }
 /* Chat/project lifecycle indicator: a compact, terminal-style status tag -- never a progress bar,
    never a percentage, only what the runtime has actually reported. Priority (highest first) is
    needs_user > working > complete_unseen, enforced in chatLifecycleState(), not here -- only one
@@ -2897,7 +2898,8 @@ async function createProjectFlow(assignSid) {
     if (!root || !root.trim()) return null;
     root = root.trim();
   }
-  const suggested = root.split('/').filter(Boolean).pop() || 'Project';
+  // Either separator: a Windows path has no '/', and its whole spelling became the name.
+  const suggested = root.split(/[\\/]/).filter(Boolean).pop() || 'Project';
   const name = await requestTextInput('Project name:', suggested);
   if (name === null) return null;
   try {
@@ -3520,7 +3522,19 @@ function renderSessions(sessions) {
     const items = byProject[pid] || [];
     const isCollapsed = !!collapsed[pid];
     sessionsEl.appendChild(makeProjectHead(pid, projects[pid].name || 'Project', groupCount(pid, items.length), isCollapsed, aggregateLifecycleState(items)));
-    if (!isCollapsed) { for (const s of items) sessionsEl.appendChild(makeSessionItem(s, false, true)); }
+    if (!isCollapsed) {
+      if (items.length) { for (const s of items) sessionsEl.appendChild(makeSessionItem(s, false, true)); }
+      else {
+        // An expanded project with no chats said nothing, which read as a broken drop-down.
+        const empty = document.createElement('div'); empty.className = 'side-empty proj-empty';
+        empty.appendChild(document.createTextNode(pageT('chats.project_empty', 'No chats yet.') + ' '));
+        const start = document.createElement('button'); start.type = 'button'; start.className = 'proj-empty-new';
+        start.textContent = pageT('chats.project_new_chat', 'New chat here');
+        start.addEventListener('click', (ev) => { ev.stopPropagation(); newChatInProject(pid); });
+        empty.appendChild(start);
+        sessionsEl.appendChild(empty);
+      }
+    }
   }
   if (projectIds.length) {
     const pn = document.createElement('div');
@@ -5340,6 +5354,7 @@ const LEDGER_MAP = {
   model_lane_started:           ['run', '◆', 'Model running'],
   model_lane_completed:         ['ok',  '◆', 'Model answered'],
   model_verification_receipt:   ['meta', '≡', 'Model identity receipt'],
+  model_no_tool_selected:       ['ok',  '◆', 'Answered without a tool'],
   model_lane_failed:            ['fail','⚠', 'Model call failed'],
   model_lane_contract_failed:   ['fail','⚠', 'Model output rejected'],
   model_lane_verifier_started:  ['run', '»', 'Model review running'],
