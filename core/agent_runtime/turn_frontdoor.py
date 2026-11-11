@@ -411,20 +411,22 @@ def _non_local_typed_path(text: str, *lanes: str, network_only: bool = False) ->
     look up and that names a share, a device or no full local folder (only a share or a device, with
     ``network_only``), with its kind; ("", "") otherwise, and always off Windows. Read with the lanes'
     own parsers, in the order given: "skill" (an import's package), "write" (the write-root lane's
-    destination) and "pdf" (the PDF lane's file), with the lane that found it ("", "", "")
-    otherwise. Nothing is looked up."""
+    destination), "pdf" (the PDF lane's file) and "read" (a share or device a read names), with the
+    lane that found it; ("", "", "") otherwise. Nothing is looked up."""
     from core import windows_path_policy
 
     if not windows_path_policy.active():
         return "", "", ""
     from core.agent_runtime.fast_paths_pdf import non_local_pdf
     from core.agent_runtime.fast_paths_skill import non_local_package
+    from core.agent_runtime.read_path_honesty import non_local_read_target
     from core.agent_runtime.write_root_honesty import non_local_write_target
 
     finders = {
         "skill": non_local_package,
         "write": lambda body: non_local_write_target(body, network_only=network_only),
         "pdf": non_local_pdf,
+        "read": non_local_read_target,
     }
     for lane in lanes:
         path, kind = finders[lane](text)
@@ -1861,7 +1863,7 @@ def handle_turn_frontdoor(
     # memory lanes take their own turns first, as on base, and a fact to remember only mentions a path.
     non_local_turn = _non_local_path_turn(
         agent,
-        _non_local_typed_path(raw_user_input, "write", "pdf"),
+        _non_local_typed_path(raw_user_input, "write", "pdf", "read"),
         session_id=session_id,
         user_input=effective_input,
         source_context=source_context,
