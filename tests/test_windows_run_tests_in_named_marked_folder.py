@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -289,7 +290,12 @@ def test_a_junction_inside_a_mark_that_leads_out_is_refused_before_any_card(mach
     """A junction (a link here) inside the marked folder that leads to an unmarked folder: where it really
     leads is what counts, so "run pytest in <junction>" is refused plainly and nothing runs anywhere."""
     junction = machine["hw"] / "escape"
-    junction.symlink_to(machine["unmarked"] / "proj", target_is_directory=True)
+    if os.name == "nt":
+        import _winapi
+
+        _winapi.CreateJunction(str(machine["unmarked"] / "proj"), str(junction))  # needs no symlink privilege
+    else:
+        junction.symlink_to(machine["unmarked"] / "proj", target_is_directory=True)
     talk = chat(machine[bound])
 
     reply = talk.say(f"run pytest in {junction}", turn_id=f"turn-{uuid.uuid4().hex[:10]}")
@@ -424,24 +430,37 @@ def test_on_windows_a_folder_on_a_drive_windows_does_not_call_local_is_not_taken
     assert payload == {"intent": "sandbox.run_command", "arguments": {"command": "python -m unittest in Z:"}}, payload
 
 
+#: A POSIX-shaped folder as literal text: the row pins the parse only, the same on every host (a Windows
+#: CI host's tmp_path is a drive path, which the base parse cuts at the drive's colon).
+POSIX_PROJ = "/home/u/VOOL HW Test/proj"
+
+#: The base reading of "run python ..." (`_explicit_command_request`): words of these characters only.
+_BASE_PYTHON_COMMAND_RE = re.compile(r"python3?\s+[A-Za-z0-9_./:-]+(?:\s+[A-Za-z0-9_./:=+-]+)*")
+
+
 def test_off_windows_a_posix_folder_is_still_part_of_the_command(machine, monkeypatch) -> None:
     monkeypatch.setattr(gate, "_IS_WINDOWS", False)
-    folder = machine["hw"] / "proj"
 
-    payload = _plan(f"run python -m unittest in {folder}", workspace=str(machine["hw"]))
+    payload = _plan(f"run python -m unittest in {POSIX_PROJ}", workspace=str(machine["hw"]))
 
-    assert payload == {"intent": "sandbox.run_command", "arguments": {"command": f"python -m unittest in {folder}"}}
+    assert payload == {"intent": "sandbox.run_command", "arguments": {"command": f"python -m unittest in {POSIX_PROJ}"}}
 
 
 def test_off_windows_the_served_ask_runs_as_before(machine, chat, monkeypatch) -> None:
-    """Served with the Windows seams off: the chat keeps its own folder and the command is read as on base."""
+    """Served with the Windows seams off: the chat keeps its own folder and the command is read as on base.
+
+    The folder is a real one, so the expected command is the base reading of the very text the row sends:
+    the whole spaced path on a POSIX host, `... in D:` on a Windows CI host (cut at the drive's colon)."""
     monkeypatch.setattr(gate, "_IS_WINDOWS", False)
     folder = machine["hw"] / "proj"
     talk = chat(machine["hw"])
+    command_text = f"python -m unittest in {folder}"
+    expected = _BASE_PYTHON_COMMAND_RE.match(command_text).group(0)
+    assert expected.startswith("python -m unittest in "), expected
 
-    card, _resumed = _ask_allow_resume(talk, f"run python -m unittest in {folder}")
+    card, _resumed = _ask_allow_resume(talk, f"run {command_text}")
 
     assert card["intent"] == "sandbox.run_command" and card["affected_resources"] == [], card
     assert len(_Recorder.jobs) == 1, _Recorder.jobs
     assert os.path.samefile(_Recorder.jobs[0]["cwd"], machine["hw"]), _Recorder.jobs
-    assert _Recorder.jobs[0]["command"] == f"python -m unittest in {folder}", _Recorder.jobs
+    assert _Recorder.jobs[0]["command"] == expected, _Recorder.jobs
