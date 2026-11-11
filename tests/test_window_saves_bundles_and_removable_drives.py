@@ -95,7 +95,7 @@ def test_a_bundle_is_saved_where_the_user_picks(tmp_path, monkeypatch) -> None:
     opener = _serve(monkeypatch, _Response(body))
     window = _Window(destination)
     result = _api(window).save_session_bundle(_BUNDLE_PATH, "chat:abc/1")
-    assert result == {"ok": True}
+    assert result == {"ok": True, "path": str(destination)}
     assert destination.read_bytes() == body
     assert [p.name for p in tmp_path.iterdir()] == ["my-chat.voolsession"]
     # The page names only the bundle; the confined download route serves it.
@@ -193,7 +193,7 @@ def test_every_native_save_works_on_a_drive_without_hard_links(save, tmp_path, m
         destination = tmp_path / "report.txt"
         _serve(monkeypatch, _Response(body, "text/plain"))
         result = _api(_Window(destination)).save_deliverable("session-1", "dlv_" + "0" * 32)
-    assert result == {"ok": True}
+    assert result == ({"ok": True, "path": str(destination)} if save == "bundle" else {"ok": True})
     assert links, "the hard link is still tried first"
     assert destination.read_bytes() == body
     assert [p.name for p in tmp_path.iterdir()] == [destination.name]
