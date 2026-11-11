@@ -225,7 +225,7 @@ def list_operator_tools() -> list[dict[str, Any]]:
             "category": "calendar",
             "destructive": False,
             **_operator_action_guardrails("apple_note_list", destructive=False),
-            "available": True,
+            "available": _apple_notes_available(),
             "description": "List Apple Notes titles through the Automation bridge (macOS permission required).",
         },
         {
@@ -233,7 +233,7 @@ def list_operator_tools() -> list[dict[str, Any]]:
             "category": "calendar",
             "destructive": False,
             **_operator_action_guardrails("apple_note_read", destructive=False),
-            "available": True,
+            "available": _apple_notes_available(),
             "description": "Read one Apple Note by exact title; locked notes stay protected.",
         },
         {
@@ -241,7 +241,7 @@ def list_operator_tools() -> list[dict[str, Any]]:
             "category": "calendar",
             "destructive": False,
             **_operator_action_guardrails("apple_note_append", destructive=False),
-            "available": True,
+            "available": _apple_notes_available(),
             "description": "Append text to one Apple Note, leaving its other content untouched.",
         },
         {
@@ -249,7 +249,7 @@ def list_operator_tools() -> list[dict[str, Any]]:
             "category": "calendar",
             "destructive": False,
             **_operator_action_guardrails("apple_note_rename", destructive=False),
-            "available": True,
+            "available": _apple_notes_available(),
             "description": "Rename one Apple Note by exact title.",
         },
         {
@@ -257,7 +257,7 @@ def list_operator_tools() -> list[dict[str, Any]]:
             "category": "calendar",
             "destructive": True,
             **_operator_action_guardrails("apple_note_delete", destructive=True),
-            "available": True,
+            "available": _apple_notes_available(),
             "description": "Delete one Apple Note after explicit confirmation; it moves to Recently Deleted.",
         },
         {
@@ -317,6 +317,13 @@ def _operator_action_guardrails(tool_id: str, *, destructive: bool) -> dict[str,
         "privacy_sensitive": privacy_sensitive,
         "requires_approval": bool(destructive or outward_facing or privacy_sensitive),
     }
+
+
+def _apple_notes_available() -> bool:
+    """Apple Notes runs through /usr/bin/osascript, a Mac program: never offered on Windows."""
+    from core import posix_tools
+
+    return not posix_tools.active()
 
 
 def _calendar_provider_available() -> bool:
@@ -382,6 +389,8 @@ def _operator_capability_unavailable_reason(tool_id: str) -> str:
         "show_agenda": "No calendar is configured or chosen in Settings yet, so there is no agenda to read.",
         "search_calendar_event": "No calendar is configured or chosen in Settings yet, so there is nothing to search.",
     }
+    if tool_id.startswith("apple_note_") and not _apple_notes_available():
+        return "Apple Notes is a Mac app and isn't available on Windows."
     return reasons.get(tool_id, f"Operator capability `{tool_id}` is not available on this host/runtime.")
 
 

@@ -21,10 +21,11 @@ before the bridge is invoked) lives with the caller, ``core.operator.notes``.
 """
 from __future__ import annotations
 
-import os
 import re
 from collections.abc import Callable
 from typing import Any
+
+from core import posix_tools
 
 _PERMISSION_GUIDE = (
     "allow this app to control Notes in System Settings > Privacy & Security > "
@@ -70,7 +71,18 @@ _LAUNCH_FAILURES = (FileNotFoundError, PermissionError, NotADirectoryError)
 
 
 def _executable(path: str) -> bool:
-    return os.access(path, os.X_OK)
+    # On Windows `/usr/bin/osascript` would resolve to a plantable C:\\usr\\bin: never stat'ed there.
+    return posix_tools.executable(path)
+
+
+#: What an Apple Notes request answers on Windows, where there is no Notes app and no osascript.
+WINDOWS_UNAVAILABLE_DETAIL = "Apple Notes is a Mac app and isn't available on Windows, so nothing was sent to Notes."
+
+
+def _osascript_unavailable(detail: str) -> dict[str, Any]:
+    if posix_tools.active():
+        detail = WINDOWS_UNAVAILABLE_DETAIL + (" No note was created." if "no note was created" in detail else "")
+    return {"ok": False, "reason": "osascript_unavailable", "detail": detail}
 
 
 def _classify(stderr: str, returncode: int) -> tuple[str, str]:
@@ -133,8 +145,7 @@ def create_apple_note(
     run = runner or subprocess.run
     script = build_create_note_script(title=title, body=body, account=account, folder=folder)
     if runner is None and not _executable(_OSASCRIPT):
-        return {"ok": False, "reason": "osascript_unavailable",
-                "detail": "osascript is not present on this system, so nothing was sent to Notes; no note was created."}
+        return _osascript_unavailable("osascript is not present on this system, so nothing was sent to Notes; no note was created.")
     try:
         # BOUNDED on purpose: a machine without Automation consent makes macOS hold the
         # call on a dialog. A granted machine answers in well under this bound; an
@@ -491,8 +502,7 @@ def run_notes_bridge(script: str, *, runner: Any = None, purpose: str = "the Not
 
     run = runner or subprocess.run
     if runner is None and not _executable(_OSASCRIPT):
-        return {"ok": False, "reason": "osascript_unavailable",
-                "detail": "osascript is not present on this system, so nothing was sent to Notes."}
+        return _osascript_unavailable("osascript is not present on this system, so nothing was sent to Notes.")
     try:
         completed = run([_OSASCRIPT, "-e", script], capture_output=True, text=True, timeout=5)
     except _LAUNCH_FAILURES as exc:

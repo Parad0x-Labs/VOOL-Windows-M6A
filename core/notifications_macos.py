@@ -32,6 +32,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from core import posix_tools
+
 HELPER_APP_NAME = "VOOL Notifications.app"
 HELPER_DISPLAY_NAME = "VOOL Notifications"
 HELPER_EXECUTABLE = "vool-notify"
@@ -320,7 +322,7 @@ def helper_executable(app: Path) -> Path:
 
 
 def toolchain_available() -> bool:
-    return platform.system() == "Darwin" and os.access(SWIFTC, os.X_OK) and os.access(CODESIGN, os.X_OK)
+    return platform.system() == "Darwin" and posix_tools.executable(SWIFTC) and posix_tools.executable(CODESIGN)
 
 
 def _target(arch: str | None, min_macos: str) -> str:
@@ -361,8 +363,8 @@ def build_helper_app(destination: Path, *, bundle_identifier: str, arch: str | N
         staged = Path(build_dir) / HELPER_APP_NAME
         helper_executable(staged).parent.mkdir(parents=True)
         compiled = subprocess.run(
-            [SWIFTC, "-O", "-swift-version", "5", "-target", _target(arch, floor), str(source), "-o", str(helper_executable(staged)),
-             "-framework", "UserNotifications", "-framework", "AppKit"],
+            posix_tools.argv([SWIFTC, "-O", "-swift-version", "5", "-target", _target(arch, floor), str(source), "-o", str(helper_executable(staged)),
+             "-framework", "UserNotifications", "-framework", "AppKit"]),
             capture_output=True, timeout=900, check=False,
         )
         if compiled.returncode != 0 or not helper_executable(staged).exists():
@@ -373,7 +375,7 @@ def build_helper_app(destination: Path, *, bundle_identifier: str, arch: str | N
         resources.mkdir(parents=True, exist_ok=True)
         (resources / "vool-pop.wav").write_bytes(sound_wav())
         (staged / "Contents" / "Info.plist").write_bytes(_info_plist(identifier, floor))
-        signed = subprocess.run([CODESIGN, "--force", "--sign", "-", "--identifier", identifier, str(staged)],
+        signed = subprocess.run(posix_tools.argv([CODESIGN, "--force", "--sign", "-", "--identifier", identifier, str(staged)]),
                                 capture_output=True, timeout=120, check=False)
         if signed.returncode != 0:
             detail = (signed.stderr or b"").decode("utf-8", "replace").strip()

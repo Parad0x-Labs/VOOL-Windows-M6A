@@ -33,6 +33,8 @@ import tempfile
 from pathlib import Path
 from typing import Any, Protocol
 
+from core import posix_tools
+
 SERVICE = "com.vool.wallet.unlock"
 SWIFTC = "/usr/bin/swiftc"
 TOOL_NAME = "vool-devauth"
@@ -147,7 +149,7 @@ def shipped_helper() -> Path | None:
 
 
 def toolchain_available() -> bool:
-    return platform.system() == "Darwin" and (shipped_helper() is not None or os.access(SWIFTC, os.X_OK))
+    return platform.system() == "Darwin" and (shipped_helper() is not None or posix_tools.executable(SWIFTC))
 
 
 # Default deployment floor for the compiled helper. Without an explicit -target, swiftc stamps
@@ -170,8 +172,8 @@ def compile_helper(destination: Path, arch: str | None = None, min_macos: str | 
         source = Path(build_dir) / "tool.swift"
         source.write_text(_SWIFT_SOURCE, encoding="utf-8")
         staged = Path(build_dir) / "tool"
-        completed = subprocess.run([SWIFTC, "-O", "-swift-version", "5", "-target", _helper_target(arch, min_macos),
-                                    str(source), "-o", str(staged), "-framework", "LocalAuthentication", "-framework", "Security"],
+        completed = subprocess.run(posix_tools.argv([SWIFTC, "-O", "-swift-version", "5", "-target", _helper_target(arch, min_macos),
+                                    str(source), "-o", str(staged), "-framework", "LocalAuthentication", "-framework", "Security"]),
                                    capture_output=True, timeout=600, check=False)
         if completed.returncode != 0 or not staged.exists():
             detail = (completed.stderr or b"").decode("utf-8", "replace").strip().splitlines()

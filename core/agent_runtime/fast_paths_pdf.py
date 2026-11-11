@@ -38,7 +38,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from core import windows_path_policy
+from core import posix_tools, windows_path_policy
 from core.agent_runtime.write_root_honesty import typed_path_kind
 from core.execution.constants import drive_left_behind
 
@@ -467,6 +467,14 @@ def maybe_handle_pdf_read(
             f"Give me the folder it is in and I will read it.",
             reason="pdf_read_not_found_by_name",
         )
+
+    if posix_tools.active():
+        # Windows has neither PDFKit nor Vision, and the helper's interpreter path would resolve to a
+        # plantable C:\usr\bin there. Refused here: after the user's own file was found, so a typo
+        # still reads as one, and before any tool runs.
+        from core.pdf_tools import WINDOWS_UNAVAILABLE
+
+        return plain(WINDOWS_UNAVAILABLE, reason="pdf_read_unavailable_on_windows")
 
     def run(intent: str) -> Any:
         return execute_authorized_runtime_tool(

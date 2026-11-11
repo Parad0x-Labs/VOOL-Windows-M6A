@@ -35,6 +35,7 @@ Windows 11, 64-bit. Windows needs 16 GB of RAM. With less, VOOL refuses to load 
 - Asking in chat to download a cloud model gets a vague answer; nothing is downloaded.
 - Give full paths when you ask VOOL to move a file.
 - Starting a new chat sets the mode back to Manual. Pick Plan again after New chat.
+- PDF reading isn't available on Windows in 0.7.1. Asking VOOL to read a PDF says so and runs nothing. Apple Notes is a Mac app, so its tools aren't offered on Windows.
 - On Windows, a Python script run inside VOOL that makes a temporary folder outside the folder it's allowed to write (tempfile.mkdtemp or TemporaryDirectory with an outside dir) waits until the job's time limit, then reports a timeout instead of a permission error. Nothing is created outside. Temporary folders inside the allowed folder, including pytest's tmp_path, work normally.
 - After a run in a subfolder of a marked folder, a run in the marked folder itself is refused, because sandbox entries left by the earlier run count as another writer. Nothing changes. Run in the subfolder instead.
 - Asking "run the tests in <folder> with pytest" asks for approval twice and then summarises the result. Ask "run pytest in <folder>" to see pytest's own output.
