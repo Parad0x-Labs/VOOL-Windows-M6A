@@ -2902,7 +2902,14 @@ async function deleteProject(pid) {
 }
 async function revealProject(pid) {
   if (!_serverProjects[pid]) return;
-  try { await fetch('/api/projects/reveal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: pid }) }); } catch (e) {}
+  let ok = false;
+  try {
+    const r = await fetch('/api/projects/reveal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: pid }) });
+    const d = await r.json().catch(() => ({}));
+    ok = !!(r.ok && d && d.ok);
+  } catch (e) { ok = false; }
+  // The server opens the folder itself; say so when it could not, instead of doing nothing.
+  if (!ok) toast('Could not show this project\u2019s folder. Check that it still exists' + (String((_serverProjects[pid] || {}).root || '').indexOf(',') >= 0 ? ' (File Explorer cannot select a folder whose path contains a comma).' : '.'));
 }
 async function assignSession(sid, pid) {
   let ok = false;
