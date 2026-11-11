@@ -312,10 +312,28 @@ function closeSetup() {
     try { window.parent.postMessage({ type: 'vool-setup-close' }, window.location.origin); } catch (e) {}
     return;
   }
-  // A native shell (the .app) owns this window: ask it to close, never navigate the page away.
+  // A native shell (the .app) owns this window: ask it to close. The bridge closes only its OWN
+  // Setup window; this page can also be hosted elsewhere (opened inside the Settings window), where
+  // close_setup answers not_open. A refused or failed close still leaves Setup, in place.
   try {
-    if (window.pywebview && window.pywebview.api && window.pywebview.api.close_setup) { window.pywebview.api.close_setup(); return; }
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.close_setup) {
+      Promise.resolve(window.pywebview.api.close_setup())
+        .then((res) => { if (!(res && res.ok)) leaveSetupInPlace(); }, () => leaveSetupInPlace());
+      return;
+    }
   } catch (e) {}
+  leaveSetupInPlace();
+}
+function cameFromSettings() {
+  try {
+    const from = new URL(String(document.referrer || ''));
+    return from.origin === window.location.origin && from.pathname === '/settings';
+  } catch (e) { return false; }
+}
+function leaveSetupInPlace() {
+  // Opened inside the Settings window: go back to Settings. Otherwise close a closable window,
+  // else show the chat. Never a dead button.
+  if (cameFromSettings()) { window.location.href = '/settings'; return; }
   try { window.close(); } catch (e) {}
   if (!window.closed) window.location.href = '/chat';
 }
@@ -407,12 +425,23 @@ function render() {
   renderMock(step.id);
   renderControl(step);
   const st = $('#stepStatus');
-  st.className = 'status' + (step.done ? ' done' : (step.skipped ? ' skipped' : ''));
-  st.textContent = step.done ? fmt(COPY.done, { later: step.later }) : (step.skipped ? fmt(COPY.skipped, { later: step.later }) : '');
+  const [stateClass, stateText] = stepStatus(step);
+  st.className = 'status' + (stateClass ? ' ' + stateClass : '');
+  st.textContent = stateText;
   $('#backBtn').disabled = view.index === 0;
   $('#skipBtn').hidden = !!step.done;
   document.body.dataset.step = step.id;
   focusPane();
+}
+
+// ONE status for the step's real state. A step note (the folder step on Windows: a folder is
+// picked but VOOL cannot change files there until it is marked) IS the state, so the status line
+// never also says "Skipped" under it.
+function stepStatus(step) {
+  if (step.done) return ['done', fmt(COPY.done, { later: step.later })];
+  if (step.note) return ['', ''];
+  if (step.skipped) return ['skipped', fmt(COPY.skipped, { later: step.later })];
+  return ['', ''];
 }
 
 // Only #pane scrolls (the body is a fixed-height column), so Page Down / arrows reach the choices

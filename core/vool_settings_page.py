@@ -1795,6 +1795,11 @@ function openSetupPage(stepId) {
     window.location.href = url;
     return;
   }
+  // The native Settings window: Setup opens in its own native window (window.open gives none
+  // there, and the fallback below navigated the Settings window itself to /setup).
+  try {
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.open_setup) { window.pywebview.api.open_setup(stepId || ''); return; }
+  } catch (e) {}
   let opened = null;
   try { opened = window.open(url, 'vool-setup'); } catch (e) { opened = null; }
   if (opened) { try { opened.focus(); } catch (e) {} return; }
