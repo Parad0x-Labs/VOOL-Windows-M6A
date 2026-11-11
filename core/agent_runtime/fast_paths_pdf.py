@@ -356,6 +356,12 @@ def _failure_text(status: str, *, reason: str, shown: str) -> str:
             f"renamed."
         )
     if status == "missing_dependency":
+        if posix_tools.active():
+            # The tool refused on Windows after the permission gate ran (`pdf_tools._run_helper`):
+            # its first sentence is the whole answer, without the macOS install advice.
+            from core.pdf_tools import WINDOWS_UNAVAILABLE
+
+            return WINDOWS_UNAVAILABLE
         return (
             f"I cannot read PDFs on this machine: {reason}. PDF reading needs the macOS system "
             f"Python at /usr/bin/python3 and its PyObjC bindings."
@@ -467,14 +473,6 @@ def maybe_handle_pdf_read(
             f"Give me the folder it is in and I will read it.",
             reason="pdf_read_not_found_by_name",
         )
-
-    if posix_tools.active():
-        # Windows has neither PDFKit nor Vision, and the helper's interpreter path would resolve to a
-        # plantable C:\usr\bin there. Refused here: after the user's own file was found, so a typo
-        # still reads as one, and before any tool runs.
-        from core.pdf_tools import WINDOWS_UNAVAILABLE
-
-        return plain(WINDOWS_UNAVAILABLE, reason="pdf_read_unavailable_on_windows")
 
     def run(intent: str) -> Any:
         return execute_authorized_runtime_tool(
