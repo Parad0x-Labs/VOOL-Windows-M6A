@@ -78,9 +78,11 @@ def _state_dir() -> str:
 
 
 def _log(message: str) -> None:
+    """One open.log line, prefixed with a UTC time so it lines up with the API's own log."""
     with contextlib.suppress(Exception):
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         with open(os.path.join(_state_dir(), "open.log"), "a", encoding="utf-8") as handle:
-            handle.write(message.rstrip() + "\n")
+            handle.write(f"{stamp} {message.rstrip()}\n")
 
 
 def _posix_lock_base() -> str:
