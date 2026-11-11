@@ -253,7 +253,8 @@ def test_stopall_launch_failure_points_at_the_desktop_button() -> None:
 
     quit_button = "Use the Quit VOOL button at the bottom of the sidebar to stop everything."
     with windows_refusals.watch_windows_answer(vool_agent_brake._is_windows(), quit_button, "shutdown") as seen:
-        result = maybe_handle_agent_brake("/stopall", "s", stopall_fn=lambda: False)
+        maybe_handle_agent_brake("/stopall", "s", stopall_fn=lambda: False)
+        result = maybe_handle_agent_brake("/stopall confirm", "s", stopall_fn=lambda: False)
     assert result is not None and result["success"] is False
     # Windows installs no "Stop VOOL" shortcut: the fallback names the sidebar's Quit VOOL button,
     # in exactly these words, and starts nothing. Off Windows it names the desktop shortcut, as always.
