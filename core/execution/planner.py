@@ -1085,6 +1085,11 @@ def _clean_workspace_directory_path(candidate: str, *, workspace_root: str = "")
         # On Windows a share or a device path names no workspace folder, and is not resolved to find
         # out: resolving `\\host\share` is already the SMB connection.
         return ""
+    from core.agent_runtime.write_root_honesty import on_a_drive_not_local
+
+    if on_a_drive_not_local(raw):
+        # Nor a folder on a mapped network drive (`Z:\proj`): a share under a letter (M4 SA row).
+        return ""
     clean = ""
     # A root- or drive-relative folder (`/notes`, `C:notes`) is not resolved either: the lexical clean
     # below places it, as it does on base once the resolve finds it outside the workspace (`/notes` is

@@ -236,7 +236,19 @@ def typed_path_kind(text: str, start: int, candidate: str) -> str:
     return kind
 
 
+def on_a_drive_not_local(candidate: str) -> bool:
+    """On Windows, whether ``candidate`` is a full path on a drive letter Windows does not call local
+    (a mapped network drive, or a type it cannot name). Such a path is never resolved or looked up:
+    looking it up is already the SMB connection. Decided by the drive's type alone (GetDriveTypeW does
+    no I/O on the share). Always False off Windows."""
+    if not _ON_WINDOWS or not re.match(r"^[A-Za-z]:[\\/]", str(candidate or "")):
+        return False
+    return windows_known_folders._drive_is_remote(str(candidate)[:2]) is not False
+
+
 def _is_reachable(candidate: str, roots: list[Path]) -> bool:
+    if on_a_drive_not_local(candidate):
+        return False  # on Windows a mapped network drive is never resolved, and is no write root
     try:
         resolved = Path(candidate).expanduser().resolve()
     except Exception:
