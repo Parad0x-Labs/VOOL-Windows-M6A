@@ -845,7 +845,9 @@ def sanitize_user_chat_text(
         if response_class in {agent.ResponseClass.TASK_FAILED_USER_SAFE, agent.ResponseClass.SYSTEM_ERROR_USER_SAFE}:
             return "I couldn't map that cleanly to a real action."
         return "I couldn't resolve that cleanly."
-    if looks_like_runtime_traceback(sanitized):
+    from core.agent_runtime.research_tool_loop_facade import is_windows_run_request_answer
+
+    if looks_like_runtime_traceback(sanitized) and not is_windows_run_request_answer(sanitized):
         if response_class in {agent.ResponseClass.TASK_FAILED_USER_SAFE, agent.ResponseClass.SYSTEM_ERROR_USER_SAFE}:
             return "I hit an internal failure while handling that request."
         return "I couldn't resolve that cleanly."

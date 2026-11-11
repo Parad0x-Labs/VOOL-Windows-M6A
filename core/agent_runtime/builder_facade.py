@@ -409,6 +409,14 @@ class BuilderFacadeMixin:
             source_context=dict(source_context or {}),
         )
         workflow_intent = str(dict(workflow_probe.next_payload or {}).get("intent") or "").strip()
+        if workflow_intent == "sandbox.run_command":
+            # Windows: "run <command> [in <folder>]" is one sandbox job whose output is the answer,
+            # not a bounded build (hardware M4 round 3). Off Windows this returns "" and the lane
+            # decides as before.
+            from core.agent_runtime.windows_program_request import windows_run_request_command
+
+            if windows_run_request_command(effective_input):
+                return False
         pure_inspection_workflow = workflow_intent in {
             "workspace.search_text",
             "workspace.symbol_search",
