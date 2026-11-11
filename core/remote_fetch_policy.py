@@ -286,9 +286,17 @@ def browser_navigation_refusal(url: str) -> str | None:
     * the permission gateway's network-fetch decision, when a turn's ledger is open.
 
     A refusal inside a turn leaves the same ``denied`` receipt the HTTP door leaves. Outside any
-    turn there is no ledger to write to, and only the first two checks apply, exactly as before.
+    turn there is no ledger to write to, and only the first two checks apply.
+
+    Windows only, behind the Windows rule's seam (`core.windows_write_gate.active`). Off Windows the
+    answer is always None, so the browser doors keep their veto-only check unchanged there; the same
+    gap on macOS and Linux is reported for its own review rather than changed by the Windows port.
     """
 
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return None
     from core.effect_gateway import current_effect_ledger
 
     ledger = current_effect_ledger()
