@@ -8265,6 +8265,17 @@ if (composerFooterEl && typeof composerFooterEl.addEventListener === 'function')
     if (text.length >= docThreshold()) { e.preventDefault(); addPastedDocument(text, displayedChat, { source: 'drop' }); }
   });
 }
+// A file dropped anywhere else in the window must not replace the app with that file: the window
+// would navigate to it and there is no way back. Only the message box takes files.
+if (typeof document.addEventListener === 'function') {
+  const dropCarriesFiles = (dt) => { const t = dt && dt.types; if (!t) return false; return typeof t.contains === 'function' ? t.contains('Files') : Array.prototype.indexOf.call(t, 'Files') >= 0; };
+  document.addEventListener('dragover', (e) => { if (!e.defaultPrevented && dropCarriesFiles(e.dataTransfer)) { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'none'; } });
+  document.addEventListener('drop', (e) => {
+    if (e.defaultPrevented || !dropCarriesFiles(e.dataTransfer)) return;
+    e.preventDefault();
+    toast('Drop files on the message box to attach them.');
+  });
+}
 if (inputEl && typeof inputEl.addEventListener === 'function') {
   inputEl.addEventListener('paste', (e) => {
     const files = e.clipboardData && e.clipboardData.files ? Array.from(e.clipboardData.files) : [];
