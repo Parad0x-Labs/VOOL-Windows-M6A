@@ -31,6 +31,12 @@ body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 -apple-sy
 #sidebar #sessions { flex:1 1 auto; overflow-y:auto; min-height:0; }
 #newProject { background:transparent; color:var(--muted); border:1px solid var(--border); border-radius:8px; padding:6px 8px; font:inherit; font-size:12px; font-weight:600; cursor:pointer; }
 #newProject:hover { color:var(--ink); border-color:var(--accent); }
+/* The Windows key cap (Ctrl+N) is wider than the Mac one; keep "+ New" and "+ Project" on one line. */
+#newChat, #newProject { white-space:nowrap; display:inline-flex; align-items:center; gap:6px; flex:0 0 auto; }
+/* At the default sidebar width the Ctrl+N key cap does not fit beside both buttons; it shows again
+   when the sidebar is dragged wider. Ctrl+N stays listed in the shortcut line under the composer. */
+#sidebar .side-head { container-type:inline-size; }
+@container (max-width: 259px) { #sidebar #newChat kbd { display:none; } }
 .proj-head { display:flex; align-items:center; gap:6px; padding:6px 10px 6px 8px; cursor:pointer; color:var(--muted); font-size:12px; font-weight:700; letter-spacing:.3px; }
 .proj-head:hover { color:var(--ink); }
 .proj-head:hover .proj-actions { opacity:1; }
@@ -362,7 +368,7 @@ header a:hover { text-decoration:underline; }
   header { gap:7px; padding-inline:12px; }
   header .ver { max-width:50px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
   header #modelCtrl { flex:1 1 200px; min-width:min(200px,100%); max-width:100%; }
-  header #pinBtn, header #searchBtn, header #exportBtn, header #panelBtn { margin-left:0; padding-inline:7px; }
+  header #pinBtn, header #searchBtn, header #exportBtn, header #panelBtn, header #councilBtn { margin-left:0; padding-inline:7px; }
   header #updateChipTxt { max-width:45px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
   header #modelWhere { font-size:12px; }
   header .spacer { display:none; }
@@ -375,6 +381,20 @@ header a:hover { text-decoration:underline; }
   body.panel-open header { gap:5px; }
   body.panel-open header .ver { display:none; }
   header #modelBtn .model-lane.auto + #modelLbl { flex-shrink:0; }
+}
+@media (max-width: 999px) {
+  /* Narrow window: one tidy header row. Search and Export become icons (their translated titles
+     and accessible names stay), the version label hides, and buttons never wrap their own text. */
+  header { gap:6px; padding-inline:10px; }
+  header .ver { display:none; }
+  header .spacer { display:none; }
+  header > button { white-space:nowrap; }
+  header #modelCtrl { flex:1 1 160px; min-width:min(160px,100%); }
+  header #pinBtn, header #searchBtn, header #exportBtn, header #panelBtn, header #councilBtn { margin-left:0; padding-inline:7px; }
+  header #searchBtn, header #exportBtn { flex:0 0 30px; width:30px; height:30px; padding:0; font-size:0; }
+  header #searchBtn::before { content:'⌕'; font-size:18px; }
+  header #exportBtn::before { content:'⇩'; font-size:18px; }
+  header #updateChipTxt { max-width:45px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
 }
 #menu { display:none; background:transparent; color:var(--ink); border:1px solid var(--border); border-radius:8px; padding:4px 10px; font:inherit; cursor:pointer; }
 #log { flex:1; overflow-y:auto; padding:28px max(20px,calc((100% - 760px)/2)); display:flex; flex-direction:column; gap:14px; user-select:text; -webkit-user-select:text; cursor:text; background:var(--chat); }
@@ -765,8 +785,8 @@ body:not(.panel-open) #xpResize { display:none; }
 .search-btn { flex:0 0 auto; background:transparent; color:var(--muted); border:1px solid var(--border); border-radius:7px; padding:3px 8px; font:inherit; font-size:12px; line-height:1.2; cursor:pointer; }
 .search-btn:hover:not(:disabled) { color:var(--ink); border-color:var(--accent); }
 .search-btn:disabled { opacity:.45; cursor:default; }
-#searchBtn, #exportBtn { background:transparent; color:var(--muted); border:1px solid var(--border); border-radius:8px; padding:4px 10px; font:inherit; font-size:13px; cursor:pointer; margin-left:10px; }
-#searchBtn:hover, #searchBtn.on, #exportBtn:hover { color:var(--ink); border-color:var(--accent); }
+#searchBtn, #exportBtn, #councilBtn { background:transparent; color:var(--muted); border:1px solid var(--border); border-radius:8px; padding:4px 10px; font:inherit; font-size:13px; cursor:pointer; margin-left:10px; }
+#searchBtn:hover, #searchBtn.on, #exportBtn:hover, #councilBtn:hover { color:var(--ink); border-color:var(--accent); }
 mark.cs-hit { background:color-mix(in srgb,var(--accent) 38%,transparent); color:inherit; border-radius:3px; padding:0 1px; }
 mark.cs-hit.cs-active { background:var(--warn); color:#1a1205; }
 .msg.cs-current-turn { box-shadow:0 0 0 2px var(--accent); }
