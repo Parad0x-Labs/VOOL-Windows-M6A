@@ -1160,10 +1160,10 @@ body:not(.panel-open) #xpanel { display:none; }
       <div class="pop-title" id="runTitle" data-i18n="header.run_title">Where VOOL can run</div>
       <div class="run-switch" role="radiogroup" aria-labelledby="runTitle">
         <button type="button" class="run-choice" role="radio" aria-checked="true" data-run-model="vool"><b data-i18n="header.run_local_first">Local first</b><small data-i18n="header.run_local_first_hint">free cloud only if needed</small></button>
-        <button type="button" class="run-choice" role="radio" aria-checked="false" data-run-model="vool-local-only"><b data-i18n="header.run_computer_only">This computer only</b><small data-i18n="header.run_computer_only_hint">cloud blocked</small></button>
+        <button type="button" class="run-choice" role="radio" aria-checked="false" data-run-model="vool-local-only"><b data-i18n="header.run_computer_only">This computer only</b><small data-i18n="header.run_computer_only_hint">cloud blocked · web search still on</small></button>
       </div>
       <div class="run-hint" data-i18n="header.run_explainer">Auto never picks a paid model. Choosing a model below pins it.</div>
-      <div class="run-hint" id="runLocalDisclosure" hidden data-i18n="header.model_local_only_explainer">Local Only routes among the models and tools on this machine and never reaches a cloud provider — not paid, not free, not for planning.</div>
+      <div class="run-hint" id="runLocalDisclosure" hidden data-i18n="header.model_local_only_explainer">Local Only runs every AI model on this machine and never reaches a cloud provider: not paid, not free, not for planning. Web search still works. It runs through VOOL's built-in browser, so your search words go to the search engine (DuckDuckGo or Bing).</div>
       <div class="pop-title" data-i18n="header.model_popover_title">Model</div>
       <div class="pop-prov" id="modelProv" hidden></div>
       <button type="button" class="pop-item" role="menuitemradio" aria-checked="false" data-model="vool"><span class="pi-check"></span><span class="pi-body"><span data-i18n="header.model_auto_option">VOOL Auto</span> <span class="pi-hint" data-i18n="header.model_auto_hint">local-first &middot; free</span></span></button>
@@ -8888,7 +8888,7 @@ function reflectModel() {
     autoRow.setAttribute('aria-checked', auto ? 'true' : 'false');
     const check = autoRow.querySelector('.pi-check'); if (check) check.textContent = auto ? '✓' : '';
     const hint = autoRow.querySelector('.pi-hint');
-    if (hint) hint.textContent = isLocalOnlyMode() ? pageT('header.run_computer_only_hint', 'cloud blocked') : pageT('header.model_auto_hint', 'local-first · free');
+    if (hint) hint.textContent = isLocalOnlyMode() ? pageT('header.run_computer_only_hint', 'cloud blocked · web search still on') : pageT('header.model_auto_hint', 'local-first · free');
   }
   const disclosure = document.getElementById('runLocalDisclosure'); if (disclosure) disclosure.hidden = !isLocalOnlyMode();
   if (isLocalOnlyMode()) renderSelectionProvenance(null);
@@ -9183,7 +9183,7 @@ function renderConnections(conns) {
     const d = document.createElement('span'); d.className = 'dot ok'; cloudPillEl.appendChild(d);
     const t = document.createElement('span'); t.className = 'cp-txt'; t.textContent = pageT('header.cloud_local', 'Local'); cloudPillEl.appendChild(t);
     cloudPillEl.title = route.kind === 'local-only'
-      ? pageT('header.run_blocked_title', 'This chat runs on this computer; cloud blocked. Click to choose a model.')
+      ? pageT('header.run_blocked_title', 'This chat\u2019s AI runs on this computer. Cloud AI is blocked, but web search still goes out. Click to choose a model.')
       : pageTF('header.run_local_title', 'This chat is pinned to the local model {model} — no cloud provider is used. Click to choose a model.', {model:route.model});
     syncModelConnectionTitle(); return;
   }
@@ -9257,7 +9257,7 @@ function setCloudConnected(on) {
   if (orKeyEl) orKeyEl.value = '';
   const note = document.querySelector('#modelPop .pop-note');
   if (note) note.textContent = isLocalOnlyMode()
-    ? pageT('header.model_local_only_explainer', 'Local Only never reaches a cloud provider.')
+    ? pageT('header.model_local_only_explainer', 'Local Only never reaches a cloud provider. Web search still goes out through the browser.')
     : (cloudKeyConnected ? pageT('header.run_explainer', 'Auto never picks a paid model. Choosing a model below pins it.') : pageT('header.model_connect_note', 'Connect a provider key in Settings.'));
   // Add the live model list when connected; strip it back to the static popover when not.
   // Only the false->true TRANSITION renders: renderCloudModels() clears the rows before its
@@ -9421,7 +9421,7 @@ function renderSelectionProvenance(sel) {
   if (!el) return;
   if (sel == null && isLocalOnlyMode()) {
     el.hidden = false;
-    el.innerHTML = '<span class="pp-row"><b>' + esc(pageT('header.run_title', 'Where VOOL can run')) + '</b><span>' + esc(pageT('header.run_prov_local_only', 'Local Only — this machine; cloud blocked')) + '</span></span>';
+    el.innerHTML = '<span class="pp-row"><b>' + esc(pageT('header.run_title', 'Where VOOL can run')) + '</b><span>' + esc(pageT('header.run_prov_local_only', 'Local Only: AI on this machine; web search still goes out')) + '</span></span>';
     return;
   }
   if (!sel || !sel.ok) {

@@ -171,9 +171,10 @@ def _active_mode_label() -> str:
 #: The one sentence the product says when Local Only refuses to leave the machine.
 #: Named once so the served UI, the CLI and the receipts cannot drift from each other.
 LOCAL_ONLY_EGRESS_DENIAL = (
-    "Local Only is in force for this turn: no request may leave this machine, so no "
-    "socket was opened. Loopback and operator-owned LAN endpoints stay available. "
-    "To use the web, leave Local Only by changing the model selection."
+    "Local Only is in force for this turn, so this request was not sent and no socket was "
+    "opened. Loopback and operator-owned LAN endpoints stay available, and web search "
+    "through VOOL's built-in browser still works. To open this page directly, leave Local "
+    "Only by changing the model selection."
 )
 
 
