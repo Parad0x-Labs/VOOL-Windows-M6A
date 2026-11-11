@@ -79,7 +79,10 @@ Type: filesandordirs; Name: "{app}\broker\confine"
 ; User-facing VOOL deep link. HKCU matches PrivilegesRequired=lowest and never requires admin.
 Root: HKCU; Subkey: "Software\Classes\vool"; ValueType: string; ValueName: ""; ValueData: "URL:VOOL Protocol"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\vool"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""; Flags: uninsdeletevalue
-Root: HKCU; Subkey: "Software\Classes\vool\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\python\pythonw.exe,0"; Flags: uninsdeletekeyifempty
+; The link's icon and the name a browser shows when it asks to open a vool:// link ("Open VOOL?").
+; Without them both came from pythonw.exe, so the OpenRouter sign-in asked "Open Python?".
+Root: HKCU; Subkey: "Software\Classes\vool\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\vool.ico,0"; Flags: uninsdeletekeyifempty
+Root: HKCU; Subkey: "Software\Classes\vool\shell\open"; ValueType: string; ValueName: "FriendlyAppName"; ValueData: "VOOL"; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\Classes\vool\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\python\pythonw.exe"" -X utf8 ""{app}\vool_protocol_handler.py"" ""%1"""; Flags: uninsdeletekeyifempty
 
 [Icons]
