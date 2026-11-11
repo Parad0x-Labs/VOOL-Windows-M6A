@@ -704,6 +704,54 @@ COMPANION_WINDOW_FLAGS: dict = {
 }
 
 
+def _save_dialog_directory() -> str:
+    """Where a Windows save dialog opens: the user's Downloads folder when it exists, so a save
+    does not start in the profile root. Other platforms keep the dialog's own default."""
+    if sys.platform != "win32":
+        return ""
+    downloads = Path.home() / "Downloads"
+    return str(downloads) if downloads.is_dir() else ""
+
+
+def _deliver_without_overwrite(body: bytes, destination: Path, prefix: str) -> None:
+    """Write ``body`` to ``destination`` without ever replacing an existing file.
+
+    The bytes are staged in a temporary file beside the destination and hard-linked into place,
+    so the destination appears whole or not at all. FAT and exFAT drives (most USB sticks) and
+    many network shares cannot hard-link; there the destination is created exclusively instead
+    (still never overwriting) and removed again if the write does not finish.
+    Raises FileExistsError when the destination already exists."""
+    linked = False
+    with tempfile.NamedTemporaryFile(dir=destination.parent, prefix=prefix, delete=False) as handle:
+        temporary = Path(handle.name)
+        try:
+            handle.write(body)
+            handle.flush()
+            os.fsync(handle.fileno())
+            try:
+                os.link(temporary, destination)
+                linked = True
+            except FileExistsError:
+                raise
+            except OSError as exc:
+                _log(f"save: no hard link on this volume ({exc!r}); writing the file directly")
+        finally:
+            # Windows cannot unlink a file that still has an open handle.
+            handle.close()
+            temporary.unlink(missing_ok=True)
+    if linked:
+        return
+    with open(destination, "xb") as direct:
+        try:
+            direct.write(body)
+            direct.flush()
+            os.fsync(direct.fileno())
+        except BaseException:
+            direct.close()
+            destination.unlink(missing_ok=True)
+            raise
+
+
 class _WindowApi:
     """Bridge exposed to the VOOL page as ``window.pywebview.api`` (native window only).
 
@@ -1012,23 +1060,14 @@ class _WindowApi:
             file_type = {"md": "Markdown documents (*.md)", "txt": "Text documents (*.txt)",
                          "pdf": "PDF documents (*.pdf)"}[format_name]
             result = self._window.create_file_dialog(self._webview.SAVE_DIALOG,
+                directory=_save_dialog_directory(),
                 save_filename=("vool-answer" if request_id else "vool-chat") + "." + format_name,
                 file_types=(file_type,))
             if not result:
                 return {"ok": False, "cancelled": True}
             destination = Path(result[0] if isinstance(result, (list, tuple)) else result)
             # Both export surfaces preserve server bytes and share the same no-clobber delivery.
-            with tempfile.NamedTemporaryFile(dir=destination.parent, prefix=".vool-export-", delete=False) as handle:
-                temporary = Path(handle.name)
-                try:
-                    handle.write(body)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                    os.link(temporary, destination)
-                finally:
-                    # Windows cannot unlink a file that still has an open handle.
-                    handle.close()
-                    temporary.unlink(missing_ok=True)
+            _deliver_without_overwrite(body, destination, ".vool-export-")
             return {"ok": True}
         except urllib.error.HTTPError as exc:
             try:
@@ -1074,21 +1113,12 @@ class _WindowApi:
             filename = Path(str(filename).replace("\\", "/")).name.lstrip(".") or "vool-file"
             extension = filename.rsplit(".", 1)[-1] if "." in filename else ""
             file_types = (f"{extension.upper()} files (*.{extension})",) if extension.isalnum() else ()
-            result = self._window.create_file_dialog(self._webview.SAVE_DIALOG, save_filename=filename, file_types=file_types)
+            result = self._window.create_file_dialog(self._webview.SAVE_DIALOG, directory=_save_dialog_directory(),
+                                                     save_filename=filename, file_types=file_types)
             if not result:
                 return {"ok": False, "cancelled": True}
             destination = Path(result[0] if isinstance(result, (list, tuple)) else result)
-            with tempfile.NamedTemporaryFile(dir=destination.parent, prefix=".vool-file-", delete=False) as handle:
-                temporary = Path(handle.name)
-                try:
-                    handle.write(body)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                    os.link(temporary, destination)
-                finally:
-                    # Windows cannot unlink a file that still has an open handle.
-                    handle.close()
-                    temporary.unlink(missing_ok=True)
+            _deliver_without_overwrite(body, destination, ".vool-file-")
             return {"ok": True}
         except urllib.error.HTTPError as exc:
             try:
