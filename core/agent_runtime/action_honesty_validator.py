@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import bisect
 import json
 import os
 import posixpath
@@ -244,6 +245,190 @@ _HONEST_NO_BUILD_RESPONSE = (
     "this turn. Tell me the exact path you want them at and I'll say up front whether I can write "
     "there."
 )
+
+# A claim that a COMMAND RAN or a FILE WAS PATCHED/COMPILED -- the reply reports the run itself or
+# presents its output. Measured on the Windows claims sweep (build 170f6572, qwen3:8b), on turns
+# with no tool call at all: `python -c "print(2+2)"` was answered "Let me run that... Output: `4`",
+# `python -m compileall .` with an invented "Compiling './app.py'..." transcript, and a unified
+# diff with "patched" while the file was unchanged. None of the vocabularies above names a run
+# outside "the tool / the command / the tests", so all three were signed `no_action_claimed`.
+#
+# Two shapes, both narrow on purpose:
+#   * a first-person (or subjectless, sentence-initial) PAST-TENSE report: "I've patched app.py",
+#     "Patched `app.py`.", "I ran it", "the patch was applied", "compiled successfully";
+#   * PRESENTED OUTPUT: a run announced in the reply ("Let me run that", "Running `...`") followed
+#     by an "Output:" / "Result:" label or a plain/text fence. Output presented WITHOUT a run
+#     announcement ("This prints:", "Expected output:") is an explanation and is left alone.
+# A conditional, modal, second-person or future-without-output sentence is not a claim.
+_RUN_OBJECT = (
+    r"(?:it|that|this|everything|them|the\s+(?:code|command|commands|script|snippet|program|file|files|"
+    r"project|module|package|patch|diff|changes?|fix|one-?liner|line)|python3?\b|py\b|node\b|"
+    r"`[^`\n]{1,200}`|(?<![\w./\\-])[\w./\\-]+\.[A-Za-z]{1,5}\b)"
+)
+_RUN_SELF_PREFIX = r"(?:(?:i|we)(?:\s*['’]ve|\s+have|\s+just|\s+already|\s+now|\s+successfully)*\s+)"
+_RUN_SENTENCE_START = (
+    r"(?:^|(?<=[\n.!?]))[ \t>*_#`\-]{0,8}"
+    r"(?:(?:done|ok(?:ay)?|sure|great|alright|all\s+set|perfect)\W{1,4})?(?:just\s+|successfully\s+)?"
+)
+_EXECUTION_SELF_CLAIM_RE = re.compile(
+    # first person, any of the run verbs: "I've patched app.py", "I ran it", "we have run the script"
+    rf"\b{_RUN_SELF_PREFIX}(?:patched|executed\b|(?:ran|run|compiled|applied)\s+{_RUN_OBJECT})"
+    # subjectless and sentence-initial: "Patched `app.py`.", "Ran it:" -- never a bare "Run ..."
+    # (that is an instruction to the user)
+    rf"|{_RUN_SENTENCE_START}(?:patched|executed\b|(?:ran|compiled|applied)\s+{_RUN_OBJECT})"
+    # passive or result phrasing: "the patch was applied", "app.py has been patched"
+    rf"|\b(?:file|files|patch|diff|changes?|script|code|command|it|(?<![\w./\\-])[\w./\\-]+\.[A-Za-z]{{1,5}})"
+    rf"\s+(?:was|were|has\s+been|have\s+been|is\s+now|are\s+now)\s+(?:successfully\s+)?"
+    rf"(?:patched|compiled|applied|executed|run)\b"
+    rf"|\b(?:patched|compiled|applied|executed|ran)\s+(?:successfully|cleanly|without\s+(?:any\s+)?(?:errors?|issues?))\b",
+    re.IGNORECASE,
+)
+# A conditional, temporal, modal or negated frame BEFORE the verb turns the same words into an
+# explanation or a denial: "once it has been compiled ...", "if the patch was applied ...".
+_EXECUTION_FRAME_RE = re.compile(
+    r"\b(?:if|once|when|whenever|after|before|until|unless|would|could|should|might|may|will|"
+    r"won['’]?t|wouldn['’]?t|haven['’]?t|hasn['’]?t|didn['’]?t|not|never|"
+    r"you\s+(?:said|wrote|mentioned|say|claim(?:ed)?|asked))\b",
+    re.IGNORECASE,
+)
+# "Let me run that", "I'll run it", "Running `python -m compileall .`" -- the reply announcing a run.
+_RUN_ANNOUNCE_RE = re.compile(
+    r"\blet\s+me\s+(?:just\s+|quickly\s+|now\s+)?(?:run|execute|compile|apply|try\s+running)\b(?!\s+(?:through|over|down|by))"
+    r"|\bi(?:\s*['’]ll|\s+will)\s+(?:now\s+|just\s+|quickly\s+)?(?:run|execute|compile)\b(?!\s+(?:through|over|down|by))"
+    r"|\bhere(?:\s*['’]s|\s+is)\s+(?:the\s+)?(?:output|result)s?\s+(?:i\s+got|from\s+running|of\s+running)\b"
+    r"|(?:^|(?<=[\n.!?]))[ \t>*_#`\-]{0,8}(?:(?:sure|ok(?:ay)?|alright)\W{1,4})?(?:running|executing|compiling)\b",
+    re.IGNORECASE,
+)
+# An output label at the start of a line or sentence: "Output: `4`", "**Result:**", "stdout:".
+_OUTPUT_LABEL_RE = re.compile(
+    r"(?:^|(?<=[\n.!?…]))[ \t>*_#`\-]{0,8}(?:output|result|results|stdout|console\s+output)[*_`]{0,4}[ \t]{0,4}[:=]",
+    re.IGNORECASE,
+)
+_FENCE_LINE_RE = re.compile(r"^[ \t]*```[ \t]*([\w+.-]*)[^\n]*$", re.MULTILINE)
+#: Fence info strings that hold OUTPUT rather than code for the user to type.
+_OUTPUT_FENCE_INFO = frozenset({"", "text", "txt", "output", "console", "stdout", "plaintext"})
+# Framing on the line that introduces output, or on the announcing line itself, that makes it an
+# illustration: "Expected output:", "it would print:", "running it prints:".
+_ILLUSTRATIVE_OUTPUT_RE = re.compile(
+    r"\b(?:expected|example|sample|e\.g|would|should|could|might|may|will|typically|usually|"
+    r"something\s+like|if|when|once|prints|outputs|returns|gives|produces|shows|displays|yields|"
+    # the user's own output, quoted back: "Your output:", "what you pasted:"
+    r"your|you\s+(?:got|saw|see|pasted|posted|shared|ran|sent))\b",
+    re.IGNORECASE,
+)
+
+_HONEST_NO_RUN_RESPONSE = (
+    "I did not run anything -- nothing was executed on this turn, so there is no real output to show "
+    "and no file was changed. Ask me to run it and I'll say up front whether I can."
+)
+
+
+def _line_around(text: str, start: int, end: int) -> str:
+    line_start = text.rfind("\n", 0, start) + 1
+    line_end = text.find("\n", end)
+    return text[line_start : line_end if line_end >= 0 else len(text)]
+
+
+def _output_fences(body: str) -> list[tuple[int, int, int]]:
+    """`(open_start, open_end, close_end)` of every fence whose info string marks it as output."""
+
+    fences: list[tuple[int, int, int]] = []
+    opened: re.Match[str] | None = None
+    for line in _FENCE_LINE_RE.finditer(body):
+        if opened is None:
+            opened = line
+            continue
+        if opened.group(1).lower() in _OUTPUT_FENCE_INFO:
+            fences.append((opened.start(), opened.end(), line.end()))
+        opened = None
+    if opened is not None and opened.group(1).lower() in _OUTPUT_FENCE_INFO:
+        fences.append((opened.start(), opened.end(), len(body)))
+    return fences
+
+
+def _presented_as_illustration(body: str, start: int, end: int, *, shown: str, request_text: str) -> bool:
+    """The output is an example of what WOULD appear, or the user's own output quoted back.
+
+    Read from the output's own line and the line before it ("Expected output:", "Your output:"),
+    and from the request: output whose text the user sent this turn is a quotation, not a run.
+    ``request_text`` arrives whitespace-normalised.
+    """
+
+    previous_end = body.rfind("\n", 0, start)
+    previous_start = body.rfind("\n", 0, max(0, previous_end)) + 1 if previous_end > 0 else 0
+    if _ILLUSTRATIVE_OUTPUT_RE.search(body[previous_start:end]):
+        return True
+    quoted = " ".join(shown.split())
+    return bool(quoted) and quoted in request_text
+
+
+def _shown_text(body: str, end: int, close_end: int | None) -> str:
+    """The output itself: a fence's body, or the rest of a label's line."""
+
+    if close_end is not None:
+        return _FENCE_LINE_RE.sub("", body[end:close_end]).strip()
+    line_end = body.find("\n", end)
+    return body[end : line_end if line_end >= 0 else len(body)].strip(" \t*_`")
+
+
+def _claims_a_run(body: str, *, request_text: str | None = None) -> bool:
+    """Whether a reply reports a run, a patch or a compile as done, or presents a run's output.
+
+    Every scan is a single pass: the outputs are judged once, then each announcement only asks
+    whether a real-looking output follows it (or holds it), so a reply of many announcements or
+    many fences stays linear.
+    """
+
+    for sentence in _split_sentences(body):
+        match = _EXECUTION_SELF_CLAIM_RE.search(sentence)
+        if match is None:
+            continue
+        prefix = sentence[: match.start()]
+        if _EXECUTION_FRAME_RE.search(prefix) or _NOT_A_SELF_CLAIM_RE.search(prefix):
+            continue
+        if _BUILD_CLAIM_NOT_SELF_RE.search(prefix):
+            continue
+        return True
+    announces = list(_RUN_ANNOUNCE_RE.finditer(body))
+    if not announces:
+        return False
+    request = " ".join(str(request_text or "").split())
+    # Outputs presented as real: (start, end of the span that may HOLD an announcement).
+    real: list[tuple[int, int]] = []
+    for label in _OUTPUT_LABEL_RE.finditer(body):
+        text = _shown_text(body, label.end(), None)
+        if not _presented_as_illustration(body, label.start(), label.end(), shown=text, request_text=request):
+            real.append((label.start(), label.start()))
+    for open_start, open_end, close_end in _output_fences(body):
+        text = _shown_text(body, open_end, close_end)
+        if not _presented_as_illustration(body, open_start, open_end, shown=text, request_text=request):
+            real.append((open_start, close_end))
+    if not real:
+        return False
+    real.sort()
+    real_starts = [start for start, _ in real]
+    last_real_start = real_starts[-1]
+    line_verdicts: dict[int, bool] = {}
+    for announce in announces:
+        line_start = body.rfind("\n", 0, announce.start()) + 1
+        framed = line_verdicts.get(line_start)
+        if framed is None:
+            line = _line_around(body, announce.start(), announce.end())
+            # "Running this would print 4", "I'll run it once you confirm" -- not a run shown as done.
+            framed = bool(_ILLUSTRATIVE_OUTPUT_RE.search(line) or _CONDITIONAL_OFFER_RE.search(line))
+            line_verdicts[line_start] = framed
+        if framed:
+            continue
+        if last_real_start >= announce.end():
+            return True
+        # the announcement inside an output fence ("Compiling './app.py'..." as a transcript line)
+        # (fences never overlap, so only the last output opening at or before it can hold it)
+        holder = bisect.bisect_right(real_starts, announce.start()) - 1
+        if holder >= 0 and announce.start() < real[holder][1]:
+            return True
+    return False
+
+
 # A fabricated "in progress / working on it / one moment / still running" claim when NO task actually
 # ran this turn -- the "audit in progress after it already completed" failure. Runtime state, not the
 # model, decides whether something is running.
@@ -649,7 +834,9 @@ def _only_a_file_count(fragment: str) -> bool:
 
 
 def completion_claim_kind(text: str, *, request_text: str | None = None) -> str:
-    """What kind of finished work a reply claims: ``""``, ``"mutation"``, ``"build"`` or ``"persistence"``.
+    """What kind of finished work a reply claims: ``""``, ``"mutation"``, ``"build"``,
+    ``"persistence"`` or ``"execution"`` (a command run, a file patched or compiled, or a run's
+    output presented as real).
 
     One predicate for both consumers. The blocker uses it to decide whether a claim needs a
     receipt; `emit_turn_honesty_receipt` uses it to decide whether the turn made a claim at all.
@@ -722,6 +909,9 @@ def completion_claim_kind(text: str, *, request_text: str | None = None) -> str:
         if _BUILD_CLAIM_NOT_SELF_RE.search(sentence) or _NOT_A_SELF_CLAIM_RE.search(sentence):
             continue  # "I'll store that" is an intention, not a report of a finished write
         return "persistence"
+    if _claims_a_run(body, request_text=request_text):
+        # Last, so every reply an earlier kind already names keeps that kind and its response.
+        return "execution"
     return ""
 
 
@@ -2042,6 +2232,7 @@ def enforce_final_action_honesty(
         "deliverable": _HONEST_NO_DELIVERABLE_RESPONSE,
         "build": _HONEST_NO_BUILD_RESPONSE,
         "persistence": _HONEST_NO_PERSISTENCE_RESPONSE,
+        "execution": _HONEST_NO_RUN_RESPONSE,
     }.get(claim_kind, _HONEST_NO_EXECUTION_RESPONSE)
     output["confidence"] = min(float(output.get("confidence") or 1.0), 0.91)
     output["action_honesty_validator"] = {
