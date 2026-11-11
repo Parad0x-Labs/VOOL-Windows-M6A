@@ -275,22 +275,20 @@ def browser_navigation_refusal(url: str) -> str | None:
     """Why a headless browser may not be started for *url* in this turn, or None when it may.
 
     The browser is not an HTTP request, so it never passes `open_remote`. Its two doors in
-    `tools/browser/browser_render.py` asked only the explicit per-turn veto, so a Local Only turn,
-    or a turn the permission gateway denies the network, still started a browser that went to the
-    public web while every other provider in the same search was refused. This asks the same three
-    checks the HTTP door asks, in the same order, before any process is started:
+    `tools/browser/browser_render.py` asked only the explicit per-turn veto, so a turn the
+    permission gateway denies the network still started a browser that went to the public web.
+    This asks, before any process is started:
 
-    * Local Only (operator selection, the ambient egress scope, or the machine's policy), decided by
-      the one `_local_only_egress_forbidden` check, so loopback and the LAN stay as they are;
     * the explicit per-turn veto;
-    * the permission gateway's network-fetch decision, when a turn's ledger is open.
+    * the permission gateway's network-fetch decision, when a turn's ledger is open (a refusal
+      leaves the same ``denied`` receipt the HTTP door leaves).
 
-    A refusal inside a turn leaves the same ``denied`` receipt the HTTP door leaves. Outside any
-    turn there is no ledger to write to, and only the first two checks apply.
+    Local Only is deliberately NOT a check here (product decision, 11 Nov 2026): Local Only keeps
+    the turn on the local model, and web search through the local headless browser stays
+    available in it. The HTTP providers keep their own Local Only refusal in `open_remote`.
 
     Windows only, behind the Windows rule's seam (`core.windows_write_gate.active`). Off Windows the
-    answer is always None, so the browser doors keep their veto-only check unchanged there; the same
-    gap on macOS and Linux is reported for its own review rather than changed by the Windows port.
+    answer is always None, so the browser doors keep their veto-only check unchanged there.
     """
 
     from core import windows_write_gate
@@ -300,12 +298,6 @@ def browser_navigation_refusal(url: str) -> str | None:
     from core.effect_gateway import current_effect_ledger
 
     ledger = current_effect_ledger()
-    lo_forbidden, lo_reason = _local_only_egress_forbidden(_SCOPE_CONTEXT.get() or {}, url)
-    if lo_forbidden:
-        if ledger is not None:
-            with contextlib.suppress(RemoteFetchRefusedError):
-                _refuse_local_only(ledger, url, lo_reason)
-        return lo_reason
     if remote_fetch_forbidden():
         return "remote fetch is not permitted for this turn"
     if ledger is None:

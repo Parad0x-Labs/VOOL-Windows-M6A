@@ -1,11 +1,15 @@
-"""The headless browser behind web search obeys the same no-network rules as every other provider.
+"""The headless browser behind web search obeys the per-turn veto and the permission gateway, and
+stays available under Local Only.
 
 Finding Edge on Windows turns a new process with network access on for every Windows web search.
 The browser is not an HTTP request, so it never passes `core.remote_fetch_policy.open_remote`, and
-its doors asked only the explicit per-turn veto: under Local Only the HTTP providers of a search
-were refused while the browser still started twice (DuckDuckGo, then Bing). Each row here forces
-the Windows seam with Edge in Program Files, spies on process creation, and runs a real
-`web_research` call. Nothing opens a socket: every name lookup fails, and the spy starts nothing.
+its doors asked only the explicit per-turn veto: a turn the permission gateway denies the network
+still started it. Each row here forces the Windows seam with Edge in Program Files, spies on process
+creation, and runs a real `web_research` call. Nothing opens a socket: every name lookup fails, and
+the spy starts nothing.
+
+Local Only is a product decision (11 Nov 2026): it keeps the turn on the local model, and web search
+through the local browser stays available in it. The Local Only rows pin that the browser IS started.
 
 Private chat is not a row: it keeps a chat out of every store, and it does not refuse web search.
 
@@ -84,27 +88,31 @@ def test_control_with_nothing_refused_the_spy_sees_edge_launched(windows_edge: d
     assert all(argv[0] == windows_edge["edge"] for argv in launches)
 
 
-def test_local_only_policy_starts_no_browser(windows_edge: dict) -> None:
-    result, context = _search({"local_only_mode": True})
-    assert windows_edge["launches"] == []
-    assert any("duckduckgo.com" in host or "bing.com" in host for host in _denied_hosts(context)), result.notes
+def _launched_edge(windows_edge: dict) -> bool:
+    launches = windows_edge["launches"]
+    return bool(launches) and all(argv[0] == windows_edge["edge"] for argv in launches)
 
 
-def test_local_only_selected_for_the_turn_starts_no_browser(windows_edge: dict) -> None:
+def test_local_only_policy_still_searches_through_the_browser(windows_edge: dict) -> None:
+    result, _context = _search({"local_only_mode": True})
+    assert _launched_edge(windows_edge), result.notes
+
+
+def test_local_only_selected_for_the_turn_still_searches_through_the_browser(windows_edge: dict) -> None:
     _search({auto_local_only_mode.CONTEXT_KEY: True})
-    assert windows_edge["launches"] == []
+    assert _launched_edge(windows_edge)
 
 
-def test_the_auto_local_only_ambient_scope_starts_no_browser(windows_edge: dict) -> None:
+def test_the_auto_local_only_ambient_scope_still_searches_through_the_browser(windows_edge: dict) -> None:
     with auto_local_only_mode.local_only_egress_scope():
         _search({})
-    assert windows_edge["launches"] == []
+    assert _launched_edge(windows_edge)
 
 
-def test_a_machine_set_to_local_only_starts_no_browser(windows_edge: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_machine_set_to_local_only_still_searches_through_the_browser(windows_edge: dict, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(policy_engine, "local_only_mode", lambda: True)
     _search({})
-    assert windows_edge["launches"] == []
+    assert _launched_edge(windows_edge)
 
 
 def test_the_explicit_per_turn_veto_starts_no_browser(windows_edge: dict) -> None:
@@ -140,10 +148,14 @@ def test_web_fallback_off_in_policy_starts_no_browser(windows_edge: dict, monkey
     assert "browser_search_skipped:disabled_by_policy" in result.notes
 
 
-def test_the_page_render_door_obeys_local_only_too(windows_edge: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_page_render_door_obeys_a_gateway_denial_too(windows_edge: dict, monkeypatch: pytest.MonkeyPatch) -> None:
     # browser_render is the door "summarize this URL" uses when web.playwright_enabled is on.
     monkeypatch.setenv("PLAYWRIGHT_ENABLED", "1")
-    with rfp.remote_fetch_policy_scope({"local_only_mode": True}):
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", None)
+    monkeypatch.setattr(
+        effect_gateway, "decide_network_fetch", lambda _ctx=None: (effect_gateway.DECISION_DENIED, "test mode denies the web")
+    )
+    with rfp.remote_fetch_policy_scope({}):
         rendered = br.browser_render("https://example.com/article")
     assert rendered["status"] == "egress_refused"
     assert windows_edge["launches"] == []
@@ -159,23 +171,29 @@ def test_windows_edge_argv_asks_for_no_component_update_or_sync(windows_edge: di
     assert "--no-sandbox" not in argv
 
 
-def test_off_windows_the_new_checks_answer_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+def _gateway_denies(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        effect_gateway, "decide_network_fetch", lambda _ctx=None: (effect_gateway.DECISION_DENIED, "test mode denies the web")
+    )
+
+
+def test_off_windows_the_new_check_answers_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(windows_write_gate, "_IS_WINDOWS", False)
-    monkeypatch.setattr(policy_engine, "local_only_mode", lambda: True)
-    with rfp.remote_fetch_policy_scope({"local_only_mode": True}):
+    _gateway_denies(monkeypatch)
+    with rfp.remote_fetch_policy_scope({}):
         assert rfp.browser_navigation_refusal("https://duckduckgo.com/?q=x") is None
 
 
-def test_off_windows_the_render_door_behaves_as_before_under_local_only(monkeypatch: pytest.MonkeyPatch) -> None:
-    # The old behaviour, kept: only the explicit veto stops the browser off Windows. The macOS and
-    # Linux gap is reported for its own review, not changed by the Windows port.
+def test_off_windows_the_render_doors_behave_as_before_under_a_gateway_denial(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The old behaviour, kept: only the explicit veto stops the browser off Windows.
     monkeypatch.setattr(windows_write_gate, "_IS_WINDOWS", False)
+    _gateway_denies(monkeypatch)
     monkeypatch.setenv("PLAYWRIGHT_ENABLED", "1")
     # No Playwright, as on an installed VOOL: browser_render then drives the same chrome engine.
     monkeypatch.setitem(sys.modules, "playwright.sync_api", None)
     rendered_with: list[str] = []
     monkeypatch.setattr(br, "_chrome_render_unchecked", lambda url, **_kw: rendered_with.append(url) or {"status": "ok", "final_url": url})
-    with rfp.remote_fetch_policy_scope({"local_only_mode": True}):
+    with rfp.remote_fetch_policy_scope({}):
         assert br.chrome_render("https://example.com/a")["status"] == "ok"
         assert br.browser_render("https://example.com/b")["status"] == "ok"
     assert rendered_with == ["https://example.com/a", "https://example.com/b"]
