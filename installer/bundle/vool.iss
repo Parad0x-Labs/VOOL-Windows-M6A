@@ -83,11 +83,13 @@ Root: HKCU; Subkey: "Software\Classes\vool\DefaultIcon"; ValueType: string; Valu
 Root: HKCU; Subkey: "Software\Classes\vool\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\python\pythonw.exe"" -X utf8 ""{app}\vool_protocol_handler.py"" ""%1"""; Flags: uninsdeletekeyifempty
 
 [Icons]
+; AppUserModelID: the same id vool_window.py claims for its process (installer/bundle/windows_chrome.py
+; APP_USER_MODEL_ID), so the taskbar groups the VOOL window under these shortcuts and their icon.
 ; Launch via wscript so the VBS runs windowless (no console flash) with no dependency on the
 ; .vbs file association -- a .vbs cannot be executed directly (CreateProcess fails, code 193).
-Name: "{group}\VOOL"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\vool.vbs"""; IconFilename: "{app}\vool.ico"; WorkingDir: "{app}"
+Name: "{group}\VOOL"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\vool.vbs"""; IconFilename: "{app}\vool.ico"; WorkingDir: "{app}"; AppUserModelID: "Parad0xLabs.VOOL"
 Name: "{group}\Uninstall VOOL"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\VOOL"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\vool.vbs"""; IconFilename: "{app}\vool.ico"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autodesktop}\VOOL"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\vool.vbs"""; IconFilename: "{app}\vool.ico"; WorkingDir: "{app}"; AppUserModelID: "Parad0xLabs.VOOL"; Tasks: desktopicon
 
 [Run]
 Filename: "{sys}\wscript.exe"; Parameters: """{app}\vool.vbs"""; Description: "Launch VOOL now"; Flags: nowait postinstall skipifsilent

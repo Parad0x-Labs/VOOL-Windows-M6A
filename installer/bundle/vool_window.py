@@ -52,7 +52,7 @@ if _PROJECT_ROOT not in sys.path:
 # only because the two lines above just put it there. An `installer.bundle` import in the header
 # block raised ImportError and the window never opened -- invisible to the suite, which imports this
 # as a module with the root already on the path.
-from installer.bundle import pet_native
+from installer.bundle import pet_native, windows_chrome
 
 _WEBVIEW2_GUID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 _LOCK_HANDLES: list[int] = []  # POSIX: keep the flocks held for the process lifetime
@@ -78,9 +78,11 @@ def _state_dir() -> str:
 
 
 def _log(message: str) -> None:
+    """One open.log line, prefixed with a UTC time so it lines up with the API's own log."""
     with contextlib.suppress(Exception):
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         with open(os.path.join(_state_dir(), "open.log"), "a", encoding="utf-8") as handle:
-            handle.write(message.rstrip() + "\n")
+            handle.write(f"{stamp} {message.rstrip()}\n")
 
 
 def _posix_lock_base() -> str:
@@ -545,6 +547,11 @@ def _settings_menu(api: object) -> list:
     the window simply starts without a menu instead of failing to start at all. The page's own
     Cmd+, handler keeps working either way.
     """
+    if sys.platform == "win32":
+        # WinForms turns the start menu into a MenuStrip on EVERY form: an empty white band under
+        # each title bar and across the top of the frameless pet. Windows reaches Settings from the
+        # page, so it starts with no app menu.
+        return []
     try:
         from webview.menu import Menu, MenuAction
     except Exception as exc:
@@ -704,6 +711,26 @@ COMPANION_WINDOW_FLAGS: dict = {
 }
 
 
+# core/ui_palette.py DARK_PALETTE_CSS --bg: what a new window shows before its page paints, instead
+# of pywebview's #FFFFFF (a white flash on every open). Six hex digits, as pywebview validates.
+WINDOW_BACKGROUND = "#141416"
+
+
+def _create_vool_window(webview_module: object, *args, **kwargs):
+    """Open a VOOL window. The ONE place VOOL opens a titled window, so every window, including
+    ones added later, gets the Windows chrome: a dark title bar with white caption buttons and
+    VOOL's icon (windows_chrome; a no-op elsewhere, and a styling failure never costs the window),
+    and opens on VOOL's dark background instead of a white flash.
+    Only the frameless pet opens its own window (detach_companion), with its own policy.
+    tests/test_every_vool_window_gets_windows_chrome.py fails on any other create_window call."""
+    kwargs.setdefault("background_color", WINDOW_BACKGROUND)
+    created = webview_module.create_window(*args, **kwargs)
+    if created is not None:
+        with contextlib.suppress(Exception):
+            windows_chrome.style_native_window(created)
+    return created
+
+
 class _WindowApi:
     """Bridge exposed to the VOOL page as ``window.pywebview.api`` (native window only).
 
@@ -754,7 +781,8 @@ class _WindowApi:
                     return {"ok": True, "mode": "focused"}
                 except Exception:
                     self._settings_window = None   # it was really destroyed; fall through and rebuild
-            created = webview_module.create_window(
+            created = _create_vool_window(
+                webview_module,
                 "VOOL Settings",
                 url,
                 js_api=self,
@@ -824,7 +852,8 @@ class _WindowApi:
                     return {"ok": True, "mode": "focused"}
                 except Exception:
                     self._setup_window = None
-            created = webview_module.create_window(
+            created = _create_vool_window(
+                webview_module,
                 "VOOL Setup",
                 url,
                 js_api=self,
@@ -891,14 +920,32 @@ class _WindowApi:
         window = self._window
         return bool(window is not None and window.create_confirmation_dialog(title, message))
 
+    def _dialog_owner(self, owner: object) -> tuple[object | None, bool]:
+        """The window a native dialog must belong to, and whether it is a secondary window.
+
+        pywebview's js_api does not say which window called, so the Setup and Settings pages name
+        their own window ("setup", "settings"). The word only picks one of the windows this bridge
+        already holds; it is never a path. Anything else, or a named window that is not open, is
+        the chat window, as before. A dialog owned by the chat window makes Windows raise the chat
+        window over Setup (owner hand test, Windows 11: Setup seemed to close on "Choose a folder")."""
+        window = None
+        if owner == "setup":
+            window = self._setup_window
+        elif owner == "settings":
+            window = self._settings_window
+        if window is not None:
+            return window, True
+        return self._window, False
+
     def mark_disposable_folder(self, _payload: object = None) -> dict:
         """Mark a folder VOOL may change on Windows (core/windows_disposable_store.py).
 
-        Takes nothing from the page: the folder comes from the OS folder picker, the consent from an
+        Takes no path from the page: the folder comes from the OS folder picker, the consent from an
         OS confirm dialog that names the folder as it really is (links and junctions followed), and
-        only then is it written to the owner-only list. Takes effect at VOOL's next start."""
+        only then is it written to the owner-only list. Takes effect at VOOL's next start. The only
+        thing the page may say is which of VOOL's own windows the picker belongs to."""
         try:
-            window = self._window
+            window, secondary = self._dialog_owner(_payload)
             if window is None:
                 return {"ok": False, "error": "no_window"}
             import webview
@@ -906,6 +953,8 @@ class _WindowApi:
             from core import windows_disposable_store as store
 
             result = window.create_file_dialog(webview.FOLDER_DIALOG)
+            if secondary:
+                _focus_window(window)
             if not result:
                 return {"ok": False, "cancelled": True}
             picked = str(result[0] if isinstance(result, (list, tuple)) else result)
@@ -944,15 +993,20 @@ class _WindowApi:
             reason = getattr(exc, "reason", "")
             return {"ok": False, "refused": reason} if reason else {"ok": False, "error": type(exc).__name__}
 
-    def pick_folder(self) -> dict:
-        """Open a native folder dialog. Returns {ok:True, path} or {ok:False, cancelled|error}."""
+    def pick_folder(self, owner: object = None) -> dict:
+        """Open a native folder dialog. Returns {ok:True, path} or {ok:False, cancelled|error}.
+
+        ``owner`` is "setup" from the Setup window (see ``_dialog_owner``); the chat page passes
+        nothing. A dialog owned by a secondary window brings that window back to the front after."""
         try:
-            window = self._window
+            window, secondary = self._dialog_owner(owner)
             if window is None:
                 return {"ok": False, "error": "no_window"}
             import webview
 
             result = window.create_file_dialog(webview.FOLDER_DIALOG)
+            if secondary:
+                _focus_window(window)
             if not result:
                 return {"ok": False, "cancelled": True}
             path = result[0] if isinstance(result, (list, tuple)) else result
@@ -1758,6 +1812,9 @@ def main() -> int:
     notification_bridge = None
     owned_pid: dict[str, int | None] = {"pid": None}
     done = threading.Event()
+    # Windows: VOOL's own taskbar identity (the launcher shortcuts carry the same AppUserModelID),
+    # claimed before any window so the taskbar never groups VOOL under pythonw. No-op elsewhere.
+    windows_chrome.set_app_user_model_id()
     try:
         if not _single_instance():
             _log("another VOOL window is already open; not opening a second")
@@ -1816,8 +1873,8 @@ def main() -> int:
         api = _WindowApi()
         _claim_macos_app_name()          # so the menu bar / Cmd-Tab say VOOL, not VOOL/Python
         _install_native_frame_authority()
-        window = webview.create_window(
-            "VOOL", URL, js_api=api, **_fit_to_work_area(1220, 860, (900, 640), _work_area()),
+        window = _create_vool_window(
+            webview, "VOOL", URL, js_api=api, **_fit_to_work_area(1220, 860, (900, 640), _work_area()),
         )
         if window is None:
             raise RuntimeError("pywebview returned no native window")
@@ -1835,6 +1892,8 @@ def main() -> int:
         menu = _settings_menu(api)
         # An ambient Qt override must not bypass the verified Cocoa datastore.
         start_options = {"gui": "cocoa"} if isolated_webkit else {}
+        # Windows: every pywebview form gets VOOL's icon instead of pythonw's. Empty elsewhere.
+        start_options.update(windows_chrome.start_icon_options())
         try:
             webview.start(_post_start_all, menu=menu, **start_options)
         except TypeError:
