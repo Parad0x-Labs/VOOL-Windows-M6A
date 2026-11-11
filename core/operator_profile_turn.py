@@ -51,6 +51,15 @@ def current_turn_scope() -> tuple[str, str, str]:
     return _TURN_SCOPE.get()
 
 
+#: The save confirmation's "where" for each kind of standing-instruction key (core.standing_instructions.applies_to).
+_STANDING_SAVED_WHERE = {
+    "chat": "this chat",
+    "project": "every chat in this project",
+    "folder": "every chat in this folder",
+    "default": "every chat",
+}
+
+
 def _observation(source_context: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(source_context, dict):
         return {"saved": [], "candidates": [], "conflicts": [], "used": [], "notices": []}
@@ -215,12 +224,17 @@ def observe_profile_turn(
     # turn that only states an instruction still gets an answer (this never claims the turn).
     if principal and not private:
         try:
+            from core.standing_instructions import applies_to as _standing_applies_to
             from core.standing_instructions import observe_turn as _observe_standing
+            from core.standing_instructions import workspace_key as _standing_workspace_key
 
             standing = _observe_standing(raw_user_input, source_context, principal=principal,
                                          project_id=project_id, session_id=session_id)
             if (standing["saved"] or standing["taken_back"]) and isinstance(source_context, dict):
-                _observation(source_context)["standing_instructions"] = standing
+                # Where the saved rule applies, so the confirmation can say it (this chat, this project, ...).
+                _observation(source_context)["standing_instructions"] = {
+                    **standing, "applies_to": _standing_applies_to(_standing_workspace_key(source_context, project_id)),
+                }
         except Exception:
             pass
     try:
@@ -403,11 +417,14 @@ def profile_frame_for_result(result: dict[str, Any] | None) -> dict[str, Any] | 
         values = [v for v in list(obs.get(key) or []) if v]
         if values:
             frame[key] = values
-    # A standing instruction is saved for every later chat in the workspace; without its own line
-    # the user never learns it was kept, or that a take-back worked. It rides the "saved" list the
-    # chat page already renders as the confirmation line (no item_id: undo is a take-back in chat).
+    # A standing instruction is saved for later chats in its workspace; without its own line the user
+    # never learns it was kept, where it applies, or that a take-back worked. It rides the "saved" list
+    # the chat page already renders as the confirmation line (no item_id: undo is a take-back in chat).
+    # A chat with no project on the default folder keeps its rules to itself (core.standing_instructions
+    # workspace_key), so its line says "this chat"; a project or folder rule reaches every chat there.
     standing = obs.get("standing_instructions") if isinstance(obs.get("standing_instructions"), dict) else {}
-    lines = [{"report": f"Saved for every chat: {text}"} for text in standing.get("saved") or [] if text]
+    where = _STANDING_SAVED_WHERE.get(str(standing.get("applies_to") or ""), "every chat")
+    lines = [{"report": f"Saved for {where}: {text}"} for text in standing.get("saved") or [] if text]
     lines += [{"report": f"No longer following: {text}"} for text in standing.get("taken_back") or [] if text]
     if lines:
         frame["saved"] = list(frame.get("saved") or []) + lines
