@@ -237,21 +237,58 @@ def _named_pdf_request(monkeypatch, pdf: Path) -> None:
     monkeypatch.setattr(fast_paths_pdf, "_outside_allowed_roots", lambda path: False)
 
 
-def test_on_windows_the_chat_fast_path_says_so_and_runs_no_tool(windows, monkeypatch, a_pdf) -> None:
-    from core import authorized_tool_execution, pdf_tools
+class _GatedAgent(_FastPathAgent):
+    def _emit_runtime_event(self, source_context, **kwargs) -> None:
+        return None
+
+
+@pytest.fixture
+def pdf_in_home(tmp_path, monkeypatch) -> Path:
+    import core.runtime_execution_tools as ret
+    from core.mode_permission_policy import reset_mode_permission_state
+
+    home = tmp_path / "machinehome"
+    (home / "Documents").mkdir(parents=True)
+    monkeypatch.setattr(ret, "_machine_home", lambda: home)
+    pdf = home / "Documents" / "report.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n%%EOF\n")
+    reset_mode_permission_state()
+    yield pdf
+    reset_mode_permission_state()
+
+
+def _gated_context(**extra):
+    from core.mode_permission_policy import set_active_mode
+
+    set_active_mode("s1", "manual")
+    return {"session_id": "s1", "surface": "api", "operating_mode": "manual", **extra}
+
+
+def test_on_windows_the_chat_fast_path_crosses_the_gate_then_says_so(windows, pdf_in_home) -> None:
+    """The permission gate runs first, as on the model route; the tool itself then refuses."""
+    from core import pdf_tools
     from core.agent_runtime import fast_paths_pdf
 
-    _named_pdf_request(monkeypatch, a_pdf)
-    monkeypatch.setattr(
-        authorized_tool_execution,
-        "execute_authorized_runtime_tool",
-        lambda *a, **k: pytest.fail("a PDF tool ran on Windows"),
+    reply = fast_paths_pdf.maybe_handle_pdf_read(
+        _GatedAgent(), f"Extract the text from {pdf_in_home}", session_id="s1", source_context=_gated_context()
     )
-    result = fast_paths_pdf.maybe_handle_pdf_read(
-        _FastPathAgent(), f"what does {a_pdf} say?", session_id="s", source_context={}
+    assert reply is not None
+    assert reply["response"] == pdf_tools.WINDOWS_UNAVAILABLE
+    assert dict((reply.get("details") or {}).get("permission") or {}).get("effect") == "allow"
+    windows.assert_untouched()
+
+
+def test_on_windows_a_project_deny_still_wins_on_the_pdf_fast_path(windows, monkeypatch, pdf_in_home) -> None:
+    import core.runtime_execution_tools as ret
+    from core.agent_runtime import fast_paths_pdf
+
+    monkeypatch.setattr(ret, "_pdf_extract_text", lambda arguments: pytest.fail("ran past a deny"))
+    reply = fast_paths_pdf.maybe_handle_pdf_read(
+        _GatedAgent(), f"Extract the text from {pdf_in_home}", session_id="s1",
+        source_context=_gated_context(project_permissions={"read_files": False}),
     )
-    assert result["response"] == pdf_tools.WINDOWS_UNAVAILABLE
-    assert result["reason"] == "pdf_read_unavailable_on_windows"
+    assert reply is not None
+    assert dict((reply.get("details") or {}).get("permission") or {}).get("effect") == "deny"
     windows.assert_untouched()
 
 
