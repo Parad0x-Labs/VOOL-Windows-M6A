@@ -63,12 +63,19 @@ function stateText(status, raw){
   return key ? CT(key, raw) : raw;
 }
 function h(tag, cls, text){ var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
+// A request VOOL never answers must not leave the panel on "Loading…" forever: after REQUEST_TIMEOUT_MS the fetch is
+// aborted, the promise rejects, and the caller shows its "VOOL did not answer" line.
+var REQUEST_TIMEOUT_MS = 10000;
 function request(method, url, body){
   var options = {method: method, headers: {'Accept': 'application/json'}};
   if (body !== undefined) { options.headers['Content-Type'] = 'application/json'; options.body = JSON.stringify(body); }
+  var ctl = typeof AbortController === 'function' ? new AbortController() : null;
+  var timer = null;
+  if (ctl) { options.signal = ctl.signal; timer = setTimeout(function(){ ctl.abort(); }, REQUEST_TIMEOUT_MS); }
+  function done(){ if (timer !== null) { clearTimeout(timer); timer = null; } }
   return fetch(url, options).then(function(r){
-    return r.json().catch(function(){ return {}; }).then(function(j){ j = j || {}; if (j.ok === undefined) j.ok = r.ok; j.http_status = r.status; return j; });
-  });
+    return r.json().catch(function(){ return {}; }).then(function(j){ done(); j = j || {}; if (j.ok === undefined) j.ok = r.ok; j.http_status = r.status; return j; });
+  }, function(e){ done(); throw e; });
 }
 function button(text, onClick){ var b = h('button', 'btn vcs-btn', text); b.type = 'button'; b.addEventListener('click', onClick); return b; }
 function toggle(text, on, onChange){
@@ -96,7 +103,7 @@ function mountInto(host){
   function load(){
     return request('GET', '/api/calendar/accounts').then(function(j){
       if (!j.ok) { say(CTF('vcs.status.unavailable', 'Calendar accounts are unavailable: {reason}', {reason: (j.error || j.detail || ('HTTP ' + j.http_status))}), true); return; }
-      view = j; paint();
+      say(''); view = j; paint();   // loaded: the "Loading…" line goes; an action then says its own result
     }).catch(function(){ say(CT('notif.no_answer', 'VOOL did not answer; nothing was changed.'), true); });
   }
   function act(url, body, done){

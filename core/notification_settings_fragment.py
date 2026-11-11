@@ -63,12 +63,19 @@ function lockOptions(){
           ['hidden', NT('vns.lock.hidden', LOCK[2][1])]];
 }
 function h(tag, cls, text){ var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
+// A request VOOL never answers must not leave the panel on "Loading…" forever: after REQUEST_TIMEOUT_MS the fetch is
+// aborted, the promise rejects, and the caller shows its "VOOL did not answer" line.
+var REQUEST_TIMEOUT_MS = 10000;
 function request(method, url, body){
   var options = {method: method, headers: {'Accept': 'application/json'}};
   if (body !== undefined) { options.headers['Content-Type'] = 'application/json'; options.body = JSON.stringify(body); }
+  var ctl = typeof AbortController === 'function' ? new AbortController() : null;
+  var timer = null;
+  if (ctl) { options.signal = ctl.signal; timer = setTimeout(function(){ ctl.abort(); }, REQUEST_TIMEOUT_MS); }
+  function done(){ if (timer !== null) { clearTimeout(timer); timer = null; } }
   return fetch(url, options).then(function(r){
-    return r.json().catch(function(){ return {}; }).then(function(j){ j = j || {}; if (j.ok === undefined) j.ok = r.ok; j.http_status = r.status; return j; });
-  });
+    return r.json().catch(function(){ return {}; }).then(function(j){ done(); j = j || {}; if (j.ok === undefined) j.ok = r.ok; j.http_status = r.status; return j; });
+  }, function(e){ done(); throw e; });
 }
 function button(text, onClick){ var b = h('button', 'btn vns-btn', text); b.type = 'button'; b.addEventListener('click', onClick); return b; }
 function toggle(text, on, onChange){
@@ -90,7 +97,7 @@ function mountInto(host){
   function load(){
     return Promise.all([request('GET', '/api/notifications/preferences'), request('GET', '/api/notifications/native/status').catch(function(){return {ok:false};})]).then(function(r){
       if (!r[0].ok) { say(NT('vns.status.unavailable', 'Notification settings are unavailable right now.'), true); return; }
-      prefs = r[0].preferences; native = r[1].ok ? r[1] : {supported:false}; paint();
+      prefs = r[0].preferences; native = r[1].ok ? r[1] : {supported:false}; say(''); paint();   // loaded: the "Loading…" line goes
     }).catch(function(){ say(NT('notif.no_answer', 'VOOL did not answer; nothing was changed.'), true); });
   }
   function save(patch, done){
