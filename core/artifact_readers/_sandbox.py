@@ -48,6 +48,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 
+from core import posix_tools
+
 from ._limits import (
     EXTRACTION_TIMEOUT_S,
     MAX_SCRATCH_BYTES,
@@ -179,7 +181,7 @@ def _host_is_macos() -> bool:
 
 def confinement_available() -> bool:
     """Whether this machine can actually confine a decoder. Nothing external runs without it."""
-    return _host_is_macos() and os.path.exists(_SANDBOX_EXEC) and os.access(_SHELL, os.X_OK)
+    return _host_is_macos() and posix_tools.exists(_SANDBOX_EXEC) and posix_tools.executable(_SHELL)
 
 
 def confinement_unavailable_reason() -> str:
@@ -382,7 +384,7 @@ def _limited_argv(argv: Sequence[str], *, cpu_seconds: int) -> list[str]:
         f"ulimit -c 0; ulimit -t {int(cpu_seconds)}; ulimit -n {int(SUBPROCESS_MAX_OPEN_FILES)}; "
         f'ulimit -f {int(MAX_SCRATCH_BYTES // 512)}; exec "$0" "$@"'
     )
-    return [_SHELL, "-c", script, *argv]
+    return [posix_tools.check(_SHELL), "-c", script, *argv]
 
 
 def _kill_group(process: subprocess.Popen) -> None:
@@ -510,7 +512,7 @@ def run_confined(
     """Run one decoder under confinement. Refuses BEFORE spawning if it cannot be confined."""
     require_confinement(fmt)
     executable = str(argv[0])
-    if not os.path.isabs(executable) or not os.access(executable, os.X_OK):
+    if posix_tools.refused(executable) or not os.path.isabs(executable) or not os.access(executable, os.X_OK):
         raise ReaderFailed(
             f"The decoder {executable!r} is not an executable absolute path.",
             code="decoder_not_executable",
@@ -526,7 +528,7 @@ def run_confined(
     # entry silently grants nothing, which shows up as the decoder dying on SIGSEGV before `main`
     # rather than as a permission error. Measured 2026-09-03 on the compiled OCR helper.
     profile = _profile(scratch=scratch_path, extra_read=_resolved(extra_read), allow_gpu=allow_gpu)
-    command = [_SANDBOX_EXEC, "-p", profile, *_limited_argv(argv, cpu_seconds=min(SUBPROCESS_CPU_SECONDS, timeout))]
+    command = [posix_tools.check(_SANDBOX_EXEC), "-p", profile, *_limited_argv(argv, cpu_seconds=min(SUBPROCESS_CPU_SECONDS, timeout))]
     # An empty environment plus only what a decoder needs to find its own libraries. No proxy
     # variables, no credentials, no real HOME: a decoder that wanted a token could not find one,
     # and one that wanted a proxy could not reach it even if the sandbox were somehow absent.
