@@ -83,6 +83,11 @@ def test_v6_narrow_header_keeps_search_and_export_accessible_names():
         assert 'aria-label="' in tag and 'title="' in tag, button
 
 
+def test_v7_disabled_voice_buttons_are_not_painted_in_the_message_bar():
+    bodies = _rules_for(CHAT_CSS, "#dictateBtn:disabled") + _rules_for(CHAT_CSS, "#voiceModeBtn:disabled")
+    assert any("display:none" in b for b in bodies)
+
+
 def test_v5_language_block_paints_the_help_once_and_keeps_the_coverage_line():
     css = SETTINGS_CSS
     assert "display:none" in " ".join(_rules_for(css, '#uiLocaleWrap .loc-note[data-i18n-html="settings.language_help"]'))
