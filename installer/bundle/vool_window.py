@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import errno
 import json
 import os
 import shutil
@@ -669,6 +670,96 @@ def _fit_to_work_area(width: int, height: int, min_size: tuple[int, int],
     }
 
 
+# Why a hard link cannot be made at a save destination, as opposed to a real refusal. FAT32 and
+# exFAT (USB sticks, SD cards) have no hard links, and many network shares refuse them: Windows says
+# ERROR_INVALID_FUNCTION (1) or ERROR_NOT_SUPPORTED (50); POSIX says EPERM, EXDEV or ENOTSUP.
+_NO_HARDLINK_WINERRORS = frozenset({1, 50})
+_NO_HARDLINK_ERRNOS = frozenset({errno.EPERM, errno.EXDEV, errno.ENOTSUP, errno.EOPNOTSUPP})
+
+
+def _hard_links_unsupported(exc: OSError) -> bool:
+    if isinstance(exc, FileExistsError):
+        return False
+    winerror = getattr(exc, "winerror", None)
+    if winerror is not None:
+        return int(winerror) in _NO_HARDLINK_WINERRORS
+    return exc.errno in _NO_HARDLINK_ERRNOS
+
+
+def _deliver_no_clobber(temporary: Path, destination: Path, body: bytes) -> None:
+    """Put the fully written, fsynced ``temporary`` at ``destination`` without replacing anything.
+
+    A hard link is atomic and never overwrites. Where the destination's filesystem has no hard
+    links (a USB stick, an SD card, many network shares) the save used to fail with a bare
+    "OSError"; there the same bytes are written to a file created exclusively instead (``xb``:
+    an existing file is still never replaced), and a half-written file is removed again. Any
+    other failure, a refusal included, is raised unchanged.
+    """
+    try:
+        os.link(temporary, destination)
+        return
+    except OSError as exc:
+        if not _hard_links_unsupported(exc):
+            raise
+        _log(f"save destination has no hard links ({type(exc).__name__}); writing it exclusively")
+    created = False
+    try:
+        with open(destination, "xb") as out:
+            created = True
+            out.write(body)
+            out.flush()
+            os.fsync(out.fileno())
+    except BaseException:
+        if created:
+            with contextlib.suppress(OSError):
+                destination.unlink()
+        raise
+
+
+def _save_dialog_start_folder() -> str:
+    """Where a save dialog opens: the person's Downloads folder when there is one, else the
+    dialog's own default."""
+    with contextlib.suppress(Exception):
+        downloads = Path.home() / "Downloads"
+        if downloads.is_dir():
+            return str(downloads)
+    return ""
+
+
+def _close_secondaries_with(window: object, api: "_WindowApi") -> bool:
+    """Close the pet, Settings and Setup windows when the main chat window closes (not macOS).
+    True when the hook was installed. See ``_WindowApi._close_secondary_windows``."""
+    if sys.platform == "darwin":
+        return False
+    try:
+        window.events.closed += api._close_secondary_windows
+        return True
+    except Exception as exc:
+        _log(f"main window closed hook unavailable ({exc!r})")
+        return False
+
+
+def _own_foreground_window(user32: object) -> object:
+    """The foreground window when it belongs to THIS process, else None (no owner).
+
+    Used as the owner of a native message box so it opens in front of the VOOL window the person
+    is using. A window of any other process is never used as an owner."""
+    try:
+        from ctypes import wintypes
+
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        user32.GetWindowThreadProcessId.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.DWORD))
+        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return None
+        pid = wintypes.DWORD(0)
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        return wintypes.HWND(hwnd) if int(pid.value) == os.getpid() else None
+    except Exception:
+        return None
+
+
 def _focus_window(window: object) -> None:
     """Raise an existing pywebview window. On macOS ``show()`` already does
     makeKeyAndOrderFront_ + activateIgnoringOtherApps_, which IS focus; restore() covers a
@@ -857,6 +948,35 @@ class _WindowApi:
         except Exception as exc:
             return {"ok": False, "error": type(exc).__name__}
 
+    def _close_secondary_windows(self, *_args: object) -> None:
+        """The chat window closed: close every other window this host made, so the host exits.
+
+        pywebview ends ``webview.start`` only when NO window is left, and the desktop pet is only
+        ever hidden (SW_HIDE), never destroyed. Without this, closing the chat with X after the pet
+        was detached once, or with Settings or Setup still open, left this process running with no
+        main window: the supervisor then had nothing titled "VOOL" to raise and never started a new
+        window, so VOOL could not be reopened until pythonw was killed. Hooked to the main window's
+        ``closed`` event (never ``closing``, which would veto the close). Not used on macOS, where X
+        hides the chat window to the Dock and the app keeps running by design.
+        """
+        pet, self._pet = self._pet, None
+        if pet is not None:
+            with contextlib.suppress(Exception):
+                pet.hide()   # stops the pet's cursor tracking before its window goes
+        closed = []
+        for attr in ("_companion_window", "_settings_window", "_setup_window"):
+            window = getattr(self, attr)
+            setattr(self, attr, None)
+            if window is None:
+                continue
+            try:
+                window.destroy()
+                closed.append(attr.strip("_").replace("_window", ""))
+            except Exception as exc:
+                _log(f"{attr.strip('_')} not closed with the chat window ({exc!r})")
+        if closed:
+            _log("chat window closed; also closed: " + ", ".join(closed))
+
     def quit_app(self, _payload: object = None) -> dict:
         """Quit VOOL: stop everything the bundle supervisor owns, then close this window.
 
@@ -887,7 +1007,11 @@ class _WindowApi:
         if os.name == "nt":
             mb_okcancel, mb_iconwarning, mb_defbutton2, mb_setforeground, idok = 0x1, 0x30, 0x100, 0x10000, 1
             flags = mb_okcancel | mb_iconwarning | mb_defbutton2 | mb_setforeground
-            return int(ctypes.windll.user32.MessageBoxW(None, message, title, flags)) == idok
+            user32 = ctypes.windll.user32
+            # Owned by the VOOL window the person clicked in (Settings, usually), so the box opens
+            # in front of it and has no taskbar button of its own. Never another app's window.
+            owner = _own_foreground_window(user32)
+            return int(user32.MessageBoxW(owner, message, title, flags)) == idok
         window = self._window
         return bool(window is not None and window.create_confirmation_dialog(title, message))
 
@@ -1012,6 +1136,7 @@ class _WindowApi:
             file_type = {"md": "Markdown documents (*.md)", "txt": "Text documents (*.txt)",
                          "pdf": "PDF documents (*.pdf)"}[format_name]
             result = self._window.create_file_dialog(self._webview.SAVE_DIALOG,
+                directory=_save_dialog_start_folder(),
                 save_filename=("vool-answer" if request_id else "vool-chat") + "." + format_name,
                 file_types=(file_type,))
             if not result:
@@ -1024,7 +1149,7 @@ class _WindowApi:
                     handle.write(body)
                     handle.flush()
                     os.fsync(handle.fileno())
-                    os.link(temporary, destination)
+                    _deliver_no_clobber(temporary, destination, body)
                 finally:
                     # Windows cannot unlink a file that still has an open handle.
                     handle.close()
@@ -1074,7 +1199,8 @@ class _WindowApi:
             filename = Path(str(filename).replace("\\", "/")).name.lstrip(".") or "vool-file"
             extension = filename.rsplit(".", 1)[-1] if "." in filename else ""
             file_types = (f"{extension.upper()} files (*.{extension})",) if extension.isalnum() else ()
-            result = self._window.create_file_dialog(self._webview.SAVE_DIALOG, save_filename=filename, file_types=file_types)
+            result = self._window.create_file_dialog(self._webview.SAVE_DIALOG, directory=_save_dialog_start_folder(),
+                                                     save_filename=filename, file_types=file_types)
             if not result:
                 return {"ok": False, "cancelled": True}
             destination = Path(result[0] if isinstance(result, (list, tuple)) else result)
@@ -1084,7 +1210,7 @@ class _WindowApi:
                     handle.write(body)
                     handle.flush()
                     os.fsync(handle.fileno())
-                    os.link(temporary, destination)
+                    _deliver_no_clobber(temporary, destination, body)
                 finally:
                     # Windows cannot unlink a file that still has an open handle.
                     handle.close()
@@ -1822,6 +1948,7 @@ def main() -> int:
         if window is None:
             raise RuntimeError("pywebview returned no native window")
         api.set_window(window, webview)
+        _close_secondaries_with(window, api)
         _register_url_scheme_handler()   # catch vool://auth/<provider>/callback launches (macOS)
         runtime_lost = _start_runtime_watchdog(supervisor, window, done)
         notification_bridge = _start_notification_bridge(window)
