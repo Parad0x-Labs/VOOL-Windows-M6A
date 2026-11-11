@@ -210,7 +210,7 @@ function section(which){
     node.className = 'vs-sec vs-privacy'; node.id = 'vsPrivacySec';
     node.innerHTML = '<h4>' + XT('vx.privacy.title', 'Privacy &amp; data') + '</h4>' +
       '<p><b>' + XT('vx.privacy.p1_b', 'Local first.') + '</b> ' + XT('vx.privacy.p1', 'Chats, memory, receipts and generated files live in this machine\\u2019s VOOL home; nothing leaves it on the local lane.') + '</p>' +
-      '<p><b>' + XT('vx.privacy.p2_b', 'Cloud is explicit.') + '</b> ' + XT('vx.privacy.p2', 'A cloud call happens only for a cloud-pinned or Auto-free turn with your key; Local Only blocks the cloud lane entirely, including free models.') + '</p>' +
+      '<p><b>' + XT('vx.privacy.p2_b', 'Cloud is explicit.') + '</b> ' + XT('vx.privacy.p2', 'A cloud call happens only for a cloud-pinned or Auto-free turn with your key; Local Only blocks cloud AI entirely, including free models. Web search still sends your search words to the search engine, even under Local Only.') + '</p>' +
       '<p><b>' + XT('vx.privacy.p3_b', 'Keys are sealed.') + '</b> ' + XT('vx.privacy.p3', 'Provider keys live in the system keychain/encrypted store and are never rendered back into this page.') + '</p>' +
       '<p><b>' + XT('vx.privacy.p4_b', 'Spend is gated.') + '</b> ' + XT('vx.privacy.p4', 'Paid pins require server-confirmed consent; accepted ceilings re-gate on price rises.') + '</p>' +
       '<p>' + XT('vx.privacy.p5', 'Retention windows and cloud-learning controls are not shown because no enforcement for them exists yet \\u2014 an unenforced toggle would be a lie.') + '</p>';
