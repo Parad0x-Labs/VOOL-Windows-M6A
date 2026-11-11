@@ -1426,6 +1426,9 @@
     "vx.memory.forget_title": "انسَ هذا المدخل بالضبط",
     "vx.memory.not_removed": "لم يُزَل",
     "vx.memory.reading": "جارٍ قراءة الذاكرة…",
+    "vx.memory.rule_remove": "إزالة",
+    "vx.memory.rule_remove_title": "التوقف عن اتباع هذه القاعدة في كل محادثة",
+    "vx.memory.rule_remove_confirm": "هل تريد إزالة هذه القاعدة؟ سيتوقف VOOL عن اتباعها.",
     "vx.memory.rules_title": "قواعد يتبعها VOOL في كل محادثة",
     "vx.memory.rules_empty": "لا توجد قواعد محفوظة. تظهر هنا أي قاعدة تعطيها في المحادثة، مثل «أجب دائمًا بنقاط».",
     "vx.memory.rules_hint": "لإزالة قاعدة، اطلب من VOOL في محادثة أن يتوقف عنها.",
@@ -1924,7 +1927,7 @@
     "fault.wallet_payment_channel_off.action": "شغّل قناة دفع في إعدادات العملات المشفرة فقط إن أردت أن تتم الدفعات عبرها؛ الحد الأقصى وموافقتك يسريان على كل قناة.",
     "fault.wallet_x402_sdk_unavailable.message": "لا يستطيع هذا الإصدار دفع عروض x402 على Base عبر x402 Foundation SDK: الإضافة الاختيارية x402 غير مثبتة على هذه الآلة. لم يوقَّع أو يُرسل شيء. كل وظائف المحفظة الأخرى تعمل بدونها؛ بعد تثبيتها أعد المحاولة."
   },
-  "source_catalog_sha256": "ec0fd0e63d56a923cb8db547d8f06cf9d35ace6647b29f31e6cb61a9b4d16dbd",
+  "source_catalog_sha256": "7249b9da6364597d1b7464ba308af944a2b5709cf51c3dc7e90a8459fcca922b",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1934,6 +1937,7 @@
     "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
-    "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)"
+    "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
+    "standing_rule_remove_addendum": "3 standing-rule Remove keys translated by the lane author (single writer)"
   }
 }

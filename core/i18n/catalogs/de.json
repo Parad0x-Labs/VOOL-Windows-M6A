@@ -1426,6 +1426,9 @@
     "vx.memory.forget_title": "Genau diesen Eintrag vergessen",
     "vx.memory.not_removed": "nicht entfernt",
     "vx.memory.reading": "Erinnerung wird gelesen…",
+    "vx.memory.rule_remove": "entfernen",
+    "vx.memory.rule_remove_title": "Diese Regel in keinem Chat mehr befolgen",
+    "vx.memory.rule_remove_confirm": "Diese Regel entfernen? VOOL befolgt sie dann nicht mehr.",
     "vx.memory.rules_title": "Regeln, die VOOL in jedem Chat befolgt",
     "vx.memory.rules_empty": "Keine Regeln gespeichert. Eine Regel, die du im Chat gibst, etwa „antworte immer in Stichpunkten“, erscheint hier.",
     "vx.memory.rules_hint": "Um eine Regel zu entfernen, sag VOOL in einem Chat, dass es damit aufhören soll.",
@@ -1924,7 +1927,7 @@
     "fault.wallet_payment_channel_off.action": "Schalte einen Zahlungskanal in den Krypto-Einstellungen nur ein, wenn Zahlungen darüber laufen sollen; die Obergrenze und deine Freigabe gelten auf jedem Kanal.",
     "fault.wallet_x402_sdk_unavailable.message": "Dieser Build kann keine x402-Angebote auf Base über das x402 Foundation SDK bezahlen: Die optionale Erweiterung x402 ist auf diesem Rechner nicht installiert. Es wurde nichts signiert oder gesendet. Jede andere Wallet-Funktion läuft ohne sie; nach der Installation versuche es erneut."
   },
-  "source_catalog_sha256": "ec0fd0e63d56a923cb8db547d8f06cf9d35ace6647b29f31e6cb61a9b4d16dbd",
+  "source_catalog_sha256": "7249b9da6364597d1b7464ba308af944a2b5709cf51c3dc7e90a8459fcca922b",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1934,6 +1937,7 @@
     "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
-    "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)"
+    "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
+    "standing_rule_remove_addendum": "3 standing-rule Remove keys translated by the lane author (single writer)"
   }
 }

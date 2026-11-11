@@ -1426,6 +1426,9 @@
     "vx.memory.forget_title": "Забути саме цей запис",
     "vx.memory.not_removed": "не видалено",
     "vx.memory.reading": "Читаю пам'ять…",
+    "vx.memory.rule_remove": "видалити",
+    "vx.memory.rule_remove_title": "Більше не дотримуватися цього правила в жодному чаті",
+    "vx.memory.rule_remove_confirm": "Видалити це правило? VOOL більше не дотримуватиметься його.",
     "vx.memory.rules_title": "Правила, яких VOOL дотримується в кожному чаті",
     "vx.memory.rules_empty": "Збережених правил немає. Правило з чату, наприклад «завжди відповідай списком», з’явиться тут.",
     "vx.memory.rules_hint": "Щоб прибрати правило, попросіть VOOL у чаті більше так не робити.",
@@ -1924,7 +1927,7 @@
     "fault.wallet_payment_channel_off.action": "Вмикайте платіжний канал у налаштуваннях Крипто, лише якщо хочете платити через нього; ліміт і ваше схвалення діють на кожному каналі.",
     "fault.wallet_x402_sdk_unavailable.message": "Ця збірка не вміє оплачувати пропозиції x402 у мережі Base через x402 Foundation SDK: необов'язковий додаток x402 не встановлено на цій машині. Нічого не підписано і не надіслано. Усі інші функції гаманця працюють без нього; після встановлення повторіть."
   },
-  "source_catalog_sha256": "ec0fd0e63d56a923cb8db547d8f06cf9d35ace6647b29f31e6cb61a9b4d16dbd",
+  "source_catalog_sha256": "7249b9da6364597d1b7464ba308af944a2b5709cf51c3dc7e90a8459fcca922b",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1934,6 +1937,7 @@
     "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
-    "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)"
+    "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
+    "standing_rule_remove_addendum": "3 standing-rule Remove keys translated by the lane author (single writer)"
   }
 }

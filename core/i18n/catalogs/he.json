@@ -1426,6 +1426,9 @@
     "vx.memory.forget_title": "שכחו בדיוק את הרשומה הזאת",
     "vx.memory.not_removed": "לא הוסר",
     "vx.memory.reading": "קורא זיכרון…",
+    "vx.memory.rule_remove": "הסרה",
+    "vx.memory.rule_remove_title": "להפסיק לפעול לפי הכלל הזה בכל צ׳אט",
+    "vx.memory.rule_remove_confirm": "להסיר את הכלל הזה? VOOL יפסיק לפעול לפיו.",
     "vx.memory.rules_title": "כללים ש-VOOL פועל לפיהם בכל צ׳אט",
     "vx.memory.rules_empty": "אין כללים שמורים. כלל שתיתן בצ׳אט, כמו „תמיד ענה בנקודות”, יופיע כאן.",
     "vx.memory.rules_hint": "כדי להסיר כלל, אמור ל-VOOL בצ׳אט להפסיק.",
@@ -1924,7 +1927,7 @@
     "fault.wallet_payment_channel_off.action": "הפעילו ערוץ תשלום בהגדרות הקריפטו רק אם אתם רוצים שתשלומים יעברו דרכו; התקרה והאישור שלכם חלים על כל ערוץ.",
     "fault.wallet_x402_sdk_unavailable.message": "גרסה זו אינה יכולה לשלם הצעות x402 ב-Base דרך x402 Foundation SDK: התוספת האופציונלית x402 אינה מותקנת במכונה זו. לא נחתם ולא נשלח דבר. כל שאר פונקציות הארנק עובדות בלעדיה; לאחר התקנתה נסו שוב."
   },
-  "source_catalog_sha256": "ec0fd0e63d56a923cb8db547d8f06cf9d35ace6647b29f31e6cb61a9b4d16dbd",
+  "source_catalog_sha256": "7249b9da6364597d1b7464ba308af944a2b5709cf51c3dc7e90a8459fcca922b",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1934,6 +1937,7 @@
     "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
-    "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)"
+    "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
+    "standing_rule_remove_addendum": "3 standing-rule Remove keys translated by the lane author (single writer)"
   }
 }

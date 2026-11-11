@@ -15,7 +15,8 @@ It is saved only when:
 * it is not a one-off ("this time", "just now", "for now", "here", "in this chat", "today", "this once").
 
 A take-back ("stop adding the summary line", "forget the rule about units", "you no longer need to …") removes
-the saved instruction it names by topic. Nothing else removes or rewrites one.
+the saved instruction it names by topic, and the Remove button on the Settings page removes one by id
+(`remove_by_id`). Nothing else removes or rewrites one.
 
 Scope is the owner AND the workspace: an instruction given in one workspace never reaches another.
 `standing_block` renders stored instructions only — no search, nothing retrieved — so this block can never
@@ -266,7 +267,7 @@ def list_instructions(principal: str, workspace: str) -> list[Instruction]:
 
 
 def list_active() -> list[Instruction]:
-    """Every active instruction in the store, oldest first: what the Memory page shows the owner (read-only).
+    """Every active instruction in the store, oldest first: what the Memory page shows the owner.
     Only owner-authored turns ever save one (`observe_turn`), so the whole store is the owner's."""
     with _LOCK:
         rows = _load()
@@ -320,12 +321,35 @@ def _remove_matching(principal: str, workspace: str, words: tuple[str, ...]) -> 
                 continue
             topic = set(row.get("topic") or ())
             if topic & set(words):
-                row["status"] = "taken_back"
-                row["taken_back_at"] = time.time()
+                _take_back_row(row)
                 removed.append(str(row.get("text")))
         if removed:
             _save(rows)
     return removed
+
+
+def _take_back_row(row: dict[str, Any]) -> None:
+    row["status"] = "taken_back"
+    row["taken_back_at"] = time.time()
+
+
+def remove_by_id(instruction_id: str) -> str | None:
+    """Take back the one active instruction with this id (the Settings page's Remove button).
+
+    The same row update a chat take-back makes. Returns the removed text, or None when no active
+    instruction has this id. Only owner-authored turns ever save one, so the whole store is the owner's.
+    """
+    wanted = str(instruction_id or "").strip()
+    if not wanted:
+        return None
+    with _LOCK:
+        rows = _load()
+        for row in rows:
+            if str(row.get("id") or "") == wanted and row.get("status") == "active":
+                _take_back_row(row)
+                _save(rows)
+                return str(row.get("text") or "")
+    return None
 
 
 # --------------------------------------------------------------------------- reading a turn
@@ -753,6 +777,7 @@ __all__ = [
     "list_instructions",
     "observe_turn",
     "read_turn",
+    "remove_by_id",
     "standing_block",
     "workspace_key",
 ]
