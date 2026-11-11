@@ -284,6 +284,75 @@ def test_a_named_folder_that_does_not_exist_inside_a_mark_is_refused(machine, ch
     assert "Nothing was run" in reply, reply
 
 
+@pytest.mark.parametrize("bound", ["desktop", "hw"], ids=["unbound-chat", "chat-bound-to-the-mark"])
+def test_a_junction_inside_a_mark_that_leads_out_is_refused_before_any_card(machine, chat, windows_jobs, bound) -> None:
+    """A junction (a link here) inside the marked folder that leads to an unmarked folder: where it really
+    leads is what counts, so "run pytest in <junction>" is refused plainly and nothing runs anywhere."""
+    junction = machine["hw"] / "escape"
+    junction.symlink_to(machine["unmarked"] / "proj", target_is_directory=True)
+    talk = chat(machine[bound])
+
+    reply = talk.say(f"run pytest in {junction}", turn_id=f"turn-{uuid.uuid4().hex[:10]}")
+
+    assert talk.pending() == [], reply
+    assert _Recorder.jobs == [], reply
+    assert "requires approval" not in reply, reply
+    assert "Nothing was run" in reply and str(junction) in reply, reply
+
+
+@pytest.mark.parametrize("quote", ["", '"'], ids=["plain", "quoted"])
+def test_a_folder_on_a_remote_drive_is_never_looked_up_and_nothing_runs_there(
+    machine, chat, windows_jobs, monkeypatch, quote
+) -> None:
+    """`Z:` is a mapped network drive: looking `Z:\\proj` up is already the SMB connection. No stat, no
+    realpath, no listing of it, from the ask through the card and the run, and no job runs in `Z:`."""
+    from core import windows_known_folders
+    from core.agent_runtime import write_root_honesty
+
+    monkeypatch.setattr(windows_known_folders, "_drive_is_remote", lambda drive: drive.upper() == "Z:")
+    monkeypatch.setattr(write_root_honesty, "_ON_WINDOWS", True)
+    looked: list[str] = []
+    for name in ("isdir", "isfile", "exists", "lexists", "realpath"):
+        real = getattr(os.path, name)
+
+        def record(path, *args, _real=real, **kwargs):
+            if "Z:" in str(path):
+                looked.append(str(path))
+            return _real(path, *args, **kwargs)
+
+        monkeypatch.setattr(os.path, name, record)
+    for name in ("stat", "lstat", "scandir", "listdir"):
+        real_os = getattr(os, name)
+
+        def record_os(path=".", *args, _real=real_os, **kwargs):
+            if "Z:" in str(path):
+                looked.append(str(path))
+            return _real(path, *args, **kwargs)
+
+        monkeypatch.setattr(os, name, record_os)
+    for name in ("is_dir", "is_file", "exists", "stat", "resolve", "iterdir"):
+        real_method = getattr(Path, name)
+
+        def record_method(self, *args, _real=real_method, **kwargs):
+            if "Z:" in str(self):
+                looked.append(str(self))
+            return _real(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, name, record_method)
+    talk = chat(machine["desktop"])
+    text = f"run pytest in {quote}Z:\\proj{quote}"
+    turn = f"turn-{uuid.uuid4().hex[:10]}"
+
+    reply = talk.say(text, turn_id=turn)
+    for card in talk.pending():  # if a card is shown, Allow it: what then runs must still not be in Z:
+        mpp.resolve_approval(str(card["approval_id"]), decision="allow")
+        reply = talk.say(text, turn_id=turn, token=str(card["approval_id"]))
+        assert "Z:" not in " ".join(str(item) for item in card.get("affected_resources") or []), card
+
+    assert looked == [], (looked, reply)
+    assert all("Z:" not in job["cwd"] for job in _Recorder.jobs), _Recorder.jobs
+
+
 # --- the planner, read as Windows types it ------------------------------------------------------------
 
 HW_TEXT = r"C:\Users\Satoshi\VOOL HW Test"
