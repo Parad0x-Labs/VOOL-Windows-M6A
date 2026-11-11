@@ -1330,17 +1330,20 @@ class _WindowApi:
         except Exception as exc:
             return {"ok": False, "error": type(exc).__name__}
 
-    def save_session_bundle(self, bundle_path: str, session_id: str = "") -> dict:
+    def save_session_bundle(self, bundle_path: str, session_id: str = "", owner: object = None) -> dict:
         """Save an exported chat bundle (.voolsession) to a place the user picks.
 
         The page names only the bundle the export route just wrote; the server's download route
         decides whether that path is inside session_bundles and supplies the bytes, and nothing
         existing on disk is overwritten. pywebview cancels page downloads, so without this the
-        export wrote its bundle under the data folder and the user got no file."""
+        export wrote its bundle under the data folder and the user got no file. ``owner`` is
+        "settings" from the Settings window (see ``_dialog_owner``), so the Save As dialog belongs
+        to that window and not to the chat window behind it; the chat page passes nothing."""
         import re
         from urllib.parse import urlencode
 
-        if self._window is None or self._webview is None:
+        dialog_window, secondary = self._dialog_owner(owner)
+        if dialog_window is None or self._webview is None:
             return {"ok": False, "error": "no_window"}
         if not isinstance(bundle_path, str) or not 0 < len(bundle_path) <= 4096 or not bundle_path.endswith(".voolsession"):
             return {"ok": False, "error": "invalid_bundle_identity"}
@@ -1362,14 +1365,17 @@ class _WindowApi:
                 return {"ok": False, "error": "bundle_too_large",
                         "message": "The bundle exceeds the native save size limit; nothing was saved."}
             stem = re.sub(r"[^A-Za-z0-9_-]", "_", session_id or "chat")[:64] or "chat"
-            result = self._window.create_file_dialog(self._webview.SAVE_DIALOG, directory=_save_dialog_directory(),
-                                                     save_filename=stem + ".voolsession",
-                                                     file_types=("VOOL chat bundles (*.voolsession)",))
+            result = dialog_window.create_file_dialog(self._webview.SAVE_DIALOG, directory=_save_dialog_directory(),
+                                                      save_filename=stem + ".voolsession",
+                                                      file_types=("VOOL chat bundles (*.voolsession)",))
+            if secondary:
+                _focus_window(dialog_window)
             if not result:
                 return {"ok": False, "cancelled": True}
             destination = Path(result[0] if isinstance(result, (list, tuple)) else result)
             _deliver_without_overwrite(body, destination, ".vool-bundle-")
-            return {"ok": True}
+            # The path the person picked in the dialog, so the page can say where the file went.
+            return {"ok": True, "path": str(destination)}
         except urllib.error.HTTPError as exc:
             try:
                 refusal = json.loads(exc.read(4096))

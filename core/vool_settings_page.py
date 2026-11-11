@@ -1582,9 +1582,22 @@ async function bundlePost(path, body) {
   const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   return await r.json().catch(() => ({ ok: false, error: 'HTTP ' + r.status }));
 }
+/* The pane is rebuilt whenever this window regains focus (reconcile), and closing the native Save
+   dialog gives focus back -- so the export's result line and the chosen chat are kept here, outside
+   the widget, and shown again by the rebuilt widget. Never a passphrase. */
+const bundleExportMemory = { sid: '', note: null };
 function widgetBundleExport(stack) {
   const status = el('div', 'state idle'); status.id = 'sbExportStatus'; status.setAttribute('role', 'status');
-  const say = (msg, warn) => { status.className = 'state ' + (warn ? 'failed' : 'saved'); status.textContent = msg; };
+  const paint = (node, note) => { node.className = note.cls; node.textContent = note.msg; };
+  const show = (cls, msg) => {
+    bundleExportMemory.note = { cls: cls, msg: msg };
+    /* A save that finishes after the pane was rebuilt reports into the widget now on screen. */
+    const live = document.getElementById('sbExportStatus');
+    paint(live || status, bundleExportMemory.note);
+    if (live && live !== status) paint(status, bundleExportMemory.note);
+  };
+  const say = (msg, warn) => show('state ' + (warn ? 'failed' : 'saved'), msg);
+  if (bundleExportMemory.note) paint(status, bundleExportMemory.note);
   const pick = el('div', 'inline');
   const chatSel = el('select', 'inp'); chatSel.id = 'sbChat'; chatSel.setAttribute('aria-label', 'Chat to export');
   const none = el('option', null, 'Choose a chat…'); none.value = ''; chatSel.appendChild(none);
@@ -1631,7 +1644,7 @@ function widgetBundleExport(stack) {
   };
   const syncEnc = () => { passRow.hidden = !enc.checked; warnRow.hidden = enc.checked; renderPreview(); };
   enc.addEventListener('change', syncEnc);
-  chatSel.addEventListener('change', renderPreview);
+  chatSel.addEventListener('change', () => { bundleExportMemory.sid = chatSel.value; renderPreview(); });
   getJSON('/api/chat/sessions').then(d => {
     const sessions = d.sessions || [];
     sessions.forEach(s => {
@@ -1639,6 +1652,9 @@ function widgetBundleExport(stack) {
       const o = el('option', null, (s.title || 'New chat') + ' — ' + String(s.session_id).slice(0, 28));
       o.value = s.session_id; chatSel.appendChild(o);
     });
+    if (bundleExportMemory.sid && sessions.some(s => s.session_id === bundleExportMemory.sid)) {
+      chatSel.value = bundleExportMemory.sid; renderPreview();
+    }
     if (!sessions.length) say('No chats to export yet.');
   }).catch(e => say('Could not list chats — ' + e.message, true));
 
@@ -1651,25 +1667,28 @@ function widgetBundleExport(stack) {
       if (!passphrase) { say('Type a passphrase, or untick encryption.', true); return; }
       if (passphrase !== String(pass2.value || '')) { say('The two passphrases do not match.', true); return; }
     } else if (!warn.checked) { say('Unticking encryption needs the explicit warning acknowledgement below.', true); return; }
-    exportBtn.disabled = true; status.className = 'state saving'; status.textContent = 'Working…';
+    exportBtn.disabled = true; show('state saving', 'Working…');
     try {
       const d = await bundlePost('/api/session/bundle/export', { session_id: sid, passphrase: passphrase });
       if (!d.ok) { say(d.error || 'Export refused.', true); exportBtn.disabled = false; return; }
       pass.value = ''; pass2.value = '';
       const nativeApi = window.pywebview && window.pywebview.api;
+      let where = '';
       if (nativeApi) {
         // The desktop window cancels page downloads: the native save dialog delivers the file.
         if (typeof nativeApi.save_session_bundle !== 'function') { say('This app build cannot save chat bundles. Update the app and try again.', true); exportBtn.disabled = false; return; }
-        const saved = await nativeApi.save_session_bundle(String(d.path || ''), String(d.session_id || sid));
+        /* 'settings': the Save As dialog belongs to THIS window, not the chat window behind it. */
+        const saved = await nativeApi.save_session_bundle(String(d.path || ''), String(d.session_id || sid), 'settings');
         if (!saved || (!saved.ok && saved.cancelled)) { say('Not saved: the save was cancelled.', true); exportBtn.disabled = false; return; }
         if (!saved.ok) { say('Not saved: ' + (saved.message || saved.error || 'the bundle could not be written.'), true); exportBtn.disabled = false; return; }
+        if (typeof saved.path === 'string' && saved.path) where = ' to ' + saved.path;
       } else {
         const a = document.createElement('a');
         a.href = '/api/session/bundle/download?path=' + encodeURIComponent(d.path);
         a.download = String(d.session_id || 'chat').replace(/[^a-z0-9_-]/gi, '_') + '.voolsession';
         document.body.appendChild(a); a.click(); a.remove();
       }
-      say(d.encrypted ? 'Saved: signed + encrypted bundle (' + d.counts.turns + ' turns).' : 'Saved: signed, UNENCRYPTED bundle (' + d.counts.turns + ' turns).', !d.encrypted);
+      say(d.encrypted ? 'Saved: signed + encrypted bundle (' + d.counts.turns + ' turns)' + where + '.' : 'Saved: signed, UNENCRYPTED bundle (' + d.counts.turns + ' turns)' + where + '.', !d.encrypted);
       renderPreview();
     } catch (e) { say('Export failed: ' + (e && e.message ? e.message : e), true); }
     exportBtn.disabled = false;
