@@ -536,29 +536,70 @@ function controlFolder(host, step) {
   const path = document.createElement('input');
   path.className = 'inp'; path.id = 'folderPath'; path.type = 'text'; path.placeholder = T('setup.folder.placeholder', 'Type the folder’s full path, e.g. /Users/you/Documents');
   path.setAttribute('aria-label', T('setup.folder.aria', 'Folder path')); path.autocomplete = 'off'; path.spellcheck = false;
+  // The typed or picked path lives in the view, so the re-render after a save never empties the box.
+  path.value = view.folderPath || '';
+  path.addEventListener('input', () => { view.folderPath = path.value; });
   const choose = el('button', 'btn', T('setup.folder.choose', 'Choose a folder…')); choose.type = 'button'; choose.id = 'chooseFolder';
   const use = el('button', 'btn primary', T('setup.folder.use', 'Use this folder')); use.type = 'button'; use.id = 'useFolder';
+  // Windows: a saved folder VOOL cannot change files in yet (the step's note says so) is offered
+  // the mark right here. The bridge takes no path: the OS picker chooses, the OS confirm consents.
+  const api = window.pywebview && window.pywebview.api;
+  const canMark = !!(step.note && api && api.mark_disposable_folder);
+  const mark = el('button', 'btn', T('setup.folder.mark', 'Mark this folder so VOOL can change files…')); mark.type = 'button'; mark.id = 'markFolder';
+  mark.hidden = !canMark;
   const bind = async (root) => {
     const clean = String(root || '').trim();
-    if (!clean) { fail(host, T('setup.folder.err_empty', 'Type or choose a folder first.')); return; }
+    view.folderPath = clean || view.folderPath || '';
+    if (!clean) { setFolderResult('failed', T('setup.folder.err_empty', 'Type or choose a folder first.')); return; }
     const name = clean.split(/[\\/]/).filter(Boolean).pop() || 'Project';
     use.disabled = true;
     const res = await postJSON('/api/projects', { name: name, root: clean });
     use.disabled = false;
-    if (!res.ok) { fail(host, fmt(T('setup.status.not_saved', 'Not saved — {reason}'), { reason: ((res.json && (res.json.error || res.json.detail)) || ('HTTP ' + res.status)) })); return; }
+    if (!res.ok) { setFolderResult('failed', fmt(T('setup.status.not_saved', 'Not saved — {reason}'), { reason: ((res.json && (res.json.error || res.json.detail)) || ('HTTP ' + res.status)) })); return; }
     await refresh();
-    live(current().done ? fmt(T('setup.status.saved_folder', 'Saved: VOOL works inside {name}.'), { name: name }) : T('setup.status.not_confirmed', 'Not confirmed yet.'));
+    const now = current();
+    if (now.done) { setFolderResult('done', fmt(T('setup.status.saved_folder', 'Saved: VOOL works inside {name}.'), { name: name })); return; }
+    if (now.note) {
+      const bridge = window.pywebview && window.pywebview.api && window.pywebview.api.mark_disposable_folder;
+      setFolderResult('', fmt(bridge
+        ? T('setup.folder.saved_unmarked', 'Saved {name}. On Windows VOOL can change files there only once you mark it: choose “Mark this folder…” and pick {name} again.')
+        : T('setup.folder.saved_unmarked_settings', 'Saved {name}. On Windows VOOL can change files there only once you mark it as disposable in Settings, then restart VOOL.'), { name: name }));
+      return;
+    }
+    setFolderResult('', T('setup.status.not_confirmed', 'Not confirmed yet.'));
   };
   choose.addEventListener('click', async () => {
     const picked = await pickFolder();
-    if (picked) { path.value = picked; await bind(picked); }
-    else { path.focus(); live(T('setup.folder.none_chosen', 'No folder was chosen. You can type its path instead.')); }
+    if (picked) { path.value = picked; view.folderPath = picked; await bind(picked); }
+    else { path.focus(); setFolderResult('', T('setup.folder.none_chosen', 'No folder was chosen. You can type its path instead.')); }
   });
   use.addEventListener('click', () => bind(path.value));
   path.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); bind(path.value); } });
+  mark.addEventListener('click', async () => {
+    mark.disabled = true;
+    let res = null;
+    try { res = await window.pywebview.api.mark_disposable_folder('setup'); } catch (e) { res = { ok: false, error: String(e && e.message || e) }; }
+    mark.disabled = false;
+    if (res && res.ok) { setFolderResult('done', T('setup.folder.marked', 'Marked. Restart VOOL to use it.')); return; }
+    if (res && res.cancelled) return;     // the person closed the picker or said Cancel: the saved message stays
+    setFolderResult('failed', (res && res.refused) || fmt(T('setup.folder.mark_failed', 'Could not mark the folder — {reason}'), { reason: (res && res.error) || 'unknown' }));
+  });
   row.appendChild(choose); row.appendChild(path); row.appendChild(use);
   host.appendChild(row);
+  host.appendChild(mark);
   host.appendChild(el('p', 'hint', T('setup.folder.hint', 'Pick a normal folder such as Documents. Not your whole disk.')));
+  const result = el('p', 'status'); result.id = 'folderResult'; result.setAttribute('role', 'status');
+  host.appendChild(result);
+  const last = view.folderResult;
+  if (last) { result.className = 'status' + (last.cls ? ' ' + last.cls : ''); result.textContent = last.text; }
+  result.hidden = !last;
+}
+// The folder step's result, as visible text that survives the step's re-render (and in #live too).
+function setFolderResult(cls, text) {
+  view.folderResult = text ? { cls: cls || '', text: String(text) } : null;
+  const node = $('#folderResult');
+  if (node) { node.className = 'status' + (cls ? ' ' + cls : ''); node.textContent = text || ''; node.hidden = !text; }
+  if (text) live(text);
 }
 function pickFolder() {
   // Own native window: the bridge is right here. Framed inside the chat: ask the host, which has it.
