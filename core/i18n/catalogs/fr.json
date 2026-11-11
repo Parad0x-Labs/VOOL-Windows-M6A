@@ -1405,6 +1405,7 @@
     "vns.saved.native_off": "Désactivé. Ce que macOS conserve encore est retiré ; la cloche garde chaque alerte.",
     "vns.saved.native_on": "Activé. VOOL demande l’autorisation à macOS si macOS ne l’a pas encore donnée.",
     "vns.saved.quiet": "Heures silencieuses enregistrées. Pendant elles, macOS n’est pas sollicité ; la cloche consigne encore chaque alerte.",
+    "vns.saved.quiet.windows": "Heures silencieuses enregistrées. Pendant elles, aucun son n’est joué ; la cloche consigne encore chaque alerte.",
     "vns.saved.test": "Envoyé à la cloche et transmis à macOS. VOOL enregistre quand macOS l’accepte ; il ne peut pas voir si une bannière est apparue.",
     "vns.status.failed": "Cela n’a pas fonctionné.",
     "vns.status.loading": "Chargement…",
@@ -1415,8 +1416,10 @@
     "vns.status.working": "Travail en cours…",
     "vns.title.mac": "Notifications macOS",
     "vns.title.prefs": "Heures silencieuses, son et contenu des notifications",
+    "vns.title.prefs.windows": "Heures silencieuses et son",
     "vns.toggle.native": "Envoyer aussi les alertes VOOL en notifications macOS",
     "vns.toggle.sound": "Son des notifications",
+    "vns.why.windows": "La cloche conserve chaque alerte VOOL. VOOL n’envoie pas encore de notifications Windows.",
     "vx.memory.empty": "Rien de mémorisé pour l’instant — les faits confirmés arrivent ici avec leur portée enregistrée, et chacun peut être oublié.",
     "vx.memory.forget": "oublier",
     "vx.memory.forget_title": "Oublier exactement cette entrée",
@@ -1918,7 +1921,7 @@
     "fault.wallet_payment_channel_off.action": "Activez un canal de paiement dans les réglages Crypto seulement si vous voulez que des paiements passent par lui ; le plafond et votre approbation s'appliquent sur chaque canal.",
     "fault.wallet_x402_sdk_unavailable.message": "Cette version ne peut pas payer les offres x402 sur Base via le x402 Foundation SDK : l'extra optionnel x402 n'est pas installé sur cette machine. Rien n'a été signé ni envoyé. Toutes les autres fonctions du portefeuille marchent sans lui ; une fois installé, réessayez."
   },
-  "source_catalog_sha256": "6b453a1710dc06461a3885df9f48775b3c2abc0e9ae820ef9be5f2e3c15845c9",
+  "source_catalog_sha256": "7ece37b9bc040ab28640b14bea290bbdf1c30f491a460a5d04fa86d4e297e702",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1926,6 +1929,7 @@
     "generated_at": "2026-09-04T14:20:28Z",
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
     "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
-    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)"
+    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
+    "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)"
   }
 }

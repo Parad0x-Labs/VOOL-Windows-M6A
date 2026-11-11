@@ -1405,6 +1405,7 @@
     "vns.saved.native_off": "Tắt. Những gì macOS còn giữ sẽ được thu hồi; chuông giữ mọi nhắc.",
     "vns.saved.native_on": "Bật. VOOL sẽ xin macOS cấp quyền nếu macOS chưa cấp.",
     "vns.saved.quiet": "Đã lưu giờ im lặng. Trong khung giờ này không hỏi macOS; chuông vẫn ghi mọi nhắc.",
+    "vns.saved.quiet.windows": "Đã lưu giờ im lặng. Trong khung giờ này không phát âm thanh; chuông vẫn ghi mọi nhắc.",
     "vns.saved.test": "Đã gửi tới chuông và chuyển cho macOS. VOOL ghi lại khi macOS chấp nhận; nó không thể thấy banner có hiện hay không.",
     "vns.status.failed": "Việc đó không thành công.",
     "vns.status.loading": "Đang tải…",
@@ -1415,8 +1416,10 @@
     "vns.status.working": "Đang xử lý…",
     "vns.title.mac": "Thông báo macOS",
     "vns.title.prefs": "Giờ im lặng, âm thanh và nội dung thông báo",
+    "vns.title.prefs.windows": "Giờ im lặng và âm thanh",
     "vns.toggle.native": "Gửi cả cảnh báo của VOOL qua thông báo macOS",
     "vns.toggle.sound": "Âm thanh thông báo",
+    "vns.why.windows": "Chuông giữ mọi nhắc của VOOL. VOOL chưa gửi thông báo Windows.",
     "vx.memory.empty": "Chưa nhớ gì — các dữ kiện đã xác nhận sẽ đến đây cùng phạm vi lưu của chúng, và mỗi dữ kiện đều có thể bị quên.",
     "vx.memory.forget": "quên",
     "vx.memory.forget_title": "Quên đúng dữ kiện này",
@@ -1918,7 +1921,7 @@
     "fault.wallet_payment_channel_off.action": "Chỉ bật một kênh thanh toán trong cài đặt Tiền điện tử nếu bạn muốn thanh toán qua kênh đó; trần chi tiêu và sự chấp thuận của bạn áp dụng trên mọi kênh.",
     "fault.wallet_x402_sdk_unavailable.message": "Bản dựng này không trả được các đề nghị x402 trên Base qua x402 Foundation SDK: phần bổ sung tùy chọn x402 chưa cài trên máy này. Chưa ký hay gửi gì. Mọi chức năng ví khác chạy không cần nó; sau khi cài, thử lại."
   },
-  "source_catalog_sha256": "6b453a1710dc06461a3885df9f48775b3c2abc0e9ae820ef9be5f2e3c15845c9",
+  "source_catalog_sha256": "7ece37b9bc040ab28640b14bea290bbdf1c30f491a460a5d04fa86d4e297e702",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1926,6 +1929,7 @@
     "generated_at": "2026-09-04T14:20:28Z",
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
     "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
-    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)"
+    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
+    "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)"
   }
 }

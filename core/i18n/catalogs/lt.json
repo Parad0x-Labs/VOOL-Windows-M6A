@@ -1405,6 +1405,7 @@
     "vns.saved.native_off": "Išjungta. Kas macOS dar laiko, atšaukiama; varpelis laiko kiekvieną įspėjimą.",
     "vns.saved.native_on": "Įjungta. VOOL paprašys macOS leidimo, jei macOS jo dar nesuteikė.",
     "vns.saved.quiet": "Tylios valandos išsaugotos. Jų metu macOS nėra apklausiamas; varpelis vis tiek registruoja kiekvieną įspėjimą.",
+    "vns.saved.quiet.windows": "Tylios valandos išsaugotos. Jų metu garsas negroja; varpelis vis tiek registruoja kiekvieną įspėjimą.",
     "vns.saved.test": "Išsiųsta į varpelį ir perduota macOS. VOOL registruoja, kai macOS priima; ar pasirodė baneris, jis matyti negali.",
     "vns.status.failed": "Tai nesuveikė.",
     "vns.status.loading": "Įkeliama…",
@@ -1415,8 +1416,10 @@
     "vns.status.working": "Dirbu…",
     "vns.title.mac": "macOS pranešimai",
     "vns.title.prefs": "Tylios valandos, garsas ir ką rodo pranešimai",
+    "vns.title.prefs.windows": "Tylios valandos ir garsas",
     "vns.toggle.native": "Siųsti ir VOOL įspėjimus kaip macOS pranešimus",
     "vns.toggle.sound": "Pranešimų garsas",
+    "vns.why.windows": "Varpelis saugo kiekvieną VOOL įspėjimą. VOOL dar nesiunčia Windows pranešimų.",
     "vx.memory.empty": "Kol kas nieko neprisiminta — patvirtinti faktai atsiranda čia su savo išsaugota apimtimi, ir kiekvieną galima užmiršti.",
     "vx.memory.forget": "užmiršti",
     "vx.memory.forget_title": "Užmiršti būtent šį įrašą",
@@ -1918,7 +1921,7 @@
     "fault.wallet_payment_channel_off.action": "Įjunkite mokėjimo kanalą Kripto nustatymuose tik jei norite, kad mokėjimai eitų per jį; riba ir jūsų patvirtinimas galioja kiekviename kanale.",
     "fault.wallet_x402_sdk_unavailable.message": "Ši versija negali apmokėti x402 pasiūlymų Base tinkle per x402 Foundation SDK: šiame kompiuteryje neįdiegtas pasirenkamas papildinys x402. Niekas nebuvo pasirašyta ar išsiųsta. Visos kitos piniginės funkcijos veikia ir be jo; jį įdiegę bandykite dar kartą."
   },
-  "source_catalog_sha256": "6b453a1710dc06461a3885df9f48775b3c2abc0e9ae820ef9be5f2e3c15845c9",
+  "source_catalog_sha256": "7ece37b9bc040ab28640b14bea290bbdf1c30f491a460a5d04fa86d4e297e702",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1926,6 +1929,7 @@
     "generated_at": "2026-09-04T14:20:28Z",
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
     "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
-    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)"
+    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
+    "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)"
   }
 }

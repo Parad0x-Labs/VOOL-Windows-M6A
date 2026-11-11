@@ -1405,6 +1405,7 @@
     "vns.saved.native_off": "बंद। macOS के पास जो अभी बचा है वह वापस लिया जाता है; घंटी हर अलर्ट रखती है।",
     "vns.saved.native_on": "चालू। अगर macOS ने अनुमति नहीं दी है तो VOOL macOS से पूछेगा।",
     "vns.saved.quiet": "ख़ामोशी के घंटे सहेज लिए गए। इस दौरान macOS से नहीं पूछा जाता; घंटी हर अलर्ट दर्ज करती रहती है।",
+    "vns.saved.quiet.windows": "ख़ामोशी के घंटे सहेज लिए गए। इस दौरान कोई ध्वनि नहीं बजती; घंटी हर अलर्ट दर्ज करती रहती है।",
     "vns.saved.test": "घंटी को भेजा और macOS को सौंपा। VOOL नोट करता है कि macOS ने कब स्वीकार किया; बैनर दिखा या नहीं, यह नहीं देख सकता।",
     "vns.status.failed": "वह काम नहीं हुआ।",
     "vns.status.loading": "लोड हो रहा है…",
@@ -1415,8 +1416,10 @@
     "vns.status.working": "काम चल रहा है…",
     "vns.title.mac": "macOS सूचनाएँ",
     "vns.title.prefs": "ख़ामोशी के घंटे, ध्वनि और सूचनाओं की सामग्री",
+    "vns.title.prefs.windows": "ख़ामोशी के घंटे और ध्वनि",
     "vns.toggle.native": "VOOL के अलर्ट macOS सूचनाओं में भी भेजें",
     "vns.toggle.sound": "सूचना ध्वनि",
+    "vns.why.windows": "घंटी VOOL का हर अलर्ट रखती है। VOOL अभी Windows सूचनाएँ नहीं भेजता।",
     "vx.memory.empty": "अभी कुछ याद नहीं है — पुष्ट सत्य अपनी सहेजी सीमा के साथ यहाँ आते हैं, और हर एक को भुलाया जा सकता है।",
     "vx.memory.forget": "भुलाएँ",
     "vx.memory.forget_title": "केवल यही प्रविष्टि भुलाएँ",
@@ -1918,7 +1921,7 @@
     "fault.wallet_payment_channel_off.action": "क्रिप्टो सेटिंग्स में भुगतान चैनल तभी चालू करें जब आप उसके ज़रिए भुगतान चाहते हों; सीमा और आपकी मंज़ूरी हर चैनल पर लागू होती है।",
     "fault.wallet_x402_sdk_unavailable.message": "यह बिल्ड x402 Foundation SDK के ज़रिए Base पर x402 ऑफ़र का भुगतान नहीं कर सकता: वैकल्पिक x402 ऐड-ऑन इस मशीन पर नहीं है। कुछ हस्ताक्षरित या भेजा नहीं गया। वॉलेट की बाकी हर सुविधा इसके बिना चलती है; इसे लगाने पर दोबारा कोशिश करें।"
   },
-  "source_catalog_sha256": "6b453a1710dc06461a3885df9f48775b3c2abc0e9ae820ef9be5f2e3c15845c9",
+  "source_catalog_sha256": "7ece37b9bc040ab28640b14bea290bbdf1c30f491a460a5d04fa86d4e297e702",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1926,6 +1929,7 @@
     "generated_at": "2026-09-04T14:20:28Z",
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
     "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
-    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)"
+    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
+    "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)"
   }
 }

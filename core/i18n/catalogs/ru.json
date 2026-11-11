@@ -1405,6 +1405,7 @@
     "vns.saved.native_off": "Выключено. То, что macOS ещё держит, отзывается; колокольчик держит каждое оповещение.",
     "vns.saved.native_on": "Включено. VOOL запросит у macOS разрешение, если macOS его ещё не выдало.",
     "vns.saved.quiet": "Тихие часы сохранены. В это время macOS не опрашивается; колокольчик по-прежнему записывает каждое оповещение.",
+    "vns.saved.quiet.windows": "Тихие часы сохранены. В это время звук не воспроизводится; колокольчик по-прежнему записывает каждое оповещение.",
     "vns.saved.test": "Отправлено в колокольчик и передано macOS. VOOL записывает, когда macOS принимает его; увидеть, появился ли баннер, оно не может.",
     "vns.status.failed": "Не получилось.",
     "vns.status.loading": "Загрузка…",
@@ -1415,8 +1416,10 @@
     "vns.status.working": "Выполняю…",
     "vns.title.mac": "Уведомления macOS",
     "vns.title.prefs": "Тихие часы, звук и содержимое уведомлений",
+    "vns.title.prefs.windows": "Тихие часы и звук",
     "vns.toggle.native": "Дублировать оповещения VOOL в уведомления macOS",
     "vns.toggle.sound": "Звук уведомлений",
+    "vns.why.windows": "Колокольчик хранит каждое оповещение VOOL. VOOL пока не отправляет уведомления Windows.",
     "vx.memory.empty": "Пока ничего не запомнено — подтверждённые факты попадают сюда со своей сохранённой областью, и каждый можно забыть.",
     "vx.memory.forget": "забыть",
     "vx.memory.forget_title": "Забыть ровно эту запись",
@@ -1918,7 +1921,7 @@
     "fault.wallet_payment_channel_off.action": "Включайте платёжный канал в настройках Крипто, только если хотите платить через него; лимит и ваше одобрение действуют на каждом канале.",
     "fault.wallet_x402_sdk_unavailable.message": "Эта сборка не умеет оплачивать предложения x402 в сети Base через x402 Foundation SDK: необязательное дополнение x402 не установлено на этой машине. Ничего не подписано и не отправлено. Все прочие функции кошелька работают без него; после установки повторите."
   },
-  "source_catalog_sha256": "6b453a1710dc06461a3885df9f48775b3c2abc0e9ae820ef9be5f2e3c15845c9",
+  "source_catalog_sha256": "7ece37b9bc040ab28640b14bea290bbdf1c30f491a460a5d04fa86d4e297e702",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1926,6 +1929,7 @@
     "generated_at": "2026-09-04T14:20:28Z",
     "language_picker_addendum": "2 keys translated by the lane author (single writer)",
     "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
-    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)"
+    "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
+    "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)"
   }
 }
