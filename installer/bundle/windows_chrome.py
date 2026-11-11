@@ -1,0 +1,95 @@
+"""Windows window chrome for VOOL's titled windows (main, Settings, Setup). Never the pet.
+
+* A dark title bar: DWM's immersive dark mode attribute on the window's HWND (20; 19 on Windows 10
+  builds before 20H1), which also makes the minimise, maximise and close glyphs white, plus the
+  caption colour (35, Windows 11 only) set to VOOL's dark panel. Owner hand test, Windows 11: the
+  title bar was plain white over VOOL's dark page.
+
+The frameless pet has no title bar and its own window policy (``pet_native_windows``); nothing
+here is ever applied to it. Everything is presentation, Windows only, and a failure anywhere is a
+silent no-op: a window that cannot be styled still opens exactly as before.
+"""
+from __future__ import annotations
+
+import contextlib
+import sys
+import threading
+
+DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1 = 19
+DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+DWMWA_CAPTION_COLOR = 35
+# core/ui_palette.py DARK_PALETTE_CSS --panel: the colour of VOOL's own dark chrome.
+CAPTION_COLOR_HEX = "#1b1b1e"
+# How long a styler waits for pywebview to build the form behind a new window.
+HWND_WAIT_SECONDS = 10.0
+
+
+def is_windows(platform: str | None = None) -> bool:
+    return (platform if platform is not None else sys.platform) == "win32"
+
+
+def colorref(hex_colour: str) -> int:
+    """``#rrggbb`` as a Win32 COLORREF (0x00BBGGRR)."""
+    value = hex_colour.lstrip("#")
+    red, green, blue = int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16)
+    return (blue << 16) | (green << 8) | red
+
+
+def _dwmapi():
+    import ctypes
+
+    return ctypes.WinDLL("dwmapi")
+
+
+def _set_attribute(dwm, hwnd: int, attribute: int, value: int) -> bool:
+    import ctypes
+
+    data = ctypes.c_int(int(value))
+    return int(dwm.DwmSetWindowAttribute(hwnd, attribute, ctypes.byref(data), ctypes.sizeof(data))) == 0
+
+
+def apply_dark_title_bar(hwnd: object, *, dwmapi: object = None) -> bool:
+    """Ask DWM for a dark title bar on ``hwnd``. True when dark mode took; never raises."""
+    try:
+        if not hwnd or int(hwnd) <= 0:
+            return False
+        dwm = dwmapi if dwmapi is not None else _dwmapi()
+        dark = _set_attribute(dwm, int(hwnd), DWMWA_USE_IMMERSIVE_DARK_MODE, 1) or _set_attribute(
+            dwm, int(hwnd), DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1, 1)
+        if dark:
+            with contextlib.suppress(Exception):   # Windows 10 has no caption colour: keep dark mode
+                _set_attribute(dwm, int(hwnd), DWMWA_CAPTION_COLOR, colorref(CAPTION_COLOR_HEX))
+        return bool(dark)
+    except Exception:
+        return False
+
+
+def _hwnd(pywebview_window: object, wait: float) -> int | None:
+    from installer.bundle.pet_native_windows import hwnd_for
+
+    return hwnd_for(pywebview_window, wait)
+
+
+def style_native_window(pywebview_window: object, *, platform: str | None = None,
+                        background: bool = True, wait: float = HWND_WAIT_SECONDS) -> bool:
+    """Style one of VOOL's titled windows once its HWND exists. False off Windows; never raises.
+
+    pywebview builds the form on its GUI thread, so by default this waits for the handle on a
+    short daemon thread and the caller never blocks."""
+    if not is_windows(platform):
+        return False
+
+    def _apply() -> None:
+        with contextlib.suppress(Exception):
+            hwnd = _hwnd(pywebview_window, wait)
+            if hwnd:
+                apply_dark_title_bar(hwnd)
+
+    try:
+        if background:
+            threading.Thread(target=_apply, name="vool-window-chrome", daemon=True).start()
+        else:
+            _apply()
+    except Exception:
+        pass
+    return True

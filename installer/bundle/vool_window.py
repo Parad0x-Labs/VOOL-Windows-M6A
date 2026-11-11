@@ -52,7 +52,7 @@ if _PROJECT_ROOT not in sys.path:
 # only because the two lines above just put it there. An `installer.bundle` import in the header
 # block raised ImportError and the window never opened -- invisible to the suite, which imports this
 # as a module with the root already on the path.
-from installer.bundle import pet_native
+from installer.bundle import pet_native, windows_chrome
 
 _WEBVIEW2_GUID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 _LOCK_HANDLES: list[int] = []  # POSIX: keep the flocks held for the process lifetime
@@ -763,6 +763,7 @@ class _WindowApi:
             if created is None:
                 raise RuntimeError("native settings window was not created")
             self._settings_window = created
+            windows_chrome.style_native_window(created)   # Windows: dark title bar; no-op elsewhere
             # Forget the handle when the window really closes, so the NEXT open builds a fresh one
             # instead of showing a destroyed object. Deliberately hooked to `closed` and NOT to
             # `closing`: a closing handler that returns False vetoes Cmd+Q as well as the red X --
@@ -833,6 +834,7 @@ class _WindowApi:
             if created is None:
                 raise RuntimeError("native setup window was not created")
             self._setup_window = created
+            windows_chrome.style_native_window(created)   # Windows: dark title bar; no-op elsewhere
             with contextlib.suppress(Exception):
                 created.events.closed += self._on_setup_closed
             _log("setup window created")
@@ -1846,6 +1848,8 @@ def main() -> int:
         )
         if window is None:
             raise RuntimeError("pywebview returned no native window")
+        # Windows: a dark title bar with white caption glyphs, once the form exists. Not the pet.
+        windows_chrome.style_native_window(window)
         api.set_window(window, webview)
         _register_url_scheme_handler()   # catch vool://auth/<provider>/callback launches (macOS)
         runtime_lost = _start_runtime_watchdog(supervisor, window, done)
