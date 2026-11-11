@@ -1374,7 +1374,8 @@ class _WindowApi:
                 return {"ok": False, "cancelled": True}
             destination = Path(result[0] if isinstance(result, (list, tuple)) else result)
             _deliver_without_overwrite(body, destination, ".vool-bundle-")
-            return {"ok": True}
+            # The path the person picked in the dialog, so the page can say where the file went.
+            return {"ok": True, "path": str(destination)}
         except urllib.error.HTTPError as exc:
             try:
                 refusal = json.loads(exc.read(4096))
