@@ -547,6 +547,11 @@ def _settings_menu(api: object) -> list:
     the window simply starts without a menu instead of failing to start at all. The page's own
     Cmd+, handler keeps working either way.
     """
+    if sys.platform == "win32":
+        # WinForms turns the start menu into a MenuStrip on EVERY form: an empty white band under
+        # each title bar and across the top of the frameless pet. Windows reaches Settings from the
+        # page, so it starts with no app menu.
+        return []
     try:
         from webview.menu import Menu, MenuAction
     except Exception as exc:
