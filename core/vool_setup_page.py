@@ -568,9 +568,16 @@ function controlFolder(host, step) {
     }
     setFolderResult('', T('setup.status.not_confirmed', 'Not confirmed yet.'));
   };
+  // A pick only fills the box: saving it at once made a new project for every pick (3 picks, 3
+  // extra projects), and replacing an earlier one would need a delete that also forgets that
+  // project's chats. The one explicit "Use this folder" saves.
   choose.addEventListener('click', async () => {
     const picked = await pickFolder();
-    if (picked) { path.value = picked; view.folderPath = picked; await bind(picked); }
+    if (picked) {
+      path.value = picked; view.folderPath = picked;
+      setFolderResult('', fmt(T('setup.folder.chosen', 'Chosen: {path}. Click “Use this folder” to save it.'), { path: picked }));
+      try { use.focus(); } catch (e) {}
+    }
     else { path.focus(); setFolderResult('', T('setup.folder.none_chosen', 'No folder was chosen. You can type its path instead.')); }
   });
   use.addEventListener('click', () => bind(path.value));
