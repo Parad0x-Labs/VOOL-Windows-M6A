@@ -45,10 +45,14 @@ def _plant_open_files() -> list[Path]:
     return planted
 
 
-def test_the_known_secret_files_are_the_six_writers_files(home) -> None:
+def test_the_known_secret_files_are_the_private_writers_files(home) -> None:
+    from core.vool_wallet import WALLET_FILENAME
+    from core.wallet_spend_policy_store import policy_path
+
     names = {path.name for path in secret_files.known_secret_files()}
     assert names == {"credentials.enc.json", "credentials.meta.json", "voolbook_token.secret",
-                     "a8_digest_key.hex", "owner_identity.json", "journal.key"}
+                     "a8_digest_key.hex", "owner_identity.json", "journal.key", WALLET_FILENAME,
+                     policy_path().name}
     assert all(str(path).startswith(str(runtime_paths.data_path())) for path in secret_files.known_secret_files())
 
 
@@ -66,6 +70,21 @@ def test_with_sealing_the_startup_seal_creates_nothing(home, monkeypatch) -> Non
     monkeypatch.setattr(owner_only, "_SEAL_SECRETS", True)
     assert secret_files.repair_known_secret_files() == {}
     assert not [path for path in secret_files.known_secret_files() if path.exists()]
+    assert not runtime_paths.data_path("keys").exists() or not any(runtime_paths.data_path("keys").iterdir())
+
+
+def test_with_sealing_a_never_read_wallet_file_is_sealed_at_startup(home, monkeypatch) -> None:
+    """SA: the wallet file is the same "never read, never repaired" case as the Voolbook token."""
+    from core.vool_wallet import VoolWallet
+
+    monkeypatch.setattr(owner_only, "_SEAL_SECRETS", True)
+    wallet = VoolWallet().wallet_path
+    wallet.parent.mkdir(parents=True, exist_ok=True)
+    wallet.write_text("old wallet", encoding="utf-8")
+    wallet.chmod(0o644)
+    assert secret_files.repair_known_secret_files() == {}
+    assert _mode(wallet) == 0o600
+    assert owner_only.verify_owner_only(wallet).ok
 
 
 def test_with_sealing_a_file_that_cannot_be_sealed_is_reported_and_boot_goes_on(home, monkeypatch) -> None:
