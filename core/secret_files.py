@@ -31,6 +31,18 @@ def known_secret_files() -> list[Path]:
         data_path("owner_identity.json"),
     ]
     try:
+        from core.vool_wallet import VoolWallet
+
+        paths.append(VoolWallet().wallet_path)  # the legacy wallet file; only its path is computed
+    except Exception:
+        pass
+    try:
+        from core.wallet_spend_policy_store import policy_path
+
+        paths.append(policy_path())  # written through the wallet's private writer
+    except Exception:
+        pass
+    try:
         from core.blackbox.store import store_root
 
         paths.append(Path(store_root()) / "journal.key")
