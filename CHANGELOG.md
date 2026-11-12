@@ -29,20 +29,16 @@ Windows 11, 64-bit. Windows needs 16 GB of RAM. With less, VOOL refuses to load 
 ### Known issues on Windows
 - Moves work only between marked folders under your user folder, and moving between marked folders also needs the chat's own folder to be marked.
 - A relative `..` path resolves from the chat's folder, not from a subfolder you named, and VOOL refuses it.
-- The chat's working-folder label shows `.` instead of the folder's name.
 - On a PC without a supported GPU, a code task takes about 8 to 11 minutes.
 - If you've set OLLAMA_HOST yourself, VOOL says its model isn't certified and won't chat. Unset OLLAMA_HOST and restart VOOL.
-- A move to a network share gets a vague answer instead of a plain refusal; nothing is opened or moved.
-- Asking in chat to download a cloud model gets a vague answer; nothing is downloaded.
 - Give full paths when you ask VOOL to move a file.
 - Starting a new chat sets the mode back to Manual. Pick Plan again after New chat.
 - PDF reading isn't available on Windows in 0.7.1. Asking VOOL to read a PDF says so and runs nothing. Apple Notes is a Mac app, so its tools aren't offered on Windows.
 - On Windows, a Python script run inside VOOL that makes a temporary folder outside the folder it's allowed to write (tempfile.mkdtemp or TemporaryDirectory with an outside dir) waits until the job's time limit, then reports a timeout instead of a permission error. Nothing is created outside. Temporary folders inside the allowed folder, including pytest's tmp_path, work normally.
 - After a run in a subfolder of a marked folder, a run in the marked folder itself is refused, because sandbox entries left by the earlier run count as another writer. Nothing changes. Run in the subfolder instead.
-- Asking "run the tests in <folder> with pytest" asks for approval twice and then summarises the result. Ask "run pytest in <folder>" to see pytest's own output.
 - The approval card for undoing a create or edit says 'No specific path reported' and 'May not be reversible', but undo restores the exact earlier file, and refuses if the file changed since.
 - With cloud off, the Test button for a stored key and `cloud test` say cloud models are off.
-- Minor: `vool://` links, focus on a second launch, the `/stopall` text, reminders and the rules list.
+- Reminders and the rules list have small display problems.
 
 ### Planned
 - A native Windows sandbox for the remaining code tools (AppContainer + Job Object).
