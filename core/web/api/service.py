@@ -1344,6 +1344,19 @@ def dispatch_get(
             )
         return apply_runtime_headers(json_response(200, payload), runtime)
 
+    if normalized_path == "/api/chat/commands":
+        # The slash commands that really work, for the composer's "/" list. The same table /help
+        # answers from (core/slash_commands.py), so the two never disagree.
+        from core.slash_commands import WORKING_SLASH_COMMANDS
+
+        return apply_runtime_headers(
+            json_response(
+                200,
+                {"commands": [{"command": command, "description": text} for command, text in WORKING_SLASH_COMMANDS]},
+            ),
+            runtime,
+        )
+
     if normalized_path == "/api/chat/sessions":
         # Sidebar list: distinct chat threads from the conversation log (verbatim user/assistant
         # turns), distinct from /api/runtime/sessions which is the task-rail/event view.
@@ -6883,6 +6896,7 @@ def _dispatch_post_inner(
             "new_session_id",
             "through_turn",
             "project_id",
+            "mode",
         }
         if unknown:
             return apply_runtime_headers(json_response(400, {"error": f"unknown fields: {sorted(unknown)}"}), runtime)
@@ -6892,6 +6906,27 @@ def _dispatch_post_inner(
         session_id = session_id.strip()
         if len(session_id) > 200 or any(ord(ch) < 32 for ch in session_id):
             return apply_runtime_headers(json_response(400, {"error": "invalid session_id"}), runtime)
+
+        if "mode" in body:
+            # The chat's composer mode, remembered with the chat (Manual, Review edits, Auto or Plan; never
+            # bypass). A request of its own: it changes nothing else, and it never creates a chat.
+            if set(body) - {"session_id", "mode"}:
+                return apply_runtime_headers(
+                    json_response(400, {"error": "mode cannot be combined with other fields"}), runtime
+                )
+            from core.memory.entries import _set_session_mode as set_session_mode
+
+            try:
+                stored = set_session_mode(session_id, str(body.get("mode") or ""))
+            except ValueError:
+                return apply_runtime_headers(
+                    json_response(400, {"error": "mode must be manual, review_edits, auto or plan"}), runtime
+                )
+            return apply_runtime_headers(
+                json_response(200, {"session_id": session_id, "mode": str(body.get("mode")).strip().lower(),
+                                    "stored": bool(stored)}),
+                runtime,
+            )
 
         if body.get("delete") is True and body.get("operation"):
             return apply_runtime_headers(
