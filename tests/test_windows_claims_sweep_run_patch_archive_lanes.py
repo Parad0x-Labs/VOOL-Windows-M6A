@@ -122,6 +122,7 @@ PATCH_ASKS = {
 def test_a_pasted_patch_is_applied_through_the_patch_tool(machine, chat, jobs, form) -> None:
     talk = chat(machine["proj"])
     target = machine["proj"] / "calc.py"
+    target.write_bytes(CALC.encode("utf-8"))  # LF on every host: on Windows write_text gives CRLF, which the patch tool refuses
 
     card, reply = talk.ask_allow_resume(PATCH_ASKS[form].replace("{proj}", str(machine["proj"])))
 
@@ -134,6 +135,7 @@ def test_a_pasted_patch_is_applied_through_the_patch_tool(machine, chat, jobs, f
 def test_a_patch_that_does_not_match_the_file_changes_nothing_and_says_so(machine, chat) -> None:
     talk = chat(machine["proj"])
     target = machine["proj"] / "calc.py"
+    target.write_bytes(CALC.encode("utf-8"))  # LF on every host: on Windows write_text gives CRLF, which the patch tool refuses
     stale = DIFF.replace("-    return a + b", "-    return a - b")
 
     _card, reply = talk.ask_allow_resume("apply this patch\n" + stale)
