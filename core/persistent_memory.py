@@ -1877,6 +1877,23 @@ def _finish_forget_turn_admission(result, *, user_text, session_id, source_conte
     execution = verified_forget_outcome(
         result, user_input=user_text, session_id=session_id, source_context=source_context,
     )
+    if execution is None and _admission_recovery_enabled() and _rules_lane_finished_take_back(
+        user_text, session_id=session_id, turn_keys=_turn_keys_of(source_context),
+    ):
+        # "Forget the rule about X": the rules lane answered the whole turn and no memory forget was owed,
+        # so this admission's barrier is lifted here (Steve, 12 Nov: before, it stayed pending for good and
+        # every memory read in its scope failed closed). A rules error never gets here: it stays pending.
+        try:
+            with ExitStack() as locks:
+                for home, _ in sorted(operations):
+                    locks.enter_context(revocation.serialized(home))
+                for home, operation in operations:
+                    revocation.complete(operation, home)
+                _forget_outcomes.release_admission(**owner)
+        except Exception:
+            _, failure = _forget_start_failure(user_text, session_id=session_id, source_context=source_context, started=True)
+            return {**result, "response": failure, "_memory_command_outcome": failure}
+        return result
     if execution is None or not _forget_outcomes.admission_ready(**owner):
         return result
     try:
@@ -1890,6 +1907,130 @@ def _finish_forget_turn_admission(result, *, user_text, session_id, source_conte
         _, failure = _forget_start_failure(user_text, session_id=session_id, source_context=source_context, started=True)
         return {**result, "response": failure, "_memory_command_outcome": failure}
     return result
+
+
+def _admission_recovery_enabled() -> bool:
+    """The one seam for both admission fixes (the take-back finishing its own admission, and startup recovery).
+
+    All operating systems: a fail-closed bug fix that removes a barrier nothing else can lift. A Windows-only
+    decision is ``return sys.platform == "win32"`` here."""
+    return True
+
+
+_RULES_LANE_ANSWERS = frozenset({"rules.remove", "rules.answer"})
+
+
+def _turn_keys_of(source_context) -> set[str]:
+    """This turn's own keys, as the rules lane files its facts (its turn key and its request id)."""
+    from core.execution_truth import resolve_turn_key
+    from core.memory.command_result import command_turn_key
+
+    context = dict(source_context or {})
+    return {resolve_turn_key(context, None), command_turn_key(context), str(context.get("request_id") or "").strip()} - {""}
+
+
+def _rules_lane_finished_take_back(user_text, *, session_id, turn_keys) -> bool:
+    """A whole-turn rules take-back ("forget the rule about X", naming no second forget) that the rules lane
+    answered without an error on THIS turn: its own ok rules fact under one of this turn's keys. No memory
+    forget was owed by such a turn."""
+    try:
+        from core.execution_truth import facts_for_turn
+        from core.user_rules import rules_command_owns_forget
+
+        if not rules_command_owns_forget(str(user_text or "")):
+            return False
+        session = str(session_id or "").strip()
+        return any(
+            fact.name in _RULES_LANE_ANSWERS and fact.ok and fact.session_id == session
+            for key in turn_keys if key
+            for fact in facts_for_turn(key, session_id=session)
+        )
+    except Exception:
+        return False
+
+
+def _transcript_turn_keys(row) -> set[str]:
+    """The keys a transcript row's turn files its facts under: its request id, and that id without the
+    ingress prefix ("req:http:<id>" files facts as "<id>")."""
+    request_id = str((row or {}).get("request_id") or "").strip()
+    return {request_id, request_id.rsplit(":", 1)[-1]} - {""} if request_id else set()
+
+
+def _recover_admissions(runtime_home=None) -> dict[str, int]:
+    """Roll a stuck rule take-back admission forward at startup, never back, and leave everything else alone.
+
+    An admission op's token is a marker, sha256 of (chat, sorted forget targets), not a forget word: completing
+    it revokes nothing and restores nothing, it only lifts the barrier. So it is completed only when it is proven
+    that no memory forget was owed: exactly one user turn in that chat's own transcript recomputes the marker,
+    with non-empty targets; that turn is a whole-turn rules take-back; and the rules lane answered THAT turn
+    without an error. Any other pending admission (a turn that crashed mid-forget, an ambiguous or missing turn)
+    stays pending and withheld, with a fixed line logged. Recovery only ever completes an op: it never deletes,
+    rewrites or reorders rows and never touches a kind=forget op. The transcript is read internally and never
+    served or logged; a log line names only a short hash of the op id. Idempotent: a completed op is not pending.
+    """
+    import json as _json
+    import logging
+    from hashlib import sha256
+
+    from core.memory import revocation
+    from core.memory.command_result import forget_demand_targets
+
+    log = logging.getLogger("core.memory.revocation")
+    counts = {"completed": 0, "kept_pending": 0}
+    if not _admission_recovery_enabled():
+        return counts
+    home = revocation._home(runtime_home)
+    directory = revocation._directory(home)
+    if not (directory / "ledger.json").exists():
+        return counts
+    try:
+        with revocation.serialized(home):
+            data = revocation._read(directory)
+            revocation._check_leases(directory)
+            revocation._dependencies(home)
+            pending = [(op_id, row) for op_id, row in data["operations"].items()
+                       if row["status"] == "pending" and row.get("kind") == "admission"]
+            if not pending:
+                return counts
+            transcript = []
+            path = conversation_log_path()
+            if path.exists():
+                for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                    try:
+                        row = _json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(row, dict):
+                        transcript.append(row)
+            for op_id, op in pending:
+                short = sha256(op_id.encode("utf-8")).hexdigest()[:10]
+                chat = op["chat"]
+                matches = []
+                for row in transcript:
+                    if str(row.get("session_id") or "") != chat:
+                        continue
+                    text = str(row.get("user") or "")
+                    targets = forget_demand_targets(text)
+                    if targets and sha256(repr((chat, sorted(targets))).encode("utf-8")).hexdigest() == op["token"]:
+                        matches.append(row)
+                reason = ""
+                if len(matches) != 1:
+                    reason = "admission request not found" if not matches else "admission request is ambiguous"
+                elif not _rules_lane_finished_take_back(
+                    str(matches[0].get("user") or ""), session_id=chat, turn_keys=_transcript_turn_keys(matches[0]),
+                ):
+                    reason = "admission is not a finished rule take-back"
+                if reason:
+                    counts["kept_pending"] += 1
+                    log.warning("forget admission %s stays pending: %s", short, reason)
+                    continue
+                revocation.complete(op_id, home)
+                counts["completed"] += 1
+                log.warning("forget admission %s completed: a finished rule take-back", short)
+    except RuntimeError as exc:
+        reason = str(exc) if str(exc) in revocation._FIXED_REFUSALS else type(exc).__name__
+        log.warning("forget admission recovery stopped: %s", reason)
+    return counts
 
 
 def _command_erasure_fence(fn):
