@@ -93,11 +93,12 @@ def test_a_name_the_patch_tool_refuses_is_shown_as_written_and_said_so() -> None
     assert mpp._patch_targets_display({"patch": ""}, {"workspace": "/nonexistent/ws"}) == []
 
 
-def test_the_display_is_the_same_off_windows(machine, monkeypatch) -> None:
-    """The card's resource list is computed the same on every host (an all-OS fix)."""
+def test_off_windows_the_patch_card_is_built_as_before(machine, monkeypatch) -> None:
+    """Windows only (the write gate's seam): off Windows the patch card's resource list is the one it was."""
     context = {"workspace": str(machine["proj"])}
     on = mpp._affected_resources_display({"patch": DIFF}, context, intent="workspace.apply_unified_diff")
     monkeypatch.setattr(gate, "_IS_WINDOWS", False)
     off = mpp._affected_resources_display({"patch": DIFF}, context, intent="workspace.apply_unified_diff")
 
-    assert on == off == [str((machine["proj"] / "calc.py").resolve())]
+    assert on == [str((machine["proj"] / "calc.py").resolve())]
+    assert off == []
