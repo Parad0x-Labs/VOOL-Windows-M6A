@@ -403,6 +403,13 @@ def should_attempt_tool_intent(
     if bool(source_context.get("live_info_partial_unresolved")):
         return True
 
+    # Windows: a whole-message Python or pytest command line ("python -m compileall .", "run: python -c
+    # ...") is the run lane's, read by the same reader the planner plans it from
+    # (`_windows_python_command`). Claims sweep: these turns returned False here, so the planner was
+    # never asked and the model answered with output it made up. Off Windows this is always "".
+    if _windows_python_command(text):
+        return True
+
     # Recording a fact for this chat is ordinary conversation. Do not expose it to
     # the model's tool schema merely because the optional catalog is enabled.
     if is_conversational_memory_declaration(text) or is_conversational_memory_recall(text):
@@ -2571,13 +2578,67 @@ def _windows_command_in_folder(user_text: str) -> tuple[str, str]:
         # downstream, and looking one up is already the network connection.
         if paths.typed_path_kind(text, start, candidate) or not _on_a_local_drive(candidate):
             continue
-        lead = _RUN_IN_FOLDER_LEAD_RE.search(text[:start])
-        if lead is None or not _RUN_IN_FOLDER_TAIL_RE.fullmatch(text[start + len(candidate):]):
+        after = text[start + len(candidate):]
+        # "in <folder> run: <command>" (claims sweep): the folder first, then the run request.
+        leading = _LEADING_FOLDER_LEAD_RE.fullmatch(text[:start])
+        follows = _LEADING_FOLDER_TAIL_RE.match(after) if leading is not None else None
+        if follows is not None:
+            command = _windows_python_command(after[follows.end():])
+            if command:
+                return command, candidate
             continue
-        command = _explicit_command_request(text[: lead.start()])
+        lead = _RUN_IN_FOLDER_LEAD_RE.search(text[:start])
+        if lead is None or not _RUN_IN_FOLDER_TAIL_RE.fullmatch(after):
+            continue
+        command = _windows_python_command(text[: lead.start()]) or _explicit_command_request(text[: lead.start()])
         if command:
             return command, candidate
     return "", ""
+
+
+#: Before the folder of "in <folder> run: <command>": the message's start, " in ", an optional quote.
+_LEADING_FOLDER_LEAD_RE = re.compile(
+    r"\s*(?:(?:please|pls|can\s+you|could\s+you|would\s+you|vool)[\s,]+)*in\s+[\"'`]?", re.IGNORECASE
+)
+#: After it: an optional closing quote, an optional comma or colon, then the run request itself.
+_LEADING_FOLDER_TAIL_RE = re.compile(r"[\"'`]?\s*[,:]?\s+(?=(?:run|execute|exec)\b)", re.IGNORECASE)
+#: The programs `_windows_python_command` reads whole: the ones the Windows sandbox runs.
+_WINDOWS_PYTHON_PROGRAMS = frozenset({"python", "python3", "py", "pytest", "py.test"})
+
+
+def _windows_python_command(user_text: str) -> str:
+    """On Windows, the whole Python or pytest command line a one-line run request names, else ``""``.
+
+    Claims sweep (Windows, marked folder): `_explicit_command_request` reads a command a word of
+    `[A-Za-z0-9_./:-]` at a time and only after "run ", so `run python -c "print(2+2)"` was planned as
+    `python -c` (refused as "'-c' with nothing after it"), and a bare `python -m compileall .` or
+    "run: python -c ..." planned nothing and went to the model, which made up the output. The command
+    is read here the way the front door's run-request reader reads it
+    (`core.agent_runtime.windows_program_request.requested_command`: "run[:] <command>", or a message
+    that is itself a `python -<flag> ...` command line), and only for the programs the Windows sandbox
+    runs. Nothing is allowed here: the job runner's phase-1 argv allowlist
+    (`sandbox.job_runner._windows_python_args_refusal`), the approval and the folder gates still decide
+    the call. Off Windows this is always ``""``."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return ""
+    from core.agent_runtime.windows_program_request import requested_command
+
+    command = requested_command(user_text)
+    program = command.split()[0].strip("\"'`") if command.split() else ""
+    name = program.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    stem = name[:-4] if name.endswith(".exe") else name
+    if "/" in program or "\\" in program or stem not in _WINDOWS_PYTHON_PROGRAMS:
+        return ""
+    return command
+
+
+def _windows_names_a_full_path(user_text: str) -> bool:
+    """Whether ``user_text`` names any full path (read without looking anything up)."""
+    from core.agent_runtime import write_root_honesty as paths
+
+    return any(True for _ in paths._destination_candidates(str(user_text or ""), look_up=False))
 
 
 def _normalize_inline_command(command: str) -> str:
@@ -3000,6 +3061,11 @@ def plan_tool_workflow(
     folder_command, explicit_cwd = _windows_command_in_folder(typed_request)
     if folder_command:
         explicit_command = folder_command
+    elif (whole_command := _windows_python_command(typed_request)) and not _windows_names_a_full_path(typed_request):
+        # Windows: a one-line Python or pytest run request is read whole (`_windows_python_command`), so
+        # `-c "<code>"` keeps its code and a bare `python -m compileall .` is a run. A request naming a
+        # full path keeps the reading it had. Off Windows `whole_command` is "" and nothing changes.
+        explicit_command = whole_command
     compare_or_verify = any(marker in lowered for marker in (" compare ", " versus ", " vs ", " verify ", " confirm ", " is it true "))
     lookup_followup_text = ""
     if followup_resume and not (looks_like_explicit_lookup_request(text) or looks_like_public_entity_lookup_request(text)):

@@ -15,9 +15,11 @@ It is saved only when:
 * it is not a one-off ("this time", "just now", "for now", "here", "in this chat", "today", "this once").
 
 A take-back ("stop adding the summary line", "forget the rule about units", "you no longer need to …") removes
-the saved instruction it names by topic. Nothing else removes or rewrites one.
+the saved instruction it names by topic, and the Remove button on the Settings page removes one by id
+(`remove_by_id`). Nothing else removes or rewrites one.
 
-Scope is the owner AND the workspace: an instruction given in one workspace never reaches another.
+Scope is the owner AND the workspace: an instruction given in one workspace never reaches another. A chat with no
+project on the default folder is its own workspace (`workspace_key`): its rules stay in that chat.
 `standing_block` renders stored instructions only — no search, nothing retrieved — so this block can never
 carry text from a record, a web page or history into the prompt.
 """
@@ -230,11 +232,20 @@ def _save(rows: list[dict[str, Any]]) -> None:
 
 
 def workspace_key(source_context: Mapping[str, Any] | None, project_id: str = "") -> str:
-    """The workspace an instruction belongs to: the bound project, else the turn's folder, else the default."""
+    """The workspace an instruction belongs to: the bound project, else the turn's folder, else the default.
+
+    A chat with no project whose folder is only the default one every unbound chat gets (the Desktop in the
+    installed app, core.web.api.runtime.default_workspace_root) keys by the CHAT: that folder is shared by every
+    unbound chat, so keying by it would carry a rule into all of them. The owner's decision (Option B). A chat
+    bound to a project or to a folder it named keeps the project or folder key.
+    """
     ctx = dict(source_context or {})
     project = str(project_id or ctx.get("_trusted_project_id") or ctx.get("project_id") or "").strip()
     if project:
         return f"project:{project}"
+    chat = str(ctx.get("chat_id") or "").strip()
+    if chat and _default_folder_binding(ctx.get("workspace_binding")):
+        return "chat:" + chat
     folder = str(ctx.get("workspace_root") or ctx.get("workspace") or "").strip()
     if folder:
         if windows_path_policy.refused_form(folder, network_only=True):
@@ -242,6 +253,25 @@ def workspace_key(source_context: Mapping[str, Any] | None, project_id: str = ""
             return "folder:" + folder
         return "folder:" + os.path.realpath(folder)
     return "default"
+
+
+def _default_folder_binding(binding: Any) -> bool:
+    """Whether the chat lane placed this turn in the default folder: "default", or a marked folder an
+    unbound chat's code ask was placed in for one turn (core.windows_marked_code_folder), which binds no chat."""
+    value = str(binding or "").strip()
+    if value == "default":
+        return True
+    if not value:
+        return False
+    from core.windows_marked_code_folder import BINDING
+
+    return value == BINDING
+
+
+def applies_to(workspace: str) -> str:
+    """Where a rule saved under this key applies, for the save confirmation: chat, project, folder or default."""
+    kind = str(workspace or "").split(":", 1)[0]
+    return kind if kind in {"chat", "project", "folder"} else "default"
 
 
 def _topic(text: str) -> tuple[str, ...]:
@@ -266,7 +296,7 @@ def list_instructions(principal: str, workspace: str) -> list[Instruction]:
 
 
 def list_active() -> list[Instruction]:
-    """Every active instruction in the store, oldest first: what the Memory page shows the owner (read-only).
+    """Every active instruction in the store, oldest first: what the Memory page shows the owner.
     Only owner-authored turns ever save one (`observe_turn`), so the whole store is the owner's."""
     with _LOCK:
         rows = _load()
@@ -320,12 +350,35 @@ def _remove_matching(principal: str, workspace: str, words: tuple[str, ...]) -> 
                 continue
             topic = set(row.get("topic") or ())
             if topic & set(words):
-                row["status"] = "taken_back"
-                row["taken_back_at"] = time.time()
+                _take_back_row(row)
                 removed.append(str(row.get("text")))
         if removed:
             _save(rows)
     return removed
+
+
+def _take_back_row(row: dict[str, Any]) -> None:
+    row["status"] = "taken_back"
+    row["taken_back_at"] = time.time()
+
+
+def remove_by_id(instruction_id: str) -> str | None:
+    """Take back the one active instruction with this id (the Settings page's Remove button).
+
+    The same row update a chat take-back makes. Returns the removed text, or None when no active
+    instruction has this id. Only owner-authored turns ever save one, so the whole store is the owner's.
+    """
+    wanted = str(instruction_id or "").strip()
+    if not wanted:
+        return None
+    with _LOCK:
+        rows = _load()
+        for row in rows:
+            if str(row.get("id") or "") == wanted and row.get("status") == "active":
+                _take_back_row(row)
+                _save(rows)
+                return str(row.get("text") or "")
+    return None
 
 
 # --------------------------------------------------------------------------- reading a turn
@@ -750,9 +803,11 @@ def standing_block(source_context: Mapping[str, Any] | None, *, principal: str =
 __all__ = [
     "BLOCK_HEADER",
     "Instruction",
+    "applies_to",
     "list_instructions",
     "observe_turn",
     "read_turn",
+    "remove_by_id",
     "standing_block",
     "workspace_key",
 ]

@@ -30,9 +30,19 @@ import re
 
 _REQUEST_RE = re.compile(
     r"^\s*(?:(?:please|pls|can\s+you|could\s+you|would\s+you|vool)[\s,]+)*"
-    r"(?:run|execute|exec|launch|start)\s+"
+    r"(?:run|execute|exec|launch|start)\s*:?\s+"
     r"(?:(?:the|this)\s+)?(?:(?:command|program|app|application|executable)\s+)?"
-    r"(?P<command>.+?)\s*(?:,?\s*(?:please|for\s+me|now))?\s*[.!?]?\s*$",
+    r"(?P<command>.+?)\s*(?:,?\s*(?:please|for\s+me|now))?\s*(?:(?<!\s)[.!?])?\s*$",
+    re.IGNORECASE,
+)
+#: "in C:\\...\\proj run: python -c ..." (claims sweep, Windows): the folder comes first, then the run
+#: request. Only a full path is taken as the folder (a drive letter, a root or `~`, optionally quoted), so
+#: "in the tests folder run pytest" is not read here. The folder itself is read by the planner's path
+#: reader (`core.execution.planner._windows_command_in_folder`); this only finds the command.
+_LEADING_FOLDER_RE = re.compile(
+    r"^\s*(?:(?:please|pls|can\s+you|could\s+you|would\s+you|vool)[\s,]+)*"
+    r"in\s+[\"'`]?(?:[A-Za-z]:[\\/]|[\\/~])[^\n]*?[\"'`]?\s*[,:]?\s+"
+    r"(?P<rest>(?:run|execute|exec)\b[^\n]*)$",
     re.IGNORECASE,
 )
 #: Suffixes that make a word a Windows program file.
@@ -61,7 +71,7 @@ _TOOL_REQUEST_RE = re.compile(
 )
 _TOOL_COMMANDS = {"ruff": {"lint": "ruff check .", "check": "ruff check .", "format": "ruff format ."}}
 _LEAD = r"^\s*(?:(?:please|pls|can\s+you|could\s+you|would\s+you|vool)[\s,]+)*"
-_TAIL = r"\s*(?:,?\s*(?:please|for\s+me|now))?\s*[.!?]?\s*$"
+_TAIL = r"\s*(?:,?\s*(?:please|for\s+me|now))?\s*(?:(?<!\s)[.!?])?\s*$"
 #: A whole message that IS a command line, with no "run" before it: "pip install requests",
 #: "py -m pip install x", "npm install", "ruff check .". Only programs whose next word is one of their
 #: own subcommands or a flag, so a sentence that starts with the word ("pip is slow", "python is
@@ -105,6 +115,9 @@ def requested_command(text: str) -> str:
     raw = str(text or "")
     if not raw.strip() or "\n" in raw.strip():
         return ""
+    leading = _LEADING_FOLDER_RE.match(raw)
+    if leading:
+        return requested_command(leading.group("rest"))
     tool = _TOOL_REQUEST_RE.match(raw)
     if tool:
         commands = _TOOL_COMMANDS.get(tool.group("tool").lower())

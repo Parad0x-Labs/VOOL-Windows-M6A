@@ -5,7 +5,9 @@ Ported from the ux-pass1 companion drawer, bound to real state only:
 - MEMORY — the rows `core/memory/entries.py` actually stores (`/api/memory/entries`), shown
   with their REAL stored scope/category/source (never the prototype's EXPLICIT/INFERRED triad
   forced onto different storage), each with a Forget that removes exactly that record
-  (`/api/memory/forget`, id-scoped by construction). Empty is stated.
+  (`/api/memory/forget`, id-scoped by construction). Empty is stated. Above them, the rules VOOL
+  follows (`/api/memory/standing-instructions`), each with a Remove that takes back exactly that
+  rule after a confirm (`/api/memory/standing-instructions/remove`, id-scoped).
 - PRIVACY & DATA — a read-only disclosure of what is true today: where data lives, what is
   encrypted, what leaves the machine and when. The prototype's retention/cloud-learning
   TOGGLES do not ship: no server enforcement exists for them, and an unenforced toggle is a
@@ -89,7 +91,9 @@ function renderRules(){
     rules.innerHTML = rows.map(function(row){
       return '<div class="vs-mem-item" data-vs-rule="' + esc(row.id) + '">' +
         '<span class="vs-tag">' + esc(String(row.workspace || '').split(':')[0] || 'rule') + '</span>' +
-        '<span>' + esc(row.text) + '</span></div>';
+        '<span>' + esc(row.text) + '</span>' +
+        (row.id ? '<button type="button" class="vs-forget vs-rule-remove" title="' + esc(XT('vx.memory.rule_remove_title', 'Stop following this rule in every chat')) + '">' + esc(XT('vx.memory.rule_remove', 'remove')) + '</button>' : '') +
+        '</div>';
     }).join('');
   }).catch(function(){
     rules.innerHTML = '<div class="vs-empty">' + XT('vx.memory.rules_unreadable', 'Saved rules could not be read.') + '</div>';
@@ -118,6 +122,22 @@ function renderMemory(){
     list.innerHTML = '<div class="vs-empty">' + XT('vx.memory.unreadable', 'Memory could not be read.') + '</div>';
   });
 }
+document.addEventListener('click', function(ev){
+  var btn = ev.target.closest && ev.target.closest('.vs-rule-remove');
+  if (!btn) return;
+  var row = btn.closest('[data-vs-rule]');
+  var ruleId = row && row.getAttribute('data-vs-rule');
+  if (!ruleId) return;
+  if (!window.confirm(XT('vx.memory.rule_remove_confirm', 'Remove this rule? VOOL will stop following it.'))) return;
+  btn.disabled = true;
+  fetch('/api/memory/standing-instructions/remove', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: ruleId }),
+  }).then(function(r){ return r.json(); }).then(function(j){
+    if (j && j.removed) { row.remove(); if (memSec && !memSec.querySelector('[data-vs-rule]')) renderRules(); }
+    else { btn.disabled = false; btn.textContent = XT('vx.memory.not_removed', 'not removed'); }
+  }).catch(function(){ btn.disabled = false; });
+});
 document.addEventListener('click', function(ev){
   var btn = ev.target.closest && ev.target.closest('.vs-forget');
   if (!btn) return;

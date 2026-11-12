@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import os
 import re
+import threading
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -61,6 +63,39 @@ _STOPALL_RE = re.compile(
     r")\s*(?:[.!]+\s*)?$",
     re.IGNORECASE,
 )
+
+# The second step of the full shutdown. A /stopall phrase only arms a per-session pending flag;
+# this confirm, sent from the same session within the window, is what runs the shutdown -- once.
+_STOPALL_CONFIRM_RE = re.compile(
+    r"^\s*(?:"
+    r"/?stop[\s_-]?all\s+confirm"
+    r"|yes[\s,]+(?:please\s+)?(?:shut\s*down|shutdown|kill|stop)\s+(?:all\s+of\s+)?vool"
+    r")\s*(?:[.!]+\s*)?$",
+    re.IGNORECASE,
+)
+_STOPALL_CONFIRM_SECONDS = 60.0
+_pending_stopall: dict[str, float] = {}
+_pending_lock = threading.Lock()
+
+
+def _now() -> float:
+    return time.monotonic()
+
+
+def _arm_stopall(session_id: str) -> None:
+    now = _now()
+    with _pending_lock:
+        for key, deadline in list(_pending_stopall.items()):
+            if deadline < now:
+                del _pending_stopall[key]
+        _pending_stopall[session_id] = now + _STOPALL_CONFIRM_SECONDS
+
+
+def _take_stopall(session_id: str) -> bool:
+    """Consume this session's pending shutdown. True only if it was armed and has not expired."""
+    with _pending_lock:
+        deadline = _pending_stopall.pop(session_id, None)
+    return deadline is not None and _now() <= deadline
 
 
 def _response(text: str, *, intent: str, success: bool = True) -> dict[str, Any]:
@@ -143,23 +178,44 @@ def maybe_handle_agent_brake(
 ) -> dict[str, Any] | None:
     """Handle /stopall (full shutdown), /stopx402 (freeze) and /startx402 (unfreeze); else None.
 
-    ``session_id`` is accepted for a uniform handler signature; the freeze is global to
-    the wallet, not per session, so it is intentionally unused.
+    ``session_id`` keys the two-step ``/stopall`` confirm: a /stopall phrase only arms that
+    session's pending shutdown, and ``/stopall confirm`` from the same session within
+    ``_STOPALL_CONFIRM_SECONDS`` runs it, once. The freeze is global to the wallet, not per
+    session, so /stopx402 and /startx402 do not use it and stay one step.
 
     ``owner_local`` marks a request from the machine owner's own local session (see
     :mod:`core.request_trust`). The two risk-increasing directions are gated on it:
-    ``/stopall`` (a full daemon shutdown — a remote DoS otherwise) and ``/startx402``
+    ``/stopall`` and its confirm (a full daemon shutdown — a remote DoS otherwise) and ``/startx402``
     (unfreeze — re-enabling spend). Freezing (``/stopx402``) is the safe direction and stays
     reachable from anywhere, so an emergency stop is never blocked. Defaults to True for
     trusted in-process callers (CLI); the HTTP dispatcher passes the loopback-derived value.
     """
     text = str(user_text or "")
+    stopall_key = str(session_id or "")
+    asked = bool(_STOPALL_RE.match(text))
+    confirmed = not asked and bool(_STOPALL_CONFIRM_RE.match(text))
 
-    if _STOPALL_RE.match(text):
+    if asked or confirmed:
         if not owner_local:
             return _response(
                 "A full VOOL shutdown can only be triggered from your own local session, "
                 "not a remote channel or a non-local caller.",
+                intent="agent_brake_stopall",
+                success=False,
+            )
+        if asked:
+            # Step one runs nothing: it arms this session's confirm and says what would stop.
+            _arm_stopall(stopall_key)
+            return _response(
+                "This stops all of VOOL (the window, the API and the local model runner). "
+                f"Type `/stopall confirm` within {int(_STOPALL_CONFIRM_SECONDS)} seconds to go ahead.",
+                intent="agent_brake_stopall",
+            )
+        if not _take_stopall(stopall_key):
+            return _response(
+                "There is no VOOL shutdown waiting to be confirmed in this chat, so nothing was "
+                "stopped. Type `/stopall` first, then `/stopall confirm` within "
+                f"{int(_STOPALL_CONFIRM_SECONDS)} seconds.",
                 intent="agent_brake_stopall",
                 success=False,
             )
@@ -178,11 +234,18 @@ def maybe_handle_agent_brake(
                 intent="agent_brake_stopall",
                 success=False,
             )
-        relaunch = "from the Start menu" if windows else "from the desktop shortcut"
+        if windows:
+            # The bundle supervisor's stop signal stops the window, the API and Ollama. Windows
+            # has no OpenClaw gateway and no auto-restart task, so neither is named.
+            return _response(
+                "Shutting down VOOL now: the window, the API and the local model runner (Ollama). "
+                "VOOL stays off until you start it again from the Start menu.",
+                intent="agent_brake_stopall",
+            )
         return _response(
             "Shutting down all of VOOL now -- the API, the OpenClaw gateway, the agent, and the "
             "auto-restart task. The dashboard will go offline in a few seconds and stay down until "
-            f"you launch VOOL again {relaunch}.",
+            "you launch VOOL again from the desktop shortcut.",
             intent="agent_brake_stopall",
         )
 

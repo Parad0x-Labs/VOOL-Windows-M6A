@@ -1427,6 +1427,9 @@
     "vx.memory.forget_title": "Užmiršti būtent šį įrašą",
     "vx.memory.not_removed": "nepašalinta",
     "vx.memory.reading": "Skaitoma atmintis…",
+    "vx.memory.rule_remove": "pašalinti",
+    "vx.memory.rule_remove_title": "Nebesilaikyti šios taisyklės jokiame pokalbyje",
+    "vx.memory.rule_remove_confirm": "Pašalinti šią taisyklę? VOOL jos nebesilaikys.",
     "vx.memory.rules_title": "Taisyklės, kurių VOOL laikosi kiekviename pokalbyje",
     "vx.memory.rules_empty": "Išsaugotų taisyklių nėra. Pokalbyje duota taisyklė, pvz., „visada atsakyk punktais“, atsiras čia.",
     "vx.memory.rules_hint": "Norėdami pašalinti taisyklę, pokalbyje paprašykite VOOL to nebedaryti.",
@@ -1926,7 +1929,7 @@
     "fault.wallet_payment_channel_off.action": "Įjunkite mokėjimo kanalą Kripto nustatymuose tik jei norite, kad mokėjimai eitų per jį; riba ir jūsų patvirtinimas galioja kiekviename kanale.",
     "fault.wallet_x402_sdk_unavailable.message": "Ši versija negali apmokėti x402 pasiūlymų Base tinkle per x402 Foundation SDK: šiame kompiuteryje neįdiegtas pasirenkamas papildinys x402. Niekas nebuvo pasirašyta ar išsiųsta. Visos kitos piniginės funkcijos veikia ir be jo; jį įdiegę bandykite dar kartą."
   },
-  "source_catalog_sha256": "bd03a5e5c6911bc59a646cb238e2735f993f2f8f309e65ceb1459c51bee1eb1e",
+  "source_catalog_sha256": "5832614598870b146a8da6d7191435dba25abe1758229157d21f6b28a8b3569d",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1936,6 +1939,7 @@
     "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
-    "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)"
+    "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
+    "standing_rule_remove_addendum": "3 standing-rule Remove keys translated by the lane author (single writer)"
   }
 }

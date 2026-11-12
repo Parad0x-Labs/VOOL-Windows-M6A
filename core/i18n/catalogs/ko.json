@@ -1427,6 +1427,9 @@
     "vx.memory.forget_title": "정확히 이 항목만 잊기",
     "vx.memory.not_removed": "제거되지 않음",
     "vx.memory.reading": "메모리를 읽는 중…",
+    "vx.memory.rule_remove": "삭제",
+    "vx.memory.rule_remove_title": "모든 채팅에서 이 규칙 따르기 중단",
+    "vx.memory.rule_remove_confirm": "이 규칙을 삭제할까요? VOOL이 더 이상 이 규칙을 따르지 않습니다.",
     "vx.memory.rules_title": "VOOL이 모든 채팅에서 따르는 규칙",
     "vx.memory.rules_empty": "저장된 규칙이 없습니다. “항상 글머리표로 답해 줘”처럼 채팅에서 준 규칙이 여기에 표시됩니다.",
     "vx.memory.rules_hint": "규칙을 없애려면 채팅에서 VOOL에게 그만하라고 말하세요.",
@@ -1926,7 +1929,7 @@
     "fault.wallet_payment_channel_off.action": "그 채널로 결제하려는 경우에만 암호화폐 설정에서 결제 채널을 켜세요; 한도와 사용자 승인은 모든 채널에 적용됩니다.",
     "fault.wallet_x402_sdk_unavailable.message": "이 빌드는 x402 Foundation SDK를 통해 Base의 x402 제안을 결제할 수 없습니다: 선택적 x402 추가 요소가 이 기기에 설치되지 않았습니다. 서명되거나 보내진 것은 없습니다. 지갑의 다른 모든 기능은 없이도 작동합니다; 설치한 뒤 다시 시도하세요."
   },
-  "source_catalog_sha256": "bd03a5e5c6911bc59a646cb238e2735f993f2f8f309e65ceb1459c51bee1eb1e",
+  "source_catalog_sha256": "5832614598870b146a8da6d7191435dba25abe1758229157d21f6b28a8b3569d",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1936,6 +1939,7 @@
     "windows_wording_addendum": "12 Windows keys translated by the lane author (single writer)",
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
-    "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)"
+    "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
+    "standing_rule_remove_addendum": "3 standing-rule Remove keys translated by the lane author (single writer)"
   }
 }

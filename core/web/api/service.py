@@ -2196,9 +2196,10 @@ def dispatch_get(
         return apply_runtime_headers(json_response(_us_status, payload), runtime)
 
     if normalized_path == "/api/memory/standing-instructions":
-        # The rules VOOL follows in every chat of a workspace (core/standing_instructions.py), listed read-only on
-        # the Memory page so the owner can see what was saved. Owner-local, like the memory listing. Removal stays
-        # the chat take-back ("stop answering in bullet points"); this route writes nothing.
+        # The rules VOOL follows in every chat of a workspace (core/standing_instructions.py), listed on the
+        # Memory page so the owner can see what was saved. Owner-local, like the memory listing. This route writes
+        # nothing: removal is the chat take-back ("stop answering in bullet points") or the page's Remove button
+        # (POST /api/memory/standing-instructions/remove).
         if not is_loopback_host(client_host):
             return apply_runtime_headers(json_response(403, {"ok": False, "error": "owner_local_required"}), runtime)
         from core.standing_instructions import list_active
@@ -5889,6 +5890,42 @@ def _dispatch_post_inner(
         from core.web.api.context_pages_api import handle_context_pages_post
 
         return handle_context_pages_post(body=body, runtime=runtime, client_host=client_host)
+
+    if normalized_path == "/api/memory/standing-instructions/remove":
+        # The Settings page's Remove button: take back exactly one standing instruction by id, the same row
+        # update a chat take-back makes (core.standing_instructions.remove_by_id). Owner-local + the standard
+        # POST guard suite, like /api/memory/forget below.
+        from core.web.api.runtime import host_header_allowed as _sr_host_allowed
+
+        def _sr_header(name: str) -> str:
+            for key, value in (headers or {}).items():
+                if str(key).lower() == name:
+                    return str(value or "")
+            return ""
+
+        _sr_ct = _sr_header("content-type").lower()
+        if _sr_ct and "json" not in _sr_ct:
+            return apply_runtime_headers(json_response(415, {"error": "content-type must be application/json"}), runtime)
+        _sr_origin = _sr_header("origin").strip()
+        if _sr_origin and not _sr_host_allowed(_sr_origin.split("://", 1)[-1]):
+            return apply_runtime_headers(json_response(403, {"error": "cross-origin request not allowed"}), runtime)
+        if not is_loopback_host(client_host):
+            return apply_runtime_headers(json_response(403, {"ok": False, "error": "owner_local_required"}), runtime)
+        unknown_sr = set(body.keys()) - {"id"}
+        if unknown_sr:
+            return apply_runtime_headers(json_response(400, {"error": f"unknown fields: {sorted(unknown_sr)}"}), runtime)
+        instruction_id = body.get("id")
+        if not isinstance(instruction_id, str) or not instruction_id.strip():
+            return apply_runtime_headers(json_response(400, {"error": "missing or invalid id"}), runtime)
+        from core.standing_instructions import remove_by_id
+
+        removed_text = remove_by_id(instruction_id.strip())
+        if removed_text is None:
+            return apply_runtime_headers(json_response(404, {"ok": False, "error": "unknown_instruction"}), runtime)
+        return apply_runtime_headers(
+            json_response(200, {"ok": True, "removed": True, "id": instruction_id.strip(), "text": removed_text}),
+            runtime,
+        )
 
     if normalized_path == "/api/memory/forget":
         # Remove exactly one remembered entry by record id. Owner-local + the standard POST

@@ -489,6 +489,35 @@ def _windows_program_turn(
     }
 
 
+def _windows_archive_read_turn(
+    agent: Any,
+    text: str,
+    *,
+    session_id: str,
+    user_input: str,
+    source_context: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """The answer to a Windows read of a 7z or RAR archive no reader opens there; None otherwise."""
+    from core.agent_runtime.windows_archive_read import windows_archive_read_refusal
+
+    try:
+        response = windows_archive_read_refusal(text, source_context=source_context)
+    except Exception:  # an unknown state answers nothing here: the other lanes see the turn as before
+        response = ""
+    if not response:
+        return None
+    return {
+        "result": agent._fast_path_result(
+            session_id=session_id,
+            user_input=user_input,
+            response=response,
+            confidence=0.95,
+            source_context=source_context,
+            reason="windows_archive_unreadable",
+        )
+    }
+
+
 def _windows_marked_file_turn(
     agent: Any,
     text: str,
@@ -996,6 +1025,23 @@ def handle_turn_frontdoor(
             )
         }
 
+    # "Where are my keys stored?" — the live backend, never the model. Before the key-status
+    # intent, which would read "where is my cloud key stored" as "is a key stored".
+    from core.agent_runtime.fast_command_surface import maybe_handle_key_location_intent
+
+    key_location_reply = maybe_handle_key_location_intent(_intent_input, owner_local=_owner_local)
+    if key_location_reply is not None:
+        return {
+            "result": agent._fast_path_result(
+                session_id=session_id,
+                user_input=effective_input,
+                response=key_location_reply,
+                confidence=0.95,
+                source_context=source_context,
+                reason="key_location_intent",
+            )
+        }
+
     # "Do we have the key set?" — answered from the credential store, never by the model.
     key_status_reply = maybe_handle_cloud_key_status_intent(_intent_input, owner_local=_owner_local)
     if key_status_reply is not None:
@@ -1086,11 +1132,29 @@ def handle_turn_frontdoor(
     # merely describing HY3. Ambiguous/refused cases come back advice_only (no action ran).
     import uuid as _uuid
 
-    _nl_actions = () if action_forbidden else (
-        maybe_handle_cloud_switch_intent,
-        maybe_handle_catalog_refresh_intent,
-        maybe_handle_connection_test_intent,
-    )
+    from core.agent_runtime.fast_command_surface import is_exact_cloud_test
+
+    if is_exact_cloud_test(_intent_input):
+        # The exact `cloud test` command is answered in every mode. Plan mode (read-only) and a
+        # turn whose actions are off get advice, never the probe.
+        from core.mode_permission_policy import OperatingMode, effective_mode_state
+
+        _cloud_test_read_only = action_forbidden or (
+            str(effective_mode_state(source_context).get("mode") or "") == OperatingMode.PLAN.value
+        )
+
+        def _exact_cloud_test(text: str, *, owner_local: bool) -> dict[str, Any] | None:
+            return maybe_handle_connection_test_intent(
+                text, owner_local=owner_local, read_only=_cloud_test_read_only
+            )
+
+        _nl_actions = (_exact_cloud_test,)
+    else:
+        _nl_actions = () if action_forbidden else (
+            maybe_handle_cloud_switch_intent,
+            maybe_handle_catalog_refresh_intent,
+            maybe_handle_connection_test_intent,
+        )
     for _nl_action in _nl_actions:
         _action = _nl_action(
             _intent_input,
@@ -1880,6 +1944,19 @@ def handle_turn_frontdoor(
     )
     if program_turn is not None:
         return program_turn
+    # On Windows, a read of a 7z or RAR archive, which no reader opens there (its decoder runs only
+    # confined), is answered here in the readers' own words, instead of by the operator lane as a move
+    # into `archive_outbox`, the machine read lane's folder list, or the model's guess
+    # (core.agent_runtime.windows_archive_read, claims sweep).
+    archive_turn = _windows_archive_read_turn(
+        agent,
+        raw_user_input,
+        session_id=session_id,
+        user_input=effective_input,
+        source_context=source_context,
+    )
+    if archive_turn is not None:
+        return archive_turn
     # On Windows, an edit, an undo of it, or a move of a file the owner names inside a marked folder
     # runs there, through the normal approval and the write gate, instead of in the chat's own
     # workspace (an unbound chat's Desktop) (core.windows_marked_file_ops, captest R1-4).
