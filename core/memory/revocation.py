@@ -723,9 +723,26 @@ def authorize_payload(payload, chat_id=None, runtime_home=None, *, owner_memory=
         payload = memory_words(payload)
         return not any(carries(payload, token) for token in tokens) and not payload_is_withdrawn(payload, tokens)
     except Exception as exc:
-        # Still withheld; the type only, since the error's text can carry the withheld words.
-        _log.warning("authorize_payload failed (%s); the payload is withheld", type(exc).__name__)
+        # Still withheld; the type only, since the error's text can carry the withheld words -- except the
+        # authority's own fixed refusals below, which carry none and say which one withheld it (12 Nov: 583
+        # bare "RuntimeError" lines an hour on Steve could not be told apart).
+        reason = str(exc) if type(exc) is RuntimeError and str(exc) in _FIXED_REFUSALS else ""
+        _log.warning("authorize_payload failed (%s%s); the payload is withheld",
+                     type(exc).__name__, ": " + reason if reason else "")
         return False
+
+
+# The authority's own refusal texts: fixed strings that never hold payload words, safe to log.
+_FIXED_REFUSALS = frozenset({
+    'independent forget authority is unavailable', 'forget authority is invalid',
+    'forget authority operation is invalid', 'forget authority dependencies are invalid',
+    'forget authority routing could not be verified', 'forget authority is absent for initialized memory',
+    'forget authority lease was abandoned', 'forget authority lease identity changed',
+    'forget authority lease is invalid', 'forget authority has an unclean lease',
+    'forget authority is absent for recorded erasure', 'forget authority is absent for retained memory',
+    'independent forget authority failed', 'memory erasure is incomplete',
+    'owner revocation authority is unavailable', 'owner erasure is incomplete',
+})
 
 
 @contextlib.contextmanager
