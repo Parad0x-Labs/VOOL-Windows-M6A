@@ -2251,15 +2251,22 @@ def dispatch_get(
             except Exception:
                 chat_ids = []
         merged: dict[str, dict[str, Any]] = {}
-        for chat_id in chat_ids:
-            try:
-                chat_rows = list_memory_entries(chat_id=chat_id, limit=limit)
-            except Exception:
-                continue
-            for row in chat_rows:
-                record_id = str(row.get("record_id") or "")
-                if record_id and record_id not in merged:
-                    merged[record_id] = row
+        # One reading of the forget authority for the whole listing (core/memory/revocation.py _one_reading),
+        # the same as the chat list: each chat's revocations are read once under one held fence, instead of
+        # the memory store being opened twice for every authority check -- four checks per chat, so 46 to
+        # 147 s per call on Steve (12 Nov) with an empty memory list.
+        from core.memory.revocation import _one_reading
+
+        with _one_reading():
+            for chat_id in chat_ids:
+                try:
+                    chat_rows = list_memory_entries(chat_id=chat_id, limit=limit)
+                except Exception:
+                    continue
+                for row in chat_rows:
+                    record_id = str(row.get("record_id") or "")
+                    if record_id and record_id not in merged:
+                        merged[record_id] = row
         # One listing keeps the store's own order; several are merged by creation time.
         rows = list(merged.values())
         if len(chat_ids) > 1:
