@@ -834,6 +834,13 @@
       "registry_command_id": "",
       "surface": "http"
     },
+    "http:GET:/api/chat/commands": {
+      "classification": "EXTERNAL_TRANSPORT_ONLY",
+      "name": "GET /api/chat/commands",
+      "note": "chat lane read feed (the static list of slash commands that work; no input, read-only)",
+      "registry_command_id": "",
+      "surface": "http"
+    },
     "http:GET:/api/chat/deliverable": {
       "classification": "EXTERNAL_TRANSPORT_ONLY",
       "name": "GET /api/chat/deliverable",
@@ -3105,7 +3112,7 @@
   },
   "totals": {
     "DEAD": 0,
-    "EXTERNAL_TRANSPORT_ONLY": 304,
+    "EXTERNAL_TRANSPORT_ONLY": 305,
     "GENERATED_ADAPTER": 130,
     "LEGACY_UNMIGRATED": 0,
     "REGISTRY_OWNED": 8

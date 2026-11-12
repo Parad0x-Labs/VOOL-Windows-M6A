@@ -614,8 +614,63 @@ def generation(chat_id=None, runtime_home=None) -> str:
         return json.dumps({str(home): data for home, data in _authority_set(runtime_home, chat_id).items()}, sort_keys=True)
 
 
+# One serving request's reading of the revocation authority (see _one_reading). Thread-local: a request runs on one
+# thread, and another thread's request never sees this one's memo.
+_ONE_READING = threading.local()
+
+
+@contextlib.contextmanager
+def _one_reading():
+    """Read the default home's revocations once per chat for the whole block, under one held fence.
+
+    Measured 2026-11-12 (Steve round, 101 chats): the chat list asked the authority again for every transcript row,
+    and each ask opened the memory store twice (with its schema check), about 0.1 s each, so the list took 25-34 s.
+    Inside this block both fences stay held, so no forget can complete or start between two rows; the tokens a
+    chat gets are therefore exactly what a fresh read would give, and the store is opened once. Anything this
+    block cannot set up (a store that will not open) leaves every read on the ordinary per-call path, which fails
+    closed on its own. Only reads for the default home without an owner_memory use the memo. Nested blocks reuse
+    the outer one."""
+    if getattr(_ONE_READING, 'state', None) is not None:
+        yield
+        return
+    from core import context_retrieval as cr
+    home = _home()
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(serialized(home))
+        memories = []
+        for opener in (lambda: cr._open_memory_for_runtime(None), cr._open_memory):
+            memory = opener()
+            if memory is None:
+                break
+            stack.callback(memory.close)
+            memories.append(memory)
+        if len(memories) != 2:
+            yield
+            return
+        _ONE_READING.state = {'home': home, 'memories': memories, 'tokens': {}}
+        try:
+            yield
+        finally:
+            _ONE_READING.state = None
+
+
+def _one_reading_tokens(state, chat_id) -> tuple[str, ...]:
+    key = str(chat_id) if chat_id else None
+    if key not in state['tokens']:
+        tokens = set(snapshot(chat_id, None))
+        for memory in state['memories']:
+            tokens.update(snapshot(chat_id, memory._authority_home))
+            tokens.update(memory.revoked_tokens(chat_id, strict=True, include_pending=True))
+        # Stored only after the whole read succeeded: a failed read is asked again (and fails closed) next time.
+        state['tokens'][key] = tuple(sorted(tokens))
+    return state['tokens'][key]
+
+
 def revoked_tokens(chat_id=None, runtime_home=None, *, owner_memory=None) -> tuple[str, ...]:
     """One authority for independent barriers and every selected owner ledger."""
+    state = getattr(_ONE_READING, 'state', None)
+    if state is not None and owner_memory is None and _home(runtime_home) == state['home']:
+        return _one_reading_tokens(state, chat_id)
     homes = {_home(runtime_home)}
     if owner_memory is None:
         homes.add(_home())

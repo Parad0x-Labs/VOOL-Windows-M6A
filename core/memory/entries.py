@@ -67,10 +67,25 @@ def _authorized_reader_payload(payload: Any, *, chat_id: str | None = None) -> b
     return all(authorize_payload(payload, chat_id=origin) for origin in origins) if origins else authorize_payload(payload)
 
 
-def _memory_reader(function: Any = None, *, owner_keys: bool = False) -> Any:
-    """Register serving APIs and recheck their completed output through the shared authority."""
+def _memory_reader(function: Any = None, *, owner_keys: bool = False, one_reading: bool = False) -> Any:
+    """Register serving APIs and recheck their completed output through the shared authority.
+
+    ``one_reading`` runs the reader and its recheck inside revocation._one_reading: one held fence and one
+    revocation read per chat for the whole call, for readers that check every transcript row."""
     if function is None:
-        return lambda reader: _memory_reader(reader, owner_keys=owner_keys)
+        return lambda reader: _memory_reader(reader, owner_keys=owner_keys, one_reading=one_reading)
+    if one_reading:
+        inner = _memory_reader(function, owner_keys=owner_keys)
+
+        @wraps(function)
+        def read_once(*args: Any, **kwargs: Any) -> Any:
+            from core.memory.revocation import _one_reading
+
+            with _one_reading():
+                return inner(*args, **kwargs)
+
+        _MEMORY_READERS[function.__name__] = read_once
+        return read_once
     parameters = signature(function)
 
     @wraps(function)
@@ -1132,6 +1147,41 @@ def set_session_meta(
         return entry
 
 
+#: The composer modes a chat remembers. Bypass is never one of them: it lives only as a short,
+#: explicitly confirmed grant, and a chat reopened later always starts below it.
+_CHAT_MODES = frozenset({"manual", "review_edits", "auto", "plan"})
+
+
+def _set_session_mode(session_id: str, mode: str) -> bool:
+    """Remember the composer mode a chat was last set to, with the chat, on the server.
+
+    The page kept it only in the window's browser storage, which the desktop window does not keep
+    across a restart, so a chat set to Plan came back as Manual. Stored only for a chat that already
+    exists (a namespace or metadata of its own); it never creates one, so choosing a mode in an unsent
+    draft does not make a sidebar entry. True when stored. An unknown mode, bypass included, is
+    refused with ValueError and nothing is written.
+    """
+    sid = str(session_id or "").strip()
+    clean = str(mode or "").strip().lower()
+    if clean not in _CHAT_MODES:
+        raise ValueError("unsupported chat mode")
+    if not sid:
+        return False
+    from core.memory.revocation import writing
+
+    with writing({}, sid), _SESSION_META_LOCK:
+        meta = _load_session_meta_raw()
+        if sid not in meta and load_chat_namespace(sid) is None:
+            return False
+        entry = dict(meta.get(sid) or {})
+        if entry.get("mode") == clean:
+            return True
+        entry["mode"] = clean
+        meta[sid] = entry
+        _write_session_meta_atomic(meta)
+    return True
+
+
 def _update_session_meta_fields(session_id: str, fields: dict[str, Any]) -> None:
     """Persist additional writer-owned metadata through the same carrier fence."""
     from core.memory.revocation import writing
@@ -1147,7 +1197,12 @@ def _update_session_meta_fields(session_id: str, fields: dict[str, Any]) -> None
         _write_session_meta_atomic(meta)
 
 
-@_memory_reader
+def _stored_mode(override: Any) -> str:
+    mode = str((override or {}).get("mode") or "").strip().lower() if isinstance(override, dict) else ""
+    return mode if mode in _CHAT_MODES else ""
+
+
+@_memory_reader(one_reading=True)
 def list_conversation_sessions(*, limit: int = 60) -> list[dict[str, Any]]:
     """Distinct chat sessions from the conversation log, newest-active first.
 
@@ -1232,6 +1287,7 @@ def list_conversation_sessions(*, limit: int = 60) -> list[dict[str, Any]]:
         )
         entry["emoji"] = str(override.get("emoji") or "")
         entry["color"] = str(override.get("color") or "")
+        entry["mode"] = _stored_mode(override)
     # A chat bound to a project (or renamed) BEFORE its first message has meta but no transcript yet —
     # surface it so it appears in the sidebar (under its project) immediately, not only after turn one.
     for raw_sid, override in meta.items():
@@ -1263,6 +1319,7 @@ def list_conversation_sessions(*, limit: int = 60) -> list[dict[str, Any]]:
             "project_id": project_id,
             "emoji": emoji,
             "color": color,
+            "mode": _stored_mode(override),
         }
     sessions = sorted(by_session.values(), key=lambda item: str(item.get("updated_at") or ""), reverse=True)
     return sessions[: max(1, int(limit))]

@@ -455,6 +455,16 @@ def _unremembered_subject_question(text: str) -> str:
     return " ".join(match.group("subject").casefold().split())
 
 
+def _memory_lane_owns_attribute_question(text: str) -> bool:
+    """Whether ``text`` is the narrow "what is my <modifier> <attribute>?" shape this lane owns.
+
+    Read by the entity-ambiguity eligibility gate (`core.entity_ambiguity`), which runs before the
+    front door and so before this lane. A personal attribute ("my test animal") names no outside
+    entity that could have several referents; only this lane or the model can answer it.
+    """
+    return bool(_unremembered_subject_question(text))
+
+
 def _unremembered_subject_line(subject: str) -> str:
     # Wording follows core.personal_knowledge.PERSONAL_KNOWLEDGE_ADMISSION ("If you tell me, I can
     # remember it"), minus its "for next time": a chat fact does not carry into the next chat, and

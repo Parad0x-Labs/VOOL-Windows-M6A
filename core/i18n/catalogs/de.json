@@ -649,7 +649,7 @@
     "header.pins_title": "Angeheftete Nachrichten in diesem Chat",
     "header.run_auto_defaults": "Dieser Chat nutzt VOOL Auto. Die angezeigten Verbindungen sind mögliche Auto-Standards und keine Auswahl für diesen Chat.",
     "header.run_blocked_title": "Die KI dieses Chats läuft auf diesem Computer. Cloud-KI ist gesperrt, aber die Websuche geht weiterhin hinaus. Klicken, um ein Modell zu wählen.",
-    "header.run_computer_only": "Nur dieser Computer",
+    "header.run_computer_only": "Nur lokal",
     "header.run_computer_only_hint": "Cloud gesperrt · Websuche bleibt an",
     "header.run_connect": "Verbinden",
     "header.run_connected": "verbunden",
@@ -1930,7 +1930,7 @@
     "fault.wallet_payment_channel_off.action": "Schalte einen Zahlungskanal in den Krypto-Einstellungen nur ein, wenn Zahlungen darüber laufen sollen; die Obergrenze und deine Freigabe gelten auf jedem Kanal.",
     "fault.wallet_x402_sdk_unavailable.message": "Dieser Build kann keine x402-Angebote auf Base über das x402 Foundation SDK bezahlen: Die optionale Erweiterung x402 ist auf diesem Rechner nicht installiert. Es wurde nichts signiert oder gesendet. Jede andere Wallet-Funktion läuft ohne sie; nach der Installation versuche es erneut."
   },
-  "source_catalog_sha256": "b24f342ac74655da1584cff91734d6da0c234893a4987a63750e9942599ada86",
+  "source_catalog_sha256": "f124eaf64a998ab66f2b07c0bd7af29c9b30be85da0b7c92648c89f88e6532ca",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

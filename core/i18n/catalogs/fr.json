@@ -649,7 +649,7 @@
     "header.pins_title": "Messages épinglés dans ce chat",
     "header.run_auto_defaults": "Cette discussion utilise VOOL Auto. Les connexions affichées sont les choix par défaut qu’Auto peut utiliser, pas une sélection pour cette discussion.",
     "header.run_blocked_title": "L’IA de cette discussion fonctionne sur cet ordinateur. L’IA cloud est bloquée, mais la recherche web sort toujours. Cliquez pour choisir un modèle.",
-    "header.run_computer_only": "Cet ordinateur uniquement",
+    "header.run_computer_only": "Local uniquement",
     "header.run_computer_only_hint": "cloud bloqué · recherche web active",
     "header.run_connect": "Connecter",
     "header.run_connected": "connecté",
@@ -1930,7 +1930,7 @@
     "fault.wallet_payment_channel_off.action": "Activez un canal de paiement dans les réglages Crypto seulement si vous voulez que des paiements passent par lui ; le plafond et votre approbation s'appliquent sur chaque canal.",
     "fault.wallet_x402_sdk_unavailable.message": "Cette version ne peut pas payer les offres x402 sur Base via le x402 Foundation SDK : l'extra optionnel x402 n'est pas installé sur cette machine. Rien n'a été signé ni envoyé. Toutes les autres fonctions du portefeuille marchent sans lui ; une fois installé, réessayez."
   },
-  "source_catalog_sha256": "b24f342ac74655da1584cff91734d6da0c234893a4987a63750e9942599ada86",
+  "source_catalog_sha256": "f124eaf64a998ab66f2b07c0bd7af29c9b30be85da0b7c92648c89f88e6532ca",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

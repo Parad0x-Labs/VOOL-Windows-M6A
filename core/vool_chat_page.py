@@ -291,6 +291,13 @@ code { background:var(--bg); border:1px solid var(--border); border-radius:5px; 
    under the pointer and a click meant for it landed on an action. The title keeps its width, the
    whole row opens the chat, and "⋯" opens the actions in a small menu beside it. */
 #sessions .session { position:relative; cursor:pointer; }
+/* The composer's "/" list of slash commands that work (core/slash_commands.py). */
+.slash-menu { position:fixed; z-index:70; max-height:240px; overflow-y:auto; padding:4px; background:var(--panel); border:1px solid var(--border); border-radius:10px; box-shadow:0 8px 26px rgba(0,0,0,.5); }
+.slash-menu[hidden] { display:none; }
+.slash-item { display:flex; gap:10px; align-items:baseline; padding:6px 8px; border-radius:6px; cursor:pointer; font-size:13px; }
+.slash-item b { flex:0 0 auto; color:var(--ink); font-weight:600; }
+.slash-item span { color:var(--muted); min-width:0; }
+.slash-item.on, .slash-item:hover { background:var(--active); }
 #sessions .s-more { display:none; flex:0 0 auto; background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:14px; line-height:1; padding:2px 6px; border-radius:4px; }
 #sessions .s-more:hover, #sessions .s-more[aria-expanded="true"] { color:var(--ink); background:var(--bg); }
 #sessions .session:hover .s-more, #sessions .session:focus-within .s-more, #sessions .s-more[aria-expanded="true"] { display:inline-block; }
@@ -1167,7 +1174,7 @@ body:not(.panel-open) #xpanel { display:none; }
       <div class="pop-title" id="runTitle" data-i18n="header.run_title">Where VOOL can run</div>
       <div class="run-switch" role="radiogroup" aria-labelledby="runTitle">
         <button type="button" class="run-choice" role="radio" aria-checked="true" data-run-model="vool"><b data-i18n="header.run_local_first">Local first</b><small data-i18n="header.run_local_first_hint">free cloud only if needed</small></button>
-        <button type="button" class="run-choice" role="radio" aria-checked="false" data-run-model="vool-local-only"><b data-i18n="header.run_computer_only">This computer only</b><small data-i18n="header.run_computer_only_hint">cloud blocked · web search still on</small></button>
+        <button type="button" class="run-choice" role="radio" aria-checked="false" data-run-model="vool-local-only"><b data-i18n="header.run_computer_only">Local Only</b><small data-i18n="header.run_computer_only_hint">cloud blocked · web search still on</small></button>
       </div>
       <div class="run-hint" data-i18n="header.run_explainer">Auto never picks a paid model. Choosing a model below pins it.</div>
       <div class="run-hint" id="runLocalDisclosure" hidden data-i18n="header.model_local_only_explainer">Local Only runs every AI model on this machine and never reaches a cloud provider: not paid, not free, not for planning. Web search still works. It runs through VOOL's built-in browser, so your search words go to the search engine (DuckDuckGo or Bing).</div>
@@ -2051,7 +2058,63 @@ const bootChatId = (() => {
 })();
 
 function loadSessionModes() { return _jget('vool_modes_v1', '{}'); }
+// A chat's mode is remembered WITH THE CHAT on the server (POST /api/chat/session {mode}), and the
+// sidebar list hands it back. The window's own storage is only a cache: the desktop window does not
+// keep it across a restart, so a chat set to Plan used to come back as Manual. Bypass is never kept.
+const _modeRestored = new Set();   // chats whose server mode this page has already adopted (or overruled)
+const _modePosted = new Set();     // chats whose window-remembered mode was already handed to the server
+function rememberableMode(mode) { return !!(mode && MODE_LABELS[mode] && mode !== 'bypass_permissions'); }
+function serverModeFor(sid) {
+  // Boot asks before the sidebar list (and its `let`) exists; that is "no server answer yet".
+  let list = [];
+  try { list = _lastSessions; } catch (e) { list = []; }
+  const rec = (list || []).find((s) => s.session_id === sid);
+  const mode = rec ? String(rec.mode || '') : '';
+  return rememberableMode(mode) ? mode : '';
+}
+async function postSessionMode(sid, mode) {
+  if (!sid || !rememberableMode(mode)) return false;
+  try {
+    const r = await fetch('/api/chat/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sid, mode: mode }) });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d && d.stored) {
+      const rec = _lastSessions.find((s) => s.session_id === sid);
+      if (rec) rec.mode = mode;
+      return true;
+    }
+  } catch (e) {}
+  return false;
+}
+// Called after each sidebar refresh: the displayed chat adopts its server mode once, and a chat the
+// server lists with no mode yet (its first turn just created it, or it predates this) is handed the
+// mode this window remembers for it, once.
+function adoptServerModes() {
+  const sid = displayedChat;
+  if (sid && !_modeRestored.has(sid)) {
+    const mode = serverModeFor(sid);
+    if (mode) {
+      _modeRestored.add(sid);
+      const st = chatState(sid);
+      if (!st.bypassGrant && !(st.run && !st.run.ended) && st.mode !== mode) {
+        st.mode = mode;
+        saveModeForSession(sid, mode, { local: true });
+        if (isDisplayed(sid)) reflectMode();
+      }
+    }
+  }
+  const local = loadSessionModes();
+  for (const s of _lastSessions) {
+    const sidN = s.session_id;
+    const want = local[sidN];
+    if (!s.mode && rememberableMode(want) && !_modePosted.has(sidN)) {
+      _modePosted.add(sidN);
+      postSessionMode(sidN, want);
+    }
+  }
+}
 function loadModeForSession(sid) {
+  const fromServer = serverModeFor(sid);
+  if (fromServer) { _modeRestored.add(sid); return fromServer; }
   const saved = loadSessionModes()[sid];
   if (saved && MODE_LABELS[saved] && saved !== 'bypass_permissions') return saved;
   // One-time migration from the retired global selector. Never migrate a bypass-like value.
@@ -2060,10 +2123,14 @@ function loadModeForSession(sid) {
   if (legacy) localStorage.removeItem('vool_mode');
   return migrated;
 }
-function saveModeForSession(sid, mode) {
+function saveModeForSession(sid, mode, opts) {
   if (!sid || mode === 'bypass_permissions' || !MODE_LABELS[mode]) return;
   const modes = loadSessionModes(); modes[sid] = mode;
   localStorage.setItem('vool_modes_v1', JSON.stringify(modes));
+  _modeRestored.add(sid);   // a mode set here is newer than whatever the last list said
+  // The server keeps it with the chat. It never creates a chat: an unsent draft's mode is handed
+  // over by adoptServerModes() once its first turn has made the chat.
+  if (!(opts && opts.local)) postSessionMode(sid, mode);
 }
 
 // ===================== DISPATCHER: per-chat state — BEGIN =====================
@@ -2446,7 +2513,7 @@ function showEmpty() {
     ['first_run.opener_7', 'Where do we start?']];
   const pick = openers[Math.floor(Math.random() * openers.length)];
   const line = emptyT(pick[0], pick[1]);
-  // A rotating fun fact — one per fresh session, quoted in an italic serif so it reads apart from
+  // A rotating fun fact — one per fresh session, set in an italic serif so it reads apart from
   // the greeting/opener. Two flavors, both TRUE: what VOOL genuinely does, and real how-AI-works
   // facts (including genuine "fails"). NO invented statistics — no made-up adoption % or market share.
   // Every fact resolves through the catalog (first_run.fact_*); the inline English is the honest
@@ -2478,7 +2545,9 @@ function showEmpty() {
   logEl.innerHTML = '<div class="empty">'
     + '<div class="empty-greet">' + esc(greet) + '</div>'
     + '<div class="empty-sub">' + esc(line) + '</div>'
-    + '<div class="empty-hint">“' + esc(emptyT(fact[0], fact[1])) + '”</div>'
+    // No quote marks of its own: several facts open or close with a quoted term ("Temperature", «Галлюцинация»,
+    // “幻觉”), so a wrapping pair doubled them. The italic serif line already sets the fact apart.
+    + '<div class="empty-hint">' + esc(emptyT(fact[0], fact[1])) + '</div>'
     + '</div>';
 }
 
@@ -3515,6 +3584,7 @@ function renderSessions(sessions) {
   // A chat that has sent its first message but is not yet in the server's log is overlaid here, so
   // it survives every re-render until the server's own record replaces it.
   _lastSessions = mergePendingSessions(sessions);
+  adoptServerModes();
   // Adopt the DISPLAYED chat's project from the record the server just returned. Boot restores
   // the transcript but never the binding, so without this a restart showed "General" until the
   // chat was clicked. The server's project_id stays authoritative (openSession's own derivation
@@ -3784,10 +3854,14 @@ function newChat() {
   // no run, no grant, no stickiness. Nothing needs clearing, and nothing the previous chat owned
   // can leak in.
   if (view.run && !view.run.ended) detachRunDom(view.run);
+  const carriedMode = rememberableMode(view.mode) ? view.mode : 'manual';
   setDisplayedChat(mintSessionId());
   restoreChatModel(displayedChat);
   localStorage.setItem('vool.sessionId', displayedChat);
-  view.mode = loadModeForSession(displayedChat);
+  // A new chat keeps the mode you were in (never bypass, which stays with its own grant). Kept in
+  // the window only until the first turn makes the chat; then the server remembers it too.
+  view.mode = carriedMode;
+  saveModeForSession(displayedChat, carriedMode, { local: true });
   reflectMode();
   // This is an unsent draft.  Keep its preference local until the user either explicitly changes
   // the mode or sends the first turn; merely pressing New must not create runtime Activity.
@@ -3844,10 +3918,12 @@ function applyProjectModel(pid) {
 async function newChatInProject(pid) {
   // No busy guard, for the same reason as newChat(): the chat being left keeps its run.
   if (view.run && !view.run.ended) detachRunDom(view.run);
+  const carriedMode = rememberableMode(view.mode) ? view.mode : 'manual';
   const sid = mintSessionId();
   setDisplayedChat(sid); localStorage.setItem('vool.sessionId', sid);
   restoreChatModel(sid);
-  view.mode = loadModeForSession(displayedChat);
+  view.mode = carriedMode;
+  saveModeForSession(sid, carriedMode, { local: true });
   reflectMode();
   activityHistory = [];   // panel-wide cross-session list, not chat state
   view.projectId = pid || '';
@@ -5142,6 +5218,16 @@ function finishRun(run, kind, summaryText, tsIso) {
   // No card means this run's chat is off screen: the state above is complete, and paintFinishedCard
   // will replay all of it onto a fresh card the moment the chat is opened again.
   paintFinishedCard(run);
+  // The companion hears a turn's end from the server's typed terminal frame. A turn the CLIENT
+  // ended -- Stop (pressed, Esc, or a typed /stop) aborts the stream before the server's
+  // task.cancelled can arrive, and a dropped connection has no frame at all -- would otherwise
+  // leave the pet narrating the last working phrase forever, since applyTaskEvent ignores
+  // everything once the run has ended. This site reports the end the card already shows.
+  if ((kind === 'cancelled' || kind === 'failed') && run.companionOpened && !run.companionTerminal
+      && typeof window !== 'undefined' && window.VoolCompanion) {
+    run.companionTerminal = true;
+    try { window.VoolCompanion.consume(run.chatId, { type: 'task.' + kind, ts: run.endedAt }); } catch (e) {}
+  }
   if (isDisplayed(run.chatId)) renderPanel();
   setTimeout(loadActivityHistory, 250);
   // Named fragment call site: lifecycle notifications. The fragment decides visibility (it only
@@ -5209,6 +5295,7 @@ function applyTaskEvent(run, ev) {
   // Placed before the switch because the terminal cases below return early. The typeof
   // guard keeps function-slicing harnesses (no DOM globals) running unchanged.
   if (typeof window !== 'undefined' && window.VoolCompanion) window.VoolCompanion.consume(run.chatId, ev);
+  if (ev.type === 'task.cancelled' || ev.type === 'task.failed' || ev.type === 'task.completed') run.companionTerminal = true;
   run.events.push(ev);
   if (ev.stage) { run.stage = ev.stage; run.evented = true; }
   if (ev.summary) { run.action = ev.summary; run.evented = true; }
@@ -7545,7 +7632,7 @@ async function runTurn(text, queueItemId, opts) {
   // acknowledgement arrived, the last card wore the previous turn's terminal phrase under a
   // `Working` header (measured 2026-09-06). `task.submitted` claims nothing about the server.
   if (typeof window !== 'undefined' && window.VoolCompanion) {
-    try { window.VoolCompanion.consume(chatId, { type: 'task.submitted', ts: run.start }); } catch (e) {}
+    try { window.VoolCompanion.consume(chatId, { type: 'task.submitted', ts: run.start }); run.companionOpened = true; } catch (e) {}
   }
   run.attachments = turnAttachments;
   reflectComposer();   // the Send button follows the DISPLAYED chat, which may not be this one
@@ -7865,6 +7952,18 @@ async function send() {
   const chatId = displayedChat;
   const draft = attachBucket(chatId);
   if (!text && !draft.length) return;
+  // `/stop` is the typed Esc: it presses the running task's Stop control through the same page
+  // action the Esc cascade uses (core/command_palette_fragment.py). It is never sent -- while a
+  // reply runs, a sent message would only be queued behind it. Staged attachments stay staged.
+  // The adapter is read as globalThis's: the page defines it once, further down this script.
+  if (/^\/stop$/i.test(text)) {
+    inputEl.value = '';
+    if (window.VoolComposerExtras) window.VoolComposerExtras.draftConsumed(chatId);
+    const p = globalThis.VoolPageActions;
+    if (p && p.hasLiveRun()) { if (p.stopDisplayedRun()) toast('Stopping…'); }
+    else toast('Nothing is running in this chat.');
+    return;
+  }
   // Attachments gate the send BEFORE the typed text is cleared: nothing is sent, nothing is
   // lost, and a second press after the upload is fixed sends the message exactly once.
   if (draft.some((i) => i.state === 'uploading')) { toast('Wait for the attachments to finish uploading.'); return; }
@@ -8930,7 +9029,7 @@ function reflectModel() {
   const where = document.getElementById('modelWhere');
   const known = !!modelValue && (MODEL_LABELS[modelValue] || isLocalModel(modelValue) || CLOUD_MODEL_ID_RE.test(modelValue));
   if (where) where.textContent = isLocalOnlyMode()
-    ? pageT('header.run_computer_only', 'This computer only')
+    ? pageT('header.run_computer_only', 'Local Only')
     : (known ? pageT('header.run_local_first', 'Local first') : String(modelValue || pageT('header.run_unknown', 'Unknown')));
   document.querySelectorAll('#modelPop .run-choice').forEach((it) => {
     const checked = known && (it.getAttribute('data-run-model') === LOCAL_ONLY_MODEL) === isLocalOnlyMode();
@@ -12277,8 +12376,91 @@ if (xpScopeEl) {
 // over category headlines and none of the evidence under them.
 const xpCopyEl = document.getElementById('xpCopy');
 if (xpCopyEl) xpCopyEl.addEventListener('click', () => copyPanelEvidence(xpCopyEl, panelTab || 'Activity'));
+// ---- "/" in the composer lists the slash commands that really work ----
+// One source: GET /api/chat/commands serves core/slash_commands.py, the same table /help answers
+// from. The list shows while the message is a single "/word"; arrows move, Tab or Enter picks
+// (Enter on a command already typed in full sends it), Esc closes. Nothing is sent by picking.
+let _slashCommands = null;
+let _slashIndex = 0;
+let _slashShown = [];
+const slashMenuEl = document.createElement('div');
+slashMenuEl.id = 'slashMenu'; slashMenuEl.className = 'slash-menu'; slashMenuEl.hidden = true;
+slashMenuEl.setAttribute('role', 'listbox'); slashMenuEl.setAttribute('aria-label', 'Slash commands');
+document.body.appendChild(slashMenuEl);
+async function loadSlashCommands() {
+  if (_slashCommands) return _slashCommands;
+  try {
+    const r = await fetch('/api/chat/commands');
+    const d = await r.json();
+    _slashCommands = Array.isArray(d && d.commands) ? d.commands.filter((c) => c && typeof c.command === 'string') : [];
+  } catch (e) { _slashCommands = null; return []; }
+  return _slashCommands;
+}
+function hideSlashMenu() { slashMenuEl.hidden = true; _slashShown = []; inputEl.removeAttribute('aria-activedescendant'); }
+let _slashPicked = '';   // the command just picked: the list stays closed until the text changes again
+function pickSlashCommand(i) {
+  const c = _slashShown[i];
+  if (!c) return;
+  inputEl.value = c.command;
+  _slashPicked = c.command;
+  hideSlashMenu();
+  inputEl.focus();
+  try { inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length); } catch (e) {}
+  inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+}
+function paintSlashMenu() {
+  slashMenuEl.textContent = '';
+  _slashShown.forEach((c, i) => {
+    const row = document.createElement('div');
+    row.className = 'slash-item' + (i === _slashIndex ? ' on' : '');
+    row.id = 'slashItem' + i; row.setAttribute('role', 'option'); row.setAttribute('aria-selected', i === _slashIndex ? 'true' : 'false');
+    const name = document.createElement('b'); name.textContent = c.command;
+    const text = document.createElement('span'); text.textContent = String(c.description || '');
+    row.appendChild(name); row.appendChild(text);
+    // mousedown, not click: the textarea must keep focus.
+    row.addEventListener('mousedown', (ev) => { ev.preventDefault(); pickSlashCommand(i); });
+    slashMenuEl.appendChild(row);
+  });
+  inputEl.setAttribute('aria-activedescendant', 'slashItem' + _slashIndex);
+  const r = inputEl.getBoundingClientRect();
+  slashMenuEl.style.left = Math.round(r.left) + 'px';
+  slashMenuEl.style.bottom = Math.round(window.innerHeight - r.top + 6) + 'px';
+  slashMenuEl.style.width = Math.round(Math.min(r.width, 520)) + 'px';
+}
+async function updateSlashMenu() {
+  const v = String(inputEl.value || '');
+  if (!/^\/[^\s]*$/.test(v)) { hideSlashMenu(); return; }
+  if (v === _slashPicked) { hideSlashMenu(); return; }
+  _slashPicked = '';
+  const all = await loadSlashCommands();
+  if (String(inputEl.value || '') !== v) return;   // typed on while the list was loading
+  const q = v.toLowerCase();
+  _slashShown = all.filter((c) => c.command.toLowerCase().startsWith(q));
+  if (!_slashShown.length) { hideSlashMenu(); return; }
+  _slashIndex = Math.min(_slashIndex, _slashShown.length - 1);
+  slashMenuEl.hidden = false;
+  paintSlashMenu();
+}
+inputEl.addEventListener('input', () => { _slashIndex = 0; updateSlashMenu(); });
+inputEl.addEventListener('blur', () => setTimeout(hideSlashMenu, 120));
+window.addEventListener('resize', hideSlashMenu);
 inputEl.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  if (slashMenuEl.hidden || !_slashShown.length) return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault(); e.stopImmediatePropagation();
+    _slashIndex = (_slashIndex + (e.key === 'ArrowDown' ? 1 : _slashShown.length - 1)) % _slashShown.length;
+    paintSlashMenu();
+  } else if (e.key === 'Escape') {
+    e.preventDefault(); e.stopImmediatePropagation(); hideSlashMenu();
+  } else if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+    const picked = _slashShown[_slashIndex];
+    // A command typed out in full is sent by Enter as before; anything else is completed first.
+    if (e.key === 'Enter' && picked && String(inputEl.value || '').toLowerCase() === picked.command.toLowerCase()) { hideSlashMenu(); return; }
+    e.preventDefault(); e.stopImmediatePropagation(); pickSlashCommand(_slashIndex);
+  }
+});
+inputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); hideSlashMenu(); send(); }
 });
 
 const modelConnectEl = document.getElementById('modelConnect');
@@ -12697,7 +12879,7 @@ _WINDOWS_FILE_ACTIONS = (
 # Windows, before a cloud key is stored and cloud is turned on (core/windows_cloud_gate.py): nothing
 # on the composer is labelled free cloud. The default lane stays VOOL Auto ("Local first", the lane
 # `modelForChat` gives every chat without a stored choice); with cloud off it runs no cloud model, and
-# its hint says so. "This computer only" is not made the default: it is zero public egress, web
+# its hint says so. "Local Only" is not made the default: it is zero public egress, web
 # search included. The swapped texts drop their i18n key, so a catalog cannot put the free-cloud
 # wording back; the same texts reach the page's i18n bundle through its owner
 # (``core.i18n.page_bundle.i18n_client_bundle_for``), so the bootstrap is served byte for byte as that

@@ -307,6 +307,7 @@ _EXTERNAL: dict[str, str] = {
     "http:GET:/api/notifications/preferences": "notifications lane read feed (preferences)",
     "http:GET:/api/notifications/native/status": "notifications lane read feed (native helper status)",
     # Windows broker lane (Phase C C5): the owner-local report the "Check and clear" banner reads.
+    "http:GET:/api/chat/commands": "chat lane read feed (the static list of slash commands that work; no input, read-only)",
     "http:GET:/api/memory/standing-instructions": "memory lane read feed (active standing instructions; loopback, read-only)",
     "http:POST:/api/memory/standing-instructions/remove": "memory lane operator action (take back one standing instruction by id; loopback, POST guards)",
     "http:GET:/api/windows/disposable-folders": "windows write-gate read feed (disposable folders; loopback, read-only)",

@@ -649,7 +649,7 @@
     "header.pins_title": "Bu sohbetteki sabitlenmiş iletiler",
     "header.run_auto_defaults": "Bu sohbet VOOL otomatik seçimini kullanır. Listelenen bağlantılar bu sohbetin seçimi değil, otomatik seçimin kullanabileceği varsayılanlardır.",
     "header.run_blocked_title": "Bu sohbetin yapay zekâsı bu bilgisayarda çalışır. Bulut yapay zekâsı engellidir, ancak web araması yine de dışarı çıkar. Model seçmek için tıklayın.",
-    "header.run_computer_only": "Yalnızca bu bilgisayar",
+    "header.run_computer_only": "Yalnızca Yerel",
     "header.run_computer_only_hint": "bulut engellendi · web araması açık",
     "header.run_connect": "Bağlan",
     "header.run_connected": "bağlı",
@@ -1930,7 +1930,7 @@
     "fault.wallet_payment_channel_off.action": "Bir ödeme kanalını Kripto ayarlarında yalnızca ödemelerin onun üzerinden yapılmasını istiyorsanız açın; tavan ve sizin onayınız her kanalda geçerlidir.",
     "fault.wallet_x402_sdk_unavailable.message": "Bu yapı x402 Foundation SDK üzerinden Base'deki x402 tekliflerini ödeyemez: isteğe bağlı x402 eki bu makinede kurulu değil. Hiçbir şey imzalanmadı veya gönderilmedi. Cüzdanın diğer her işlevi onsuz çalışır; kurulunca tekrar deneyin."
   },
-  "source_catalog_sha256": "b24f342ac74655da1584cff91734d6da0c234893a4987a63750e9942599ada86",
+  "source_catalog_sha256": "f124eaf64a998ab66f2b07c0bd7af29c9b30be85da0b7c92648c89f88e6532ca",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

@@ -649,7 +649,7 @@
     "header.pins_title": "इस चैट में पिन किए संदेश",
     "header.run_auto_defaults": "यह चैट VOOL के स्वचालित चयन पर है। दिखाए गए कनेक्शन उसके डिफ़ॉल्ट विकल्प हैं, इस चैट का चयन नहीं।",
     "header.run_blocked_title": "इस चैट का AI इस कंप्यूटर पर चलता है। क्लाउड AI अवरुद्ध है, लेकिन वेब खोज फिर भी बाहर जाती है। मॉडल चुनने के लिए क्लिक करें।",
-    "header.run_computer_only": "केवल यह कंप्यूटर",
+    "header.run_computer_only": "केवल लोकल",
     "header.run_computer_only_hint": "क्लाउड अवरुद्ध · वेब खोज चालू",
     "header.run_connect": "जोड़ें",
     "header.run_connected": "जुड़ा हुआ",
@@ -1930,7 +1930,7 @@
     "fault.wallet_payment_channel_off.action": "क्रिप्टो सेटिंग्स में भुगतान चैनल तभी चालू करें जब आप उसके ज़रिए भुगतान चाहते हों; सीमा और आपकी मंज़ूरी हर चैनल पर लागू होती है।",
     "fault.wallet_x402_sdk_unavailable.message": "यह बिल्ड x402 Foundation SDK के ज़रिए Base पर x402 ऑफ़र का भुगतान नहीं कर सकता: वैकल्पिक x402 ऐड-ऑन इस मशीन पर नहीं है। कुछ हस्ताक्षरित या भेजा नहीं गया। वॉलेट की बाकी हर सुविधा इसके बिना चलती है; इसे लगाने पर दोबारा कोशिश करें।"
   },
-  "source_catalog_sha256": "b24f342ac74655da1584cff91734d6da0c234893a4987a63750e9942599ada86",
+  "source_catalog_sha256": "f124eaf64a998ab66f2b07c0bd7af29c9b30be85da0b7c92648c89f88e6532ca",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
