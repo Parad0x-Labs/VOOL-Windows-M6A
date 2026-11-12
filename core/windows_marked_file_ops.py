@@ -457,7 +457,35 @@ def _patch(body: str, source_context: dict[str, Any] | None) -> MarkedFileAsk | 
         named, folder = own, _real_folder(own)
     if not folder or not windows_write_gate.inside_flagged(folder):
         return MarkedFileAsk("patch", refusal=_NOT_MARKED.format(path=named) + _NOTHING_CHANGED)
+    shared = _shared_patch_target(patch)
+    if shared:
+        return MarkedFileAsk("patch", refusal=shared)
     return MarkedFileAsk("patch", intent="workspace.apply_unified_diff", workspace=folder, arguments={"patch": patch})
+
+
+def _shared_patch_target(patch: str) -> str:
+    """The refusal for a patch that names a share or device path as a file it changes (Steve R21: a
+    `+++ \\\\localhost\\c$\\x.txt` got an approval card), in the words every other lane uses; "" otherwise.
+    Read from the diff's names alone (the patch tool's own list), with nothing looked up: looking up
+    `\\\\localhost\\c$` already opens the network connection. The patch tool's own refusal stays the backstop.
+    Windows only (`windows_path_policy.active()`)."""
+    from core import windows_path_policy
+
+    if not windows_path_policy.active():
+        return ""
+    try:
+        from core.execution.workspace_tools import _extract_patch_paths, patch_review_paths
+
+        # Both sides of every header: the review list names only what the patch writes, so a share in a
+        # modified file's `---` line (with `+++ b/a.txt`) is read from the header list (SA, R21).
+        names = list(dict.fromkeys([*patch_review_paths(patch), *_extract_patch_paths(patch)]))
+    except Exception:
+        return ""
+    for name in names:
+        kind = windows_path_policy.refused_form(name, network_only=True) or windows_path_policy.refused_doubled_drive(name)
+        if kind:
+            return windows_path_policy.refusal_text(name, kind, nothing="written")
+    return ""
 
 
 def _first_unlookable(body: str, candidates: list[tuple[int, str]]) -> str:
