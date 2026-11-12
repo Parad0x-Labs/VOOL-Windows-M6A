@@ -1,8 +1,9 @@
 """Served DOM proof: the Settings Memory section shows a Remove button on every saved rule, and pressing it
-(after the confirm) takes back exactly that rule on the real daemon.
+(then its in-page confirm) takes back exactly that rule on the real daemon.
 
-A real daemon, a real chromium on /settings#memory. Cancelling the confirm removes nothing; accepting it
-removes the row from the page and the rule from the store, and the other rule stays, still with its button.
+A real daemon, a real chromium on /settings#memory. The first press turns the button into "confirm" and opens
+no browser dialog; left alone it goes back to "remove" and removes nothing. Pressing confirm removes the row
+from the page and the rule from the store, and the other rule stays, still with its button.
 """
 from __future__ import annotations
 
@@ -52,24 +53,25 @@ def test_every_saved_rule_has_a_remove_button_that_takes_back_only_that_rule(tmp
                     assert row.locator("button.vs-rule-remove").count() == 1
 
                 first = page.locator(f'[data-vs-rule="{RULES[0][0]}"] button.vs-rule-remove')
-                # Cancelling the confirm removes nothing.
-                page.once("dialog", lambda dialog: dialog.dismiss())
+                dialogs: list[str] = []
+                page.on("dialog", lambda dialog: (dialogs.append(dialog.message), dialog.dismiss()))
+                # The first press only arms the button; left alone, it goes back and removes nothing.
                 first.click()
-                page.wait_for_timeout(500)
+                assert first.inner_text().strip() == "confirm"
+                assert "rule" in (first.get_attribute("title") or "").lower()
+                page.wait_for_function(
+                    f"""() => {{ const b = document.querySelector('[data-vs-rule="{RULES[0][0]}"] .vs-rule-remove');
+                    return b && b.textContent.trim() === 'remove'; }}""",
+                    timeout=10_000,
+                )
                 assert page.locator("[data-vs-rule]").count() == len(RULES)
                 assert set(_statuses(home).values()) == {"active"}
 
-                # Accepting it removes exactly that rule.
-                messages: list[str] = []
-
-                def _accept(dialog) -> None:
-                    messages.append(dialog.message)
-                    dialog.accept()
-
-                page.once("dialog", _accept)
+                # Pressing it, then confirm, removes exactly that rule.
+                first.click()
                 first.click()
                 page.wait_for_selector(f'[data-vs-rule="{RULES[0][0]}"]', state="detached", timeout=15_000)
-                assert messages and "rule" in messages[0].lower()
+                assert dialogs == [], dialogs
                 assert _statuses(home) == {RULES[0][0]: "taken_back", RULES[1][0]: "active"}
                 remaining = page.locator("[data-vs-rule]")
                 assert remaining.count() == 1
