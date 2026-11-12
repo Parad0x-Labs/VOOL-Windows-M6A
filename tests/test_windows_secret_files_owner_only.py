@@ -166,7 +166,7 @@ def test_without_sealing_the_writers_keep_their_own_handling(home, monkeypatch) 
 def test_sabotage_a_plain_write_leaves_the_secret_readable(home, monkeypatch) -> None:
     """The control the rows above depend on: without sealing, a written file keeps the open mode."""
     monkeypatch.setattr(owner_only, "_SEAL_SECRETS", True)
-    monkeypatch.setattr(owner_only, "write_private_file", lambda path, data, encoding="utf-8": Path(path).write_text(str(data)) and Path(path))
+    monkeypatch.setattr(owner_only, "write_private_file", lambda path, data, encoding="utf-8": Path(path).write_text(str(data), encoding=encoding) and Path(path))
     previous = os.umask(0o022)
     try:
         path = _write_voolbook_token()
