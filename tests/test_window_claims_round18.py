@@ -67,16 +67,28 @@ def test_wscript_is_never_taken_from_an_untrusted_place(monkeypatch, system_root
         handler._wscript()
 
 
-def test_a_missing_wscript_says_vool_could_not_start(monkeypatch, tmp_path) -> None:
+def test_without_a_trusted_wscript_vool_cmd_is_started_instead(monkeypatch, tmp_path) -> None:
     root = _install(tmp_path)
-    monkeypatch.setenv("SystemRoot", "C:\\Windows")
-    notified: list[str] = []
-    monkeypatch.setattr(handler, "_notify", notified.append)
-    monkeypatch.setattr(handler, "_bundle_root", lambda: root)
+    monkeypatch.setenv("SystemRoot", "\\\\server\\share\\Windows")   # never trusted
+    seen: list = []
     monkeypatch.setattr(handler, "_pass_on_the_foreground", lambda: True)
+    monkeypatch.setattr(handler.subprocess, "Popen", lambda args, **kw: seen.append(args))
+    handler._start_bundle(root)
+    assert len(seen) == 1 and isinstance(seen[0], str) and seen[0].endswith(f'/s /c ""{root / "VOOL.cmd"}""')
+    assert not seen[0].lower().startswith(("wscript", '"\\\\server'))
+
+
+@pytest.mark.parametrize("bad", ["100%OS%", "a\rb", "a\nb"])
+def test_an_install_path_wscript_would_expand_is_refused_too(monkeypatch, tmp_path, system32, bad) -> None:
+    """vool.vbs passes its folder to WScript.Shell.Run, which expands %NAME% like cmd does."""
+    class _Named:
+        def __init__(self, text): self._t = text
+        def __truediv__(self, name): return _Named(f"{self._t}\\{name}")
+        def is_file(self): return True
+        def __str__(self): return self._t
     monkeypatch.setattr(handler.subprocess, "Popen", lambda *a, **k: pytest.fail("nothing may start"))
-    assert handler.main(["vool://"]) == 1
-    assert notified == [handler._NOT_STARTED]
+    with pytest.raises(ValueError):
+        handler._start_bundle(_Named(f"C:\\root{bad}"))
 
 
 def test_an_install_without_vool_vbs_still_starts_vool_cmd(monkeypatch, tmp_path) -> None:
@@ -175,10 +187,16 @@ def test_the_chat_actions_open_from_one_button_and_still_work(tmp_path) -> None:
 
     manager, browser, page, errors = _page(tmp_path, render_vool_chat_html(), _STUB_CHAT, "chat.html")
     try:
+        page.wait_for_load_state("networkidle")
         row = page.locator("#sessions .session", has_text="Alpha planning chat").first
         row.hover()
         assert row.locator(".s-actions .s-act:visible").count() == 0, "no inline action buttons on hover"
         row.locator(".s-more").click()
+        assert row.locator(".s-actions.open .s-act:visible").count() == 6
+        # The list re-renders whenever it refreshes; the open menu comes back on the new row.
+        page.evaluate("loadSessions()")
+        page.wait_for_timeout(300)
+        row = page.locator("#sessions .session", has_text="Alpha planning chat").first
         assert row.locator(".s-actions.open .s-act:visible").count() == 6
         page.evaluate("window.__urls = []")
         row.locator('.s-actions .s-act[title="Pin chat to the top"]').click()
