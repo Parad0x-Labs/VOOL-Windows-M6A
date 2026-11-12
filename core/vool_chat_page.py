@@ -9154,7 +9154,16 @@ function initComposerControls() {
       e.stopPropagation();
       const requested = it.getAttribute('data-mode'); closePops(null);
       if (requested === 'bypass_permissions') { openBypassModal(); return; }
-      try { await setModeController(requested); } catch (err) { toast('Mode was not changed: ' + err.message); }
+      // Kept with the chat the moment it is picked (Steve round 22: POST /api/mode took 3-23 s, and a restart
+      // before it answered reopened a chat set to Plan in Manual). The controller still decides; if it refuses,
+      // the chat's previous mode is put back.
+      const pickedChat = displayedChat, previous = chatState(pickedChat).mode;
+      if (rememberableMode(requested)) saveModeForSession(pickedChat, requested);
+      try { await setModeController(requested); }
+      catch (err) {
+        if (rememberableMode(requested) && rememberableMode(previous) && previous !== requested) saveModeForSession(pickedChat, previous);
+        toast('Mode was not changed: ' + err.message);
+      }
     });
   });
   const modeItems = Array.from(document.querySelectorAll('#modePop .pop-item'));
