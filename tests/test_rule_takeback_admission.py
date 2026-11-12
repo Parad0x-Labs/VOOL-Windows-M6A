@@ -431,3 +431,42 @@ def test_served_a_stuck_take_back_is_finished_at_restart_and_its_words_stay_from
     assert "cupcake" not in "\n".join(line for line in log.splitlines() if "forget admission" in line)
     restart_log = log.rsplit("completed: a finished rule take-back", 1)[-1]
     assert "authorize_payload failed" not in restart_log
+
+
+def test_served_broad_sounding_take_backs_forget_only_their_own_words_in_their_own_chat(tmp_path) -> None:
+    """The words go back through the forget command, so a needle like "everything" or "my name" must stay one
+    target in one chat: no forget-all, no attribute-wide erasure, nothing in another chat."""
+    from core.vool_memory import _normalize_forget_token
+    from tests.test_user_rules_served_workflow import _certify
+
+    profile, folder, provider, seed, ServedDaemon = _served(tmp_path)
+    needles = {"everything": "openclaw:" + "c3" * 10, "all memories": "openclaw:" + "d4" * 10,
+               "my name": "openclaw:" + "e5" * 10}
+    with provider:
+        seed()
+        with ServedDaemon(profile, env_extra={"VOOL_MODEL_LOAD_FLOOR_GB": "0"}) as daemon:
+            assert _certify(daemon).get("state") == "verified"
+            assert "Locked in" in _say(daemon, provider, folder, "Remember that my boat is called Juniper.", OTHER)[0]
+            assert "Saved to your profile" in _say(daemon, provider, folder, "Remember that my name is Rowan Vale.", OTHER)[0]
+            for needle, chat in needles.items():
+                assert "Locked in" in _say(daemon, provider, folder, "Remember that my locker is QUILL-9.", chat)[0]
+                _say(daemon, provider, folder, f"forget the rule about {needle}", chat)
+            operations = list(_ledger(profile).values())
+            assert not [row for row in operations if row["status"] == "pending"], operations
+            forgets = [(row["chat"], row["token"]) for row in operations if row.get("kind", "forget") == "forget"]
+            # One forget per take-back, of exactly its own words, in exactly its own chat.
+            assert sorted(forgets) == sorted((chat, _normalize_forget_token(needle)) for needle, chat in needles.items())
+            _, facts = _memory_list(daemon)
+            assert any("Juniper" in fact for fact in facts), facts
+            # The profile name (an attribute) is still known in another chat.
+            assert "Rowan Vale" in _say(daemon, provider, folder, "What is my name?", OTHER)[0] + \
+                _say(daemon, provider, folder, "What is my name?", OTHER)[1]
+            assert sum("QUILL-9" in fact for fact in facts) == len(needles), facts
+
+
+@pytest.mark.parametrize("text", ["forget the rule about cupcake and forget everything",
+                                  "forget the rule about cupcake and forget QUILL-77"])
+def test_a_take_back_that_names_a_second_forget_is_not_a_take_back(text) -> None:
+    from core.user_rules import rules_command_owns_forget
+
+    assert rules_command_owns_forget(text) is False
