@@ -1432,7 +1432,7 @@
     "vx.memory.rule_remove_confirm": "¿Quitar esta regla? VOOL dejará de seguirla.",
     "vx.memory.rules_title": "Reglas que VOOL sigue en cada chat",
     "vx.memory.rules_empty": "No hay reglas guardadas. Una regla que des en el chat, como «responde siempre con viñetas», aparece aquí.",
-    "vx.memory.rules_hint": "Para quitar una regla, pídele a VOOL en un chat que deje de hacerlo.",
+    "vx.memory.rules_hint": "Para quitar una regla, pulsa «quitar» junto a ella o pídele a VOOL en un chat que deje de hacerlo.",
     "vx.memory.rules_unreadable": "No se pudieron leer las reglas guardadas.",
     "vx.memory.title": "Memoria",
     "vx.memory.unreadable": "No se pudo leer la memoria.",

@@ -1432,7 +1432,7 @@
     "vx.memory.rule_remove_confirm": "Xóa quy tắc này? VOOL sẽ ngừng tuân theo nó.",
     "vx.memory.rules_title": "Quy tắc VOOL tuân theo trong mọi cuộc trò chuyện",
     "vx.memory.rules_empty": "Chưa lưu quy tắc nào. Quy tắc bạn đưa ra trong trò chuyện, như “luôn trả lời bằng gạch đầu dòng”, sẽ hiện ở đây.",
-    "vx.memory.rules_hint": "Để bỏ một quy tắc, hãy bảo VOOL ngừng làm điều đó trong một cuộc trò chuyện.",
+    "vx.memory.rules_hint": "Để bỏ một quy tắc, hãy bấm “xóa” bên cạnh nó, hoặc bảo VOOL ngừng làm điều đó trong một cuộc trò chuyện.",
     "vx.memory.rules_unreadable": "Không thể đọc các quy tắc đã lưu.",
     "vx.memory.title": "Bộ nhớ",
     "vx.memory.unreadable": "Không đọc được bộ nhớ.",

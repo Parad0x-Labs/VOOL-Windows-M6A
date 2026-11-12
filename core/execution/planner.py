@@ -3059,6 +3059,7 @@ def plan_tool_workflow(
     # Windows: "run <command> in <folder>" runs the command in that folder (`_windows_command_in_folder`).
     # Off Windows `explicit_cwd` is always "" and every plan below is the one it was.
     folder_command, explicit_cwd = _windows_command_in_folder(typed_request)
+    windows_run_read = bool(folder_command)
     if folder_command:
         explicit_command = folder_command
     elif (whole_command := _windows_python_command(typed_request)) and not _windows_names_a_full_path(typed_request):
@@ -3066,6 +3067,7 @@ def plan_tool_workflow(
         # `-c "<code>"` keeps its code and a bare `python -m compileall .` is a run. A request naming a
         # full path keeps the reading it had. Off Windows `whole_command` is "" and nothing changes.
         explicit_command = whole_command
+        windows_run_read = True
     compare_or_verify = any(marker in lowered for marker in (" compare ", " versus ", " vs ", " verify ", " confirm ", " is it true "))
     lookup_followup_text = ""
     if followup_resume and not (looks_like_explicit_lookup_request(text) or looks_like_public_entity_lookup_request(text)):
@@ -3082,6 +3084,11 @@ def plan_tool_workflow(
     explicit_lookup = looks_like_explicit_lookup_request(research_text) or public_entity_lookup
     tool_inventory_request = _looks_like_tool_inventory_request(text)
     machine_directory_list = _extract_safe_machine_directory_listing(text)
+    if windows_run_read:
+        # Windows (Steve R18): a Python command line is a run, not a listing. "in <...>\\Documents\\...
+        # run: python -c \"print(2+2)\"" was planned as a listing of ~/Documents: the code's `print` was
+        # read as the listing verb and the path's "Documents" as the folder. Off Windows this is never set.
+        machine_directory_list = None
     machine_directory_create = _extract_safe_machine_directory_create(text)
     machine_specs_request = _extract_machine_specs_request(text)
     machine_diagnostics = machine_diagnostics_intent(text)

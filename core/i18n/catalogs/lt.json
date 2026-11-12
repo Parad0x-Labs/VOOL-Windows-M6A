@@ -1432,7 +1432,7 @@
     "vx.memory.rule_remove_confirm": "Pašalinti šią taisyklę? VOOL jos nebesilaikys.",
     "vx.memory.rules_title": "Taisyklės, kurių VOOL laikosi kiekviename pokalbyje",
     "vx.memory.rules_empty": "Išsaugotų taisyklių nėra. Pokalbyje duota taisyklė, pvz., „visada atsakyk punktais“, atsiras čia.",
-    "vx.memory.rules_hint": "Norėdami pašalinti taisyklę, pokalbyje paprašykite VOOL to nebedaryti.",
+    "vx.memory.rules_hint": "Norėdami pašalinti taisyklę, spustelėkite šalia jos „pašalinti“ arba pokalbyje paprašykite VOOL to nebedaryti.",
     "vx.memory.rules_unreadable": "Išsaugotų taisyklių nepavyko perskaityti.",
     "vx.memory.title": "Atmintis",
     "vx.memory.unreadable": "Atminties nepavyko perskaityti.",

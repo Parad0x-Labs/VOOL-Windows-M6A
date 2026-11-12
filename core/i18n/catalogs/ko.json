@@ -1432,7 +1432,7 @@
     "vx.memory.rule_remove_confirm": "이 규칙을 삭제할까요? VOOL이 더 이상 이 규칙을 따르지 않습니다.",
     "vx.memory.rules_title": "VOOL이 모든 채팅에서 따르는 규칙",
     "vx.memory.rules_empty": "저장된 규칙이 없습니다. “항상 글머리표로 답해 줘”처럼 채팅에서 준 규칙이 여기에 표시됩니다.",
-    "vx.memory.rules_hint": "규칙을 없애려면 채팅에서 VOOL에게 그만하라고 말하세요.",
+    "vx.memory.rules_hint": "규칙을 없애려면 옆의 ‘삭제’를 누르거나 채팅에서 VOOL에게 그만하라고 말하세요.",
     "vx.memory.rules_unreadable": "저장된 규칙을 읽을 수 없습니다.",
     "vx.memory.title": "메모리",
     "vx.memory.unreadable": "메모리를 읽을 수 없습니다.",

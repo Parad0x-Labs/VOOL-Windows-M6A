@@ -1432,7 +1432,7 @@
     "vx.memory.rule_remove_confirm": "Usunąć tę regułę? VOOL przestanie jej przestrzegać.",
     "vx.memory.rules_title": "Zasady, których VOOL przestrzega w każdym czacie",
     "vx.memory.rules_empty": "Brak zapisanych zasad. Zasada podana w czacie, np. „zawsze odpowiadaj w punktach”, pojawi się tutaj.",
-    "vx.memory.rules_hint": "Aby usunąć zasadę, powiedz VOOL w czacie, żeby przestał tak robić.",
+    "vx.memory.rules_hint": "Aby usunąć zasadę, kliknij obok niej „usuń” albo powiedz VOOL w czacie, żeby przestał tak robić.",
     "vx.memory.rules_unreadable": "Nie udało się odczytać zapisanych zasad.",
     "vx.memory.title": "Pamięć",
     "vx.memory.unreadable": "Nie udało się odczytać pamięci.",

@@ -225,7 +225,7 @@ function section(which){
     node.className = 'vs-sec'; node.id = 'vsMemorySec';
     node.innerHTML = '<h4>' + XT('vx.memory.title', 'Memory') + '</h4><div class="vs-mem-list"></div>' +
       '<h4>' + XT('vx.memory.rules_title', 'Rules VOOL follows in every chat') + '</h4><div class="vs-rule-list"></div>' +
-      '<div class="vs-empty">' + XT('vx.memory.rules_hint', 'To remove a rule, tell VOOL in a chat to stop doing it.') + '</div>';
+      '<div class="vs-empty">' + XT('vx.memory.rules_hint', 'To remove a rule, press remove next to it, or tell VOOL in a chat to stop doing it.') + '</div>';
   } else if (which === 'privacy') {
     node.className = 'vs-sec vs-privacy'; node.id = 'vsPrivacySec';
     node.innerHTML = '<h4>' + XT('vx.privacy.title', 'Privacy &amp; data') + '</h4>' +

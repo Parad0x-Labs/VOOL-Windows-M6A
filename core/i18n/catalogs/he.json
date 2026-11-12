@@ -1432,7 +1432,7 @@
     "vx.memory.rule_remove_confirm": "להסיר את הכלל הזה? VOOL יפסיק לפעול לפיו.",
     "vx.memory.rules_title": "כללים ש-VOOL פועל לפיהם בכל צ׳אט",
     "vx.memory.rules_empty": "אין כללים שמורים. כלל שתיתן בצ׳אט, כמו „תמיד ענה בנקודות”, יופיע כאן.",
-    "vx.memory.rules_hint": "כדי להסיר כלל, אמור ל-VOOL בצ׳אט להפסיק.",
+    "vx.memory.rules_hint": "כדי להסיר כלל, לחץ על „הסרה” לידו, או אמור ל-VOOL בצ׳אט להפסיק.",
     "vx.memory.rules_unreadable": "לא ניתן היה לקרוא את הכללים השמורים.",
     "vx.memory.title": "זיכרון",
     "vx.memory.unreadable": "לא ניתן היה לקרוא את הזיכרון.",

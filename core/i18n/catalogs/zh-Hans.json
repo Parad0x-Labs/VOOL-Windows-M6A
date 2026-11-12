@@ -1432,7 +1432,7 @@
     "vx.memory.rule_remove_confirm": "要移除这条规则吗？VOOL 将不再遵循它。",
     "vx.memory.rules_title": "VOOL 在每个对话中遵循的规则",
     "vx.memory.rules_empty": "尚未保存规则。你在对话中给出的规则（如“始终用要点回答”）会显示在这里。",
-    "vx.memory.rules_hint": "要删除一条规则，请在对话中让 VOOL 停止这样做。",
+    "vx.memory.rules_hint": "要删除一条规则，请点它旁边的“移除”，或在对话中让 VOOL 停止这样做。",
     "vx.memory.rules_unreadable": "无法读取已保存的规则。",
     "vx.memory.title": "记忆",
     "vx.memory.unreadable": "无法读取记忆。",

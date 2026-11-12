@@ -1432,7 +1432,7 @@
     "vx.memory.rule_remove_confirm": "هل تريد إزالة هذه القاعدة؟ سيتوقف VOOL عن اتباعها.",
     "vx.memory.rules_title": "قواعد يتبعها VOOL في كل محادثة",
     "vx.memory.rules_empty": "لا توجد قواعد محفوظة. تظهر هنا أي قاعدة تعطيها في المحادثة، مثل «أجب دائمًا بنقاط».",
-    "vx.memory.rules_hint": "لإزالة قاعدة، اطلب من VOOL في محادثة أن يتوقف عنها.",
+    "vx.memory.rules_hint": "لإزالة قاعدة، اضغط «إزالة» بجانبها، أو اطلب من VOOL في محادثة أن يتوقف عنها.",
     "vx.memory.rules_unreadable": "تعذّرت قراءة القواعد المحفوظة.",
     "vx.memory.title": "الذاكرة",
     "vx.memory.unreadable": "تعذّرت قراءة الذاكرة.",

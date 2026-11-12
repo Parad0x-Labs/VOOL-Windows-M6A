@@ -1432,7 +1432,7 @@
     "vx.memory.rule_remove_confirm": "Remover esta regra? O VOOL deixará de segui-la.",
     "vx.memory.rules_title": "Regras que o VOOL segue em todos os chats",
     "vx.memory.rules_empty": "Nenhuma regra salva. Uma regra dada no chat, como “sempre responda em tópicos”, aparece aqui.",
-    "vx.memory.rules_hint": "Para remover uma regra, peça ao VOOL num chat que pare de fazer isso.",
+    "vx.memory.rules_hint": "Para remover uma regra, carregue em «remover» ao lado dela ou peça ao VOOL num chat que pare de fazer isso.",
     "vx.memory.rules_unreadable": "Não foi possível ler as regras salvas.",
     "vx.memory.title": "Memória",
     "vx.memory.unreadable": "Não foi possível ler a memória.",

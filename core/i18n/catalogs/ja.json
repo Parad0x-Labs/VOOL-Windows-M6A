@@ -1432,7 +1432,7 @@
     "vx.memory.rule_remove_confirm": "このルールを削除しますか？VOOL は今後このルールに従いません。",
     "vx.memory.rules_title": "VOOL がすべてのチャットで守るルール",
     "vx.memory.rules_empty": "保存されたルールはありません。「常に箇条書きで答えて」のようにチャットで伝えたルールがここに表示されます。",
-    "vx.memory.rules_hint": "ルールを外すには、チャットで VOOL にやめるよう伝えてください。",
+    "vx.memory.rules_hint": "ルールを外すには、その横の「削除」を押すか、チャットで VOOL にやめるよう伝えてください。",
     "vx.memory.rules_unreadable": "保存されたルールを読み込めませんでした。",
     "vx.memory.title": "メモリー",
     "vx.memory.unreadable": "メモリーを読み取れませんでした。",

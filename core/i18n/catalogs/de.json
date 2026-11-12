@@ -1432,7 +1432,7 @@
     "vx.memory.rule_remove_confirm": "Diese Regel entfernen? VOOL befolgt sie dann nicht mehr.",
     "vx.memory.rules_title": "Regeln, die VOOL in jedem Chat befolgt",
     "vx.memory.rules_empty": "Keine Regeln gespeichert. Eine Regel, die du im Chat gibst, etwa „antworte immer in Stichpunkten“, erscheint hier.",
-    "vx.memory.rules_hint": "Um eine Regel zu entfernen, sag VOOL in einem Chat, dass es damit aufhören soll.",
+    "vx.memory.rules_hint": "Um eine Regel zu entfernen, klick daneben auf „entfernen“ oder sag VOOL in einem Chat, dass es damit aufhören soll.",
     "vx.memory.rules_unreadable": "Gespeicherte Regeln konnten nicht gelesen werden.",
     "vx.memory.title": "Erinnerung",
     "vx.memory.unreadable": "Erinnerung konnte nicht gelesen werden.",
