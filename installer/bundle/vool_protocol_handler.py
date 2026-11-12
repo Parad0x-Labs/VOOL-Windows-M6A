@@ -118,7 +118,46 @@ def _pass_on_the_foreground() -> bool:
         return False
 
 
+def _wscript() -> str:
+    """``%SystemRoot%\\System32\\wscript.exe`` by absolute path, or OSError.
+
+    A bare name would be looked up through pythonw's own folder, the current folder and PATH first.
+    Only a drive-letter SystemRoot is trusted (never a network share); anything else fails closed.
+    The same rule as core/process_liveness.py ``_system32``, repeated here because this handler
+    runs from the top of the install and imports nothing of VOOL's."""
+    import ntpath
+
+    root = os.environ.get("SystemRoot") or ""
+    drive, rest = ntpath.splitdrive(root)
+    if len(drive) != 2 or drive[1] != ":" or not rest.startswith(("\\", "/")):
+        raise OSError("SystemRoot is not an absolute Windows folder")
+    exe = ntpath.join(root, "System32", "wscript.exe")
+    if not os.path.isfile(exe):
+        raise OSError(f"{exe} is missing")
+    return exe
+
+
 def _start_bundle(root: Path) -> None:
+    """Start VOOL exactly the way the Start-menu shortcut does: ``wscript.exe vool.vbs``.
+
+    Steve round 18 (578d185f): starting VOOL.cmd from here through ``cmd /s /c`` with
+    CREATE_NO_WINDOW|DETACHED_PROCESS and null handles never reached the supervisor (the handler
+    exited 0 and nothing happened), while the same VOOL.cmd run by vool.vbs works. vool.vbs runs
+    VOOL.cmd hidden from wscript, a GUI process, which gives VOOL.cmd's ``for /f`` and nested
+    ``start "" /B`` the hidden console they expect. VOOL.cmd is started directly only when the
+    install has no vool.vbs."""
+    script = root / "vool.vbs"
+    if script.is_file():
+        _pass_on_the_foreground()
+        subprocess.Popen(
+            [_wscript(), str(script)],   # a list: each path is quoted for CreateProcess, & ( ) % included
+            cwd=str(root),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+        return
     launcher = root / "VOOL.cmd"
     if not launcher.is_file():
         raise FileNotFoundError("VOOL.cmd is missing")
