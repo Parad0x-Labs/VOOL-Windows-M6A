@@ -129,3 +129,15 @@ def test_off_windows_nothing_changes(machine, chat, monkeypatch) -> None:
     c = chat(machine["desktop"])
     reply = _say(c, "are you online?")
     assert "Web lookup:" not in reply and "Replies:" not in reply, reply
+
+
+def test_an_unreadable_local_only_state_is_reported_as_local_only(machine, monkeypatch) -> None:
+    """SA: if the Local Only reader fails, the answer promises less: no cloud."""
+    from core import auto_local_only_mode
+    from core.agent_runtime import fast_command_surface
+
+    def broken(_context=None):
+        raise RuntimeError("unreadable")
+
+    monkeypatch.setattr(auto_local_only_mode, "turn_is_local_only", broken)
+    assert fast_command_surface.online_status_snapshot({})["local_only"] is True
