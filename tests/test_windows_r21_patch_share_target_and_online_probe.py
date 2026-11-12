@@ -68,6 +68,19 @@ def test_a_patch_naming_a_share_is_refused_before_any_card(paths_on_windows, cha
     assert (proj / "calc.py").read_bytes() == CALC.encode("utf-8")
 
 
+def test_a_share_only_in_the_old_side_header_is_refused_before_any_card(paths_on_windows, chat) -> None:
+    """SA: the review list names only what the patch writes; a share in a modified file's `---` line is read too."""
+    proj = paths_on_windows["proj"]
+    talk = chat(proj)
+    patch = DIFF.replace("--- a/calc.py", "--- \\\\h\\s\\x")
+
+    reply = talk.say("apply this patch:\n" + patch, turn_id=f"r21-old-{uuid.uuid4().hex[:8]}")
+
+    assert talk.pending() == [] and talk.model_rounds == 0, reply
+    assert "is a network or device path" in reply and "nothing was written" in reply, reply
+    assert (proj / "calc.py").read_bytes() == CALC.encode("utf-8")
+
+
 def test_a_local_patch_still_gets_its_card(paths_on_windows, chat) -> None:
     proj = paths_on_windows["proj"]
     talk = chat(proj)
