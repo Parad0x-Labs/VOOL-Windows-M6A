@@ -69,8 +69,10 @@ def test_on_windows_the_read_finder_leaves_other_messages_alone(windows_host, te
     assert non_local_read_target(text) == ("", ""), text
 
 
-def test_off_windows_the_read_finder_stands_down() -> None:
+def test_off_windows_the_read_finder_stands_down(windows_host) -> None:
     from core.agent_runtime.read_path_honesty import non_local_read_target
+
+    windows_host.off()  # a real Windows runner has the seam on
 
     for text in _SHARE_AND_DEVICE_READS:
         assert non_local_read_target(text) == ("", "")

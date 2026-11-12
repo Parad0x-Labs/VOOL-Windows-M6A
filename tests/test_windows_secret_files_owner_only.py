@@ -9,8 +9,9 @@ and when it cannot be made owner-only nothing is written. A file written before 
 the first time it is read.
 
 These rows drive the Windows branch on any host through `owner_only._SEAL_SECRETS`. Off Windows,
-`make_owner_only` applies `0o600` and checks the owner, so the rows check those modes here. On
-Windows the same calls set and verify the protected one-ACE DACL. A spy proves the seal comes
+`make_owner_only` applies `0o600` and checks the owner, so the rows check those modes there. On a real
+Windows host the same calls set and verify the protected one-ACE DACL, and the rows check the DACL
+(`verify_owner_only`), because st_mode on Windows shows only the read-only bit. A spy proves the seal comes
 before the secret: every sealed file was still empty when it was sealed.
 """
 from __future__ import annotations
@@ -60,6 +61,20 @@ def refusing(monkeypatch):
 
 def _mode(path: Path) -> int:
     return stat.S_IMODE(os.stat(path).st_mode)
+
+
+def _assert_sealed(path: Path) -> None:
+    """Owner-only now: the DACL on Windows (st_mode there shows only the read-only bit), 0o600 elsewhere."""
+    assert owner_only.verify_owner_only(path).ok, path
+    if os.name != "nt":
+        assert _mode(path) == 0o600, path
+
+
+def _assert_open(path: Path) -> None:
+    """Readable by others: an inherited DACL on Windows, 0o644 elsewhere."""
+    assert not owner_only.verify_owner_only(path).ok, path
+    if os.name != "nt":
+        assert _mode(path) == 0o644, path
 
 
 def _write_credentials() -> Path:
@@ -121,8 +136,7 @@ def test_with_sealing_each_secret_is_owner_only_and_sealed_while_empty(home, sea
     path = WRITERS[name]()
     assert path.name == name
     assert path.read_bytes()
-    assert owner_only.verify_owner_only(path).ok
-    assert _mode(path) == 0o600
+    _assert_sealed(path)
     pending = [size for sealed_name, size in sealing if sealed_name.startswith(f".{name}.")]
     assert pending, f"{name} was never sealed before it was written: {sealing}"
     assert set(pending) == {0}, f"{name} was sealed only after secret bytes were in it: {sealing}"
@@ -151,8 +165,8 @@ def test_with_sealing_an_existing_secret_is_repaired_when_it_is_read(home, seali
 
     assert load_local_token() == "old-token"
     assert onboarding.load_identity()["agent_name"] == "Helper"
-    assert _mode(token) == 0o600
-    assert _mode(identity) == 0o600
+    _assert_sealed(token)
+    _assert_sealed(identity)
 
 
 def test_without_sealing_the_writers_keep_their_own_handling(home, monkeypatch) -> None:
@@ -172,5 +186,4 @@ def test_sabotage_a_plain_write_leaves_the_secret_readable(home, monkeypatch) ->
         path = _write_voolbook_token()
     finally:
         os.umask(previous)
-    assert _mode(path) == 0o644
-    assert not owner_only.verify_owner_only(path).ok
+    _assert_open(path)
