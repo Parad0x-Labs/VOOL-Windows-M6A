@@ -3359,6 +3359,38 @@ def _looks_like_a_slash_command(phrase: str) -> bool:
     return "/" not in head[1:]
 
 
+# The Windows VOOL window has no OpenClaw and its new-chat button is "+ New" at the top left of the
+# sidebar (core/vool_chat_page.py `#newChat`). Every command /help names (core/slash_commands.py) is
+# one the Windows chat really answers: `/stop` is taken by the chat page itself before it is sent (it clicks the running
+# task's Stop control, the same one Esc presses; see `send()` in core/vool_chat_page.py), and
+# `/stopall` with its confirm is core/vool_agent_brake.py, answered before this lane.
+_WINDOWS_NEW_CHAT_REPLY = "To start a new chat, use the **+ New** button at the top left of the sidebar."
+
+
+def _windows_help_reply() -> str:
+    """`/help` on Windows: one line per row of the shared table the "/" composer menu is built from."""
+
+    from core.slash_commands import WORKING_SLASH_COMMANDS
+
+    lines = "\n".join(f"- `{command}` {description}" for command, description in WORKING_SLASH_COMMANDS)
+    return f"Commands that work in this chat:\n\n{lines}"
+
+
+def _windows_ui_command_reply(phrase: str) -> str:
+    """The Windows chat's answer to a slash command this lane owns (Mac and Linux keep theirs)."""
+
+    if phrase in {"/new", "/new-session", "/new_session", "/clear", "/reset"}:
+        return _WINDOWS_NEW_CHAT_REPLY
+    if phrase in {"/help", "/commands"}:
+        return _windows_help_reply()
+    if phrase in {"/trace", "/rail", "/task-rail"}:
+        return "Open the live trace rail at `http://127.0.0.1:11435/trace`."
+    if phrase == "/stop":
+        # Reached only from a surface other than the chat window, which stops the run itself.
+        return "`/stop` stops a running reply from the VOOL chat window, the same as Esc or the task's Stop button."
+    return "That is not a command here. Type `/help` for the commands that work, or just say what you want."
+
+
 def ui_command_fast_path(normalized_input: str, *, source_surface: str) -> str | None:
     phrase = str(normalized_input or "").strip().lower()
     if not phrase.startswith("/"):
@@ -3366,6 +3398,10 @@ def ui_command_fast_path(normalized_input: str, *, source_surface: str) -> str |
     if not _looks_like_a_slash_command(phrase):
         # An absolute path, not a command. Leave the turn to the lanes that can actually read it.
         return None
+    from core import windows_write_gate
+
+    if windows_write_gate.active():
+        return _windows_ui_command_reply(phrase)
     if phrase in {"/new", "/new-session", "/new_session", "/clear", "/reset"}:
         return "Use the OpenClaw `New session` button on the lower right. Slash `/new` is not a wired command in this runtime."
     if phrase in {"/trace", "/rail", "/task-rail"}:
