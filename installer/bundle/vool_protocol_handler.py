@@ -145,19 +145,29 @@ def _start_bundle(root: Path) -> None:
     exited 0 and nothing happened), while the same VOOL.cmd run by vool.vbs works. vool.vbs runs
     VOOL.cmd hidden from wscript, a GUI process, which gives VOOL.cmd's ``for /f`` and nested
     ``start "" /B`` the hidden console they expect. VOOL.cmd is started directly only when the
-    install has no vool.vbs."""
+    install has no vool.vbs, or wscript.exe cannot be found by its absolute System32 path.
+
+    The install path is refused first on BOTH routes when it holds a quote, % or a line break:
+    vool.vbs hands it to WScript.Shell.Run, which expands %NAME% the way cmd does."""
+    if any(char in str(root) for char in '"%\r\n'):
+        raise ValueError("the install path holds a quote, % or line break the launchers cannot keep")
     script = root / "vool.vbs"
     if script.is_file():
-        _pass_on_the_foreground()
-        subprocess.Popen(
-            [_wscript(), str(script)],   # a list: each path is quoted for CreateProcess, & ( ) % included
-            cwd=str(root),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            close_fds=True,
-        )
-        return
+        try:
+            wscript = _wscript()
+        except OSError:
+            wscript = ""
+        if wscript:
+            _pass_on_the_foreground()
+            subprocess.Popen(
+                [wscript, str(script)],   # a list: each path is quoted for CreateProcess, & ( ) included
+                cwd=str(root),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+            )
+            return
     launcher = root / "VOOL.cmd"
     if not launcher.is_file():
         raise FileNotFoundError("VOOL.cmd is missing")

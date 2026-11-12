@@ -3005,7 +3005,11 @@ function startProjectRename(head, nameEl, pid) {
   input.focus(); input.select();
 }
 
+// The chat whose actions menu is open. The list is re-rendered whenever it refreshes; the menu of
+// the same chat opens again on the new row instead of vanishing under the pointer.
+let openSessionActionsFor = '';
 function closeSessionActionMenus() {
+  openSessionActionsFor = '';
   document.querySelectorAll('#sessions .s-actions.open').forEach((m) => m.classList.remove('open'));
   document.querySelectorAll('#sessions .s-more[aria-expanded="true"]').forEach((b) => b.setAttribute('aria-expanded', 'false'));
 }
@@ -3072,18 +3076,25 @@ function makeSessionItem(s, archived, nested) {
   more.type = 'button'; more.className = 's-more'; more.textContent = '\u22EF';
   more.title = 'Chat actions'; more.setAttribute('aria-label', 'Chat actions'); more.setAttribute('aria-haspopup', 'true');
   more.setAttribute('aria-expanded', 'false');
-  more.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const opening = !actions.classList.contains('open');
-    closeSessionActionMenus();
-    if (!opening) return;
+  const openMenu = () => {
     const r = more.getBoundingClientRect();
     actions.style.top = Math.round(r.bottom + 4) + 'px';
     actions.style.right = Math.max(4, Math.round(window.innerWidth - r.right)) + 'px';
     actions.classList.add('open'); more.setAttribute('aria-expanded', 'true');
+    openSessionActionsFor = s.session_id;
+  };
+  more.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const opening = !actions.classList.contains('open');
+    closeSessionActionMenus();
+    if (opening) openMenu();
   });
-  // Any action closes the menu; the action's own handler runs as before.
-  actions.addEventListener('click', () => closeSessionActionMenus());
+  if (openSessionActionsFor && openSessionActionsFor === s.session_id) {
+    requestAnimationFrame(() => { if (item.isConnected && openSessionActionsFor === s.session_id) openMenu(); });
+  }
+  // Any action closes the menu; the action's own handler runs as before. Capture phase: each action
+  // stops the click's propagation, so a bubbling listener here would never hear it.
+  actions.addEventListener('click', () => closeSessionActionMenus(), true);
   item.appendChild(more);
   item.appendChild(actions);
   return item;
