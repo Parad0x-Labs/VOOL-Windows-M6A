@@ -291,6 +291,13 @@ code { background:var(--bg); border:1px solid var(--border); border-radius:5px; 
    under the pointer and a click meant for it landed on an action. The title keeps its width, the
    whole row opens the chat, and "⋯" opens the actions in a small menu beside it. */
 #sessions .session { position:relative; cursor:pointer; }
+/* The composer's "/" list of slash commands that work (core/slash_commands.py). */
+.slash-menu { position:fixed; z-index:70; max-height:240px; overflow-y:auto; padding:4px; background:var(--panel); border:1px solid var(--border); border-radius:10px; box-shadow:0 8px 26px rgba(0,0,0,.5); }
+.slash-menu[hidden] { display:none; }
+.slash-item { display:flex; gap:10px; align-items:baseline; padding:6px 8px; border-radius:6px; cursor:pointer; font-size:13px; }
+.slash-item b { flex:0 0 auto; color:var(--ink); font-weight:600; }
+.slash-item span { color:var(--muted); min-width:0; }
+.slash-item.on, .slash-item:hover { background:var(--active); }
 #sessions .s-more { display:none; flex:0 0 auto; background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:14px; line-height:1; padding:2px 6px; border-radius:4px; }
 #sessions .s-more:hover, #sessions .s-more[aria-expanded="true"] { color:var(--ink); background:var(--bg); }
 #sessions .session:hover .s-more, #sessions .session:focus-within .s-more, #sessions .s-more[aria-expanded="true"] { display:inline-block; }
@@ -2051,7 +2058,63 @@ const bootChatId = (() => {
 })();
 
 function loadSessionModes() { return _jget('vool_modes_v1', '{}'); }
+// A chat's mode is remembered WITH THE CHAT on the server (POST /api/chat/session {mode}), and the
+// sidebar list hands it back. The window's own storage is only a cache: the desktop window does not
+// keep it across a restart, so a chat set to Plan used to come back as Manual. Bypass is never kept.
+const _modeRestored = new Set();   // chats whose server mode this page has already adopted (or overruled)
+const _modePosted = new Set();     // chats whose window-remembered mode was already handed to the server
+function rememberableMode(mode) { return !!(mode && MODE_LABELS[mode] && mode !== 'bypass_permissions'); }
+function serverModeFor(sid) {
+  // Boot asks before the sidebar list (and its `let`) exists; that is "no server answer yet".
+  let list = [];
+  try { list = _lastSessions; } catch (e) { list = []; }
+  const rec = (list || []).find((s) => s.session_id === sid);
+  const mode = rec ? String(rec.mode || '') : '';
+  return rememberableMode(mode) ? mode : '';
+}
+async function postSessionMode(sid, mode) {
+  if (!sid || !rememberableMode(mode)) return false;
+  try {
+    const r = await fetch('/api/chat/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sid, mode: mode }) });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d && d.stored) {
+      const rec = _lastSessions.find((s) => s.session_id === sid);
+      if (rec) rec.mode = mode;
+      return true;
+    }
+  } catch (e) {}
+  return false;
+}
+// Called after each sidebar refresh: the displayed chat adopts its server mode once, and a chat the
+// server lists with no mode yet (its first turn just created it, or it predates this) is handed the
+// mode this window remembers for it, once.
+function adoptServerModes() {
+  const sid = displayedChat;
+  if (sid && !_modeRestored.has(sid)) {
+    const mode = serverModeFor(sid);
+    if (mode) {
+      _modeRestored.add(sid);
+      const st = chatState(sid);
+      if (!st.bypassGrant && !(st.run && !st.run.ended) && st.mode !== mode) {
+        st.mode = mode;
+        saveModeForSession(sid, mode, { local: true });
+        if (isDisplayed(sid)) reflectMode();
+      }
+    }
+  }
+  const local = loadSessionModes();
+  for (const s of _lastSessions) {
+    const sidN = s.session_id;
+    const want = local[sidN];
+    if (!s.mode && rememberableMode(want) && !_modePosted.has(sidN)) {
+      _modePosted.add(sidN);
+      postSessionMode(sidN, want);
+    }
+  }
+}
 function loadModeForSession(sid) {
+  const fromServer = serverModeFor(sid);
+  if (fromServer) { _modeRestored.add(sid); return fromServer; }
   const saved = loadSessionModes()[sid];
   if (saved && MODE_LABELS[saved] && saved !== 'bypass_permissions') return saved;
   // One-time migration from the retired global selector. Never migrate a bypass-like value.
@@ -2060,10 +2123,14 @@ function loadModeForSession(sid) {
   if (legacy) localStorage.removeItem('vool_mode');
   return migrated;
 }
-function saveModeForSession(sid, mode) {
+function saveModeForSession(sid, mode, opts) {
   if (!sid || mode === 'bypass_permissions' || !MODE_LABELS[mode]) return;
   const modes = loadSessionModes(); modes[sid] = mode;
   localStorage.setItem('vool_modes_v1', JSON.stringify(modes));
+  _modeRestored.add(sid);   // a mode set here is newer than whatever the last list said
+  // The server keeps it with the chat. It never creates a chat: an unsent draft's mode is handed
+  // over by adoptServerModes() once its first turn has made the chat.
+  if (!(opts && opts.local)) postSessionMode(sid, mode);
 }
 
 // ===================== DISPATCHER: per-chat state — BEGIN =====================
@@ -3515,6 +3582,7 @@ function renderSessions(sessions) {
   // A chat that has sent its first message but is not yet in the server's log is overlaid here, so
   // it survives every re-render until the server's own record replaces it.
   _lastSessions = mergePendingSessions(sessions);
+  adoptServerModes();
   // Adopt the DISPLAYED chat's project from the record the server just returned. Boot restores
   // the transcript but never the binding, so without this a restart showed "General" until the
   // chat was clicked. The server's project_id stays authoritative (openSession's own derivation
@@ -3784,10 +3852,14 @@ function newChat() {
   // no run, no grant, no stickiness. Nothing needs clearing, and nothing the previous chat owned
   // can leak in.
   if (view.run && !view.run.ended) detachRunDom(view.run);
+  const carriedMode = rememberableMode(view.mode) ? view.mode : 'manual';
   setDisplayedChat(mintSessionId());
   restoreChatModel(displayedChat);
   localStorage.setItem('vool.sessionId', displayedChat);
-  view.mode = loadModeForSession(displayedChat);
+  // A new chat keeps the mode you were in (never bypass, which stays with its own grant). Kept in
+  // the window only until the first turn makes the chat; then the server remembers it too.
+  view.mode = carriedMode;
+  saveModeForSession(displayedChat, carriedMode, { local: true });
   reflectMode();
   // This is an unsent draft.  Keep its preference local until the user either explicitly changes
   // the mode or sends the first turn; merely pressing New must not create runtime Activity.
@@ -3844,10 +3916,12 @@ function applyProjectModel(pid) {
 async function newChatInProject(pid) {
   // No busy guard, for the same reason as newChat(): the chat being left keeps its run.
   if (view.run && !view.run.ended) detachRunDom(view.run);
+  const carriedMode = rememberableMode(view.mode) ? view.mode : 'manual';
   const sid = mintSessionId();
   setDisplayedChat(sid); localStorage.setItem('vool.sessionId', sid);
   restoreChatModel(sid);
-  view.mode = loadModeForSession(displayedChat);
+  view.mode = carriedMode;
+  saveModeForSession(sid, carriedMode, { local: true });
   reflectMode();
   activityHistory = [];   // panel-wide cross-session list, not chat state
   view.projectId = pid || '';
@@ -12277,8 +12351,91 @@ if (xpScopeEl) {
 // over category headlines and none of the evidence under them.
 const xpCopyEl = document.getElementById('xpCopy');
 if (xpCopyEl) xpCopyEl.addEventListener('click', () => copyPanelEvidence(xpCopyEl, panelTab || 'Activity'));
+// ---- "/" in the composer lists the slash commands that really work ----
+// One source: GET /api/chat/commands serves core/slash_commands.py, the same table /help answers
+// from. The list shows while the message is a single "/word"; arrows move, Tab or Enter picks
+// (Enter on a command already typed in full sends it), Esc closes. Nothing is sent by picking.
+let _slashCommands = null;
+let _slashIndex = 0;
+let _slashShown = [];
+const slashMenuEl = document.createElement('div');
+slashMenuEl.id = 'slashMenu'; slashMenuEl.className = 'slash-menu'; slashMenuEl.hidden = true;
+slashMenuEl.setAttribute('role', 'listbox'); slashMenuEl.setAttribute('aria-label', 'Slash commands');
+document.body.appendChild(slashMenuEl);
+async function loadSlashCommands() {
+  if (_slashCommands) return _slashCommands;
+  try {
+    const r = await fetch('/api/chat/commands');
+    const d = await r.json();
+    _slashCommands = Array.isArray(d && d.commands) ? d.commands.filter((c) => c && typeof c.command === 'string') : [];
+  } catch (e) { _slashCommands = null; return []; }
+  return _slashCommands;
+}
+function hideSlashMenu() { slashMenuEl.hidden = true; _slashShown = []; inputEl.removeAttribute('aria-activedescendant'); }
+let _slashPicked = '';   // the command just picked: the list stays closed until the text changes again
+function pickSlashCommand(i) {
+  const c = _slashShown[i];
+  if (!c) return;
+  inputEl.value = c.command;
+  _slashPicked = c.command;
+  hideSlashMenu();
+  inputEl.focus();
+  try { inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length); } catch (e) {}
+  inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+}
+function paintSlashMenu() {
+  slashMenuEl.textContent = '';
+  _slashShown.forEach((c, i) => {
+    const row = document.createElement('div');
+    row.className = 'slash-item' + (i === _slashIndex ? ' on' : '');
+    row.id = 'slashItem' + i; row.setAttribute('role', 'option'); row.setAttribute('aria-selected', i === _slashIndex ? 'true' : 'false');
+    const name = document.createElement('b'); name.textContent = c.command;
+    const text = document.createElement('span'); text.textContent = String(c.description || '');
+    row.appendChild(name); row.appendChild(text);
+    // mousedown, not click: the textarea must keep focus.
+    row.addEventListener('mousedown', (ev) => { ev.preventDefault(); pickSlashCommand(i); });
+    slashMenuEl.appendChild(row);
+  });
+  inputEl.setAttribute('aria-activedescendant', 'slashItem' + _slashIndex);
+  const r = inputEl.getBoundingClientRect();
+  slashMenuEl.style.left = Math.round(r.left) + 'px';
+  slashMenuEl.style.bottom = Math.round(window.innerHeight - r.top + 6) + 'px';
+  slashMenuEl.style.width = Math.round(Math.min(r.width, 520)) + 'px';
+}
+async function updateSlashMenu() {
+  const v = String(inputEl.value || '');
+  if (!/^\/[^\s]*$/.test(v)) { hideSlashMenu(); return; }
+  if (v === _slashPicked) { hideSlashMenu(); return; }
+  _slashPicked = '';
+  const all = await loadSlashCommands();
+  if (String(inputEl.value || '') !== v) return;   // typed on while the list was loading
+  const q = v.toLowerCase();
+  _slashShown = all.filter((c) => c.command.toLowerCase().startsWith(q));
+  if (!_slashShown.length) { hideSlashMenu(); return; }
+  _slashIndex = Math.min(_slashIndex, _slashShown.length - 1);
+  slashMenuEl.hidden = false;
+  paintSlashMenu();
+}
+inputEl.addEventListener('input', () => { _slashIndex = 0; updateSlashMenu(); });
+inputEl.addEventListener('blur', () => setTimeout(hideSlashMenu, 120));
+window.addEventListener('resize', hideSlashMenu);
 inputEl.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  if (slashMenuEl.hidden || !_slashShown.length) return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault(); e.stopImmediatePropagation();
+    _slashIndex = (_slashIndex + (e.key === 'ArrowDown' ? 1 : _slashShown.length - 1)) % _slashShown.length;
+    paintSlashMenu();
+  } else if (e.key === 'Escape') {
+    e.preventDefault(); e.stopImmediatePropagation(); hideSlashMenu();
+  } else if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+    const picked = _slashShown[_slashIndex];
+    // A command typed out in full is sent by Enter as before; anything else is completed first.
+    if (e.key === 'Enter' && picked && String(inputEl.value || '').toLowerCase() === picked.command.toLowerCase()) { hideSlashMenu(); return; }
+    e.preventDefault(); e.stopImmediatePropagation(); pickSlashCommand(_slashIndex);
+  }
+});
+inputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); hideSlashMenu(); send(); }
 });
 
 const modelConnectEl = document.getElementById('modelConnect');
