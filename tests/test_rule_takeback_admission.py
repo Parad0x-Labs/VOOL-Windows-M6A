@@ -102,6 +102,11 @@ def _ledger(home: Path) -> dict:
     return json.loads((home / ".forget-authority" / "ledger.json").read_text(encoding="utf-8"))["operations"]
 
 
+def _journal(home: Path) -> dict:
+    path = home / ".forget-authority" / "take-back-forgets.json"
+    return json.loads(path.read_text(encoding="utf-8"))["ops"] if path.exists() else {}
+
+
 def _recover(home: Path) -> dict:
     from core.persistent_memory import _recover_admissions
 
@@ -129,7 +134,12 @@ def test_recovery_completes_a_finished_rule_take_back_and_nothing_else(home, cap
     assert after[op]["status"] == "complete"
     assert after[pending_forget] == before[pending_forget]
     assert after[done_forget] == before[done_forget]
-    assert list(after) == list(before)
+    # Every earlier row is kept, in order; what is added is the take-back's own forget, complete, in its chat.
+    assert list(after)[: len(before)] == list(before)
+    added = [after[key] for key in list(after)[len(before):]]
+    assert added and all(row.get("kind", "forget") == "forget" and row["chat"] == CHAT
+                         and row["status"] == "complete" for row in added), added
+    assert _journal(home) == {}
     # Never the user's words or the targets in the log.
     assert "OK-TEST" not in caplog.text and "ok test" not in caplog.text
     # Running it again changes nothing.
@@ -214,24 +224,62 @@ runtime_paths.configure_runtime_home({home!r})
 from storage.db import configure_default_db_path
 configure_default_db_path({db!r})
 from core.memory import revocation
-def die(*args, **kwargs):
-    os._exit(9)
+real = revocation.complete
+def die(operation_id, runtime_home=None):
+    if {stage!r} == "forget" or operation_id == {admission!r}:
+        os._exit(9)
+    return real(operation_id, runtime_home)
 revocation.complete = die
 from core.persistent_memory import _recover_admissions
 _recover_admissions({home!r})
 """
 
 
-def test_a_kill_during_recovery_leaves_the_op_pending_and_the_next_start_completes_it(home) -> None:
+@pytest.mark.parametrize("stage", ["forget", "admission"])
+def test_a_kill_during_recovery_leaves_the_op_pending_and_the_next_start_completes_it(home, stage) -> None:
+    from core.persistent_memory import append_conversation_event, list_conversation_sessions
+
+    append_conversation_event(session_id=CHAT, user_input="From now on mention OK-TEST.", assistant_output="ok")
     _turn(CHAT, TAKE_BACK, "t1")
     _rules_fact(CHAT, "t1")
     op = _admission(home, CHAT, TAKE_BACK)
-    done = subprocess.run([sys.executable, "-c", _CRASH.format(repo=str(REPO), home=str(home), db=str(_db_path()))],
+    done = subprocess.run([sys.executable, "-c", _CRASH.format(repo=str(REPO), home=str(home), db=str(_db_path()),
+                                                                stage=stage, admission=op)],
                           env={**__import__("os").environ, "VOOL_HOME": str(home)}, timeout=180)
     assert done.returncode == 9
     assert _ledger(home)[op]["status"] == "pending"
+    # The proof was written down before the forget ran, so the next start finishes it even though the forget
+    # may already have withheld the turn that proved it.
+    assert op in _journal(home)
     assert _recover(home)["completed"] == 1
     assert _ledger(home)[op]["status"] == "complete"
+    assert _journal(home) == {}
+    assert "OK-TEST" not in json.dumps(list_conversation_sessions(limit=100))
+    assert _recover(home) == {"completed": 0, "kept_pending": 0}
+
+
+def test_an_admission_stays_pending_when_its_forget_cannot_be_verified(home, monkeypatch) -> None:
+    import core.persistent_memory as pm
+
+    _turn(CHAT, TAKE_BACK, "t1")
+    _rules_fact(CHAT, "t1")
+    op = _admission(home, CHAT, TAKE_BACK)
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("store unavailable")
+
+    monkeypatch.setattr(pm, "maybe_handle_memory_command", broken)
+    assert _recover(home) == {"completed": 0, "kept_pending": 1}
+    assert _ledger(home)[op]["status"] == "pending"
+
+
+def test_a_take_back_by_rule_number_names_no_words_and_stays_pending(home) -> None:
+    text = "forget rule 2"
+    _turn(CHAT, text, "t1")
+    _rules_fact(CHAT, "t1")
+    op = _admission(home, CHAT, text)
+    _recover(home)
+    assert _ledger(home)[op]["status"] == "pending"
 
 
 # --- the take-back finishing its own admission ----------------------------------------------------------------
@@ -255,6 +303,9 @@ def test_a_take_back_the_rules_lane_answered_completes_its_admission(home) -> No
     assert _finish_forget_turn_admission(result, user_text=TAKE_BACK, session_id=CHAT,
                                          source_context=context) == result
     assert _ledger(home)[op]["status"] == "complete"
+    forgets = [row for row in _ledger(home).values() if row.get("kind", "forget") == "forget"]
+    assert forgets and all(row["chat"] == CHAT and row["status"] == "complete" for row in forgets)
+    assert _journal(home) == {}
 
 
 @pytest.mark.parametrize("fact", ["none", "failed", "other_turn"])
@@ -275,30 +326,108 @@ def test_a_take_back_that_errored_leaves_its_admission_pending(home, fact) -> No
 # --- served -------------------------------------------------------------------------------------------------
 
 
-def test_served_a_rule_take_back_leaves_no_pending_op_and_memory_answers_quickly(tmp_path) -> None:
+_OLD_BUILD = """
+# The build before this fix, for the restart rows: a take-back leaves its admission pending.
+import core.persistent_memory as _pm
+_pm._admission_recovery_enabled = lambda: False
+"""
+
+
+def _served(tmp_path: Path):
     from tests._blackbox_served_rig import ServedDaemon, run_in_home
     from tests._served_sufficiency_provider import SEED
-    from tests.test_private_chat_served_workflow import MODEL, _certify, _Provider, _stream
+    from tests.test_user_rules_served_workflow import MODEL, _Provider
 
     profile = tmp_path / "home"
-    provider = _Provider({MODEL: "Got it."})
+    folder = tmp_path / "bakery"
+    folder.mkdir(exist_ok=True)
+    provider = _Provider({MODEL: "Try Crumb and Kettle."})
+    return profile, folder, provider, lambda: run_in_home(
+        profile, SEED.format(root=REPO, base_url=provider.base_url, models=[(MODEL, {})])), ServedDaemon
+
+
+def _say(daemon, provider, folder, text: str, session: str) -> tuple[str, str]:
+    from tests.test_user_rules_served_workflow import MODEL, _answer
+
+    before = len(provider.calls)
+    answer = _answer(daemon.chat(text, session_id=session, model=MODEL, workspace=str(folder), timeout=600.0))
+    sent = "\n".join(f"{c.get('system', '')}\n{c.get('full_prompt', '')}" for c in provider.calls[before:])
+    return answer, sent
+
+
+def _memory_list(daemon) -> tuple[float, list[str]]:
+    started = time.monotonic()
+    with urlopen(f"{daemon.base_url}/api/memory/entries?limit=100", timeout=300) as response:
+        facts = [str(e.get("fact") or "") for e in json.loads(response.read().decode())["entries"]]
+    return time.monotonic() - started, facts
+
+
+CUPCAKE_TAKE_BACK = "forget the rule about cupcake"
+
+
+def _logs(profile: Path) -> str:
+    """The daemon's console and its runtime log (data/logs/vool_api.log, where Steve's lines come from)."""
+    return "\n".join(path.read_text(encoding="utf-8", errors="replace")
+                     for path in (profile / "daemon.log", profile / "data" / "logs" / "vool_api.log") if path.exists())
+
+
+def test_served_a_rule_take_back_keeps_its_words_from_the_model_and_memory_answers_quickly(tmp_path) -> None:
+    from tests.test_user_rules_served_workflow import MODEL, PLAIN_TASK, _certify
+
+    profile, folder, provider, seed, ServedDaemon = _served(tmp_path)
     with provider:
-        run_in_home(profile, SEED.format(root=REPO, base_url=provider.base_url, models=[(MODEL, {})]))
+        seed()
         with ServedDaemon(profile, env_extra={"VOOL_MODEL_LOAD_FLOOR_GB": "0"}) as daemon:
             assert _certify(daemon).get("state") == "verified"
-            assert "Locked in" in _stream(daemon, "Remember that my boat is called Juniper.", OTHER)[0]
-            _stream(daemon, "From now on always end with a haiku about OK-TEST.", CHAT)
-            answer = _stream(daemon, TAKE_BACK, CHAT)[0]
-            assert "Took back" in answer, answer
+            assert "Locked in" in _say(daemon, provider, folder, "Remember that my boat is called Juniper.", OTHER)[0]
+            assert "Saved rule" in _say(daemon, provider, folder, "add to chat rules: never use the word cupcake", CHAT)[0]
+            assert "cupcake" in _say(daemon, provider, folder, PLAIN_TASK, CHAT)[1]
+            removed = _say(daemon, provider, folder, CUPCAKE_TAKE_BACK, CHAT)[0]
+            assert "Removed" in removed, removed
             operations = _ledger(profile)
-            assert operations and all(row["status"] == "complete" for row in operations.values()), operations
-            started = time.monotonic()
-            with urlopen(f"{daemon.base_url}/api/memory/entries?limit=100", timeout=300) as response:
-                facts = [str(e.get("fact") or "") for e in json.loads(response.read().decode())["entries"]]
-            took = time.monotonic() - started
+            assert not [row for row in operations.values() if row["status"] == "pending"], operations
+            # While the take-back turn ran, its admission withheld reads in its scope (by design); after it, none.
+            settled = len(_logs(profile))
+            # History, retrieved context, standing instructions and recall: the word reaches the model nowhere.
+            sent_after = _say(daemon, provider, folder, PLAIN_TASK, CHAT)[1]
+            assert sent_after and "cupcake" not in sent_after.lower()
+            took, facts = _memory_list(daemon)
             assert any("Juniper" in fact for fact in facts), facts
             assert took < 3.0, took
-            # The rule stays taken back.
-            assert "Took back" not in _stream(daemon, TAKE_BACK, CHAT)[0]
-    log = (profile / "daemon.log").read_text(encoding="utf-8", errors="replace")
-    assert "authorize_payload failed" not in log
+    assert "authorize_payload failed" not in _logs(profile)[settled:]
+    assert MODEL
+
+
+def test_served_a_stuck_take_back_is_finished_at_restart_and_its_words_stay_from_the_model(tmp_path) -> None:
+    from tests.test_user_rules_served_workflow import PLAIN_TASK, _certify
+
+    profile, folder, provider, seed, ServedDaemon = _served(tmp_path)
+    old_build = tmp_path / "old-build"
+    old_build.mkdir()
+    (old_build / "sitecustomize.py").write_text(_OLD_BUILD, encoding="utf-8")
+    import os
+
+    with provider:
+        seed()
+        old = {"VOOL_MODEL_LOAD_FLOOR_GB": "0", "PYTHONPATH": f"{old_build}{os.pathsep}{REPO}"}
+        with ServedDaemon(profile, env_extra=old) as daemon:
+            assert _certify(daemon).get("state") == "verified"
+            assert "Locked in" in _say(daemon, provider, folder, "Remember that my boat is called Juniper.", OTHER)[0]
+            assert "Saved rule" in _say(daemon, provider, folder, "add to chat rules: never use the word cupcake", CHAT)[0]
+            assert "Removed" in _say(daemon, provider, folder, CUPCAKE_TAKE_BACK, CHAT)[0]
+        stuck = [row for row in _ledger(profile).values() if row["status"] == "pending"]
+        assert [row.get("kind") for row in stuck] == ["admission"], stuck   # the Steve state
+
+        with ServedDaemon(profile, env_extra={"VOOL_MODEL_LOAD_FLOOR_GB": "0"}) as daemon:
+            operations = _ledger(profile)
+            assert not [row for row in operations.values() if row["status"] == "pending"], operations
+            sent_after = _say(daemon, provider, folder, PLAIN_TASK, CHAT)[1]
+            assert sent_after and "cupcake" not in sent_after.lower()
+            took, facts = _memory_list(daemon)
+            assert any("Juniper" in fact for fact in facts), facts
+            assert took < 3.0, took
+    log = _logs(profile)
+    assert "completed: a finished rule take-back, its words forgotten" in log
+    assert "cupcake" not in "\n".join(line for line in log.splitlines() if "forget admission" in line)
+    restart_log = log.rsplit("completed: a finished rule take-back", 1)[-1]
+    assert "authorize_payload failed" not in restart_log
