@@ -12,6 +12,7 @@ Windows 11, 64-bit. Windows needs 16 GB of RAM. With less, VOOL refuses to load 
 - **Windows installer.** A per-user Inno Setup installer (`%LOCALAPPDATA%\Programs\VOOL`) that never asks for administrator rights. It bundles VOOL's own Python, the local-model runner and the Windows broker, so nothing else needs installing.
 - **Folders VOOL may change.** On Windows, VOOL changes files only inside folders you mark as disposable, in **Settings → Folders VOOL may change (Windows)**. Marking asks Windows to confirm the folder. A new mark is used after VOOL restarts; unmarking takes effect at once. Outside a marked folder, VOOL refuses a write before asking you to approve it. You can't mark a whole drive, your user folder itself, or a folder that holds your temp or app-data folders; mark a folder inside them instead.
 - **Offline by default.** VOOL works offline by default. Ollama's cloud models are refused. A cloud provider is used only after you add your own key in Settings. Saving an OpenRouter key turns cloud on; for other providers, also choose an Auto fallback model or pin a paid model in Settings. To turn cloud off again, type `cloud off` (it also clears a pinned paid model) or remove your key in Settings. Otherwise VOOL goes online only when you ask it to: to download its model, or when you turn on web access. VOOL's bundled Ollama answers only on this computer. If you run the bundled ollama command yourself, it can download a cloud model's listing, but VOOL refuses it and starts Ollama with cloud models turned off.
+- **Local Only still searches the web.** Local Only runs every AI model on this computer and never calls a cloud AI provider, paid or free. Web search still works under Local Only: it runs through VOOL's built-in browser (Microsoft Edge), so your search words go to the search engine (DuckDuckGo or Bing). The Local Only labels and help text now say so.
 - **Online add-on scan.** The add-on store's **Scan with Eyebrow** step (**Download and scan** for an external add-on) is an online service: it downloads the add-on from its source (for an external add-on) and calls api.eyebrow.cc, and runs only after you add an Eyebrow key in Settings → API Keys and agree to the scan.
 - **Owner-only secrets.** Secrets on disk are locked to your Windows account, and VOOL refuses to store one where that lock can't be set.
 - **No console windows.** Background tools no longer flash a window on every turn.
@@ -23,6 +24,7 @@ Windows 11, 64-bit. Windows needs 16 GB of RAM. With less, VOOL refuses to load 
 - **Network locations are refused.** VOOL refuses paths that name a network share or a device, and never writes to a mapped network drive.
 - The installer is **not code-signed yet**. SmartScreen shows **Windows protected your PC**; check the file against `SHA256SUMS` first, then use **More info → Run anyway**.
 - VOOL does not send Windows notifications yet; alerts stay in its own bell.
+- **API keys are kept in VOOL's encrypted vault in your user profile**, protected by your Windows account's file permissions, not by Windows Credential Manager. Anyone who can read your Windows profile can read them. Type `cloud diagnostics` to see which keys are stored.
 
 ### Known issues on Windows
 - Moves work only between marked folders under your user folder, and moving between marked folders also needs the chat's own folder to be marked.
@@ -34,6 +36,7 @@ Windows 11, 64-bit. Windows needs 16 GB of RAM. With less, VOOL refuses to load 
 - Asking in chat to download a cloud model gets a vague answer; nothing is downloaded.
 - Give full paths when you ask VOOL to move a file.
 - Starting a new chat sets the mode back to Manual. Pick Plan again after New chat.
+- PDF reading isn't available on Windows in 0.7.1. Asking VOOL to read a PDF says so and runs nothing. Apple Notes is a Mac app, so its tools aren't offered on Windows.
 - On Windows, a Python script run inside VOOL that makes a temporary folder outside the folder it's allowed to write (tempfile.mkdtemp or TemporaryDirectory with an outside dir) waits until the job's time limit, then reports a timeout instead of a permission error. Nothing is created outside. Temporary folders inside the allowed folder, including pytest's tmp_path, work normally.
 - After a run in a subfolder of a marked folder, a run in the marked folder itself is refused, because sandbox entries left by the earlier run count as another writer. Nothing changes. Run in the subfolder instead.
 - Asking "run the tests in <folder> with pytest" asks for approval twice and then summarises the result. Ask "run pytest in <folder>" to see pytest's own output.

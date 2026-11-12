@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import errno
 import json
 import os
 import shutil
@@ -52,7 +53,7 @@ if _PROJECT_ROOT not in sys.path:
 # only because the two lines above just put it there. An `installer.bundle` import in the header
 # block raised ImportError and the window never opened -- invisible to the suite, which imports this
 # as a module with the root already on the path.
-from installer.bundle import pet_native
+from installer.bundle import pet_native, windows_chrome
 
 _WEBVIEW2_GUID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 _LOCK_HANDLES: list[int] = []  # POSIX: keep the flocks held for the process lifetime
@@ -78,9 +79,11 @@ def _state_dir() -> str:
 
 
 def _log(message: str) -> None:
+    """One open.log line, prefixed with a UTC time so it lines up with the API's own log."""
     with contextlib.suppress(Exception):
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         with open(os.path.join(_state_dir(), "open.log"), "a", encoding="utf-8") as handle:
-            handle.write(message.rstrip() + "\n")
+            handle.write(f"{stamp} {message.rstrip()}\n")
 
 
 def _posix_lock_base() -> str:
@@ -545,6 +548,11 @@ def _settings_menu(api: object) -> list:
     the window simply starts without a menu instead of failing to start at all. The page's own
     Cmd+, handler keeps working either way.
     """
+    if sys.platform == "win32":
+        # WinForms turns the start menu into a MenuStrip on EVERY form: an empty white band under
+        # each title bar and across the top of the frameless pet. Windows reaches Settings from the
+        # page, so it starts with no app menu.
+        return []
     try:
         from webview.menu import Menu, MenuAction
     except Exception as exc:
@@ -669,6 +677,101 @@ def _fit_to_work_area(width: int, height: int, min_size: tuple[int, int],
     }
 
 
+# Why a hard link cannot be made at a save destination, as opposed to a real refusal. FAT32 and
+# exFAT (USB sticks, SD cards) have no hard links, and many network shares refuse them: Windows says
+# ERROR_INVALID_FUNCTION (1) or ERROR_NOT_SUPPORTED (50); POSIX says EPERM, EXDEV or ENOTSUP.
+_NO_HARDLINK_WINERRORS = frozenset({1, 50})
+_NO_HARDLINK_ERRNOS = frozenset({errno.EPERM, errno.EXDEV, errno.ENOTSUP, errno.EOPNOTSUPP})
+
+
+def _hard_links_unsupported(exc: OSError) -> bool:
+    if isinstance(exc, FileExistsError):
+        return False
+    winerror = getattr(exc, "winerror", None)
+    if winerror is not None:
+        return int(winerror) in _NO_HARDLINK_WINERRORS
+    return exc.errno in _NO_HARDLINK_ERRNOS
+
+
+def _deliver_no_clobber(temporary: Path, destination: Path, body: bytes) -> None:
+    """Put the fully written, fsynced ``temporary`` at ``destination`` without replacing anything.
+
+    A hard link is atomic and never overwrites. Where the destination's filesystem has no hard
+    links (a USB stick, an SD card, many network shares) the save used to fail with a bare
+    "OSError"; there the same bytes are written to a file created exclusively instead (``xb``:
+    an existing file is still never replaced), and a half-written file is removed again. Any
+    other failure, a refusal included, is raised unchanged.
+    """
+    try:
+        os.link(temporary, destination)
+        return
+    except OSError as exc:
+        if not _hard_links_unsupported(exc):
+            raise
+        _log(f"save destination has no hard links ({type(exc).__name__}); writing it exclusively")
+    created = False
+    try:
+        with open(destination, "xb") as out:
+            created = True
+            out.write(body)
+            out.flush()
+            os.fsync(out.fileno())
+    except BaseException:
+        if created:
+            with contextlib.suppress(OSError):
+                destination.unlink()
+        raise
+
+
+def _save_dialog_start_folder() -> str:
+    """Where a save dialog opens: the person's Downloads folder when there is one, else the
+    dialog's own default."""
+    with contextlib.suppress(Exception):
+        downloads = Path.home() / "Downloads"
+        if downloads.is_dir():
+            return str(downloads)
+    return ""
+
+
+_NO_FOLDER_RETURNED = (
+    "Windows didn't return a folder. A whole drive can't be marked; pick a folder inside it."
+)
+
+
+def _close_secondaries_with(window: object, api: "_WindowApi") -> bool:
+    """Close the pet, Settings and Setup windows when the main chat window closes (not macOS).
+    True when the hook was installed. See ``_WindowApi._close_secondary_windows``."""
+    if sys.platform == "darwin":
+        return False
+    try:
+        window.events.closed += api._close_secondary_windows
+        return True
+    except Exception as exc:
+        _log(f"main window closed hook unavailable ({exc!r})")
+        return False
+
+
+def _own_foreground_window(user32: object) -> object:
+    """The foreground window when it belongs to THIS process, else None (no owner).
+
+    Used as the owner of a native message box so it opens in front of the VOOL window the person
+    is using. A window of any other process is never used as an owner."""
+    try:
+        from ctypes import wintypes
+
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        user32.GetWindowThreadProcessId.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.DWORD))
+        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+        hwnd = user32.GetForegroundWindow()
+        if not hwnd:
+            return None
+        pid = wintypes.DWORD(0)
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        return wintypes.HWND(hwnd) if int(pid.value) == os.getpid() else None
+    except Exception:
+        return None
+
+
 def _focus_window(window: object) -> None:
     """Raise an existing pywebview window. On macOS ``show()`` already does
     makeKeyAndOrderFront_ + activateIgnoringOtherApps_, which IS focus; restore() covers a
@@ -702,6 +805,74 @@ COMPANION_WINDOW_FLAGS: dict = {
     "text_select": False,
     "zoomable": False,
 }
+
+
+# core/ui_palette.py DARK_PALETTE_CSS --bg: what a new window shows before its page paints, instead
+# of pywebview's #FFFFFF (a white flash on every open). Six hex digits, as pywebview validates.
+WINDOW_BACKGROUND = "#141416"
+
+
+def _create_vool_window(webview_module: object, *args, **kwargs):
+    """Open a VOOL window. The ONE place VOOL opens a titled window, so every window, including
+    ones added later, gets the Windows chrome: a dark title bar with white caption buttons and
+    VOOL's icon (windows_chrome; a no-op elsewhere, and a styling failure never costs the window),
+    and opens on VOOL's dark background instead of a white flash.
+    Only the frameless pet opens its own window (detach_companion), with its own policy.
+    tests/test_every_vool_window_gets_windows_chrome.py fails on any other create_window call."""
+    kwargs.setdefault("background_color", WINDOW_BACKGROUND)
+    created = webview_module.create_window(*args, **kwargs)
+    if created is not None:
+        with contextlib.suppress(Exception):
+            windows_chrome.style_native_window(created)
+    return created
+
+
+def _save_dialog_directory() -> str:
+    """Where a Windows save dialog opens: the user's Downloads folder when it exists, so a save
+    does not start in the profile root. Other platforms keep the dialog's own default."""
+    if sys.platform != "win32":
+        return ""
+    downloads = Path.home() / "Downloads"
+    return str(downloads) if downloads.is_dir() else ""
+
+
+def _deliver_without_overwrite(body: bytes, destination: Path, prefix: str) -> None:
+    """Write ``body`` to ``destination`` without ever replacing an existing file.
+
+    The bytes are staged in a temporary file beside the destination and hard-linked into place,
+    so the destination appears whole or not at all. FAT and exFAT drives (most USB sticks) and
+    many network shares cannot hard-link; there the destination is created exclusively instead
+    (still never overwriting) and removed again if the write does not finish.
+    Raises FileExistsError when the destination already exists."""
+    linked = False
+    with tempfile.NamedTemporaryFile(dir=destination.parent, prefix=prefix, delete=False) as handle:
+        temporary = Path(handle.name)
+        try:
+            handle.write(body)
+            handle.flush()
+            os.fsync(handle.fileno())
+            try:
+                os.link(temporary, destination)
+                linked = True
+            except FileExistsError:
+                raise
+            except OSError as exc:
+                _log(f"save: no hard link on this volume ({exc!r}); writing the file directly")
+        finally:
+            # Windows cannot unlink a file that still has an open handle.
+            handle.close()
+            temporary.unlink(missing_ok=True)
+    if linked:
+        return
+    with open(destination, "xb") as direct:
+        try:
+            direct.write(body)
+            direct.flush()
+            os.fsync(direct.fileno())
+        except BaseException:
+            direct.close()
+            destination.unlink(missing_ok=True)
+            raise
 
 
 class _WindowApi:
@@ -754,7 +925,8 @@ class _WindowApi:
                     return {"ok": True, "mode": "focused"}
                 except Exception:
                     self._settings_window = None   # it was really destroyed; fall through and rebuild
-            created = webview_module.create_window(
+            created = _create_vool_window(
+                webview_module,
                 "VOOL Settings",
                 url,
                 js_api=self,
@@ -824,7 +996,8 @@ class _WindowApi:
                     return {"ok": True, "mode": "focused"}
                 except Exception:
                     self._setup_window = None
-            created = webview_module.create_window(
+            created = _create_vool_window(
+                webview_module,
                 "VOOL Setup",
                 url,
                 js_api=self,
@@ -857,6 +1030,35 @@ class _WindowApi:
         except Exception as exc:
             return {"ok": False, "error": type(exc).__name__}
 
+    def _close_secondary_windows(self, *_args: object) -> None:
+        """The chat window closed: close every other window this host made, so the host exits.
+
+        pywebview ends ``webview.start`` only when NO window is left, and the desktop pet is only
+        ever hidden (SW_HIDE), never destroyed. Without this, closing the chat with X after the pet
+        was detached once, or with Settings or Setup still open, left this process running with no
+        main window: the supervisor then had nothing titled "VOOL" to raise and never started a new
+        window, so VOOL could not be reopened until pythonw was killed. Hooked to the main window's
+        ``closed`` event (never ``closing``, which would veto the close). Not used on macOS, where X
+        hides the chat window to the Dock and the app keeps running by design.
+        """
+        pet, self._pet = self._pet, None
+        if pet is not None:
+            with contextlib.suppress(Exception):
+                pet.hide()   # stops the pet's cursor tracking before its window goes
+        closed = []
+        for attr in ("_companion_window", "_settings_window", "_setup_window"):
+            window = getattr(self, attr)
+            setattr(self, attr, None)
+            if window is None:
+                continue
+            try:
+                window.destroy()
+                closed.append(attr.strip("_").replace("_window", ""))
+            except Exception as exc:
+                _log(f"{attr.strip('_')} not closed with the chat window ({exc!r})")
+        if closed:
+            _log("chat window closed; also closed: " + ", ".join(closed))
+
     def quit_app(self, _payload: object = None) -> dict:
         """Quit VOOL: stop everything the bundle supervisor owns, then close this window.
 
@@ -887,18 +1089,40 @@ class _WindowApi:
         if os.name == "nt":
             mb_okcancel, mb_iconwarning, mb_defbutton2, mb_setforeground, idok = 0x1, 0x30, 0x100, 0x10000, 1
             flags = mb_okcancel | mb_iconwarning | mb_defbutton2 | mb_setforeground
-            return int(ctypes.windll.user32.MessageBoxW(None, message, title, flags)) == idok
+            user32 = ctypes.windll.user32
+            # Owned by the VOOL window the person clicked in (Settings, usually), so the box opens
+            # in front of it and has no taskbar button of its own. Never another app's window.
+            owner = _own_foreground_window(user32)
+            return int(user32.MessageBoxW(owner, message, title, flags)) == idok
         window = self._window
         return bool(window is not None and window.create_confirmation_dialog(title, message))
+
+    def _dialog_owner(self, owner: object) -> tuple[object | None, bool]:
+        """The window a native dialog must belong to, and whether it is a secondary window.
+
+        pywebview's js_api does not say which window called, so the Setup and Settings pages name
+        their own window ("setup", "settings"). The word only picks one of the windows this bridge
+        already holds; it is never a path. Anything else, or a named window that is not open, is
+        the chat window, as before. A dialog owned by the chat window makes Windows raise the chat
+        window over Setup (owner hand test, Windows 11: Setup seemed to close on "Choose a folder")."""
+        window = None
+        if owner == "setup":
+            window = self._setup_window
+        elif owner == "settings":
+            window = self._settings_window
+        if window is not None:
+            return window, True
+        return self._window, False
 
     def mark_disposable_folder(self, _payload: object = None) -> dict:
         """Mark a folder VOOL may change on Windows (core/windows_disposable_store.py).
 
-        Takes nothing from the page: the folder comes from the OS folder picker, the consent from an
+        Takes no path from the page: the folder comes from the OS folder picker, the consent from an
         OS confirm dialog that names the folder as it really is (links and junctions followed), and
-        only then is it written to the owner-only list. Takes effect at VOOL's next start."""
+        only then is it written to the owner-only list. Takes effect at VOOL's next start. The only
+        thing the page may say is which of VOOL's own windows the picker belongs to."""
         try:
-            window = self._window
+            window, secondary = self._dialog_owner(_payload)
             if window is None:
                 return {"ok": False, "error": "no_window"}
             import webview
@@ -906,8 +1130,16 @@ class _WindowApi:
             from core import windows_disposable_store as store
 
             result = window.create_file_dialog(webview.FOLDER_DIALOG)
-            if not result:
+            if secondary:
+                _focus_window(window)
+            if result is None:   # the person pressed Cancel
                 return {"ok": False, "cancelled": True}
+            if not result or not str(result[0] if isinstance(result, (list, tuple)) else result).strip():
+                # OK was pressed but Windows handed back no folder. pywebview's picker returns
+                # tuple(FileNames), which is empty for a drive root such as C:\ -- reported as a
+                # cancel, Settings showed nothing at all. A whole drive is never markable anyway.
+                _log("mark_disposable_folder: the picker returned no folder")
+                return {"ok": False, "refused": _NO_FOLDER_RETURNED}
             picked = str(result[0] if isinstance(result, (list, tuple)) else result)
             reason = store.refusal_reason(picked, extra_sealed=(str(Path(__file__).resolve().parent),))
             if reason:
@@ -944,15 +1176,20 @@ class _WindowApi:
             reason = getattr(exc, "reason", "")
             return {"ok": False, "refused": reason} if reason else {"ok": False, "error": type(exc).__name__}
 
-    def pick_folder(self) -> dict:
-        """Open a native folder dialog. Returns {ok:True, path} or {ok:False, cancelled|error}."""
+    def pick_folder(self, owner: object = None) -> dict:
+        """Open a native folder dialog. Returns {ok:True, path} or {ok:False, cancelled|error}.
+
+        ``owner`` is "setup" from the Setup window (see ``_dialog_owner``); the chat page passes
+        nothing. A dialog owned by a secondary window brings that window back to the front after."""
         try:
-            window = self._window
+            window, secondary = self._dialog_owner(owner)
             if window is None:
                 return {"ok": False, "error": "no_window"}
             import webview
 
             result = window.create_file_dialog(webview.FOLDER_DIALOG)
+            if secondary:
+                _focus_window(window)
             if not result:
                 return {"ok": False, "cancelled": True}
             path = result[0] if isinstance(result, (list, tuple)) else result
@@ -1012,6 +1249,7 @@ class _WindowApi:
             file_type = {"md": "Markdown documents (*.md)", "txt": "Text documents (*.txt)",
                          "pdf": "PDF documents (*.pdf)"}[format_name]
             result = self._window.create_file_dialog(self._webview.SAVE_DIALOG,
+                directory=_save_dialog_start_folder(),
                 save_filename=("vool-answer" if request_id else "vool-chat") + "." + format_name,
                 file_types=(file_type,))
             if not result:
@@ -1024,7 +1262,7 @@ class _WindowApi:
                     handle.write(body)
                     handle.flush()
                     os.fsync(handle.fileno())
-                    os.link(temporary, destination)
+                    _deliver_no_clobber(temporary, destination, body)
                 finally:
                     # Windows cannot unlink a file that still has an open handle.
                     handle.close()
@@ -1074,7 +1312,8 @@ class _WindowApi:
             filename = Path(str(filename).replace("\\", "/")).name.lstrip(".") or "vool-file"
             extension = filename.rsplit(".", 1)[-1] if "." in filename else ""
             file_types = (f"{extension.upper()} files (*.{extension})",) if extension.isalnum() else ()
-            result = self._window.create_file_dialog(self._webview.SAVE_DIALOG, save_filename=filename, file_types=file_types)
+            result = self._window.create_file_dialog(self._webview.SAVE_DIALOG, directory=_save_dialog_start_folder(),
+                                                     save_filename=filename, file_types=file_types)
             if not result:
                 return {"ok": False, "cancelled": True}
             destination = Path(result[0] if isinstance(result, (list, tuple)) else result)
@@ -1084,7 +1323,7 @@ class _WindowApi:
                     handle.write(body)
                     handle.flush()
                     os.fsync(handle.fileno())
-                    os.link(temporary, destination)
+                    _deliver_no_clobber(temporary, destination, body)
                 finally:
                     # Windows cannot unlink a file that still has an open handle.
                     handle.close()
@@ -1097,6 +1336,64 @@ class _WindowApi:
             except (ValueError, AttributeError):
                 message = "The file is not available"
             return {"ok": False, "error": "deliverable_unavailable", "message": message}
+        except FileExistsError:
+            return {"ok": False, "error": "destination_exists", "message": "Choose a new filename; the existing file was not changed."}
+        except Exception as exc:
+            return {"ok": False, "error": type(exc).__name__}
+
+    def save_session_bundle(self, bundle_path: str, session_id: str = "", owner: object = None) -> dict:
+        """Save an exported chat bundle (.voolsession) to a place the user picks.
+
+        The page names only the bundle the export route just wrote; the server's download route
+        decides whether that path is inside session_bundles and supplies the bytes, and nothing
+        existing on disk is overwritten. pywebview cancels page downloads, so without this the
+        export wrote its bundle under the data folder and the user got no file. ``owner`` is
+        "settings" from the Settings window (see ``_dialog_owner``), so the Save As dialog belongs
+        to that window and not to the chat window behind it; the chat page passes nothing."""
+        import re
+        from urllib.parse import urlencode
+
+        dialog_window, secondary = self._dialog_owner(owner)
+        if dialog_window is None or self._webview is None:
+            return {"ok": False, "error": "no_window"}
+        if not isinstance(bundle_path, str) or not 0 < len(bundle_path) <= 4096 or not bundle_path.endswith(".voolsession"):
+            return {"ok": False, "error": "invalid_bundle_identity"}
+        if not isinstance(session_id, str) or len(session_id) > 512:
+            return {"ok": False, "error": "invalid_bundle_identity"}
+        limit = 256 * 1024 * 1024
+
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, *args, **kwargs):
+                return None
+        try:
+            url = _API_ORIGIN + "/api/session/bundle/download?" + urlencode({"path": bundle_path})
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+            with opener.open(url, timeout=60) as response:
+                if response.headers.get_content_type() != "application/octet-stream":
+                    return {"ok": False, "error": "invalid_bundle_response"}
+                body = response.read(limit + 1)
+            if len(body) > limit:
+                return {"ok": False, "error": "bundle_too_large",
+                        "message": "The bundle exceeds the native save size limit; nothing was saved."}
+            stem = re.sub(r"[^A-Za-z0-9_-]", "_", session_id or "chat")[:64] or "chat"
+            result = dialog_window.create_file_dialog(self._webview.SAVE_DIALOG, directory=_save_dialog_directory(),
+                                                      save_filename=stem + ".voolsession",
+                                                      file_types=("VOOL chat bundles (*.voolsession)",))
+            if secondary:
+                _focus_window(dialog_window)
+            if not result:
+                return {"ok": False, "cancelled": True}
+            destination = Path(result[0] if isinstance(result, (list, tuple)) else result)
+            _deliver_without_overwrite(body, destination, ".vool-bundle-")
+            # The path the person picked in the dialog, so the page can say where the file went.
+            return {"ok": True, "path": str(destination)}
+        except urllib.error.HTTPError as exc:
+            try:
+                refusal = json.loads(exc.read(4096))
+                message = str(refusal.get("message") or refusal.get("error") or "The bundle is not available")
+            except (ValueError, AttributeError):
+                message = "The bundle is not available"
+            return {"ok": False, "error": "bundle_unavailable", "message": message}
         except FileExistsError:
             return {"ok": False, "error": "destination_exists", "message": "Choose a new filename; the existing file was not changed."}
         except Exception as exc:
@@ -1758,6 +2055,9 @@ def main() -> int:
     notification_bridge = None
     owned_pid: dict[str, int | None] = {"pid": None}
     done = threading.Event()
+    # Windows: VOOL's own taskbar identity (the launcher shortcuts carry the same AppUserModelID),
+    # claimed before any window so the taskbar never groups VOOL under pythonw. No-op elsewhere.
+    windows_chrome.set_app_user_model_id()
     try:
         if not _single_instance():
             _log("another VOOL window is already open; not opening a second")
@@ -1816,12 +2116,13 @@ def main() -> int:
         api = _WindowApi()
         _claim_macos_app_name()          # so the menu bar / Cmd-Tab say VOOL, not VOOL/Python
         _install_native_frame_authority()
-        window = webview.create_window(
-            "VOOL", URL, js_api=api, **_fit_to_work_area(1220, 860, (900, 640), _work_area()),
+        window = _create_vool_window(
+            webview, "VOOL", URL, js_api=api, **_fit_to_work_area(1220, 860, (900, 640), _work_area()),
         )
         if window is None:
             raise RuntimeError("pywebview returned no native window")
         api.set_window(window, webview)
+        _close_secondaries_with(window, api)
         _register_url_scheme_handler()   # catch vool://auth/<provider>/callback launches (macOS)
         runtime_lost = _start_runtime_watchdog(supervisor, window, done)
         notification_bridge = _start_notification_bridge(window)
@@ -1835,6 +2136,8 @@ def main() -> int:
         menu = _settings_menu(api)
         # An ambient Qt override must not bypass the verified Cocoa datastore.
         start_options = {"gui": "cocoa"} if isolated_webkit else {}
+        # Windows: every pywebview form gets VOOL's icon instead of pythonw's. Empty elsewhere.
+        start_options.update(windows_chrome.start_icon_options())
         try:
             webview.start(_post_start_all, menu=menu, **start_options)
         except TypeError:

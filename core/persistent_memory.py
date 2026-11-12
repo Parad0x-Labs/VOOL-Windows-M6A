@@ -413,6 +413,111 @@ _NO_ACTIVE_REMEMBERED_VALUE = (
 )
 _EMPTY_RECALL_ANSWERS = frozenset({_NO_ACTIVE_MEMORY_RECORDED, _NO_ACTIVE_REMEMBERED_VALUE})
 
+# ---- "what is my X?" in a chat with no earlier turns ---------------------------------------------
+#
+# Memory is chat-scoped by design (`_memory_scope_for_user_fact`): "remember my test colour is teal"
+# is a chat fact, so a NEW chat cannot see it. With no transcript and nothing in active memory, a
+# bare "what is my test colour?" used to reach the model, which had nothing to read and guessed
+# ("VOOL Blue"). This lane now answers that one shape with a fixed admission instead.
+#
+# The shape is deliberately an ALLOWLIST, not "my <any noun>": the whole message must be
+# "what is / what's / what was my <modifier> [<modifier>] <attribute noun>[?]", where the modifier
+# is one of `_UNREMEMBERED_SUBJECT_MODIFIERS` and the attribute noun one of
+# `_UNREMEMBERED_SUBJECT_NOUNS`. At least one modifier is required, so the generic nouns
+# ("name", "number", "code", "word") are only claimed in a personal-attribute frame ("favourite
+# number", "lucky number", "test code", "pet's name") and never as "what is my repo name", "what
+# is my best option", "what is my name" (the identity authority's question) or "what is my phone
+# number" (personal_knowledge's). "password hint" is the one phrase admitted without a modifier.
+# Anything else -- a longer question, another noun, an unlisted modifier -- reaches the model as
+# before.
+_UNREMEMBERED_SUBJECT_MODIFIERS = (
+    r"test|favou?rite|fave|lucky|secret|magic|safe|code|pet'?s|dog'?s|cat'?s"
+)
+_UNREMEMBERED_SUBJECT_NOUNS = (
+    r"colou?r|number|code|name|word|phrase|animal|food|dish|drink|fruit|flower|song|movie|film"
+    r"|book|band|sport|season|city|place|game|holiday"
+)
+_UNREMEMBERED_SUBJECT_QUESTION_RE = re.compile(
+    r"^\s*what(?:'s|’s|\s+is|\s+was)\s+my\s+"
+    r"(?P<subject>"
+    rf"(?:(?:{_UNREMEMBERED_SUBJECT_MODIFIERS})\s+){{1,2}}(?:{_UNREMEMBERED_SUBJECT_NOUNS})"
+    r"|password\s+hint"
+    r")\s*[?.!]*\s*$",
+    re.IGNORECASE,
+)
+
+
+def _unremembered_subject_question(text: str) -> str:
+    """The asked-for subject ("test colour") when ``text`` is exactly the narrow shape, else ''."""
+    match = _UNREMEMBERED_SUBJECT_QUESTION_RE.match(" ".join(str(text or "").replace("’", "'").split()))
+    if not match:
+        return ""
+    return " ".join(match.group("subject").casefold().split())
+
+
+def _unremembered_subject_line(subject: str) -> str:
+    # Wording follows core.personal_knowledge.PERSONAL_KNOWLEDGE_ADMISSION ("If you tell me, I can
+    # remember it"), minus its "for next time": a chat fact does not carry into the next chat, and
+    # the last sentence says so while memory stays chat-scoped.
+    return (
+        f"I don't have your {subject} remembered. If you tell me, I can remember it. "
+        "Facts you saved in another chat stay in that chat."
+    )
+
+
+def _turn_has_no_earlier_turns(session_id: str, source_context: dict[str, Any] | None) -> bool:
+    """True only when the caller handed us this turn's transcript and it holds nothing before it.
+
+    Requires ``conversation_history`` to be PRESENT (the agent's front door always sets it, after
+    hydrating it from the session log); a caller that sends none is not evidence of a new chat.
+    The session log is consulted as well, so a client that dropped its history does not count.
+    """
+    context = source_context or {}
+    if "conversation_history" not in context:
+        return False
+    history = _normalized_history(context.get("conversation_history"))
+    if history and history[-1].get("role") == "user":
+        history = history[:-1]
+    if history:
+        return False
+    try:
+        return not recent_conversation_events(str(session_id or ""), limit=1)
+    except Exception:
+        return False
+
+
+def _subject_is_in_active_memory(subject: str, query: str, *, access_policy: ContextAccessPolicy) -> bool:
+    """True when anything this chat's model context could read mentions the subject's noun.
+
+    Deliberately broad (any mention of the head noun counts, "colour" and "color" alike) and
+    fail-closed (an unreadable store counts as a mention): a false True only hands the turn to the
+    model as before, while a false False would assert an absence that is not true.
+    """
+    head = subject.split()[-1]
+    nouns = {"colour", "color"} if head in {"colour", "color"} else {head}
+    pattern = re.compile(r"\b(?:" + "|".join(re.escape(noun) for noun in sorted(nouns)) + r")\b", re.IGNORECASE)
+    try:
+        texts: list[str] = [
+            str(row.get("text") or "") for row in list_memory_entries(access_policy=access_policy, limit=500)
+        ]
+        texts.extend(
+            str(row.get("text") or "") for row in search_relevant_memory(query, access_policy=access_policy, limit=8)
+        )
+        texts.extend(
+            str(row.get("text") or "") + " " + str(row.get("signal") or "")
+            for row in search_user_heuristics(query, access_policy=access_policy, limit=8)
+        )
+        texts.extend(
+            str(row.get("summary") or "")
+            for row in search_session_summaries(query, access_policy=access_policy, limit=8)
+        )
+        if access_policy.allow_user_profile_context:
+            texts.append(json.dumps(load_operator_dense_profile() or {}, ensure_ascii=False))
+    except Exception as exc:
+        LOGGER.warning("active memory unreadable for an unremembered-subject check: %s", type(exc).__name__)
+        return True
+    return any(pattern.search(text) for text in texts)
+
 # A question about WHERE in the conversation something was said -- "the very FIRST thing I asked you
 # to remember", "what did I tell you EARLIEST" -- is a property of the transcript, not of a row in
 # this store. This lane's lookup is relevance-ranked and carries no ordering, so it cannot answer an
@@ -1822,6 +1927,11 @@ def maybe_handle_memory_command(
         return False, ""
     lowered = text.lower()
     scope_command = _parse_session_scope_command(text)
+    # Only a turn with no earlier turns is ever a candidate (see `_unremembered_subject_question`);
+    # every other turn with this shape is declined here exactly as before.
+    unremembered_subject = _unremembered_subject_question(text)
+    if unremembered_subject and not _turn_has_no_earlier_turns(str(session_id or ""), source_context):
+        unremembered_subject = ""
     if not (
         scope_command is not None
         or lowered in {"/memory", "what do you remember", "show memory"}
@@ -1829,6 +1939,7 @@ def maybe_handle_memory_command(
         or _correction_match(text)
         or _FORGET_RE.match(text)
         or _is_memory_recall_question(text)
+        or unremembered_subject
     ):
         return False, ""
     capture_match = _memory_capture_match(text)
@@ -1881,6 +1992,9 @@ def maybe_handle_memory_command(
             chat_id=session_id,
         )
     except (TypeError, ValueError):
+        if unremembered_subject:
+            # Admitted only for the fixed absence line, which needs a readable memory to be true.
+            return False, ""
         return True, "I need an active chat before I can access memory."
     resolved_session = resolved_policy.chat_id
 
@@ -1946,6 +2060,15 @@ def maybe_handle_memory_command(
             # matching that request in this chat" with model_ran=False.
             return False, ""
         return True, response
+
+    if unremembered_subject:
+        # A new chat (no earlier turns) asking for a personal attribute that active memory does
+        # not hold: there is nothing for the model to read, so a model answer can only be a guess.
+        # Any earlier turn, or any mention of the subject in active memory, hands the turn to the
+        # model exactly as before.
+        if not _subject_is_in_active_memory(unremembered_subject, text, access_policy=resolved_policy):
+            return True, _unremembered_subject_line(unremembered_subject)
+        return False, ""
 
     correction = _correction_match(text)
     if correction:

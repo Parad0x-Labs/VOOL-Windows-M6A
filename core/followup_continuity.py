@@ -142,7 +142,7 @@ def _passthrough_command(text: str) -> bool:
         from core import vool_agent_brake as brake
     except Exception:  # pragma: no cover - the brake module ships with the runtime
         return False
-    for name in ("_STOPALL_RE", "_STOP_RE", "_START_RE"):
+    for name in ("_STOPALL_RE", "_STOPALL_CONFIRM_RE", "_STOP_RE", "_START_RE"):
         pattern = getattr(brake, name, None)
         if pattern is not None and pattern.match(text):
             return True

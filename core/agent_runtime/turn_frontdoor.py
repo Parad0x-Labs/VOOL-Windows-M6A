@@ -411,20 +411,22 @@ def _non_local_typed_path(text: str, *lanes: str, network_only: bool = False) ->
     look up and that names a share, a device or no full local folder (only a share or a device, with
     ``network_only``), with its kind; ("", "") otherwise, and always off Windows. Read with the lanes'
     own parsers, in the order given: "skill" (an import's package), "write" (the write-root lane's
-    destination) and "pdf" (the PDF lane's file), with the lane that found it ("", "", "")
-    otherwise. Nothing is looked up."""
+    destination), "pdf" (the PDF lane's file) and "read" (a share or device a read names), with the
+    lane that found it; ("", "", "") otherwise. Nothing is looked up."""
     from core import windows_path_policy
 
     if not windows_path_policy.active():
         return "", "", ""
     from core.agent_runtime.fast_paths_pdf import non_local_pdf
     from core.agent_runtime.fast_paths_skill import non_local_package
+    from core.agent_runtime.read_path_honesty import non_local_read_target
     from core.agent_runtime.write_root_honesty import non_local_write_target
 
     finders = {
         "skill": non_local_package,
         "write": lambda body: non_local_write_target(body, network_only=network_only),
         "pdf": non_local_pdf,
+        "read": non_local_read_target,
     }
     for lane in lanes:
         path, kind = finders[lane](text)
@@ -485,6 +487,35 @@ def _windows_program_turn(
             confidence=0.95,
             source_context=source_context,
             reason="windows_program_refused",
+        )
+    }
+
+
+def _windows_archive_read_turn(
+    agent: Any,
+    text: str,
+    *,
+    session_id: str,
+    user_input: str,
+    source_context: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """The answer to a Windows read of a 7z or RAR archive no reader opens there; None otherwise."""
+    from core.agent_runtime.windows_archive_read import windows_archive_read_refusal
+
+    try:
+        response = windows_archive_read_refusal(text, source_context=source_context)
+    except Exception:  # an unknown state answers nothing here: the other lanes see the turn as before
+        response = ""
+    if not response:
+        return None
+    return {
+        "result": agent._fast_path_result(
+            session_id=session_id,
+            user_input=user_input,
+            response=response,
+            confidence=0.95,
+            source_context=source_context,
+            reason="windows_archive_unreadable",
         )
     }
 
@@ -996,6 +1027,23 @@ def handle_turn_frontdoor(
             )
         }
 
+    # "Where are my keys stored?" — the live backend, never the model. Before the key-status
+    # intent, which would read "where is my cloud key stored" as "is a key stored".
+    from core.agent_runtime.fast_command_surface import maybe_handle_key_location_intent
+
+    key_location_reply = maybe_handle_key_location_intent(_intent_input, owner_local=_owner_local)
+    if key_location_reply is not None:
+        return {
+            "result": agent._fast_path_result(
+                session_id=session_id,
+                user_input=effective_input,
+                response=key_location_reply,
+                confidence=0.95,
+                source_context=source_context,
+                reason="key_location_intent",
+            )
+        }
+
     # "Do we have the key set?" — answered from the credential store, never by the model.
     key_status_reply = maybe_handle_cloud_key_status_intent(_intent_input, owner_local=_owner_local)
     if key_status_reply is not None:
@@ -1086,11 +1134,29 @@ def handle_turn_frontdoor(
     # merely describing HY3. Ambiguous/refused cases come back advice_only (no action ran).
     import uuid as _uuid
 
-    _nl_actions = () if action_forbidden else (
-        maybe_handle_cloud_switch_intent,
-        maybe_handle_catalog_refresh_intent,
-        maybe_handle_connection_test_intent,
-    )
+    from core.agent_runtime.fast_command_surface import is_exact_cloud_test
+
+    if is_exact_cloud_test(_intent_input):
+        # The exact `cloud test` command is answered in every mode. Plan mode (read-only) and a
+        # turn whose actions are off get advice, never the probe.
+        from core.mode_permission_policy import OperatingMode, effective_mode_state
+
+        _cloud_test_read_only = action_forbidden or (
+            str(effective_mode_state(source_context).get("mode") or "") == OperatingMode.PLAN.value
+        )
+
+        def _exact_cloud_test(text: str, *, owner_local: bool) -> dict[str, Any] | None:
+            return maybe_handle_connection_test_intent(
+                text, owner_local=owner_local, read_only=_cloud_test_read_only
+            )
+
+        _nl_actions = (_exact_cloud_test,)
+    else:
+        _nl_actions = () if action_forbidden else (
+            maybe_handle_cloud_switch_intent,
+            maybe_handle_catalog_refresh_intent,
+            maybe_handle_connection_test_intent,
+        )
     for _nl_action in _nl_actions:
         _action = _nl_action(
             _intent_input,
@@ -1861,7 +1927,7 @@ def handle_turn_frontdoor(
     # memory lanes take their own turns first, as on base, and a fact to remember only mentions a path.
     non_local_turn = _non_local_path_turn(
         agent,
-        _non_local_typed_path(raw_user_input, "write", "pdf"),
+        _non_local_typed_path(raw_user_input, "write", "pdf", "read"),
         session_id=session_id,
         user_input=effective_input,
         source_context=source_context,
@@ -1880,6 +1946,19 @@ def handle_turn_frontdoor(
     )
     if program_turn is not None:
         return program_turn
+    # On Windows, a read of a 7z or RAR archive, which no reader opens there (its decoder runs only
+    # confined), is answered here in the readers' own words, instead of by the operator lane as a move
+    # into `archive_outbox`, the machine read lane's folder list, or the model's guess
+    # (core.agent_runtime.windows_archive_read, claims sweep).
+    archive_turn = _windows_archive_read_turn(
+        agent,
+        raw_user_input,
+        session_id=session_id,
+        user_input=effective_input,
+        source_context=source_context,
+    )
+    if archive_turn is not None:
+        return archive_turn
     # On Windows, an edit, an undo of it, or a move of a file the owner names inside a marked folder
     # runs there, through the normal approval and the write gate, instead of in the chat's own
     # workspace (an unbound chat's Desktop) (core.windows_marked_file_ops, captest R1-4).
@@ -1923,6 +2002,25 @@ def handle_turn_frontdoor(
                 confidence=0.95,
                 source_context=source_context,
                 reason="write_root_unreachable",
+            )
+        }
+    # A read whose relative path climbs with `..` out of the chat's folder is refused the same plain
+    # way on Windows (owner decision D4, claims sweep 11 Nov 2026). After the write and move climbs,
+    # so a climb a write or a move names keeps their sentence.
+    from core.agent_runtime.read_path_honesty import climbing_relative_read, climbing_relative_read_response
+
+    read_climb_path, read_climb_leads_to = climbing_relative_read(
+        str(raw_user_input or effective_input), source_context=source_context
+    )
+    if read_climb_path:
+        return {
+            "result": agent._fast_path_result(
+                session_id=session_id,
+                user_input=effective_input,
+                response=climbing_relative_read_response(read_climb_path, read_climb_leads_to),
+                confidence=0.95,
+                source_context=source_context,
+                reason="read_climb_refused",
             )
         }
 
@@ -2119,6 +2217,19 @@ def handle_turn_frontdoor(
         )
     if pdf_read is not None:
         return {"result": pdf_read}
+
+    # Windows has no Apple Notes. A request for it is answered here in one fixed sentence instead of
+    # reaching the model, which has no Notes tool there (measured: 263 s of provider failures).
+    from core.agent_runtime.fast_paths_apple_notes_windows import maybe_refuse_apple_notes_on_windows
+
+    apple_notes_on_windows = maybe_refuse_apple_notes_on_windows(
+        agent,
+        effective_input,
+        session_id=session_id,
+        source_context=source_context,
+    )
+    if apple_notes_on_windows is not None:
+        return {"result": apple_notes_on_windows}
 
     # The mirror of the lane above. `web.fetch` works when called directly and nothing routed a URL
     # to it, so "fetch https://example.com and tell me what the page says" was answered by the

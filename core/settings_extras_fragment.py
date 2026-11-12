@@ -5,7 +5,9 @@ Ported from the ux-pass1 companion drawer, bound to real state only:
 - MEMORY — the rows `core/memory/entries.py` actually stores (`/api/memory/entries`), shown
   with their REAL stored scope/category/source (never the prototype's EXPLICIT/INFERRED triad
   forced onto different storage), each with a Forget that removes exactly that record
-  (`/api/memory/forget`, id-scoped by construction). Empty is stated.
+  (`/api/memory/forget`, id-scoped by construction). Empty is stated. Above them, the rules VOOL
+  follows (`/api/memory/standing-instructions`), each with a Remove that takes back exactly that
+  rule after a confirm (`/api/memory/standing-instructions/remove`, id-scoped).
 - PRIVACY & DATA — a read-only disclosure of what is true today: where data lives, what is
   encrypted, what leaves the machine and when. The prototype's retention/cloud-learning
   TOGGLES do not ship: no server enforcement exists for them, and an unenforced toggle is a
@@ -89,7 +91,9 @@ function renderRules(){
     rules.innerHTML = rows.map(function(row){
       return '<div class="vs-mem-item" data-vs-rule="' + esc(row.id) + '">' +
         '<span class="vs-tag">' + esc(String(row.workspace || '').split(':')[0] || 'rule') + '</span>' +
-        '<span>' + esc(row.text) + '</span></div>';
+        '<span>' + esc(row.text) + '</span>' +
+        (row.id ? '<button type="button" class="vs-forget vs-rule-remove" title="' + esc(XT('vx.memory.rule_remove_title', 'Stop following this rule in every chat')) + '">' + esc(XT('vx.memory.rule_remove', 'remove')) + '</button>' : '') +
+        '</div>';
     }).join('');
   }).catch(function(){
     rules.innerHTML = '<div class="vs-empty">' + XT('vx.memory.rules_unreadable', 'Saved rules could not be read.') + '</div>';
@@ -118,6 +122,36 @@ function renderMemory(){
     list.innerHTML = '<div class="vs-empty">' + XT('vx.memory.unreadable', 'Memory could not be read.') + '</div>';
   });
 }
+document.addEventListener('click', function(ev){
+  var btn = ev.target.closest && ev.target.closest('.vs-rule-remove');
+  if (!btn) return;
+  var row = btn.closest('[data-vs-rule]');
+  var ruleId = row && row.getAttribute('data-vs-rule');
+  if (!ruleId) return;
+  // An in-page confirm (Steve R18): a browser dialog carried the page's address as its title. The first press
+  // arms the button, a second press within a few seconds removes the rule, and otherwise it goes back.
+  if (btn.getAttribute('data-vs-armed') !== '1') {
+    btn.setAttribute('data-vs-armed', '1');
+    btn.textContent = XT('vx.memory.rule_remove_confirm_button', 'confirm');
+    btn.title = XT('vx.memory.rule_remove_confirm', 'Remove this rule? VOOL will stop following it.');
+    setTimeout(function(){
+      if (btn.getAttribute('data-vs-armed') !== '1' || btn.disabled) return;
+      btn.removeAttribute('data-vs-armed');
+      btn.textContent = XT('vx.memory.rule_remove', 'remove');
+      btn.title = XT('vx.memory.rule_remove_title', 'Stop following this rule in every chat');
+    }, 4000);
+    return;
+  }
+  btn.removeAttribute('data-vs-armed');
+  btn.disabled = true;
+  fetch('/api/memory/standing-instructions/remove', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: ruleId }),
+  }).then(function(r){ return r.json(); }).then(function(j){
+    if (j && j.removed) { row.remove(); if (memSec && !memSec.querySelector('[data-vs-rule]')) renderRules(); }
+    else { btn.disabled = false; btn.textContent = XT('vx.memory.not_removed', 'not removed'); }
+  }).catch(function(){ btn.disabled = false; });
+});
 document.addEventListener('click', function(ev){
   var btn = ev.target.closest && ev.target.closest('.vs-forget');
   if (!btn) return;
@@ -205,15 +239,23 @@ function section(which){
     node.className = 'vs-sec'; node.id = 'vsMemorySec';
     node.innerHTML = '<h4>' + XT('vx.memory.title', 'Memory') + '</h4><div class="vs-mem-list"></div>' +
       '<h4>' + XT('vx.memory.rules_title', 'Rules VOOL follows in every chat') + '</h4><div class="vs-rule-list"></div>' +
-      '<div class="vs-empty">' + XT('vx.memory.rules_hint', 'To remove a rule, tell VOOL in a chat to stop doing it.') + '</div>';
+      '<div class="vs-empty">' + XT('vx.memory.rules_hint', 'To remove a rule, press remove next to it, or tell VOOL in a chat to stop doing it.') + '</div>';
   } else if (which === 'privacy') {
     node.className = 'vs-sec vs-privacy'; node.id = 'vsPrivacySec';
     node.innerHTML = '<h4>' + XT('vx.privacy.title', 'Privacy &amp; data') + '</h4>' +
       '<p><b>' + XT('vx.privacy.p1_b', 'Local first.') + '</b> ' + XT('vx.privacy.p1', 'Chats, memory, receipts and generated files live in this machine\\u2019s VOOL home; nothing leaves it on the local lane.') + '</p>' +
-      '<p><b>' + XT('vx.privacy.p2_b', 'Cloud is explicit.') + '</b> ' + XT('vx.privacy.p2', 'A cloud call happens only for a cloud-pinned or Auto-free turn with your key; Local Only blocks the cloud lane entirely, including free models.') + '</p>' +
-      '<p><b>' + XT('vx.privacy.p3_b', 'Keys are sealed.') + '</b> ' + XT('vx.privacy.p3', 'Provider keys live in the system keychain/encrypted store and are never rendered back into this page.') + '</p>' +
+      '<p><b>' + XT('vx.privacy.p2_b', 'Cloud is explicit.') + '</b> ' + XT('vx.privacy.p2', 'A cloud call happens only for a cloud-pinned or Auto-free turn with your key; Local Only blocks cloud AI entirely, including free models. Web search still sends your search words to the search engine, even under Local Only.') + '</p>' +
+      '<p><b>' + XT('vx.privacy.p3_b', 'Keys are sealed.') + '</b> <span class="vs-keys-where">' + XT('vx.privacy.p3', 'Provider keys live in the system keychain/encrypted store and are never rendered back into this page.') + '</span></p>' +
       '<p><b>' + XT('vx.privacy.p4_b', 'Spend is gated.') + '</b> ' + XT('vx.privacy.p4', 'Paid pins require server-confirmed consent; accepted ceilings re-gate on price rises.') + '</p>' +
       '<p>' + XT('vx.privacy.p5', 'Retention windows and cloud-learning controls are not shown because no enforcement for them exists yet \\u2014 an unenforced toggle would be a lie.') + '</p>';
+    // Where keys live is the runtime's answer, not the host's name: the credential list reports the live backend.
+    // The OS keychain keeps the text above; VOOL's own vault (every Windows install today) says so plainly.
+    fetch('/api/settings/credentials').then(function(r){ return r.json(); }).then(function(j){
+      var data = j && j.data ? j.data : j;
+      if (data && data.backend === 'vault') {
+        node.querySelector('.vs-keys-where').textContent = XT('vx.privacy.p3.vault', 'Provider keys are kept in VOOL\\u2019s encrypted vault in your user profile and are never shown on this page.');
+      }
+    }).catch(function(){});
   } else if (which === 'toolbelt') {
     node.className = 'vs-sec'; node.id = 'vsToolbeltSec';
     node.innerHTML = '<h4>' + XT('vx.toolbelt.title', 'Toolbelt') + '</h4>' +

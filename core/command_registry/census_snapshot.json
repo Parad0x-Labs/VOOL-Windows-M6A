@@ -2248,6 +2248,13 @@
       "registry_command_id": "memory.forget",
       "surface": "http"
     },
+    "http:POST:/api/memory/standing-instructions/remove": {
+      "classification": "EXTERNAL_TRANSPORT_ONLY",
+      "name": "POST /api/memory/standing-instructions/remove",
+      "note": "memory lane operator action (take back one standing instruction by id; loopback, POST guards)",
+      "registry_command_id": "",
+      "surface": "http"
+    },
     "http:POST:/api/mobile/companion": {
       "classification": "GENERATED_ADAPTER",
       "name": "POST /api/mobile/companion",
@@ -3098,7 +3105,7 @@
   },
   "totals": {
     "DEAD": 0,
-    "EXTERNAL_TRANSPORT_ONLY": 303,
+    "EXTERNAL_TRANSPORT_ONLY": 304,
     "GENERATED_ADAPTER": 130,
     "LEGACY_UNMIGRATED": 0,
     "REGISTRY_OWNED": 8

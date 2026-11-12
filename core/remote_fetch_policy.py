@@ -171,9 +171,10 @@ def _active_mode_label() -> str:
 #: The one sentence the product says when Local Only refuses to leave the machine.
 #: Named once so the served UI, the CLI and the receipts cannot drift from each other.
 LOCAL_ONLY_EGRESS_DENIAL = (
-    "Local Only is in force for this turn: no request may leave this machine, so no "
-    "socket was opened. Loopback and operator-owned LAN endpoints stay available. "
-    "To use the web, leave Local Only by changing the model selection."
+    "Local Only is in force for this turn, so this request was not sent and no socket was "
+    "opened. Loopback and operator-owned LAN endpoints stay available, and web search "
+    "through VOOL's built-in browser still works. To open this page directly, leave Local "
+    "Only by changing the model selection."
 )
 
 
@@ -269,6 +270,63 @@ def remote_fetch_forbidden() -> bool:
 
 class RemoteFetchRefusedError(RuntimeError):
     """This turn is not permitted to reach the network, so no socket was opened."""
+
+
+def browser_navigation_refusal(url: str) -> str | None:
+    """Why a headless browser may not be started for *url* in this turn, or None when it may.
+
+    The browser is not an HTTP request, so it never passes `open_remote`. Its two doors in
+    `tools/browser/browser_render.py` asked only the explicit per-turn veto, so a turn the
+    permission gateway denies the network still started a browser that went to the public web.
+    This asks, before any process is started:
+
+    * the explicit per-turn veto;
+    * the permission gateway's network-fetch decision, when a turn's ledger is open (a refusal
+      leaves the same ``denied`` receipt the HTTP door leaves).
+
+    Local Only is deliberately NOT a check here (product decision, 11 Nov 2026): Local Only keeps
+    the turn on the local model, and web search through the local headless browser stays
+    available in it. The HTTP providers keep their own Local Only refusal in `open_remote`.
+
+    Windows only, behind the Windows rule's seam (`core.windows_write_gate.active`). Off Windows the
+    answer is always None, so the browser doors keep their veto-only check unchanged there.
+    """
+
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return None
+    from core.effect_gateway import current_effect_ledger
+
+    ledger = current_effect_ledger()
+    if remote_fetch_forbidden():
+        return "remote fetch is not permitted for this turn"
+    if ledger is None:
+        return None
+    from core.effect_gateway import (
+        DECISION_DENIED,
+        EFFECT_NETWORK_FETCH,
+        LIFECYCLE_DENIED,
+        EffectReceipt,
+        decide_network_fetch,
+    )
+
+    decision, reason = decide_network_fetch(_SCOPE_CONTEXT.get() or {})
+    if decision != DECISION_DENIED:
+        return None
+    ledger.open_effect(
+        EffectReceipt(
+            effect_class=EFFECT_NETWORK_FETCH,
+            decision=DECISION_DENIED,
+            lifecycle=LIFECYCLE_DENIED,
+            reason=reason,
+            host=_host_of(url),
+            mode=_active_mode_label(),
+            decided_by="mode_permission_policy.decide_tool_call",
+            recorded_at=_utcnow_iso(),
+        ),
+    )
+    return f"network fetch denied by the permission gateway: {reason}"
 
 
 def open_remote(
@@ -1002,6 +1060,7 @@ __all__ = [
     "NO_ACTIVE_LEDGER_DENIAL",
     "CredentialRedirectRefusedError",
     "RemoteFetchRefusedError",
+    "browser_navigation_refusal",
     "effective_web_available",
     "explicit_remote_fetch_disabled",
     "local_only_active",

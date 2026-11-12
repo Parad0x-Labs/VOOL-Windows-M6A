@@ -152,6 +152,26 @@ def isolation_launch_flags(*, profile_dir: str) -> list[str]:
     ]
 
 
+def find_windows_program_files_edge() -> str | None:
+    """The Edge installed for every user under a Program Files folder the shell reports, or None.
+
+    The one Windows browser lookup. The headless renderer behind web search
+    (`tools/browser/browser_render.py`) asks here too, so both lanes launch the same
+    browser and neither looks at PATH, a per-user install or a Playwright cache under
+    the profile, all of which any program the user runs can replace. Off Windows the
+    shell reports no Program Files folders, so the answer is None.
+    """
+
+    from core import windows_known_folders
+
+    for parts in _WINDOWS_PROGRAM_FILES_CANDIDATES:
+        for folder in windows_known_folders.program_files_folders():
+            candidate = os.path.join(folder, *parts)
+            if os.path.isfile(candidate):
+                return candidate
+    return None
+
+
 def find_engine_binary() -> str | None:
     """A Chromium-family browser already on this machine, or None (a legitimate
     answer: the lane then answers typed `engine_missing`, never installs)."""
@@ -162,14 +182,7 @@ def find_engine_binary() -> str | None:
             return override
         return None
     if sys.platform == "win32":
-        from core import windows_known_folders
-
-        for parts in _WINDOWS_PROGRAM_FILES_CANDIDATES:
-            for folder in windows_known_folders.program_files_folders():
-                candidate = os.path.join(folder, *parts)
-                if os.path.isfile(candidate):
-                    return candidate
-        return None
+        return find_windows_program_files_edge()
     if sys.platform == "darwin":
         for candidate in _MACOS_APP_CANDIDATES:
             if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
@@ -185,6 +198,7 @@ def find_engine_binary() -> str | None:
 __all__ = [
     "_FORBIDDEN_PROFILE_MARKERS",
     "find_engine_binary",
+    "find_windows_program_files_edge",
     "isolation_launch_flags",
     "refuse_real_profile_target",
 ]

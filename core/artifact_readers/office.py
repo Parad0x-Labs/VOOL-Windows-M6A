@@ -21,13 +21,14 @@ that silently drops tables, footnotes and half the words, which is worse than a 
 from __future__ import annotations
 
 import hashlib
-import os
 import platform
 import re
 import zipfile
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
+
+from core import posix_tools
 
 from ._limits import MAX_ARCHIVE_MEMBER_BYTES, MAX_DOCX_BLOCKS, MAX_UNIT_CHARS
 from ._sandbox import Scratch, extraction_budget, require_confinement, run_confined
@@ -270,7 +271,7 @@ def doc_converter_available() -> bool:
     """A converter is only 'available' if it can also be CONFINED; an unconfinable one is not."""
     from . import _sandbox
 
-    return platform.system() == "Darwin" and os.access(TEXTUTIL, os.X_OK) and _sandbox.confinement_available()
+    return platform.system() == "Darwin" and posix_tools.executable(TEXTUTIL) and _sandbox.confinement_available()
 
 
 def read_doc(data: bytes, *, name: str = "document.doc") -> ReaderResult:

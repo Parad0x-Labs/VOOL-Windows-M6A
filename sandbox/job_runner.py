@@ -16,6 +16,7 @@ import threading
 import time
 from pathlib import Path
 
+from core import posix_tools
 from sandbox.container_adapter import ExecutionResult
 from sandbox.network_guard import command_uses_network
 from sandbox.resource_limits import (
@@ -371,6 +372,10 @@ def _trusted_sandbox_exec() -> str | None:
     """`_SANDBOX_EXEC` when it can be trusted to apply the profile, else None (and the job is
     refused). A symlink, a non-root owner, or a group/world-writable file or directory means
     someone other than the system can swap what runs, so it is not used."""
+    # On Windows lstat reports st_uid 0 for every file, so a sandbox-exec planted under C:\usr\bin
+    # would pass the owner check below: the POSIX path is refused before it is stat'ed.
+    if posix_tools.refused(_SANDBOX_EXEC):
+        return None
     path = Path(_SANDBOX_EXEC)
     try:
         binary = os.lstat(path)

@@ -187,6 +187,81 @@ def make_tree_owner_only(path: str | os.PathLike[str]) -> OwnerOnlyReport:
     return OwnerOnlyReport(True)
 
 
+#: Whether the secret writers below seal their files. On Windows, where a plain write inherits the
+#: parent folder's ACL (under %LOCALAPPDATA% that can include another local group's read ACE), so a
+#: secret has to be made owner-only explicitly. Off Windows the writers keep their own ``0o600``
+#: handling, unchanged. Tests switch this on to drive the Windows branch with POSIX modes.
+_SEAL_SECRETS: bool = _WINDOWS
+
+
+#: What a save says when its secret file could not be made private, so nothing was written.
+OWNER_ONLY_SAVE_REFUSED = "VOOL couldn't make this file private to your account, so the key wasn't saved."
+
+
+def seals_secrets() -> bool:
+    """Whether this process seals secret files (on Windows, or when a test switches it on)."""
+    return _SEAL_SECRETS
+
+
+def write_private_file(path: str | os.PathLike[str], data: bytes | str, *, encoding: str = "utf-8") -> Path:
+    """Write ``data`` to ``path`` so it is never readable by anyone but this user, then return ``path``.
+
+    An empty sibling is created and made owner-only first; only then are the bytes written into it,
+    and it is moved over ``path`` (the descriptor moves with it). When the sibling cannot be made
+    owner-only, :class:`OwnerOnlyUnavailable` is raised, the sibling is removed and ``path`` is left
+    as it was: nothing secret is written. The result is verified owner-only before this returns."""
+    target = Path(os.fspath(path))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = data.encode(encoding) if isinstance(data, str) else bytes(data)
+    pending = target.with_name(f".{target.name}.{os.getpid()}.{os.urandom(4).hex()}.tmp")
+    pending.write_bytes(b"")
+    try:
+        require_owner_only(pending)
+        with open(pending, "r+b") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        # A reader holding the old file open refuses the replace for a moment on Windows (a sharing
+        # violation); the bounded retry waits it out.
+        from core import windows_sharing_retry
+
+        windows_sharing_retry.replace(pending, target)
+    except BaseException:
+        pending.unlink(missing_ok=True)
+        raise
+    report = verify_owner_only(target)
+    if not report.ok:
+        raise OwnerOnlyUnavailable(target, report.reason)
+    return target
+
+
+def repair_private_file(path: str | os.PathLike[str]) -> OwnerOnlyReport:
+    """Make an existing secret file owner-only, for installs written before the writers sealed them.
+
+    Only when :func:`seals_secrets`; an absent file needs nothing. Never raises: a read of an existing
+    secret goes on either way, and the next write seals it or fails closed."""
+    if not _SEAL_SECRETS:
+        return OwnerOnlyReport(True)
+    target = os.fspath(path)
+    key = os.path.normcase(os.path.abspath(target))
+    if key in _REPAIRED:
+        return OwnerOnlyReport(True)  # once per process: later writes are sealed at write time
+    if not os.path.isfile(target):
+        return OwnerOnlyReport(True)
+    try:
+        report = make_owner_only(target)
+    except OSError:
+        report = OwnerOnlyReport(False, "set_failed")
+    if report.ok:
+        _REPAIRED.add(key)
+    else:
+        logger.warning("secret file %s is not owner-only (%s)", Path(target).name, report.reason)
+    return report
+
+
+_REPAIRED: set[str] = set()
+
+
 # --- POSIX ---------------------------------------------------------------------------------------------
 def _posix_make(path: str, *, directory: bool) -> OwnerOnlyReport:
     try:

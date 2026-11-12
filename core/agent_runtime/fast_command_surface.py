@@ -406,8 +406,12 @@ def _seal_cloud_key(secret: str, provider_id: str = "openrouter") -> str:
             "That does not look like a complete API key, so I did not store anything. Paste the "
             "whole key as `cloud key <your-key>` (an OpenRouter key starts with `sk-or-`, others vary)."
         )
+    from core.owner_only import OWNER_ONLY_SAVE_REFUSED, OwnerOnlyUnavailable
+
     try:
         credential_store.store_credential(slot, secret, label=label)
+    except OwnerOnlyUnavailable:
+        return OWNER_ONLY_SAVE_REFUSED + " Keep VOOL's data folder on a local NTFS drive, then try again."
     except Exception:
         return (
             "I could not save the cloud key just now, so nothing was stored. Check that VOOL can "
@@ -659,6 +663,29 @@ def maybe_handle_cloud_key_status_intent(user_input: str, *, owner_local: bool =
     )
 
 
+# The fixed reply for a non-owner asking about this host's stored credentials.
+_CREDENTIAL_OWNER_ONLY_REFUSAL = (
+    "Credential diagnostics are owner-only, so I won't report this host's stored keys from here."
+)
+
+
+def _credential_backend_label(backend: object) -> str:
+    return "the macOS Keychain" if backend == "keychain" else "the encrypted local vault"
+
+
+def _credential_backend_sentence(backend: object) -> str:
+    """Where stored credentials live, as one sentence (no trailing period). Windows is always the
+    vault (core.credential_store gates the Keychain to macOS)."""
+    if backend == "keychain":
+        return "Keys live in the macOS Keychain"
+    # The vault's sealing key sits in the same user profile (core.secret_storage
+    # account-file-permissions class): never call it the OS secret store.
+    return (
+        "Keys live in VOOL's encrypted local vault in your user profile, protected by your "
+        "account's file permissions, not by the OS secret store"
+    )
+
+
 _CLOUD_DIAG_RE = re.compile(
     r"\bcloud\s+diagnostics?\b"
     r"|\bcredential\s+diagnostics?\b"
@@ -679,7 +706,7 @@ def maybe_handle_cloud_diagnostics_intent(user_input: str, *, owner_local: bool 
     if not text or len(text) > 64 or not _CLOUD_DIAG_RE.search(text):
         return None
     if not owner_local:
-        return "Credential diagnostics are owner-only, so I won't report this host's stored keys from here."
+        return _CREDENTIAL_OWNER_ONLY_REFUSAL
 
     from core import credential_store
 
@@ -688,15 +715,60 @@ def maybe_handle_cloud_diagnostics_intent(user_input: str, *, owner_local: bool 
     except Exception:
         return "I couldn't read the credential store just now — try again in a moment."
     creds = list(diag.get("credentials") or [])
-    where = "the macOS Keychain" if diag.get("backend") == "keychain" else "the encrypted local vault"
+    where = _credential_backend_label(diag.get("backend"))
     if not creds:
         return f"No credentials are stored yet (backend: {where}). Add one with `cloud key <key>` or Settings."
     lines = [f"Stored credentials ({len(creds)}) — backend: {where}. No full secret is ever shown:"]
     for cred in creds:
         label = f" — {cred['label']}" if cred.get("label") else ""
         lines.append(f"- {cred.get('name')}{label}  ({cred.get('masked_suffix') or 'empty'})")
-    lines.append("`cloud key forget` erases one. Keys live in the OS secret store — never in logs, the DB, or exports.")
+    stored = _credential_backend_sentence(diag.get("backend"))
+    lines.append(f"`cloud key forget` erases one. {stored} — never in logs, the DB, or exports.")
     return "\n".join(lines)
+
+
+# "where are my keys stored?" — answered from the live backend, never by the model. Only the
+# owner's credentials qualify: "my" with nothing between it and keys/credentials, or an
+# api/cloud/provider word, or a bare "keys stored". "where are my car keys" is ordinary chat.
+_KEY_LOCATION_RE = re.compile(
+    r"^\s*where\s+(?:are|is|do\s+you\s+(?:keep|store|save))\s+"
+    r"(?:"
+    r"my\s+(?:(?:api|cloud|provider)\s+)?(?:keys?|credentials?)"
+    r"|(?:the\s+|my\s+)?(?:api|cloud|provider)\s+(?:keys?|credentials?)"
+    r"|(?:the\s+)?credentials"
+    r"|(?:the\s+)?keys(?=\s+(?:stored|kept|saved)\b)"
+    r")"
+    r"(?:\s+(?:stored|kept|saved))?\s*[?.!]*\s*$",
+    re.IGNORECASE,
+)
+
+
+def maybe_handle_key_location_intent(user_input: str, *, owner_local: bool = False) -> str | None:
+    """"where are my keys stored?" — name the live credential backend, and the wallet keys folder.
+
+    Owner-local only, as `cloud diagnostics` is: the backend is a fact about this host's stored
+    keys. A non-owner gets the same fixed refusal. Nothing is read beyond the backend choice.
+    """
+    text = str(user_input or "").strip()
+    if not text or len(text) > 64 or not _KEY_LOCATION_RE.match(text):
+        return None
+    if not owner_local:
+        return _CREDENTIAL_OWNER_ONLY_REFUSAL
+
+    from core import credential_store
+    from core.windows_path_policy import active as _windows_paths
+
+    try:
+        backend = credential_store.active_backend()
+    except Exception:
+        return "I couldn't read the credential store just now — try again in a moment."
+    keys_dir = "data\\keys\\" if _windows_paths() else "data/keys/"
+    return (
+        f"{_credential_backend_sentence(backend)}. That covers cloud and API keys: "
+        "`cloud diagnostics` lists them masked, `cloud key forget` erases one.\n"
+        f"If you mean your wallet or node-signing keys: those are files in the {keys_dir} folder "
+        "of your VOOL home."
+    )
 
 
 # A token only counts as a MODEL name when it is model-shaped: a known family, or it carries a
@@ -1306,6 +1378,20 @@ _CONNECTION_TEST_RE = re.compile(
     r"|\bare\s+we\s+connected\b",
     re.IGNORECASE | re.DOTALL,
 )
+# The exact command `cloud test` (no `conn...` word, so _CONNECTION_TEST_RE misses it). Answered
+# in every mode: Plan gets advice, cloud off gets the gate's text, a non-owner a fixed line.
+_CLOUD_TEST_EXACT_RE = re.compile(r"^\s*/?cloud\s+test\s*$", re.IGNORECASE)
+_CLOUD_TEST_OWNER_ONLY = (
+    "`cloud test` sends the owner's stored cloud key to the provider, so it only runs from the "
+    "owner's own local session."
+)
+_CLOUD_TEST_READ_ONLY = "Switch to Manual to run a cloud test."
+
+
+def is_exact_cloud_test(user_input: str) -> bool:
+    return bool(_CLOUD_TEST_EXACT_RE.match(str(user_input or "")))
+
+
 # A connection test uses the owner's cloud KEY against the provider, so it must be about the
 # cloud/OpenRouter — never a bare "are we connected?" (peer/DB connectivity in a P2P product).
 _CLOUD_SUBJECT_RE = re.compile(
@@ -1509,19 +1595,40 @@ def maybe_handle_catalog_refresh_intent(user_input: str, *, owner_local: bool = 
     }
 
 
-def maybe_handle_connection_test_intent(user_input: str, *, owner_local: bool = False) -> dict[str, Any] | None:
-    """"confirm the connection" — REALLY probe the provider's auth-gated endpoint and report."""
+def _cloud_test_advice(response: str, reason: str) -> dict[str, Any]:
+    return {"response": response, "success": False, "advice_only": True, "reason": reason}
+
+
+def maybe_handle_connection_test_intent(
+    user_input: str, *, owner_local: bool = False, read_only: bool = False
+) -> dict[str, Any] | None:
+    """"confirm the connection" — REALLY probe the provider's auth-gated endpoint and report.
+
+    The exact command `cloud test` never falls through to the model: a non-owner gets a fixed
+    line, Windows with cloud off gets ``windows_cloud_gate.OFF_TEXT``, and ``read_only`` (Plan
+    mode, or a turn whose actions are off) gets advice. None of those runs the probe.
+    """
     text = str(user_input or "").strip()
     if not text or len(text) > 80:
         return None
-    if not _CONNECTION_TEST_RE.search(text):
-        return None
-    if not _CLOUD_SUBJECT_RE.search(text):
-        return None  # must name the cloud/OpenRouter — "are we connected?" (peers) is not this
-    if _OPENROUTER_CODING_GUARD_RE.search(text) or re.search(r"\b(wifi|internet|ethernet|vpn|bluetooth)\b", text, re.IGNORECASE):
-        return None
-    if not owner_local:
-        return None  # the probe sends the owner's stored key to the provider — owner's session only
+    if is_exact_cloud_test(text):
+        if not owner_local:
+            return _cloud_test_advice(_CLOUD_TEST_OWNER_ONLY, "connection_test_owner_only")
+        from core import windows_cloud_gate
+
+        if windows_cloud_gate.cloud_off():
+            return _cloud_test_advice(windows_cloud_gate.OFF_TEXT, windows_cloud_gate.REASON)
+        if read_only:
+            return _cloud_test_advice(_CLOUD_TEST_READ_ONLY, "connection_test_read_only")
+    else:
+        if not _CONNECTION_TEST_RE.search(text):
+            return None
+        if not _CLOUD_SUBJECT_RE.search(text):
+            return None  # must name the cloud/OpenRouter — "are we connected?" (peers) is not this
+        if _OPENROUTER_CODING_GUARD_RE.search(text) or re.search(r"\b(wifi|internet|ethernet|vpn|bluetooth)\b", text, re.IGNORECASE):
+            return None
+        if not owner_local:
+            return None  # the probe sends the owner's stored key to the provider — owner's session only
 
     from core import cloud_escalation_policy as cep
     from core.cloud_connection_state import STATE_NO_KEY, STATE_OK, run_auth_probe

@@ -42,6 +42,13 @@ def _ensure_private_dir(path: Path) -> None:
 
 
 def _atomic_write_private(path: Path, text: str) -> None:
+    from core import owner_only
+
+    if owner_only.seals_secrets():
+        # Windows: chmod only flips the read-only bit, so the file would keep the folder's inherited
+        # ACL. Sealed owner-only before the text is written, or nothing is written.
+        owner_only.write_private_file(path, text)
+        return
     _ensure_private_dir(path.parent)
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=str(path.parent), delete=False) as handle:
         tmp_path = Path(handle.name)

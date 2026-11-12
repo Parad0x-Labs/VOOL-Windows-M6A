@@ -252,9 +252,11 @@ def _handle_prefs_set(inp, ctx):
 
 
 def _handle_credentials_list(inp, ctx):
-    from core.credential_store import list_credentials
+    from core.credential_store import active_backend, list_credentials
 
-    return HandlerOk(data={"credentials": list_credentials()}, summary="Credential slots")
+    # ``backend`` ('keychain' or 'vault') lets Settings say truthfully where keys are kept; it names a store, never a
+    # secret, and list_credentials has already consulted the same backend choice.
+    return HandlerOk(data={"credentials": list_credentials(), "backend": active_backend()}, summary="Credential slots")
 
 
 def _handle_credentials_set(inp, ctx):

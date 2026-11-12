@@ -421,6 +421,33 @@ def _within_turn_navigation(loop: Any) -> Any:
 
 
 
+#: A tool-selection round the model answered without a usable call. Not a tool event: nothing was
+#: selected or run, so it is neither an execution (core/execution_truth.py) nor a tool receipt, and
+#: the chat page files it as a runtime row rather than as a failed tool call.
+MODEL_NO_TOOL_SELECTED_EVENT = "model_no_tool_selected"
+
+_MISSING_TOOL_CALL_MARKERS = (
+    "required native tool call is missing",
+    "native tool call required but the response produced no usable content",
+)
+_UNUSABLE_TOOL_CALL_PREFIXES = ("malformed_tool_arguments", "malformed_tool_call", "unknown_tool_name", "duplicate_tool_call")
+
+
+def _unusable_tool_call_cause(tool_decision: Any, block_reason: str) -> str:
+    """``answered_without_tool`` / ``tool_call_unusable`` when the model WAS asked and replied
+    without a call the runtime could use; ``""`` otherwise (a timeout, an empty reply, or a
+    refusal with no proof of dispatch keeps its provider record)."""
+    details = dict(getattr(tool_decision, "details", None) or {})
+    if details.get("model_was_attempted") is not True:
+        return ""
+    cause = str(block_reason or "").strip().lower()
+    if any(marker in cause for marker in _MISSING_TOOL_CALL_MARKERS):
+        return "answered_without_tool"
+    if cause.startswith(_UNUSABLE_TOOL_CALL_PREFIXES):
+        return "tool_call_unusable"
+    return ""
+
+
 def steps_that_ran(executed_steps: list[dict] | None) -> list[dict]:
     """The steps that actually ran: an approval card's preview step (mode ``tool_preview`` or
     status ``pending_approval``) is not output. Empty when nothing ran."""
@@ -1761,6 +1788,30 @@ class ResearchToolLoopFacadeMixin:
                                 tool_name="unknown",
                                 status="tool_selection_refused_before_send",
                                 refusal_reason=block_reason,
+                                step_count=len(executed_steps),
+                            )
+                            break
+                        # A FOURTH cause, and the provider did answer: the model replied in prose,
+                        # or with a call the runtime could not use, where a call was required
+                        # (Ollama ignores `tool_choice: required`). Measured on the Windows
+                        # captest with qwen3:8b: "What folder are you looking at?" was answered
+                        # correctly in prose under "No usable provider reply ... required native
+                        # tool call is missing" and a "Tool failed" row, though no tool was
+                        # chosen or run. Only with the router's own proof that the model was
+                        # asked; the loop's decisions below read loop_stop_reason, unchanged.
+                        tool_call_cause = _unusable_tool_call_cause(tool_decision, block_reason)
+                        if tool_call_cause:
+                            self._emit_runtime_event(
+                                loop_source_context,
+                                event_type=MODEL_NO_TOOL_SELECTED_EVENT,
+                                message=(
+                                    "The model answered without choosing a tool; nothing was run."
+                                    if tool_call_cause == "answered_without_tool"
+                                    else "The model's tool call could not be used, so no tool was "
+                                    "selected and nothing was run."
+                                ),
+                                status=tool_call_cause,
+                                tool_call_cause=block_reason,
                                 step_count=len(executed_steps),
                             )
                             break

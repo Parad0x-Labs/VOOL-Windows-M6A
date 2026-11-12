@@ -92,7 +92,82 @@ def _post_callback(code: str, state: str) -> bool:
         return False
 
 
+# AllowSetForegroundWindow(ASFW_ANY): the DWORD -1.
+_ASFW_ANY = 0xFFFFFFFF
+
+
+def _pass_on_the_foreground() -> bool:
+    """Let VOOL's own window come to the front when this link starts or reopens it.
+
+    Windows lets only a process the user just started (this handler, launched by the browser or
+    the shell) take the foreground. VOOL's supervisor and window are three launches further down
+    (cmd, VOOL.cmd, pythonw), so their SetForegroundWindow was refused and the link seemed to do
+    nothing. ASFW_ANY hands this one-time right on; Windows ends it at the next user input.
+    Windows only; never fails the link. True when Windows accepted it."""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        allow = ctypes.windll.user32.AllowSetForegroundWindow
+        allow.argtypes = (wintypes.DWORD,)
+        allow.restype = wintypes.BOOL
+        return bool(allow(_ASFW_ANY))
+    except Exception:
+        return False
+
+
+def _wscript() -> str:
+    """``%SystemRoot%\\System32\\wscript.exe`` by absolute path, or OSError.
+
+    A bare name would be looked up through pythonw's own folder, the current folder and PATH first.
+    Only a drive-letter SystemRoot is trusted (never a network share); anything else fails closed.
+    The same rule as core/process_liveness.py ``_system32``, repeated here because this handler
+    runs from the top of the install and imports nothing of VOOL's."""
+    import ntpath
+
+    root = os.environ.get("SystemRoot") or ""
+    drive, rest = ntpath.splitdrive(root)
+    if len(drive) != 2 or drive[1] != ":" or not rest.startswith(("\\", "/")):
+        raise OSError("SystemRoot is not an absolute Windows folder")
+    exe = ntpath.join(root, "System32", "wscript.exe")
+    if not os.path.isfile(exe):
+        raise OSError(f"{exe} is missing")
+    return exe
+
+
 def _start_bundle(root: Path) -> None:
+    """Start VOOL exactly the way the Start-menu shortcut does: ``wscript.exe vool.vbs``.
+
+    Steve round 18 (578d185f): starting VOOL.cmd from here through ``cmd /s /c`` with
+    CREATE_NO_WINDOW|DETACHED_PROCESS and null handles never reached the supervisor (the handler
+    exited 0 and nothing happened), while the same VOOL.cmd run by vool.vbs works. vool.vbs runs
+    VOOL.cmd hidden from wscript, a GUI process, which gives VOOL.cmd's ``for /f`` and nested
+    ``start "" /B`` the hidden console they expect. VOOL.cmd is started directly only when the
+    install has no vool.vbs, or wscript.exe cannot be found by its absolute System32 path.
+
+    The install path is refused first on BOTH routes when it holds a quote, % or a line break:
+    vool.vbs hands it to WScript.Shell.Run, which expands %NAME% the way cmd does."""
+    if any(char in str(root) for char in '"%\r\n'):
+        raise ValueError("the install path holds a quote, % or line break the launchers cannot keep")
+    script = root / "vool.vbs"
+    if script.is_file():
+        try:
+            wscript = _wscript()
+        except OSError:
+            wscript = ""
+        if wscript:
+            _pass_on_the_foreground()
+            subprocess.Popen(
+                [wscript, str(script)],   # a list: each path is quoted for CreateProcess, & ( ) included
+                cwd=str(root),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+            )
+            return
     launcher = root / "VOOL.cmd"
     if not launcher.is_file():
         raise FileNotFoundError("VOOL.cmd is missing")
@@ -100,6 +175,7 @@ def _start_bundle(root: Path) -> None:
         # Inside quotes cmd still expands %NAME% and ends the line at a line break.
         raise ValueError("the VOOL.cmd path holds a quote, % or line break cmd cannot keep")
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
+    _pass_on_the_foreground()
     subprocess.Popen(
         # A string, not a list: /s with doubled quotes keeps the path quoted even when it holds & or ( ).
         f'"{os.environ.get("ComSpec", "cmd.exe")}" /s /c ""{launcher}""',

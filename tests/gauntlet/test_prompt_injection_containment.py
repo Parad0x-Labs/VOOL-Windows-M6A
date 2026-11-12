@@ -250,7 +250,8 @@ def test_clean_stop_command_still_fires_the_brake_control():
     from core.vool_agent_brake import maybe_handle_agent_brake
 
     stopall_spy = mock.Mock(return_value=True)
-    result = maybe_handle_agent_brake("/stopall", "session-1", stopall_fn=stopall_spy)
+    maybe_handle_agent_brake("/stopall", "session-1", stopall_fn=stopall_spy)
+    result = maybe_handle_agent_brake("/stopall confirm", "session-1", stopall_fn=stopall_spy)
 
     assert result is not None
     assert result["intent"] == "agent_brake_stopall"

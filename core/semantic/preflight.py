@@ -219,7 +219,23 @@ def _quoted_content_is_the_subject(text: str, quote_spans: tuple[EntitySpan, ...
         return False
     if re.search(r"\b(?:search|browse|look up|find online|google)\b", outside, re.IGNORECASE):
         return False
-    return bool(_QUOTED_DISCOURSE.search(outside))
+    return bool(_QUOTED_DISCOURSE.search(_without_typed_paths(outside)))
+
+
+#: A word with a folder separator in it: a typed path, or one of its segments when the path has spaces.
+_PATH_WORD_RE = re.compile(r"[^\s\"'`]*[\\/][^\s\"'`]*")
+
+
+def _without_typed_paths(outside: str) -> str:
+    """On Windows, ``outside`` with every word that holds a folder separator blanked out: a folder name is
+    not discourse. Steve R18: 'in C:\\...\\claims\\marked run: python -c "print(2+2)"' read the folder
+    `claims` as "the quoted text is what someone claims", so the run was held as a quoted example and
+    the model was asked. Off Windows (the write gate's seam) ``outside`` is returned as it is."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return outside
+    return _PATH_WORD_RE.sub(" ", outside)
 
 
 def _frame_scopes(raw: CanonicalText) -> tuple[tuple[FrameScope, ...], SemanticFrame, bool]:
