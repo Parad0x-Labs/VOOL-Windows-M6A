@@ -474,9 +474,11 @@ def _shared_patch_target(patch: str) -> str:
     if not windows_path_policy.active():
         return ""
     try:
-        from core.execution.workspace_tools import patch_review_paths
+        from core.execution.workspace_tools import _extract_patch_paths, patch_review_paths
 
-        names = patch_review_paths(patch)
+        # Both sides of every header: the review list names only what the patch writes, so a share in a
+        # modified file's `---` line (with `+++ b/a.txt`) is read from the header list (SA, R21).
+        names = list(dict.fromkeys([*patch_review_paths(patch), *_extract_patch_paths(patch)]))
     except Exception:
         return ""
     for name in names:
