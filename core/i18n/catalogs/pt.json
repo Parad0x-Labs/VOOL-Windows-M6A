@@ -649,7 +649,7 @@
     "header.pins_title": "Mensagens fixadas nesta conversa",
     "header.run_auto_defaults": "Esta conversa usa VOOL Auto. As conexões são padrões que Auto pode usar, não uma seleção desta conversa.",
     "header.run_blocked_title": "A IA desta conversa executa neste computador. A IA na nuvem está bloqueada, mas a busca na web ainda sai. Clique para escolher um modelo.",
-    "header.run_computer_only": "Só neste computador",
+    "header.run_computer_only": "Somente Local",
     "header.run_computer_only_hint": "nuvem bloqueada · busca na web ativa",
     "header.run_connect": "Conectar",
     "header.run_connected": "conectado",
@@ -1930,7 +1930,7 @@
     "fault.wallet_payment_channel_off.action": "Ligue um canal de pagamento nos ajustes de Cripto só se quiser que pagamentos passem por ele; o teto e a sua aprovação valem em todos os canais.",
     "fault.wallet_x402_sdk_unavailable.message": "Esta versão não consegue pagar ofertas x402 na Base pelo x402 Foundation SDK: o extra opcional x402 não está instalado nesta máquina. Nada foi assinado ou enviado. Toda outra função da carteira funciona sem ele; com ele instalado, tente de novo."
   },
-  "source_catalog_sha256": "b24f342ac74655da1584cff91734d6da0c234893a4987a63750e9942599ada86",
+  "source_catalog_sha256": "f124eaf64a998ab66f2b07c0bd7af29c9b30be85da0b7c92648c89f88e6532ca",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

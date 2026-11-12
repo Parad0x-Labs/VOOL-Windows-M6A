@@ -649,7 +649,7 @@
     "header.pins_title": "הודעות מוצמדות בצ׳אט זה",
     "header.run_auto_defaults": "שיחה זו משתמשת בבחירה האוטומטית של VOOL. החיבורים המוצגים הם ברירות המחדל שלה, ולא בחירה עבור שיחה זו.",
     "header.run_blocked_title": "הבינה המלאכותית של שיחה זו פועלת במחשב זה. בינה מלאכותית בענן חסומה, אבל חיפוש באינטרנט עדיין יוצא. לחצו לבחירת מודל.",
-    "header.run_computer_only": "מחשב זה בלבד",
+    "header.run_computer_only": "מקומי בלבד",
     "header.run_computer_only_hint": "הענן חסום · חיפוש באינטרנט פעיל",
     "header.run_connect": "חיבור",
     "header.run_connected": "מחובר",
@@ -1930,7 +1930,7 @@
     "fault.wallet_payment_channel_off.action": "הפעילו ערוץ תשלום בהגדרות הקריפטו רק אם אתם רוצים שתשלומים יעברו דרכו; התקרה והאישור שלכם חלים על כל ערוץ.",
     "fault.wallet_x402_sdk_unavailable.message": "גרסה זו אינה יכולה לשלם הצעות x402 ב-Base דרך x402 Foundation SDK: התוספת האופציונלית x402 אינה מותקנת במכונה זו. לא נחתם ולא נשלח דבר. כל שאר פונקציות הארנק עובדות בלעדיה; לאחר התקנתה נסו שוב."
   },
-  "source_catalog_sha256": "b24f342ac74655da1584cff91734d6da0c234893a4987a63750e9942599ada86",
+  "source_catalog_sha256": "f124eaf64a998ab66f2b07c0bd7af29c9b30be85da0b7c92648c89f88e6532ca",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

@@ -649,7 +649,7 @@
     "header.pins_title": "本对话中的置顶消息",
     "header.run_auto_defaults": "此聊天使用VOOL自动模式。列出的连接是自动模式可用的默认连接，并非此聊天选定的连接。",
     "header.run_blocked_title": "此聊天的 AI 在此电脑上运行。云端 AI 被禁止，但网页搜索仍会联网。点击选择模型。",
-    "header.run_computer_only": "仅此电脑",
+    "header.run_computer_only": "仅本地",
     "header.run_computer_only_hint": "禁止云端 · 网页搜索仍开启",
     "header.run_connect": "连接",
     "header.run_connected": "已连接",
@@ -1930,7 +1930,7 @@
     "fault.wallet_payment_channel_off.action": "只有在希望通过某个支付通道付款时，才在加密设置中打开它；上限和你的批准在每个通道上都适用。",
     "fault.wallet_x402_sdk_unavailable.message": "此构建无法通过 x402 Foundation SDK 支付 Base 上的 x402 报价：这台机器上没有安装可选的 x402 扩展。没有签名或发送任何内容。钱包的其他所有功能没有它也能工作；安装之后请重试。"
   },
-  "source_catalog_sha256": "b24f342ac74655da1584cff91734d6da0c234893a4987a63750e9942599ada86",
+  "source_catalog_sha256": "f124eaf64a998ab66f2b07c0bd7af29c9b30be85da0b7c92648c89f88e6532ca",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

@@ -649,7 +649,7 @@
     "header.pins_title": "الرسائل المثبتة في هذه المحادثة",
     "header.run_auto_defaults": "تستخدم هذه المحادثة اختيار VOOL التلقائي. الاتصالات المعروضة هي الخيارات الافتراضية المتاحة له وليست اختياراً لهذه المحادثة.",
     "header.run_blocked_title": "يعمل الذكاء الاصطناعي لهذه المحادثة على هذا الكمبيوتر. الذكاء الاصطناعي السحابي محظور، لكن البحث على الويب ما زال يخرج. انقر لاختيار نموذج.",
-    "header.run_computer_only": "هذا الكمبيوتر فقط",
+    "header.run_computer_only": "محلي فقط",
     "header.run_computer_only_hint": "السحابة محظورة · البحث على الويب مفعّل",
     "header.run_connect": "اتصال",
     "header.run_connected": "متصل",
@@ -1930,7 +1930,7 @@
     "fault.wallet_payment_channel_off.action": "شغّل قناة دفع في إعدادات العملات المشفرة فقط إن أردت أن تتم الدفعات عبرها؛ الحد الأقصى وموافقتك يسريان على كل قناة.",
     "fault.wallet_x402_sdk_unavailable.message": "لا يستطيع هذا الإصدار دفع عروض x402 على Base عبر x402 Foundation SDK: الإضافة الاختيارية x402 غير مثبتة على هذه الآلة. لم يوقَّع أو يُرسل شيء. كل وظائف المحفظة الأخرى تعمل بدونها؛ بعد تثبيتها أعد المحاولة."
   },
-  "source_catalog_sha256": "b24f342ac74655da1584cff91734d6da0c234893a4987a63750e9942599ada86",
+  "source_catalog_sha256": "f124eaf64a998ab66f2b07c0bd7af29c9b30be85da0b7c92648c89f88e6532ca",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

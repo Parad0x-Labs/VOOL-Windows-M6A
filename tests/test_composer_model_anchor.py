@@ -657,7 +657,7 @@ def test_the_visible_pin_is_the_identity_the_request_carries(session) -> None:
     page.wait_for_timeout(200)
     label = page.evaluate("() => document.getElementById('modelLbl').textContent")
     assert label == "VOOL Auto", f"the visible model did not stay Auto: {label!r}"
-    assert page.locator('#modelWhere').inner_text() == "This computer only"
+    assert page.locator('#modelWhere').inner_text() == "Local Only"
     body = _send_and_capture(page, "local only turn")
     assert body["model"] == "vool-local-only" and body["model_selection"] == "pin", body
 
