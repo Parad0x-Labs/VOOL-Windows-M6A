@@ -1880,15 +1880,28 @@ def _finish_forget_turn_admission(result, *, user_text, session_id, source_conte
     if execution is None and _admission_recovery_enabled() and _rules_lane_finished_take_back(
         user_text, session_id=session_id, turn_keys=_turn_keys_of(source_context),
     ):
-        # "Forget the rule about X": the rules lane answered the whole turn and no memory forget was owed,
-        # so this admission's barrier is lifted here (Steve, 12 Nov: before, it stayed pending for good and
-        # every memory read in its scope failed closed). A rules error never gets here: it stays pending.
+        # "Forget the rule about X": the rules lane answered the whole turn. Its words are forgotten in this chat
+        # through the ordinary forget first, so the turns and recall that name the rule stay withheld from the
+        # model; only once that forget is verified complete is the admission's barrier lifted (Steve, 12 Nov:
+        # before, the admission stayed pending for good and every memory read in its scope failed closed).
+        # A rules error, or a forget that could not be verified, leaves it pending.
+        words = _take_back_words(user_text)
         try:
+            if not words:
+                raise RuntimeError("take-back names no words")
+            # Proven now, so written down first: a kill during the forget below is finished at the next start
+            # from this record, even though the forget has already withheld the turn that proved it.
+            for home, operation in operations:
+                _take_back_journal(home, add={operation: words})
+            if not _forget_take_back_words(words, session_id=session_id, source_context=source_context,
+                                           homes={home for home, _ in operations}):
+                raise RuntimeError("the take-back's forget could not be verified")
             with ExitStack() as locks:
                 for home, _ in sorted(operations):
                     locks.enter_context(revocation.serialized(home))
                 for home, operation in operations:
                     revocation.complete(operation, home)
+                    _take_back_journal(home, remove={operation})
                 _forget_outcomes.release_admission(**owner)
         except Exception:
             _, failure = _forget_start_failure(user_text, session_id=session_id, source_context=source_context, started=True)
@@ -1949,6 +1962,82 @@ def _rules_lane_finished_take_back(user_text, *, session_id, turn_keys) -> bool:
         return False
 
 
+def _take_back_words(user_text) -> str:
+    """The words a "forget the rule about X" turn takes back (X), or "" when it names none."""
+    try:
+        from core.user_rules import parse_rule_command
+
+        command = parse_rule_command(str(user_text or ""))
+    except Exception:
+        return ""
+    if command is None or command.action != "remove_about":
+        return ""
+    return " ".join(str(command.needle or "").split())
+
+
+_TAKE_BACK_JOURNAL = "take-back-forgets.json"
+
+
+def _take_back_journal(home, *, add=None, remove=None) -> dict[str, str]:
+    """The proven rule take-backs whose forget is under way: {admission op id: the words taken back}.
+
+    Kept beside the ledger in the forget authority's own folder, under its fence, written durably. An entry is
+    added only after the take-back was proven (live in its turn, or from the transcript at startup) and removed
+    only once its admission is complete. The words are stored as plainly as a forget op already stores them."""
+    import json as _json
+
+    from core.memory import revocation
+
+    path = revocation._directory(home) / _TAKE_BACK_JOURNAL
+    with revocation.serialized(home):
+        entries: dict[str, str] = {}
+        if path.exists():
+            value = _json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(value, dict) or not isinstance(value.get("ops"), dict):
+                raise RuntimeError("take-back journal is invalid")
+            entries = {str(k): str(v) for k, v in value["ops"].items()}
+        if add or remove:
+            entries.update(add or {})
+            for key in remove or ():
+                entries.pop(key, None)
+            revocation._durable_write(path, {"version": 1, "ops": entries})
+        return entries
+
+
+def _forget_take_back_words(words, *, session_id, source_context, homes) -> bool:
+    """Forget a take-back's words in its chat through the ordinary forget command, and verify it.
+
+    True only when every home's forget authority holds a COMPLETE kind=forget operation for this chat and
+    those words afterwards (the forget's own completion, which comes only after every store verified its
+    erasure). No words (a take-back by rule number, or of all rules) is False, so its admission stays pending."""
+    from core.memory import revocation
+    from core.vool_memory import _normalize_forget_token
+
+    words = " ".join(str(words or "").split())
+    session = str(session_id or "").strip()
+    if not words or not session:
+        return False
+    command = f"forget {words}"
+    context = {**dict(source_context or {}), "chat_id": session}
+    try:
+        maybe_handle_memory_command(command, session_id=session, source_context=context)
+    except Exception:
+        return False
+    token = _normalize_forget_token(_normalize_forget_target(words))
+    if len(token) < 2:
+        return False
+    try:
+        for home in homes or {revocation._home()}:
+            with revocation.serialized(home):
+                operations = revocation._read(revocation._directory(home))["operations"].values()
+                if not any(row.get("kind", "forget") == "forget" and row["chat"] == session
+                           and row["token"] == token and row["status"] == "complete" for row in operations):
+                    return False
+    except Exception:
+        return False
+    return True
+
+
 def _transcript_turn_keys(row) -> set[str]:
     """The keys a transcript row's turn files its facts under: its request id, and that id without the
     ingress prefix ("req:http:<id>" files facts as "<id>")."""
@@ -1961,12 +2050,17 @@ def _recover_admissions(runtime_home=None) -> dict[str, int]:
 
     An admission op's token is a marker, sha256 of (chat, sorted forget targets), not a forget word: completing
     it revokes nothing and restores nothing, it only lifts the barrier. So it is completed only when it is proven
-    that no memory forget was owed: exactly one user turn in that chat's own transcript recomputes the marker,
+    a finished rule take-back: exactly one user turn in that chat's own transcript recomputes the marker,
     with non-empty targets; that turn is a whole-turn rules take-back; and the rules lane answered THAT turn
     without an error. Any other pending admission (a turn that crashed mid-forget, an ambiguous or missing turn)
-    stays pending and withheld, with a fixed line logged. Recovery only ever completes an op: it never deletes,
-    rewrites or reorders rows and never touches a kind=forget op. The transcript is read internally and never
-    served or logged; a log line names only a short hash of the op id. Idempotent: a completed op is not pending.
+    stays pending and withheld, with a fixed line logged. Recovery only ever completes an admission: it never
+    deletes, rewrites or reorders rows and never touches an existing kind=forget op. Before completing, the take-back's
+    words are forgotten in that chat through the ordinary forget (which adds its own kind=forget op and
+    withholds every turn and recall naming them), and only a verified forget lets the admission complete. The
+    proof is recorded in the take-back journal before that forget runs, because the forget withholds the very
+    turn that proved it: a kill in between is finished from the journal at the next start. The transcript is
+    read internally and never served or logged; a log line names only a short hash of the op id. Idempotent:
+    a completed op is not pending, and its journal entry is gone.
     """
     import json as _json
     import logging
@@ -2002,9 +2096,25 @@ def _recover_admissions(runtime_home=None) -> dict[str, int]:
                         continue
                     if isinstance(row, dict):
                         transcript.append(row)
+            journal = _take_back_journal(home)
             for op_id, op in pending:
                 short = sha256(op_id.encode("utf-8")).hexdigest()[:10]
                 chat = op["chat"]
+                if op_id in journal:
+                    # Proven before a stop or a kill cut its forget short: finish that forget, then complete.
+                    if not _forget_take_back_words(
+                        journal[op_id], session_id=chat,
+                        source_context={"turn_key": "admission-recovery-" + short, "chat_id": chat}, homes={home},
+                    ):
+                        counts["kept_pending"] += 1
+                        log.warning("forget admission %s stays pending: %s", short,
+                                    "the take-back's forget could not be verified")
+                        continue
+                    revocation.complete(op_id, home)
+                    _take_back_journal(home, remove={op_id})
+                    counts["completed"] += 1
+                    log.warning("forget admission %s completed: a finished rule take-back, its words forgotten", short)
+                    continue
                 matches = []
                 for row in transcript:
                     if str(row.get("session_id") or "") != chat:
@@ -2020,13 +2130,24 @@ def _recover_admissions(runtime_home=None) -> dict[str, int]:
                     str(matches[0].get("user") or ""), session_id=chat, turn_keys=_transcript_turn_keys(matches[0]),
                 ):
                     reason = "admission is not a finished rule take-back"
+                words = _take_back_words(str(matches[0].get("user") or "")) if not reason else ""
+                if not reason and not words:
+                    reason = "admission is not a finished rule take-back"
+                if not reason:
+                    _take_back_journal(home, add={op_id: words})
+                    if not _forget_take_back_words(
+                        words, session_id=chat,
+                        source_context={"turn_key": "admission-recovery-" + short, "chat_id": chat}, homes={home},
+                    ):
+                        reason = "the take-back's forget could not be verified"
                 if reason:
                     counts["kept_pending"] += 1
                     log.warning("forget admission %s stays pending: %s", short, reason)
                     continue
                 revocation.complete(op_id, home)
+                _take_back_journal(home, remove={op_id})
                 counts["completed"] += 1
-                log.warning("forget admission %s completed: a finished rule take-back", short)
+                log.warning("forget admission %s completed: a finished rule take-back, its words forgotten", short)
     except RuntimeError as exc:
         reason = str(exc) if str(exc) in revocation._FIXED_REFUSALS else type(exc).__name__
         log.warning("forget admission recovery stopped: %s", reason)
