@@ -1926,7 +1926,7 @@
     "fault.wallet_payment_channel_off.action": "Вмикайте платіжний канал у налаштуваннях Крипто, лише якщо хочете платити через нього; ліміт і ваше схвалення діють на кожному каналі.",
     "fault.wallet_x402_sdk_unavailable.message": "Ця збірка не вміє оплачувати пропозиції x402 у мережі Base через x402 Foundation SDK: необов'язковий додаток x402 не встановлено на цій машині. Нічого не підписано і не надіслано. Усі інші функції гаманця працюють без нього; після встановлення повторіть."
   },
-  "source_catalog_sha256": "ec0fd0e63d56a923cb8db547d8f06cf9d35ace6647b29f31e6cb61a9b4d16dbd",
+  "source_catalog_sha256": "bd03a5e5c6911bc59a646cb238e2735f993f2f8f309e65ceb1459c51bee1eb1e",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
