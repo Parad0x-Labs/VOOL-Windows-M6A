@@ -267,6 +267,12 @@ def single_plain_know_question(
 
         if is_workspace_identity_question(message):
             return False
+        # Steve R21: the first "are you online?" after a cold start was held by this probe, which timed
+        # out while the model loaded. The front door's online-status answer reads the runtime's state.
+        from core.agent_runtime.fast_command_surface import is_online_status_question
+
+        if is_online_status_question(message):
+            return False
     try:
         from core.agent_runtime.answer_coverage import demand_units
 
