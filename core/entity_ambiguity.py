@@ -259,6 +259,14 @@ def single_plain_know_question(
 
         if memory_lane_owns_attribute_question(message):
             return False
+        # Steve R20: "which project am I in?" is the workspace-identity answer's question ("This chat is
+        # in General, not in a project."), which also runs in the front door. Left eligible, the probe
+        # asked "Which specific project are you referring to?". The chat's own place names no outside
+        # entity either.
+        from core.agent_runtime.fast_paths_utility import is_workspace_identity_question
+
+        if is_workspace_identity_question(message):
+            return False
     try:
         from core.agent_runtime.answer_coverage import demand_units
 

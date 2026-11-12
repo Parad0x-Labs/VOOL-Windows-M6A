@@ -5218,6 +5218,16 @@ function finishRun(run, kind, summaryText, tsIso) {
   // No card means this run's chat is off screen: the state above is complete, and paintFinishedCard
   // will replay all of it onto a fresh card the moment the chat is opened again.
   paintFinishedCard(run);
+  // The companion hears a turn's end from the server's typed terminal frame. A turn the CLIENT
+  // ended -- Stop (pressed, Esc, or a typed /stop) aborts the stream before the server's
+  // task.cancelled can arrive, and a dropped connection has no frame at all -- would otherwise
+  // leave the pet narrating the last working phrase forever, since applyTaskEvent ignores
+  // everything once the run has ended. This site reports the end the card already shows.
+  if ((kind === 'cancelled' || kind === 'failed') && run.companionOpened && !run.companionTerminal
+      && typeof window !== 'undefined' && window.VoolCompanion) {
+    run.companionTerminal = true;
+    try { window.VoolCompanion.consume(run.chatId, { type: 'task.' + kind, ts: run.endedAt }); } catch (e) {}
+  }
   if (isDisplayed(run.chatId)) renderPanel();
   setTimeout(loadActivityHistory, 250);
   // Named fragment call site: lifecycle notifications. The fragment decides visibility (it only
@@ -5285,6 +5295,7 @@ function applyTaskEvent(run, ev) {
   // Placed before the switch because the terminal cases below return early. The typeof
   // guard keeps function-slicing harnesses (no DOM globals) running unchanged.
   if (typeof window !== 'undefined' && window.VoolCompanion) window.VoolCompanion.consume(run.chatId, ev);
+  if (ev.type === 'task.cancelled' || ev.type === 'task.failed' || ev.type === 'task.completed') run.companionTerminal = true;
   run.events.push(ev);
   if (ev.stage) { run.stage = ev.stage; run.evented = true; }
   if (ev.summary) { run.action = ev.summary; run.evented = true; }
@@ -7621,7 +7632,7 @@ async function runTurn(text, queueItemId, opts) {
   // acknowledgement arrived, the last card wore the previous turn's terminal phrase under a
   // `Working` header (measured 2026-09-06). `task.submitted` claims nothing about the server.
   if (typeof window !== 'undefined' && window.VoolCompanion) {
-    try { window.VoolCompanion.consume(chatId, { type: 'task.submitted', ts: run.start }); } catch (e) {}
+    try { window.VoolCompanion.consume(chatId, { type: 'task.submitted', ts: run.start }); run.companionOpened = true; } catch (e) {}
   }
   run.attachments = turnAttachments;
   reflectComposer();   // the Send button follows the DISPLAYED chat, which may not be this one
