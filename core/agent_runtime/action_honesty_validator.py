@@ -280,7 +280,13 @@ _EXECUTION_SELF_CLAIM_RE = re.compile(
     rf"|\b(?:file|files|patch|diff|changes?|script|code|command|it|(?<![\w./\\-])[\w./\\-]+\.[A-Za-z]{{1,5}})"
     rf"\s+(?:was|were|has\s+been|have\s+been|is\s+now|are\s+now)\s+(?:successfully\s+)?"
     rf"(?:patched|compiled|applied|executed|run)\b"
-    rf"|\b(?:patched|compiled|applied|executed|ran)\s+(?:successfully|cleanly|without\s+(?:any\s+)?(?:errors?|issues?))\b",
+    rf"|\b(?:patched|compiled|applied|executed|ran)\s+(?:successfully|cleanly|without\s+(?:any\s+)?(?:errors?|issues?))\b"
+    # The run and patch tools' own result lines (Steve consistency check, 12 Nov 2026): "`python -m
+    # pytest -q` ran and exited 0." and "Applied unified diff:". A real turn has the tool's receipt,
+    # so the receipt reads them as backed claims ("clean"), and the same words with no receipt are a
+    # claim the blocker refuses, instead of both being signed "no_action_claimed".
+    rf"|{_RUN_OBJECT}\s+ran\s+and\s+exited\b"
+    rf"|{_RUN_SENTENCE_START}applied\s+(?:the\s+|a\s+)?unified\s+diff\b",
     re.IGNORECASE,
 )
 # A conditional, temporal, modal or negated frame BEFORE the verb turns the same words into an
