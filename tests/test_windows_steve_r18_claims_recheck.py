@@ -43,6 +43,7 @@ def _turn() -> str:
 @pytest.mark.parametrize("target", ["file", "folder", "quoted-folder"])
 def test_a_patch_to_a_full_path_is_applied_there_from_an_unbound_chat(machine, chat, jobs, target) -> None:
     calc = machine["proj"] / "calc.py"
+    calc.write_bytes(CALC.encode("utf-8"))  # LF on every host: the patch tool refuses a file with CRs
     named = {"file": str(calc), "folder": str(machine["proj"]), "quoted-folder": f'"{machine["proj"]}"'}[target]
     talk = chat(machine["desktop"])
 
@@ -56,6 +57,7 @@ def test_a_patch_to_a_full_path_is_applied_there_from_an_unbound_chat(machine, c
 
 def test_a_patch_that_does_not_match_the_named_file_says_why_not_which_folder(machine, chat) -> None:
     calc = machine["proj"] / "calc.py"
+    calc.write_bytes(CALC.encode("utf-8"))
     stale = DIFF.replace("-    return a + b", "-    return a - b")
     talk = chat(machine["desktop"])
 
@@ -70,14 +72,14 @@ def test_a_patch_that_does_not_match_the_named_file_says_why_not_which_folder(ma
 def test_a_patch_to_a_full_path_outside_the_marked_folders_is_refused_by_that_path(machine, chat) -> None:
     other = machine["home"] / "Other folder"
     other.mkdir()
-    (other / "calc.py").write_text(CALC, encoding="utf-8")
+    (other / "calc.py").write_bytes(CALC.encode("utf-8"))
     talk = chat(machine["desktop"])
 
     reply = talk.say(f"apply this patch to {other / 'calc.py'}\n" + DIFF, turn_id=_turn())
 
     assert talk.pending() == [] and talk.model_rounds == 0, reply
     assert f"`{other / 'calc.py'}` is not inside a folder you marked" in reply and "Nothing was changed." in reply, reply
-    assert (other / "calc.py").read_text(encoding="utf-8") == CALC
+    assert (other / "calc.py").read_bytes() == CALC.encode("utf-8")
 
 
 def test_a_patch_to_a_full_path_that_is_not_there_says_so(machine, chat) -> None:
