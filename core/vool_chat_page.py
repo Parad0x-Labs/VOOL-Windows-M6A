@@ -2446,7 +2446,7 @@ function showEmpty() {
     ['first_run.opener_7', 'Where do we start?']];
   const pick = openers[Math.floor(Math.random() * openers.length)];
   const line = emptyT(pick[0], pick[1]);
-  // A rotating fun fact — one per fresh session, quoted in an italic serif so it reads apart from
+  // A rotating fun fact — one per fresh session, set in an italic serif so it reads apart from
   // the greeting/opener. Two flavors, both TRUE: what VOOL genuinely does, and real how-AI-works
   // facts (including genuine "fails"). NO invented statistics — no made-up adoption % or market share.
   // Every fact resolves through the catalog (first_run.fact_*); the inline English is the honest
@@ -2478,7 +2478,9 @@ function showEmpty() {
   logEl.innerHTML = '<div class="empty">'
     + '<div class="empty-greet">' + esc(greet) + '</div>'
     + '<div class="empty-sub">' + esc(line) + '</div>'
-    + '<div class="empty-hint">“' + esc(emptyT(fact[0], fact[1])) + '”</div>'
+    // No quote marks of its own: several facts open or close with a quoted term ("Temperature", «Галлюцинация»,
+    // “幻觉”), so a wrapping pair doubled them. The italic serif line already sets the fact apart.
+    + '<div class="empty-hint">' + esc(emptyT(fact[0], fact[1])) + '</div>'
     + '</div>';
 }
 
