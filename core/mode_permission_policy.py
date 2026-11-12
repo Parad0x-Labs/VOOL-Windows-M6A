@@ -3100,7 +3100,9 @@ def _affected_resources_display(
     if str(intent or "").strip() == "machine.move_path" and windows_write_gate.active():
         # Windows only: off Windows the card is built as before, with nothing resolved.
         return _machine_move_display(arguments)
-    machine = str(intent or "").strip() in {"machine.write_file", "machine.ensure_directory"}
+    if str(intent or "").strip() == "workspace.apply_unified_diff":
+        return _patch_targets_display(arguments, source_context)
+    machine =str(intent or "").strip() in {"machine.write_file", "machine.ensure_directory"}
     root = _trusted_write_root(source_context).rstrip("/")
     raw = _affected_resources(arguments)
     if not root and not machine:
@@ -3128,6 +3130,43 @@ def _affected_resources_display(
                 displayed.append(f"{root}/{value}")
         else:
             displayed.append(value)
+    return displayed
+
+
+def _patch_targets_display(arguments: dict[str, Any], source_context: dict[str, Any]) -> list[str]:
+    """The files a unified diff changes, each placed where the patch tool writes it.
+
+    A patch carries its targets in its `---`/`+++` headers, not in a `path` argument, so its card read
+    "Affects: -" (Steve, Windows). Each name the review lists (`patch_review_paths`: a new file's `+++`
+    name, a deleted file's `---` name, never /dev/null) is resolved by the writer's own authority
+    (`resolve_write_target`, under the context's `workspace`, then `workspace_root`). A name the
+    patch tool would refuse is shown as the patch writes it, saying so; the tool then refuses the
+    whole patch with nothing written."""
+    patch = str(arguments.get("patch") or arguments.get("diff") or "")
+    if not patch.strip():
+        return []
+    try:
+        from core.execution.workspace_tools import patch_review_paths
+        from core.runtime_execution_tools import resolve_write_target
+
+        names = patch_review_paths(patch)
+    except Exception:
+        return []
+    root = _trusted_write_root(source_context)
+    displayed: list[str] = []
+    for name in names[:12]:
+        try:
+            target = resolve_write_target("workspace.apply_unified_diff", name, source_context)
+        except Exception:
+            target = None
+        if target is not None:
+            displayed.append(str(target))
+        elif root:
+            displayed.append(f"{name} (as the patch names it: it cannot be changed in {root})")
+        else:
+            displayed.append(f"{name} (as the patch names it: it cannot be changed here)")
+    if len(names) > 12:
+        displayed.append(f"and {len(names) - 12} more files the patch names")
     return displayed
 
 
