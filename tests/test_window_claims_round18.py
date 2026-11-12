@@ -192,11 +192,13 @@ def test_the_chat_actions_open_from_one_button_and_still_work(tmp_path) -> None:
         row.hover()
         assert row.locator(".s-actions .s-act:visible").count() == 0, "no inline action buttons on hover"
         row.locator(".s-more").click()
+        row.locator(".s-actions.open .s-act").nth(5).wait_for(state="visible")
         assert row.locator(".s-actions.open .s-act:visible").count() == 6
         # The list re-renders whenever it refreshes; the open menu comes back on the new row.
         page.evaluate("loadSessions()")
         page.wait_for_timeout(300)
         row = page.locator("#sessions .session", has_text="Alpha planning chat").first
+        row.locator(".s-actions.open .s-act").nth(5).wait_for(state="visible")
         assert row.locator(".s-actions.open .s-act:visible").count() == 6
         page.evaluate("window.__urls = []")
         row.locator('.s-actions .s-act[title="Pin chat to the top"]').click()
