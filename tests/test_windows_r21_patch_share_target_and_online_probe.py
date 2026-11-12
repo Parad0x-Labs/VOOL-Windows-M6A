@@ -91,9 +91,12 @@ def test_a_local_patch_still_gets_its_card(paths_on_windows, chat) -> None:
     assert (proj / "calc.py").read_text(encoding="utf-8") == CALC.replace("return a + b", "return b + a"), reply
 
 
-def test_off_windows_the_patch_lane_reads_no_names(machine) -> None:
+def test_off_windows_the_patch_lane_reads_no_names(machine, monkeypatch) -> None:
     from core import windows_marked_file_ops as marked
 
+    # Off Windows is forced through the seams, so the row means the same on a real Windows runner.
+    monkeypatch.setattr(windows_path_policy, "_IS_WINDOWS", False)
+    monkeypatch.setattr(gate, "_IS_WINDOWS", False)
     assert not windows_path_policy.active()
     assert marked._shared_patch_target(_new_file(SHARES["localhost-admin-share"])) == ""
 
