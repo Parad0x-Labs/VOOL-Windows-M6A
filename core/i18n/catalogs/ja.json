@@ -1259,6 +1259,7 @@
     "update.rolled_back": "ロールバックされました",
     "update.unavailable": "更新は利用できません",
     "update.up_to_date": "最新です",
+    "update.idle": "現在、更新の動きはありません。",
     "update.verifying": "検証中…",
     "update.version_line": "バージョン {version}",
     "usepod.approval_expired": "支出承認の有効期限が切れました。",
@@ -1438,6 +1439,7 @@
     "vx.privacy.p2": "クラウド呼び出しは、あなたのキーによるクラウド指定またはAuto-freeのターンでのみ行われます。「ローカルのみ」は無料モデルを含めクラウドAIを完全に遮断します。ウェブ検索は「ローカルのみ」でも検索語を検索エンジンに送ります。",
     "vx.privacy.p2_b": "クラウドは明示的に。",
     "vx.privacy.p3": "プロバイダのキーはシステムキーチェーン／暗号化ストアに保存され、このページに再表示されることはありません。",
+    "vx.privacy.p3.vault": "プロバイダのキーはユーザープロファイル内の VOOL の暗号化保管庫に保存され、このページに表示されることはありません。",
     "vx.privacy.p3_b": "キーは封印。",
     "vx.privacy.p4": "有料ピンにはサーバー確認済みの同意が必要です。承認済み上限は価格上昇時に再度ゲートされます。",
     "vx.privacy.p4_b": "支出は門番付き。",
@@ -1924,7 +1926,7 @@
     "fault.wallet_payment_channel_off.action": "支払いチャネルは、そのチャネルで支払いたい場合にだけ暗号設定でオンにしてください。上限とあなたの承認はどのチャネルでも適用されます。",
     "fault.wallet_x402_sdk_unavailable.message": "このビルドはx402 Foundation SDKを通じてBase上のx402オファーを支払えません：オプションのx402拡張がこのマシンにインストールされていません。署名も送信もされていません。他のウォレット機能はそれなしで動作します。導入後にもう一度お試しください。"
   },
-  "source_catalog_sha256": "ec0fd0e63d56a923cb8db547d8f06cf9d35ace6647b29f31e6cb61a9b4d16dbd",
+  "source_catalog_sha256": "bd03a5e5c6911bc59a646cb238e2735f993f2f8f309e65ceb1459c51bee1eb1e",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

@@ -2074,8 +2074,13 @@ function widgetUpdates(stack) {
   const src = state.sources['/api/update/status'];
   const error = state.sourceErr['/api/update/status'];
   const phase = src && src.phase || 'idle';
+  // "Loading…" only until the status has been read. An idle status with no message is the normal state
+  // when no update has run (core/updater/runtime.py status_payload); an unconfigured updater says why.
   const message = phase === 'up_to_date' ? T('update.up_to_date', 'Up to date')
-    : error || src && src.message || T('settings.widget.loading', 'Loading…');
+    : error || (!src ? T('settings.widget.loading', 'Loading…')
+      : src.configured === false && src.unavailable_plain ? src.unavailable_plain
+      : src.message || (phase === 'idle' ? T('update.idle', 'No update activity right now.')
+      : T('settings.widget.loading', 'Loading…')));
   const status = el('div', 'subtle', message); status.setAttribute('role', 'status');
   status.dataset.testid = 'settings-update-status'; stack.appendChild(status);
   const check = el('button', 'btn', T('update.action_check', 'Check for updates'));

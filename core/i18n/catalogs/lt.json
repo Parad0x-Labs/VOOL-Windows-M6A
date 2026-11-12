@@ -1259,6 +1259,7 @@
     "update.rolled_back": "Grąžinta atgal",
     "update.unavailable": "Atnaujinimai neprieinami",
     "update.up_to_date": "Naujausia versija",
+    "update.idle": "Šiuo metu atnaujinimų veiklos nėra.",
     "update.verifying": "Verifikuojama…",
     "update.version_line": "Versija {version}",
     "usepod.approval_expired": "Jūsų išlaidų patvirtinimas baigė galioti.",
@@ -1438,6 +1439,7 @@
     "vx.privacy.p2": "Kreipimasis į debesį vyksta tik debesį prisegtam ar Auto-free ėjimui su jūsų raktu; „Tik vieta“ visiškai blokuoja debesies DI, įskaitant nemokamus modelius. Paieška internete net ir šiame režime siunčia jūsų paieškos žodžius paieškos sistemai.",
     "vx.privacy.p2_b": "Debesis tik aiškiai.",
     "vx.privacy.p3": "Tiekėjų raktai gyvena sistemos raktinėje/šifruotoje saugykloje ir niekada nėra grąžinami į šį puslapį.",
+    "vx.privacy.p3.vault": "Teikėjų raktai laikomi užšifruotoje VOOL saugykloje jūsų naudotojo profilyje ir šiame puslapyje niekada nerodomi.",
     "vx.privacy.p3_b": "Raktai užantspauduoti.",
     "vx.privacy.p4": "Mokami prisegimai reikalauja serveryje patvirtinto sutikimo; priimti lubos vėl užsidaro kainoms kylant.",
     "vx.privacy.p4_b": "Išlaidos ribojamos.",
@@ -1924,7 +1926,7 @@
     "fault.wallet_payment_channel_off.action": "Įjunkite mokėjimo kanalą Kripto nustatymuose tik jei norite, kad mokėjimai eitų per jį; riba ir jūsų patvirtinimas galioja kiekviename kanale.",
     "fault.wallet_x402_sdk_unavailable.message": "Ši versija negali apmokėti x402 pasiūlymų Base tinkle per x402 Foundation SDK: šiame kompiuteryje neįdiegtas pasirenkamas papildinys x402. Niekas nebuvo pasirašyta ar išsiųsta. Visos kitos piniginės funkcijos veikia ir be jo; jį įdiegę bandykite dar kartą."
   },
-  "source_catalog_sha256": "ec0fd0e63d56a923cb8db547d8f06cf9d35ace6647b29f31e6cb61a9b4d16dbd",
+  "source_catalog_sha256": "bd03a5e5c6911bc59a646cb238e2735f993f2f8f309e65ceb1459c51bee1eb1e",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

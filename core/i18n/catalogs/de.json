@@ -1259,6 +1259,7 @@
     "update.rolled_back": "Zurückgerollt",
     "update.unavailable": "Keine Updates verfügbar",
     "update.up_to_date": "Aktuell",
+    "update.idle": "Gerade keine Update-Aktivität.",
     "update.verifying": "Wird verifiziert…",
     "update.version_line": "Version {version}",
     "usepod.approval_expired": "Deine Ausgabengenehmigung ist abgelaufen.",
@@ -1438,6 +1439,7 @@
     "vx.privacy.p2": "Ein Cloud-Aufruf geschieht nur für eine Cloud-gepinnte oder Auto-free-Runde mit deinem Schlüssel; Nur-lokal sperrt Cloud-KI vollständig, auch freie Modelle. Die Websuche sendet deine Suchbegriffe auch unter Nur-lokal an die Suchmaschine.",
     "vx.privacy.p2_b": "Cloud ist ausdrücklich.",
     "vx.privacy.p3": "Anbieterschlüssel leben im System-Schlüsselbund bzw. verschlüsselten Speicher und werden nie zurück in diese Seite gerendert.",
+    "vx.privacy.p3.vault": "Anbieterschlüssel liegen im verschlüsselten Tresor von VOOL in deinem Benutzerprofil und werden auf dieser Seite nie angezeigt.",
     "vx.privacy.p3_b": "Schlüssel sind versiegelt.",
     "vx.privacy.p4": "Bezahlte Pins verlangen serverseitig bestätigte Zustimmung; angenommene Obergrenzen sperren bei Preiserhöhungen erneut.",
     "vx.privacy.p4_b": "Ausgaben sind begrenzt.",
@@ -1924,7 +1926,7 @@
     "fault.wallet_payment_channel_off.action": "Schalte einen Zahlungskanal in den Krypto-Einstellungen nur ein, wenn Zahlungen darüber laufen sollen; die Obergrenze und deine Freigabe gelten auf jedem Kanal.",
     "fault.wallet_x402_sdk_unavailable.message": "Dieser Build kann keine x402-Angebote auf Base über das x402 Foundation SDK bezahlen: Die optionale Erweiterung x402 ist auf diesem Rechner nicht installiert. Es wurde nichts signiert oder gesendet. Jede andere Wallet-Funktion läuft ohne sie; nach der Installation versuche es erneut."
   },
-  "source_catalog_sha256": "ec0fd0e63d56a923cb8db547d8f06cf9d35ace6647b29f31e6cb61a9b4d16dbd",
+  "source_catalog_sha256": "bd03a5e5c6911bc59a646cb238e2735f993f2f8f309e65ceb1459c51bee1eb1e",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

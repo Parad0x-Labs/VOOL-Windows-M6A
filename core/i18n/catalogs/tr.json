@@ -1259,6 +1259,7 @@
     "update.rolled_back": "Geri alındı",
     "update.unavailable": "Güncellemeler kullanılamıyor",
     "update.up_to_date": "Güncel",
+    "update.idle": "Şu anda güncelleme etkinliği yok.",
     "update.verifying": "Doğrulanıyor…",
     "update.version_line": "Sürüm {version}",
     "usepod.approval_expired": "Harcama onayınızın süresi doldu.",
@@ -1438,6 +1439,7 @@
     "vx.privacy.p2": "Bulut çağrısı yalnızca anahtarınızla buluta sabitlenmiş veya Auto-free bir tur için olur; Yalnızca yerel, bulut yapay zekâsını ücretsiz modeller dahil tamamen kapatır. Web araması, Yalnızca yerel modunda bile arama sözcüklerinizi arama motoruna gönderir.",
     "vx.privacy.p2_b": "Bulut açık seçik.",
     "vx.privacy.p3": "Sağlayıcı anahtarları sistemin anahtar zincirinde/şifreli depoda yaşar ve bu sayfaya asla geri çizilmez.",
+    "vx.privacy.p3.vault": "Sağlayıcı anahtarları kullanıcı profilinizdeki VOOL şifreli kasasında tutulur ve bu sayfada asla gösterilmez.",
     "vx.privacy.p3_b": "Anahtarlar mühürlü.",
     "vx.privacy.p4": "Ücretli sabitlemeler sunucu tarafından onaylanan rıza ister; kabul edilen tavanlar fiyat artışında yeniden kapanır.",
     "vx.privacy.p4_b": "Harcama kapılı.",
@@ -1924,7 +1926,7 @@
     "fault.wallet_payment_channel_off.action": "Bir ödeme kanalını Kripto ayarlarında yalnızca ödemelerin onun üzerinden yapılmasını istiyorsanız açın; tavan ve sizin onayınız her kanalda geçerlidir.",
     "fault.wallet_x402_sdk_unavailable.message": "Bu yapı x402 Foundation SDK üzerinden Base'deki x402 tekliflerini ödeyemez: isteğe bağlı x402 eki bu makinede kurulu değil. Hiçbir şey imzalanmadı veya gönderilmedi. Cüzdanın diğer her işlevi onsuz çalışır; kurulunca tekrar deneyin."
   },
-  "source_catalog_sha256": "ec0fd0e63d56a923cb8db547d8f06cf9d35ace6647b29f31e6cb61a9b4d16dbd",
+  "source_catalog_sha256": "bd03a5e5c6911bc59a646cb238e2735f993f2f8f309e65ceb1459c51bee1eb1e",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
