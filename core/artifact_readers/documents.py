@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import hashlib
+import io
 import re
 import struct
 import zipfile
@@ -1608,7 +1609,9 @@ def read_xls(data: bytes, *, name: str = "workbook.xls") -> ReaderResult:
         )
     digest = hashlib.sha256(data).hexdigest()
     try:
-        book = xlrd.open_workbook(file_contents=data)
+        # xlrd prints its warnings to sys.stdout by default; a closed or replaced stdout then
+        # turns a readable workbook into "I/O operation on closed file". Keep them in memory.
+        book = xlrd.open_workbook(file_contents=data, logfile=io.StringIO())
     except xlrd.XLRDError as exc:
         message = str(exc).lower()
         if "encrypted" in message:
