@@ -1850,6 +1850,11 @@ function removeSetupGroup() {
    the native window bridge can mark (OS folder picker + OS confirm) or unmark (by id), so a browser
    tab shows the list and no buttons. */
 const DISPOSABLE_URL = '/api/windows/disposable-folders';
+/* The folder picker and the OS confirm box hand focus back to Settings, and the focus handler
+   rebuilds the pane (reconcile) -- often with the list as it was BEFORE the mark, so right after
+   marking Settings said "No folder is marked yet", and a refusal written into the old widget was
+   never seen. The last result line lives here, and every redraw renders the pane that is on screen. */
+const disposableMemory = { note: null };
 function widgetDisposableFolders(stack) {
   const src = state.sources[DISPOSABLE_URL];
   const err = state.sourceErr[DISPOSABLE_URL];
@@ -1858,8 +1863,14 @@ function widgetDisposableFolders(stack) {
   if (!src.windows) { stack.appendChild(el('div', 'subtle', T('settings.disposable.not_windows', 'Only Windows needs this. On this computer VOOL already works in the folders described above.'))); return; }
   const api = window.pywebview && window.pywebview.api;
   const native = !!(api && api.mark_disposable_folder);
-  const status = el('div', 'state idle'); status.setAttribute('role', 'status');
-  const redraw = async () => { await readSource(DISPOSABLE_URL); stack.textContent = ''; widgetDisposableFolders(stack); };
+  const status = el('div', 'state idle'); status.id = 'disposableStatus'; status.setAttribute('role', 'status');
+  if (disposableMemory.note) { status.className = disposableMemory.note.cls; status.textContent = disposableMemory.note.msg; }
+  const fail = (msg) => {
+    disposableMemory.note = { cls: 'state failed', msg: String(msg || '') };
+    const live = document.getElementById('disposableStatus') || status;
+    live.className = disposableMemory.note.cls; live.textContent = disposableMemory.note.msg;
+  };
+  const redraw = async () => { disposableMemory.note = null; await readSource(DISPOSABLE_URL); renderPane(); };
   const folders = src.folders || [];
   if (src.problem) stack.appendChild(el('div', 'state failed', T('settings.disposable.untrusted', 'The saved folder list could not be trusted, so no marked folder is used.')));
   if (!folders.length) stack.appendChild(el('div', 'empty', T('settings.disposable.none', 'No folder is marked yet.')));
@@ -1873,7 +1884,7 @@ function widgetDisposableFolders(stack) {
       off.type = 'button';
       off.addEventListener('click', async () => {
         const res = await window.pywebview.api.unmark_disposable_folder(String(f.id || ''));
-        if (res && res.ok) await redraw(); else { status.className = 'state failed'; status.textContent = (res && (res.refused || res.error)) || ''; }
+        if (res && res.ok) await redraw(); else fail((res && (res.refused || res.error)) || '');
       });
       line.appendChild(off);
     }
@@ -1885,7 +1896,7 @@ function widgetDisposableFolders(stack) {
     add.addEventListener('click', async () => {
       const res = await window.pywebview.api.mark_disposable_folder('settings');
       if (res && res.ok) await redraw();
-      else if (res && !res.cancelled) { status.className = 'state failed'; status.textContent = res.refused || res.error || ''; }
+      else if (res && !res.cancelled) fail(res.refused || res.error || '');
     });
     stack.appendChild(add);
   } else {

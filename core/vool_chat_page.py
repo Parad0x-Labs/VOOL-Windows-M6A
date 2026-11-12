@@ -286,8 +286,16 @@ code { background:var(--bg); border:1px solid var(--border); border-radius:5px; 
 #sessions .pin-head .proj-name::before { content:'\1F4CC  '; }
 #sessions .s-pin-mark { flex:0 0 auto; font-size:11px; opacity:.75; margin-left:4px; }
 #sessions .s-rename { flex:1; min-width:0; background:var(--bg); color:var(--ink); border:1px solid var(--accent); border-radius:6px; padding:2px 6px; font:inherit; font-size:13px; }
-#sessions .s-actions { display:none; gap:2px; flex:0 0 auto; }
-#sessions .session:hover .s-actions { display:flex; }
+/* A chat's actions sit behind one small "⋯" button. Shown inline on hover, the six emoji buttons
+   (wider in Segoe UI Emoji) squeezed the title to a sliver (205 px -> 52 px), so the title vanished
+   under the pointer and a click meant for it landed on an action. The title keeps its width, the
+   whole row opens the chat, and "⋯" opens the actions in a small menu beside it. */
+#sessions .session { position:relative; cursor:pointer; }
+#sessions .s-more { display:none; flex:0 0 auto; background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:14px; line-height:1; padding:2px 6px; border-radius:4px; }
+#sessions .s-more:hover, #sessions .s-more[aria-expanded="true"] { color:var(--ink); background:var(--bg); }
+#sessions .session:hover .s-more, #sessions .session:focus-within .s-more, #sessions .s-more[aria-expanded="true"] { display:inline-block; }
+#sessions .s-actions { display:none; position:fixed; z-index:60; gap:2px; padding:4px; background:var(--panel); border:1px solid var(--border); border-radius:8px; box-shadow:0 8px 26px rgba(0,0,0,.5); }
+#sessions .s-actions.open { display:flex; }
 #sessions .s-act { background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:12px; padding:2px 5px; border-radius:4px; line-height:1; }
 #sessions .s-act:hover { color:var(--ink); background:var(--bg); }
 #sessions .arch-head { color:var(--muted); font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; padding:12px 10px 4px; cursor:pointer; user-select:none; }
@@ -2997,6 +3005,23 @@ function startProjectRename(head, nameEl, pid) {
   input.focus(); input.select();
 }
 
+// The chat whose actions menu is open. The list is re-rendered whenever it refreshes; the menu of
+// the same chat opens again on the new row instead of vanishing under the pointer.
+let openSessionActionsFor = '';
+function closeSessionActionMenus() {
+  openSessionActionsFor = '';
+  document.querySelectorAll('#sessions .s-actions.open').forEach((m) => m.classList.remove('open'));
+  document.querySelectorAll('#sessions .s-more[aria-expanded="true"]').forEach((b) => b.setAttribute('aria-expanded', 'false'));
+}
+if (typeof document.addEventListener === 'function') {
+  // A click anywhere else, Escape, the chat list scrolling or a resize closes an open chat-actions menu.
+  document.addEventListener('click', (e) => { if (!(e.target && e.target.closest && e.target.closest('#sessions .s-actions, #sessions .s-more'))) closeSessionActionMenus(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSessionActionMenus(); });
+  // Only the chat list scrolling moves the row away from its menu; a streaming answer does not.
+  document.addEventListener('scroll', (e) => { if (e.target && e.target.id === 'sessions') closeSessionActionMenus(); }, true);
+  window.addEventListener('resize', () => closeSessionActionMenus());
+}
+
 function makeSessionItem(s, archived, nested) {
   const item = document.createElement('div');
   item.className = 'session' + (s.session_id === displayedChat ? ' active' : '') + (nested ? ' nested' : '');
@@ -3006,7 +3031,13 @@ function makeSessionItem(s, archived, nested) {
   title.className = 's-title';
   title.textContent = s.title || '(new chat)';
   title.title = s.title || '';
-  title.addEventListener('click', () => openSession(s.session_id));
+  // The whole row opens the chat (the title, its emoji, the empty space beside it); an action
+  // button or the rename box never does.
+  item.addEventListener('click', (e) => {
+    const t = e.target;
+    if (t && t.closest && t.closest('.s-actions, .s-rename, input, button')) return;
+    openSession(s.session_id);
+  });
   const actions = document.createElement('div');
   actions.className = 's-actions';
   const semo = document.createElement('button');
@@ -3041,6 +3072,30 @@ function makeSessionItem(s, archived, nested) {
   item.appendChild(emo); item.appendChild(title);
   if (s.pinned && !archived) { const pm = document.createElement('span'); pm.className = 's-pin-mark'; pm.textContent = '\u{1F4CC}'; pm.title = 'Pinned'; item.appendChild(pm); }
   if (!archived) appendLifecycleBadge(item, sidebarLifecycleState(s.session_id));
+  const more = document.createElement('button');
+  more.type = 'button'; more.className = 's-more'; more.textContent = '\u22EF';
+  more.title = 'Chat actions'; more.setAttribute('aria-label', 'Chat actions'); more.setAttribute('aria-haspopup', 'true');
+  more.setAttribute('aria-expanded', 'false');
+  const openMenu = () => {
+    const r = more.getBoundingClientRect();
+    actions.style.top = Math.round(r.bottom + 4) + 'px';
+    actions.style.right = Math.max(4, Math.round(window.innerWidth - r.right)) + 'px';
+    actions.classList.add('open'); more.setAttribute('aria-expanded', 'true');
+    openSessionActionsFor = s.session_id;
+  };
+  more.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const opening = !actions.classList.contains('open');
+    closeSessionActionMenus();
+    if (opening) openMenu();
+  });
+  if (openSessionActionsFor && openSessionActionsFor === s.session_id) {
+    requestAnimationFrame(() => { if (item.isConnected && openSessionActionsFor === s.session_id) openMenu(); });
+  }
+  // Any action closes the menu; the action's own handler runs as before. Capture phase: each action
+  // stops the click's propagation, so a bubbling listener here would never hear it.
+  actions.addEventListener('click', () => closeSessionActionMenus(), true);
+  item.appendChild(more);
   item.appendChild(actions);
   return item;
 }
