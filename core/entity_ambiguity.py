@@ -255,9 +255,9 @@ def single_plain_know_question(
     from core import windows_write_gate
 
     if windows_write_gate.active():
-        from core.persistent_memory import memory_lane_owns_attribute_question
+        from core.persistent_memory import _memory_lane_owns_attribute_question
 
-        if memory_lane_owns_attribute_question(message):
+        if _memory_lane_owns_attribute_question(message):
             return False
         # Steve R20: "which project am I in?" is the workspace-identity answer's question ("This chat is
         # in General, not in a project."), which also runs in the front door. Left eligible, the probe

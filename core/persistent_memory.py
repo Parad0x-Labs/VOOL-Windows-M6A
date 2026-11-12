@@ -140,7 +140,6 @@ __all__ = [
     "load_operator_dense_profile",
     "maybe_handle_memory_command",
     "memory_entries_path",
-    "memory_lane_owns_attribute_question",
     "memory_lifecycle_snapshot",
     "memory_path",
     "open_transcript_commit_boundary",
@@ -456,7 +455,7 @@ def _unremembered_subject_question(text: str) -> str:
     return " ".join(match.group("subject").casefold().split())
 
 
-def memory_lane_owns_attribute_question(text: str) -> bool:
+def _memory_lane_owns_attribute_question(text: str) -> bool:
     """Whether ``text`` is the narrow "what is my <modifier> <attribute>?" shape this lane owns.
 
     Read by the entity-ambiguity eligibility gate (`core.entity_ambiguity`), which runs before the
