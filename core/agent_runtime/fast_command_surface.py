@@ -1003,9 +1003,8 @@ def maybe_handle_cloud_models_command(user_input: str, *, owner_local: bool = Fa
 def _search_models_text(query: str) -> str:
     """Search the LIVE OpenRouter catalog by name. Ranks exact > name-part > prefix > substring, with
     free models first, so "hunyuan" or "deepseek" surfaces the right ids without the full list."""
-    from core.openrouter_catalog import load_openrouter_catalog, model_is_free
-
     from core import windows_cloud_gate
+    from core.openrouter_catalog import load_openrouter_catalog, model_is_free
 
     if windows_cloud_gate.cloud_off():
         return windows_cloud_gate.OFF_TEXT
@@ -1378,6 +1377,147 @@ _CONNECTION_TEST_RE = re.compile(
     r"|\bare\s+we\s+connected\b",
     re.IGNORECASE | re.DOTALL,
 )
+
+
+# "are you online?" / "is web lookup on?" (Windows) — a fixed status answer from the runtime's own
+# state, never small talk from the model. Capability recheck (Windows 11): "are you online?" got
+# "I'm here, Jesse…" 3 of 3 times and never said whether replies were local or cloud, or whether web
+# lookup was on. Whole-message and about VOOL only: "is the server online", "is google online" and
+# "is my friend online" name another subject and do not match.
+_ONLINE_STATUS_RE = re.compile(
+    r"^\s*(?:(?:hey|hi|so|ok(?:ay)?)[,\s]+)?(?:vool[,\s]+)?"
+    r"(?:"
+    r"(?:are|r)\s+(?:you|u)\s+(?:still\s+|currently\s+|actually\s+)?"
+    r"(?:on[- ]?line|off[- ]?line|connected\s+to\s+(?:the\s+)?(?:internet|web|net))"
+    r"|(?:do|can)\s+you\s+(?:have\s+)?(?:internet|web)\s+access"
+    r"|(?:is|are)\s+(?:the\s+|your\s+)?(?:web|internet)\s+(?:lookup|look[- ]up|search|searching|access|browsing)s?"
+    r"\s+(?:turned\s+)?(?:on|off|enabled|disabled|available|allowed|working)"
+    r")"
+    r"(?:\s+(?:right\s+)?now)?\s*[?.!]*\s*$",
+    re.IGNORECASE,
+)
+
+
+def is_online_status_question(user_input: str) -> bool:
+    text = str(user_input or "").strip()
+    return bool(text) and len(text) <= 80 and bool(_ONLINE_STATUS_RE.match(text))
+
+
+def _online_status_local_model() -> str:
+    """The local model's name when it is known: the last local reply's model, else the one enabled
+    local model registered on this machine ("" when there is none or more than one)."""
+    try:
+        from core.usage_meter import last_served_call
+
+        call = last_served_call() or {}
+        if str(call.get("lane") or "") == "local" and str(call.get("model_id") or "").strip():
+            return str(call["model_id"]).strip()
+    except Exception:
+        pass
+    try:
+        from core.local_model_policy import manifest_is_local
+        from storage.model_provider_manifest import list_provider_manifests
+
+        names = {m.model_name for m in list_provider_manifests(enabled_only=True) if manifest_is_local(m)}
+        return next(iter(names)) if len(names) == 1 else ""
+    except Exception:
+        return ""
+
+
+def _online_status_cloud_model() -> str:
+    try:
+        from core.cloud_escalation_policy import load_policy
+
+        model = str(getattr(load_policy(), "model", "") or "").strip()
+        return "" if model.lower() in {"", "auto"} else model
+    except Exception:
+        return ""
+
+
+def online_status_snapshot(source_context: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The state the answer reads. Each source fails soft to the answer that promises less."""
+    try:
+        from core.auto_local_only_mode import turn_is_local_only
+
+        local_only = bool(turn_is_local_only(source_context))
+    except Exception:
+        local_only = False
+    try:
+        from core import windows_cloud_gate
+
+        # The Windows cloud rule itself (a stored key AND cloud turned on), read directly: this
+        # answer is the Windows one, so it reports that rule whatever host the test runs on.
+        cloud_on = bool(windows_cloud_gate.cloud_key_stored() and windows_cloud_gate.owner_turned_cloud_on())
+    except Exception:
+        cloud_on = False
+    try:
+        from core.local_model_presence import local_model_running
+
+        local_running = bool(local_model_running())
+    except Exception:
+        local_running = False
+    try:
+        # Web lookup is the web-search permission the research lane asks (`allow_web_fallback`),
+        # not Local Only: Local Only keeps replies on this computer, and web search through the
+        # local browser stays available in it (product decision, 11 Nov 2026).
+        from core import policy_engine
+        from core.remote_fetch_policy import remote_fetch_forbidden
+
+        web_on = bool(policy_engine.allow_web_fallback()) and not remote_fetch_forbidden()
+    except Exception:
+        web_on = False
+    return {
+        "local_only": local_only,
+        "cloud_on": cloud_on and not local_only,
+        "local_running": local_running,
+        "local_model": _online_status_local_model() if local_running else "",
+        "cloud_model": _online_status_cloud_model() if cloud_on and not local_only else "",
+        "web_on": web_on,
+    }
+
+
+def render_online_status(snapshot: dict[str, Any]) -> str:
+    local_name = f" ({snapshot['local_model']})" if snapshot.get("local_model") else ""
+    cloud_name = f" ({snapshot['cloud_model']})" if snapshot.get("cloud_model") else ""
+    cloud_off_why = "Local Only is on" if snapshot.get("local_only") else "cloud models are off"
+    if snapshot.get("cloud_on") and snapshot.get("local_running"):
+        models = (
+            f"Replies: a local model on this computer{local_name} answers first, and cloud models "
+            f"are on{cloud_name}, so a reply can come from a cloud model."
+        )
+    elif snapshot.get("cloud_on"):
+        models = f"Replies: from a cloud model{cloud_name}. No local model is running on this computer."
+    elif snapshot.get("local_running"):
+        models = f"Replies: from a local model on this computer{local_name}. Nothing goes to a cloud model: {cloud_off_why}."
+    else:
+        models = (
+            f"Replies: no local model is running on this computer and {cloud_off_why}, so I can't "
+            "write model replies until you start a local model or add your own key in Settings."
+        )
+    if snapshot.get("web_on"):
+        web = "Web lookup: on. I can search the web when a question needs it."
+        if snapshot.get("local_only"):
+            web += " Local Only keeps replies on this computer; web search still goes through the browser."
+    else:
+        web = "Web lookup: off. I won't search the web."
+    return "\n".join([
+        "VOOL is running on this computer.", models, web,
+        "This reply: answered by VOOL's runtime from its current state, with no model call.",
+    ])
+
+
+def maybe_handle_online_status_question(
+    user_input: str, *, source_context: dict[str, Any] | None = None
+) -> str | None:
+    """Windows: "are you online?" answered from the runtime's state. None off Windows or on any
+    other message."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active() or not is_online_status_question(user_input):
+        return None
+    return render_online_status(online_status_snapshot(source_context))
+
+
 # The exact command `cloud test` (no `conn...` word, so _CONNECTION_TEST_RE misses it). Answered
 # in every mode: Plan gets advice, cloud off gets the gate's text, a non-owner a fixed line.
 _CLOUD_TEST_EXACT_RE = re.compile(r"^\s*/?cloud\s+test\s*$", re.IGNORECASE)
