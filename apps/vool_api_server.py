@@ -385,6 +385,17 @@ def create_app(runtime: RuntimeServices | None = None):
         import logging
 
         logging.getLogger(__name__).warning("agent team recovery at boot failed: %s", exc)
+    # A rule take-back ("forget the rule about X") used to leave its forget admission pending for good, and
+    # every memory read in its scope then failed closed. Startup rolls such a proven take-back forward; any
+    # other pending admission stays pending (core/persistent_memory.py _recover_admissions).
+    try:
+        from core.persistent_memory import _recover_admissions
+
+        _recover_admissions()
+    except Exception as exc:  # pragma: no cover - recovery never stops the server
+        import logging
+
+        logging.getLogger(__name__).warning("forget admission recovery at boot failed: %s", type(exc).__name__)
     return create_api_app(
         runtime=runtime or _legacy_handler_runtime(),
         model_name=MODEL_NAME,
