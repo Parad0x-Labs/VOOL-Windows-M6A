@@ -726,6 +726,16 @@ def main() -> int:
 
             route_logging_to_file(active_data_dir() / "logs" / "vool_api.log")
         _warn_if_confined_job_variable_set()
+        # Windows: seal every known secret file once, so one VOOL never reads in a session (a
+        # Voolbook token with no sign-in) is not left readable by other accounts. Never blocks boot.
+        try:
+            from core.secret_files import repair_known_secret_files
+
+            unsealed = repair_known_secret_files()
+            if unsealed:
+                logger.warning("secret files not owner-only after the startup seal: %s", sorted(unsealed))
+        except Exception:
+            logger.exception("startup seal of secret files failed; server continues")
         app = create_app(runtime)
         import uvicorn
 
