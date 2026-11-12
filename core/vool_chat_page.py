@@ -1167,7 +1167,7 @@ body:not(.panel-open) #xpanel { display:none; }
       <div class="pop-title" id="runTitle" data-i18n="header.run_title">Where VOOL can run</div>
       <div class="run-switch" role="radiogroup" aria-labelledby="runTitle">
         <button type="button" class="run-choice" role="radio" aria-checked="true" data-run-model="vool"><b data-i18n="header.run_local_first">Local first</b><small data-i18n="header.run_local_first_hint">free cloud only if needed</small></button>
-        <button type="button" class="run-choice" role="radio" aria-checked="false" data-run-model="vool-local-only"><b data-i18n="header.run_computer_only">This computer only</b><small data-i18n="header.run_computer_only_hint">cloud blocked · web search still on</small></button>
+        <button type="button" class="run-choice" role="radio" aria-checked="false" data-run-model="vool-local-only"><b data-i18n="header.run_computer_only">Local Only</b><small data-i18n="header.run_computer_only_hint">cloud blocked · web search still on</small></button>
       </div>
       <div class="run-hint" data-i18n="header.run_explainer">Auto never picks a paid model. Choosing a model below pins it.</div>
       <div class="run-hint" id="runLocalDisclosure" hidden data-i18n="header.model_local_only_explainer">Local Only runs every AI model on this machine and never reaches a cloud provider: not paid, not free, not for planning. Web search still works. It runs through VOOL's built-in browser, so your search words go to the search engine (DuckDuckGo or Bing).</div>
@@ -8930,7 +8930,7 @@ function reflectModel() {
   const where = document.getElementById('modelWhere');
   const known = !!modelValue && (MODEL_LABELS[modelValue] || isLocalModel(modelValue) || CLOUD_MODEL_ID_RE.test(modelValue));
   if (where) where.textContent = isLocalOnlyMode()
-    ? pageT('header.run_computer_only', 'This computer only')
+    ? pageT('header.run_computer_only', 'Local Only')
     : (known ? pageT('header.run_local_first', 'Local first') : String(modelValue || pageT('header.run_unknown', 'Unknown')));
   document.querySelectorAll('#modelPop .run-choice').forEach((it) => {
     const checked = known && (it.getAttribute('data-run-model') === LOCAL_ONLY_MODEL) === isLocalOnlyMode();
@@ -12697,7 +12697,7 @@ _WINDOWS_FILE_ACTIONS = (
 # Windows, before a cloud key is stored and cloud is turned on (core/windows_cloud_gate.py): nothing
 # on the composer is labelled free cloud. The default lane stays VOOL Auto ("Local first", the lane
 # `modelForChat` gives every chat without a stored choice); with cloud off it runs no cloud model, and
-# its hint says so. "This computer only" is not made the default: it is zero public egress, web
+# its hint says so. "Local Only" is not made the default: it is zero public egress, web
 # search included. The swapped texts drop their i18n key, so a catalog cannot put the free-cloud
 # wording back; the same texts reach the page's i18n bundle through its owner
 # (``core.i18n.page_bundle.i18n_client_bundle_for``), so the bootstrap is served byte for byte as that

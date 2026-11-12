@@ -649,7 +649,7 @@
     "header.pins_title": "이 채팅의 고정된 메시지",
     "header.run_auto_defaults": "이 채팅은 VOOL 자동 선택을 사용합니다. 표시된 연결은 자동 선택이 사용할 수 있는 기본 연결이며 이 채팅에서 선택한 연결은 아닙니다.",
     "header.run_blocked_title": "이 채팅의 AI는 이 컴퓨터에서 실행됩니다. 클라우드 AI는 차단되지만 웹 검색은 외부로 전송됩니다. 클릭하여 모델을 선택하세요.",
-    "header.run_computer_only": "이 컴퓨터에서만",
+    "header.run_computer_only": "로컬 전용",
     "header.run_computer_only_hint": "클라우드 차단 · 웹 검색 켜짐",
     "header.run_connect": "연결",
     "header.run_connected": "연결됨",
@@ -1930,7 +1930,7 @@
     "fault.wallet_payment_channel_off.action": "그 채널로 결제하려는 경우에만 암호화폐 설정에서 결제 채널을 켜세요; 한도와 사용자 승인은 모든 채널에 적용됩니다.",
     "fault.wallet_x402_sdk_unavailable.message": "이 빌드는 x402 Foundation SDK를 통해 Base의 x402 제안을 결제할 수 없습니다: 선택적 x402 추가 요소가 이 기기에 설치되지 않았습니다. 서명되거나 보내진 것은 없습니다. 지갑의 다른 모든 기능은 없이도 작동합니다; 설치한 뒤 다시 시도하세요."
   },
-  "source_catalog_sha256": "b24f342ac74655da1584cff91734d6da0c234893a4987a63750e9942599ada86",
+  "source_catalog_sha256": "f124eaf64a998ab66f2b07c0bd7af29c9b30be85da0b7c92648c89f88e6532ca",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

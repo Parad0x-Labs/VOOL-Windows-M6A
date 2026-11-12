@@ -716,7 +716,7 @@
     "header.pins_title": "Pinned messages in this chat",
     "header.run_auto_defaults": "This chat is on VOOL Auto — the connections listed are the defaults Auto may use, not a selection for this chat.",
     "header.run_blocked_title": "This chat's AI runs on this computer. Cloud AI is blocked, but web search still goes out. Click to choose a model.",
-    "header.run_computer_only": "This computer only",
+    "header.run_computer_only": "Local Only",
     "header.run_computer_only_hint": "cloud blocked · web search still on",
     "header.run_connect": "Connect",
     "header.run_connected": "connected",

@@ -3408,11 +3408,14 @@ def _dispatch_runtime_tool(
         if intent == "capability.expand_family":
             return _capability_expand_family(arguments, source_context=source_context)
         if intent == "workspace.identity":
+            project_id, project_name = _sidebar_project_for(source_context)
             return _memoized_runtime_result(
                 "workspace.identity",
                 arguments,
-                lambda: _workspace_identity(workspace_root),
-                scope=(str(workspace_root),),
+                lambda: _workspace_identity(workspace_root, project_name=project_name),
+                # The project's name is part of the answer, so a rename must not be served the
+                # answer remembered under the old one.
+                scope=(str(workspace_root), project_id, project_name),
             )
         if intent == "workspace.list_files":
             return _list_files(arguments, workspace_root=workspace_root)
@@ -4502,7 +4505,29 @@ def _capability_expand_family(
     )
 
 
-def _workspace_identity(workspace_root: Path) -> RuntimeExecutionResult:
+def _sidebar_project_for(source_context: dict[str, Any] | None) -> tuple[str, str]:
+    """The chat's project as the sidebar shows it: (id, name), or ("", "") for General.
+
+    The sidebar's projects are `core.project_store` entries, and a chat in none of them sits under
+    "General". The working folder is a different thing: a General chat still works in a folder
+    (Desktop by default), and that folder's name is not a project name. An id that no longer
+    resolves (a deleted project) reads as General, which is where the sidebar puts its chats.
+    """
+    context = source_context or {}
+    project_id = str(context.get("_trusted_project_id") or context.get("project_id") or "").strip()
+    if not project_id:
+        return "", ""
+    try:
+        from core import project_store
+
+        project = project_store.get_project(project_id) or {}
+    except Exception:
+        project = {}
+    name = " ".join(str(project.get("name") or "").split()).strip()
+    return (project_id, name) if name else ("", "")
+
+
+def _workspace_identity(workspace_root: Path, *, project_name: str = "") -> RuntimeExecutionResult:
     """Answer "where is my workspace / what project am I in" in one line.
 
     Sixteen workspace tools existed and not one of them reported WHERE the workspace is, so a model
@@ -4537,9 +4562,15 @@ def _workspace_identity(workspace_root: Path) -> RuntimeExecutionResult:
         text = f"The workspace is set to `{root}`, but that folder does not exist right now."
     else:
         parts = [f"The workspace is set to `{root}`."]
+        # Name the chat's project the way the sidebar does, and call the folder a folder: "the
+        # project `Desktop`" gave a General chat a second name the sidebar never shows.
+        if project_name:
+            parts.append(f"This chat is in the project `{project_name}`.")
+        else:
+            parts.append("This chat is in General, not in a project.")
         parts.append(
-            f"That is the project `{name}`" + (" (a git repository)" if is_git else "")
-            + f", holding {files} file{'s' if files != 1 else ''} and "
+            f"The folder `{name}`" + (" (a git repository)" if is_git else "")
+            + f" holds {files} file{'s' if files != 1 else ''} and "
             f"{directories} folder{'s' if directories != 1 else ''} at the top level."
         )
         text = " ".join(parts)

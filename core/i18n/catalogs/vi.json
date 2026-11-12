@@ -649,7 +649,7 @@
     "header.pins_title": "Tin nhắn đã ghim trong cuộc trò chuyện này",
     "header.run_auto_defaults": "Cuộc trò chuyện này dùng chế độ tự động của VOOL. Các kết nối được liệt kê là mặc định có thể dùng, không phải lựa chọn cho cuộc trò chuyện này.",
     "header.run_blocked_title": "AI của cuộc trò chuyện này chạy trên máy tính này. AI đám mây bị chặn, nhưng tìm kiếm web vẫn ra ngoài. Nhấp để chọn mô hình.",
-    "header.run_computer_only": "Chỉ máy tính này",
+    "header.run_computer_only": "Chỉ Cục bộ",
     "header.run_computer_only_hint": "chặn đám mây · tìm kiếm web vẫn bật",
     "header.run_connect": "Kết nối",
     "header.run_connected": "đã kết nối",
@@ -1930,7 +1930,7 @@
     "fault.wallet_payment_channel_off.action": "Chỉ bật một kênh thanh toán trong cài đặt Tiền điện tử nếu bạn muốn thanh toán qua kênh đó; trần chi tiêu và sự chấp thuận của bạn áp dụng trên mọi kênh.",
     "fault.wallet_x402_sdk_unavailable.message": "Bản dựng này không trả được các đề nghị x402 trên Base qua x402 Foundation SDK: phần bổ sung tùy chọn x402 chưa cài trên máy này. Chưa ký hay gửi gì. Mọi chức năng ví khác chạy không cần nó; sau khi cài, thử lại."
   },
-  "source_catalog_sha256": "b24f342ac74655da1584cff91734d6da0c234893a4987a63750e9942599ada86",
+  "source_catalog_sha256": "f124eaf64a998ab66f2b07c0bd7af29c9b30be85da0b7c92648c89f88e6532ca",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
