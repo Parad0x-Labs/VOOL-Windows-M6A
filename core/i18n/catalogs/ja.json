@@ -1430,9 +1430,10 @@
     "vx.memory.rule_remove": "削除",
     "vx.memory.rule_remove_title": "すべてのチャットでこのルールに従うのをやめる",
     "vx.memory.rule_remove_confirm": "このルールを削除しますか？VOOL は今後このルールに従いません。",
+    "vx.memory.rule_remove_confirm_button": "確定",
     "vx.memory.rules_title": "VOOL がすべてのチャットで守るルール",
     "vx.memory.rules_empty": "保存されたルールはありません。「常に箇条書きで答えて」のようにチャットで伝えたルールがここに表示されます。",
-    "vx.memory.rules_hint": "ルールを外すには、チャットで VOOL にやめるよう伝えてください。",
+    "vx.memory.rules_hint": "ルールを外すには、その横の「削除」を押すか、チャットで VOOL にやめるよう伝えてください。",
     "vx.memory.rules_unreadable": "保存されたルールを読み込めませんでした。",
     "vx.memory.title": "メモリー",
     "vx.memory.unreadable": "メモリーを読み取れませんでした。",
@@ -1929,7 +1930,7 @@
     "fault.wallet_payment_channel_off.action": "支払いチャネルは、そのチャネルで支払いたい場合にだけ暗号設定でオンにしてください。上限とあなたの承認はどのチャネルでも適用されます。",
     "fault.wallet_x402_sdk_unavailable.message": "このビルドはx402 Foundation SDKを通じてBase上のx402オファーを支払えません：オプションのx402拡張がこのマシンにインストールされていません。署名も送信もされていません。他のウォレット機能はそれなしで動作します。導入後にもう一度お試しください。"
   },
-  "source_catalog_sha256": "5832614598870b146a8da6d7191435dba25abe1758229157d21f6b28a8b3569d",
+  "source_catalog_sha256": "b24f342ac74655da1584cff91734d6da0c234893a4987a63750e9942599ada86",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1940,6 +1941,6 @@
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
-    "standing_rule_remove_addendum": "3 standing-rule Remove keys translated by the lane author (single writer)"
+    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)"
   }
 }

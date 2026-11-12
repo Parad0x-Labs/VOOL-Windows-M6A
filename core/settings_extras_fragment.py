@@ -128,7 +128,21 @@ document.addEventListener('click', function(ev){
   var row = btn.closest('[data-vs-rule]');
   var ruleId = row && row.getAttribute('data-vs-rule');
   if (!ruleId) return;
-  if (!window.confirm(XT('vx.memory.rule_remove_confirm', 'Remove this rule? VOOL will stop following it.'))) return;
+  // An in-page confirm (Steve R18): a browser dialog carried the page's address as its title. The first press
+  // arms the button, a second press within a few seconds removes the rule, and otherwise it goes back.
+  if (btn.getAttribute('data-vs-armed') !== '1') {
+    btn.setAttribute('data-vs-armed', '1');
+    btn.textContent = XT('vx.memory.rule_remove_confirm_button', 'confirm');
+    btn.title = XT('vx.memory.rule_remove_confirm', 'Remove this rule? VOOL will stop following it.');
+    setTimeout(function(){
+      if (btn.getAttribute('data-vs-armed') !== '1' || btn.disabled) return;
+      btn.removeAttribute('data-vs-armed');
+      btn.textContent = XT('vx.memory.rule_remove', 'remove');
+      btn.title = XT('vx.memory.rule_remove_title', 'Stop following this rule in every chat');
+    }, 4000);
+    return;
+  }
+  btn.removeAttribute('data-vs-armed');
   btn.disabled = true;
   fetch('/api/memory/standing-instructions/remove', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -225,7 +239,7 @@ function section(which){
     node.className = 'vs-sec'; node.id = 'vsMemorySec';
     node.innerHTML = '<h4>' + XT('vx.memory.title', 'Memory') + '</h4><div class="vs-mem-list"></div>' +
       '<h4>' + XT('vx.memory.rules_title', 'Rules VOOL follows in every chat') + '</h4><div class="vs-rule-list"></div>' +
-      '<div class="vs-empty">' + XT('vx.memory.rules_hint', 'To remove a rule, tell VOOL in a chat to stop doing it.') + '</div>';
+      '<div class="vs-empty">' + XT('vx.memory.rules_hint', 'To remove a rule, press remove next to it, or tell VOOL in a chat to stop doing it.') + '</div>';
   } else if (which === 'privacy') {
     node.className = 'vs-sec vs-privacy'; node.id = 'vsPrivacySec';
     node.innerHTML = '<h4>' + XT('vx.privacy.title', 'Privacy &amp; data') + '</h4>' +

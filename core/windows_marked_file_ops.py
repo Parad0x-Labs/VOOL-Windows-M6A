@@ -406,7 +406,24 @@ def _patch(body: str, source_context: dict[str, Any] | None) -> MarkedFileAsk | 
     lead = _LEAD_RE.match(first)
     pos = lead.end() if lead else 0
     named = ""
-    if not _PATCH_VERB_RE.match(first, pos):
+    target_file = ""
+    missing = "There is no folder at `{path}`. "
+    if _PATCH_VERB_RE.match(first, pos):
+        # "apply this patch to C:\...\proj\notes.txt" (Steve R18): the full path the request names is
+        # where the patch goes, a folder or a file in it, not the chat's own folder (an unbound chat's
+        # Desktop, which then refused the patch for the wrong folder).
+        found = next(((start, path) for start, path in _candidates(first) if start >= pos), None)
+        if found is not None:
+            start, named = found
+            if not _local(first, start, named):
+                return MarkedFileAsk("patch", refusal=_NOT_LOCAL.format(path=named) + _NOTHING_CHANGED)
+            missing = "There is no file or folder at `{path}`. "
+            try:
+                if os.path.isfile(named) and not _is_link(named):
+                    target_file, named = named, os.path.dirname(named)
+            except (OSError, ValueError):
+                pass
+    else:
         folder_first = _FOLDER_FIRST_RE.match(first, pos)
         if folder_first is None:
             return None
@@ -428,7 +445,9 @@ def _patch(body: str, source_context: dict[str, Any] | None) -> MarkedFileAsk | 
         except (OSError, ValueError):
             is_dir = False
         if not is_dir:
-            return MarkedFileAsk("patch", refusal=f"There is no folder at `{named}`. " + _NOTHING_CHANGED)
+            return MarkedFileAsk("patch", refusal=missing.format(path=named) + _NOTHING_CHANGED)
+        if target_file and not windows_write_gate.inside_flagged(_real_folder(target_file)):
+            return MarkedFileAsk("patch", refusal=_NOT_MARKED.format(path=target_file) + _NOTHING_CHANGED)
         folder = _real_folder(named)
     else:
         context = source_context or {}

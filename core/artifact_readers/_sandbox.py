@@ -187,6 +187,9 @@ def confinement_available() -> bool:
 def confinement_unavailable_reason() -> str:
     if confinement_available():
         return ""
+    if platform.system() == "Windows":
+        # Steve R18: a Windows owner was told about macOS. The reason says what is true here.
+        return "VOOL can't yet run an untrusted decoder in a sandbox on this computer; this host is Windows"
     if not _host_is_macos():
         return f"process confinement for untrusted decoders is implemented for macOS only; this host is {platform.system()}"
     return "the macOS sandbox (/usr/bin/sandbox-exec) is not available on this machine"

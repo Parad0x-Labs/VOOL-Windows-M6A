@@ -1430,9 +1430,10 @@
     "vx.memory.rule_remove": "移除",
     "vx.memory.rule_remove_title": "在所有聊天中不再遵循此规则",
     "vx.memory.rule_remove_confirm": "要移除这条规则吗？VOOL 将不再遵循它。",
+    "vx.memory.rule_remove_confirm_button": "确认",
     "vx.memory.rules_title": "VOOL 在每个对话中遵循的规则",
     "vx.memory.rules_empty": "尚未保存规则。你在对话中给出的规则（如“始终用要点回答”）会显示在这里。",
-    "vx.memory.rules_hint": "要删除一条规则，请在对话中让 VOOL 停止这样做。",
+    "vx.memory.rules_hint": "要删除一条规则，请点它旁边的“移除”，或在对话中让 VOOL 停止这样做。",
     "vx.memory.rules_unreadable": "无法读取已保存的规则。",
     "vx.memory.title": "记忆",
     "vx.memory.unreadable": "无法读取记忆。",
@@ -1929,7 +1930,7 @@
     "fault.wallet_payment_channel_off.action": "只有在希望通过某个支付通道付款时，才在加密设置中打开它；上限和你的批准在每个通道上都适用。",
     "fault.wallet_x402_sdk_unavailable.message": "此构建无法通过 x402 Foundation SDK 支付 Base 上的 x402 报价：这台机器上没有安装可选的 x402 扩展。没有签名或发送任何内容。钱包的其他所有功能没有它也能工作；安装之后请重试。"
   },
-  "source_catalog_sha256": "5832614598870b146a8da6d7191435dba25abe1758229157d21f6b28a8b3569d",
+  "source_catalog_sha256": "b24f342ac74655da1584cff91734d6da0c234893a4987a63750e9942599ada86",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1940,6 +1941,6 @@
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
-    "standing_rule_remove_addendum": "3 standing-rule Remove keys translated by the lane author (single writer)"
+    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)"
   }
 }

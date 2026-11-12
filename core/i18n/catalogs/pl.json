@@ -1430,9 +1430,10 @@
     "vx.memory.rule_remove": "usuń",
     "vx.memory.rule_remove_title": "Przestań stosować tę regułę we wszystkich czatach",
     "vx.memory.rule_remove_confirm": "Usunąć tę regułę? VOOL przestanie jej przestrzegać.",
+    "vx.memory.rule_remove_confirm_button": "potwierdź",
     "vx.memory.rules_title": "Zasady, których VOOL przestrzega w każdym czacie",
     "vx.memory.rules_empty": "Brak zapisanych zasad. Zasada podana w czacie, np. „zawsze odpowiadaj w punktach”, pojawi się tutaj.",
-    "vx.memory.rules_hint": "Aby usunąć zasadę, powiedz VOOL w czacie, żeby przestał tak robić.",
+    "vx.memory.rules_hint": "Aby usunąć zasadę, kliknij obok niej „usuń” albo powiedz VOOL w czacie, żeby przestał tak robić.",
     "vx.memory.rules_unreadable": "Nie udało się odczytać zapisanych zasad.",
     "vx.memory.title": "Pamięć",
     "vx.memory.unreadable": "Nie udało się odczytać pamięci.",
@@ -1929,7 +1930,7 @@
     "fault.wallet_payment_channel_off.action": "Włącz kanał płatności w ustawieniach Krypto tylko wtedy, gdy chcesz, by płatności przez niego szły; limit i twoja zgoda obowiązują na każdym kanale.",
     "fault.wallet_x402_sdk_unavailable.message": "Ta wersja nie potrafi opłacać ofert x402 w sieci Base przez x402 Foundation SDK: na tym komputerze nie ma opcjonalnego dodatku x402. Nic nie podpisano ani nie wysłano. Każda inna funkcja portfela działa bez niego; po zainstalowaniu spróbuj ponownie."
   },
-  "source_catalog_sha256": "5832614598870b146a8da6d7191435dba25abe1758229157d21f6b28a8b3569d",
+  "source_catalog_sha256": "b24f342ac74655da1584cff91734d6da0c234893a4987a63750e9942599ada86",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1940,6 +1941,6 @@
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
-    "standing_rule_remove_addendum": "3 standing-rule Remove keys translated by the lane author (single writer)"
+    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)"
   }
 }

@@ -1430,9 +1430,10 @@
     "vx.memory.rule_remove": "إزالة",
     "vx.memory.rule_remove_title": "التوقف عن اتباع هذه القاعدة في كل محادثة",
     "vx.memory.rule_remove_confirm": "هل تريد إزالة هذه القاعدة؟ سيتوقف VOOL عن اتباعها.",
+    "vx.memory.rule_remove_confirm_button": "تأكيد",
     "vx.memory.rules_title": "قواعد يتبعها VOOL في كل محادثة",
     "vx.memory.rules_empty": "لا توجد قواعد محفوظة. تظهر هنا أي قاعدة تعطيها في المحادثة، مثل «أجب دائمًا بنقاط».",
-    "vx.memory.rules_hint": "لإزالة قاعدة، اطلب من VOOL في محادثة أن يتوقف عنها.",
+    "vx.memory.rules_hint": "لإزالة قاعدة، اضغط «إزالة» بجانبها، أو اطلب من VOOL في محادثة أن يتوقف عنها.",
     "vx.memory.rules_unreadable": "تعذّرت قراءة القواعد المحفوظة.",
     "vx.memory.title": "الذاكرة",
     "vx.memory.unreadable": "تعذّرت قراءة الذاكرة.",
@@ -1929,7 +1930,7 @@
     "fault.wallet_payment_channel_off.action": "شغّل قناة دفع في إعدادات العملات المشفرة فقط إن أردت أن تتم الدفعات عبرها؛ الحد الأقصى وموافقتك يسريان على كل قناة.",
     "fault.wallet_x402_sdk_unavailable.message": "لا يستطيع هذا الإصدار دفع عروض x402 على Base عبر x402 Foundation SDK: الإضافة الاختيارية x402 غير مثبتة على هذه الآلة. لم يوقَّع أو يُرسل شيء. كل وظائف المحفظة الأخرى تعمل بدونها؛ بعد تثبيتها أعد المحاولة."
   },
-  "source_catalog_sha256": "5832614598870b146a8da6d7191435dba25abe1758229157d21f6b28a8b3569d",
+  "source_catalog_sha256": "b24f342ac74655da1584cff91734d6da0c234893a4987a63750e9942599ada86",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1940,6 +1941,6 @@
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
-    "standing_rule_remove_addendum": "3 standing-rule Remove keys translated by the lane author (single writer)"
+    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)"
   }
 }
