@@ -733,6 +733,11 @@ def _save_dialog_start_folder() -> str:
     return ""
 
 
+_NO_FOLDER_RETURNED = (
+    "Windows didn't return a folder. A whole drive can't be marked; pick a folder inside it."
+)
+
+
 def _close_secondaries_with(window: object, api: "_WindowApi") -> bool:
     """Close the pet, Settings and Setup windows when the main chat window closes (not macOS).
     True when the hook was installed. See ``_WindowApi._close_secondary_windows``."""
@@ -1127,8 +1132,14 @@ class _WindowApi:
             result = window.create_file_dialog(webview.FOLDER_DIALOG)
             if secondary:
                 _focus_window(window)
-            if not result:
+            if result is None:   # the person pressed Cancel
                 return {"ok": False, "cancelled": True}
+            if not result or not str(result[0] if isinstance(result, (list, tuple)) else result).strip():
+                # OK was pressed but Windows handed back no folder. pywebview's picker returns
+                # tuple(FileNames), which is empty for a drive root such as C:\ -- reported as a
+                # cancel, Settings showed nothing at all. A whole drive is never markable anyway.
+                _log("mark_disposable_folder: the picker returned no folder")
+                return {"ok": False, "refused": _NO_FOLDER_RETURNED}
             picked = str(result[0] if isinstance(result, (list, tuple)) else result)
             reason = store.refusal_reason(picked, extra_sealed=(str(Path(__file__).resolve().parent),))
             if reason:
