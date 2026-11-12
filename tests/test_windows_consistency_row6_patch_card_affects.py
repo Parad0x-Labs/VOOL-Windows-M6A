@@ -62,9 +62,11 @@ def test_a_patch_that_creates_a_file_names_the_new_file_not_dev_null(machine, ch
     proj = machine["proj"]
     talk = chat(proj)
 
-    talk.say("apply this patch:\n" + NEW_FILE, turn_id=_turn())
+    reply = talk.say("apply this patch:\n" + NEW_FILE, turn_id=_turn())
 
-    (card,) = talk.pending()
+    pending = talk.pending()
+    assert len(pending) == 1, reply
+    (card,) = pending
     assert card["affected_resources"] == [str((proj / "notes.txt").resolve())], card["affected_resources"]
     assert not any("/dev/null" in item for item in card["affected_resources"])
     assert not (proj / "notes.txt").exists()
@@ -75,9 +77,11 @@ def test_a_patch_over_two_files_names_both(machine, chat) -> None:
     (proj / "calc.py").write_bytes(CALC.encode("utf-8"))
     talk = chat(proj)
 
-    talk.say("apply this patch:\n" + DIFF + NEW_FILE, turn_id=_turn())
+    reply = talk.say("apply this patch:\n" + DIFF + NEW_FILE, turn_id=_turn())
 
-    (card,) = talk.pending()
+    pending = talk.pending()
+    assert len(pending) == 1, reply  # the reply says why when no card was raised
+    (card,) = pending
     assert _same(card["affected_resources"][:1], [proj / "calc.py"]), card["affected_resources"]
     assert card["affected_resources"][1:] == [str((proj / "notes.txt").resolve())], card["affected_resources"]
 

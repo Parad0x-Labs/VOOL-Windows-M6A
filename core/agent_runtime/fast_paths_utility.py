@@ -3371,7 +3371,7 @@ def _looks_like_a_slash_command(phrase: str) -> bool:
 # one the Windows chat really answers: `/stop` is taken by the chat page itself before it is sent (it clicks the running
 # task's Stop control, the same one Esc presses; see `send()` in core/vool_chat_page.py), and
 # `/stopall` with its confirm is core/vool_agent_brake.py, answered before this lane.
-_WINDOWS_NEW_CHAT_REPLY = "To start a new chat, use the **+ New** button at the top left of the sidebar."
+_WINDOWS_NEW_CHAT_REPLY = "To start a New session, use the **+ New** button at the top left of the sidebar."
 
 
 def _windows_help_reply() -> str:

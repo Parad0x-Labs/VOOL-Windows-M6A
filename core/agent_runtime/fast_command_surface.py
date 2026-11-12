@@ -1441,7 +1441,7 @@ def online_status_snapshot(source_context: dict[str, Any] | None = None) -> dict
 
         local_only = bool(turn_is_local_only(source_context))
     except Exception:
-        local_only = False
+        local_only = True  # unknown: say Local Only (no cloud), the answer that promises less (SA)
     try:
         from core import windows_cloud_gate
 

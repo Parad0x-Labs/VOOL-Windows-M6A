@@ -43,7 +43,9 @@ def test_windows_new_chat_commands_point_to_plus_new_at_the_top_left(monkeypatch
     monkeypatch.setattr(gate, "_IS_WINDOWS", True)
     reply = _reply(command)
     assert "+ New" in reply and "top left" in reply, reply
-    assert "OpenClaw" not in reply and "lower right" not in reply and "New session" not in reply, reply
+    assert "OpenClaw" not in reply and "lower right" not in reply, reply
+    # The words the base tests read ("New session") stay; only the place and the button change.
+    assert "New session" in reply, reply
 
 
 def test_windows_help_lists_the_shared_table_and_no_openclaw(monkeypatch) -> None:
