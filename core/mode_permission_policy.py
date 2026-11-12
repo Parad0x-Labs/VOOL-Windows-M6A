@@ -3100,9 +3100,10 @@ def _affected_resources_display(
     if str(intent or "").strip() == "machine.move_path" and windows_write_gate.active():
         # Windows only: off Windows the card is built as before, with nothing resolved.
         return _machine_move_display(arguments)
-    if str(intent or "").strip() == "workspace.apply_unified_diff":
+    if str(intent or "").strip() == "workspace.apply_unified_diff" and windows_write_gate.active():
+        # Windows only, like the move above: off Windows a patch card is built as before.
         return _patch_targets_display(arguments, source_context)
-    machine =str(intent or "").strip() in {"machine.write_file", "machine.ensure_directory"}
+    machine = str(intent or "").strip() in {"machine.write_file", "machine.ensure_directory"}
     root = _trusted_write_root(source_context).rstrip("/")
     raw = _affected_resources(arguments)
     if not root and not machine:
