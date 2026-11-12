@@ -7,7 +7,8 @@ the call if the model made one, and the model paraphrased that refusal or never 
 the user got a vague answer. Measured on Windows 11, 11 Nov 2026 (claims sweep, 170f6572). Nothing was
 read either way.
 
-`non_local_read_target` reads the message as typed with the read lane's own cue, and names the first
+`non_local_read_target` reads the message as typed with the read lane's own cue (or a listing verb:
+list, ls, dir, browse), and names the first
 path in it that is a share or a device. The front door answers that path with the same refusal
 sentence the tool door gives. It is lexical: nothing is looked up, resolved or opened. Off Windows it
 returns ("", "") at its first statement.
@@ -23,9 +24,13 @@ left alone.
 """
 from __future__ import annotations
 
+import re
+
 from core import windows_path_policy
 
 _TRAILING = ".,;:!?)"
+# A listing is a read of a folder: "list \\?\C:\" reached the model (Steve round 18, 12 Nov 2026).
+_LISTING_CUE_RE = re.compile(r"\b(?:list|lists|listing|ls|dir|browse)\b", re.IGNORECASE)
 
 
 def non_local_read_target(text: str) -> tuple[str, str]:
@@ -36,7 +41,7 @@ def non_local_read_target(text: str) -> tuple[str, str]:
     from core.agent_runtime.write_root_honesty import _TYPED_WORD_RE, typed_path_kind
 
     body = str(text or "")
-    if not _asks_to_read(body):
+    if not (_asks_to_read(body) or _asks_to_list(body)):
         return "", ""
     for match in _TYPED_WORD_RE.finditer(body):
         group = "quoted" if match.group("quoted") is not None else "word"
@@ -53,6 +58,12 @@ def _asks_to_read(body: str) -> bool:
     from core.execution.constants import _TYPED_FILE_CONTENT_CUE_RE, _TYPED_FILE_OTHER_INTENT_RE
 
     return bool(_TYPED_FILE_CONTENT_CUE_RE.search(body)) and not _TYPED_FILE_OTHER_INTENT_RE.search(body)
+
+
+def _asks_to_list(body: str) -> bool:
+    from core.execution.constants import _TYPED_FILE_OTHER_INTENT_RE
+
+    return bool(_LISTING_CUE_RE.search(body)) and not _TYPED_FILE_OTHER_INTENT_RE.search(body)
 
 
 def climbing_relative_read(text: str, *, source_context: dict[str, object] | None) -> tuple[str, str]:
