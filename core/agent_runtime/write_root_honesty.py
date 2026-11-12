@@ -620,6 +620,15 @@ def non_local_write_target(text: str, *, network_only: bool = False, look_up: bo
     changes whether a path is a share or a device, so a ``network_only`` reading needs no lookup.
     """
     body = str(text or "")
+    if windows_path_policy.active():
+        from core.windows_marked_file_ops import carries_a_patch_request
+
+        if carries_a_patch_request(body):
+            # A patch request (Steve, consistency row 6): the unified diff under its first line is the
+            # patch's text, not a destination. Its `--- /dev/null` header, or a path in a changed line
+            # after a word like "add", was refused here before any card. The patch tool judges the
+            # diff's own paths; the request line is still read.
+            body = body.strip().replace("\r\n", "\n").partition("\n")[0]
     passed_start = -1
     for start, candidate in _destination_candidates(body, typed_shares=windows_path_policy.active(), look_up=look_up):
         if not candidate.strip("/\\*"):
