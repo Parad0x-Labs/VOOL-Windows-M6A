@@ -7941,6 +7941,18 @@ async function send() {
   const chatId = displayedChat;
   const draft = attachBucket(chatId);
   if (!text && !draft.length) return;
+  // `/stop` is the typed Esc: it presses the running task's Stop control through the same page
+  // action the Esc cascade uses (core/command_palette_fragment.py). It is never sent -- while a
+  // reply runs, a sent message would only be queued behind it. Staged attachments stay staged.
+  // The adapter is read as globalThis's: the page defines it once, further down this script.
+  if (/^\/stop$/i.test(text)) {
+    inputEl.value = '';
+    if (window.VoolComposerExtras) window.VoolComposerExtras.draftConsumed(chatId);
+    const p = globalThis.VoolPageActions;
+    if (p && p.hasLiveRun()) { if (p.stopDisplayedRun()) toast('Stopping…'); }
+    else toast('Nothing is running in this chat.');
+    return;
+  }
   // Attachments gate the send BEFORE the typed text is cleared: nothing is sent, nothing is
   // lost, and a second press after the upload is fixed sends the message exactly once.
   if (draft.some((i) => i.state === 'uploading')) { toast('Wait for the attachments to finish uploading.'); return; }

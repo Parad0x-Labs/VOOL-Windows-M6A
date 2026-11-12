@@ -245,6 +245,20 @@ def single_plain_know_question(
 
     if runtime_lane_question(message):
         return False
+    # Windows (consistency row 1): "what is my test animal?" in a new chat is the memory lane's
+    # question, and that lane runs in the front door, after this preflight. Left eligible, the
+    # model's verdict decided the reply: "ambiguous" asked "Which specific test animal ...?",
+    # "not ambiguous" let the memory lane say it has nothing remembered, and a timed-out probe
+    # asked back that the check did not complete. The same ask got different replies from run to
+    # run. A personal attribute names no outside entity, so the probe never adjudicates that
+    # shape: the memory lane answers it, or the model answers it from what the chat holds.
+    from core import windows_write_gate
+
+    if windows_write_gate.active():
+        from core.persistent_memory import memory_lane_owns_attribute_question
+
+        if memory_lane_owns_attribute_question(message):
+            return False
     try:
         from core.agent_runtime.answer_coverage import demand_units
 

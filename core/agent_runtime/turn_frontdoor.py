@@ -635,6 +635,24 @@ def handle_turn_frontdoor(
             )
         }
 
+    # Windows: "are you online?" / "is web lookup on?" — local or cloud replies and web lookup on or
+    # off, read from the runtime's state. Before the lanes that answered it with small talk, the
+    # cloud key block or a web search for the question itself. None off Windows.
+    from core.agent_runtime.fast_command_surface import maybe_handle_online_status_question
+
+    online_status_reply = maybe_handle_online_status_question(raw_user_input, source_context=source_context)
+    if online_status_reply is not None:
+        return {
+            "result": agent._fast_path_result(
+                session_id=session_id,
+                user_input=effective_input,
+                response=online_status_reply,
+                confidence=0.97,
+                source_context=source_context,
+                reason="online_status_question",
+            )
+        }
+
     # Exact literal user directives are already fully determined by the current turn. Sending a
     # JSON-looking ``task: output the word BANANA`` through tool-intent routing made every local
     # provider fail for not calling a tool, then bought a second synthesis pass for text the user
