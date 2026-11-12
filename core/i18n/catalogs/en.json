@@ -1789,6 +1789,7 @@
     "vx.memory.rule_remove": "remove",
     "vx.memory.rule_remove_title": "Stop following this rule in every chat",
     "vx.memory.rule_remove_confirm": "Remove this rule? VOOL will stop following it.",
+    "vx.memory.rule_remove_confirm_button": "confirm",
     "vx.memory.rules_title": "Rules VOOL follows in every chat",
     "vx.memory.rules_empty": "No rules saved. A rule you give in chat, like “always answer in bullet points”, appears here.",
     "vx.memory.rules_hint": "To remove a rule, press remove next to it, or tell VOOL in a chat to stop doing it.",

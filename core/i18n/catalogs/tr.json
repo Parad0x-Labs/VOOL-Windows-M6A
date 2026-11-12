@@ -1430,6 +1430,7 @@
     "vx.memory.rule_remove": "kaldır",
     "vx.memory.rule_remove_title": "Bu kurala hiçbir sohbette artık uyma",
     "vx.memory.rule_remove_confirm": "Bu kural kaldırılsın mı? VOOL artık ona uymayacak.",
+    "vx.memory.rule_remove_confirm_button": "onayla",
     "vx.memory.rules_title": "VOOL'un her sohbette uyduğu kurallar",
     "vx.memory.rules_empty": "Kayıtlı kural yok. Sohbette verdiğiniz bir kural, örneğin “her zaman madde işaretleriyle yanıtla”, burada görünür.",
     "vx.memory.rules_hint": "Bir kuralı kaldırmak için yanındaki “kaldır” düğmesine basın veya sohbette VOOL'a bunu bırakmasını söyleyin.",
@@ -1929,7 +1930,7 @@
     "fault.wallet_payment_channel_off.action": "Bir ödeme kanalını Kripto ayarlarında yalnızca ödemelerin onun üzerinden yapılmasını istiyorsanız açın; tavan ve sizin onayınız her kanalda geçerlidir.",
     "fault.wallet_x402_sdk_unavailable.message": "Bu yapı x402 Foundation SDK üzerinden Base'deki x402 tekliflerini ödeyemez: isteğe bağlı x402 eki bu makinede kurulu değil. Hiçbir şey imzalanmadı veya gönderilmedi. Cüzdanın diğer her işlevi onsuz çalışır; kurulunca tekrar deneyin."
   },
-  "source_catalog_sha256": "5832614598870b146a8da6d7191435dba25abe1758229157d21f6b28a8b3569d",
+  "source_catalog_sha256": "b24f342ac74655da1584cff91734d6da0c234893a4987a63750e9942599ada86",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1940,6 +1941,6 @@
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
-    "standing_rule_remove_addendum": "3 standing-rule Remove keys translated by the lane author (single writer)"
+    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)"
   }
 }

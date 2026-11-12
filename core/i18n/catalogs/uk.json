@@ -1430,6 +1430,7 @@
     "vx.memory.rule_remove": "видалити",
     "vx.memory.rule_remove_title": "Більше не дотримуватися цього правила в жодному чаті",
     "vx.memory.rule_remove_confirm": "Видалити це правило? VOOL більше не дотримуватиметься його.",
+    "vx.memory.rule_remove_confirm_button": "підтвердити",
     "vx.memory.rules_title": "Правила, яких VOOL дотримується в кожному чаті",
     "vx.memory.rules_empty": "Збережених правил немає. Правило з чату, наприклад «завжди відповідай списком», з’явиться тут.",
     "vx.memory.rules_hint": "Щоб прибрати правило, натисніть «видалити» поруч із ним або попросіть VOOL у чаті більше так не робити.",
@@ -1929,7 +1930,7 @@
     "fault.wallet_payment_channel_off.action": "Вмикайте платіжний канал у налаштуваннях Крипто, лише якщо хочете платити через нього; ліміт і ваше схвалення діють на кожному каналі.",
     "fault.wallet_x402_sdk_unavailable.message": "Ця збірка не вміє оплачувати пропозиції x402 у мережі Base через x402 Foundation SDK: необов'язковий додаток x402 не встановлено на цій машині. Нічого не підписано і не надіслано. Усі інші функції гаманця працюють без нього; після встановлення повторіть."
   },
-  "source_catalog_sha256": "5832614598870b146a8da6d7191435dba25abe1758229157d21f6b28a8b3569d",
+  "source_catalog_sha256": "b24f342ac74655da1584cff91734d6da0c234893a4987a63750e9942599ada86",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1940,6 +1941,6 @@
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
-    "standing_rule_remove_addendum": "3 standing-rule Remove keys translated by the lane author (single writer)"
+    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)"
   }
 }

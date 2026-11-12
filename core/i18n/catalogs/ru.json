@@ -1430,6 +1430,7 @@
     "vx.memory.rule_remove": "удалить",
     "vx.memory.rule_remove_title": "Перестать следовать этому правилу во всех чатах",
     "vx.memory.rule_remove_confirm": "Удалить это правило? VOOL перестанет ему следовать.",
+    "vx.memory.rule_remove_confirm_button": "подтвердить",
     "vx.memory.rules_title": "Правила, которым VOOL следует в каждом чате",
     "vx.memory.rules_empty": "Сохранённых правил нет. Правило из чата, например «всегда отвечай списком», появится здесь.",
     "vx.memory.rules_hint": "Чтобы убрать правило, нажмите «удалить» рядом с ним или попросите VOOL в чате перестать так делать.",
@@ -1929,7 +1930,7 @@
     "fault.wallet_payment_channel_off.action": "Включайте платёжный канал в настройках Крипто, только если хотите платить через него; лимит и ваше одобрение действуют на каждом канале.",
     "fault.wallet_x402_sdk_unavailable.message": "Эта сборка не умеет оплачивать предложения x402 в сети Base через x402 Foundation SDK: необязательное дополнение x402 не установлено на этой машине. Ничего не подписано и не отправлено. Все прочие функции кошелька работают без него; после установки повторите."
   },
-  "source_catalog_sha256": "5832614598870b146a8da6d7191435dba25abe1758229157d21f6b28a8b3569d",
+  "source_catalog_sha256": "b24f342ac74655da1584cff91734d6da0c234893a4987a63750e9942599ada86",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1940,6 +1941,6 @@
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
-    "standing_rule_remove_addendum": "3 standing-rule Remove keys translated by the lane author (single writer)"
+    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)"
   }
 }

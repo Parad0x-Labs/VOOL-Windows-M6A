@@ -1430,6 +1430,7 @@
     "vx.memory.rule_remove": "remover",
     "vx.memory.rule_remove_title": "Deixar de seguir esta regra em todas as conversas",
     "vx.memory.rule_remove_confirm": "Remover esta regra? O VOOL deixará de segui-la.",
+    "vx.memory.rule_remove_confirm_button": "confirmar",
     "vx.memory.rules_title": "Regras que o VOOL segue em todos os chats",
     "vx.memory.rules_empty": "Nenhuma regra salva. Uma regra dada no chat, como “sempre responda em tópicos”, aparece aqui.",
     "vx.memory.rules_hint": "Para remover uma regra, carregue em «remover» ao lado dela ou peça ao VOOL num chat que pare de fazer isso.",
@@ -1929,7 +1930,7 @@
     "fault.wallet_payment_channel_off.action": "Ligue um canal de pagamento nos ajustes de Cripto só se quiser que pagamentos passem por ele; o teto e a sua aprovação valem em todos os canais.",
     "fault.wallet_x402_sdk_unavailable.message": "Esta versão não consegue pagar ofertas x402 na Base pelo x402 Foundation SDK: o extra opcional x402 não está instalado nesta máquina. Nada foi assinado ou enviado. Toda outra função da carteira funciona sem ele; com ele instalado, tente de novo."
   },
-  "source_catalog_sha256": "5832614598870b146a8da6d7191435dba25abe1758229157d21f6b28a8b3569d",
+  "source_catalog_sha256": "b24f342ac74655da1584cff91734d6da0c234893a4987a63750e9942599ada86",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1940,6 +1941,6 @@
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
-    "standing_rule_remove_addendum": "3 standing-rule Remove keys translated by the lane author (single writer)"
+    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)"
   }
 }
