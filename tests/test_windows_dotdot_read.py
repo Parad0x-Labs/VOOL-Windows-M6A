@@ -67,7 +67,8 @@ def test_on_windows_the_climb_finder_leaves_other_messages_alone(machine, window
     assert read_path_honesty.climbing_relative_read(text, source_context=context) == ("", ""), text
 
 
-def test_off_windows_the_climb_finder_stands_down(machine) -> None:
+def test_off_windows_the_climb_finder_stands_down(machine, windows_host) -> None:
+    windows_host.off()  # a real Windows runner has the seam on
     context = {"workspace": str(machine["marked"])}
     assert read_path_honesty.climbing_relative_read("show me ../secret.txt", source_context=context) == ("", "")
 

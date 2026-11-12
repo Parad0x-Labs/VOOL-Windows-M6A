@@ -6,7 +6,7 @@ sign-in) still carried CodexSandboxUsers:(RX): repair-on-read never fired. The A
 `core.secret_files.repair_known_secret_files` once at startup.
 
 The Windows branch is switched on through `owner_only._SEAL_SECRETS`. Off Windows `make_owner_only`
-applies 0o600, so the rows check modes.
+applies 0o600, so the rows check modes there; on a real Windows host they check the DACL instead.
 """
 from __future__ import annotations
 
@@ -32,6 +32,20 @@ def home(tmp_path: Path, monkeypatch):
 
 def _mode(path: Path) -> int:
     return stat.S_IMODE(os.stat(path).st_mode)
+
+
+def _assert_sealed(path: Path) -> None:
+    """Owner-only now: the DACL on Windows (st_mode there shows only the read-only bit), 0o600 elsewhere."""
+    assert owner_only.verify_owner_only(path).ok, path
+    if os.name != "nt":
+        assert _mode(path) == 0o600, path
+
+
+def _assert_open(path: Path) -> None:
+    """Readable by others: an inherited DACL on Windows, 0o644 elsewhere."""
+    assert not owner_only.verify_owner_only(path).ok, path
+    if os.name != "nt":
+        assert _mode(path) == 0o644, path
 
 
 def _plant_open_files() -> list[Path]:
@@ -61,8 +75,7 @@ def test_with_sealing_the_startup_seal_makes_every_existing_secret_owner_only(ho
     planted = _plant_open_files()
     assert secret_files.repair_known_secret_files() == {}
     for path in planted:
-        assert _mode(path) == 0o600, path
-        assert owner_only.verify_owner_only(path).ok, path
+        _assert_sealed(path)
         assert path.read_text(encoding="utf-8") == "old secret"
 
 
@@ -83,8 +96,7 @@ def test_with_sealing_a_never_read_wallet_file_is_sealed_at_startup(home, monkey
     wallet.write_text("old wallet", encoding="utf-8")
     wallet.chmod(0o644)
     assert secret_files.repair_known_secret_files() == {}
-    assert _mode(wallet) == 0o600
-    assert owner_only.verify_owner_only(wallet).ok
+    _assert_sealed(wallet)
 
 
 def test_with_sealing_a_file_that_cannot_be_sealed_is_reported_and_boot_goes_on(home, monkeypatch) -> None:
@@ -100,7 +112,8 @@ def test_without_sealing_the_startup_seal_changes_nothing(home, monkeypatch) -> 
     monkeypatch.setattr(owner_only, "_SEAL_SECRETS", False)
     planted = _plant_open_files()
     assert secret_files.repair_known_secret_files() == {}
-    assert {_mode(path) for path in planted} == {0o644}
+    for path in planted:
+        _assert_open(path)
 
 
 def test_the_api_server_runs_the_startup_seal_before_it_serves() -> None:
@@ -120,5 +133,4 @@ def test_sabotage_without_the_startup_seal_a_never_read_token_stays_readable(hom
     from core import onboarding
 
     onboarding.load_identity()  # another secret is read; the token is not
-    assert _mode(token) == 0o644
-    assert not owner_only.verify_owner_only(token).ok
+    _assert_open(token)
