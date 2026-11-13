@@ -9,7 +9,9 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-MODEL = "qwen3-stub:8b"
+# Named as a 2B model, like every other served stub: the hardware-fit gate sizes an unmeasured local
+# model from the <n>b in its name, and "8b" (7.5 GB) does not fit an 8 GB graphics card (6.8 GB usable).
+MODEL = "qwen3-stub:2b"
 _PAY_RE = re.compile(r"pay\s+(?P<amount>\d+)\s+lamports?\s+to\s+(?P<dest>[1-9A-HJ-NP-Za-km-z]{32,44})(?:\s+for\s+(?P<memo>[^\n.?!]+))?", re.I)
 _SEND_RE = re.compile(r"send\s+(?P<amount>\d+(?:\.\d+)?)\s+(?P<asset>SOL|ETH|BNB)\s+(?:on\s+(?P<chain>solana|base|ethereum|bnb|robinhood|arbitrum)\s+)?to\s+(?P<dest>0x[0-9a-fA-F]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})(?:\s+on\s+(?P<chain2>solana|base|ethereum|bnb|robinhood|arbitrum))?(?:\s+for\s+(?P<memo>[^\n.?!]+))?", re.I)
 #: the recipient first, with no "to" ("pay 0x... 1 USDC on base")
