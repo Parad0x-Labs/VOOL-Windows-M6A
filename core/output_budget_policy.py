@@ -318,7 +318,6 @@ def manifest_declares_reasoning(manifest: Any) -> bool:
     if str(getattr(manifest, "provider_name", "") or "").strip().lower() == "openrouter-byok":
         try:
             from core.openrouter_catalog import cached_catalog_row
-
             from core.windows_cloud_gate import catalog_lane
 
             lane = dict(getattr(manifest, "runtime_config", None) or {}).get("base_url")
