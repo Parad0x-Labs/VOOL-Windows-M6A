@@ -738,7 +738,7 @@ _NO_FOLDER_RETURNED = (
 )
 
 
-def _close_secondaries_with(window: object, api: "_WindowApi") -> bool:
+def _close_secondaries_with(window: object, api: _WindowApi) -> bool:
     """Close the pet, Settings and Setup windows when the main chat window closes (not macOS).
     True when the hook was installed. See ``_WindowApi._close_secondary_windows``."""
     if sys.platform == "darwin":

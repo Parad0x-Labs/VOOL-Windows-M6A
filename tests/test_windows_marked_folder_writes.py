@@ -191,8 +191,7 @@ def test_a_drive_letter_is_never_a_folder_in_the_workspace(tmp_path: Path, text:
 
 
 def test_a_refused_exact_write_is_not_reported_as_written() -> None:
-    from core.agent_runtime.builder import app_builder
-    from core.agent_runtime.builder import mutation_scope
+    from core.agent_runtime.builder import app_builder, mutation_scope
 
     scope = mutation_scope.MutationScope(kind=mutation_scope.EXACT, paths=("hello.txt",), allow_commands=False)
     refusal = "This target is outside the marked folders; nothing was changed."
@@ -211,8 +210,7 @@ def test_a_refused_exact_write_is_not_reported_as_written() -> None:
 
 
 def test_a_written_exact_file_is_still_reported() -> None:
-    from core.agent_runtime.builder import app_builder
-    from core.agent_runtime.builder import mutation_scope
+    from core.agent_runtime.builder import app_builder, mutation_scope
 
     scope = mutation_scope.MutationScope(kind=mutation_scope.EXACT, paths=("hello.txt",), allow_commands=False)
     report = app_builder.build_app_from_spec(
