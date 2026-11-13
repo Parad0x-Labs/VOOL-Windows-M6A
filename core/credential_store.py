@@ -38,6 +38,7 @@ import base64
 import contextlib
 import json
 import os
+import re
 import sys
 import time
 from contextvars import ContextVar
@@ -245,10 +246,14 @@ def active_storage_class() -> str:
     from core.secret_storage import (
         STORAGE_CLASS_ACCOUNT_FILE_PERMISSIONS,
         STORAGE_CLASS_KEYCHAIN,
+        STORAGE_CLASS_OS_USER_SEALED,
         assert_known_storage_class,
     )
 
-    if _active_keyring() is not None:  # the macOS Keychain or Windows Credential Manager
+    backend = _active_keyring()
+    if _is_windows_store(backend):
+        return assert_known_storage_class(STORAGE_CLASS_OS_USER_SEALED)
+    if backend is not None:
         return assert_known_storage_class(STORAGE_CLASS_KEYCHAIN)
     return assert_known_storage_class(STORAGE_CLASS_ACCOUNT_FILE_PERMISSIONS)
 
@@ -480,6 +485,27 @@ def _chain_reconcile_names() -> tuple[tuple[str, str], ...]:
         return ()
 
 
+#: The shape of the slot names VOOL's own code writes: one of its credential families, then one to
+#: four segments of letters, digits and ``_ @ + -``. Nothing in it can carry markup, a link, a path
+#: separator or whitespace. Used to decide which ENUMERATED Credential Manager names may be re-indexed:
+#: anything running as the user can plant an entry under VOOL/credentials/*, and an index row is what
+#: makes a name show up in Settings and chat.
+_SLOT_NAME_RE = re.compile(
+    r"(?:llm\.cloud|search\.web|chain\.data|market\.data|x\.api|security|email\.smtp|email\.imap|email\.oauth)"
+    r"(?:\.[A-Za-z0-9_@+-]+){1,4}"
+)
+_SLOT_NAME_MAX = 160
+_REINDEX_NOTICES: set[int] = set()
+
+
+def _reindexable(name: str, known_slots: dict[str, str]) -> bool:
+    """A name found by enumerating Credential Manager may be re-indexed only when it is one of
+    VOOL's fixed slots or has the exact slot-name shape (``_SLOT_NAME_RE``)."""
+    if name in known_slots:
+        return True
+    return len(name) <= _SLOT_NAME_MAX and _SLOT_NAME_RE.fullmatch(name) is not None
+
+
 def _reconcile_index_with_keychain() -> None:
     """Re-index keychain credentials this runtime owns but has no sidecar entry for.
 
@@ -494,10 +520,22 @@ def _reconcile_index_with_keychain() -> None:
     def _reconcile_all() -> None:
         slots = (*_RECONCILE_NAMES, *_search_reconcile_names(), *_chain_reconcile_names())
         if _is_windows_store(keyring):
-            # Credential Manager CAN list VOOL's namespace, so every stored name is re-indexed,
-            # not only the fixed slots; a listed name is still confirmed by a read below.
+            # Credential Manager CAN list VOOL's namespace, so stored names beyond the fixed slots
+            # are re-indexed too -- but only names VOOL could have written (``_reindexable``): any
+            # program running as the user can plant one there. The rest are skipped and counted,
+            # never named. Every name kept is still confirmed by a read below.
             labels = dict(slots)
-            slots = tuple((name, labels.get(name, "")) for name in keyring.list_names(_KC_SERVICE))
+            listed = [name for name in keyring.list_names(_KC_SERVICE) if name not in known]
+            accepted = [name for name in listed if _reindexable(name, labels)]
+            skipped = len(listed) - len(accepted)
+            if skipped and skipped not in _REINDEX_NOTICES:
+                _REINDEX_NOTICES.add(skipped)
+                print(
+                    f"WARNING: credential index: {skipped} unrecognised Windows Credential Manager "
+                    "entr(y/ies) under VOOL/credentials were not indexed",
+                    file=sys.stderr,
+                )
+            slots = tuple((name, labels.get(name, "")) for name in accepted)
         for name, label in slots:
             if name in known:
                 continue
