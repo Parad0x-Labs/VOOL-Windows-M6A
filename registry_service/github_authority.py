@@ -157,11 +157,11 @@ class Repository:
         self.path, self.branch = Path(path), branch
         # The checkout keeps no credentials, so the install step can't push; only this process holds the token,
         # passed to git in its environment and never written to the checkout.
-        self._auth: dict[str, str] = {}
+        self._env: dict[str, str] = {}  # only this signer's own additions, laid over safe_git.safe_env()
         if token:
             header = "AUTHORIZATION: basic " + base64.b64encode(b"x-access-token:" + token.encode()).decode()
-            self._auth = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
-                          "GIT_CONFIG_VALUE_0": header}
+            self._env = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+                         "GIT_CONFIG_VALUE_0": header}
 
     def _git(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
         """git through core/safe_git.py: refused where VOOL runs no git (Windows), refused for a checkout whose own
@@ -174,18 +174,31 @@ class Repository:
         try:
             programs = safe_git.executable_config_for(self.path, args, timeout=120)
         except (OSError, RuntimeError, subprocess.TimeoutExpired):
-            raise RegistryError("the checkout's git config could not be checked") from None
+            if not self._outside_any_repository():
+                raise RegistryError("the checkout's git config could not be checked") from None
+            programs = []  # no repository here, so no repository config for git to obey (ls-remote of a URL)
         if programs:
             raise RegistryError("the checkout's own git config names programs git would run: " + ", ".join(programs))
         command = safe_git.hardened_argv(self.path, "-c", "user.name=" + BOT[0], "-c", "user.email=" + BOT[1],
                                          "-c", "commit.gpgsign=false", "-c", "http.followRedirects=false", *args)
         result = subprocess.run(command, capture_output=True, encoding="utf-8", errors="replace", timeout=120,
-                                env={**safe_git.safe_env(), **self._auth})
+                                env={**safe_git.safe_env(), **self._env})
         if check and result.returncode:
             if re.search(r"(?:HTTP |returned error: )30[12378]\b", result.stderr):
                 raise RegistryError("git redirect refused")
             raise RegistryError("git " + args[0] + " failed: " + " ".join(result.stderr.split())[:300])
         return result
+
+    def _outside_any_repository(self) -> bool:
+        """Whether git says this folder is in no repository at all; any other answer, or none, is False."""
+        from core import safe_git
+
+        try:
+            probe = subprocess.run(safe_git.hardened_argv(self.path, "rev-parse", "--git-dir"), capture_output=True,
+                                   encoding="utf-8", errors="replace", timeout=60, env=safe_git.safe_env())
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return probe.returncode == 128 and "not a git repository" in probe.stderr.lower()
 
     def start(self) -> None:
         """Begin from the newest state on GitHub; a run queued behind another must not start from older state."""
