@@ -39,6 +39,14 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 INSTALLER = PROJECT_ROOT / "installer" / "install_vool.sh"
 
 
+@pytest.fixture(autouse=True)
+def _system32_tools(monkeypatch):
+    """The Windows port names schtasks/taskkill by their System32 path; off Windows there is none to resolve."""
+    from core import process_liveness
+
+    monkeypatch.setattr(process_liveness, "system_tool", lambda name: "C:\\Windows\\System32\\" + name + ".exe")
+
+
 class _FakeRun:
     """Records every command; ``fail`` lists command prefixes that exit 1."""
 
@@ -47,8 +55,11 @@ class _FakeRun:
         self.systemd_units = systemd_units or []
         self.fail = [tuple(f) for f in fail]
 
-    def __call__(self, cmd, capture_output=False, text=False, check=False):
+    def __call__(self, cmd, capture_output=False, text=False, check=False, **_kwargs):
+        # The Windows port's runner passes encoding/errors (and creationflags on Windows) and names
+        # schtasks/taskkill by their System32 path; record the bare tool name.
         cmd = [str(c) for c in cmd]
+        cmd[0] = re.sub(r"\.exe$", "", re.split(r"[\\/]", cmd[0])[-1], flags=re.IGNORECASE)
         self.calls.append(cmd)
         out = ""
         if cmd[:1] == ["systemctl"] and "list-unit-files" in cmd:

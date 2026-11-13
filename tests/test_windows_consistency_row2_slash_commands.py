@@ -90,7 +90,7 @@ def test_an_absolute_path_is_still_not_a_command_on_windows(monkeypatch) -> None
 def test_mac_and_linux_replies_are_byte_identical(monkeypatch) -> None:
     monkeypatch.setattr(gate, "_IS_WINDOWS", False)
     new_session = (
-        "Use the OpenClaw `New session` button on the lower right. Slash `/new` is not a wired command in this runtime."
+        "New session: use the `+ New` button in the chat sidebar. Slash `/new` is not a wired command in this runtime."
     )
     other = (
         "That slash command is not wired here. Use plain language, the `New session` button, or open "

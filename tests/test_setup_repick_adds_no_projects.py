@@ -28,12 +28,15 @@ PICKS = ["C:\\Users\\me\\One", "C:\\Users\\me\\Two", "C:\\Users\\me\\Three"]
 
 def _run(steps: str) -> dict:
     html = render_vool_setup_html()
-    fns = "".join(_function(html, n) for n in ("renderControl", "fail", "controlFolder", "setFolderResult"))
+    fns = "".join(_function(html, n) for n in ("renderControl", "fail", "controlFolder", "setFolderResult",
+                                                       "clearFailNote", "notSaved", "draft", "hasFolderPicker"))
     rig = (_DOM.replace("__STEP__", json.dumps(FOLDER)).replace("__AFTER__", json.dumps({**FOLDER, "note": NOTE}))
            .replace("__POST__", json.dumps({"ok": True, "status": 200, "json": {"project": {"id": "p"}}}))
            .replace("__MARK__", "null"))
     rig = rig.replace("async function pickFolder() { return null; }",
                       "const PICKS = " + json.dumps(PICKS) + "; async function pickFolder() { return PICKS.shift() || null; }")
+    # 0.7.2 offers Choose only where a picker exists: framed in the chat, the host has one.
+    rig = rig.replace("const framed = () => false;", "const framed = () => true;")
     script = rig + fns + "(async () => { renderControl(STEP);\n" + steps + """
   const res = byId('folderResult');
   console.log(JSON.stringify({ posts: out.posts, value: byId('folderPath').value, result: res ? res.textContent : null }));

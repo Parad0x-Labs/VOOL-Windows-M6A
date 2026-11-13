@@ -25,12 +25,15 @@ def test_the_windows_palette_says_ctrl_for_every_shortcut(monkeypatch) -> None:
 
     windows = _as_host(monkeypatch, "win32", render_palette_fragment)
     script = windows.split("<script>", 1)[1]
-    assert not [mark for mark in MAC_MARKS if mark in script]
+    # 0.7.2 builds the palette rows' key caps from MOD; a Windows page is served MOD = Ctrl+. The two ⌘ left are
+    # a comment and the browser-side fallback that turns a ⌘ cap into Ctrl+, neither of them shown.
+    code = "\n".join(line for line in script.splitlines() if not line.lstrip().startswith("//"))
+    assert "var MOD = 'Ctrl+';" in code and "IS_MAC ? '\u2318'" not in code
+    assert [mark for mark in MAC_MARKS if mark in code.replace(".replace('\u2318', 'Ctrl+')", "")] == []
     for label in ("Ctrl+K", "Ctrl+N", "Ctrl+J", "Ctrl+/", "Ctrl+F", "Ctrl+,"):
         assert f"<kbd>{label}</kbd>" in script, label
-    for label in ("Ctrl+N", "Ctrl+J", "Ctrl+M", "Ctrl+,"):
-        assert f"}}, '{label}');" in script, label
-    assert all(label in script for label in PALETTE_LABELS)
+    for key in ("N", "J", "M", ","):
+        assert f"}}, MOD + '{key}');" in script, key
 
 
 def test_the_windows_new_chat_key_cap_and_pet_row_say_ctrl(monkeypatch) -> None:
@@ -64,4 +67,5 @@ def test_each_windows_label_replaces_exactly_one_mac_label() -> None:
     for script, swaps in ((_PALETTE_JS, PALETTE_SWAPS), (_DRAWER_JS, DRAWER_SWAPS)):
         for mac, windows in swaps:
             assert script.count(mac) == 1, mac
-            assert windows not in script, windows
+            # 0.7.2's palette names '<kbd>Ctrl+N</kbd>' itself, to drop that cap in a plain browser tab.
+            assert windows not in script or windows == "<kbd>Ctrl+N</kbd>", windows

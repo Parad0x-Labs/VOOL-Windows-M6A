@@ -50,13 +50,15 @@ SID = "sess-7f3e2b9a-4c1d-4e8b-a2f0-91d4c17aeaa6"
 
 
 def test_an_untitled_chat_is_new_chat_not_its_id_tail() -> None:
+    # 0.7.2: an untitled chat has NO bound title (the detached pet gets none); the in-app bubble's caller says
+    # "New chat" (tests/test_pet_ux_squad.py::test_an_untitled_chat_never_puts_a_random_code_in_the_pets_mouth).
     title = _bound_title([{"session_id": SID, "title": ""}], SID)
-    assert title == "New chat"
+    assert title == ""
     assert "c17aeaa6" not in title
 
 
 def test_a_chat_the_page_has_not_listed_yet_is_new_chat() -> None:
-    assert _bound_title([], SID) == "New chat"
+    assert _bound_title([], SID) == ""
 
 
 def test_a_titled_chat_keeps_its_title() -> None:
@@ -64,12 +66,14 @@ def test_a_titled_chat_keeps_its_title() -> None:
 
 
 def test_a_whitespace_title_is_untitled() -> None:
-    assert _bound_title([{"session_id": SID, "title": "   "}], SID) == "New chat"
+    assert _bound_title([{"session_id": SID, "title": "   "}], SID) == ""
 
 
 def test_new_chat_goes_through_the_page_catalog_when_it_has_one() -> None:
-    title = _bound_title([{"session_id": SID, "title": ""}], SID, {"companion.new_chat": "Neuer Chat"})
-    assert title == "Neuer Chat"
+    # The words come from the caller's catalog key companion.untitled_chat, not from the bound title.
+    title = _bound_title([{"session_id": SID, "title": ""}], SID, {"companion.untitled_chat": "Neuer Chat"})
+    assert title == ""
+    assert 'vnLabel("companion.untitled_chat", "New chat")' in render_companion_fragment()
 
 
 def test_an_unbound_pet_still_has_no_title() -> None:
