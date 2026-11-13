@@ -195,8 +195,30 @@ def _apply_edition_floor(
     return floored
 
 
+def _pdf_reading_unsupported_reason(read_enabled: bool) -> str:
+    """Why `pdf.*` is not offered here, or "" when it is.
+
+    PDF reading runs macOS PDFKit and Vision under the Mac system interpreter
+    (`core.pdf_tools`), which Windows does not have. On Windows the two contracts are therefore
+    unsupported at the source, so every reader of the catalog drops them together: the model's
+    tool list, the native definitions, the capability ledger, the operation catalog and direct
+    dispatch. `pdf_tools` still refuses on its own as a second wall. A policy refusal that would
+    apply on any host keeps its own words.
+    """
+    if not read_enabled:
+        return "Local file reading is disabled on this runtime."
+    from core import posix_tools
+
+    if posix_tools.active():
+        from core.pdf_tools import WINDOWS_UNAVAILABLE
+
+        return WINDOWS_UNAVAILABLE
+    return ""
+
+
 def _runtime_tool_contracts_raw(*, web_available_fn: Any = None) -> list[RuntimeToolContract]:
     read_enabled = bool(policy_engine.get("filesystem.allow_read_workspace", True))
+    pdf_unsupported_reason = _pdf_reading_unsupported_reason(read_enabled)
     write_enabled = bool(policy_engine.get("filesystem.allow_write_workspace", False))
     sandbox_enabled = bool(policy_engine.get("execution.allow_sandbox_execution", False))
     # Effective per-turn availability, not the ambient machine default: a turn
@@ -211,6 +233,12 @@ def _runtime_tool_contracts_raw(*, web_available_fn: Any = None) -> list[Runtime
         web_enabled = bool(effective_web_available())
     browser_enabled = bool(policy_engine.browser_runtime_enabled())
     email_send_enabled = bool(policy_engine.get("email.send_enabled", False))
+    # Apple Notes runs through /usr/bin/osascript, a Mac program: on Windows its tools are never
+    # offered, the same rule as core.operator.registry._apple_notes_available.
+    from core import posix_tools
+
+    apple_notes_enabled = not posix_tools.active()
+    apple_notes_reason = "" if apple_notes_enabled else "Apple Notes is a Mac app and isn't available on Windows."
     email_read_enabled = bool(policy_engine.get("email.read_enabled", False))
     image_gen_enabled = bool(policy_engine.get("image.generate_enabled", False)) or _has_image_service()
     video_gen_enabled = bool(policy_engine.get("video.generate_enabled", False))
@@ -2205,8 +2233,8 @@ def _runtime_tool_contracts_raw(*, web_available_fn: Any = None) -> list[Runtime
             tool_surface="pdf",
             capability_id="pdf.read",
             capability_claim="read the text of a PDF on this machine",
-            supported=read_enabled,
-            unsupported_reason="Local file reading is disabled on this runtime.",
+            supported=not pdf_unsupported_reason,
+            unsupported_reason=pdf_unsupported_reason or "Local file reading is disabled on this runtime.",
             input_schema={"path": "string", "max_pages": "integer optional"},
             output_schema={
                 "status": "ok|no_text_layer|not_found|unreadable|missing_dependency|timeout|error",
@@ -2233,8 +2261,8 @@ def _runtime_tool_contracts_raw(*, web_available_fn: Any = None) -> list[Runtime
             tool_surface="pdf",
             capability_id="pdf.read",
             capability_claim="recognise text on a scanned PDF on this machine, without sending it anywhere",
-            supported=read_enabled,
-            unsupported_reason="Local file reading is disabled on this runtime.",
+            supported=not pdf_unsupported_reason,
+            unsupported_reason=pdf_unsupported_reason or "Local file reading is disabled on this runtime.",
             input_schema={
                 "path": "string",
                 "max_pages": "integer optional",
@@ -2978,8 +3006,8 @@ def _runtime_tool_contracts_raw(*, web_available_fn: Any = None) -> list[Runtime
             tool_surface="operator",
             capability_id="operator.read",
             capability_claim="read one Apple Notes note",
-            supported=True,
-            unsupported_reason="",
+            supported=apple_notes_enabled,
+            unsupported_reason=apple_notes_reason,
             input_schema={"title": "string"},
             output_schema={"body": "string", "note": "note_row"},
             side_effect_class="read_only",
@@ -2997,8 +3025,8 @@ def _runtime_tool_contracts_raw(*, web_available_fn: Any = None) -> list[Runtime
             tool_surface="operator",
             capability_id="operator.read",
             capability_claim="list Apple Notes notes",
-            supported=True,
-            unsupported_reason="",
+            supported=apple_notes_enabled,
+            unsupported_reason=apple_notes_reason,
             input_schema={"folder": "string (optional)", "account": "string (optional)"},
             output_schema={"notes": "list[note_row]"},
             side_effect_class="read_only",

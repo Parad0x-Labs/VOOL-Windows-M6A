@@ -178,6 +178,105 @@ LOCAL_ONLY_EGRESS_DENIAL = (
 )
 
 
+#: Where the owner's switch lives, named once so every refusal points at the same control.
+LOCAL_ONLY_WEB_SWITCH = "Settings → Privacy & Permissions → Block web search in Local Only"
+
+#: The HTTP door's Local Only sentence while the owner's switch is on: the default sentence says web
+#: search through the browser still works, which is then not true.
+LOCAL_ONLY_EGRESS_DENIAL_WEB_BLOCKED = (
+    "Local Only is in force for this turn, so this request was not sent and no socket was "
+    "opened. Loopback and operator-owned LAN endpoints stay available. Web search through "
+    f"VOOL's built-in browser is turned off in Local Only too ({LOCAL_ONLY_WEB_SWITCH}). To open "
+    "this page directly, leave Local Only by changing the model selection."
+)
+LOCAL_ONLY_EGRESS_DENIAL_WEB_UNKNOWN = (
+    "Local Only is in force for this turn, so this request was not sent and no socket was "
+    "opened. Loopback and operator-owned LAN endpoints stay available. Web search through "
+    "VOOL's built-in browser is refused in Local Only too, because VOOL could not read the "
+    f"setting {LOCAL_ONLY_WEB_SWITCH}. To open this page directly, leave Local Only by changing "
+    "the model selection."
+)
+
+#: The web gate's refusal while Local Only is on and the owner turned the switch on.
+LOCAL_ONLY_WEB_BLOCKED_DENIAL = (
+    f"Local Only is on and {LOCAL_ONLY_WEB_SWITCH} is turned on, so VOOL did not search the web "
+    "or open this page, and its browser was not started. To search the web in Local Only, turn "
+    "that setting off. Pages on this computer and on your own network stay available."
+)
+#: The web gate's refusal while Local Only is on and the switch cannot be read: unknown fails closed.
+LOCAL_ONLY_WEB_UNKNOWN_DENIAL = (
+    f"Local Only is on and VOOL could not read the setting {LOCAL_ONLY_WEB_SWITCH}, so it refuses "
+    "web search and page fetches until it can. Open that setting and turn it off to allow web "
+    "search in Local Only (saving it again repairs the setting). Pages on this computer and on "
+    "your own network stay available."
+)
+
+
+def local_only_web_block_setting() -> bool | None:
+    """The owner's switch: True on, False off or never set, None when it cannot be read.
+
+    Read from the owner's preferences file only (`core.user_preferences`), which only the Settings
+    prefs authority writes for the operator principal. Nothing in a turn's context, a tool call's
+    arguments or the model's text is consulted, so none of them can turn it off.
+    """
+    try:
+        from core.user_preferences import local_only_block_web_state
+
+        state = local_only_block_web_state()
+    except Exception:
+        return None
+    return state if isinstance(state, bool) else None
+
+
+def local_only_web_block_reason(source_context: dict[str, Any] | None = None) -> str | None:
+    """Why web search and page fetches are refused for THIS turn, or None when they are not.
+
+    The one decision behind the owner's "Block web search in Local Only" switch. It binds only
+    while Local Only binds the turn (`local_only_active`); outside Local Only it is always None,
+    whatever the switch says. With Local Only on: switch off -> None (today's behaviour: web search
+    through the browser stays available); switch on -> the refusal; switch unreadable -> the
+    refusal that says so (unknown fails closed). The switch is read first, so a machine with the
+    switch off pays nothing more than one small file read.
+    """
+    if not local_only_active(source_context):
+        return None
+    state = local_only_web_block_setting()
+    if state is False:
+        return None
+    return LOCAL_ONLY_WEB_BLOCKED_DENIAL if state is True else LOCAL_ONLY_WEB_UNKNOWN_DENIAL
+
+
+def local_only_web_refusal(url: str, source_context: dict[str, Any] | None = None) -> str | None:
+    """The web gate for one address: the refusal for *url*, or None when it may be opened.
+
+    Every web lane asks this before it reaches the network: the browser doors
+    (`browser_navigation_refusal`, so web search through the browser, page render and summarize-URL
+    renders), the VOOL browser sessions (`core.vool_browser.api`), and the HTTP door through
+    `_local_only_egress_forbidden`. An address on this machine or on the owner's own network stays
+    open, decided by the same endpoint law the HTTP door uses (`endpoint_is_local`); a classifier
+    that cannot answer has not said "local", so the address is refused.
+    """
+    reason = local_only_web_block_reason(source_context)
+    if reason is None:
+        return None
+    try:
+        from core.auto_local_only_mode import endpoint_is_local
+
+        if endpoint_is_local(url):
+            return None
+    except Exception:
+        pass
+    return reason
+
+
+def _local_only_denial_text() -> str:
+    """The HTTP door's Local Only sentence, true to the owner's switch."""
+    state = local_only_web_block_setting()
+    if state is False:
+        return LOCAL_ONLY_EGRESS_DENIAL
+    return LOCAL_ONLY_EGRESS_DENIAL_WEB_BLOCKED if state is True else LOCAL_ONLY_EGRESS_DENIAL_WEB_UNKNOWN
+
+
 def local_only_active(source_context: dict[str, Any] | None = None) -> bool:
     """Whether Local Only binds THIS turn — by operator selection or by profile.
 
@@ -231,7 +330,7 @@ def _local_only_egress_forbidden(
         # Windows: a host the cloud gate names a cloud provider is never this machine or the LAN
         # (literal local addresses are not cloud), so it is public egress with no name lookup.
         if windows_cloud_gate.active() and windows_cloud_gate.is_cloud_provider_request(url):
-            return True, LOCAL_ONLY_EGRESS_DENIAL
+            return True, _local_only_denial_text()
     except Exception:
         pass
     try:
@@ -242,8 +341,8 @@ def _local_only_egress_forbidden(
     except Exception:
         # A classifier that cannot answer has not said "local". Fail CLOSED: in
         # Local Only the safe default is refusing to leave the machine.
-        return True, LOCAL_ONLY_EGRESS_DENIAL
-    return True, LOCAL_ONLY_EGRESS_DENIAL
+        return True, _local_only_denial_text()
+    return True, _local_only_denial_text()
 
 
 def effective_web_available(source_context: dict[str, Any] | None = None) -> bool:
@@ -284,13 +383,24 @@ def browser_navigation_refusal(url: str) -> str | None:
     * the permission gateway's network-fetch decision, when a turn's ledger is open (a refusal
       leaves the same ``denied`` receipt the HTTP door leaves).
 
-    Local Only is deliberately NOT a check here (product decision, 11 Nov 2026): Local Only keeps
-    the turn on the local model, and web search through the local headless browser stays
+    Local Only alone is deliberately NOT a check here (product decision, 11 Nov 2026): Local Only
+    keeps the turn on the local model, and web search through the local headless browser stays
     available in it. The HTTP providers keep their own Local Only refusal in `open_remote`.
 
-    Windows only, behind the Windows rule's seam (`core.windows_write_gate.active`). Off Windows the
-    answer is always None, so the browser doors keep their veto-only check unchanged there.
+    The owner's "Block web search in Local Only" switch IS a check here, on every platform, and it
+    comes first: with Local Only on and the switch on (or unreadable), `local_only_web_refusal`
+    refuses a public address before any process is started, and the refusal leaves a ``denied``
+    receipt carrying the host when a ledger is open. With the switch off this check answers None
+    and nothing below changes.
+
+    The rest is Windows only, behind the Windows rule's seam (`core.windows_write_gate.active`).
+    Off Windows it answers None, so the browser doors keep their veto-only check unchanged there.
     """
+
+    switch_refusal = local_only_web_refusal(url)
+    if switch_refusal is not None:
+        _record_local_only_web_denial(url, switch_refusal)
+        return switch_refusal
 
     from core import windows_write_gate
 
@@ -327,6 +437,33 @@ def browser_navigation_refusal(url: str) -> str | None:
         ),
     )
     return f"network fetch denied by the permission gateway: {reason}"
+
+
+def _record_local_only_web_denial(url: str, reason: str) -> None:
+    """One ``denied`` receipt for a web gate refusal, carrying the host and nothing else."""
+    from core.effect_gateway import (
+        DECISION_DENIED,
+        EFFECT_NETWORK_FETCH,
+        LIFECYCLE_DENIED,
+        EffectReceipt,
+        current_effect_ledger,
+    )
+
+    ledger = current_effect_ledger()
+    if ledger is None:
+        return
+    ledger.open_effect(
+        EffectReceipt(
+            effect_class=EFFECT_NETWORK_FETCH,
+            decision=DECISION_DENIED,
+            lifecycle=LIFECYCLE_DENIED,
+            reason=reason,
+            host=_host_of(url),
+            mode=_active_mode_label(),
+            decided_by="remote_fetch_policy.local_only_web_switch",
+            recorded_at=_utcnow_iso(),
+        ),
+    )
 
 
 def open_remote(
@@ -1057,6 +1194,11 @@ def remote_fetch_policy_scope(source_context: dict[str, Any] | None) -> Iterator
 
 __all__ = [
     "LOCAL_ONLY_EGRESS_DENIAL",
+    "LOCAL_ONLY_EGRESS_DENIAL_WEB_BLOCKED",
+    "LOCAL_ONLY_EGRESS_DENIAL_WEB_UNKNOWN",
+    "LOCAL_ONLY_WEB_BLOCKED_DENIAL",
+    "LOCAL_ONLY_WEB_SWITCH",
+    "LOCAL_ONLY_WEB_UNKNOWN_DENIAL",
     "NO_ACTIVE_LEDGER_DENIAL",
     "CredentialRedirectRefusedError",
     "RemoteFetchRefusedError",
@@ -1064,6 +1206,9 @@ __all__ = [
     "effective_web_available",
     "explicit_remote_fetch_disabled",
     "local_only_active",
+    "local_only_web_block_reason",
+    "local_only_web_block_setting",
+    "local_only_web_refusal",
     "note_remote_fetch_attempt",
     "open_keyed_request",
     "open_remote",

@@ -1074,6 +1074,9 @@
     "settings.row.local_models.effect": "חל מיד.",
     "settings.row.local_models.help": "דגמים מותקנים ב-Ollama במכונה זו. רישום אחד מוסיף נתיב ש-VOOL יכול לנתב אליו; הסמכה מריצה את בדיקת הכלים החתומה שמחליטה אם הוא רשאי לכתוב תשובות סופיות. שום דבר לא יורד ואף אחד לא נוצר קשר — נקרא רק ה-Ollama המקומי שלכם.",
     "settings.row.local_models.label": "דגמים מקומיים",
+    "settings.row.local_only_block_web.effect": "חל מיד.",
+    "settings.row.local_only_block_web.help": "כבוי כברירת מחדל. מצב מקומי בלבד משאיר את התשובות במחשב הזה, אבל VOOL עדיין יכול לחפש באינטרנט ולפתוח דפי אינטרנט דרך הדפדפן המובנה שלו, כך שמילות החיפוש שלך מגיעות למנוע החיפוש והדפים שביקשת נטענים מהאתרים שלהם. הפעל את זה כדי למנוע זאת כל עוד שיחה נמצאת במצב מקומי בלבד: חיפושים באינטרנט, פתיחה או סיכום של דף אינטרנט והפעלות של הדפדפן של VOOL נדחים. שום דבר לא משתנה מחוץ למצב מקומי בלבד, ודפים במחשב הזה או ברשת שלך נשארים זמינים. מקומי בלבד לא עוצר דוא״ל: דואר שאתה שולח או קורא עדיין עובר דרך שרת הדואר שלך.",
+    "settings.row.local_only_block_web.label": "חסימת חיפוש באינטרנט במצב מקומי בלבד",
     "settings.row.locality_note.help": "הצ׳אטים, ההגדרות ומה ש-VOOL זוכר הם קבצים במחשב הזה, וגם המפתחות שלך נעולים כאן. כשתשובה משתמשת במודל מקוון או בחיפוש באינטרנט, הטקסט של הבקשה האחת הזאת נשלח לשירות הזה, ורק אז.",
     "settings.row.locality_note.label": "היכן הנתונים שלכם",
     "settings.row.mode_note.help": "לצ׳אט אחד יכול להיות גם מצב אישור משלו, שנבחר מתפריט המצב ליד תיבת ההודעה. הוא חל רק על הצ׳אט הזה, והרשאה זמנית שם מסתיימת עם המשימה שלה.",
@@ -1087,7 +1090,7 @@
     "settings.row.network_research_note.help": "עבודה עם סוכנים אחרים (משימות משותפות, מחקר בזמן סרק, שיחה עם סוכנים אחרים) היא תכונת מחקר שלא הושלמה. העותק הזה של VOOL הופעל למחקר, ולכן המתגים למטה פעילים ונכנסים לתוקף כשאתה משנה אותם. התקנה רגילה של VOOL לא מציגה אותם.",
     "settings.row.network_research_note.label": "תצוגת מחקר",
     "settings.row.notifications_panel.help": "הפעמון ב-VOOL שומר כל התראה. באפליקציית VOOL ב-Mac אפשר גם לקבל התראת מערכת, לבחור שעות שקטות, צליל ומה התראה רשאית להציג, ולשלוח בדיקה.",
-    "settings.row.notifications_panel.help.windows": "הפעמון שומר כל התראה. קבעו שעות שקט וצליל, ושלחו התראת בדיקה. VOOL עדיין לא שולח התראות Windows.",
+    "settings.row.notifications_panel.help.windows": "הפעמון שומר כל התראה. קבעו שעות שקט וצליל. VOOL עדיין לא שולח התראות Windows.",
     "settings.row.notifications_panel.label": "התראות והתראות מערכת",
     "settings.row.notifications_panel.label.windows": "התראות",
     "settings.row.privacy_disclosure.help": "איפה הנתונים שלך נמצאים, מה נעול, ומה יוצא מהמחשב הזה ומתי. אין כאן מתגים, כי אלה עובדות על האופן שבו VOOL עובד.",
@@ -2666,7 +2669,7 @@
     "addons.registry_release_notes": "הערות גרסה",
     "addons.registry_metrics": "{stars} כוכבים באתר · {downloads} בקשות הורדה"
   },
-  "source_catalog_sha256": "014c22efc7ce35cab1f5f7069a5e5059d5efb6a57492ff381e436c59f8b6e1f8",
+  "source_catalog_sha256": "fbfcf1d7db601973e3603ca3dfbcd0d5e48070a6c72bf34276a8db24ae5af973",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -2678,6 +2681,7 @@
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
     "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)",
     "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)"
   }
 }

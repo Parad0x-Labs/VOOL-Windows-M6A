@@ -891,6 +891,26 @@ class _WindowApi:
         self._pet: object | None = None
         self._settings_window: object | None = None
         self._setup_window: object | None = None
+        # pywebview runs every js_api call on its own thread, and one Ctrl+, can reach
+        # open_settings more than once (a page listener, the palette, a native menu). The
+        # "is it open? no: create it" step is therefore made atomic per window kind: a call that
+        # arrives while that window is still being built does not build a second one. The lock
+        # is held only to read/flip this state, never across create_window, so a caller on the
+        # GUI thread can never deadlock against a create that is waiting for that thread.
+        self._open_lock = threading.Lock()
+        self._creating: set[str] = set()
+
+    def _claim_create(self, kind: str) -> bool:
+        """True when THIS call should build the ``kind`` window; False when another call is."""
+        with self._open_lock:
+            if kind in self._creating:
+                return False
+            self._creating.add(kind)
+            return True
+
+    def _release_create(self, kind: str) -> None:
+        with self._open_lock:
+            self._creating.discard(kind)
 
     def set_window(self, window: object, webview_module: object | None = None) -> None:
         self._window = window
@@ -925,16 +945,29 @@ class _WindowApi:
                     return {"ok": True, "mode": "focused"}
                 except Exception:
                     self._settings_window = None   # it was really destroyed; fall through and rebuild
-            created = _create_vool_window(
-                webview_module,
-                "VOOL Settings",
-                url,
-                js_api=self,
-                **_fit_to_work_area(1000, 720, (560, 420), _work_area()),
-            )
-            if created is None:
-                raise RuntimeError("native settings window was not created")
-            self._settings_window = created
+            if not self._claim_create("settings"):
+                # Another call is building this window right now; it opens focused, so this
+                # press is already answered. Never a second window.
+                return {"ok": True, "mode": "creating"}
+            try:
+                # The handle is stored before the claim is released, so a build that finished
+                # between this call's first look and its claim is seen here and only focused.
+                built = self._settings_window
+                if built is not None:
+                    _focus_window(built)
+                    return {"ok": True, "mode": "focused"}
+                created = _create_vool_window(
+                    webview_module,
+                    "VOOL Settings",
+                    url,
+                    js_api=self,
+                    **_fit_to_work_area(1000, 720, (560, 420), _work_area()),
+                )
+                if created is None:
+                    raise RuntimeError("native settings window was not created")
+                self._settings_window = created
+            finally:
+                self._release_create("settings")
             # Forget the handle when the window really closes, so the NEXT open builds a fresh one
             # instead of showing a destroyed object. Deliberately hooked to `closed` and NOT to
             # `closing`: a closing handler that returns False vetoes Cmd+Q as well as the red X --
@@ -996,16 +1029,29 @@ class _WindowApi:
                     return {"ok": True, "mode": "focused"}
                 except Exception:
                     self._setup_window = None
-            created = _create_vool_window(
-                webview_module,
-                "VOOL Setup",
-                url,
-                js_api=self,
-                **_fit_to_work_area(920, 740, (560, 480), _work_area()),
-            )
-            if created is None:
-                raise RuntimeError("native setup window was not created")
-            self._setup_window = created
+            if not self._claim_create("setup"):
+                # Another call is building this window right now; it opens focused, so this
+                # press is already answered. Never a second window.
+                return {"ok": True, "mode": "creating"}
+            try:
+                # The handle is stored before the claim is released, so a build that finished
+                # between this call's first look and its claim is seen here and only focused.
+                built = self._setup_window
+                if built is not None:
+                    _focus_window(built)
+                    return {"ok": True, "mode": "focused"}
+                created = _create_vool_window(
+                    webview_module,
+                    "VOOL Setup",
+                    url,
+                    js_api=self,
+                    **_fit_to_work_area(920, 740, (560, 480), _work_area()),
+                )
+                if created is None:
+                    raise RuntimeError("native setup window was not created")
+                self._setup_window = created
+            finally:
+                self._release_create("setup")
             with contextlib.suppress(Exception):
                 created.events.closed += self._on_setup_closed
             _log("setup window created")

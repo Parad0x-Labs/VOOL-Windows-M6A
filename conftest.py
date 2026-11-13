@@ -6,6 +6,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -73,3 +75,15 @@ def pytest_unconfigure(config) -> None:
         return
     shutil.rmtree(_TEST_RUNTIME_HOME, ignore_errors=True)
     _TEST_RUNTIME_HOME = None
+
+
+@pytest.fixture(autouse=True)
+def _no_real_windows_credential_manager(monkeypatch):
+    """No test reaches the real Windows Credential Manager: advapi32 is 'unavailable' unless a
+    test installs its own fake (tests/test_windows_credential_manager_store.py)."""
+    from core import windows_credential_manager
+
+    monkeypatch.setattr(windows_credential_manager, "_load_advapi32", lambda: None)
+    windows_credential_manager.reset_probe()
+    yield
+    windows_credential_manager.reset_probe()

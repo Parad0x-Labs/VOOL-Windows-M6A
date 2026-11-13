@@ -413,6 +413,26 @@ def _settings_groups() -> list[dict]:
                     keywords="windows folder disposable workspace write change files mark allow",
                 ),
                 _row(
+                    id="local_only_block_web",
+                    label="Block web search in Local Only",
+                    help=(
+                        "Off by default. Local Only keeps replies on this computer, but VOOL can "
+                        "still search the web and open web pages through its own built-in browser, "
+                        "so your search words reach the search engine and the pages you ask for are "
+                        "fetched from their websites. Turn this on to stop that while a chat is in "
+                        "Local Only: web searches, opening or summarizing a web page, and VOOL's "
+                        "browser sessions are refused. It changes nothing outside Local Only, and "
+                        "pages on this computer or on your own network stay available. Local Only "
+                        "does not stop email: mail you send or read still goes to your mail server."
+                    ),
+                    kind="toggle",
+                    read={"url": PREFS, "field": "local_only_block_web"},
+                    write={"url": PREFS, "field": "local_only_block_web", "type": "bool"},
+                    scope=SCOPE_GLOBAL,
+                    effect=EFFECT_IMMEDIATE,
+                    keywords="local only web search browser block offline privacy internet pages fetch",
+                ),
+                _row(
                     id="privacy_disclosure",
                     label="Privacy & data, as it stands",
                     kind="custom",
@@ -2730,6 +2750,14 @@ function widgetKeys(stack) {
   else if (!src) list.appendChild(el('div', 'empty', 'Loading…'));
   else {
     const creds = src.credentials || src.items || [];
+    /* Where keys really live, by the backend the list reports (the same words as
+       core.credential_store.backend_sentence; nothing is said for a backend it does not know). */
+    const KEY_STORE_WHERE = {
+      credential_manager: 'Keys live in Windows Credential Manager under VOOL/credentials, sealed by Windows to your sign-in; any program running as you can read them.',
+      keychain: 'Keys live in the macOS Keychain.',
+      vault: 'Keys live in VOOL\u2019s encrypted local vault in your user profile, protected by your account\u2019s file permissions, not by the OS secret store.',
+    };
+    if (KEY_STORE_WHERE[src.backend]) list.appendChild(el('div', 'subtle', KEY_STORE_WHERE[src.backend]));
     const yours = creds.filter(c => isOperatorKey(c.name));
     if (!yours.length) list.appendChild(el('div', 'empty', T('keys.empty_plain', 'No keys yet. Without a key VOOL can only use a model installed on this computer.')));
     const groups = [...KEY_FAMILIES.map(f => f.id), 'managed'];

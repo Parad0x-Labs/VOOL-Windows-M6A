@@ -14,8 +14,19 @@ description: How VOOL protects your files and API keys — workspace boundaries,
 
 ## Keys
 
-Your provider key is stored by the operating system — Keychain, Credential Manager, or
-Secret Service — and used from your machine to reach your provider. It is not sent to
+Your provider key stays on your machine and is used from there to reach your provider. Where it
+is kept depends on the system:
+
+* **Windows:** Windows Credential Manager, as a generic credential named `VOOL/credentials/` plus the key's name.
+  Windows seals it to your sign-in; any program running as you can read it. If Credential Manager
+  is not available, VOOL keeps the key in its encrypted vault file instead and says so. Keys saved
+  by an older version are moved into Credential Manager once, and removed from the vault only after
+  they read back correctly.
+* **macOS:** the Keychain, once you allow it in Settings; until then the encrypted vault file.
+* **Linux:** VOOL's encrypted vault file. Its sealing key is in the same user profile, so it is
+  protected by your account's file permissions only, not against someone who copies the profile.
+
+`where are my keys stored?` in chat names the store this install really uses. It is not sent to
 Parad0x Labs, and there is no Parad0x-operated endpoint in the request path.
 
 ## Plugins

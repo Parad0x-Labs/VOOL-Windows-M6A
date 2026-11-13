@@ -1074,6 +1074,9 @@
     "settings.row.local_models.effect": "Wirkt sofort.",
     "settings.row.local_models.help": "Modelle, die in Ollama auf dieser Maschine installiert sind. Eine Registrierung fügt eine Spalte hinzu, an die VOOL routen kann; eine Zertifizierung führt die versiegelte Werkzeugsonde aus, die entscheidet, ob es endgültige Antworten schreiben darf. Nichts wird heruntergeladen, niemand wird kontaktiert — gelesen wird nur dein lokales Ollama.",
     "settings.row.local_models.label": "Lokale Modelle",
+    "settings.row.local_only_block_web.effect": "Wirkt sofort.",
+    "settings.row.local_only_block_web.help": "Standardmäßig aus. „Nur lokal“ hält Antworten auf diesem Computer, aber VOOL kann weiterhin über seinen eingebauten Browser im Web suchen und Webseiten öffnen – deine Suchbegriffe erreichen also die Suchmaschine, und die angefragten Seiten werden von ihren Websites geladen. Schalte dies ein, um das zu verhindern, solange ein Chat in „Nur lokal“ ist: Websuchen, das Öffnen oder Zusammenfassen einer Webseite und VOOLs Browser-Sitzungen werden abgelehnt. Außerhalb von „Nur lokal“ ändert sich nichts, und Seiten auf diesem Computer oder in deinem eigenen Netzwerk bleiben erreichbar. „Nur lokal“ stoppt keine E-Mails: Mails, die du sendest oder liest, gehen weiterhin an deinen Mailserver.",
+    "settings.row.local_only_block_web.label": "Websuche in „Nur lokal“ sperren",
     "settings.row.locality_note.help": "Deine Chats, Einstellungen und was VOOL sich merkt, sind Dateien auf diesem Computer, und deine Schlüssel sind ebenfalls hier geschützt. Wenn eine Antwort ein Online-Modell oder eine Websuche nutzt, geht der Text genau dieser einen Anfrage an diesen Dienst, und nur dann.",
     "settings.row.locality_note.label": "Wo deine Daten sind",
     "settings.row.mode_note.help": "Ein Chat kann auch seinen eigenen Freigabemodus haben, gewählt im Modusmenü neben dem Nachrichtenfeld. Er gilt nur für diesen Chat, und eine vorübergehende Erlaubnis dort endet mit ihrer Aufgabe.",
@@ -1087,7 +1090,7 @@
     "settings.row.network_research_note.help": "Die Zusammenarbeit mit anderen Agenten (geteilte Aufgaben, Recherche im Leerlauf, Gespräche mit anderen Agenten) ist eine unfertige Forschungsfunktion. Diese VOOL-Kopie wurde für die Forschung gestartet, daher sind die Schalter unten aktiv und wirken, sobald du sie änderst. Eine normale VOOL-Installation zeigt sie nicht.",
     "settings.row.network_research_note.label": "Forschungsvorschau",
     "settings.row.notifications_panel.help": "Die Glocke in VOOL behält jeden Hinweis. In der VOOL-App auf einem Mac kannst du außerdem eine Systembenachrichtigung erhalten, Ruhezeiten, Ton und den Inhalt einer Benachrichtigung wählen und einen Test senden.",
-    "settings.row.notifications_panel.help.windows": "Die Glocke behält jede Erinnerung. Stelle stille Stunden und Klang ein und sende eine Testerinnerung. Windows-Mitteilungen sendet VOOL noch nicht.",
+    "settings.row.notifications_panel.help.windows": "Die Glocke behält jede Erinnerung. Stelle stille Stunden und Klang ein. Windows-Mitteilungen sendet VOOL noch nicht.",
     "settings.row.notifications_panel.label": "Hinweise und Systembenachrichtigungen",
     "settings.row.notifications_panel.label.windows": "Erinnerungen",
     "settings.row.privacy_disclosure.help": "Wo deine Daten liegen, was geschützt ist und was diesen Computer wann verlässt. Hier gibt es keine Schalter, weil das Fakten darüber sind, wie VOOL arbeitet.",
@@ -2666,7 +2669,7 @@
     "addons.registry_release_notes": "Versionshinweise",
     "addons.registry_metrics": "{stars} Website-Sterne · {downloads} Downloadanfragen"
   },
-  "source_catalog_sha256": "014c22efc7ce35cab1f5f7069a5e5059d5efb6a57492ff381e436c59f8b6e1f8",
+  "source_catalog_sha256": "fbfcf1d7db601973e3603ca3dfbcd0d5e48070a6c72bf34276a8db24ae5af973",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -2678,6 +2681,7 @@
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
     "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)",
     "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)"
   }
 }

@@ -669,21 +669,37 @@ _CREDENTIAL_OWNER_ONLY_REFUSAL = (
 )
 
 
+#: The backends core.credential_store names (its _BACKEND_LABELS); only these get a location.
+_KNOWN_CREDENTIAL_BACKENDS = frozenset({"keychain", "vault", "credential_manager"})
+
+
+def _reported_backend_name(backend: object) -> str:
+    """The backend's own name as credential_store reported it, for wording that makes no claim."""
+    name = re.sub(r"[^A-Za-z0-9._-]", "", str(backend or ""))[:48]
+    return name or "unreported"
+
+
 def _credential_backend_label(backend: object) -> str:
-    return "the macOS Keychain" if backend == "keychain" else "the encrypted local vault"
+    """The true store name for a backend VOOL knows, from the one authority
+    (core.credential_store.backend_label); any other backend is named as reported, with no claim."""
+    if backend in _KNOWN_CREDENTIAL_BACKENDS:
+        from core.credential_store import backend_label
+
+        return backend_label(str(backend))
+    return f"the `{_reported_backend_name(backend)}` credential store"
 
 
 def _credential_backend_sentence(backend: object) -> str:
-    """Where stored credentials live, as one sentence (no trailing period). Windows is always the
-    vault (core.credential_store gates the Keychain to macOS)."""
-    if backend == "keychain":
-        return "Keys live in the macOS Keychain"
-    # The vault's sealing key sits in the same user profile (core.secret_storage
-    # account-file-permissions class): never call it the OS secret store.
-    return (
-        "Keys live in VOOL's encrypted local vault in your user profile, protected by your "
-        "account's file permissions, not by the OS secret store"
-    )
+    """Where stored credentials live, as one sentence (no trailing period). A backend VOOL knows gets
+    its location from the one authority (core.credential_store.backend_sentence): the Keychain,
+    Windows Credential Manager, or the vault, which is never called the OS secret store. Any other
+    backend (a new store, an empty or misspelled value) is named as reported, with no claim about
+    where or how it keeps keys, so the sentence stays true when a backend is added."""
+    if backend in _KNOWN_CREDENTIAL_BACKENDS:
+        from core.credential_store import backend_sentence
+
+        return backend_sentence(str(backend))
+    return f"Keys live in VOOL's credential store, backend `{_reported_backend_name(backend)}`"
 
 
 _CLOUD_DIAG_RE = re.compile(
@@ -1466,6 +1482,16 @@ def online_status_snapshot(source_context: dict[str, Any] | None = None) -> dict
         web_on = bool(policy_engine.allow_web_fallback()) and not remote_fetch_forbidden()
     except Exception:
         web_on = False
+    try:
+        # ...unless the owner turned on "Block web search in Local Only": then, in Local Only, the
+        # web gate refuses web search (core.remote_fetch_policy). Unknown reads as blocked.
+        from core.remote_fetch_policy import local_only_web_block_setting
+
+        web_blocked = local_only and local_only_web_block_setting() is not False
+    except Exception:
+        web_blocked = local_only
+    if web_blocked:
+        web_on = False
     return {
         "local_only": local_only,
         "cloud_on": cloud_on and not local_only,
@@ -1473,6 +1499,7 @@ def online_status_snapshot(source_context: dict[str, Any] | None = None) -> dict
         "local_model": _online_status_local_model() if local_running else "",
         "cloud_model": _online_status_cloud_model() if cloud_on and not local_only else "",
         "web_on": web_on,
+        "local_only_web_blocked": web_blocked,
     }
 
 
@@ -1498,6 +1525,11 @@ def render_online_status(snapshot: dict[str, Any]) -> str:
         web = "Web lookup: on. I can search the web when a question needs it."
         if snapshot.get("local_only"):
             web += " Local Only keeps replies on this computer; web search still goes through the browser."
+    elif snapshot.get("local_only_web_blocked"):
+        web = (
+            "Web lookup: off in Local Only. Settings → Privacy & Permissions → Block web search in "
+            "Local Only is on, so I won't search the web or open web pages while Local Only is on."
+        )
     else:
         web = "Web lookup: off. I won't search the web."
     return "\n".join([

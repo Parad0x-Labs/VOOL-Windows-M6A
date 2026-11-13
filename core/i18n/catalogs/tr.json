@@ -1074,6 +1074,9 @@
     "settings.row.local_models.effect": "Hemen geçerli.",
     "settings.row.local_models.help": "Bu makinedeki Ollama'ya kurulu modeller. Birini kaydetmek, VOOL'un yönlendirebileceği bir şerit ekler; sertifikalamak, son yanıtları yazıp yazamayacağına karar veren mühürlü araç yoklamasını çalıştırır. Hiçbir şey indirilmez, kimseyle bağlantı kurulmaz — yalnızca sizin yerel Ollamanız okunur.",
     "settings.row.local_models.label": "Yerel modeller",
+    "settings.row.local_only_block_web.effect": "Hemen geçerli.",
+    "settings.row.local_only_block_web.help": "Varsayılan olarak kapalı. Yalnızca yerel, yanıtları bu bilgisayarda tutar; ancak VOOL yerleşik tarayıcısıyla web'de arama yapıp web sayfalarını açmaya devam edebilir, bu yüzden arama sözcükleriniz arama motoruna ulaşır ve istediğiniz sayfalar kendi sitelerinden alınır. Bir sohbet Yalnızca yerel moddayken bunu durdurmak için açın: web aramaları, bir web sayfasını açma veya özetleme ve VOOL'un tarayıcı oturumları reddedilir. Yalnızca yerel dışında hiçbir şey değişmez; bu bilgisayardaki veya kendi ağınızdaki sayfalar kullanılabilir kalır. Yalnızca yerel, e-postayı durdurmaz: gönderdiğiniz veya okuduğunuz postalar yine posta sunucunuza gider.",
+    "settings.row.local_only_block_web.label": "Yalnızca yerel modda web aramasını engelle",
     "settings.row.locality_note.help": "Sohbetleriniz, ayarlarınız ve VOOL'un hatırladıkları bu bilgisayardaki dosyalardır; anahtarlarınız da burada kilitlidir. Bir yanıt çevrimiçi bir model ya da web araması kullandığında, yalnızca o tek isteğin metni o hizmete gider, ve yalnızca o zaman.",
     "settings.row.locality_note.label": "Verileriniz nerede",
     "settings.row.mode_note.help": "Bir sohbetin, mesaj kutusunun yanındaki mod menüsünden seçilen kendi onay modu da olabilir. Yalnızca o sohbete uygulanır ve oradaki geçici bir izin göreviyle birlikte sona erer.",
@@ -1087,7 +1090,7 @@
     "settings.row.network_research_note.help": "Diğer ajanlarla çalışmak (ortak görevler, boştayken araştırma, diğer ajanlarla konuşma) bitmemiş bir araştırma özelliğidir. VOOL'un bu kopyası araştırma için başlatıldı, bu yüzden aşağıdaki anahtarlar etkindir ve değiştirdiğiniz anda geçerli olur. Normal bir VOOL kurulumu bunları göstermez.",
     "settings.row.network_research_note.label": "Araştırma önizlemesi",
     "settings.row.notifications_panel.help": "VOOL'daki zil her uyarıyı saklar. Mac'teki VOOL uygulamasında ayrıca sistem bildirimi alabilir, sessiz saatleri, sesi ve bir bildirimin neyi gösterebileceğini seçebilir ve bir deneme gönderebilirsiniz.",
-    "settings.row.notifications_panel.help.windows": "Zil her uyarıyı tutar. Sessiz saatleri ve sesi ayarlayın ve bir sınama uyarısı gönderin. VOOL henüz Windows bildirimleri göndermez.",
+    "settings.row.notifications_panel.help.windows": "Zil her uyarıyı tutar. Sessiz saatleri ve sesi ayarlayın. VOOL henüz Windows bildirimleri göndermez.",
     "settings.row.notifications_panel.label": "Uyarılar ve sistem bildirimleri",
     "settings.row.notifications_panel.label.windows": "Uyarılar",
     "settings.row.privacy_disclosure.help": "Verilerinizin nerede durduğu, neyin kilitli olduğu ve bu bilgisayardan neyin ne zaman çıktığı. Burada anahtar yok, çünkü bunlar VOOL'un nasıl çalıştığına dair gerçeklerdir.",
@@ -2666,7 +2669,7 @@
     "addons.registry_release_notes": "Sürüm notları",
     "addons.registry_metrics": "{stars} site yıldızı · {downloads} indirme isteği"
   },
-  "source_catalog_sha256": "014c22efc7ce35cab1f5f7069a5e5059d5efb6a57492ff381e436c59f8b6e1f8",
+  "source_catalog_sha256": "fbfcf1d7db601973e3603ca3dfbcd0d5e48070a6c72bf34276a8db24ae5af973",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -2678,6 +2681,7 @@
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
     "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)",
     "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)"
   }
 }

@@ -1074,6 +1074,9 @@
     "settings.row.local_models.effect": "Se aplica de inmediato.",
     "settings.row.local_models.help": "Modelos instalados en Ollama en esta máquina. Registrar uno añade un carril al que VOOL puede enrutar; certificarlo ejecuta la sonda sellada de herramientas que decide si puede escribir respuestas finales. No se descarga nada ni se contacta a nadie — solo lee tu Ollama local.",
     "settings.row.local_models.label": "Modelos locales",
+    "settings.row.local_only_block_web.effect": "Se aplica de inmediato.",
+    "settings.row.local_only_block_web.help": "Desactivado de forma predeterminada. Solo local mantiene las respuestas en este equipo, pero VOOL aún puede buscar en la web y abrir páginas web con su navegador integrado, así que tus palabras de búsqueda llegan al buscador y las páginas que pides se descargan de sus sitios. Actívalo para impedirlo mientras un chat esté en Solo local: se rechazan las búsquedas web, abrir o resumir una página web y las sesiones del navegador de VOOL. No cambia nada fuera de Solo local, y las páginas de este equipo o de tu propia red siguen disponibles. Solo local no detiene el correo: el correo que envías o lees sigue pasando por tu servidor de correo.",
+    "settings.row.local_only_block_web.label": "Bloquear la búsqueda web en Solo local",
     "settings.row.locality_note.help": "Tus chats, ajustes y lo que VOOL recuerda son archivos en este ordenador, y tus claves también están protegidas aquí. Cuando una respuesta usa un modelo en línea o una búsqueda web, el texto de esa única petición va a ese servicio, y solo entonces.",
     "settings.row.locality_note.label": "Dónde están tus datos",
     "settings.row.mode_note.help": "Un chat también puede tener su propio modo de aprobación, elegido en el menú de modo junto al cuadro de mensaje. Solo se aplica a ese chat, y un permiso temporal allí termina con su tarea.",
@@ -1087,7 +1090,7 @@
     "settings.row.network_research_note.help": "Trabajar con otros agentes (tareas compartidas, investigar en reposo, hablar con otros agentes) es una función de investigación sin terminar. Esta copia de VOOL se inició para investigación, así que los interruptores de abajo están activos y tienen efecto al cambiarlos. Una instalación normal de VOOL no los muestra.",
     "settings.row.network_research_note.label": "Vista previa de investigación",
     "settings.row.notifications_panel.help": "La campana de VOOL guarda cada aviso. En la app de VOOL en un Mac también puedes recibir una notificación del sistema, elegir horas de silencio, sonido y lo que puede mostrar una notificación, y enviar una prueba.",
-    "settings.row.notifications_panel.help.windows": "La campana guarda cada alerta. Define horas de silencio y sonido, y envía una alerta de prueba. VOOL aún no envía notificaciones de Windows.",
+    "settings.row.notifications_panel.help.windows": "La campana guarda cada alerta. Define horas de silencio y sonido. VOOL aún no envía notificaciones de Windows.",
     "settings.row.notifications_panel.label": "Avisos y notificaciones del sistema",
     "settings.row.notifications_panel.label.windows": "Alertas",
     "settings.row.privacy_disclosure.help": "Dónde están tus datos, qué está protegido y qué sale de este ordenador y cuándo. Aquí no hay interruptores porque son hechos sobre cómo funciona VOOL.",
@@ -2666,7 +2669,7 @@
     "addons.registry_release_notes": "Notas de versión",
     "addons.registry_metrics": "{stars} estrellas en el sitio · {downloads} solicitudes de descarga"
   },
-  "source_catalog_sha256": "014c22efc7ce35cab1f5f7069a5e5059d5efb6a57492ff381e436c59f8b6e1f8",
+  "source_catalog_sha256": "fbfcf1d7db601973e3603ca3dfbcd0d5e48070a6c72bf34276a8db24ae5af973",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -2678,6 +2681,7 @@
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
     "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)",
     "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)"
   }
 }

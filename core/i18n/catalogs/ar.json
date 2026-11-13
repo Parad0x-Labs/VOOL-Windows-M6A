@@ -1074,6 +1074,9 @@
     "settings.row.local_models.effect": "يسري فورًا.",
     "settings.row.local_models.help": "نماذج مثبتة في Ollama على هذه الآلة. تسجيل أحدها يضيف مسارًا يمكن لـ VOOL التوجيه إليه؛ واعتماده يشغّل مسبار الأدوات المختوم الذي يقرر إن كان يجوز له كتابة الإجابات النهائية. لا يُنزَّل شيء ولا يتصل بأحد — يُقرأ Ollama المحلي خاصتك فقط.",
     "settings.row.local_models.label": "النماذج المحلية",
+    "settings.row.local_only_block_web.effect": "يسري فورًا.",
+    "settings.row.local_only_block_web.help": "معطّل افتراضيًا. يُبقي وضع محلي فقط الردود على هذا الكمبيوتر، لكن VOOL يظل قادرًا على البحث في الويب وفتح صفحات الويب عبر متصفحه المدمج، فتصل كلمات بحثك إلى محرك البحث وتُجلب الصفحات التي تطلبها من مواقعها. فعّل هذا لإيقاف ذلك ما دامت المحادثة في وضع محلي فقط: تُرفض عمليات البحث على الويب وفتح صفحة ويب أو تلخيصها وجلسات متصفح VOOL. لا يغيّر شيئًا خارج وضع محلي فقط، وتبقى الصفحات على هذا الكمبيوتر أو على شبكتك الخاصة متاحة. لا يوقف وضع «محلي فقط» البريد الإلكتروني: البريد الذي ترسله أو تقرؤه لا يزال يمر عبر خادم بريدك.",
+    "settings.row.local_only_block_web.label": "حظر البحث على الويب في وضع محلي فقط",
     "settings.row.locality_note.help": "محادثاتك وإعداداتك وما يتذكره VOOL ملفات على هذا الكمبيوتر، ومفاتيحك محمية هنا أيضًا. عندما تستخدم إجابةٌ نموذجًا عبر الإنترنت أو بحثًا على الويب، يذهب نص ذلك الطلب الواحد إلى تلك الخدمة، وحينها فقط.",
     "settings.row.locality_note.label": "أين بياناتك",
     "settings.row.mode_note.help": "يمكن أن يكون لمحادثة واحدة وضع موافقة خاص بها، يُختار من قائمة الوضع بجانب مربع الرسالة. ينطبق على تلك المحادثة فقط، وأي إذن مؤقت هناك ينتهي بانتهاء مهمته.",
@@ -1087,7 +1090,7 @@
     "settings.row.network_research_note.help": "العمل مع وكلاء آخرين (مهام مشتركة، والبحث أثناء الخمول، والتحدث مع وكلاء آخرين) ميزة بحثية غير مكتملة. شُغّلت نسخة VOOL هذه لأغراض البحث، لذا فمفاتيح التبديل أدناه فعّالة وتسري عند تغييرها. تثبيت VOOL العادي لا يعرضها.",
     "settings.row.network_research_note.label": "معاينة بحثية",
     "settings.row.notifications_panel.help": "يحتفظ الجرس في VOOL بكل تنبيه. في تطبيق VOOL على جهاز Mac يمكنك أيضًا تلقي إشعار من النظام، واختيار ساعات الهدوء والصوت وما يُسمح للإشعار بعرضه، وإرسال تجربة.",
-    "settings.row.notifications_panel.help.windows": "تحتفظ الجرسة بكل تنبيه. اضبط ساعات السكون والصوت، وأرسل تنبيه اختبار. لا يرسل VOOL إشعارات Windows بعد.",
+    "settings.row.notifications_panel.help.windows": "تحتفظ الجرسة بكل تنبيه. اضبط ساعات السكون والصوت. لا يرسل VOOL إشعارات Windows بعد.",
     "settings.row.notifications_panel.label": "التنبيهات وإشعارات النظام",
     "settings.row.notifications_panel.label.windows": "التنبيهات",
     "settings.row.privacy_disclosure.help": "أين توجد بياناتك، وما المحمي منها، وما الذي يغادر هذا الكمبيوتر ومتى. لا توجد مفاتيح تبديل هنا لأن هذه حقائق عن طريقة عمل VOOL.",
@@ -2666,7 +2669,7 @@
     "addons.registry_release_notes": "ملاحظات الإصدار",
     "addons.registry_metrics": "{stars} نجوم على الموقع · {downloads} طلبات تنزيل"
   },
-  "source_catalog_sha256": "014c22efc7ce35cab1f5f7069a5e5059d5efb6a57492ff381e436c59f8b6e1f8",
+  "source_catalog_sha256": "fbfcf1d7db601973e3603ca3dfbcd0d5e48070a6c72bf34276a8db24ae5af973",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -2678,6 +2681,7 @@
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
     "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)",
     "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)"
   }
 }

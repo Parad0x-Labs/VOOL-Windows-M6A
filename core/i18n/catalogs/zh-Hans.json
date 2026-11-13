@@ -1074,6 +1074,9 @@
     "settings.row.local_models.effect": "立即生效。",
     "settings.row.local_models.help": "安装在这台机器 Ollama 里的模型。注册一个会添加一条 VOOL 可以路由到的通道；认证一个会运行密封的工具探针，决定它是否可以撰写最终答案。不下载任何东西，也不联系任何人 — 只读取你本地的 Ollama。",
     "settings.row.local_models.label": "本地模型",
+    "settings.row.local_only_block_web.effect": "立即生效。",
+    "settings.row.local_only_block_web.help": "默认关闭。仅本地模式会把回复留在这台电脑上，但 VOOL 仍可通过其内置浏览器搜索网页和打开网页，因此你的搜索词会发送到搜索引擎，你要求的页面会从其网站获取。打开此项可在对话处于仅本地模式时阻止这些操作：网页搜索、打开或总结网页以及 VOOL 的浏览器会话都会被拒绝。它不会改变仅本地模式之外的任何行为，这台电脑或你自己网络上的页面仍可使用。 仅本地不会阻止电子邮件：你发送或阅读的邮件仍会经过你的邮件服务器。",
+    "settings.row.local_only_block_web.label": "在仅本地模式下阻止网页搜索",
     "settings.row.locality_note.help": "你的聊天、设置和 VOOL 记住的内容都是这台电脑上的文件，你的密钥也锁在这里。只有当回答使用在线模型或网络搜索时，那一次请求的文本才会发送到该服务。",
     "settings.row.locality_note.label": "你的数据在哪里",
     "settings.row.mode_note.help": "单个聊天也可以有自己的批准模式，从消息框旁边的模式菜单中选择。它只适用于该聊天，在那里给出的临时许可会随任务一起结束。",
@@ -1087,7 +1090,7 @@
     "settings.row.network_research_note.help": "与其他智能体协作（共享任务、空闲时研究、与其他智能体交谈）是一个尚未完成的研究功能。此 VOOL 副本是为研究而启动的，因此下面的开关处于启用状态，更改后立即生效。普通安装的 VOOL 不会显示它们。",
     "settings.row.network_research_note.label": "研究预览",
     "settings.row.notifications_panel.help": "VOOL 中的铃铛会保留每条提醒。在 Mac 上的 VOOL 应用中，你还可以接收系统通知，选择免打扰时段、声音以及通知可以显示的内容，并发送测试通知。",
-    "settings.row.notifications_panel.help.windows": "铃铛保留每条提醒。设置免打扰时段和声音，并发送一条测试提醒。VOOL 暂不发送 Windows 通知。",
+    "settings.row.notifications_panel.help.windows": "铃铛保留每条提醒。设置免打扰时段和声音。VOOL 暂不发送 Windows 通知。",
     "settings.row.notifications_panel.label": "提醒与系统通知",
     "settings.row.notifications_panel.label.windows": "提醒",
     "settings.row.privacy_disclosure.help": "你的数据存放在哪里、什么被锁定，以及什么会在何时离开这台电脑。这里没有开关，因为这些是关于 VOOL 如何工作的事实。",
@@ -2666,7 +2669,7 @@
     "addons.registry_release_notes": "版本说明",
     "addons.registry_metrics": "网站星标 {stars} · 下载请求 {downloads}"
   },
-  "source_catalog_sha256": "014c22efc7ce35cab1f5f7069a5e5059d5efb6a57492ff381e436c59f8b6e1f8",
+  "source_catalog_sha256": "fbfcf1d7db601973e3603ca3dfbcd0d5e48070a6c72bf34276a8db24ae5af973",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -2678,6 +2681,7 @@
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
     "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)",
     "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)"
   }
 }

@@ -1074,6 +1074,9 @@
     "settings.row.local_models.effect": "Działa natychmiast.",
     "settings.row.local_models.help": "Modele zainstalowane w Ollama na tej maszynie. Rejestracja dodaje pasmo, do którego VOOL może kierować; certyfikacja uruchamia zapieczętowaną sondę narzędzia, która rozstrzyga, czy może pisać ostateczne odpowiedzi. Nic nie jest pobierane i nikt nie jest kontaktowany — czytane jest tylko Twoje lokalne Ollama.",
     "settings.row.local_models.label": "Modele lokalne",
+    "settings.row.local_only_block_web.effect": "Działa natychmiast.",
+    "settings.row.local_only_block_web.help": "Domyślnie wyłączone. Tryb Tylko lokalnie zatrzymuje odpowiedzi na tym komputerze, ale VOOL nadal może szukać w sieci i otwierać strony przez swoją wbudowaną przeglądarkę, więc wpisane słowa trafiają do wyszukiwarki, a żądane strony są pobierane z ich witryn. Włącz to, aby temu zapobiec, gdy czat jest w trybie Tylko lokalnie: wyszukiwania w sieci, otwieranie lub streszczanie strony oraz sesje przeglądarki VOOL są odrzucane. Poza trybem Tylko lokalnie nic się nie zmienia, a strony na tym komputerze lub w Twojej własnej sieci pozostają dostępne. Tylko lokalnie nie zatrzymuje poczty: wiadomości, które wysyłasz lub czytasz, nadal przechodzą przez Twój serwer poczty.",
+    "settings.row.local_only_block_web.label": "Blokuj wyszukiwanie w sieci w trybie Tylko lokalnie",
     "settings.row.locality_note.help": "Twoje czaty, ustawienia i to, co VOOL pamięta, to pliki na tym komputerze, a twoje klucze też są tu zablokowane. Gdy odpowiedź korzysta z modelu online lub wyszukiwania w sieci, tekst tego jednego zapytania trafia do tej usługi, i tylko wtedy.",
     "settings.row.locality_note.label": "Gdzie są Twoje dane",
     "settings.row.mode_note.help": "Czat może też mieć własny tryb zatwierdzania, wybierany z menu trybu obok pola wiadomości. Dotyczy tylko tego czatu, a tymczasowe pozwolenie wygasa tam razem z zadaniem.",
@@ -1087,7 +1090,7 @@
     "settings.row.network_research_note.help": "Praca z innymi agentami (wspólne zadania, badania w czasie bezczynności, rozmowy z innymi agentami) to niedokończona funkcja badawcza. Ta kopia VOOL została uruchomiona do badań, więc przełączniki poniżej działają i zaczynają obowiązywać od razu po zmianie. Zwykła instalacja VOOL ich nie pokazuje.",
     "settings.row.network_research_note.label": "Podgląd badawczy",
     "settings.row.notifications_panel.help": "Dzwonek w VOOL przechowuje każdy alert. W aplikacji VOOL na Macu możesz też dostawać powiadomienie systemowe, wybrać godziny ciszy, dźwięk i to, co powiadomienie może pokazać, oraz wysłać test.",
-    "settings.row.notifications_panel.help.windows": "Dzwonek trzyma każdy alert. Ustaw ciche godziny i dźwięk, i wyślij alert testowy. VOOL nie wysyła jeszcze powiadomień Windows.",
+    "settings.row.notifications_panel.help.windows": "Dzwonek trzyma każdy alert. Ustaw ciche godziny i dźwięk. VOOL nie wysyła jeszcze powiadomień Windows.",
     "settings.row.notifications_panel.label": "Alerty i powiadomienia systemowe",
     "settings.row.notifications_panel.label.windows": "Alerty",
     "settings.row.privacy_disclosure.help": "Gdzie są twoje dane, co jest zablokowane i co oraz kiedy opuszcza ten komputer. Nie ma tu przełączników, bo to fakty o tym, jak działa VOOL.",
@@ -2666,7 +2669,7 @@
     "addons.registry_release_notes": "Informacje o wersji",
     "addons.registry_metrics": "{stars} gwiazdek w witrynie · {downloads} żądań pobrania"
   },
-  "source_catalog_sha256": "014c22efc7ce35cab1f5f7069a5e5059d5efb6a57492ff381e436c59f8b6e1f8",
+  "source_catalog_sha256": "fbfcf1d7db601973e3603ca3dfbcd0d5e48070a6c72bf34276a8db24ae5af973",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -2678,6 +2681,7 @@
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
     "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)",
     "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)"
   }
 }

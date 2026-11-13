@@ -33,8 +33,10 @@ from core import posix_tools
 #: On Windows the helper is never run (`_run_helper` refuses before the interpreter path is looked
 #: at): it needs macOS PDFKit and Vision, and its interpreter path, run on Windows, would resolve to a
 #: plantable C:\usr\bin. The user's own file is still checked first, so a typo still reads as one.
+#: The same sentence is the PDF contracts' unsupported reason on Windows, so the catalog, direct
+#: dispatch, the chat fast path and this second wall all say one Windows-true thing.
 WINDOWS_UNAVAILABLE = "Reading PDFs isn't available on Windows in this release; nothing was run."
-_WINDOWS_REASON = WINDOWS_UNAVAILABLE + " PDF reading needs the macOS system Python and PDFKit."
+_WINDOWS_REASON = WINDOWS_UNAVAILABLE
 
 # The system interpreter, not the venv one: this is where PyObjC lives on macOS.
 _SYSTEM_PYTHON = "/usr/bin/python3"

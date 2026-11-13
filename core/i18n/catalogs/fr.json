@@ -1074,6 +1074,9 @@
     "settings.row.local_models.effect": "S'applique immédiatement.",
     "settings.row.local_models.help": "Modèles installés dans Ollama sur cette machine. En enregistrer un ajoute une voie vers laquelle VOOL peut router ; le certifier lance la sonde d'outils scellée qui décide s'il peut écrire les réponses finales. Rien n'est téléchargé et personne n'est contacté — cela ne lit que votre Ollama local.",
     "settings.row.local_models.label": "Modèles locaux",
+    "settings.row.local_only_block_web.effect": "S'applique immédiatement.",
+    "settings.row.local_only_block_web.help": "Désactivé par défaut. Local uniquement garde les réponses sur cet ordinateur, mais VOOL peut toujours chercher sur le web et ouvrir des pages web avec son navigateur intégré : vos mots de recherche parviennent au moteur de recherche et les pages demandées sont récupérées sur leurs sites. Activez cette option pour l'empêcher tant qu'une conversation est en Local uniquement : les recherches web, l'ouverture ou le résumé d'une page web et les sessions du navigateur de VOOL sont refusés. Rien ne change hors de Local uniquement, et les pages de cet ordinateur ou de votre propre réseau restent accessibles. Local uniquement n’arrête pas l’e-mail : les messages que vous envoyez ou lisez passent toujours par votre serveur de messagerie.",
+    "settings.row.local_only_block_web.label": "Bloquer la recherche web en mode Local uniquement",
     "settings.row.locality_note.help": "Vos conversations, vos réglages et ce dont VOOL se souvient sont des fichiers sur cet ordinateur, et vos clés y sont aussi protégées. Quand une réponse utilise un modèle en ligne ou une recherche web, le texte de cette seule requête va à ce service, et seulement à ce moment-là.",
     "settings.row.locality_note.label": "Où sont vos données",
     "settings.row.mode_note.help": "Une conversation peut aussi avoir son propre mode d’approbation, choisi dans le menu de mode à côté de la zone de message. Il ne s’applique qu’à cette conversation, et une permission temporaire y prend fin avec sa tâche.",
@@ -1087,7 +1090,7 @@
     "settings.row.network_research_note.help": "Travailler avec d’autres agents (tâches partagées, recherche au repos, discussion avec d’autres agents) est une fonction de recherche inachevée. Cette copie de VOOL a été lancée pour la recherche, donc les interrupteurs ci-dessous sont actifs et prennent effet dès que vous les changez. Une installation normale de VOOL ne les affiche pas.",
     "settings.row.network_research_note.label": "Aperçu de recherche",
     "settings.row.notifications_panel.help": "La cloche de VOOL garde chaque alerte. Dans l’app VOOL sur un Mac, vous pouvez aussi recevoir une notification système, choisir les heures calmes, le son et ce qu’une notification peut afficher, et envoyer un test.",
-    "settings.row.notifications_panel.help.windows": "La cloche garde chaque alerte. Réglez heures silencieuses et son, et envoyez une alerte de test. VOOL n'envoie pas encore de notifications Windows.",
+    "settings.row.notifications_panel.help.windows": "La cloche garde chaque alerte. Réglez heures silencieuses et son. VOOL n'envoie pas encore de notifications Windows.",
     "settings.row.notifications_panel.label": "Alertes et notifications système",
     "settings.row.notifications_panel.label.windows": "Alertes",
     "settings.row.privacy_disclosure.help": "Où se trouvent vos données, ce qui est protégé, et ce qui quitte cet ordinateur et quand. Il n’y a pas d’interrupteurs ici, car ce sont des faits sur le fonctionnement de VOOL.",
@@ -2666,7 +2669,7 @@
     "addons.registry_release_notes": "Notes de version",
     "addons.registry_metrics": "{stars} étoiles sur le site · {downloads} demandes de téléchargement"
   },
-  "source_catalog_sha256": "014c22efc7ce35cab1f5f7069a5e5059d5efb6a57492ff381e436c59f8b6e1f8",
+  "source_catalog_sha256": "fbfcf1d7db601973e3603ca3dfbcd0d5e48070a6c72bf34276a8db24ae5af973",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -2678,6 +2681,7 @@
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
     "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)",
     "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)"
   }
 }

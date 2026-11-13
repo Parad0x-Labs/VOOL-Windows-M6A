@@ -58,7 +58,7 @@ def set_prefs_authority(body: dict, headers: dict, runtime, client_host: str = '
         "deep_reasoning", "show_answer_details", "show_workflow", "hive_followups",
         "idle_research_assist", "accept_hive_tasks", "social_commons",
         "wallet_enabled", "setup_dismissed", "speech_notice_dismissed",
-        "model_own_tools",
+        "model_own_tools", "local_only_block_web",
     }
     _INT_PREFS = {"humor_percent", "ram_reserve_pct", "daily_token_budget", "profanity_level"}
     # Normalized by save_preferences (_normalize_* / _clamp_pct), so an out-of-vocabulary value
@@ -134,7 +134,8 @@ def set_prefs_authority(body: dict, headers: dict, runtime, client_host: str = '
             if not isinstance(value, str) or any(ord(ch) < 32 for ch in value):
                 return apply_runtime_headers(json_response(400, {"error": f"{key} must be a plain string"}), runtime)
             setattr(prefs, key, value.strip()[: _TEXT_LIMITS[key]])
-    save_preferences(prefs)
+    # Only a body that names the switch writes it; any other save keeps it (fail closed when unknown).
+    save_preferences(prefs, writes_local_only_block_web="local_only_block_web" in body)
     if _wallet_switched:
         from core.wallet import config as wallet_config
 

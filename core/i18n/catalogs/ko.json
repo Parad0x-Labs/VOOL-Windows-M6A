@@ -1074,6 +1074,9 @@
     "settings.row.local_models.effect": "즉시 적용됩니다.",
     "settings.row.local_models.help": "이 기기의 Ollama에 설치된 모델들. 하나를 등록하면 VOOL이 경로 지정할 수 있는 차선이 추가되고, 인증하면 최종 답변을 쓸 수 있는지 결정하는 봉인된 도구 탐침이 실행됩니다. 아무 것도 내려받지 않고 누구에게도 연락하지 않습니다 — 당신의 로컬 Ollama만 읽습니다.",
     "settings.row.local_models.label": "로컬 모델",
+    "settings.row.local_only_block_web.effect": "즉시 적용됩니다.",
+    "settings.row.local_only_block_web.help": "기본값은 꺼짐입니다. 로컬 전용은 답변을 이 컴퓨터에 유지하지만, VOOL은 여전히 내장 브라우저로 웹을 검색하고 웹 페이지를 열 수 있으므로 검색어가 검색 엔진에 전달되고 요청한 페이지는 해당 웹사이트에서 가져옵니다. 채팅이 로컬 전용인 동안 이를 막으려면 켜세요. 웹 검색, 웹 페이지 열기나 요약, VOOL의 브라우저 세션이 거부됩니다. 로컬 전용 밖에서는 아무것도 바뀌지 않으며, 이 컴퓨터나 내 네트워크의 페이지는 계속 사용할 수 있습니다. 로컬 전용은 이메일을 막지 않습니다. 보내거나 읽는 메일은 여전히 메일 서버를 거칩니다.",
+    "settings.row.local_only_block_web.label": "로컬 전용에서 웹 검색 차단",
     "settings.row.locality_note.help": "채팅, 설정, VOOL이 기억하는 내용은 이 컴퓨터의 파일이며, 키도 여기에 잠겨 있습니다. 답변에 온라인 모델이나 웹 검색을 쓸 때만 그 요청 하나의 텍스트가 해당 서비스로 갑니다.",
     "settings.row.locality_note.label": "당신의 데이터가 있는 곳",
     "settings.row.mode_note.help": "채팅마다 자체 승인 모드를 둘 수도 있으며, 메시지 상자 옆의 모드 메뉴에서 고릅니다. 그 채팅에만 적용되고, 거기서 준 임시 권한은 해당 작업과 함께 끝납니다.",
@@ -1087,7 +1090,7 @@
     "settings.row.network_research_note.help": "다른 에이전트와 함께 일하기(공유 작업, 쉬는 동안 조사, 다른 에이전트와 대화)는 완성되지 않은 연구용 기능입니다. 이 VOOL은 연구용으로 시작되어 아래 스위치가 활성 상태이며 바꾸는 즉시 적용됩니다. 일반 VOOL 설치에서는 보이지 않습니다.",
     "settings.row.network_research_note.label": "연구용 미리보기",
     "settings.row.notifications_panel.help": "VOOL의 종 모양 아이콘에 모든 알림이 남습니다. Mac의 VOOL 앱에서는 시스템 알림을 받고, 방해 금지 시간, 소리, 알림에 보일 내용을 고르고, 테스트를 보낼 수도 있습니다.",
-    "settings.row.notifications_panel.help.windows": "종은 모든 알림을 담습니다. 방해 금지 시간과 소리를 정하고, 시험 알림을 보내세요. VOOL은 아직 Windows 알림을 보내지 않습니다.",
+    "settings.row.notifications_panel.help.windows": "종은 모든 알림을 담습니다. 방해 금지 시간과 소리를 정하세요. VOOL은 아직 Windows 알림을 보내지 않습니다.",
     "settings.row.notifications_panel.label": "알림과 시스템 알림",
     "settings.row.notifications_panel.label.windows": "알림",
     "settings.row.privacy_disclosure.help": "데이터가 어디에 있는지, 무엇이 잠겨 있는지, 무엇이 언제 이 컴퓨터를 떠나는지. 이것은 VOOL이 작동하는 방식에 대한 사실이라 여기에는 스위치가 없습니다.",
@@ -2666,7 +2669,7 @@
     "addons.registry_release_notes": "릴리스 노트",
     "addons.registry_metrics": "웹사이트 별 {stars}개 · 다운로드 요청 {downloads}회"
   },
-  "source_catalog_sha256": "014c22efc7ce35cab1f5f7069a5e5059d5efb6a57492ff381e436c59f8b6e1f8",
+  "source_catalog_sha256": "fbfcf1d7db601973e3603ca3dfbcd0d5e48070a6c72bf34276a8db24ae5af973",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -2678,6 +2681,7 @@
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
     "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)",
     "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)"
   }
 }

@@ -466,12 +466,14 @@ def authoritative_chat_workspace(chat_id: str) -> tuple[str, str]:
         project_id = str(namespace.project_id or "").strip()
     if not project_id:
         # A chat can pre-date its namespace row; session meta is the same server-owned pairing
-        # the turn dispatch falls back to, so it is consulted the same way here.
+        # the turn dispatch falls back to, so it is consulted the same way here. Only THIS chat's
+        # row is read and authorized: the whole-file load_session_meta() authorized every chat's
+        # row to find one, which made every mode change cost a multiple of the number of chats.
         try:
-            from core.persistent_memory import load_session_meta
+            from core.memory.entries import _session_meta_entry
 
             project_id = str(
-                (load_session_meta().get(clean_chat) or {}).get("project_id") or ""
+                (_session_meta_entry(clean_chat) or {}).get("project_id") or ""
             ).strip()
         except Exception:
             return "", "unreadable"

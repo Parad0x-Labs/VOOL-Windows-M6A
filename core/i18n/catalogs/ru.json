@@ -1074,6 +1074,9 @@
     "settings.row.local_models.effect": "Применяется сразу.",
     "settings.row.local_models.help": "Модели, установленные в Ollama на этой машине. Регистрация добавляет канал, куда VOOL может маршрутизировать; сертификация запускает запечатанную пробу инструментов, решающую, можно ли ему писать финальные ответы. Ничего не скачивается и никто не опрашивается — читается только ваш локальный Ollama.",
     "settings.row.local_models.label": "Локальные модели",
+    "settings.row.local_only_block_web.effect": "Применяется сразу.",
+    "settings.row.local_only_block_web.help": "По умолчанию выключено. Режим «Только локально» оставляет ответы на этом компьютере, но VOOL всё равно может искать в интернете и открывать веб-страницы через свой встроенный браузер, поэтому ваши поисковые слова попадают в поисковую систему, а запрошенные страницы загружаются с их сайтов. Включите, чтобы запретить это, пока чат в режиме «Только локально»: веб-поиск, открытие или пересказ веб-страницы и сеансы браузера VOOL отклоняются. Вне режима «Только локально» ничего не меняется, а страницы на этом компьютере или в вашей собственной сети остаются доступны. Режим «Только локально» не останавливает почту: письма, которые вы отправляете или читаете, по-прежнему идут через ваш почтовый сервер.",
+    "settings.row.local_only_block_web.label": "Блокировать веб-поиск в режиме «Только локально»",
     "settings.row.locality_note.help": "Ваши чаты, настройки и то, что помнит VOOL, — это файлы на этом компьютере, и ваши ключи тоже заперты здесь. Когда для ответа используется онлайн-модель или веб-поиск, текст этого одного запроса уходит в этот сервис, и только тогда.",
     "settings.row.locality_note.label": "Где ваши данные",
     "settings.row.mode_note.help": "У чата может быть и свой режим подтверждения, выбранный в меню режима рядом с полем сообщения. Он действует только в этом чате, а временное разрешение там заканчивается вместе с задачей.",
@@ -1087,7 +1090,7 @@
     "settings.row.network_research_note.help": "Работа с другими агентами (общие задачи, исследования в простое, общение с другими агентами) — незавершённая исследовательская функция. Эта копия VOOL запущена для исследований, поэтому переключатели ниже работают и вступают в силу сразу после изменения. Обычная установка VOOL их не показывает.",
     "settings.row.network_research_note.label": "Исследовательская версия",
     "settings.row.notifications_panel.help": "Колокольчик в VOOL хранит каждое оповещение. В приложении VOOL на Mac можно также получать системные уведомления, выбрать тихие часы, звук и то, что может показывать уведомление, и отправить тестовое.",
-    "settings.row.notifications_panel.help.windows": "Колокольчик держит каждое оповещение. Настройте тихие часы и звук и отправьте тестовое оповещение. VOOL пока не отправляет уведомления Windows.",
+    "settings.row.notifications_panel.help.windows": "Колокольчик держит каждое оповещение. Настройте тихие часы и звук. VOOL пока не отправляет уведомления Windows.",
     "settings.row.notifications_panel.label": "Оповещения и системные уведомления",
     "settings.row.notifications_panel.label.windows": "Оповещения",
     "settings.row.privacy_disclosure.help": "Где хранятся ваши данные, что заблокировано и что и когда покидает этот компьютер. Здесь нет переключателей, потому что это факты о том, как работает VOOL.",
@@ -2666,7 +2669,7 @@
     "addons.registry_release_notes": "Примечания к версии",
     "addons.registry_metrics": "{stars} звёзд на сайте · {downloads} запросов скачивания"
   },
-  "source_catalog_sha256": "014c22efc7ce35cab1f5f7069a5e5059d5efb6a57492ff381e436c59f8b6e1f8",
+  "source_catalog_sha256": "fbfcf1d7db601973e3603ca3dfbcd0d5e48070a6c72bf34276a8db24ae5af973",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -2678,6 +2681,7 @@
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
     "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)",
     "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)"
   }
 }

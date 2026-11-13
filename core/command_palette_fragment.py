@@ -375,7 +375,8 @@ document.addEventListener('keydown', function(ev){
   else if (key === 'n' && !ev.shiftKey) { var p1 = pageActions(); if (p1) { ev.preventDefault(); p1.newChat(); } }
   else if (key === 'j') { var p2 = pageActions(); if (p2) { ev.preventDefault(); p2.togglePanel(); } }
   else if (key === 'm') { var p3 = pageActions(); if (p3) { ev.preventDefault(); p3.openModelMenu(); } }
-  else if (key === ',') { var p4 = pageActions(); if (p4) { ev.preventDefault(); p4.openSettings(); } }
+  // The chat page binds Ctrl+, as well: a press another listener already handled is not opened twice.
+  else if (key === ',') { var p4 = pageActions(); if (p4 && !ev.defaultPrevented) { ev.preventDefault(); p4.openSettings(); } }
 });
 
 // Escape closes the palette no matter which of its children (or body, after the

@@ -270,11 +270,14 @@ function section(which){
       '<p><b>' + XT('vx.privacy.p4_b', 'Spend is gated.') + '</b> ' + XE('vx.privacy.p4', 'Nothing that costs money runs without your OK, and VOOL asks again if a price goes above what you accepted.') + '</p>' +
       '<p>' + XE('vx.privacy.p5', 'There are no switches here for how long data is kept or for cloud learning, because VOOL cannot enforce those yet.') + '</p>';
     // Where keys live is the runtime's answer, not the host's name: the credential list reports the live backend.
-    // The OS keychain keeps the text above; VOOL's own vault (every Windows install today) says so plainly.
+    // The OS keychain keeps the text above; VOOL's own vault and Windows Credential Manager each say so plainly.
     fetch('/api/settings/credentials').then(function(r){ return r.json(); }).then(function(j){
       var data = j && j.data ? j.data : j;
       if (data && data.backend === 'vault') {
         node.querySelector('.vs-keys-where').textContent = XT('vx.privacy.p3.vault', 'Provider keys are kept in VOOL\\u2019s encrypted vault in your user profile and are never shown on this page.');
+      } else if (data && data.backend === 'credential_manager') {
+        // English until the catalog carries a translated key for it (every locale must be regenerated together).
+        node.querySelector('.vs-keys-where').textContent = 'Provider keys are kept in Windows Credential Manager under VOOL/credentials and are never shown on this page.';
       }
     }).catch(function(){});
   } else if (which === 'toolbelt') {

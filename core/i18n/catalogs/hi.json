@@ -1074,6 +1074,9 @@
     "settings.row.local_models.effect": "तुरंत लागू।",
     "settings.row.local_models.help": "इस मशीन के Ollama में लगे मॉडल। एक को पंजीकृत करने से एक लेन जुड़ता है जिस पर VOOL रूट कर सकता है; प्रमाणित करने पर सीलबंद टूल-जाँच चलती है जो तय करती है कि वह अंतिम जवाब लिख सकता है या नहीं। कुछ डाउनलोड नहीं होता और किसी से संपर्क नहीं होता — केवल आपका स्थानीय Ollama पढ़ा जाता है।",
     "settings.row.local_models.label": "स्थानीय मॉडल",
+    "settings.row.local_only_block_web.effect": "तुरंत लागू।",
+    "settings.row.local_only_block_web.help": "डिफ़ॉल्ट रूप से बंद। केवल लोकल जवाबों को इसी कंप्यूटर पर रखता है, लेकिन VOOL फिर भी अपने बिल्ट-इन ब्राउज़र से वेब पर खोज सकता है और वेब पेज खोल सकता है, इसलिए आपके खोज शब्द सर्च इंजन तक पहुँचते हैं और आपके माँगे पेज उनकी वेबसाइटों से लाए जाते हैं। जब तक कोई चैट केवल लोकल में है, इसे रोकने के लिए इसे चालू करें: वेब खोज, किसी वेब पेज को खोलना या उसका सारांश बनाना, और VOOL के ब्राउज़र सत्र अस्वीकार किए जाते हैं। केवल लोकल के बाहर कुछ नहीं बदलता, और इस कंप्यूटर या आपके अपने नेटवर्क के पेज उपलब्ध रहते हैं। केवल लोकल ईमेल नहीं रोकता: आप जो मेल भेजते या पढ़ते हैं, वह अब भी आपके मेल सर्वर से होकर जाती है।",
+    "settings.row.local_only_block_web.label": "केवल लोकल में वेब खोज रोकें",
     "settings.row.locality_note.help": "आपकी चैट, सेटिंग्स और VOOL को जो याद है, वे इस कंप्यूटर पर फ़ाइलें हैं, और आपकी कुंजियाँ भी यहीं लॉक हैं। जब कोई जवाब ऑनलाइन मॉडल या वेब खोज का उपयोग करता है, तो सिर्फ़ उसी एक अनुरोध का पाठ उस सेवा को जाता है, और केवल तभी।",
     "settings.row.locality_note.label": "आपका डेटा कहाँ है",
     "settings.row.mode_note.help": "एक चैट का अपना अनुमति मोड भी हो सकता है, जिसे संदेश बॉक्स के पास वाले मोड मेनू से चुना जाता है। यह केवल उसी चैट पर लागू होता है, और वहाँ दी गई अस्थायी अनुमति उसके काम के साथ खत्म हो जाती है।",
@@ -1087,7 +1090,7 @@
     "settings.row.network_research_note.help": "दूसरे एजेंटों के साथ काम करना (साझा काम, खाली समय में शोध, दूसरे एजेंटों से बात) एक अधूरी शोध सुविधा है। VOOL की यह कॉपी शोध के लिए शुरू की गई थी, इसलिए नीचे के स्विच चालू हैं और बदलते ही लागू होते हैं। VOOL का सामान्य इंस्टॉल इन्हें नहीं दिखाता।",
     "settings.row.network_research_note.label": "शोध पूर्वावलोकन",
     "settings.row.notifications_panel.help": "VOOL की घंटी हर अलर्ट रखती है। Mac पर VOOL ऐप में आप सिस्टम सूचना भी पा सकते हैं, शांत घंटे, ध्वनि और सूचना क्या दिखा सकती है चुन सकते हैं, और एक टेस्ट भेज सकते हैं।",
-    "settings.row.notifications_panel.help.windows": "घंटी हर अलर्ट रखती है। ख़ामोशी के घंटे और ध्वनि सेट करें, और एक परीक्षण अलर्ट भेजें। VOOL अभी Windows सूचनाएँ नहीं भेजता।",
+    "settings.row.notifications_panel.help.windows": "घंटी हर अलर्ट रखती है। ख़ामोशी के घंटे और ध्वनि सेट करें। VOOL अभी Windows सूचनाएँ नहीं भेजता।",
     "settings.row.notifications_panel.label": "अलर्ट और सिस्टम सूचनाएँ",
     "settings.row.notifications_panel.label.windows": "अलर्ट",
     "settings.row.privacy_disclosure.help": "आपका डेटा कहाँ रहता है, क्या लॉक है, और इस कंप्यूटर से क्या और कब बाहर जाता है। यहाँ कोई स्विच नहीं हैं क्योंकि ये VOOL के काम करने के तरीके के तथ्य हैं।",
@@ -2666,7 +2669,7 @@
     "addons.registry_release_notes": "संस्करण विवरण",
     "addons.registry_metrics": "वेबसाइट पर {stars} सितारे · {downloads} डाउनलोड अनुरोध"
   },
-  "source_catalog_sha256": "014c22efc7ce35cab1f5f7069a5e5059d5efb6a57492ff381e436c59f8b6e1f8",
+  "source_catalog_sha256": "fbfcf1d7db601973e3603ca3dfbcd0d5e48070a6c72bf34276a8db24ae5af973",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -2678,6 +2681,7 @@
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
     "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)",
     "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)"
   }
 }

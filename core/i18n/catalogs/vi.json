@@ -1074,6 +1074,9 @@
     "settings.row.local_models.effect": "Áp dụng ngay.",
     "settings.row.local_models.help": "Các mô hình cài trong Ollama trên máy này. Đăng ký một cái thêm một làn VOOL có thể định tuyến tới; chứng nhận một cái chạy đầu dò công cụ niêm phong quyết định nó có được viết câu trả lời cuối hay không. Không tải gì và không liên lạc ai — chỉ đọc Ollama cục bộ của bạn.",
     "settings.row.local_models.label": "Mô hình cục bộ",
+    "settings.row.local_only_block_web.effect": "Áp dụng ngay.",
+    "settings.row.local_only_block_web.help": "Mặc định tắt. Chỉ cục bộ giữ câu trả lời trên máy tính này, nhưng VOOL vẫn có thể tìm kiếm web và mở trang web bằng trình duyệt tích hợp của nó, nên từ khóa tìm kiếm của bạn đến được công cụ tìm kiếm và các trang bạn yêu cầu được tải từ trang web của chúng. Bật mục này để ngăn điều đó khi cuộc trò chuyện ở chế độ Chỉ cục bộ: tìm kiếm web, mở hoặc tóm tắt một trang web và các phiên trình duyệt của VOOL đều bị từ chối. Không có gì thay đổi ngoài chế độ Chỉ cục bộ, và các trang trên máy tính này hoặc trong mạng riêng của bạn vẫn dùng được. Chỉ cục bộ không chặn email: thư bạn gửi hoặc đọc vẫn đi qua máy chủ thư của bạn.",
+    "settings.row.local_only_block_web.label": "Chặn tìm kiếm web trong chế độ Chỉ cục bộ",
     "settings.row.locality_note.help": "Các cuộc trò chuyện, cài đặt và những gì VOOL nhớ là các tệp trên máy tính này, và khóa của bạn cũng được khóa ở đây. Khi một câu trả lời dùng mô hình trực tuyến hoặc tìm kiếm web, chỉ nội dung của đúng yêu cầu đó được gửi tới dịch vụ đó, và chỉ khi đó.",
     "settings.row.locality_note.label": "Dữ liệu của bạn ở đâu",
     "settings.row.mode_note.help": "Một cuộc trò chuyện cũng có thể có chế độ phê duyệt riêng, chọn từ menu chế độ cạnh ô tin nhắn. Nó chỉ áp dụng cho cuộc trò chuyện đó, và quyền tạm thời ở đó kết thúc cùng nhiệm vụ.",
@@ -1087,7 +1090,7 @@
     "settings.row.network_research_note.help": "Làm việc với các tác nhân khác (nhiệm vụ chung, nghiên cứu khi rảnh, trò chuyện với tác nhân khác) là một tính năng nghiên cứu chưa hoàn thiện. Bản VOOL này được khởi động để nghiên cứu, nên các công tắc bên dưới đang hoạt động và có hiệu lực ngay khi bạn thay đổi. Bản cài VOOL thông thường không hiển thị chúng.",
     "settings.row.network_research_note.label": "Bản xem trước nghiên cứu",
     "settings.row.notifications_panel.help": "Chuông trong VOOL giữ mọi cảnh báo. Trong ứng dụng VOOL trên máy Mac, bạn cũng có thể nhận thông báo hệ thống, chọn giờ yên lặng, âm thanh và nội dung thông báo được hiển thị, và gửi thử.",
-    "settings.row.notifications_panel.help.windows": "Chuông giữ mọi nhắc. Đặt giờ im lặng và âm thanh, và gửi một nhắc thử. VOOL chưa gửi thông báo Windows.",
+    "settings.row.notifications_panel.help.windows": "Chuông giữ mọi nhắc. Đặt giờ im lặng và âm thanh. VOOL chưa gửi thông báo Windows.",
     "settings.row.notifications_panel.label": "Cảnh báo và thông báo hệ thống",
     "settings.row.notifications_panel.label.windows": "Nhắc",
     "settings.row.privacy_disclosure.help": "Dữ liệu của bạn nằm ở đâu, cái gì được khóa, và cái gì rời máy tính này khi nào. Ở đây không có công tắc vì đây là sự thật về cách VOOL hoạt động.",
@@ -2666,7 +2669,7 @@
     "addons.registry_release_notes": "Ghi chú phiên bản",
     "addons.registry_metrics": "{stars} sao trên trang web · {downloads} yêu cầu tải xuống"
   },
-  "source_catalog_sha256": "014c22efc7ce35cab1f5f7069a5e5059d5efb6a57492ff381e436c59f8b6e1f8",
+  "source_catalog_sha256": "fbfcf1d7db601973e3603ca3dfbcd0d5e48070a6c72bf34276a8db24ae5af973",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -2678,6 +2681,7 @@
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
     "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)",
     "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)"
   }
 }

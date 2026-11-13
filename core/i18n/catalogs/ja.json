@@ -1074,6 +1074,9 @@
     "settings.row.local_models.effect": "即時に適用されます。",
     "settings.row.local_models.help": "このマシンのOllamaにインストールされたモデル。登録するとVOOLがルーティングできるレーンが追加され、認証すると、最終回答を書けるかを決める封印されたツールプローブが走ります。何もダウンロードされず、誰にも接続しません — あなたのローカルOllamaだけを読みます。",
     "settings.row.local_models.label": "ローカルモデル",
+    "settings.row.local_only_block_web.effect": "即時に適用されます。",
+    "settings.row.local_only_block_web.help": "既定ではオフです。ローカルのみでは返答はこのコンピューター上にとどまりますが、VOOL は内蔵ブラウザーでウェブを検索したりウェブページを開いたりできるため、検索語は検索エンジンに届き、求めたページはそのサイトから取得されます。チャットがローカルのみの間これを止めるにはオンにします。ウェブ検索、ウェブページを開くことや要約すること、VOOL のブラウザーセッションが拒否されます。ローカルのみ以外では何も変わらず、このコンピューターや自分のネットワーク上のページは引き続き使えます。 ローカルのみでもメールは止まりません。送受信するメールは引き続きメールサーバーを通ります。",
+    "settings.row.local_only_block_web.label": "ローカルのみでウェブ検索をブロック",
     "settings.row.locality_note.help": "チャット、設定、VOOL が覚えていることはこのコンピューター上のファイルで、キーもここにロックされています。回答にオンラインのモデルやウェブ検索を使うときだけ、その1件のリクエストの本文がそのサービスに送られます。",
     "settings.row.locality_note.label": "あなたのデータの在処",
     "settings.row.mode_note.help": "チャットごとに独自の承認モードを持たせることもできます。メッセージ欄の横のモードメニューで選びます。そのチャットにだけ適用され、そこでの一時的な許可はそのタスクとともに終わります。",
@@ -1087,7 +1090,7 @@
     "settings.row.network_research_note.help": "ほかのエージェントとの連携(共有タスク、空き時間の調査、ほかのエージェントとの会話)は未完成の研究用機能です。この VOOL は研究用に起動されたため、下のスイッチは有効で、変更するとすぐに反映されます。通常の VOOL のインストールでは表示されません。",
     "settings.row.network_research_note.label": "研究用プレビュー",
     "settings.row.notifications_panel.help": "VOOL のベルはすべてのアラートを保存します。Mac の VOOL アプリでは、システム通知を受け取ったり、おやすみ時間、サウンド、通知に表示してよい内容を選んだり、テストを送ったりもできます。",
-    "settings.row.notifications_panel.help.windows": "ベルはすべての通知を保持します。サイレント時間とサウンドを設定し、テスト通知を送れます。VOOLはまだWindowsの通知を送りません。",
+    "settings.row.notifications_panel.help.windows": "ベルはすべての通知を保持します。サイレント時間とサウンドを設定できます。VOOLはまだWindowsの通知を送りません。",
     "settings.row.notifications_panel.label": "アラートとシステム通知",
     "settings.row.notifications_panel.label.windows": "通知",
     "settings.row.privacy_disclosure.help": "データがどこにあるか、何がロックされているか、何がいつこのコンピューターの外に出るか。これらは VOOL の仕組みについての事実なので、ここにスイッチはありません。",
@@ -2666,7 +2669,7 @@
     "addons.registry_release_notes": "リリースノート",
     "addons.registry_metrics": "サイトのスター {stars} · ダウンロード要求 {downloads}"
   },
-  "source_catalog_sha256": "014c22efc7ce35cab1f5f7069a5e5059d5efb6a57492ff381e436c59f8b6e1f8",
+  "source_catalog_sha256": "fbfcf1d7db601973e3603ca3dfbcd0d5e48070a6c72bf34276a8db24ae5af973",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -2678,6 +2681,7 @@
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
     "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)",
     "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)"
   }
 }
