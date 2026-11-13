@@ -486,8 +486,11 @@ def rearm_after_open(project_root: Path, *, run: Runner = subprocess.run) -> dic
     supervisor_started = False
     nothing_to_rearm = False
     if sys.platform == "win32":
-        if not _ok(_run(run, ["schtasks", "/query", "/tn", WATCHDOG_TASK])):
-            nothing_to_rearm = True  # no watchdog task on this install
+        query = _run(run, ["schtasks", "/query", "/tn", WATCHDOG_TASK])
+        if query is None:
+            pass  # schtasks could not run at all: the task may still be disabled, so the Stop stays
+        elif not _ok(query):
+            nothing_to_rearm = True  # schtasks ran and found no watchdog task on this install
         else:
             rearmed = _ok(_run(run, ["schtasks", "/change", "/tn", WATCHDOG_TASK, "/enable"]))
     elif sys.platform == "darwin":
