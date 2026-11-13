@@ -198,6 +198,12 @@ def _runtime_tool_contracts_raw(*, web_available_fn: Any = None) -> list[Runtime
         web_enabled = bool(effective_web_available())
     browser_enabled = bool(policy_engine.browser_runtime_enabled())
     email_send_enabled = bool(policy_engine.get("email.send_enabled", False))
+    # Apple Notes runs through /usr/bin/osascript, a Mac program: on Windows its tools are never
+    # offered, the same rule as core.operator.registry._apple_notes_available.
+    from core import posix_tools
+
+    apple_notes_enabled = not posix_tools.active()
+    apple_notes_reason = "" if apple_notes_enabled else "Apple Notes is a Mac app and isn't available on Windows."
     email_read_enabled = bool(policy_engine.get("email.read_enabled", False))
     image_gen_enabled = bool(policy_engine.get("image.generate_enabled", False)) or _has_image_service()
     video_gen_enabled = bool(policy_engine.get("video.generate_enabled", False))
@@ -2961,8 +2967,8 @@ def _runtime_tool_contracts_raw(*, web_available_fn: Any = None) -> list[Runtime
             tool_surface="operator",
             capability_id="operator.read",
             capability_claim="read one Apple Notes note",
-            supported=True,
-            unsupported_reason="",
+            supported=apple_notes_enabled,
+            unsupported_reason=apple_notes_reason,
             input_schema={"title": "string"},
             output_schema={"body": "string", "note": "note_row"},
             side_effect_class="read_only",
@@ -2980,8 +2986,8 @@ def _runtime_tool_contracts_raw(*, web_available_fn: Any = None) -> list[Runtime
             tool_surface="operator",
             capability_id="operator.read",
             capability_claim="list Apple Notes notes",
-            supported=True,
-            unsupported_reason="",
+            supported=apple_notes_enabled,
+            unsupported_reason=apple_notes_reason,
             input_schema={"folder": "string (optional)", "account": "string (optional)"},
             output_schema={"notes": "list[note_row]"},
             side_effect_class="read_only",
