@@ -130,14 +130,19 @@ def _windows_norm(path: str) -> str:
 
 
 def _windows_spellings(folders: list[str]) -> set[str]:
-    """Each folder as spelled and as it really resolves (a junction is judged by its target too)."""
+    """Each folder as spelled and, when it is on a drive of this machine, as it really resolves (a junction is
+    judged by its target too). A folder on a share or a network drive is compared by its spelling only:
+    resolving it would already be the SMB connection."""
+    from core import windows_known_folders
+
     out: set[str] = set()
     for folder in folders:
         if not folder:
             continue
         out.add(_windows_norm(folder))
-        with contextlib.suppress(OSError, ValueError):
-            out.add(_windows_norm(os.path.realpath(folder)))
+        if windows_known_folders.on_local_drive(folder):
+            with contextlib.suppress(OSError, ValueError):
+                out.add(_windows_norm(os.path.realpath(folder)))
     return out
 
 
@@ -157,7 +162,8 @@ def _windows_system_refusal(resolved: str) -> str:
         drive = ntpath.splitdrive(os.environ.get("SystemDrive", "") or "C:")[0] or "C:"
         sealed += [drive + "\\Windows", drive + "\\Program Files", drive + "\\Program Files (x86)",
                    drive + "\\ProgramData"]
-    profiles = [known("Profile") or "", os.environ.get("USERPROFILE", "")]
+    profiles = [known("Profile") or "", os.environ.get("USERPROFILE", ""), os.path.expanduser("~")]
+    profiles = [p for p in profiles if p and p != "~"]
     exact = [p for p in profiles if p] + [ntpath.dirname(ntpath.normpath(p)) for p in profiles if p]
     exact += [ntpath.join(p, "AppData") for p in profiles if p]
     exact += [known(name) or "" for name in _WINDOWS_EXACT_KNOWN]
@@ -178,9 +184,9 @@ def _windows_system_refusal(resolved: str) -> str:
 def _too_broad_root(resolved: str) -> str:
     """A plain refusal when ``resolved`` is the home folder, the folder holding every home, or a system folder; else ''."""
     if windows_path_policy.active():
-        refusal = _windows_system_refusal(resolved)
-        if refusal:
-            return refusal
+        # Windows answers from the shell's known folders and the environment alone: the POSIX checks below
+        # would resolve the home folder, which on a roaming profile is a share.
+        return _windows_system_refusal(resolved)
     home = _real(os.path.expanduser("~"))
     if home and home not in {"~", os.sep} and resolved == home:
         return "that is your whole home folder. Pick one folder inside it, like Documents."
