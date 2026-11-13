@@ -151,7 +151,8 @@ def stage_upload(data: bytes) -> dict[str, Any]:
         _PREVIEW = None
         upload_id = secrets.token_hex(16)
         path = _import_dir("incoming") / f"{upload_id}.zip"
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        # O_BINARY (Windows only; 0 elsewhere): a text-mode descriptor turns every 0x0A written into 0x0D 0x0A.
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
         with os.fdopen(descriptor, "wb") as handle:
             handle.write(data)
         _UPLOADS[upload_id] = path

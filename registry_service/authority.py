@@ -155,7 +155,8 @@ def create_online_key(path) -> Ed25519PrivateKey:
     key = Ed25519PrivateKey.generate()
     from cryptography.hazmat.primitives.serialization import NoEncryption, PrivateFormat
 
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    # O_BINARY (Windows only; 0 elsewhere): a text-mode descriptor turns every 0x0A written into 0x0D 0x0A.
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
     with os.fdopen(descriptor, "wb") as handle:
         handle.write(key.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption()))
     return key
@@ -241,7 +242,8 @@ class OnlineCatalog:
 
         directory = decode(self.catalog_file.read_bytes())
         temporary = self.catalog_file.with_name(self.catalog_file.name + ".new")
-        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        # O_BINARY (Windows only; 0 elsewhere): a text-mode descriptor turns every 0x0A written into 0x0D 0x0A.
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
         with os.fdopen(descriptor, "wb") as handle:
             handle.write(canonical({**directory, "registry": snapshot}))
             handle.flush()
