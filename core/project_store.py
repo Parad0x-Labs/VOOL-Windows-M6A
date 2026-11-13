@@ -236,6 +236,12 @@ def create_project(name: str, root: str) -> tuple[bool, Any]:
     # Windows: a drive letter Windows does not call local (a mapped network drive is a share under a
     # letter, and a drive type Windows cannot name counts as one) is refused before realpath, which
     # would already open the SMB connection.
+    # A `~` path is judged as it expands too: a home on a share turns `~\\x` into `\\\\server\\...`.
+    if raw.startswith("~"):
+        expanded = os.path.expanduser(raw)
+        non_local = windows_path_policy.refused_form(expanded)
+        if non_local:
+            return False, windows_path_policy.refusal_text(expanded, non_local)
     network_drive = _network_drive(raw)
     if network_drive:
         return False, (
