@@ -1139,9 +1139,9 @@ _JS = r"""
 #: Hello bridge, so Windows shows its credential window, which needs OK and does not check what is typed in it. (A source
 #: install with a Hello bridge asks Windows Hello first; this text describes the bundle.)
 _WINDOWS_WORDING: tuple[tuple[str, str], ...] = (
-    ("'This Mac asks you to confirm it is you in its own window.'",
+    ("'Your computer now asks you to confirm it is you, in its own window.'",
      "'Windows shows a confirmation window; choose OK to continue.'"),
-    ("Setting, changing or resetting it asks this Mac to confirm it is you in its own window.'",
+    ("Setting, changing or resetting it asks your computer to confirm it is you, in its own window.'",
      "When you set, change or reset it, Windows shows a confirmation window; choose OK to continue.'"),
 )
 
