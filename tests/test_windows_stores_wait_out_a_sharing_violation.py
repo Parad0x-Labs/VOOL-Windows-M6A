@@ -94,12 +94,13 @@ def test_usage_meter_that_stays_unreadable_refuses_and_keeps_its_counts(home, mo
         usage_quota.consume_quota("x.post", tier="free", today="2026-11-13")
     usage_quota.consume_quota("other", tier="free", today="2026-11-13")
     before = usage_quota._usage_path().read_bytes()
-    _Held(monkeypatch, usage_quota._usage_path().name, reads=10_000)
+    held = _Held(monkeypatch, usage_quota._usage_path().name, reads=10_000)
     assert usage_quota.check_quota("x.post", tier="free", today="2026-11-13").allowed is False
     assert usage_quota.consume_quota("x.post", tier="free", today="2026-11-13").allowed is False
     assert usage_quota.consume_quota("other", tier="free", today="2026-11-13").allowed is False
     usage_quota.release_quota("other", today="2026-11-13")
     assert usage_quota.store_readable() is False
+    held.reads = 0  # the other process lets go
     assert usage_quota._usage_path().read_bytes() == before
 
 
