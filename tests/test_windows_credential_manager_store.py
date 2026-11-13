@@ -140,6 +140,7 @@ def _isolated(tmp_path, monkeypatch):
     monkeypatch.delenv("VOOL_KEYCHAIN_ALLOWED", raising=False)
     monkeypatch.setattr(cs, "_WINDOWS_NOTICE_SHOWN", False)
     monkeypatch.setattr(cs, "_MIGRATION_NOTICES", set())
+    monkeypatch.setattr(cs, "_REINDEX_NOTICES", set(), raising=False)
     wcm.reset_probe()
     yield
     wcm.reset_probe()
@@ -271,7 +272,7 @@ def test_windows_selects_credential_manager_by_default_without_a_keychain_grant(
     assert cs.active_backend() == "credential_manager"
     assert cs.backend_label() == "Windows Credential Manager"
     assert "Windows Credential Manager" in cs.backend_sentence()
-    assert cs.active_storage_class() == "keychain"
+    assert cs.active_storage_class() == "os-user-sealed"
 
 
 def test_off_windows_nothing_changes_and_advapi32_is_never_loaded(monkeypatch):
@@ -364,10 +365,10 @@ def test_a_failed_read_is_unknown_under_strict_reads(windows):
 
 def test_a_wiped_index_is_rebuilt_from_the_enumerate(windows):
     cs.store_credential("llm.cloud.openrouter", FAKE_KEY, label="OpenRouter")
-    cs.store_credential("custom.slot.name", OTHER_FAKE, label="Mine")
+    cs.store_credential("email.imap.work", OTHER_FAKE, label="Mine")
     runtime_paths.data_path("credentials.meta.json").unlink()
     names = [item["name"] for item in cs.list_credentials()]
-    assert names == ["custom.slot.name", "llm.cloud.openrouter"]
+    assert names == ["email.imap.work", "llm.cloud.openrouter"]
 
 
 def test_diagnostics_name_credential_manager_and_never_carry_a_value(windows):
@@ -539,3 +540,65 @@ def test_a_save_whose_index_cannot_be_sealed_is_refused_and_leaves_nothing_behin
     with pytest.raises(owner_only.OwnerOnlyUnavailable):
         cs.store_credential("llm.cloud.openrouter", FAKE_KEY)
     assert windows.records == {}  # "the key wasn't saved" stays true
+
+
+# ------------------------------------------------------------------ re-indexing enumerated names (security review B)
+
+
+def _wipe_index() -> None:
+    runtime_paths.data_path("credentials.meta.json").unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize(
+    "planted",
+    [
+        "totally.unknown.thing",          # grammar-shaped, but no VOOL slot family
+        "notvool",                        # one segment
+        "llm.cloud.<img src=x onerror=1>",  # a family, but not the name grammar
+        "llm.cloud.[click](https:x)",     # markdown-shaped
+        "LLM.cloud.openrouter",           # case-folded look-alike of a known slot
+    ],
+)
+def test_a_planted_unknown_name_is_never_indexed_and_never_logged(windows, capsys, planted):
+    windows.plant("VOOL/credentials/" + planted, b"fake-planted")
+    _wipe_index()
+    assert cs.list_credentials() == []
+    assert not cs.has_credential(planted)
+    assert planted not in cs._meta_load()
+    err = capsys.readouterr().err
+    assert planted not in err
+    assert "1 unrecognised" in err
+
+
+def test_a_planted_known_slot_is_indexed_only_after_its_read_confirms_it(windows):
+    windows.plant("VOOL/credentials/llm.cloud.openrouter", b"")  # present, but reads back empty
+    _wipe_index()
+    assert cs.list_credentials() == []
+    windows.fail_read = 5  # present, but its read fails
+    assert cs.list_credentials() == []
+    assert "llm.cloud.openrouter" not in cs._meta_load()
+    windows.fail_read = None
+    windows.plant("VOOL/credentials/llm.cloud.openrouter", FAKE_KEY.encode())
+    assert cs.list_credentials() == [{"name": "llm.cloud.openrouter", "label": "OpenRouter"}]
+
+
+def test_a_family_name_in_the_write_grammar_is_reindexed_after_its_read(windows):
+    windows.plant("VOOL/credentials/email.smtp.me@example.com", b"fake-app-password")
+    _wipe_index()
+    assert [item["name"] for item in cs.list_credentials()] == ["email.smtp.me@example.com"]
+
+
+def test_the_windows_store_reports_the_os_user_sealed_class(windows):
+    from core.secret_storage import (
+        STORAGE_CLASS_DESCRIPTIONS,
+        STORAGE_CLASS_KEYCHAIN,
+        STORAGE_CLASS_OS_USER_SEALED,
+    )
+
+    assert STORAGE_CLASS_OS_USER_SEALED == "os-user-sealed"
+    assert cs.active_storage_class() == STORAGE_CLASS_OS_USER_SEALED
+    text = STORAGE_CLASS_DESCRIPTIONS[STORAGE_CLASS_OS_USER_SEALED].lower()
+    assert "sign-in" in text and "any program running as that user" in text
+    assert "windows" not in STORAGE_CLASS_DESCRIPTIONS[STORAGE_CLASS_KEYCHAIN].lower()
+    cs.store_credential("llm.cloud.openrouter", FAKE_KEY)
+    assert cs.export_diagnostics()["storage_class"] == "os-user-sealed"
