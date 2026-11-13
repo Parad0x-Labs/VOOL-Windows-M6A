@@ -669,21 +669,35 @@ _CREDENTIAL_OWNER_ONLY_REFUSAL = (
 )
 
 
+def _reported_backend_name(backend: object) -> str:
+    """The backend's own name as credential_store reported it, for wording that makes no claim."""
+    name = re.sub(r"[^A-Za-z0-9._-]", "", str(backend or ""))[:48]
+    return name or "unreported"
+
+
 def _credential_backend_label(backend: object) -> str:
-    return "the macOS Keychain" if backend == "keychain" else "the encrypted local vault"
+    if backend == "keychain":
+        return "the macOS Keychain"
+    if backend == "vault":
+        return "the encrypted local vault"
+    return f"the `{_reported_backend_name(backend)}` credential store"
 
 
 def _credential_backend_sentence(backend: object) -> str:
-    """Where stored credentials live, as one sentence (no trailing period). Windows is always the
-    vault (core.credential_store gates the Keychain to macOS)."""
+    """Where stored credentials live, as one sentence (no trailing period), read from the backend
+    credential_store reports. Only the two backends VOOL knows get a location; any other backend
+    (a new store, or a value this code has not seen) is named as reported, with no claim about where
+    or how it keeps keys, so the sentence stays true when a backend is added."""
     if backend == "keychain":
         return "Keys live in the macOS Keychain"
-    # The vault's sealing key sits in the same user profile (core.secret_storage
-    # account-file-permissions class): never call it the OS secret store.
-    return (
-        "Keys live in VOOL's encrypted local vault in your user profile, protected by your "
-        "account's file permissions, not by the OS secret store"
-    )
+    if backend == "vault":
+        # The vault's sealing key sits in the same user profile (core.secret_storage
+        # account-file-permissions class): never call it the OS secret store.
+        return (
+            "Keys live in VOOL's encrypted local vault in your user profile, protected by your "
+            "account's file permissions, not by the OS secret store"
+        )
+    return f"Keys live in VOOL's credential store, backend `{_reported_backend_name(backend)}`"
 
 
 _CLOUD_DIAG_RE = re.compile(
