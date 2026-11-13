@@ -134,10 +134,8 @@ def _candidates(body: str) -> list[tuple[int, str]]:
 def _local(body: str, start: int, path: str) -> bool:
     """Whether ``path`` may be looked up at all: a full path on a local drive. Judged on its spelling
     and, for a drive letter on Windows, on GetDriveTypeW, which does no I/O on a share."""
-    from core import windows_known_folders
+    from core import windows_known_folders, windows_path_policy
     from core.agent_runtime import write_root_honesty as paths
-
-    from core import windows_path_policy
 
     if paths.typed_path_kind(body, start, path) or windows_path_policy.refused_doubled_drive(path):
         return False  # `typed_path_kind` asks the doubled-separator rule too; asked here as well

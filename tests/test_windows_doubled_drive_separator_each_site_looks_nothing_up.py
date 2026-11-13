@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from tests._nonlocal_touch_recorder import recorder, windows_host  # noqa: F401
-from tests.test_windows_doubled_drive_separator_is_refused_like_a_share import (  # noqa: F401
+from tests._nonlocal_touch_recorder import recorder, windows_host
+from tests.test_windows_doubled_drive_separator_is_refused_like_a_share import (
     DOUBLED,
     lookups,
     real_windows_seams,

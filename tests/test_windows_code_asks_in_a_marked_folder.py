@@ -17,9 +17,8 @@ would run, which is what this change decides.
 """
 from __future__ import annotations
 
-import ntpath
-
 import json
+import ntpath
 import uuid
 from pathlib import Path
 from typing import Any
