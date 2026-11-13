@@ -1,5 +1,8 @@
 @echo off
 setlocal enabledelayedexpansion
+rem UTF-8 mode for every Python this launcher starts (as installer\bundle\vool-launch.cmd does):
+rem without it Python on Windows reads and writes text as cp1252.
+set "PYTHONUTF8=1"
 REM Open the VOOL .null (Web0) browser. A normal browser cannot open a .null site
 REM directly (it lives on Arweave, behind the resolver), so this points at the page
 REM VOOL serves at http://127.0.0.1:11435/web0 - the always-on API server renders it

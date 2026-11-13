@@ -1,5 +1,8 @@
 @echo off
 setlocal enabledelayedexpansion
+rem UTF-8 mode for every Python this launcher starts (as installer\bundle\vool-launch.cmd does):
+rem without it Python on Windows reads and writes text as cp1252.
+set "PYTHONUTF8=1"
 REM Open the VOOL chat page - the product's own chat surface served by the
 REM always-on API server at http://127.0.0.1:11435/chat (core/vool_chat_page.py).
 REM Same ensure-healthy-then-open contract as Open_Web0.bat; the .null browser
