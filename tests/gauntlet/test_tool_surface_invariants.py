@@ -35,6 +35,25 @@ pytestmark = [pytest.mark.gauntlet, pytest.mark.safety]
 
 GOLDEN_PATH = Path(__file__).resolve().parent / "tool_surface_golden.json"
 
+#: Intents the golden lists that Windows deliberately does not offer. Named here, not derived, so
+#: a new platform gap is a reviewed edit to this test and never a silent shrink of the catalog.
+#: pdf.*: PDF reading runs macOS PDFKit (core/pdf_tools.py). operator.apple_note_*: Apple Notes
+#: runs through /usr/bin/osascript. On Windows these contracts are unsupported at the source;
+#: tests/test_windows_catalog_no_pdf.py and tests/test_windows_apple_notes_contracts_not_offered.py
+#: pin that they ARE withheld.
+WINDOWS_WITHHELD_INTENTS = frozenset({
+    "operator.apple_note_list",
+    "operator.apple_note_read",
+    "pdf.extract_text",
+    "pdf.ocr",
+})
+
+
+def _withheld_on_this_host() -> frozenset[str]:
+    from core import posix_tools
+
+    return WINDOWS_WITHHELD_INTENTS if posix_tools.active() else frozenset()
+
 
 def _shipped_specs() -> list[dict[str, Any]]:
     """The specs a shipped runtime offers, with policy pinned rather than inherited.
@@ -97,7 +116,7 @@ def test_the_snapshot_ignores_the_ambient_policy_cache() -> None:
 
 
 def test_no_intent_disappears_from_the_catalog(golden: dict, live: dict) -> None:
-    missing = sorted(set(golden["intents"]) - set(live["intents"]))
+    missing = sorted(set(golden["intents"]) - set(live["intents"]) - _withheld_on_this_host())
     assert not missing, f"intents no longer advertised to the model: {missing}"
 
 
@@ -254,6 +273,7 @@ def test_the_golden_is_current_enough_to_be_meaningful(golden: dict, live: dict)
     """Guard against a golden that silently stopped covering the surface it claims to."""
 
     assert golden["intent_count"] == len(golden["tools"])
-    assert live["intent_count"] >= golden["intent_count"] - 1, (
+    expected = golden["intent_count"] - len(_withheld_on_this_host() & set(golden["intents"]))
+    assert live["intent_count"] >= expected - 1, (
         "the live surface shrank by more than one intent; regenerate deliberately"
     )
