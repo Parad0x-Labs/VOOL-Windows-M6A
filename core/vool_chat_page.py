@@ -14289,19 +14289,17 @@ def _page_fragments() -> tuple[str, ...]:
 # served these exact pieces swapped; every other host gets the template byte for byte. A click on an
 # image starts nothing and the menu's Open item is disabled.
 _WINDOWS_FILE_ACTIONS = (
-    ("Newest first; click a file to reveal it in Finder.</p>",
-     "Newest first; click a file to show it in its folder.</p>"),
-    ("prev.title = 'Reveal folder in Finder';",
+    ("prev.title = /Mac/.test(navigator.platform || '') ? pageT('session.reveal_folder_title', 'Reveal folder in Finder') : 'Show folder';",
      "prev.title = 'Show folder in File Explorer';"),
     ('title="Click to open in Preview - right-click for more">',
      'title="Opening files is not available on Windows yet - right-click for more">'),
     ("function openImageNative(local) { if (local) _fileOpen(local, false); }   // default app (Preview)",
      "function openImageNative(local) {}   // opening a file is not available on Windows yet"),
-    ("if (local) add('Open in Preview', () => openImageNative(local));",
+    ("if (local) add(pageT('msg.img_open_preview', 'Open in Preview'), () => openImageNative(local));",
      "if (local) { const off = document.createElement('button'); off.type = 'button'; off.className = 'proj-menu-item';"
      " off.disabled = true; off.style.opacity = '0.55'; off.textContent = 'Open (not available on Windows yet)';"
      " menu.appendChild(off); }"),
-    ("if (local) add('Show in Finder', () => revealImage(local));",
+    ("if (local) add(/Mac/.test(navigator.platform || '') ? pageT('msg.img_show_in_finder', 'Show in Finder') : 'Show in folder', () => revealImage(local));",
      "if (local) add('Show in folder', () => revealImage(local));"),
 )
 
