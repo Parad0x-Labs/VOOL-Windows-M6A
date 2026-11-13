@@ -9,12 +9,14 @@ hardware-bound, or encrypted-at-rest against profile or disk theft.
 from __future__ import annotations
 
 STORAGE_CLASS_KEYCHAIN = "keychain"
+STORAGE_CLASS_OS_USER_SEALED = "os-user-sealed"
 STORAGE_CLASS_USER_PASSPHRASE = "user-passphrase"
 STORAGE_CLASS_ACCOUNT_FILE_PERMISSIONS = "account-file-permissions"
 STORAGE_CLASS_EPHEMERAL = "ephemeral"
 
 STORAGE_CLASSES = (
     STORAGE_CLASS_KEYCHAIN,
+    STORAGE_CLASS_OS_USER_SEALED,
     STORAGE_CLASS_USER_PASSPHRASE,
     STORAGE_CLASS_ACCOUNT_FILE_PERMISSIONS,
     STORAGE_CLASS_EPHEMERAL,
@@ -24,6 +26,11 @@ STORAGE_CLASS_DESCRIPTIONS = {
     STORAGE_CLASS_KEYCHAIN: (
         "Secret stored in the OS Keychain. Only available after the explicit operator "
         "grant (Settings); the Keychain protects the item under its own ACL."
+    ),
+    STORAGE_CLASS_OS_USER_SEALED: (
+        "Secret stored in an OS credential store (Windows Credential Manager), sealed by the OS "
+        "to the user's sign-in; readable by any program running as that user (there is no "
+        "per-application access list)."
     ),
     STORAGE_CLASS_USER_PASSPHRASE: (
         "Secret sealed with AES-GCM under a key derived from a passphrase only the user "

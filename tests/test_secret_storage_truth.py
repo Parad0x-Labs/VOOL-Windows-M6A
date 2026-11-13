@@ -27,7 +27,9 @@ _FORBIDDEN = ("machine-protected", "machine protected", "hardware-bound", "hardw
 def test_storage_class_vocabulary_is_the_four_truthful_classes() -> None:
     from core.secret_storage import STORAGE_CLASSES
 
-    assert STORAGE_CLASSES == ("keychain", "user-passphrase", "account-file-permissions", "ephemeral")
+    assert STORAGE_CLASSES == (
+        "keychain", "os-user-sealed", "user-passphrase", "account-file-permissions", "ephemeral"
+    )
 
 
 def test_account_file_description_denies_what_it_does_not_protect() -> None:

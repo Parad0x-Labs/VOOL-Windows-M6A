@@ -17,8 +17,11 @@ VOOL keeps its settings, chats, memory and records in one runtime home:
 Setting `VOOL_HOME` before starting VOOL uses that folder instead. Startup logs print the
 home in use.
 
-Keys are **not** stored here. They live in the operating system credential store —
-Keychain on macOS, Credential Manager on Windows, Secret Service on Linux.
+Keys are **not** stored as plain files here. On Windows they live in Windows Credential Manager
+(each key as `VOOL/credentials/` plus its name); on macOS in the Keychain once you allow it in Settings. Otherwise
+(Linux, macOS before that, or a Windows session where Credential Manager is unavailable) they are
+in VOOL's encrypted vault, `data/credentials.enc.json` in this folder, protected by your account's
+file permissions. Setting `VOOL_CREDENTIAL_STORE=vault` keeps them in the vault on every system.
 
 ## Settings
 
