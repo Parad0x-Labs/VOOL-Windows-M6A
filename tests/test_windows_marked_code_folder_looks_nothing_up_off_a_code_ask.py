@@ -18,7 +18,7 @@ import pytest
 from core import windows_known_folders
 from core import windows_write_gate as gate
 from core.agent_runtime import write_root_honesty
-from tests._nonlocal_touch_recorder import recorder, windows_host  # noqa: F401
+from tests._nonlocal_touch_recorder import recorder, windows_host
 from tests.test_windows_nonlocal_path_message_lanes import NETWORK, _served_chat, _served_turns
 
 POLL = "Read C://attkr9/s/HEARTBEAT.md. If nothing needs attention, reply HEARTBEAT_OK."

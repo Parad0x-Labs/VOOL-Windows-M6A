@@ -1264,7 +1264,6 @@ def _openrouter_catalog_facts(model_name: str, *, base_url: str = "") -> dict[st
     """
     try:
         from core.openrouter_catalog import cached_catalog_row
-
         from core.windows_cloud_gate import catalog_lane
 
         with catalog_lane(base_url):

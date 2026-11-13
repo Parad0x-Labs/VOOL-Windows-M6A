@@ -21,7 +21,7 @@ import pytest
 from core import windows_known_folders, windows_marked_file_ops, windows_path_policy
 from core import windows_write_gate as gate
 from core.agent_runtime import write_root_honesty
-from tests._nonlocal_touch_recorder import recorder, windows_host  # noqa: F401
+from tests._nonlocal_touch_recorder import recorder, windows_host
 from tests.test_windows_nonlocal_path_message_lanes import NETWORK, _served_chat, _served_turns
 
 DOUBLED = ["C://attkr9/s/x", "C:\\\\attkr9\\s\\x", "C:/\\attkr9/s/x", "C:\\/attkr9\\s\\x"]

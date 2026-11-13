@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from sandbox import job_runner as jr
-from tests.test_windows_confinement_runner import (  # noqa: F401 - `windows` is a fixture
+from tests.test_windows_confinement_runner import (
     _fake_launcher,
     _runner,
     _use_launcher,

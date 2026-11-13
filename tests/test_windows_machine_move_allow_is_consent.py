@@ -365,7 +365,7 @@ def test_a_move_naming_a_network_drive_is_refused_before_anything_resolves_it(ma
     resolved: list[str] = []
     monkeypatch.setattr(machine_file_ops, "_canonicalize", lambda raw: resolved.append(raw))
     monkeypatch.setattr(windows_known_folders, "_drive_is_remote",
-                        lambda drive: True if str(drive or "").upper().rstrip("\\/") == "Z:" else False)
+                        lambda drive: str(drive or "").upper().rstrip("\\/") == "Z:")
     arguments = {"source": str(machine["first"] / "notes.txt"), "destination": str(machine["second"] / "notes.txt")}
     arguments[remote] = "Z:\\VOOL Test\\notes.txt"
     refused = _windows_move_card_refusal("machine.move_path", arguments)
