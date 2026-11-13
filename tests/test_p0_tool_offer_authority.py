@@ -20,6 +20,7 @@ from core.capability_graph import (
     _FAMILY_REPRESENTATIVE,
     model_visible_specs,
 )
+from core import posix_tools
 from core.runtime_tool_contracts import runtime_tool_contract_map
 
 _STUB_MCP = str(Path(__file__).parent / "mcp_stub_server.py")
@@ -65,6 +66,10 @@ def test_explicit_read_request_wins_over_family_ranking() -> None:
         family_hint="workspace",
         user_text="extract the text from report.pdf",
     )
+    if posix_tools.active():
+        # Windows withholds pdf.* at the contract, so no phrasing may seat it there.
+        assert "pdf.extract_text" not in _intents(specs)
+        return
     assert "pdf.extract_text" in _intents(specs)
 
 
@@ -408,6 +413,10 @@ def test_expansion_reseats_the_requested_family() -> None:
     context = {"runtime_session_id": "p0-sess", "turn_id": "p0-turn"}
     record_family_expansion(context, "pdf")
     specs = model_visible_specs(source_context=context, family_hint="workspace")
+    if posix_tools.active():
+        # Windows withholds pdf.* at the contract, so expanding the family seats nothing from it.
+        assert not {"pdf.extract_text", "pdf.ocr"} & _intents(specs)
+        return
     assert "pdf.extract_text" in _intents(specs)
 
 

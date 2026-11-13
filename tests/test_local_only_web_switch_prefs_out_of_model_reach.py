@@ -123,7 +123,7 @@ def test_an_approved_command_runs_with_the_data_folder_hidden(
     home: dict[str, Path], monkeypatch: pytest.MonkeyPatch, which: int
 ) -> None:
     """The served command lane, up to the kernel profile: the bwrap argv hides the data folder."""
-    from sandbox import job_runner
+    from sandbox import job_runner, network_guard
 
     workspace = _workspaces(home)[which]
     prefs = home["prefs"]
@@ -132,6 +132,10 @@ def test_an_approved_command_runs_with_the_data_folder_hidden(
     real_which = shutil.which
     monkeypatch.setattr(job_runner.sys, "platform", "linux")
     monkeypatch.setattr(job_runner, "_is_windows_platform", lambda: False)
+    # The whole lane is Linux's: the command line is read by the POSIX rules too. Left on Windows,
+    # the sandbox's Windows rule looks the bare `python3` up as an .exe on PATH and refuses it there,
+    # before any profile is built.
+    monkeypatch.setattr(network_guard, "_IS_WINDOWS", False)
     monkeypatch.setattr(job_runner.shutil, "which", lambda name, *a, **k: "/usr/bin/bwrap" if name == "bwrap" else real_which(name, *a, **k))
     monkeypatch.setattr(job_runner, "_backend_usable", lambda *_a, **_k: True)
     launched: list[list[str]] = []

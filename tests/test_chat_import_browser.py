@@ -173,10 +173,20 @@ def test_bring_chats_in_from_a_file_and_from_an_app(served):
         look = panel.get_by_role("button", name="Show my chats", exact=True)
         assert look.is_disabled()  # nothing is read until a source is chosen
 
-        # The app found on this computer is described by what it is, never by name.
+        # The app found on this computer is described by what it is, never by name. On Windows only
+        # the export file is offered (core.chat_import.local_sources.SUPPORTED_PLATFORMS is macOS
+        # and Linux), so there the app is not offered at all.
+        from core.chat_import import local_sources
+
+        apps_offered = local_sources._platform_key(None) in local_sources.SUPPORTED_PLATFORMS
         agent = panel.get_by_role("radio", name="An AI agent on this computer")
-        agent.wait_for()
-        assert "Last used" in panel.inner_text()
+        if apps_offered:
+            agent.wait_for()
+            assert "Last used" in panel.inner_text()
+        else:
+            panel.get_by_role("radio", name="A data export file (.zip)").wait_for()
+            assert agent.count() == 0
+            assert "Last used" not in panel.inner_text()
 
         panel.get_by_role("radio", name="A data export file (.zip)").check()
         panel.get_by_label("Data export file", exact=True).set_input_files(str(export))
@@ -214,6 +224,9 @@ def test_bring_chats_in_from_a_file_and_from_an_app(served):
         panel.get_by_role("button", name="Cancel", exact=True).click()
         assert panel.locator(".vci-chat").count() == 0
 
+        if not apps_offered:
+            assert not errors, errors
+            return
         # The app on this computer.
         agent.check()
         look.click()

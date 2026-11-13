@@ -305,6 +305,12 @@ def test_a_run_cut_off_before_titles_is_finished_on_the_next_look(app, monkeypat
     assert [row["title"] for row in imported] == ["Baking bread"]
 
 
+def _local_apps_read_here() -> bool:
+    from core.chat_import import local_sources
+
+    return local_sources._platform_key(None) in local_sources.SUPPORTED_PLATFORMS
+
+
 def test_reading_a_local_app_never_changes_its_files(app, tmp_path):
     db = tmp_path / "user-home" / ".hermes" / "state.db"
     db.parent.mkdir(parents=True)
@@ -338,6 +344,17 @@ def test_reading_a_local_app_never_changes_its_files(app, tmp_path):
         assert set(before) == {"", "-wal", "-shm"}
         status, sources = _call(app, "GET", "/api/chat/import/sources")
         assert status == 200 and sources["file"] is True
+        if not _local_apps_read_here():
+            # Windows offers only the export file: other apps' store locations are verified for
+            # macOS and Linux only (core.chat_import.local_sources.SUPPORTED_PLATFORMS). The app is
+            # not offered, a direct ask is answered "store_missing", and its files are never opened.
+            assert sources["local"] == []
+            status, preview = _call(app, "POST", "/api/chat/import/preview", body={"source": "local_agent"})
+            assert status == 200 and preview["chats"] == [] and preview["problems"] == ["store_missing"], preview
+            assert fingerprint() == before
+            work = runtime_paths.data_path("chat_import", "work")
+            assert not work.exists() or list(work.iterdir()) == []
+            return
         assert [s["id"] for s in sources["local"]] == ["local_agent"]
         assert sources["local"][0]["kind"] == "ai_agent"
         status, preview = _call(app, "POST", "/api/chat/import/preview", body={"source": "local_agent"})

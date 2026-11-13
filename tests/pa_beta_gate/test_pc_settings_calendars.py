@@ -149,6 +149,16 @@ def test_setup_refuses_what_cannot_work_and_a_reconnected_account_waits_for_a_ne
     status, synced = api_post("/api/calendar/sync", {"account_id": account_id})
     assert status == 200 and synced["reports"][0]["status"] == "sync_off" and state.request_count == requests_before, synced
 
+    from core.operator import calendar_accounts
+
+    if calendar_accounts._host_is_windows():
+        # Windows has no EventKit: the add itself is refused with the CalDAV way in, and nothing is
+        # stored (tests/test_calendar_add_refuses_eventkit_on_windows.py pins the same refusal).
+        status, refused = api_post("/api/calendar/accounts/add", {"provider": "eventkit", "label": "This Mac"})
+        assert status == 400 and refused["reason"] == "provider_not_on_this_host", refused
+        assert "CalDAV" in refused["detail"], refused
+        assert [a["account_id"] for a in api_get("/api/calendar/accounts")[1]["accounts"]] == [account_id]
+        return
     apple = _ok("/api/calendar/accounts/add", {"provider": "eventkit", "label": "This Mac"})
     status, looked = api_post("/api/calendar/accounts/discover", {"account_id": apple["account_id"]})
     assert status == 200 and looked["ok"] is False and looked["status"] == "unsupported" and looked["recovery"], looked

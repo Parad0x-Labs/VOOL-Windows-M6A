@@ -23,6 +23,7 @@ from unittest import mock
 
 import pytest
 
+from core import posix_tools
 from core.runtime_execution_tools import execute_runtime_tool
 from core.runtime_tool_contracts import runtime_tool_contract_map
 
@@ -175,6 +176,12 @@ def test_a_missing_framework_says_so_rather_than_returning_nothing(tmp_path) -> 
         result = pdf_tools.extract_text(str(pdf))
 
     assert result["status"] == "missing_dependency"
+    if posix_tools.active():
+        # Windows withholds PDF reading (no PDFKit or Vision): the reason is the Windows sentence,
+        # given before any interpreter is looked for, and still never an empty "ok".
+        assert result["reason"] == pdf_tools.WINDOWS_UNAVAILABLE
+        assert result["text"] == ""
+        return
     assert "system Python" in result["reason"]
 
 
