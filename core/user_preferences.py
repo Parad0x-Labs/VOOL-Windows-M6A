@@ -225,7 +225,18 @@ def load_preferences() -> UserPreferences:
         return default_preferences()
 
 
-def save_preferences(prefs: UserPreferences) -> Path:
+def save_preferences(prefs: UserPreferences, *, writes_local_only_block_web: bool = False) -> Path:
+    """Persist ``prefs``.
+
+    The "Block web search in Local Only" switch is written only by its own Settings save
+    (``writes_local_only_block_web=True``, the prefs authority when its body names the switch).
+    Every other writer keeps the value already on disk, and when the file on disk cannot be read
+    it writes the switch ON: `load_preferences` turned that file into defaults, so the ``False`` it
+    carries is not the owner's choice, and the gate already reads the unknown switch as ON.
+    """
+    if not writes_local_only_block_web:
+        stored = local_only_block_web_state()
+        prefs.local_only_block_web = True if stored is None else stored
     prefs = _apply_edition_clamps(prefs)
     path = _prefs_path()
     payload = asdict(prefs)

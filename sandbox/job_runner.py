@@ -1574,6 +1574,24 @@ class JobRunner:
         for root in allowed_roots:
             resolved = str(root.resolve() if isinstance(root, Path) else Path(root).resolve())
             cmd += ["--bind", resolved, resolved]
+        # This runtime's own state (core.runtime_state_protection: its database, credentials, keys and
+        # the owner's preferences) is no-read, no-write for a job. A bound root can CONTAIN it -- a
+        # chat bound to the home folder that holds VOOL's home -- and the binds above would then hand
+        # it to the job writable. Hide each such state root under an empty read-only tmpfs, mounted
+        # AFTER the binds so it covers them. The protected set unknown: no confinement is claimed.
+        try:
+            from core.runtime_state_protection import protected_state_roots
+
+            state_roots = tuple(dict.fromkeys(Path(state).resolve() for state in protected_state_roots()))
+        except Exception:
+            return None
+        bound_roots = [
+            *(Path(root).resolve() for root in (*self.policy.read_roots, self.policy.workspace_root, *program_reads)),
+            *(Path(root).resolve() for root in allowed_roots),
+        ]
+        for state in state_roots:
+            if state.is_dir() and any(state == bound or bound in state.parents for bound in bound_roots):
+                cmd += ["--tmpfs", str(state), "--remount-ro", str(state)]
         # Mountpoint parents created inside the private tmpfs trees are otherwise
         # writable. A child could report an unauthorized write there even though
         # the file disappears with its namespace. Freeze those trees after all

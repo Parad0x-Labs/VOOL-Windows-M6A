@@ -134,7 +134,8 @@ def set_prefs_authority(body: dict, headers: dict, runtime, client_host: str = '
             if not isinstance(value, str) or any(ord(ch) < 32 for ch in value):
                 return apply_runtime_headers(json_response(400, {"error": f"{key} must be a plain string"}), runtime)
             setattr(prefs, key, value.strip()[: _TEXT_LIMITS[key]])
-    save_preferences(prefs)
+    # Only a body that names the switch writes it; any other save keeps it (fail closed when unknown).
+    save_preferences(prefs, writes_local_only_block_web="local_only_block_web" in body)
     if _wallet_switched:
         from core.wallet import config as wallet_config
 
