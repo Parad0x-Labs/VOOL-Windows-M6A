@@ -257,12 +257,12 @@ def ensure_tool() -> Path:
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             _LOG.warning("OCR helper build failed: %s", exc)
-            raise ReaderUnavailable(*_build_failed_words(), code="vision_build_failed") from exc
+            raise ReaderUnavailable(_build_failed_words()[0], code="vision_build_failed", remediation=_build_failed_words()[1]) from exc
         if completed.returncode != 0 or not staged.exists():
             # Compiler output is for the log, not for the person reading the chat.
             detail = (completed.stderr or b"").decode("utf-8", "replace").strip().splitlines()
             _LOG.warning("OCR helper build failed: %s", "; ".join(detail[-3:]) or "unknown compiler error")
-            raise ReaderUnavailable(*_build_failed_words(), code="vision_build_failed")
+            raise ReaderUnavailable(_build_failed_words()[0], code="vision_build_failed", remediation=_build_failed_words()[1])
         # Atomic publish: a half-written binary is never visible to a concurrent extraction.
         pending = binary.with_name(binary.name + f".{os.getpid()}.tmp")
         shutil.copy2(staged, pending)
