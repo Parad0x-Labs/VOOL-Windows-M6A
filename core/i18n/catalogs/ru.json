@@ -1182,6 +1182,13 @@
     "setup.folder.placeholder": "Введите полный путь к папке, напр. /Users/you/Documents",
     "setup.folder.placeholder.windows": "Введите полный путь к папке, напр. C:\\Users\\you\\Documents",
     "setup.folder.use": "Использовать эту папку",
+    "setup.folder.chosen": "Выбрано: {path}. Нажмите «Использовать эту папку», чтобы сохранить её.",
+    "setup.folder.mark": "Отметить эту папку, чтобы VOOL мог менять в ней файлы…",
+    "setup.folder.mark_failed": "Не удалось отметить папку — {reason}",
+    "setup.folder.marked": "Отмечено. Перезапустите VOOL, чтобы ею пользоваться.",
+    "setup.folder.saved_unmarked": "{name} сохранена. В Windows VOOL может менять в ней файлы только после того, как вы её отметите: выберите «Отметить эту папку…» и снова укажите {name}.",
+    "setup.folder.saved_unmarked_settings": "{name} сохранена. В Windows VOOL сможет менять там файлы только после того, как вы отметите папку как одноразовую в настройках и перезапустите VOOL.",
+    "setup.folder.type_help.windows": "Введите путь к папке, например C:\\Users\\you\\Documents. После сохранения VOOL покажет полный путь.",
     "setup.name.aria": "Как VOOL должен вас называть",
     "setup.name.err_empty": "Сначала введите имя или пропустите шаг.",
     "setup.name.hint": "Хранится как одна запомненная запись, которую можно изменить или забыть в Настройках.",
@@ -2659,7 +2666,7 @@
     "addons.registry_release_notes": "Примечания к версии",
     "addons.registry_metrics": "{stars} звёзд на сайте · {downloads} запросов скачивания"
   },
-  "source_catalog_sha256": "08e296a643866431f9324f7e916b71f18e1308638999bf2140a294bd4c5ec3d6",
+  "source_catalog_sha256": "014c22efc7ce35cab1f5f7069a5e5059d5efb6a57492ff381e436c59f8b6e1f8",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -2670,6 +2677,7 @@
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
-    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)"
+    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)"
   }
 }

@@ -1182,6 +1182,13 @@
     "setup.folder.placeholder": "输入文件夹的完整路径，例如 /Users/you/Documents",
     "setup.folder.placeholder.windows": "输入文件夹的完整路径，例如 C:\\Users\\you\\Documents",
     "setup.folder.use": "使用此文件夹",
+    "setup.folder.chosen": "已选择：{path}。点击“使用此文件夹”保存。",
+    "setup.folder.mark": "标记此文件夹，让 VOOL 可以更改其中的文件…",
+    "setup.folder.mark_failed": "无法标记该文件夹 — {reason}",
+    "setup.folder.marked": "已标记。重启 VOOL 后即可使用。",
+    "setup.folder.saved_unmarked": "已保存 {name}。在 Windows 上，只有标记后 VOOL 才能更改其中的文件：选择“标记此文件夹…”，然后再次选择 {name}。",
+    "setup.folder.saved_unmarked_settings": "已保存 {name}。在 Windows 上，只有在设置中将它标记为可丢弃并重启 VOOL 后，VOOL 才能更改其中的文件。",
+    "setup.folder.type_help.windows": "输入文件夹路径，例如 C:\\Users\\you\\Documents。保存后 VOOL 会显示完整文件夹。",
     "setup.name.aria": "VOOL 应该怎么称呼你",
     "setup.name.err_empty": "请先输入名字，或跳过此步骤。",
     "setup.name.hint": "作为一条可编辑、可遗忘的记忆条目保存在设置中。",
@@ -2659,7 +2666,7 @@
     "addons.registry_release_notes": "版本说明",
     "addons.registry_metrics": "网站星标 {stars} · 下载请求 {downloads}"
   },
-  "source_catalog_sha256": "08e296a643866431f9324f7e916b71f18e1308638999bf2140a294bd4c5ec3d6",
+  "source_catalog_sha256": "014c22efc7ce35cab1f5f7069a5e5059d5efb6a57492ff381e436c59f8b6e1f8",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -2670,6 +2677,7 @@
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
-    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)"
+    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)"
   }
 }

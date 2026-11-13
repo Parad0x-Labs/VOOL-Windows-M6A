@@ -1182,6 +1182,13 @@
     "setup.folder.placeholder": "Nhập đường dẫn đầy đủ của thư mục, vd. /Users/ban/Documents",
     "setup.folder.placeholder.windows": "Nhập đường dẫn đầy đủ của thư mục, vd. C:\\Users\\ban\\Documents",
     "setup.folder.use": "Dùng thư mục này",
+    "setup.folder.chosen": "Đã chọn: {path}. Bấm “Dùng thư mục này” để lưu.",
+    "setup.folder.mark": "Đánh dấu thư mục này để VOOL có thể thay đổi tệp…",
+    "setup.folder.mark_failed": "Không đánh dấu được thư mục — {reason}",
+    "setup.folder.marked": "Đã đánh dấu. Khởi động lại VOOL để dùng.",
+    "setup.folder.saved_unmarked": "Đã lưu {name}. Trên Windows, VOOL chỉ thay đổi được tệp ở đó sau khi bạn đánh dấu: chọn “Đánh dấu thư mục này…” rồi chọn lại {name}.",
+    "setup.folder.saved_unmarked_settings": "Đã lưu {name}. Trên Windows, VOOL chỉ có thể thay đổi tệp ở đó sau khi bạn đánh dấu thư mục là dùng một lần trong Cài đặt rồi khởi động lại VOOL.",
+    "setup.folder.type_help.windows": "Nhập đường dẫn thư mục, ví dụ C:\\Users\\you\\Documents. VOOL hiện đầy đủ thư mục sau khi lưu.",
     "setup.name.aria": "VOOL nên gọi bạn là gì",
     "setup.name.err_empty": "Nhập tên trước, hoặc bỏ qua bước này.",
     "setup.name.hint": "Được giữ như một mục ghi nhớ bạn có thể sửa hoặc quên trong Cài đặt.",
@@ -2659,7 +2666,7 @@
     "addons.registry_release_notes": "Ghi chú phiên bản",
     "addons.registry_metrics": "{stars} sao trên trang web · {downloads} yêu cầu tải xuống"
   },
-  "source_catalog_sha256": "08e296a643866431f9324f7e916b71f18e1308638999bf2140a294bd4c5ec3d6",
+  "source_catalog_sha256": "014c22efc7ce35cab1f5f7069a5e5059d5efb6a57492ff381e436c59f8b6e1f8",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -2670,6 +2677,7 @@
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
-    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)"
+    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)"
   }
 }

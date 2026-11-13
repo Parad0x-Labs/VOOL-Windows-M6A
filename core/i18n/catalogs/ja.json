@@ -1182,6 +1182,13 @@
     "setup.folder.placeholder": "フォルダの完全なパスを入力。例: /Users/you/Documents",
     "setup.folder.placeholder.windows": "フォルダの完全なパスを入力。例: C:\\Users\\you\\Documents",
     "setup.folder.use": "このフォルダを使用",
+    "setup.folder.chosen": "選択済み：{path}。保存するには「このフォルダを使用」をクリックしてください。",
+    "setup.folder.mark": "VOOL がファイルを変更できるよう、このフォルダーをマークする…",
+    "setup.folder.mark_failed": "フォルダーをマークできませんでした — {reason}",
+    "setup.folder.marked": "マークしました。使うには VOOL を再起動してください。",
+    "setup.folder.saved_unmarked": "{name} を保存しました。Windows では、マークした後でないと VOOL はそこでファイルを変更できません。「このフォルダーをマークする…」を選び、もう一度 {name} を選んでください。",
+    "setup.folder.saved_unmarked_settings": "{name} を保存しました。Windows では、設定でこのフォルダーを使い捨てとしてマークし、VOOL を再起動した後でないと、VOOL はそこでファイルを変更できません。",
+    "setup.folder.type_help.windows": "フォルダーのパスを入力してください（例：C:\\Users\\you\\Documents）。保存すると、VOOL がフォルダー全体を表示します。",
     "setup.name.aria": "VOOLがあなたを何と呼ぶか",
     "setup.name.err_empty": "まず名前を入力するか、このステップを省略してください。",
     "setup.name.hint": "設定で編集・忘却できる1つの記憶項目として保存されます。",
@@ -2659,7 +2666,7 @@
     "addons.registry_release_notes": "リリースノート",
     "addons.registry_metrics": "サイトのスター {stars} · ダウンロード要求 {downloads}"
   },
-  "source_catalog_sha256": "08e296a643866431f9324f7e916b71f18e1308638999bf2140a294bd4c5ec3d6",
+  "source_catalog_sha256": "014c22efc7ce35cab1f5f7069a5e5059d5efb6a57492ff381e436c59f8b6e1f8",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -2670,6 +2677,7 @@
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
-    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)"
+    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)"
   }
 }

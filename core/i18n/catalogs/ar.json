@@ -1182,6 +1182,13 @@
     "setup.folder.placeholder": "اكتب المسار الكامل للمجلد، مثل /Users/you/Documents",
     "setup.folder.placeholder.windows": "اكتب المسار الكامل للمجلد، مثل C:\\Users\\you\\Documents",
     "setup.folder.use": "استخدم هذا المجلد",
+    "setup.folder.chosen": "تم الاختيار: {path}. انقر «استخدم هذا المجلد» لحفظه.",
+    "setup.folder.mark": "ضع علامة على هذا المجلد ليتمكن VOOL من تغيير الملفات…",
+    "setup.folder.mark_failed": "تعذّر وضع علامة على المجلد — {reason}",
+    "setup.folder.marked": "تم وضع العلامة. أعد تشغيل VOOL لاستخدامه.",
+    "setup.folder.saved_unmarked": "تم حفظ {name}. على Windows لا يستطيع VOOL تغيير الملفات فيه إلا بعد وضع علامة عليه: اختر «ضع علامة على هذا المجلد…» ثم اختر {name} مرة أخرى.",
+    "setup.folder.saved_unmarked_settings": "تم حفظ {name}. على Windows لا يستطيع VOOL تغيير الملفات فيه إلا بعد أن تحدده كمجلد قابل للاستغناء في الإعدادات ثم تعيد تشغيل VOOL.",
+    "setup.folder.type_help.windows": "اكتب مسار المجلد، مثلًا C:\\Users\\you\\Documents. يعرض VOOL المجلد كاملًا بعد حفظه.",
     "setup.name.aria": "بماذا يجب أن يناديك VOOL",
     "setup.name.err_empty": "اكتب اسمًا أولًا، أو تخطَّ هذه الخطوة.",
     "setup.name.hint": "يُحفظ كعنصر يتذكره يمكنك تعديله أو نسيانه في الإعدادات.",
@@ -2659,7 +2666,7 @@
     "addons.registry_release_notes": "ملاحظات الإصدار",
     "addons.registry_metrics": "{stars} نجوم على الموقع · {downloads} طلبات تنزيل"
   },
-  "source_catalog_sha256": "08e296a643866431f9324f7e916b71f18e1308638999bf2140a294bd4c5ec3d6",
+  "source_catalog_sha256": "014c22efc7ce35cab1f5f7069a5e5059d5efb6a57492ff381e436c59f8b6e1f8",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -2670,6 +2677,7 @@
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
-    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)"
+    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)"
   }
 }

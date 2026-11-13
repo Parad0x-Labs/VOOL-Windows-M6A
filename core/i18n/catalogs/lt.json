@@ -1182,6 +1182,13 @@
     "setup.folder.placeholder": "Įrašykite pilną aplanko kelią, pvz. /Users/you/Documents",
     "setup.folder.placeholder.windows": "Įrašykite pilną aplanko kelią, pvz. C:\\Users\\you\\Documents",
     "setup.folder.use": "Naudoti šį aplanką",
+    "setup.folder.chosen": "Pasirinkta: {path}. Spustelėkite „Naudoti šį aplanką“, kad įrašytumėte.",
+    "setup.folder.mark": "Pažymėti šį aplanką, kad VOOL galėtų keisti failus…",
+    "setup.folder.mark_failed": "Nepavyko pažymėti aplanko — {reason}",
+    "setup.folder.marked": "Pažymėta. Paleiskite VOOL iš naujo, kad galėtumėte naudoti.",
+    "setup.folder.saved_unmarked": "{name} įrašytas. Sistemoje Windows VOOL gali keisti failus jame tik jį pažymėjus: pasirinkite „Pažymėti šį aplanką…“ ir dar kartą pasirinkite {name}.",
+    "setup.folder.saved_unmarked_settings": "{name} įrašytas. Windows sistemoje VOOL ten gali keisti failus tik pažymėjus aplanką kaip nereikalingą nustatymuose ir paleidus VOOL iš naujo.",
+    "setup.folder.type_help.windows": "Įveskite aplanko kelią, pavyzdžiui, C:\\Users\\you\\Documents. Įrašius VOOL parodys visą aplanką.",
     "setup.name.aria": "Kaip VOOL turėtų jus vadinti",
     "setup.name.err_empty": "Pirmiausia įrašykite vardą arba praleiskite šį žingsnį.",
     "setup.name.hint": "Laikoma kaip vienas įsimintas įrašas, kurį Nustatymuose galite keisti ar pamiršti.",
@@ -2659,7 +2666,7 @@
     "addons.registry_release_notes": "Versijos pastabos",
     "addons.registry_metrics": "{stars} svetainės žvaigždučių · {downloads} atsisiuntimo užklausų"
   },
-  "source_catalog_sha256": "08e296a643866431f9324f7e916b71f18e1308638999bf2140a294bd4c5ec3d6",
+  "source_catalog_sha256": "014c22efc7ce35cab1f5f7069a5e5059d5efb6a57492ff381e436c59f8b6e1f8",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -2670,6 +2677,7 @@
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
-    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)"
+    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)"
   }
 }
