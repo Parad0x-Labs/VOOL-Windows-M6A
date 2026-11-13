@@ -32,6 +32,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from core.fs_links import is_link  # a Windows junction counts as a link, as a symlink does
+
 PUBLISH_PATH = "/codex/skills/publish"
 #: The written-skill form's limit on the SKILL.md text (``Store.draft``).
 MAX_SKILL_MARKDOWN = 32768
@@ -149,13 +151,13 @@ def _extra_files(skill_dir: Path, *, limit: int = 12) -> list[str]:
         here = Path(current)
         relative = here.relative_to(skill_dir)
         for name in list(folders):
-            if (here / name).is_symlink():
+            if is_link(here / name):
                 found.append((relative / name).as_posix())
         for name in files:
             path = relative / name
             if path.parts == ("SKILL.md",):
                 continue  # the skill itself, read the way export reads it
-            if not (here / name).is_symlink() and (
+            if not is_link(here / name) and (
                     path.parts == (_ACTIVE_TMP,)
                     or (relative.parts == (VERSIONS_DIRNAME,) and _HISTORY_FILE.fullmatch(name))):
                 continue
@@ -176,7 +178,7 @@ def _made_here(skill_dir: Path, scope: str) -> None:
         raise PackageRefused("not_user_skill", f"`{slug}` came with the {skill_dir.parent.parent.name!r} package, "
                                                "not from you; only skills you made can go on the Skill Codex")
     # A link can lead to someone else's skill, or to one that ships with VOOL.
-    if any(path.is_symlink() for path in (skill_dir / "SKILL.md", skill_dir, skill_dir.parent, skill_dir.parent.parent)):
+    if any(is_link(path) for path in (skill_dir / "SKILL.md", skill_dir, skill_dir.parent, skill_dir.parent.parent)):
         raise PackageRefused("not_user_skill", f"`{slug}` is a link to another skill; only skills you made can go "
                                                "on the Skill Codex")
     if any(str(row.get("source")) == "import" for row in skill_tools._read_history(skill_dir).get("versions") or []):

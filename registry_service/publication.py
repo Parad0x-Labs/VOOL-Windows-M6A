@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+from core.fs_links import is_link  # a Windows junction counts as a link, as a symlink does
 from core.registry.codec import HEX, canonical, decode, require, version_key
 from registry_service.mac_authority import _write
 
@@ -17,9 +18,9 @@ def publish(directory: Path, entries: list, revoked: list, marks: dict, *, artif
                 isinstance(item["id"], str) and all(type(item[field]) is int and 0 <= item[field] <= 10**12
                 for field in ("stars", "download_requests")), "invalid public metrics")
         metrics[item["id"]] = {field: item[field] for field in ("stars", "download_requests")}
-    require(directory.is_dir() and not directory.is_symlink(), "invalid publication directory")
+    require(directory.is_dir() and not is_link(directory), "invalid publication directory")
     packages = directory / "packages"
-    require(not packages.is_symlink(), "invalid publication package directory")
+    require(not is_link(packages), "invalid publication package directory")
     packages.mkdir(exist_ok=True)
     path = directory / "registry.json"
     previous = decode(path.read_bytes()) if path.exists() else {"entries": []}
@@ -40,11 +41,11 @@ def publish(directory: Path, entries: list, revoked: list, marks: dict, *, artif
     for package_id, entry in sorted(latest.items()):
         sha = entry["artifact_sha256"]
         file = packages / (sha + ".json")
-        require(not file.is_symlink(), "invalid public artifact")
+        require(not is_link(file), "invalid public artifact")
         raw = file.read_bytes() if file.exists() else artifact(sha)
         require(hashlib.sha256(raw).hexdigest() == sha and len(raw) == entry["artifact_length"],
                 "public artifact differs from admission")
-        require(not file.is_symlink() and (not file.exists() or file.read_bytes() == raw), "public artifact was changed")
+        require(not is_link(file) and (not file.exists() or file.read_bytes() == raw), "public artifact was changed")
         if not file.exists():
             _write(file, raw)
         rows.append({**entry["metadata"], "sha256": sha, "path": "packages/" + sha + ".json", "targets": entry["targets"],
@@ -58,7 +59,7 @@ def publish(directory: Path, entries: list, revoked: list, marks: dict, *, artif
         _write(path, value)
     for sha in old - {item["sha256"] for item in rows}:
         file = packages / (sha + ".json")
-        require(not file.is_symlink(), "invalid previous public artifact")
+        require(not is_link(file), "invalid previous public artifact")
         if file.exists():
             require(hashlib.sha256(file.read_bytes()).hexdigest() == sha, "previous public artifact was changed")
             file.unlink()
