@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
+from core import windows_sharing_retry
 from core.runtime_paths import config_path, data_path
 
 _USAGE_FILE = "usage_quota.json"
@@ -101,12 +102,26 @@ def _usage_path():
     return data_path(_USAGE_FILE)
 
 
+class _UsageRefused(Exception):
+    """The usage file exists but the OS refused to open it (still held after the bounded retry)."""
+
+
 def _load_usage() -> dict[str, dict[str, int]]:
+    """Today's counts. A file that cannot be parsed reads as empty, as before; a file the OS refuses to open
+    raises ``_UsageRefused``: "nothing used today" there would let one more through and the write-back would
+    wipe every other count."""
     path = _usage_path()
     if not path.exists():
         return {}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        # Windows refuses the open for a moment while another writer's replace swaps the file in.
+        text = windows_sharing_retry.read_text(path, encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    except OSError:
+        raise _UsageRefused() from None
+    try:
+        data = json.loads(text)
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}
@@ -127,7 +142,12 @@ def _save_usage(usage: dict[str, dict[str, int]]) -> None:
     # would read back as "nothing used today".
     tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
     tmp.write_text(json.dumps(usage, sort_keys=True), encoding="utf-8")
-    os.replace(tmp, path)
+    try:
+        # Windows refuses the replace for a moment while a reader holds the file; the bounded retry waits it out.
+        windows_sharing_retry.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def store_readable() -> bool:
@@ -136,20 +156,28 @@ def store_readable() -> bool:
     if not path.exists():
         return True
     try:
-        return isinstance(json.loads(path.read_text(encoding="utf-8")), dict)
+        return isinstance(json.loads(windows_sharing_retry.read_text(path, encoding="utf-8")), dict)
     except Exception:
         return False
 
 
 def usage_today(capability: str, *, today: str | None = None) -> int:
-    return int(_load_usage().get(_today(today), {}).get(str(capability), 0))
+    try:
+        return int(_load_usage().get(_today(today), {}).get(str(capability), 0))
+    except _UsageRefused:
+        return 0  # a display count only; check_quota and consume_quota refuse on their own
 
 
 def check_quota(capability: str, *, tier: str, today: str | None = None) -> QuotaCheck:
     """Non-mutating: can at least one more unit be consumed for (capability, tier) today?"""
     day = _today(today)
-    used = usage_today(capability, today=day)
     limit = capability_limit(capability, tier)
+    try:
+        used = int(_load_usage().get(day, {}).get(str(capability), 0))
+    except _UsageRefused:
+        if limit is None:
+            return QuotaCheck(capability, tier, 0, None, None, True, day)
+        return QuotaCheck(capability, tier, limit, limit, 0, False, day)  # unknown count: the cap holds
     if limit is None:
         return QuotaCheck(capability, tier, used, None, None, True, day)
     return QuotaCheck(capability, tier, used, limit, max(0, limit - used), used < limit, day)
@@ -159,14 +187,19 @@ def consume_quota(capability: str, *, tier: str, units: int = 1, today: str | No
     """Try to consume `units`. Under the cap -> increment + allowed=True. At/over -> no change, allowed=False."""
     day = _today(today)
     with _usage_lock:
-        used = usage_today(capability, today=day)
         limit = capability_limit(capability, tier)
+        try:
+            usage = _load_usage()
+        except _UsageRefused:
+            if limit is None:
+                return QuotaCheck(capability, tier, 0, None, None, True, day)
+            return QuotaCheck(capability, tier, limit, limit, 0, False, day)  # unknown count: refuse, write nothing
+        used = int(usage.get(day, {}).get(str(capability), 0))
         if limit is None:
             return QuotaCheck(capability, tier, used, None, None, True, day)
         if used >= limit:
             return QuotaCheck(capability, tier, used, limit, 0, False, day)
         new_used = min(limit, used + max(1, int(units)))
-        usage = _load_usage()
         usage.setdefault(day, {})[str(capability)] = new_used
         _save_usage(_prune(usage, day))
     return QuotaCheck(capability, tier, new_used, limit, max(0, limit - new_used), True, day)
@@ -177,7 +210,10 @@ def release_quota(capability: str, *, units: int = 1, today: str | None = None) 
     the machine, or refused outright by the provider). Never goes below zero."""
     day = _today(today)
     with _usage_lock:
-        usage = _load_usage()
+        try:
+            usage = _load_usage()
+        except _UsageRefused:
+            return  # never overwrite a meter that could not be read
         used = int(usage.get(day, {}).get(str(capability), 0))
         if used <= 0:
             return
@@ -189,7 +225,7 @@ def reset_usage() -> None:
     """Clear all tracked usage (admin / tests)."""
     path = _usage_path()
     if path.exists():
-        path.unlink()
+        windows_sharing_retry.unlink(path, missing_ok=True)
 
 
 __all__ = [

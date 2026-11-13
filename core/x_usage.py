@@ -16,7 +16,6 @@ reads rather than guess the count is zero. ``0`` means "no reads at all"; ``None
 from __future__ import annotations
 
 import json
-import os
 import threading
 from datetime import datetime, timezone
 from typing import Any
@@ -56,7 +55,10 @@ def _load() -> dict[str, Any]:
     if not path.exists():
         return _blank(month)
     try:
-        state = json.loads(path.read_text(encoding="utf-8"))
+        from core import windows_sharing_retry
+
+        # Windows refuses the open for a moment while another writer's replace swaps the file in.
+        state = json.loads(windows_sharing_retry.read_text(path, encoding="utf-8"))
     except (OSError, ValueError):
         raise UsageUnreadable() from None
     if not isinstance(state, dict) or not isinstance(state.get("limits"), dict):
@@ -75,7 +77,14 @@ def _save(state: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(state, sort_keys=True, indent=1), encoding="utf-8")
-    os.replace(tmp, path)
+    from core import windows_sharing_retry
+
+    try:
+        # Windows refuses the replace for a moment while a reader holds the file; the bounded retry waits it out.
+        windows_sharing_retry.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _limit(value: Any) -> int | None:

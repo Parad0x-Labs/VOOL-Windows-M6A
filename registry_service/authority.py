@@ -271,4 +271,7 @@ class OnlineCatalog:
             handle.write(canonical({**directory, "registry": snapshot}))
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, self.catalog_file)
+        from core import windows_sharing_retry
+
+        # A reader holding the catalog file refuses the replace for a moment on Windows.
+        windows_sharing_retry.replace(temporary, self.catalog_file)

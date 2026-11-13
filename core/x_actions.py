@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import secrets
 import threading
 import time
@@ -74,7 +73,10 @@ def _load() -> dict[str, Any]:
     if not path.exists():
         return {"actions": {}}
     try:
-        state = json.loads(path.read_text(encoding="utf-8"))
+        from core import windows_sharing_retry
+
+        # Windows refuses the open for a moment while another writer's replace swaps the file in.
+        state = json.loads(windows_sharing_retry.read_text(path, encoding="utf-8"))
     except (OSError, ValueError):
         raise RuntimeError("x actions store unreadable") from None
     if not isinstance(state, dict) or not isinstance(state.get("actions"), dict):
@@ -87,7 +89,14 @@ def _save(state: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(state, sort_keys=True, indent=1), encoding="utf-8")
-    os.replace(tmp, path)
+    from core import windows_sharing_retry
+
+    try:
+        # Windows refuses the replace for a moment while a reader holds the file; the bounded retry waits it out.
+        windows_sharing_retry.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _expire(state: dict[str, Any], now: float) -> None:

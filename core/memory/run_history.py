@@ -745,6 +745,7 @@ def _forget_pins(token: str, *, chat_id: str, erasures: dict[str, Any]) -> None:
     """
     import os
 
+    from core import windows_sharing_retry
     from core.memory.entries import _record_erasure_store
     from core.message_pins import _PINS_LOCK
 
@@ -775,7 +776,8 @@ def _forget_pins(token: str, *, chat_id: str, erasures: dict[str, Any]) -> None:
                         handle.write(payload)
                         handle.flush()
                         os.fsync(handle.fileno())
-                    os.replace(staging, path)
+                    # A reader holding the pin file refuses the replace for a moment on Windows.
+                    windows_sharing_retry.replace(staging, path)
             if _pins_carrying(token, chat_id):
                 raise RuntimeError("pinned messages could not be erased and verified")
         _record_erasure_store(erasures, store_name, "verified", removed)
