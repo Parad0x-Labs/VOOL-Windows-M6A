@@ -373,6 +373,17 @@ def _failure_text(status: str, *, reason: str, shown: str) -> str:
     return f"I could not read `{shown}`: {reason or status}."
 
 
+def _refused_as_windows_unavailable(execution: Any) -> bool:
+    """On Windows, whether dispatch refused this PDF read because PDF reading is not offered here.
+
+    Always False off Windows, so macOS and Linux keep their answers."""
+    if not posix_tools.active() or str(getattr(execution, "status", "") or "") != "disabled":
+        return False
+    from core.pdf_tools import WINDOWS_UNAVAILABLE
+
+    return str(getattr(execution, "response_text", "") or "").strip() == WINDOWS_UNAVAILABLE
+
+
 def _render_ok(execution: Any, *, shown: str, lead: str) -> str:
     details = dict(getattr(execution, "details", {}) or {})
     text = str(details.get("text") or "").strip()
@@ -531,6 +542,21 @@ def maybe_handle_pdf_read(
         )
 
     reason = str(dict(getattr(execution, "details", {}) or {}).get("reason") or "")
+    if _refused_as_windows_unavailable(execution):
+        # On Windows the PDF contracts are unsupported, so dispatch answers `disabled` after the
+        # permission gate ran and before any tool code: the contract's sentence is the whole answer.
+        from core.pdf_tools import WINDOWS_UNAVAILABLE
+
+        return _machine_tool_fast_path_result(
+            agent,
+            user_input=user_input,
+            session_id=session_id,
+            source_context=source_context,
+            intent=intent,
+            execution=execution,
+            reason="pdf_read_windows_unavailable",
+            response_text=WINDOWS_UNAVAILABLE,
+        )
     if status in REFUSAL_STATUSES:
         # The authority refused (or wants approval for) this read: its own words are the answer,
         # and the envelope carries the typed decision, not a fabricated tool failure.

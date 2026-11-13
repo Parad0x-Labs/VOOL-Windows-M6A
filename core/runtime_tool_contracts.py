@@ -182,8 +182,30 @@ def _apply_edition_floor(
     return floored
 
 
+def _pdf_reading_unsupported_reason(read_enabled: bool) -> str:
+    """Why `pdf.*` is not offered here, or "" when it is.
+
+    PDF reading runs macOS PDFKit and Vision under the Mac system interpreter
+    (`core.pdf_tools`), which Windows does not have. On Windows the two contracts are therefore
+    unsupported at the source, so every reader of the catalog drops them together: the model's
+    tool list, the native definitions, the capability ledger, the operation catalog and direct
+    dispatch. `pdf_tools` still refuses on its own as a second wall. A policy refusal that would
+    apply on any host keeps its own words.
+    """
+    if not read_enabled:
+        return "Local file reading is disabled on this runtime."
+    from core import posix_tools
+
+    if posix_tools.active():
+        from core.pdf_tools import WINDOWS_UNAVAILABLE
+
+        return WINDOWS_UNAVAILABLE
+    return ""
+
+
 def _runtime_tool_contracts_raw(*, web_available_fn: Any = None) -> list[RuntimeToolContract]:
     read_enabled = bool(policy_engine.get("filesystem.allow_read_workspace", True))
+    pdf_unsupported_reason = _pdf_reading_unsupported_reason(read_enabled)
     write_enabled = bool(policy_engine.get("filesystem.allow_write_workspace", False))
     sandbox_enabled = bool(policy_engine.get("execution.allow_sandbox_execution", False))
     # Effective per-turn availability, not the ambient machine default: a turn
@@ -2190,8 +2212,8 @@ def _runtime_tool_contracts_raw(*, web_available_fn: Any = None) -> list[Runtime
             tool_surface="pdf",
             capability_id="pdf.read",
             capability_claim="read the text of a PDF on this machine",
-            supported=read_enabled,
-            unsupported_reason="Local file reading is disabled on this runtime.",
+            supported=not pdf_unsupported_reason,
+            unsupported_reason=pdf_unsupported_reason or "Local file reading is disabled on this runtime.",
             input_schema={"path": "string", "max_pages": "integer optional"},
             output_schema={
                 "status": "ok|no_text_layer|not_found|unreadable|missing_dependency|timeout|error",
@@ -2218,8 +2240,8 @@ def _runtime_tool_contracts_raw(*, web_available_fn: Any = None) -> list[Runtime
             tool_surface="pdf",
             capability_id="pdf.read",
             capability_claim="recognise text on a scanned PDF on this machine, without sending it anywhere",
-            supported=read_enabled,
-            unsupported_reason="Local file reading is disabled on this runtime.",
+            supported=not pdf_unsupported_reason,
+            unsupported_reason=pdf_unsupported_reason or "Local file reading is disabled on this runtime.",
             input_schema={
                 "path": "string",
                 "max_pages": "integer optional",
