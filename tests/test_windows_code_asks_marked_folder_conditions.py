@@ -19,7 +19,7 @@ from core import windows_known_folders
 from core import windows_marked_code_folder as placed
 from core import windows_write_gate as gate
 from core.agent_runtime import write_root_honesty
-from tests.test_windows_code_asks_in_a_marked_folder import _Recorder, _served_turn, machine  # noqa: F401
+from tests.test_windows_code_asks_in_a_marked_folder import _Recorder, _served_turn, machine
 
 
 def _spy_turn_folder(monkeypatch) -> list[str]:

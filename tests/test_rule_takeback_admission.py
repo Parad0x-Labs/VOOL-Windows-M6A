@@ -65,7 +65,7 @@ def _id(request: str) -> str:
     import os
 
     test = os.environ.get("PYTEST_CURRENT_TEST", "").split(" ")[0]
-    return sha256(f"{_RUN}|{test}|{request}".encode("utf-8")).hexdigest()[:32]
+    return sha256(f"{_RUN}|{test}|{request}".encode()).hexdigest()[:32]
 
 
 def _turn(chat: str, text: str, request: str) -> None:
