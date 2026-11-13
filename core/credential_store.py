@@ -8,21 +8,29 @@ backends, chosen automatically:
   store via the ``keyring`` library (Security.framework), protected by the login session / Secure
   Enclave, not by a file on disk. A non-secret sidecar (``credentials.meta.json``) tracks which
   names exist + their labels so ``list_credentials`` works (Keychain has no "list accounts" API).
+* **Windows Credential Manager** (default on Windows) -- the VALUE is a generic credential named
+  ``VOOL/credentials/<name>`` in the user's Credential Manager (``core.windows_credential_manager``,
+  advapi32 through ctypes), sealed by Windows under the user's sign-in. It never shows a dialog, so
+  unlike the Keychain it needs no operator grant. The same non-secret sidecar keeps the labels.
 * **AES-256-GCM vault file** (fallback) -- for environments without a usable keyring backend
-  (headless Linux, CI, the dev venv). Each value is sealed under a key derived from the node
-  signing key (``network.signer.derive_local_secret``); this is the historical scheme.
+  (headless Linux, CI, the dev venv, a Windows session where Credential Manager does not answer).
+  Each value is sealed under a key derived from the node signing key
+  (``network.signer.derive_local_secret``); this is the historical scheme. On Windows the file is
+  written owner-only or not at all (``core.owner_only.write_private_file``).
 
 Per VOOL_MIGRATION.md §4 the Keychain path is the hardening: it removes the "stolen disk -> plaintext
 seed -> vault key -> every secret" exposure, because the secret value no longer lives in a
-seed-sealed file. On first Keychain-available run, existing vault secrets are migrated into the
-Keychain (read-back verified) and their ciphertext is scrubbed from the vault.
+seed-sealed file. On first Keychain-available run (on Windows: first Credential Manager-available
+run), existing vault secrets are migrated into the OS store (read-back verified) and their
+ciphertext is scrubbed from the vault. :func:`backend_label` / :func:`backend_sentence` name the
+store really in use, for every surface that tells the user where keys live.
 
 The public API is unchanged across both backends: ``store_credential`` / ``get_credential`` /
 ``has_credential`` / ``list_credentials`` / ``delete_credential``. ``list_credentials`` and
 ``export_diagnostics`` never return a value -- only names, labels, and a masked last-4.
 
-Windows Credential Manager / DPAPI is the Windows lane's job; the ``_load_keyring`` selector is the
-seam where that backend plugs in. This module gates Keychain to macOS on purpose.
+``_load_keyring`` is the one selector: the Keychain on macOS, Credential Manager on Windows, nothing
+(the vault) elsewhere. Linux keeps the vault on purpose.
 """
 from __future__ import annotations
 
@@ -85,12 +93,17 @@ from core.keychain_policy import keychain_write_granted, surface_fallback_notice
 
 
 def _load_keyring():
-    """Return the ``keyring`` module IF a real macOS Keychain backend is active, else None.
+    """Return the OS secret store for this platform, else None (the vault).
 
-    Gated to macOS on purpose (Windows Credential Manager is the other lane). Rejects the
-    ``fail``/``null``/``chainer`` backends, which would silently store nothing. Tests monkeypatch
-    this to inject an in-memory fake keyring.
+    macOS: the ``keyring`` module IF a real Keychain backend is active; the ``fail``/``null``/
+    ``chainer`` backends, which would silently store nothing, are rejected. Windows: the
+    Credential Manager store (``core.windows_credential_manager``) when advapi32 answers. Anything
+    else: None. Tests monkeypatch this to inject an in-memory fake keyring.
     """
+    if sys.platform == "win32":
+        from core import windows_credential_manager
+
+        return windows_credential_manager.backend(_KC_SERVICE)
     if sys.platform != "darwin":
         return None
     try:
@@ -137,6 +150,14 @@ def _active_keyring(*, write: bool = False):
     mode = _mode()
     if mode == "vault":
         return None
+    if sys.platform == "win32":
+        backend = _load_keyring()
+        if _is_windows_store(backend):
+            return backend  # never prompts: no operator grant needed (module docstring)
+        if backend is None:
+            _windows_fallback_notice()
+            return None
+        # Any other object here is a test's injected keyring: it takes the grant policy below.
     allowed = keychain_write_granted() if write else (keychain_write_granted() or _keychain_previously_used())
     if not allowed:
         if _load_keyring() is not None and mode == "keychain":
@@ -148,9 +169,72 @@ def _active_keyring(*, write: bool = False):
     return backend
 
 
+def _is_windows_store(backend) -> bool:
+    from core.windows_credential_manager import WindowsCredentialManager
+
+    return isinstance(backend, WindowsCredentialManager)
+
+
+_WINDOWS_NOTICE_SHOWN = False
+WINDOWS_FALLBACK_NOTICE = (
+    "Windows Credential Manager is not available in this session, so API keys stay in VOOL's "
+    "encrypted local vault (an owner-only file, protected by your account's file permissions only)."
+)
+
+
+def _windows_fallback_notice() -> None:
+    """Say ONCE per process that Windows keys are in the vault because Credential Manager is out."""
+    global _WINDOWS_NOTICE_SHOWN
+    if _WINDOWS_NOTICE_SHOWN:
+        return
+    _WINDOWS_NOTICE_SHOWN = True
+    print(WINDOWS_FALLBACK_NOTICE, file=sys.stderr)
+
+
 def active_backend() -> str:
-    """Which backend is live right now: 'keychain' or 'vault' (for diagnostics/tests)."""
-    return "keychain" if _active_keyring() is not None else "vault"
+    """Which backend is live right now: 'keychain', 'credential_manager' or 'vault'."""
+    backend = _active_keyring()
+    if backend is None:
+        return "vault"
+    return "credential_manager" if _is_windows_store(backend) else "keychain"
+
+
+_BACKEND_LABELS = {
+    "keychain": "the macOS Keychain",
+    "credential_manager": "Windows Credential Manager",
+    "vault": "the encrypted local vault",
+}
+
+
+def backend_label(backend: str | None = None) -> str:
+    """The true name of the store keys live in (``backend`` defaults to the live one).
+
+    The ONE place the store is named: chat replies, diagnostics and Settings all use this."""
+    key = active_backend() if backend is None else str(backend)
+    return _BACKEND_LABELS.get(key, _BACKEND_LABELS["vault"])
+
+
+def backend_sentence(backend: str | None = None) -> str:
+    """Where stored credentials live, as one sentence (no trailing period).
+
+    The vault's sealing key sits in the same user profile (core.secret_storage
+    account-file-permissions class): it is never called the OS secret store. On Windows, when
+    Credential Manager was wanted but did not answer, the sentence says so first."""
+    key = active_backend() if backend is None else str(backend)
+    if key == "keychain":
+        return "Keys live in the macOS Keychain"
+    if key == "credential_manager":
+        return (
+            "Keys live in Windows Credential Manager under VOOL/credentials, sealed by Windows to "
+            "your sign-in; any program running as you can read them"
+        )
+    vault = (
+        "VOOL's encrypted local vault in your user profile, protected by your "
+        "account's file permissions, not by the OS secret store"
+    )
+    if sys.platform == "win32" and _mode() != "vault":
+        return "Windows Credential Manager is not available here, so keys live in " + vault
+    return "Keys live in " + vault
 
 
 def active_storage_class() -> str:
@@ -164,7 +248,7 @@ def active_storage_class() -> str:
         assert_known_storage_class,
     )
 
-    if _active_keyring() is not None:
+    if _active_keyring() is not None:  # the macOS Keychain or Windows Credential Manager
         return assert_known_storage_class(STORAGE_CLASS_KEYCHAIN)
     return assert_known_storage_class(STORAGE_CLASS_ACCOUNT_FILE_PERMISSIONS)
 
@@ -408,7 +492,13 @@ def _reconcile_index_with_keychain() -> None:
     known = _meta_load()
 
     def _reconcile_all() -> None:
-        for name, label in (*_RECONCILE_NAMES, *_search_reconcile_names(), *_chain_reconcile_names()):
+        slots = (*_RECONCILE_NAMES, *_search_reconcile_names(), *_chain_reconcile_names())
+        if _is_windows_store(keyring):
+            # Credential Manager CAN list VOOL's namespace, so every stored name is re-indexed,
+            # not only the fixed slots; a listed name is still confirmed by a read below.
+            labels = dict(slots)
+            slots = tuple((name, labels.get(name, "")) for name in keyring.list_names(_KC_SERVICE))
+        for name, label in slots:
             if name in known:
                 continue
             try:
@@ -468,12 +558,43 @@ def _maybe_migrate() -> None:
         except Exception:
             readback = None
         if readback == value:  # verified in the Keychain -> safe to drop the ciphertext
-            _meta_upsert(name, str(entry.get("label") or ""))
+            try:
+                _meta_upsert(name, str(entry.get("label") or ""))
+            except OSError:
+                # The index could not be written (on Windows: not sealable owner-only), so the
+                # entry stays in the vault and this run does not count it as moved.
+                continue
             remaining.pop(name, None)
     if remaining != raw:
-        _save_raw(remaining)
-    if not remaining:
+        try:
+            _save_raw(remaining)
+        except OSError:
+            # The vault could not be rewritten (on Windows: not sealable owner-only). The migrated
+            # entries now sit in both stores; the vault keeps what it had and the next run retries.
+            _migration_notice(
+                "WARNING: credential migration: the vault could not be rewritten, so migrated keys "
+                f"also remain in it for now ({len(raw) - len(remaining)} moved)"
+            )
+            return
+    if remaining:
+        _migration_notice(
+            f"WARNING: credential migration: {len(remaining)} key(s) could not be moved into "
+            f"{backend_label('credential_manager' if _is_windows_store(keyring) else 'keychain')} "
+            "and stay in VOOL's encrypted local vault"
+        )
+    else:
         _write_marker(marker)
+
+
+_MIGRATION_NOTICES: set[str] = set()
+
+
+def _migration_notice(text: str) -> None:
+    """Print a migration warning once per process (migration re-runs on every read until drained)."""
+    if text in _MIGRATION_NOTICES:
+        return
+    _MIGRATION_NOTICES.add(text)
+    print(text, file=sys.stderr)
 
 
 def _write_marker(marker) -> None:
@@ -502,13 +623,39 @@ def store_credential(name: str, value: str, *, label: str = "") -> None:
 
     keyring = _active_keyring(write=True)  # keychain WRITE: explicit operator grant required
     if keyring is not None:
+        if _is_windows_store(keyring):
+            _refuse_oversized_for_windows(name, value)
         explicit_secure_storage(
             lambda: keyring.set_password(_KC_SERVICE, name, str(value)), what=f"set {name}"
         )
-        _meta_upsert(name, label)
+        try:
+            _meta_upsert(name, label)
+        except OSError:
+            if _is_windows_store(keyring):
+                # The save is reported as refused (owner-only index not writable), so it must not
+                # have landed: take the Credential Manager entry back out before saying so.
+                with contextlib.suppress(Exception):
+                    keyring.delete_password(_KC_SERVICE, name)
+            raise
         _vault_drop(name)  # if a legacy ciphertext existed, the value now lives only in the Keychain
     else:
         _vault_store(name, value, label)
+
+
+def _refuse_oversized_for_windows(name: str, value: str) -> None:
+    """A value longer than one Credential Manager blob is refused in plain words; nothing is written.
+
+    Keys are small; chunking one secret across several credentials is not worth its failure modes."""
+    from core.unattended_preflight import SecureStorageError
+    from core.windows_credential_manager import CRED_MAX_CREDENTIAL_BLOB_SIZE, CredentialTooLarge
+
+    size = len(str(value).encode("utf-8"))
+    if size > CRED_MAX_CREDENTIAL_BLOB_SIZE:
+        raise SecureStorageError(
+            "value_too_large",
+            str(CredentialTooLarge(name, size)),
+            "Check that you pasted only the key itself, then save it again.",
+        )
 
 
 def get_credential(name: str) -> str | None:
@@ -665,6 +812,8 @@ def export_diagnostics() -> dict[str, object]:
 __all__ = [
     "CredentialReadError",
     "active_backend",
+    "backend_label",
+    "backend_sentence",
     "delete_credential",
     "export_diagnostics",
     "get_credential",

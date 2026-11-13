@@ -14,7 +14,10 @@ No. A local model is enough to use the app.
 
 ## Where is my key stored?
 
-In your operating system's credential store, on your machine. See
+On your machine. On Windows it is in Windows Credential Manager (`cmdkey /list:VOOL/*` lists
+it). On macOS it is in the Keychain once you allow that in Settings; until then, and on Linux, it
+is in VOOL's encrypted vault file in your user profile, protected by your account's file
+permissions. Type `where are my keys stored?` in chat to see which one this install uses. See
 [Security model](../trust/security.md).
 
 ## Does Parad0x see my prompts?

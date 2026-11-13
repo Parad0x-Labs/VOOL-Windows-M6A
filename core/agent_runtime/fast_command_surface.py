@@ -670,20 +670,19 @@ _CREDENTIAL_OWNER_ONLY_REFUSAL = (
 
 
 def _credential_backend_label(backend: object) -> str:
-    return "the macOS Keychain" if backend == "keychain" else "the encrypted local vault"
+    """The true store name, from the one authority (core.credential_store.backend_label)."""
+    from core.credential_store import backend_label
+
+    return backend_label(str(backend or "vault"))
 
 
 def _credential_backend_sentence(backend: object) -> str:
-    """Where stored credentials live, as one sentence (no trailing period). Windows is always the
-    vault (core.credential_store gates the Keychain to macOS)."""
-    if backend == "keychain":
-        return "Keys live in the macOS Keychain"
-    # The vault's sealing key sits in the same user profile (core.secret_storage
-    # account-file-permissions class): never call it the OS secret store.
-    return (
-        "Keys live in VOOL's encrypted local vault in your user profile, protected by your "
-        "account's file permissions, not by the OS secret store"
-    )
+    """Where stored credentials live, as one sentence (no trailing period), from the one authority
+    (core.credential_store.backend_sentence): the Keychain, Windows Credential Manager, or the
+    vault, which is never called the OS secret store."""
+    from core.credential_store import backend_sentence
+
+    return backend_sentence(str(backend or "vault"))
 
 
 _CLOUD_DIAG_RE = re.compile(

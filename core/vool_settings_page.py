@@ -2242,6 +2242,14 @@ function widgetKeys(stack) {
   else if (!src) list.appendChild(el('div', 'empty', 'Loading…'));
   else {
     const creds = src.credentials || src.items || [];
+    /* Where keys really live, by the backend the list reports (the same words as
+       core.credential_store.backend_sentence; nothing is said for a backend it does not know). */
+    const KEY_STORE_WHERE = {
+      credential_manager: 'Keys live in Windows Credential Manager under VOOL/credentials, sealed by Windows to your sign-in; any program running as you can read them.',
+      keychain: 'Keys live in the macOS Keychain.',
+      vault: 'Keys live in VOOL\u2019s encrypted local vault in your user profile, protected by your account\u2019s file permissions, not by the OS secret store.',
+    };
+    if (KEY_STORE_WHERE[src.backend]) list.appendChild(el('div', 'subtle', KEY_STORE_WHERE[src.backend]));
     if (!creds.length) list.appendChild(el('div', 'empty', 'No key stored. VOOL runs on this machine, free.'));
     const groups = [...KEY_FAMILIES.map(f => f.id), 'managed'];
     groups.forEach(fam => {

@@ -22,8 +22,10 @@ STORAGE_CLASSES = (
 
 STORAGE_CLASS_DESCRIPTIONS = {
     STORAGE_CLASS_KEYCHAIN: (
-        "Secret stored in the OS Keychain. Only available after the explicit operator "
-        "grant (Settings); the Keychain protects the item under its own ACL."
+        "Secret stored in the OS secret store. macOS: the Keychain, only after the explicit "
+        "operator grant (Settings); the Keychain protects the item under its own ACL. Windows: "
+        "Credential Manager, sealed by Windows to the user's sign-in; any program running as "
+        "that user can read it."
     ),
     STORAGE_CLASS_USER_PASSPHRASE: (
         "Secret sealed with AES-GCM under a key derived from a passphrase only the user "

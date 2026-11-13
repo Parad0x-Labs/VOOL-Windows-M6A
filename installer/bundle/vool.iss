@@ -100,6 +100,8 @@ Filename: "{sys}\wscript.exe"; Parameters: """{app}\vool.vbs"""; Description: "L
 ; No [UninstallDelete] for the data dir: uninstall removes ONLY the program files. The user's
 ; models, wallet, keys, memory and receipts in {localappdata}\VOOL are preserved (a reinstall
 ; reuses them, no multi-GB re-download and no lost wallet). A full reset stays a manual choice.
+; API keys in Windows Credential Manager (VOOL/credentials/*, core/windows_credential_manager.py) are
+; user data too: uninstall never deletes them, and the post-uninstall note says where they are.
 
 [Messages]
 ; Uninstall removes the program only (see above), so it must not promise to remove "all of its
@@ -169,6 +171,8 @@ begin
     MsgBox('Your VOOL models, chats, settings, logs, wallet and keys were kept in:' + #13#10 +
       ExpandConstant('{localappdata}\VOOL') + #13#10#13#10 +
       'Reinstalling VOOL uses them again. The folder also holds your wallet and keys: back them up first, ' +
-      'or deleting the folder loses them for good. If you no longer need any of it, delete that folder yourself.',
+      'or deleting the folder loses them for good. If you no longer need any of it, delete that folder yourself.' + #13#10#13#10 +
+      'API keys VOOL saved in Windows Credential Manager (entries named VOOL/credentials/...) were kept too. ' +
+      'Deleting the folder does not remove them; remove them in Credential Manager if you no longer need them.',
       mbInformation, MB_OK);
 end;
