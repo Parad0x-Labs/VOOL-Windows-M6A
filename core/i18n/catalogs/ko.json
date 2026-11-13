@@ -1076,7 +1076,7 @@
     "settings.row.local_models.help": "이 기기의 Ollama에 설치된 모델들. 하나를 등록하면 VOOL이 경로 지정할 수 있는 차선이 추가되고, 인증하면 최종 답변을 쓸 수 있는지 결정하는 봉인된 도구 탐침이 실행됩니다. 아무 것도 내려받지 않고 누구에게도 연락하지 않습니다 — 당신의 로컬 Ollama만 읽습니다.",
     "settings.row.local_models.label": "로컬 모델",
     "settings.row.local_only_block_web.effect": "즉시 적용됩니다.",
-    "settings.row.local_only_block_web.help": "기본값은 꺼짐입니다. 로컬 전용은 답변을 이 컴퓨터에 유지하지만, VOOL은 여전히 내장 브라우저로 웹을 검색하고 웹 페이지를 열 수 있으므로 검색어가 검색 엔진에 전달되고 요청한 페이지는 해당 웹사이트에서 가져옵니다. 채팅이 로컬 전용인 동안 이를 막으려면 켜세요. 웹 검색, 웹 페이지 열기나 요약, VOOL의 브라우저 세션이 거부됩니다. 로컬 전용 밖에서는 아무것도 바뀌지 않으며, 이 컴퓨터나 내 네트워크의 페이지는 계속 사용할 수 있습니다.",
+    "settings.row.local_only_block_web.help": "기본값은 꺼짐입니다. 로컬 전용은 답변을 이 컴퓨터에 유지하지만, VOOL은 여전히 내장 브라우저로 웹을 검색하고 웹 페이지를 열 수 있으므로 검색어가 검색 엔진에 전달되고 요청한 페이지는 해당 웹사이트에서 가져옵니다. 채팅이 로컬 전용인 동안 이를 막으려면 켜세요. 웹 검색, 웹 페이지 열기나 요약, VOOL의 브라우저 세션이 거부됩니다. 로컬 전용 밖에서는 아무것도 바뀌지 않으며, 이 컴퓨터나 내 네트워크의 페이지는 계속 사용할 수 있습니다. 로컬 전용은 이메일을 막지 않습니다. 보내거나 읽는 메일은 여전히 메일 서버를 거칩니다.",
     "settings.row.local_only_block_web.label": "로컬 전용에서 웹 검색 차단",
     "settings.row.locality_note.help": "대화, 영수증, 기본 설정, 프로필 항목은 이 기기의 파일입니다. 공급자 키도 여기 봉인되어 보관됩니다. 그것은 데이터의 소재이고, VOOL이 네트워크에 닿을 수 있는지와는 다릅니다: 클라우드 모델이나 실시간 웹 조회는 그 요청의 글을 그 공급자에게 보내며, 턴이 실제로 사용할 때만 그렇습니다.",
     "settings.row.locality_note.label": "당신의 데이터가 있는 곳",
@@ -1933,7 +1933,7 @@
     "fault.wallet_payment_channel_off.action": "그 채널로 결제하려는 경우에만 암호화폐 설정에서 결제 채널을 켜세요; 한도와 사용자 승인은 모든 채널에 적용됩니다.",
     "fault.wallet_x402_sdk_unavailable.message": "이 빌드는 x402 Foundation SDK를 통해 Base의 x402 제안을 결제할 수 없습니다: 선택적 x402 추가 요소가 이 기기에 설치되지 않았습니다. 서명되거나 보내진 것은 없습니다. 지갑의 다른 모든 기능은 없이도 작동합니다; 설치한 뒤 다시 시도하세요."
   },
-  "source_catalog_sha256": "78bfddd3bf6037a0f74f176a97ddc734a1962afb949b87ac5f3844af0b42b8f5",
+  "source_catalog_sha256": "da88296df89b37638093f3a452749bf040a83ccd9e86802af0f837e848ceecdd",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

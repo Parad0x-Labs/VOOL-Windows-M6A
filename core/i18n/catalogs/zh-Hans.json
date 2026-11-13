@@ -1076,7 +1076,7 @@
     "settings.row.local_models.help": "安装在这台机器 Ollama 里的模型。注册一个会添加一条 VOOL 可以路由到的通道；认证一个会运行密封的工具探针，决定它是否可以撰写最终答案。不下载任何东西，也不联系任何人 — 只读取你本地的 Ollama。",
     "settings.row.local_models.label": "本地模型",
     "settings.row.local_only_block_web.effect": "立即生效。",
-    "settings.row.local_only_block_web.help": "默认关闭。仅本地模式会把回复留在这台电脑上，但 VOOL 仍可通过其内置浏览器搜索网页和打开网页，因此你的搜索词会发送到搜索引擎，你要求的页面会从其网站获取。打开此项可在对话处于仅本地模式时阻止这些操作：网页搜索、打开或总结网页以及 VOOL 的浏览器会话都会被拒绝。它不会改变仅本地模式之外的任何行为，这台电脑或你自己网络上的页面仍可使用。",
+    "settings.row.local_only_block_web.help": "默认关闭。仅本地模式会把回复留在这台电脑上，但 VOOL 仍可通过其内置浏览器搜索网页和打开网页，因此你的搜索词会发送到搜索引擎，你要求的页面会从其网站获取。打开此项可在对话处于仅本地模式时阻止这些操作：网页搜索、打开或总结网页以及 VOOL 的浏览器会话都会被拒绝。它不会改变仅本地模式之外的任何行为，这台电脑或你自己网络上的页面仍可使用。 仅本地不会阻止电子邮件：你发送或阅读的邮件仍会经过你的邮件服务器。",
     "settings.row.local_only_block_web.label": "在仅本地模式下阻止网页搜索",
     "settings.row.locality_note.help": "对话、收据、偏好和个人资料条目都是这台机器上的文件。提供方密钥也在这里被密封保存。这是数据所在的位置，与 VOOL 是否可以联网是两回事：云端模型或实时网络查询会把该请求的文本发送给那个提供方，而且只在某个回合真正使用它时才会发生。",
     "settings.row.locality_note.label": "你的数据在哪里",
@@ -1933,7 +1933,7 @@
     "fault.wallet_payment_channel_off.action": "只有在希望通过某个支付通道付款时，才在加密设置中打开它；上限和你的批准在每个通道上都适用。",
     "fault.wallet_x402_sdk_unavailable.message": "此构建无法通过 x402 Foundation SDK 支付 Base 上的 x402 报价：这台机器上没有安装可选的 x402 扩展。没有签名或发送任何内容。钱包的其他所有功能没有它也能工作；安装之后请重试。"
   },
-  "source_catalog_sha256": "78bfddd3bf6037a0f74f176a97ddc734a1962afb949b87ac5f3844af0b42b8f5",
+  "source_catalog_sha256": "da88296df89b37638093f3a452749bf040a83ccd9e86802af0f837e848ceecdd",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

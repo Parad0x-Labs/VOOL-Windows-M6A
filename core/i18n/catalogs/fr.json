@@ -1076,7 +1076,7 @@
     "settings.row.local_models.help": "Modèles installés dans Ollama sur cette machine. En enregistrer un ajoute une voie vers laquelle VOOL peut router ; le certifier lance la sonde d'outils scellée qui décide s'il peut écrire les réponses finales. Rien n'est téléchargé et personne n'est contacté — cela ne lit que votre Ollama local.",
     "settings.row.local_models.label": "Modèles locaux",
     "settings.row.local_only_block_web.effect": "S'applique immédiatement.",
-    "settings.row.local_only_block_web.help": "Désactivé par défaut. Local uniquement garde les réponses sur cet ordinateur, mais VOOL peut toujours chercher sur le web et ouvrir des pages web avec son navigateur intégré : vos mots de recherche parviennent au moteur de recherche et les pages demandées sont récupérées sur leurs sites. Activez cette option pour l'empêcher tant qu'une conversation est en Local uniquement : les recherches web, l'ouverture ou le résumé d'une page web et les sessions du navigateur de VOOL sont refusés. Rien ne change hors de Local uniquement, et les pages de cet ordinateur ou de votre propre réseau restent accessibles.",
+    "settings.row.local_only_block_web.help": "Désactivé par défaut. Local uniquement garde les réponses sur cet ordinateur, mais VOOL peut toujours chercher sur le web et ouvrir des pages web avec son navigateur intégré : vos mots de recherche parviennent au moteur de recherche et les pages demandées sont récupérées sur leurs sites. Activez cette option pour l'empêcher tant qu'une conversation est en Local uniquement : les recherches web, l'ouverture ou le résumé d'une page web et les sessions du navigateur de VOOL sont refusés. Rien ne change hors de Local uniquement, et les pages de cet ordinateur ou de votre propre réseau restent accessibles. Local uniquement n’arrête pas l’e-mail : les messages que vous envoyez ou lisez passent toujours par votre serveur de messagerie.",
     "settings.row.local_only_block_web.label": "Bloquer la recherche web en mode Local uniquement",
     "settings.row.locality_note.help": "Conversations, reçus, préférences et éléments de profil sont des fichiers sur cette machine. Les clés des fournisseurs y sont aussi scellées au repos. C'est la localité des données, distincte du droit de VOOL d'atteindre le réseau : un modèle cloud ou une recherche web en direct envoie le texte de cette requête à ce fournisseur, et seulement quand un tour l'utilise vraiment.",
     "settings.row.locality_note.label": "Où sont vos données",
@@ -1933,7 +1933,7 @@
     "fault.wallet_payment_channel_off.action": "Activez un canal de paiement dans les réglages Crypto seulement si vous voulez que des paiements passent par lui ; le plafond et votre approbation s'appliquent sur chaque canal.",
     "fault.wallet_x402_sdk_unavailable.message": "Cette version ne peut pas payer les offres x402 sur Base via le x402 Foundation SDK : l'extra optionnel x402 n'est pas installé sur cette machine. Rien n'a été signé ni envoyé. Toutes les autres fonctions du portefeuille marchent sans lui ; une fois installé, réessayez."
   },
-  "source_catalog_sha256": "78bfddd3bf6037a0f74f176a97ddc734a1962afb949b87ac5f3844af0b42b8f5",
+  "source_catalog_sha256": "da88296df89b37638093f3a452749bf040a83ccd9e86802af0f837e848ceecdd",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

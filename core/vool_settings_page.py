@@ -385,7 +385,8 @@ def _settings_groups() -> list[dict]:
                         "fetched from their websites. Turn this on to stop that while a chat is in "
                         "Local Only: web searches, opening or summarizing a web page, and VOOL's "
                         "browser sessions are refused. It changes nothing outside Local Only, and "
-                        "pages on this computer or on your own network stay available."
+                        "pages on this computer or on your own network stay available. Local Only "
+                        "does not stop email: mail you send or read still goes to your mail server."
                     ),
                     kind="toggle",
                     read={"url": PREFS, "field": "local_only_block_web"},
