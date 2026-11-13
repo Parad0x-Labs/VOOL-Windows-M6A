@@ -4093,10 +4093,6 @@ function widgetLocalModels(stack) {
       body.appendChild(el('div', 'empty', T('settings.models.local_empty', 'No local model yet. A local model runs privately on this computer; once one is installed, it appears here.')));
       // The click is the consent for that one download (core/local_model_pull.py, job 52 D2).
       if (window.VoolModelDownload) window.VoolModelDownload.mount(body, { onDone: (name) => draw('Downloaded ' + name + '. Run the certification to see if it may author answers.') });
-      const cmd = el('div', 'inline');
-      cmd.appendChild(el('span', 'subtle', T('settings.models.terminal', 'For people comfortable with a terminal:')));
-      cmd.appendChild(el('code', 'mono', 'ollama pull qwen3:8b'));
-      body.appendChild(cmd);
       return;
     }
     const certLabel = (s) => s === 'verified' ? 'certified author' : (s === 'degraded' || s === 'incompatible' || s === 'stale') ? 'probe ' + s : s === 'probing' ? 'probing…' : 'not certified';
