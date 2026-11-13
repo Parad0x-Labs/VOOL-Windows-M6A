@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import os
 import re
 import secrets
 import threading
@@ -30,6 +31,9 @@ AGREEMENT_TEXT = ("I made this skill, or have the right to share it, and I relea
 ACCOUNT_AGE = 14 * 86400
 MARKS_SCHEMA = "vool.registry.marks.v1"
 _FIELD = re.compile(r"^(keyid|ts|nonce|sig)=([A-Za-z0-9+/=_-]{1,128})$")
+#: Patched by tests to drive the Windows branch on any platform. Windows mode bits say nothing about who
+#: can read a file, so there the owner-only ACL (core/owner_only.py) decides instead.
+_IS_WINDOWS = os.name == "nt"
 
 MIT = """MIT License
 
@@ -138,9 +142,18 @@ def marks_document(value: dict, *, now: int) -> dict:
     return value
 
 
+def _owner_only_file(path) -> bool:
+    """Whether only this user can read ``path``: its mode on POSIX, its ACL on Windows (never its mode there)."""
+    if _IS_WINDOWS:
+        from core import owner_only
+
+        return owner_only.verify_owner_only(path).ok
+    return path.stat().st_mode & 0o077 == 0
+
+
 def load_online_key(path) -> Ed25519PrivateKey:
     """The service's online catalog key: raw Ed25519 bytes in a 0600 file inside the private directory."""
-    require(path.is_file() and path.stat().st_mode & 0o077 == 0, "online catalog key is missing or readable by others")
+    require(path.is_file() and _owner_only_file(path), "online catalog key is missing or readable by others")
     raw = path.read_bytes()
     require(len(raw) == 32, "invalid online catalog key")
     return Ed25519PrivateKey.from_private_bytes(raw)
@@ -148,8 +161,6 @@ def load_online_key(path) -> Ed25519PrivateKey:
 
 def create_online_key(path) -> Ed25519PrivateKey:
     """Create the key once; an existing key is kept, never replaced."""
-    import os
-
     if path.exists():
         return load_online_key(path)
     key = Ed25519PrivateKey.generate()
@@ -157,6 +168,18 @@ def create_online_key(path) -> Ed25519PrivateKey:
 
     # O_BINARY (Windows only; 0 elsewhere): a text-mode descriptor turns every 0x0A written into 0x0D 0x0A.
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+    if _IS_WINDOWS:
+        # 0o600 only sets the read-only bit there: the empty file is made owner-only by ACL before the key is
+        # written into it, and is removed when it cannot be.
+        os.close(descriptor)
+        from core import owner_only
+
+        try:
+            owner_only.require_owner_only(path)
+            descriptor = os.open(path, os.O_WRONLY | getattr(os, "O_BINARY", 0))
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
     with os.fdopen(descriptor, "wb") as handle:
         handle.write(key.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption()))
     return key

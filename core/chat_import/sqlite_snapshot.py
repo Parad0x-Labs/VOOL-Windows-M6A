@@ -22,6 +22,8 @@ from pathlib import Path
 #: The write-ahead log SQLite keeps beside a WAL database; it holds the newest rows.
 _COMPANIONS = ("-wal",)
 _ATTEMPTS = 3
+#: Patched by tests to drive the Windows branch on any platform.
+_IS_WINDOWS = os.name == "nt"
 
 
 class SnapshotError(Exception):
@@ -75,7 +77,15 @@ def snapshot_connection(path: Path, *, max_bytes: int, work_dir: str | os.PathLi
         raise SnapshotError("store_too_large")
     temp_root = tempfile.mkdtemp(prefix="vool-chat-import-", dir=os.fspath(work_dir) if work_dir else None)
     try:
-        os.chmod(temp_root, 0o700)
+        if _IS_WINDOWS:
+            # chmod only toggles the read-only bit on Windows; the folder keeps its parent's ACL. Make it
+            # owner-only by ACL, or copy nothing.
+            from core import owner_only
+
+            if not owner_only.make_owner_only(temp_root, directory=True).ok:
+                raise SnapshotError("store_unreadable")
+        else:
+            os.chmod(temp_root, 0o700)
         copy = Path(temp_root) / "store.db"
         sources = [source] + [source.with_name(source.name + suffix) for suffix in _COMPANIONS]
         copied = False

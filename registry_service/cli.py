@@ -14,15 +14,33 @@ from registry_service.api import create_app
 from registry_service.auth import Auth, Provider
 from registry_service.store import Store
 
+#: Patched by tests to drive the Windows branch on any platform.
+_IS_WINDOWS = os.name == "nt"
+
+
+def _private_dir(private: Path) -> Path:
+    """The service's private folder, created when missing and refused unless only this user can open it.
+
+    POSIX checks its mode (0700). On Windows the mode bits say nothing about who can read it, so the folder is
+    made owner-only by ACL (core/owner_only.py) instead, and a folder that cannot be is refused."""
+    if _IS_WINDOWS:
+        from core import owner_only
+
+        try:
+            return owner_only.ensure_private_dir(private)
+        except owner_only.OwnerOnlyUnavailable:
+            raise RegistryError("the private directory cannot be made private to this user") from None
+    private.mkdir(mode=0o700, parents=True, exist_ok=True)
+    require(private.stat().st_mode & 0o077 == 0, "private directory permissions must be 0700")
+    return private
+
 
 def load_service(config: dict, *, now: int):
     require(isinstance(config, dict) and set(config) - {"github_import", "authority"} == {"schema", "origin", "private_dir",
         "trusted_root", "catalog_file", "artifact_dir", "target", "providers"} and
         config["schema"] == "vool.registry.service.v1" and type(config.get("github_import", False)) is bool and
         type(config.get("authority", False)) is bool, "unknown service configuration")
-    private = Path(config["private_dir"]).resolve()
-    private.mkdir(mode=0o700, parents=True, exist_ok=True)
-    require(private.stat().st_mode & 0o077 == 0, "private directory permissions must be 0700")
+    private = _private_dir(Path(config["private_dir"]).resolve())
     root = decode(Path(config["trusted_root"]).read_bytes(), 65536)
     trust = TrustedCatalog(root, private / "trust.sqlite", now=now)
     store = Store(private / "accounts.sqlite")
@@ -135,9 +153,7 @@ def catalog_key(args) -> int:
     try:
         config = decode(args.config.read_bytes(), 65536)
         require(isinstance(config, dict) and config.get("schema") == "vool.registry.service.v1", "unknown service configuration")
-        private = Path(config["private_dir"]).resolve()
-        private.mkdir(mode=0o700, parents=True, exist_ok=True)
-        require(private.stat().st_mode & 0o077 == 0, "private directory permissions must be 0700")
+        private = _private_dir(Path(config["private_dir"]).resolve())
         key = create_online_key(private / "catalog.key")
         from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 

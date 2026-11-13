@@ -19,7 +19,6 @@ from __future__ import annotations
 import argparse
 import base64
 import contextlib
-import fcntl
 import functools
 import getpass
 import hashlib
@@ -51,6 +50,21 @@ from core.registry.publisher import add_signature, admission, authorize_catalog
 from core.registry.trust import AUTHORIZATION_SECONDS, root_document, verify
 from registry_service.authority import HEADER, MARKS_SCHEMA, keyid, marks_document, sign_request
 from registry_service.http_transport import open_request
+
+try:  # POSIX only. github_authority and publication import from here, so Windows must still import it.
+    import fcntl
+except ImportError:  # pragma: no cover - Windows
+    fcntl = None  # type: ignore[assignment]
+
+#: Patched by tests to drive the Windows refusal on any platform.
+_IS_WINDOWS = os.name == "nt"
+#: Its keys and lock rely on POSIX modes and flock, which Windows does not have.
+_NOT_ON_WINDOWS = "the signing authority runs on the owner's Mac; it cannot run on Windows"
+
+
+def _refuse_windows() -> None:
+    require(not _IS_WINDOWS and fcntl is not None, _NOT_ON_WINDOWS)
+
 
 PREFIX = "/registry/api"
 ADMISSION_SECONDS = 30 * 86400 - 3600
@@ -106,6 +120,7 @@ def _write(path: Path, data: bytes) -> None:
 
 
 def _private(path: Path) -> bytes:
+    _refuse_windows()  # Windows mode bits say nothing about who can read a key
     require(path.is_file() and path.stat().st_mode & 0o077 == 0, path.name + " is missing or readable by others")
     return path.read_bytes()
 
@@ -161,6 +176,7 @@ class Authority:
     """Everything the signing Mac keeps, in one private folder."""
 
     def __init__(self, directory: Path, *, transport=None, review=None, clock=time.time):
+        _refuse_windows()
         self.dir = Path(directory)
         require(self.dir.is_dir() and self.dir.stat().st_mode & 0o077 == 0, "the authority folder must be private (0700)")
         self._begin(json.loads(_private(self.dir / "config.json")), decode(_private(self.dir / "trusted-root.json"), 65536),
@@ -192,6 +208,7 @@ class Authority:
 
     @contextlib.contextmanager
     def _locked(self):
+        _refuse_windows()
         descriptor = os.open(self.dir / "lock", os.O_RDWR | os.O_CREAT, 0o600)
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX)
@@ -634,6 +651,7 @@ class Authority:
 def setup(directory: Path, *, server: str, catalog_key: str, targets: list[dict], review: dict,
           passphrase: str, now: int) -> tuple[str, bytes]:
     """Create the keys, the trust root and the authenticator secret. Returns (otpauth URI, totp secret)."""
+    _refuse_windows()
     parsed = urllib.parse.urlsplit(server)
     require(parsed.scheme == "https" and parsed.netloc and not parsed.path.strip("/") and not parsed.query,
             "the server must be a plain https:// address")
