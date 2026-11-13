@@ -1482,6 +1482,16 @@ def online_status_snapshot(source_context: dict[str, Any] | None = None) -> dict
         web_on = bool(policy_engine.allow_web_fallback()) and not remote_fetch_forbidden()
     except Exception:
         web_on = False
+    try:
+        # ...unless the owner turned on "Block web search in Local Only": then, in Local Only, the
+        # web gate refuses web search (core.remote_fetch_policy). Unknown reads as blocked.
+        from core.remote_fetch_policy import local_only_web_block_setting
+
+        web_blocked = local_only and local_only_web_block_setting() is not False
+    except Exception:
+        web_blocked = local_only
+    if web_blocked:
+        web_on = False
     return {
         "local_only": local_only,
         "cloud_on": cloud_on and not local_only,
@@ -1489,6 +1499,7 @@ def online_status_snapshot(source_context: dict[str, Any] | None = None) -> dict
         "local_model": _online_status_local_model() if local_running else "",
         "cloud_model": _online_status_cloud_model() if cloud_on and not local_only else "",
         "web_on": web_on,
+        "local_only_web_blocked": web_blocked,
     }
 
 
@@ -1514,6 +1525,11 @@ def render_online_status(snapshot: dict[str, Any]) -> str:
         web = "Web lookup: on. I can search the web when a question needs it."
         if snapshot.get("local_only"):
             web += " Local Only keeps replies on this computer; web search still goes through the browser."
+    elif snapshot.get("local_only_web_blocked"):
+        web = (
+            "Web lookup: off in Local Only. Settings → Privacy & Permissions → Block web search in "
+            "Local Only is on, so I won't search the web or open web pages while Local Only is on."
+        )
     else:
         web = "Web lookup: off. I won't search the web."
     return "\n".join([

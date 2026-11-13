@@ -1075,6 +1075,9 @@
     "settings.row.local_models.effect": "तुरंत लागू।",
     "settings.row.local_models.help": "इस मशीन के Ollama में लगे मॉडल। एक को पंजीकृत करने से एक लेन जुड़ता है जिस पर VOOL रूट कर सकता है; प्रमाणित करने पर सीलबंद टूल-जाँच चलती है जो तय करती है कि वह अंतिम जवाब लिख सकता है या नहीं। कुछ डाउनलोड नहीं होता और किसी से संपर्क नहीं होता — केवल आपका स्थानीय Ollama पढ़ा जाता है।",
     "settings.row.local_models.label": "स्थानीय मॉडल",
+    "settings.row.local_only_block_web.effect": "तुरंत लागू।",
+    "settings.row.local_only_block_web.help": "डिफ़ॉल्ट रूप से बंद। केवल लोकल जवाबों को इसी कंप्यूटर पर रखता है, लेकिन VOOL फिर भी अपने बिल्ट-इन ब्राउज़र से वेब पर खोज सकता है और वेब पेज खोल सकता है, इसलिए आपके खोज शब्द सर्च इंजन तक पहुँचते हैं और आपके माँगे पेज उनकी वेबसाइटों से लाए जाते हैं। जब तक कोई चैट केवल लोकल में है, इसे रोकने के लिए इसे चालू करें: वेब खोज, किसी वेब पेज को खोलना या उसका सारांश बनाना, और VOOL के ब्राउज़र सत्र अस्वीकार किए जाते हैं। केवल लोकल के बाहर कुछ नहीं बदलता, और इस कंप्यूटर या आपके अपने नेटवर्क के पेज उपलब्ध रहते हैं। केवल लोकल ईमेल नहीं रोकता: आप जो मेल भेजते या पढ़ते हैं, वह अब भी आपके मेल सर्वर से होकर जाती है।",
+    "settings.row.local_only_block_web.label": "केवल लोकल में वेब खोज रोकें",
     "settings.row.locality_note.help": "बातचीत, रसीदें, प्राथमिकताएँ और प्रोफ़ाइल बिंदु इस मशीन पर फ़ाइलें हैं। प्रदाता कुंजियाँ भी यहीं सीलबंद पड़ी हैं। यह डेटा का स्थान है, और यह इस बात से अलग है कि VOOL नेटवर्क तक पहुँच सकता है या नहीं: क्लाउड मॉडल या लाइव वेब खोज उस अनुरोध का पाठ उसी प्रदाता को भेजती है, और तभी जब कोई टर्न सच में उसे उपयोग करे।",
     "settings.row.locality_note.label": "आपका डेटा कहाँ है",
     "settings.row.mode_note.help": "मैनुअल, ऑटो और बायपास एक बातचीत के हैं, ऐप के नहीं — बायपास अनुदान एक कार्य तक सीमित होता है और समाप्त हो जाता है। इसीलिए वह कंपोज़र के मोड नियंत्रण से, जिस चैट पर लागू है उसके बगल से सेट होता है, और यहाँ दोहराया नहीं जाता।",
@@ -1930,7 +1933,7 @@
     "fault.wallet_payment_channel_off.action": "क्रिप्टो सेटिंग्स में भुगतान चैनल तभी चालू करें जब आप उसके ज़रिए भुगतान चाहते हों; सीमा और आपकी मंज़ूरी हर चैनल पर लागू होती है।",
     "fault.wallet_x402_sdk_unavailable.message": "यह बिल्ड x402 Foundation SDK के ज़रिए Base पर x402 ऑफ़र का भुगतान नहीं कर सकता: वैकल्पिक x402 ऐड-ऑन इस मशीन पर नहीं है। कुछ हस्ताक्षरित या भेजा नहीं गया। वॉलेट की बाकी हर सुविधा इसके बिना चलती है; इसे लगाने पर दोबारा कोशिश करें।"
   },
-  "source_catalog_sha256": "2134d6a1a63d656869082b38805f6feff2ac516d337fe912fca32d1fd3cf5c65",
+  "source_catalog_sha256": "838f08a6c8c07d3897719b90f80104b963bcc1b77fe6daf6c312363bd693561a",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1941,6 +1944,7 @@
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
-    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)"
+    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)"
   }
 }

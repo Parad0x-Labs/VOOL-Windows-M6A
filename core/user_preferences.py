@@ -34,6 +34,12 @@ class UserPreferences:
     wallet_enabled_generation: int = 0  # counts changes of the switch; a signed wallet transfer compares it before sending
     zcash_invoices_enabled: bool = False  # Zcash private invoices (watch-only, core/zcash) -- OFF by default
     speech_notice_dismissed: bool = False  # durable even in private native web sessions
+    # The owner's "Block web search in Local Only" switch (Settings -> Privacy & Permissions). OFF by
+    # default: Local Only then keeps web search through VOOL's own browser, as it always has. ON, the
+    # one gate in core/remote_fetch_policy.py refuses web search and page fetches while Local Only
+    # is on. Written only by the Settings prefs authority (operator principal); no chat sentence and
+    # no tool sets it. Read for enforcement by `local_only_block_web_state`, which fails closed.
+    local_only_block_web: bool = False
     # First-run setup (core/setup_progress.py). The flow persists ONLY these two: which steps the
     # user skipped and whether the "Complete setup" reminder was dismissed. Done-ness is never
     # stored -- it is derived from the authorities that own each value.
@@ -46,6 +52,7 @@ class UserPreferences:
 
 
 _PREFS_FILE = "user_preferences.json"
+LOCAL_ONLY_BLOCK_WEB_FIELD = "local_only_block_web"
 _HUMOR_RE = re.compile(r"(?:set\s+)?humou?r\s*[:=]?\s*(\d{1,3})\s*%?", re.IGNORECASE)
 _CHAR_RE = re.compile(
     r"^(?:set\s+persona|act\s+like|act\s+as|be\s+like|be\s+(?:a\s+)?|character|roleplay\s+as|pretend\s+(?:to\s+be|you(?:'re| are)\s+)|play\s+(?:the\s+role\s+of|as)|i\s+name\s+(?:you|u)|your?\s+name\s+(?:is|now)|you\s+are\s+now|from\s+now\s+on\s+you(?:'re| are))\s*[:=]?\s*(.+)$",
@@ -210,6 +217,7 @@ def load_preferences() -> UserPreferences:
             setup_skipped_steps=str(raw.get("setup_skipped_steps", "") or "").strip()[:200],
             setup_dismissed=bool(raw.get("setup_dismissed", False)),
             speech_notice_dismissed=bool(raw.get("speech_notice_dismissed", False)),
+            local_only_block_web=raw.get(LOCAL_ONLY_BLOCK_WEB_FIELD, False) is True,
             autonomy_chosen_at=str(raw.get("autonomy_chosen_at", "") or "").strip()[:40],
         )
         return _apply_edition_clamps(prefs)
@@ -217,7 +225,18 @@ def load_preferences() -> UserPreferences:
         return default_preferences()
 
 
-def save_preferences(prefs: UserPreferences) -> Path:
+def save_preferences(prefs: UserPreferences, *, writes_local_only_block_web: bool = False) -> Path:
+    """Persist ``prefs``.
+
+    The "Block web search in Local Only" switch is written only by its own Settings save
+    (``writes_local_only_block_web=True``, the prefs authority when its body names the switch).
+    Every other writer keeps the value already on disk, and when the file on disk cannot be read
+    it writes the switch ON: `load_preferences` turned that file into defaults, so the ``False`` it
+    carries is not the owner's choice, and the gate already reads the unknown switch as ON.
+    """
+    if not writes_local_only_block_web:
+        stored = local_only_block_web_state()
+        prefs.local_only_block_web = True if stored is None else stored
     prefs = _apply_edition_clamps(prefs)
     path = _prefs_path()
     payload = asdict(prefs)
@@ -239,10 +258,35 @@ def save_preferences(prefs: UserPreferences) -> Path:
     payload["timezone"] = _validate_timezone(str(payload.get("timezone", "") or ""))
     payload["setup_skipped_steps"] = str(payload.get("setup_skipped_steps", "") or "").strip()[:200]
     payload["speech_notice_dismissed"] = bool(payload.get("speech_notice_dismissed", False))
+    payload[LOCAL_ONLY_BLOCK_WEB_FIELD] = payload.get(LOCAL_ONLY_BLOCK_WEB_FIELD, False) is True
     payload["setup_dismissed"] = bool(payload.get("setup_dismissed", False))
     payload["autonomy_chosen_at"] = str(payload.get("autonomy_chosen_at", "") or "").strip()[:40]
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return path
+
+
+def local_only_block_web_state() -> bool | None:
+    """The owner's "Block web search in Local Only" switch, read strictly for enforcement.
+
+    ``False``: turned off, or never set (no preferences file yet, or one written before the switch
+    existed). ``True``: turned on. ``None``: the file is there but cannot be read or parsed, or holds
+    something other than a boolean for the switch. `load_preferences` turns an unreadable file into
+    the defaults, which would read as "off"; the gate must not, so it asks here and treats ``None``
+    as "refuse while Local Only is on".
+    """
+    try:
+        path = _prefs_path()
+        if not path.exists():
+            return False
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(raw, dict):
+        return None
+    if LOCAL_ONLY_BLOCK_WEB_FIELD not in raw:
+        return False
+    value = raw[LOCAL_ONLY_BLOCK_WEB_FIELD]
+    return value if isinstance(value, bool) else None
 
 
 def mark_autonomy_chosen(prefs: UserPreferences) -> UserPreferences:

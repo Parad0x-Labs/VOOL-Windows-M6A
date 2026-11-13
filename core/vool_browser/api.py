@@ -92,6 +92,28 @@ def _require_session(arguments: dict[str, Any]) -> Any:
     raise OpFailed("session_unavailable", f"session {session!r} is {record.get('state')}")
 
 
+#: Session-bound ops that never reach a page, so the web gate has nothing to judge for them.
+_OFFLINE_OPS = frozenset({"permission.grant", "permission.list", "session.status", "upload.stage"})
+
+
+def _web_gate_refusal(url: str) -> str | None:
+    """The owner's "Block web search in Local Only" gate for one address (core.remote_fetch_policy)."""
+    from core.remote_fetch_policy import local_only_web_refusal
+
+    return local_only_web_refusal(url)
+
+
+def _arm_route_guard(handle: Any) -> None:
+    """Hand the session's route guard this turn's web gate verdict.
+
+    The guard runs on the engine's own thread, which does not carry the turn's context, so the
+    turn's answer is decided here, on the calling thread, and the guard reads it from the handle.
+    """
+    from core.remote_fetch_policy import local_only_web_block_reason
+
+    handle.web_gate_reason = local_only_web_block_reason() or ""
+
+
 def handle_intent(intent: str, arguments: dict[str, Any]) -> LaneResult:
     spec = LANE_INTENTS.get(intent)
     if spec is None:
@@ -108,6 +130,9 @@ def handle_intent(intent: str, arguments: dict[str, Any]) -> LaneResult:
             reason = ops.check_url_navigable(start_url)
             if reason:
                 return _result(ok=False, status="refused", response_text=f"start_url {reason}")
+            blocked = _web_gate_refusal(start_url)
+            if blocked is not None:
+                return _result(ok=False, status="refused", response_text=blocked)
         try:
             handle = open_session(
                 session=session, start_url=start_url,
@@ -119,6 +144,7 @@ def handle_intent(intent: str, arguments: dict[str, Any]) -> LaneResult:
             return _result(ok=False, status=exc.status, response_text=exc.message)
         except (TypeError, ValueError) as exc:
             return _result(ok=False, status="invalid_arguments", response_text=str(exc))
+        _arm_route_guard(handle)
         # The start origin is the session's primary origin: everything else is
         # denied until the operator grants it. The engine DRIVES to the start
         # URL now, so a journey's first inspect sees the page the operator named;
@@ -255,6 +281,21 @@ def handle_intent(intent: str, arguments: dict[str, Any]) -> LaneResult:
 
     try:
         handle = _require_session(arguments)
+    except OpFailed as exc:
+        return _result(ok=False, status=exc.status, response_text=exc.message)
+    if op not in _OFFLINE_OPS:
+        # The web gate, before any budget is spent: the address this op goes to, or the page the
+        # session is on for an op that acts on it.
+        _arm_route_guard(handle)
+        target = str(arguments.get("url") or "").strip() or str(handle.current_url or "").strip()
+        blocked = _web_gate_refusal(target) if target else None
+        if blocked is not None:
+            record = record_receipt(handle, op=op, outcome="refused",
+                                    origin=handle.primary_origin, final_url=handle.current_url,
+                                    reason=blocked[:300])
+            return _result(ok=False, status="refused", response_text=blocked,
+                           observation={"receipt": record})
+    try:
         handle.spend_op()
     except OpFailed as exc:
         return _result(ok=False, status=exc.status, response_text=exc.message)

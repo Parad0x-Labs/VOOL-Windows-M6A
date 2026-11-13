@@ -1075,6 +1075,9 @@
     "settings.row.local_models.effect": "يسري فورًا.",
     "settings.row.local_models.help": "نماذج مثبتة في Ollama على هذه الآلة. تسجيل أحدها يضيف مسارًا يمكن لـ VOOL التوجيه إليه؛ واعتماده يشغّل مسبار الأدوات المختوم الذي يقرر إن كان يجوز له كتابة الإجابات النهائية. لا يُنزَّل شيء ولا يتصل بأحد — يُقرأ Ollama المحلي خاصتك فقط.",
     "settings.row.local_models.label": "النماذج المحلية",
+    "settings.row.local_only_block_web.effect": "يسري فورًا.",
+    "settings.row.local_only_block_web.help": "معطّل افتراضيًا. يُبقي وضع محلي فقط الردود على هذا الكمبيوتر، لكن VOOL يظل قادرًا على البحث في الويب وفتح صفحات الويب عبر متصفحه المدمج، فتصل كلمات بحثك إلى محرك البحث وتُجلب الصفحات التي تطلبها من مواقعها. فعّل هذا لإيقاف ذلك ما دامت المحادثة في وضع محلي فقط: تُرفض عمليات البحث على الويب وفتح صفحة ويب أو تلخيصها وجلسات متصفح VOOL. لا يغيّر شيئًا خارج وضع محلي فقط، وتبقى الصفحات على هذا الكمبيوتر أو على شبكتك الخاصة متاحة. لا يوقف وضع «محلي فقط» البريد الإلكتروني: البريد الذي ترسله أو تقرؤه لا يزال يمر عبر خادم بريدك.",
+    "settings.row.local_only_block_web.label": "حظر البحث على الويب في وضع محلي فقط",
     "settings.row.locality_note.help": "المحادثات والإيصالات والتفضيلات وعناصر الملف الشخصي ملفات على هذه الآلة. مفاتيح المزودين مختومة هنا أيضًا. هذا هو موقع البيانات، وهو منفصل عما إذا كان يحق لـ VOOL بلوغ الشبكة: نموذج سحابي أو بحث ويب مباشر يرسل نص ذلك الطلب إلى ذلك المزود، وفقط حين يستخدمه دور فعليًا.",
     "settings.row.locality_note.label": "أين بياناتك",
     "settings.row.mode_note.help": "اليدوي والتلقائي والتجاوز تخص محادثة واحدة، لا التطبيق — منح التجاوز مقيد بمهمة وينتهي. لهذا يُضبط من عنصر التحكم بالوضع في محرر الرسائل، بجوار المحادثة التي يطبق عليها، ولا يتكرر هنا.",
@@ -1930,7 +1933,7 @@
     "fault.wallet_payment_channel_off.action": "شغّل قناة دفع في إعدادات العملات المشفرة فقط إن أردت أن تتم الدفعات عبرها؛ الحد الأقصى وموافقتك يسريان على كل قناة.",
     "fault.wallet_x402_sdk_unavailable.message": "لا يستطيع هذا الإصدار دفع عروض x402 على Base عبر x402 Foundation SDK: الإضافة الاختيارية x402 غير مثبتة على هذه الآلة. لم يوقَّع أو يُرسل شيء. كل وظائف المحفظة الأخرى تعمل بدونها؛ بعد تثبيتها أعد المحاولة."
   },
-  "source_catalog_sha256": "2134d6a1a63d656869082b38805f6feff2ac516d337fe912fca32d1fd3cf5c65",
+  "source_catalog_sha256": "838f08a6c8c07d3897719b90f80104b963bcc1b77fe6daf6c312363bd693561a",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1941,6 +1944,7 @@
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
-    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)"
+    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)"
   }
 }

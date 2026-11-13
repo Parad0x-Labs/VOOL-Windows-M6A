@@ -92,6 +92,21 @@ def _runtime_origin_refused(url: str) -> str:
     return runtime_origin_refusal(url)
 
 
+def _endpoint_is_local(url: str) -> bool:
+    """This machine or the owner's own network, by the one endpoint law; unknown is not local.
+
+    Only a network address is judged: a ``data:`` or ``blob:`` resource inside a page leaves nothing."""
+    scheme = str(url or "").split(":", 1)[0].strip().lower()
+    if scheme not in {"http", "https", "ws", "wss", "ftp"}:
+        return True
+    try:
+        from core.auto_local_only_mode import endpoint_is_local
+
+        return bool(endpoint_is_local(url))
+    except Exception:
+        return False
+
+
 def check_url_navigable(url: str) -> str:
     """A typed verdict for a direct navigation: '' when allowed, else the reason."""
 
@@ -132,6 +147,11 @@ def _install_route_guard(context: Any, handle: SessionHandle) -> None:
 
     def guard(route: Any, request: Any) -> None:
         try:
+            if getattr(handle, "web_gate_reason", "") and not _endpoint_is_local(str(request.url)):
+                # the owner's "Block web search in Local Only" switch, as the calling turn decided it
+                handle.recently_blocked.append(str(request.url))
+                route.abort("blocked_by_vool_browser")
+                return
             if _runtime_origin_refused(str(request.url)):
                 # a page (or a link, script or redirect in it) never reaches this runtime's own service
                 handle.recently_blocked.append(str(request.url))

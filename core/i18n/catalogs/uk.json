@@ -1075,6 +1075,9 @@
     "settings.row.local_models.effect": "Діє негайно.",
     "settings.row.local_models.help": "Моделі, встановлені в Ollama на цій машині. Реєстрація додає канал, куди VOOL може спрямовувати; сертифікація запускає запечатану пробу інструментів, що вирішує, чи можна йому писати кінцеві відповіді. Нічого не завантажується і ніхто не опитується — читається лише ваш локальний Ollama.",
     "settings.row.local_models.label": "Локальні моделі",
+    "settings.row.local_only_block_web.effect": "Діє негайно.",
+    "settings.row.local_only_block_web.help": "Типово вимкнено. Режим «Лише локально» залишає відповіді на цьому комп'ютері, але VOOL усе одно може шукати в інтернеті й відкривати вебсторінки через свій вбудований браузер, тож ваші пошукові слова потрапляють до пошукової системи, а запитані сторінки завантажуються з їхніх сайтів. Увімкніть, щоб заборонити це, поки чат у режимі «Лише локально»: вебпошук, відкриття чи підсумок вебсторінки та сеанси браузера VOOL відхиляються. Поза режимом «Лише локально» нічого не змінюється, а сторінки на цьому комп'ютері чи у вашій власній мережі лишаються доступними. Режим «Лише локально» не зупиняє пошту: листи, які ви надсилаєте чи читаєте, і далі йдуть через ваш поштовий сервер.",
+    "settings.row.local_only_block_web.label": "Блокувати вебпошук у режимі «Лише локально»",
     "settings.row.locality_note.help": "Розмови, квитанції, вподобання і елементи профілю — файли на цій машині. Ключі провайдерів теж запечатані тут. Це локальність даних, і вона відокремлена від того, чи може VOOL виходити в мережу: хмарна модель або живий веб-пошук надсилає текст того запиту тому провайдеру, і лише коли хід справді його використовує.",
     "settings.row.locality_note.label": "Де ваші дані",
     "settings.row.mode_note.help": "Ручний, Авто і Обхід належать ОДНІЙ розмові, не застосунку — видача обходу обмежена завданням і спливає. Тому він задається перемикачем режиму біля поля вводу, поруч із чатом, до якого належить, і тут не дублюється.",
@@ -1930,7 +1933,7 @@
     "fault.wallet_payment_channel_off.action": "Вмикайте платіжний канал у налаштуваннях Крипто, лише якщо хочете платити через нього; ліміт і ваше схвалення діють на кожному каналі.",
     "fault.wallet_x402_sdk_unavailable.message": "Ця збірка не вміє оплачувати пропозиції x402 у мережі Base через x402 Foundation SDK: необов'язковий додаток x402 не встановлено на цій машині. Нічого не підписано і не надіслано. Усі інші функції гаманця працюють без нього; після встановлення повторіть."
   },
-  "source_catalog_sha256": "2134d6a1a63d656869082b38805f6feff2ac516d337fe912fca32d1fd3cf5c65",
+  "source_catalog_sha256": "838f08a6c8c07d3897719b90f80104b963bcc1b77fe6daf6c312363bd693561a",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1941,6 +1944,7 @@
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
-    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)"
+    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)"
   }
 }

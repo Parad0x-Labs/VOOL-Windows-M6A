@@ -1075,6 +1075,9 @@
     "settings.row.local_models.effect": "Se aplica de inmediato.",
     "settings.row.local_models.help": "Modelos instalados en Ollama en esta máquina. Registrar uno añade un carril al que VOOL puede enrutar; certificarlo ejecuta la sonda sellada de herramientas que decide si puede escribir respuestas finales. No se descarga nada ni se contacta a nadie — solo lee tu Ollama local.",
     "settings.row.local_models.label": "Modelos locales",
+    "settings.row.local_only_block_web.effect": "Se aplica de inmediato.",
+    "settings.row.local_only_block_web.help": "Desactivado de forma predeterminada. Solo local mantiene las respuestas en este equipo, pero VOOL aún puede buscar en la web y abrir páginas web con su navegador integrado, así que tus palabras de búsqueda llegan al buscador y las páginas que pides se descargan de sus sitios. Actívalo para impedirlo mientras un chat esté en Solo local: se rechazan las búsquedas web, abrir o resumir una página web y las sesiones del navegador de VOOL. No cambia nada fuera de Solo local, y las páginas de este equipo o de tu propia red siguen disponibles. Solo local no detiene el correo: el correo que envías o lees sigue pasando por tu servidor de correo.",
+    "settings.row.local_only_block_web.label": "Bloquear la búsqueda web en Solo local",
     "settings.row.locality_note.help": "Las conversaciones, recibos, preferencias y elementos de perfil son archivos en esta máquina. Las claves de proveedores también están selladas aquí. Eso es localidad de datos, y es distinto de si VOOL puede alcanzar la red: un modelo en la nube o una búsqueda web en vivo envía el texto de esa solicitud a ese proveedor, y solo cuando un turno realmente usa uno.",
     "settings.row.locality_note.label": "Dónde están tus datos",
     "settings.row.mode_note.help": "Manual, Auto y Bypass pertenecen a UNA conversación, no a la aplicación — una concesión de bypass se limita a una tarea y expira. Por eso se configura desde el control de modo del compositor, junto al chat al que aplica, y no se duplica aquí.",
@@ -1930,7 +1933,7 @@
     "fault.wallet_payment_channel_off.action": "Activa un canal de pago en los ajustes de Cripto solo si quieres que los pagos pasen por él; el tope y tu aprobación se aplican en todos los canales.",
     "fault.wallet_x402_sdk_unavailable.message": "Esta compilación no puede pagar ofertas x402 en Base mediante el x402 Foundation SDK: el extra opcional x402 no está instalado en esta máquina. No se firmó ni envió nada. Todo lo demás de la cartera funciona sin él; instálalo y reintenta."
   },
-  "source_catalog_sha256": "2134d6a1a63d656869082b38805f6feff2ac516d337fe912fca32d1fd3cf5c65",
+  "source_catalog_sha256": "838f08a6c8c07d3897719b90f80104b963bcc1b77fe6daf6c312363bd693561a",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1941,6 +1944,7 @@
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
-    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)"
+    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)"
   }
 }

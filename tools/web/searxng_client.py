@@ -9,7 +9,7 @@ import urllib.request
 from dataclasses import dataclass
 
 from core import policy_engine
-from core.remote_fetch_policy import RemoteFetchRefusedError, open_remote
+from core.remote_fetch_policy import RemoteFetchRefusedError, local_only_web_block_reason, open_remote
 
 DEFAULT_TIMEOUT_SECONDS = 12.0
 
@@ -65,6 +65,12 @@ class SearXNGClient:
         text = (query or "").strip()
         if not text:
             return []
+        # A SearXNG instance relays the query to the search engines wherever it runs, so the owner's
+        # "Block web search in Local Only" switch refuses it even on this machine, where the HTTP
+        # door alone would let a loopback address through.
+        blocked = local_only_web_block_reason()
+        if blocked is not None:
+            raise RemoteFetchRefusedError(blocked)
 
         params = urllib.parse.urlencode(
             {
