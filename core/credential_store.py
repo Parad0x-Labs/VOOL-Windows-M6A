@@ -11,7 +11,10 @@ backends, chosen automatically:
 * **Windows Credential Manager** (default on Windows) -- the VALUE is a generic credential named
   ``VOOL/credentials/<name>`` in the user's Credential Manager (``core.windows_credential_manager``,
   advapi32 through ctypes), sealed by Windows under the user's sign-in. It never shows a dialog, so
-  unlike the Keychain it needs no operator grant. The same non-secret sidecar keeps the labels.
+  unlike the Keychain it needs no operator grant on the installed home of an attended run. It is
+  the user's global store, outside VOOL's home, so a test, CI, an unattended boot or a scratch home
+  takes the Keychain's rule instead (a grant, or a prior use) and otherwise keeps to the vault.
+  The same non-secret sidecar keeps the labels.
 * **AES-256-GCM vault file** (fallback) -- for environments without a usable keyring backend
   (headless Linux, CI, the dev venv, a Windows session where Credential Manager does not answer).
   Each value is sealed under a key derived from the node signing key
@@ -152,6 +155,14 @@ def _active_keyring(*, write: bool = False):
     if mode == "vault":
         return None
     if sys.platform == "win32":
+        # Credential Manager never prompts, but it is the user's global store, outside VOOL's home.
+        # So it takes the macOS rule (a grant, or for reads a prior use of the store), plus one
+        # Windows allowance: an attended process on the default installed home needs no grant.
+        # A scratch or isolated home, or an unattended run, gets the vault, decided here before
+        # advapi32 is loaded, so it makes no Credential Manager call at all (Security Review, #229).
+        granted = keychain_write_granted() if write else (keychain_write_granted() or _keychain_previously_used())
+        if not (granted or _windows_home_may_use_credential_manager()):
+            return None
         backend = _load_keyring()
         if _is_windows_store(backend):
             return backend  # never prompts: no operator grant needed (module docstring)
@@ -168,6 +179,20 @@ def _active_keyring(*, write: bool = False):
     if backend is None:
         surface_fallback_notice()
     return backend
+
+
+def _windows_home_may_use_credential_manager() -> bool:
+    """Whether this Windows process may use Credential Manager without a grant: an attended run
+    (``core.unattended_preflight``) on the installed home (``runtime_home_is_isolated`` is False).
+    A test, CI, an unattended boot or a scratch home never may, so its keys stay inside its own home.
+    """
+    from core.runtime_paths import runtime_home_is_isolated
+    from core.unattended_preflight import is_unattended
+
+    try:
+        return not is_unattended() and not runtime_home_is_isolated()
+    except Exception:
+        return False
 
 
 def _is_windows_store(backend) -> bool:

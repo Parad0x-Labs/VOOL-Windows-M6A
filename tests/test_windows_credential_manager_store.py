@@ -154,11 +154,19 @@ def api(monkeypatch):
     return fake
 
 
+def _installed_home_attended(monkeypatch) -> None:
+    """What the installed app is: an attended run on the default home. A pytest process on a
+    tmp_path home is neither, so without this it keeps to the vault (rows at the end of the file)."""
+    monkeypatch.setattr(cs, "_windows_home_may_use_credential_manager", lambda: True)
+
+
 @pytest.fixture
 def windows(monkeypatch, api):
-    """This process is Windows, the store mode is the default, and advapi32 is the fake."""
+    """This process is Windows, the store mode is the default, advapi32 is the fake, and the run is
+    the installed app's (attended, on the default home)."""
     monkeypatch.delenv("VOOL_CREDENTIAL_STORE", raising=False)
     monkeypatch.setattr(cs.sys, "platform", "win32")
+    _installed_home_attended(monkeypatch)
     return api
 
 
@@ -301,6 +309,7 @@ def test_credential_manager_unavailable_keeps_the_vault_and_says_so(monkeypatch,
     monkeypatch.setattr(wcm, "_load_advapi32", lambda: None)
     monkeypatch.delenv("VOOL_CREDENTIAL_STORE", raising=False)
     monkeypatch.setattr(cs.sys, "platform", "win32")
+    _installed_home_attended(monkeypatch)
     assert cs.active_backend() == "vault"
     cs.store_credential("llm.cloud.openrouter", FAKE_KEY)
     cs.get_credential("llm.cloud.openrouter")
@@ -602,3 +611,70 @@ def test_the_windows_store_reports_the_os_user_sealed_class(windows):
     assert "windows" not in STORAGE_CLASS_DESCRIPTIONS[STORAGE_CLASS_KEYCHAIN].lower()
     cs.store_credential("llm.cloud.openrouter", FAKE_KEY)
     assert cs.export_diagnostics()["storage_class"] == "os-user-sealed"
+
+
+# ------------------------------------------------------------------ scratch, unattended and isolated homes
+
+
+def _no_advapi32(monkeypatch) -> None:
+    def _boom():
+        raise AssertionError("advapi32 loaded for a process that must keep to the vault")
+
+    monkeypatch.setattr(wcm, "_load_advapi32", _boom)
+    monkeypatch.delenv("VOOL_CREDENTIAL_STORE", raising=False)
+    monkeypatch.setattr(cs.sys, "platform", "win32")
+
+
+def test_a_scratch_process_on_windows_keeps_to_the_vault_and_never_loads_advapi32(monkeypatch):
+    """Credential Manager is the user's global store, outside VOOL's home: a test or scratch
+    process (this pytest run, on a tmp_path home) must leave nothing there."""
+    _no_advapi32(monkeypatch)
+    assert cs.active_backend() == "vault"
+    cs.store_credential("llm.cloud.openrouter", FAKE_KEY, label="OpenRouter")
+    assert cs.get_credential("llm.cloud.openrouter") == FAKE_KEY
+    assert cs.has_credential("llm.cloud.openrouter")
+    assert [row["name"] for row in cs.list_credentials()] == ["llm.cloud.openrouter"]
+    assert "llm.cloud.openrouter" in _vault_raw()
+    assert cs.active_backend() == "vault"
+
+
+@pytest.mark.parametrize(("unattended", "isolated"), [(False, True), (True, False), (True, True)])
+def test_only_an_attended_run_on_the_installed_home_uses_credential_manager_without_a_grant(
+    monkeypatch, unattended, isolated
+):
+    import core.unattended_preflight as preflight
+
+    monkeypatch.setattr(preflight, "is_unattended", lambda: unattended)
+    monkeypatch.setattr(runtime_paths, "runtime_home_is_isolated", lambda env=None: isolated)
+    _no_advapi32(monkeypatch)
+    assert cs.active_backend() == "vault"
+    cs.store_credential("llm.cloud.openrouter", FAKE_KEY)
+    assert "llm.cloud.openrouter" in _vault_raw()
+
+
+def test_an_attended_run_on_the_installed_home_uses_credential_manager(monkeypatch, api):
+    import core.unattended_preflight as preflight
+
+    monkeypatch.setattr(preflight, "is_unattended", lambda: False)
+    monkeypatch.setattr(runtime_paths, "runtime_home_is_isolated", lambda env=None: False)
+    monkeypatch.delenv("VOOL_CREDENTIAL_STORE", raising=False)
+    monkeypatch.setattr(cs.sys, "platform", "win32")
+    assert cs.active_backend() == "credential_manager"
+    cs.store_credential("llm.cloud.openrouter", FAKE_KEY)
+    assert "llm.cloud.openrouter" not in _vault_raw()
+    assert any(name.endswith("llm.cloud.openrouter") for name in api.records)
+
+
+def test_an_unattended_run_reads_a_key_already_in_credential_manager_but_never_writes(monkeypatch, api):
+    """The macOS read rule: a home that used the OS store before still finds its keys there in a
+    background run; storing still needs the attended app or a grant, as on macOS."""
+    monkeypatch.delenv("VOOL_CREDENTIAL_STORE", raising=False)
+    monkeypatch.setattr(cs.sys, "platform", "win32")
+    monkeypatch.setattr(cs, "_windows_home_may_use_credential_manager", lambda: True)
+    cs.store_credential("llm.cloud.openrouter", FAKE_KEY)
+    written = dict(api.records)
+    assert written and "llm.cloud.openrouter" not in _vault_raw()
+    monkeypatch.setattr(cs, "_windows_home_may_use_credential_manager", lambda: False)
+    assert cs.get_credential("llm.cloud.openrouter") == FAKE_KEY
+    assert cs._active_keyring(write=True) is None
+    assert api.records == written
