@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import ntpath
 import os
 import re
 import threading
@@ -115,8 +116,71 @@ def _real(path: str) -> str:
         return path
 
 
+#: Windows known folders a project may be neither at nor inside (the OS, installed programs, machine-wide app
+#: state), and the environment variables that name the same folders when the shell cannot answer.
+_WINDOWS_SEALED_KNOWN = ("Windows", "ProgramFiles", "ProgramFilesX86", "ProgramData")
+_WINDOWS_SEALED_ENV = ("SystemRoot", "windir", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "ProgramData")
+#: Windows folders a project may sit inside but may not be: the profile, the folder holding every profile and
+#: the per-user app-state folders (the Windows counterparts of ``~`` and ``~/Library``).
+_WINDOWS_EXACT_KNOWN = ("LocalAppData", "RoamingAppData")
+
+
+def _windows_norm(path: str) -> str:
+    return ntpath.normcase(ntpath.normpath(str(path))).rstrip("\\")
+
+
+def _windows_spellings(folders: list[str]) -> set[str]:
+    """Each folder as spelled and as it really resolves (a junction is judged by its target too)."""
+    out: set[str] = set()
+    for folder in folders:
+        if not folder:
+            continue
+        out.add(_windows_norm(folder))
+        with contextlib.suppress(OSError, ValueError):
+            out.add(_windows_norm(os.path.realpath(folder)))
+    return out
+
+
+def _windows_system_refusal(resolved: str) -> str:
+    """Windows: a plain refusal when ``resolved`` is, or is inside, the Windows folder, a Program Files folder or
+    ProgramData, or is the profile, the folder holding every profile or a per-user app-state folder; else ''.
+
+    The folders come from the shell (SHGetKnownFolderPath, core/windows_known_folders.py), with the environment
+    added. Both only add refusals, and when neither names the Windows folder the default on the system drive is
+    refused, so a lookup that cannot answer never opens a system folder."""
+    from core import windows_known_folders
+
+    known = windows_known_folders.known_folder
+    sealed = [known(name) or "" for name in _WINDOWS_SEALED_KNOWN]
+    sealed += [os.environ.get(name, "") for name in _WINDOWS_SEALED_ENV]
+    if not (known("Windows") or os.environ.get("SystemRoot") or os.environ.get("windir")):
+        drive = ntpath.splitdrive(os.environ.get("SystemDrive", "") or "C:")[0] or "C:"
+        sealed += [drive + "\\Windows", drive + "\\Program Files", drive + "\\Program Files (x86)",
+                   drive + "\\ProgramData"]
+    profiles = [known("Profile") or "", os.environ.get("USERPROFILE", "")]
+    exact = [p for p in profiles if p] + [ntpath.dirname(ntpath.normpath(p)) for p in profiles if p]
+    exact += [ntpath.join(p, "AppData") for p in profiles if p]
+    exact += [known(name) or "" for name in _WINDOWS_EXACT_KNOWN]
+    target = _windows_norm(resolved)
+    for folder in _windows_spellings(sealed):
+        if folder and (target == folder or target.startswith(folder + "\\")):
+            return "that is a system folder. Pick a normal folder, like Documents."
+    for folder in _windows_spellings(exact):
+        if folder and target == folder:
+            if any(target == p for p in _windows_spellings(profiles)):
+                return "that is your whole home folder. Pick one folder inside it, like Documents."
+            if any(target == _windows_norm(ntpath.dirname(ntpath.normpath(p))) for p in profiles if p):
+                return "that folder holds every user's files. Pick one folder inside your home folder, like Documents."
+            return "that is a system folder. Pick a normal folder, like Documents."
+    return ""
+
+
 def _too_broad_root(resolved: str) -> str:
     """A plain refusal when ``resolved`` is the home folder, the folder holding every home, or a system folder; else ''."""
+    if windows_path_policy.active():
+        refusal = _windows_system_refusal(resolved)
+        if refusal:
+            return refusal
     home = _real(os.path.expanduser("~"))
     if home and home not in {"~", os.sep} and resolved == home:
         return "that is your whole home folder. Pick one folder inside it, like Documents."
