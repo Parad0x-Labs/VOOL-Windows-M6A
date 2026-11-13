@@ -15,12 +15,12 @@ from pathlib import Path
 
 import pytest
 
+from core import posix_tools
 from core.capability_graph import (
     _DEFAULT_MAX_CANDIDATES,
     _FAMILY_REPRESENTATIVE,
     model_visible_specs,
 )
-from core import posix_tools
 from core.runtime_tool_contracts import runtime_tool_contract_map
 
 _STUB_MCP = str(Path(__file__).parent / "mcp_stub_server.py")
