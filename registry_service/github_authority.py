@@ -157,16 +157,30 @@ class Repository:
         self.path, self.branch = Path(path), branch
         # The checkout keeps no credentials, so the install step can't push; only this process holds the token,
         # passed to git in its environment and never written to the checkout.
-        self._env = None
+        self._auth: dict[str, str] = {}
         if token:
             header = "AUTHORIZATION: basic " + base64.b64encode(b"x-access-token:" + token.encode()).decode()
-            self._env = {**os.environ, "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
-                         "GIT_CONFIG_VALUE_0": header}
+            self._auth = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+                          "GIT_CONFIG_VALUE_0": header}
 
     def _git(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
-        result = subprocess.run(["git", "-C", str(self.path), "-c", "user.name=" + BOT[0], "-c", "user.email=" + BOT[1],
-                                 "-c", "commit.gpgsign=false", "-c", "http.followRedirects=false", *args], capture_output=True, text=True, timeout=120,
-                                env=self._env)
+        """git through core/safe_git.py: refused where VOOL runs no git (Windows), refused for a checkout whose own
+        config names a program git would run, hardened, and with no inherited GIT_* variable. Only this signer's
+        own token header is added back to the scrubbed environment."""
+        from core import safe_git
+
+        if safe_git.git_refused_here():
+            raise RegistryError(safe_git.GIT_REFUSED_TEXT)
+        try:
+            programs = safe_git.executable_config_for(self.path, args, timeout=120)
+        except (OSError, RuntimeError, subprocess.TimeoutExpired):
+            raise RegistryError("the checkout's git config could not be checked") from None
+        if programs:
+            raise RegistryError("the checkout's own git config names programs git would run: " + ", ".join(programs))
+        command = safe_git.hardened_argv(self.path, "-c", "user.name=" + BOT[0], "-c", "user.email=" + BOT[1],
+                                         "-c", "commit.gpgsign=false", "-c", "http.followRedirects=false", *args)
+        result = subprocess.run(command, capture_output=True, encoding="utf-8", errors="replace", timeout=120,
+                                env={**safe_git.safe_env(), **self._auth})
         if check and result.returncode:
             if re.search(r"(?:HTTP |returned error: )30[12378]\b", result.stderr):
                 raise RegistryError("git redirect refused")
@@ -336,7 +350,7 @@ class RepoAuthority(Authority):
         self._openrouter = env.get("VOOL_AUTHORITY_OPENROUTER_KEY", "")
         require(review is not None or bool(self._openrouter.strip()),
                 "the OPENROUTER_API_KEY secret is missing, so no upload can be reviewed")
-        config = json.loads((self.repo / FOLDER / "config.json").read_text())
+        config = json.loads((self.repo / FOLDER / "config.json").read_text(encoding="utf-8"))
         require(isinstance(config, dict) and set(config) == {"review"}, FOLDER + "/config.json holds only the review settings")
         config["server"] = _server(env.get(SERVER, ""))
         self._begin(config, decode((self.repo / FOLDER / "trusted-root.json").read_bytes(), 65536),
@@ -391,7 +405,7 @@ class RepoAuthority(Authority):
     def save(self) -> None:
         private = {key: self.state[key] for key in PRIVATE if key in self.state}
         try:
-            private["spend"] = json.loads((self.dir / "spend.json").read_text())
+            private["spend"] = json.loads((self.dir / "spend.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             raise RegistryError("the review spend state cannot be read") from None
         public = {key: value for key, value in self.state.items() if key not in PRIVATE}
@@ -719,20 +733,34 @@ def setup(repo: Path, *, github: str, catalog_key: str, targets: list[dict], rev
     folder.mkdir()
     (folder / "trusted-root.json").write_bytes(canonical(envelope))
     (folder / "config.json").write_bytes(_public_json({"review": review}))
-    (folder / "vool-commit").write_text(vool_commit + "\n")
+    (folder / "vool-commit").write_text(vool_commit + "\n", encoding="utf-8")
     state = {
         "epoch": 0, "entries": [], "revoked": [], "targets": targets, "released": targets, "authorized_until": 0,
         "marks": {"sequence": 0, "tested": [], "highlighted": [], "suspended": [], "teams": {}}}
     (folder / "state.json").write_bytes(_public_json(state))
     (folder / "private.bin").write_bytes(seal(state_key, {"verdicts": {}, "attempts": {}, "reviews": {}, "spend": {},
                                                          "public_sha256": digest(state)}))
-    (repo / ".gitattributes").write_text(FOLDER + "/private.bin binary\n")
+    (repo / ".gitattributes").write_text(FOLDER + "/private.bin binary\n", encoding="utf-8")
     (repo / STEPS).write_bytes((TEMPLATES / STEPS).read_bytes())
     (repo / WORKFLOW).parent.mkdir(parents=True, exist_ok=True)
     (repo / WORKFLOW).write_bytes((TEMPLATES / "skill-codex.yml").read_bytes())
     if not (repo / "README.md").exists():
         (repo / "README.md").write_bytes((TEMPLATES / "README.md").read_bytes())
     return envelope
+
+
+def _own_commit() -> str:
+    """The VOOL commit this signer runs from (its own checkout), through core/safe_git.py; '' when git cannot say."""
+    from core import safe_git
+
+    if safe_git.git_refused_here():
+        return ""
+    try:
+        return subprocess.run(safe_git.hardened_argv(Path(__file__).resolve().parent, "rev-parse", "HEAD"),
+                              capture_output=True, encoding="utf-8", errors="replace", timeout=60,
+                              env=safe_git.safe_env()).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
 
 
 def gh_secret(github: str):
@@ -759,9 +787,8 @@ def main(argv=None, *, transport=None, clock=time.time, releases=None) -> int:
     try:
         if args.command == "setup":
             require(args.offline is not None, "give a new folder for the main key with --offline")
-            commit = args.vool_commit or subprocess.run(["git", "-C", str(Path(__file__).resolve().parent), "rev-parse",
-                                                         "HEAD"], capture_output=True, text=True).stdout.strip()
-            targets = json.loads(args.targets.read_text()) if args.targets else released_targets(
+            commit = args.vool_commit or _own_commit()
+            targets = json.loads(args.targets.read_text(encoding="utf-8")) if args.targets else released_targets(
                 token=os.environ.get("GITHUB_TOKEN", ""))
             passphrase = getpass.getpass("Choose a passphrase for the main key: ")
             require(passphrase == getpass.getpass("Type it again: "), "the passphrases differ")
