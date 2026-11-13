@@ -124,3 +124,34 @@ def test_windows_profile_on_a_share_is_never_resolved(windows, monkeypatch, prof
     assert ps._too_broad_root(profile)
     reached = [p for p in looked_up if p.replace("/", "\\").lower().startswith((r"\\server", "z:"))]
     assert reached == []
+
+
+@pytest.mark.parametrize("typed", [r"Z:\proj", r"z:\work\repo", "Z:/proj"])
+def test_windows_a_typed_folder_on_a_network_drive_is_refused_before_any_lookup(windows, monkeypatch, typed) -> None:
+    """A drive letter Windows does not call local (a mapped network drive is a share under a letter) is
+    refused by its spelling and drive type, before realpath: resolving it would already open the SMB
+    connection (Security Architect, 0.7.2 merge review)."""
+    monkeypatch.setattr(windows_known_folders, "_drive_is_remote", lambda drive: drive.upper() == "Z:")
+    looked_up: list[str] = []
+    real = os.path.realpath
+
+    def realpath(path, *args, **kwargs):
+        looked_up.append(os.fspath(path))
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(os.path, "realpath", realpath)
+    ok, message = ps.create_project("p", typed)
+    assert ok is False
+    assert "network drive" in message and message[0].islower(), message
+    assert [p for p in looked_up if p.replace("/", "\\").lower().startswith("z:")] == []
+
+
+def test_windows_a_drive_windows_cannot_type_is_refused_too(windows, monkeypatch) -> None:
+    monkeypatch.setattr(windows_known_folders, "_drive_is_remote", lambda drive: None)
+    ok, message = ps.create_project("p", r"Q:\proj")
+    assert ok is False and "network drive" in message, message
+
+
+def test_windows_a_local_drive_is_not_refused_as_a_network_drive(windows) -> None:
+    ok, message = ps.create_project("p", r"C:\Users\me\Documents\x")
+    assert "network drive" not in str(message)
