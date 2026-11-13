@@ -431,7 +431,7 @@ _LOCAL_DRIVE_TYPES = frozenset({2, 3, 5, 6})
 
 def _drive_type(root: str) -> int:
     """GetDriveTypeW for a drive root such as ``Z:\\``; 0 (unknown, so refused) off Windows."""
-    if sys.platform != "win32":
+    if not _WINDOWS:   # the module's one host seam, read once at import like every other branch here
         return 0
     import ctypes
 
