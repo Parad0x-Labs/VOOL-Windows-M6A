@@ -134,6 +134,12 @@ def add_account(
     name = str(provider or "").strip().lower()
     if name not in PROVIDERS:
         return {"ok": False, "reason": "unsupported_provider", "detail": f"no calendar source named {name or 'nothing'}"}
+    if name == "eventkit" and _host_is_windows():
+        # Settings does not offer EventKit on Windows (offered_provider_keys); a direct post is refused
+        # here too, before anything is stored, so no account exists whose calendars can never be found.
+        return {"ok": False, "reason": "provider_not_on_this_host",
+                "detail": "Apple Calendar on this computer needs macOS. On Windows, add iCloud as a CalDAV account "
+                          "(server address and an app-specific password)."}
     base = str(base_url or "").strip().rstrip("/")
     binding = str(auth_binding or "").strip()
     if name == "caldav" and not base:
@@ -586,6 +592,12 @@ def presented(account: dict[str, Any], *, now_fn: Callable[[], str] = _utcnow,
     view = present_account(account, now_iso=now_fn(), stale_after_minutes=STALE_AFTER_MINUTES)
     view["calendars"] = list_selections(str(account["account_id"]), get_connection_fn=get_connection_fn)
     return view
+
+
+def _host_is_windows() -> bool:
+    import sys
+
+    return sys.platform == "win32"
 
 
 def offered_provider_keys(platform: str | None = None) -> list[str]:

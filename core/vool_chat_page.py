@@ -4459,7 +4459,9 @@ function mountAnswerExport(host, chatId, requestId) {
     button.disabled = true; status.textContent = '';
     try {
       const nativeApi = window.pywebview && window.pywebview.api;
-      if (nativeApi && typeof nativeApi.save_answer_pdf === 'function') {
+      if (nativeApi) {
+        // The desktop window cancels page downloads: only the native save dialog delivers the file.
+        if (typeof nativeApi.save_answer_pdf !== 'function') throw new Error('This app build cannot save answer PDFs. Update the app and try again.');
         const result = await nativeApi.save_answer_pdf(chatId, requestId);
         if (!result.ok && !result.cancelled) throw new Error(result.message || result.error || 'PDF save failed');
         status.textContent = result.cancelled ? 'Cancelled' : 'Saved';

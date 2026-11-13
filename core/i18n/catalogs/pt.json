@@ -1088,7 +1088,7 @@
     "settings.row.network_research_note.help": "A rede agente-a-agente (tarefas compartilhadas, pesquisa em ociosidade, o comum dos agentes) é pesquisa inacabada. Ela não roda, não conecta e não se anuncia numa versão de produção do VOOL, e estes interruptores aqui não fazem nada. Fica disponível só sob uma invocação explícita de pesquisa (VOOL_RESEARCH_NETWORKING=1).",
     "settings.row.network_research_note.label": "Só pesquisa - inativo nesta versão",
     "settings.row.notifications_panel.help": "O sino guarda cada alerta. Ligue notificações do macOS para uma cópia extra, defina horas de silêncio, som e o que uma notificação pode mostrar, e envie uma notificação de teste.",
-    "settings.row.notifications_panel.help.windows": "O sino guarda cada alerta. Defina horas de silêncio e som, e envie um alerta de teste. O VOOL ainda não envia notificações do Windows.",
+    "settings.row.notifications_panel.help.windows": "O sino guarda cada alerta. Defina horas de silêncio e som. O VOOL ainda não envia notificações do Windows.",
     "settings.row.notifications_panel.label": "Alertas e notificações do macOS",
     "settings.row.notifications_panel.label.windows": "Alertas",
     "settings.row.privacy_disclosure.help": "O que hoje é verdade sobre onde os dados vivem, o que está selado, o que sai desta máquina e quando. Uma revelação, não um painel de interruptores: retenção e aprendizado na nuvem estão ausentes porque nada os impõe ainda.",
@@ -1930,7 +1930,7 @@
     "fault.wallet_payment_channel_off.action": "Ligue um canal de pagamento nos ajustes de Cripto só se quiser que pagamentos passem por ele; o teto e a sua aprovação valem em todos os canais.",
     "fault.wallet_x402_sdk_unavailable.message": "Esta versão não consegue pagar ofertas x402 na Base pelo x402 Foundation SDK: o extra opcional x402 não está instalado nesta máquina. Nada foi assinado ou enviado. Toda outra função da carteira funciona sem ele; com ele instalado, tente de novo."
   },
-  "source_catalog_sha256": "f124eaf64a998ab66f2b07c0bd7af29c9b30be85da0b7c92648c89f88e6532ca",
+  "source_catalog_sha256": "2134d6a1a63d656869082b38805f6feff2ac516d337fe912fca32d1fd3cf5c65",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
