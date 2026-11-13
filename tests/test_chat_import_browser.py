@@ -88,6 +88,7 @@ def served(tmp_path, monkeypatch):
     user_home = tmp_path / "user-home"
     user_home.mkdir()
     monkeypatch.setenv("HOME", str(user_home))
+    monkeypatch.setenv("USERPROFILE", str(user_home))   # Path.home() on Windows
     for name in ("HERMES_HOME", "OPENCLAW_STATE_DIR", "XDG_CONFIG_HOME"):
         monkeypatch.delenv(name, raising=False)
     _agent_store(user_home)

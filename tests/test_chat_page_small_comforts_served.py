@@ -143,12 +143,19 @@ def test_small_comforts_on_the_served_chat_page(tmp_path):
                 assert not errors, errors
                 page.close()
 
-                # On a Mac the caps keep the command sign.
+                # On a Mac the caps keep the command sign. A Windows host serves Ctrl caps to every
+                # browser, whatever platform it reports (core/command_palette_fragment.py).
+                from core.generated_files import host_is_windows
+
                 mac, mac_errors, _ = _open(browser, daemon.base_url, init_script=(
                     "Object.defineProperty(navigator, 'platform', {get: () => 'MacIntel'});"
                     "Object.defineProperty(navigator, 'userAgentData', {get: () => undefined});"))
                 mac.wait_for_selector("#vpHint", timeout=5000)
-                assert "⌘K" in mac.locator("#vpHint").inner_text()
+                mac_hint = mac.locator("#vpHint").inner_text()
+                if host_is_windows():
+                    assert "Ctrl+K" in mac_hint and "⌘" not in mac_hint, mac_hint
+                else:
+                    assert "⌘K" in mac_hint, mac_hint
                 assert not mac_errors, mac_errors
                 mac.close()
             finally:

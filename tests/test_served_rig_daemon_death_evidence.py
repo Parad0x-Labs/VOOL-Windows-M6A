@@ -16,12 +16,16 @@ Nothing here classifies a failure's cause; the contract is accurate reporting.
 """
 from __future__ import annotations
 
+import os
 from urllib.error import URLError
 from urllib.request import urlopen
 
 import pytest
 
 from tests import _reader_served_rig as rig
+
+#: Popen.kill() is SIGKILL off Windows (rc -9) and TerminateProcess(handle, 1) on Windows (rc 1).
+_KILLED = "exited rc=1" if os.name == "nt" else "exited rc=-9"
 
 
 def _notes(exc: BaseException) -> str:
@@ -50,7 +54,7 @@ def test_an_exited_daemon_fails_the_boundary_check_with_evidence(tmp_path):
             with pytest.raises(AssertionError) as caught:
                 daemon.assert_running(context="initial browser navigation")
             message = str(caught.value)
-            assert "exited rc=-9" in message, message
+            assert _KILLED in message, message
             assert "initial browser navigation" in message, message
             # Measured state only -- the failure does not pre-classify the cause.
             assert "not a" not in message, message
@@ -78,7 +82,7 @@ def test_a_daemon_exiting_after_the_precheck_fails_the_step_with_its_evidence(tm
                         pass
             assert type(caught.value) is URLError
             note = _notes(caught.value)
-            assert "exited rc=-9" in note, note
+            assert _KILLED in note, note
             assert "post-turn queue read" in note, note
             assert "vool_api.log" in note or "daemon.log" in note, note
             assert str(tmp_path) not in note

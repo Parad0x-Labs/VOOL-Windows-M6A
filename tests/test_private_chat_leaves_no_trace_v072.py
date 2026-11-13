@@ -63,7 +63,7 @@ def _traces(home: Path, key: str) -> list[str]:
         except OSError:
             continue
         if any(n in raw for n in needles) or any(n.decode() in part for n in needles for part in path.parts):
-            found.append(str(path.relative_to(home)))
+            found.append(path.relative_to(home).as_posix())
     for path in home.rglob("*.db"):
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
         try:

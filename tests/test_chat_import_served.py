@@ -12,8 +12,10 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import socket
 import sqlite3
+import sys
 import time
 import zipfile
 from pathlib import Path
@@ -23,6 +25,7 @@ import pytest
 from core import runtime_paths
 from core.chat_import import flow
 from core.chat_import import store as import_store
+from tests import _network_seal as network_seal
 from tests.asgi_harness import asgi_request
 
 LOCAL = {"Host": "127.0.0.1"}
@@ -42,6 +45,24 @@ def _drop_import_tables() -> None:
         connection.close()
 
 
+_TESTS_DIR = os.path.dirname(os.path.abspath(__file__)) + os.sep
+
+
+def _stdlib_socketpair_connecting() -> bool:
+    """Whether this connect is the stdlib's own loopback socket pair, and nothing else.
+
+    On Windows ``socket.socketpair`` is the Python fallback in socket.py, which joins its two ends by
+    connecting over 127.0.0.1; every new asyncio loop (one per served request in the harness) makes
+    one for its wakeup pipe. That connect is inside one process and never goes online. Only a connect
+    whose first caller outside tests/ is that stdlib function passes; anything VOOL connects is still refused.
+    """
+    frame = sys._getframe(1)
+    while frame is not None and frame.f_code.co_filename.startswith(_TESTS_DIR):
+        frame = frame.f_back   # this guard and the suite's own socket guards sit between
+    return (frame is not None and frame.f_code.co_filename == socket.__file__
+            and frame.f_code.co_name in {"socketpair", "_fallback_socketpair"})
+
+
 @pytest.fixture
 def app(tmp_path, monkeypatch):
     home = tmp_path / "vool-home"
@@ -53,26 +74,27 @@ def app(tmp_path, monkeypatch):
     user_home = tmp_path / "user-home"
     user_home.mkdir()
     monkeypatch.setenv("HOME", str(user_home))
+    monkeypatch.setenv("USERPROFILE", str(user_home))   # Path.home() on Windows
     for name in ("HERMES_HOME", "OPENCLAW_STATE_DIR", "XDG_CONFIG_HOME"):
         monkeypatch.delenv(name, raising=False)
     _drop_import_tables()
     flow.reset_for_tests()
 
-    # Nothing in a move-in may go online: any outbound connection fails the test.
-    real_connect = socket.socket.connect
-
-    def no_network(sock, address, *args, **kwargs):
-        if sock.family in (socket.AF_INET, socket.AF_INET6):
+    # Nothing in a move-in may go online: any outbound connection fails the test. The refusal is a
+    # policy on the suite's one socket seal (tests/_network_seal.py), so it adds to the seal's other
+    # refusals and covers connect, connect_ex and create_connection alike.
+    def no_network(_kind, address):
+        if isinstance(address, tuple) and not _stdlib_socketpair_connecting():   # an IPv4/IPv6 address
             raise AssertionError(f"chat import tried to connect to {address!r}")
-        return real_connect(sock, address, *args, **kwargs)
 
-    monkeypatch.setattr(socket.socket, "connect", no_network)
+    token = network_seal.push("chat import goes nowhere online", no_network)
     from apps.vool_api_server import create_app
     from core.web.api.runtime import RuntimeServices
 
     try:
         yield create_app(RuntimeServices(display_name="VOOL"))
     finally:
+        network_seal.release(token)
         flow.reset_for_tests()
         _drop_import_tables()
         runtime_paths.configure_runtime_home(prior)
