@@ -23,10 +23,11 @@ from core.remote_fetch_policy import (
     RemoteFetchRefusedError as _RemoteFetchRefusedError,
 )
 from core.remote_fetch_policy import (
-    open_remote as _open_remote_door,
+    local_only_web_block_reason,
+    remote_fetch_forbidden,
 )
 from core.remote_fetch_policy import (
-    remote_fetch_forbidden,
+    open_remote as _open_remote_door,
 )
 from core.source_credibility import evaluate_source_domain
 from core.weather_result_contract import WeatherResult
@@ -3116,6 +3117,22 @@ def web_research(
             hits=[],
             pages=[],
             notes=["remote_fetch_disabled"],
+            ts_utc=time.time(),
+        )
+
+    # The owner's "Block web search in Local Only" switch (core.remote_fetch_policy): while Local
+    # Only is on and the switch is on or unreadable, this search lane runs no provider at all. The
+    # doors refuse each one anyway; stopping here also covers a self-hosted SearXNG on this machine,
+    # which is local to the HTTP door but relays the query to the search engines, and it keeps the
+    # reason in the notes instead of a "the web had nothing".
+    _web_block = local_only_web_block_reason()
+    if _web_block is not None:
+        return ResearchResult(
+            query=query,
+            provider="disabled",
+            hits=[],
+            pages=[],
+            notes=["local_only_web_blocked", _web_block],
             ts_utc=time.time(),
         )
 

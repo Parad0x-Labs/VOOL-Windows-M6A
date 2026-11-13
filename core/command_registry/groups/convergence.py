@@ -204,7 +204,7 @@ class CredentialsSetInput:
 
 
 def _handle_prefs_list(inp, ctx):
-    from core.user_preferences import load_preferences, user_address
+    from core.user_preferences import load_preferences, local_only_block_web_state, user_address
 
     p = load_preferences()
     # Every field settings.prefs.set accepts is read back here. A surface that can WRITE a value it
@@ -233,6 +233,10 @@ def _handle_prefs_list(inp, ctx):
             "setup_skipped_steps": p.setup_skipped_steps,
             "setup_dismissed": p.setup_dismissed,
             "speech_notice_dismissed": p.speech_notice_dismissed,
+            # Read the way the gate reads it: a switch that cannot be read shows ON, because the
+            # gate refuses web search in Local Only then (core.remote_fetch_policy). Saving the
+            # switch from Settings rewrites the file and ends the unknown state.
+            "local_only_block_web": local_only_block_web_state() is not False,
         },
         summary="User preferences",
     )

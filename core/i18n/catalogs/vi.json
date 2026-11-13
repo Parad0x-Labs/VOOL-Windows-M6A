@@ -1075,6 +1075,9 @@
     "settings.row.local_models.effect": "Áp dụng ngay.",
     "settings.row.local_models.help": "Các mô hình cài trong Ollama trên máy này. Đăng ký một cái thêm một làn VOOL có thể định tuyến tới; chứng nhận một cái chạy đầu dò công cụ niêm phong quyết định nó có được viết câu trả lời cuối hay không. Không tải gì và không liên lạc ai — chỉ đọc Ollama cục bộ của bạn.",
     "settings.row.local_models.label": "Mô hình cục bộ",
+    "settings.row.local_only_block_web.effect": "Áp dụng ngay.",
+    "settings.row.local_only_block_web.help": "Mặc định tắt. Chỉ cục bộ giữ câu trả lời trên máy tính này, nhưng VOOL vẫn có thể tìm kiếm web và mở trang web bằng trình duyệt tích hợp của nó, nên từ khóa tìm kiếm của bạn đến được công cụ tìm kiếm và các trang bạn yêu cầu được tải từ trang web của chúng. Bật mục này để ngăn điều đó khi cuộc trò chuyện ở chế độ Chỉ cục bộ: tìm kiếm web, mở hoặc tóm tắt một trang web và các phiên trình duyệt của VOOL đều bị từ chối. Không có gì thay đổi ngoài chế độ Chỉ cục bộ, và các trang trên máy tính này hoặc trong mạng riêng của bạn vẫn dùng được.",
+    "settings.row.local_only_block_web.label": "Chặn tìm kiếm web trong chế độ Chỉ cục bộ",
     "settings.row.locality_note.help": "Hội thoại, biên lai, tuỳ chọn và mục hồ sơ là các tệp trên máy này. Khóa nhà cung cấp cũng được niêm phong tại đây. Đó là tính cục bộ của dữ liệu, tách biệt với việc VOOL có được chạm mạng hay không: một mô hình đám mây hoặc tra cứu web trực tiếp gửi văn bản của yêu cầu đó đến nhà cung cấp đó, và chỉ khi một lượt thực sự dùng.",
     "settings.row.locality_note.label": "Dữ liệu của bạn ở đâu",
     "settings.row.mode_note.help": "Thủ công, Tự động và Bỏ qua thuộc về MỘT cuộc hội thoại, không phải ứng dụng — quyền bỏ qua giới hạn cho một tác vụ và hết hạn. Vì vậy nó được đặt từ nút chế độ ở khung soạn, cạnh cuộc trò chuyện nó áp dụng, và không lặp lại ở đây.",
@@ -1930,7 +1933,7 @@
     "fault.wallet_payment_channel_off.action": "Chỉ bật một kênh thanh toán trong cài đặt Tiền điện tử nếu bạn muốn thanh toán qua kênh đó; trần chi tiêu và sự chấp thuận của bạn áp dụng trên mọi kênh.",
     "fault.wallet_x402_sdk_unavailable.message": "Bản dựng này không trả được các đề nghị x402 trên Base qua x402 Foundation SDK: phần bổ sung tùy chọn x402 chưa cài trên máy này. Chưa ký hay gửi gì. Mọi chức năng ví khác chạy không cần nó; sau khi cài, thử lại."
   },
-  "source_catalog_sha256": "f124eaf64a998ab66f2b07c0bd7af29c9b30be85da0b7c92648c89f88e6532ca",
+  "source_catalog_sha256": "78bfddd3bf6037a0f74f176a97ddc734a1962afb949b87ac5f3844af0b42b8f5",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1941,6 +1944,7 @@
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
-    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)"
+    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)"
   }
 }

@@ -1075,6 +1075,9 @@
     "settings.row.local_models.effect": "Taikoma iškart.",
     "settings.row.local_models.help": "Modeliai, įdiegti Ollama šiame kompiuteryje. Vieno registravimas prideda eismo juostą, į kurią VOOL gai nukreipti; sertifikavimas paleidžia užantspauduotą įrankio zondą, kuris sprendžia, ar jis gali rašyti galutinius atsakymus. Nieko neparsiunčiama ir niekas nekontaktuojama — skaitoma tik jūsų vietinė Ollama.",
     "settings.row.local_models.label": "Vietiniai modeliai",
+    "settings.row.local_only_block_web.effect": "Taikoma iškart.",
+    "settings.row.local_only_block_web.help": "Pagal numatytuosius nustatymus išjungta. Režimas „Tik lokaliai“ palieka atsakymus šiame kompiuteryje, bet VOOL vis tiek gali ieškoti internete ir atidaryti tinklalapius per savo integruotą naršyklę, todėl jūsų paieškos žodžiai pasiekia paieškos sistemą, o prašomi puslapiai parsiunčiami iš jų svetainių. Įjunkite, kad to nebūtų, kol pokalbis yra režimu „Tik lokaliai“: paieškos internete, tinklalapio atidarymas ar santrauka ir VOOL naršyklės seansai atmetami. Už režimo „Tik lokaliai“ ribų niekas nesikeičia, o puslapiai šiame kompiuteryje ar jūsų tinkle lieka pasiekiami.",
+    "settings.row.local_only_block_web.label": "Blokuoti paiešką internete režimu „Tik lokaliai“",
     "settings.row.locality_note.help": "Pokalbiai, kvitai, nuostatos ir profilio įrašai yra failai šiame kompiuteryje. Tiekėjų raktai čia pat užantspauduoti. Tai duomenų vietovė, ir tai skirta nuo to, ar VOOL gali pasiekti tinklą: debesies modelis ar gyva paieška tinklu išsiunčia to prašymo tekstą tam tiekėjui, ir tik tada, kai ėjimas iš tikrųjų jį naudoja.",
     "settings.row.locality_note.label": "Kur jūsų duomenys",
     "settings.row.mode_note.help": "Rankinis, Auto ir Bypass priklauso VIENAM pokalbiui, ne programai — bypass suteikimas ribojamas užduočiai ir baigia galioti. Todėl jis nustatomas iš režimo valdiklio prie kompozitoriaus, šalia pokalbio, kuriam taikomas, ir čia nedubliuojamas.",
@@ -1930,7 +1933,7 @@
     "fault.wallet_payment_channel_off.action": "Įjunkite mokėjimo kanalą Kripto nustatymuose tik jei norite, kad mokėjimai eitų per jį; riba ir jūsų patvirtinimas galioja kiekviename kanale.",
     "fault.wallet_x402_sdk_unavailable.message": "Ši versija negali apmokėti x402 pasiūlymų Base tinkle per x402 Foundation SDK: šiame kompiuteryje neįdiegtas pasirenkamas papildinys x402. Niekas nebuvo pasirašyta ar išsiųsta. Visos kitos piniginės funkcijos veikia ir be jo; jį įdiegę bandykite dar kartą."
   },
-  "source_catalog_sha256": "f124eaf64a998ab66f2b07c0bd7af29c9b30be85da0b7c92648c89f88e6532ca",
+  "source_catalog_sha256": "78bfddd3bf6037a0f74f176a97ddc734a1962afb949b87ac5f3844af0b42b8f5",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1941,6 +1944,7 @@
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
-    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)"
+    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)"
   }
 }

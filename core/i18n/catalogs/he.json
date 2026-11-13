@@ -1075,6 +1075,9 @@
     "settings.row.local_models.effect": "חל מיד.",
     "settings.row.local_models.help": "דגמים מותקנים ב-Ollama במכונה זו. רישום אחד מוסיף נתיב ש-VOOL יכול לנתב אליו; הסמכה מריצה את בדיקת הכלים החתומה שמחליטה אם הוא רשאי לכתוב תשובות סופיות. שום דבר לא יורד ואף אחד לא נוצר קשר — נקרא רק ה-Ollama המקומי שלכם.",
     "settings.row.local_models.label": "דגמים מקומיים",
+    "settings.row.local_only_block_web.effect": "חל מיד.",
+    "settings.row.local_only_block_web.help": "כבוי כברירת מחדל. מצב מקומי בלבד משאיר את התשובות במחשב הזה, אבל VOOL עדיין יכול לחפש באינטרנט ולפתוח דפי אינטרנט דרך הדפדפן המובנה שלו, כך שמילות החיפוש שלך מגיעות למנוע החיפוש והדפים שביקשת נטענים מהאתרים שלהם. הפעל את זה כדי למנוע זאת כל עוד שיחה נמצאת במצב מקומי בלבד: חיפושים באינטרנט, פתיחה או סיכום של דף אינטרנט והפעלות של הדפדפן של VOOL נדחים. שום דבר לא משתנה מחוץ למצב מקומי בלבד, ודפים במחשב הזה או ברשת שלך נשארים זמינים.",
+    "settings.row.local_only_block_web.label": "חסימת חיפוש באינטרנט במצב מקומי בלבד",
     "settings.row.locality_note.help": "שיחות, קבלות, העדפות ופריטי פרופיל הם קבצים במכונה הזו. מפתחות הספקים חתומים גם כן כאן במנוחה. זו מיקומיות הנתונים, והיא נפרדת משאלה אם VOOL רשאי להגיע לרשת: דגם ענן או חיפוש רשת חי שולח את טקסט הבקשה ההיא לספק ההוא, ורק כשתור באמת משתמש בו.",
     "settings.row.locality_note.label": "היכן הנתונים שלכם",
     "settings.row.mode_note.help": "ידני, אוטומטי ועקיפה שייכים לשיחה אחת, לא לאפליקציה — מענק עקיפה מוגבל למשימה ופג. לכן הוא נקבע מפקד המצב בשולחן הכתיבה, לצד הצ׳אט שהוא חל עליו, ואינו משוכפל כאן.",
@@ -1930,7 +1933,7 @@
     "fault.wallet_payment_channel_off.action": "הפעילו ערוץ תשלום בהגדרות הקריפטו רק אם אתם רוצים שתשלומים יעברו דרכו; התקרה והאישור שלכם חלים על כל ערוץ.",
     "fault.wallet_x402_sdk_unavailable.message": "גרסה זו אינה יכולה לשלם הצעות x402 ב-Base דרך x402 Foundation SDK: התוספת האופציונלית x402 אינה מותקנת במכונה זו. לא נחתם ולא נשלח דבר. כל שאר פונקציות הארנק עובדות בלעדיה; לאחר התקנתה נסו שוב."
   },
-  "source_catalog_sha256": "f124eaf64a998ab66f2b07c0bd7af29c9b30be85da0b7c92648c89f88e6532ca",
+  "source_catalog_sha256": "78bfddd3bf6037a0f74f176a97ddc734a1962afb949b87ac5f3844af0b42b8f5",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1941,6 +1944,7 @@
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
-    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)"
+    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)"
   }
 }

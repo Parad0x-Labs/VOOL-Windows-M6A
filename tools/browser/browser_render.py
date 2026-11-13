@@ -472,8 +472,9 @@ def chrome_render(
     note_remote_fetch_attempt(url)
     if remote_fetch_forbidden():
         return {"status": "remote_fetch_disabled", "final_url": url}
-    # Windows: the permission gateway binds a browser as it binds an HTTP request. Local Only does
-    # not stop the browser (product decision). Off Windows this answers None.
+    # The web gate: on every platform, the owner's "Block web search in Local Only" switch stops the
+    # browser while Local Only is on (Local Only alone does not, product decision). Windows: the
+    # permission gateway also binds a browser as it binds an HTTP request.
     refusal = browser_navigation_refusal(url)
     if refusal is not None:
         return {"status": "egress_refused", "final_url": url, "error": refusal}
@@ -512,8 +513,9 @@ def browser_render(
     note_remote_fetch_attempt(url)
     if remote_fetch_forbidden():
         return {"status": "remote_fetch_disabled", "final_url": url}
-    # Windows: the permission gateway binds a browser as it binds an HTTP request. Local Only does
-    # not stop the browser (product decision). Off Windows this answers None.
+    # The web gate: on every platform, the owner's "Block web search in Local Only" switch stops the
+    # browser while Local Only is on (Local Only alone does not, product decision). Windows: the
+    # permission gateway also binds a browser as it binds an HTTP request.
     refusal = browser_navigation_refusal(url)
     if refusal is not None:
         return {"status": "egress_refused", "final_url": url, "error": refusal}

@@ -1075,6 +1075,9 @@
     "settings.row.local_models.effect": "Wirkt sofort.",
     "settings.row.local_models.help": "Modelle, die in Ollama auf dieser Maschine installiert sind. Eine Registrierung fügt eine Spalte hinzu, an die VOOL routen kann; eine Zertifizierung führt die versiegelte Werkzeugsonde aus, die entscheidet, ob es endgültige Antworten schreiben darf. Nichts wird heruntergeladen, niemand wird kontaktiert — gelesen wird nur dein lokales Ollama.",
     "settings.row.local_models.label": "Lokale Modelle",
+    "settings.row.local_only_block_web.effect": "Wirkt sofort.",
+    "settings.row.local_only_block_web.help": "Standardmäßig aus. „Nur lokal“ hält Antworten auf diesem Computer, aber VOOL kann weiterhin über seinen eingebauten Browser im Web suchen und Webseiten öffnen – deine Suchbegriffe erreichen also die Suchmaschine, und die angefragten Seiten werden von ihren Websites geladen. Schalte dies ein, um das zu verhindern, solange ein Chat in „Nur lokal“ ist: Websuchen, das Öffnen oder Zusammenfassen einer Webseite und VOOLs Browser-Sitzungen werden abgelehnt. Außerhalb von „Nur lokal“ ändert sich nichts, und Seiten auf diesem Computer oder in deinem eigenen Netzwerk bleiben erreichbar.",
+    "settings.row.local_only_block_web.label": "Websuche in „Nur lokal“ sperren",
     "settings.row.locality_note.help": "Gespräche, Belege, Einstellungen und Profileinträge sind Dateien auf dieser Maschine. Anbieter-Schlüssel liegen hier ebenfalls versiegelt. Das ist Datenlokalität, getrennt davon, ob VOOL das Netz erreichen darf: ein Cloud-Modell oder eine Live-Websuche sendet den Text genau dieser Anfrage an genau diesen Anbieter — und nur, wenn ein Zug ihn wirklich nutzt.",
     "settings.row.locality_note.label": "Wo deine Daten sind",
     "settings.row.mode_note.help": "Manuell, Auto und Bypass gehören zu EINEM Gespräch, nicht zur App — eine Bypass-Freigabe gilt für eine Aufgabe und läuft ab. Deshalb wird sie über die Modussteuerung am Verfassenfeld gesetzt, neben dem Chat, für den sie gilt, und hier nicht dupliziert.",
@@ -1930,7 +1933,7 @@
     "fault.wallet_payment_channel_off.action": "Schalte einen Zahlungskanal in den Krypto-Einstellungen nur ein, wenn Zahlungen darüber laufen sollen; die Obergrenze und deine Freigabe gelten auf jedem Kanal.",
     "fault.wallet_x402_sdk_unavailable.message": "Dieser Build kann keine x402-Angebote auf Base über das x402 Foundation SDK bezahlen: Die optionale Erweiterung x402 ist auf diesem Rechner nicht installiert. Es wurde nichts signiert oder gesendet. Jede andere Wallet-Funktion läuft ohne sie; nach der Installation versuche es erneut."
   },
-  "source_catalog_sha256": "f124eaf64a998ab66f2b07c0bd7af29c9b30be85da0b7c92648c89f88e6532ca",
+  "source_catalog_sha256": "78bfddd3bf6037a0f74f176a97ddc734a1962afb949b87ac5f3844af0b42b8f5",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1941,6 +1944,7 @@
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
-    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)"
+    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)"
   }
 }

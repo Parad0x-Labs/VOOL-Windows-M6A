@@ -1075,6 +1075,9 @@
     "settings.row.local_models.effect": "Hemen geçerli.",
     "settings.row.local_models.help": "Bu makinedeki Ollama'ya kurulu modeller. Birini kaydetmek, VOOL'un yönlendirebileceği bir şerit ekler; sertifikalamak, son yanıtları yazıp yazamayacağına karar veren mühürlü araç yoklamasını çalıştırır. Hiçbir şey indirilmez, kimseyle bağlantı kurulmaz — yalnızca sizin yerel Ollamanız okunur.",
     "settings.row.local_models.label": "Yerel modeller",
+    "settings.row.local_only_block_web.effect": "Hemen geçerli.",
+    "settings.row.local_only_block_web.help": "Varsayılan olarak kapalı. Yalnızca yerel, yanıtları bu bilgisayarda tutar; ancak VOOL yerleşik tarayıcısıyla web'de arama yapıp web sayfalarını açmaya devam edebilir, bu yüzden arama sözcükleriniz arama motoruna ulaşır ve istediğiniz sayfalar kendi sitelerinden alınır. Bir sohbet Yalnızca yerel moddayken bunu durdurmak için açın: web aramaları, bir web sayfasını açma veya özetleme ve VOOL'un tarayıcı oturumları reddedilir. Yalnızca yerel dışında hiçbir şey değişmez; bu bilgisayardaki veya kendi ağınızdaki sayfalar kullanılabilir kalır.",
+    "settings.row.local_only_block_web.label": "Yalnızca yerel modda web aramasını engelle",
     "settings.row.locality_note.help": "Konuşmalar, makbuzlar, tercihler ve profil maddeleri bu makinedeki dosyalardır. Sağlayıcı anahtarları da burada mühürlü durur. Bu, verinin yeri olup VOOL'un ağa erişip erişemeyeceğinden ayrıdır: bir bulut modeli veya canlı web araması, o isteğin metnini o sağlayıcıya gönderir ve yalnızca bir tur gerçekten kullandığında.",
     "settings.row.locality_note.label": "Verileriniz nerede",
     "settings.row.mode_note.help": "Manuel, Otomatik ve Atla TEK bir konuşmaya aittir, uygulamaya değil — bir atla yetkisi bir görevle sınırlıdır ve süresi dolar. Bu yüzden yazma alanındaki mod düğmesinden, uygulandığı sohbetin yanından ayarlanır ve burada yinelenmez.",
@@ -1930,7 +1933,7 @@
     "fault.wallet_payment_channel_off.action": "Bir ödeme kanalını Kripto ayarlarında yalnızca ödemelerin onun üzerinden yapılmasını istiyorsanız açın; tavan ve sizin onayınız her kanalda geçerlidir.",
     "fault.wallet_x402_sdk_unavailable.message": "Bu yapı x402 Foundation SDK üzerinden Base'deki x402 tekliflerini ödeyemez: isteğe bağlı x402 eki bu makinede kurulu değil. Hiçbir şey imzalanmadı veya gönderilmedi. Cüzdanın diğer her işlevi onsuz çalışır; kurulunca tekrar deneyin."
   },
-  "source_catalog_sha256": "f124eaf64a998ab66f2b07c0bd7af29c9b30be85da0b7c92648c89f88e6532ca",
+  "source_catalog_sha256": "78bfddd3bf6037a0f74f176a97ddc734a1962afb949b87ac5f3844af0b42b8f5",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -1941,6 +1944,7 @@
     "broker_line_addendum": "8 Windows broker-line keys translated by the lane author (single writer)",
     "notification_windows_addendum": "3 Windows notification-settings keys translated by the lane author (single writer)",
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
-    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)"
+    "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
+    "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)"
   }
 }

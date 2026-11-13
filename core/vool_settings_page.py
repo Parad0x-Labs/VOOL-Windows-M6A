@@ -376,6 +376,25 @@ def _settings_groups() -> list[dict]:
                     keywords="windows folder disposable workspace write change files mark allow",
                 ),
                 _row(
+                    id="local_only_block_web",
+                    label="Block web search in Local Only",
+                    help=(
+                        "Off by default. Local Only keeps replies on this computer, but VOOL can "
+                        "still search the web and open web pages through its own built-in browser, "
+                        "so your search words reach the search engine and the pages you ask for are "
+                        "fetched from their websites. Turn this on to stop that while a chat is in "
+                        "Local Only: web searches, opening or summarizing a web page, and VOOL's "
+                        "browser sessions are refused. It changes nothing outside Local Only, and "
+                        "pages on this computer or on your own network stay available."
+                    ),
+                    kind="toggle",
+                    read={"url": PREFS, "field": "local_only_block_web"},
+                    write={"url": PREFS, "field": "local_only_block_web", "type": "bool"},
+                    scope=SCOPE_GLOBAL,
+                    effect=EFFECT_IMMEDIATE,
+                    keywords="local only web search browser block offline privacy internet pages fetch",
+                ),
+                _row(
                     id="privacy_disclosure",
                     label="Privacy & data, as it stands",
                     kind="custom",
