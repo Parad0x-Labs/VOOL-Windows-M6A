@@ -209,6 +209,9 @@ def test_every_settings_group_paints_without_a_repository_path(monkeypatch) -> N
         page.locator("#nav .nav-item").first.wait_for()
         groups = settings_groups()
         assert page.evaluate("MODEL.map(g => g.id)") == [g["id"] for g in groups]
+        # Each group's first row as the page was served it: on Windows a row that names a Mac is
+        # served its ".windows" sibling (core/i18n/host_text.py), so read the label from the page.
+        served_first_label = page.evaluate("Object.fromEntries(MODEL.map(g => [g.id, g.rows[0].label]))")
         for group in groups:
             page.locator(f'#nav [data-group="{group["id"]}"]').click()
             page.wait_for_function(
@@ -222,6 +225,6 @@ def test_every_settings_group_paints_without_a_repository_path(monkeypatch) -> N
 
     # The walk really painted each group's own rows, not a stale or empty pane.
     for group in groups:
-        assert group["rows"][0]["label"] in painted[group["id"]], group["id"]
+        assert served_first_label[group["id"]] in painted[group["id"]], group["id"]
     leaks = {gid: paths for gid, text in painted.items() if (paths := sorted(set(source_paths(text))))}
     assert not leaks, f"Settings groups paint repository paths: {leaks}"
