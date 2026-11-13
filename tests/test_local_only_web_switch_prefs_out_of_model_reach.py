@@ -158,6 +158,41 @@ def test_an_approved_command_runs_with_the_data_folder_hidden(
         assert argv.index("--") > hide
 
 
+def test_an_unreadable_protected_list_refuses_the_job_and_never_runs_it_unconfined(
+    home: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If the protected-state list cannot be read, the bwrap profile is not built, and the job is
+    refused: no process starts at all, confined or not (Security Architect, PR #230 follow-up)."""
+    from core import runtime_state_protection
+    from sandbox import job_runner
+
+    workspace = _workspaces(home)[0]
+    prefs = home["prefs"]
+    before = prefs.read_bytes()
+    _approve_sandbox_commands(monkeypatch)
+    real_which = shutil.which
+    monkeypatch.setattr(job_runner.sys, "platform", "linux")
+    monkeypatch.setattr(job_runner, "_is_windows_platform", lambda: False)
+    monkeypatch.setattr(job_runner.shutil, "which", lambda name, *a, **k: "/usr/bin/bwrap" if name == "bwrap" else real_which(name, *a, **k))
+    monkeypatch.setattr(job_runner, "_backend_usable", lambda *_a, **_k: True)
+
+    def _unreadable():
+        raise OSError("the protected-state list cannot be read")
+
+    monkeypatch.setattr(runtime_state_protection, "protected_state_roots", _unreadable)
+    launched: list[list[str]] = []
+
+    def _spy(argv, *_args, **_kwargs):
+        launched.append(list(argv))
+        raise OSError("spy: no process is started in this test")
+
+    monkeypatch.setattr(subprocess, "Popen", _spy)
+    result = _dispatch("sandbox.run_command", {"command": _DELETE.format(path=str(prefs))}, workspace)
+    assert launched == [], f"a process was started without the protected-state cover: {launched}"
+    assert result is None or result.ok is False, getattr(result, "response_text", result)
+    assert _intact(home, before)
+
+
 @pytest.mark.skipif(shutil.which("bwrap") is None, reason="needs bwrap (the Linux kernel sandbox)")
 def test_a_real_confined_command_cannot_delete_the_prefs_file(home: dict[str, Path], monkeypatch: pytest.MonkeyPatch) -> None:
     workspace = home["vool_home"]
