@@ -164,7 +164,7 @@ def test_the_list_still_withholds_what_the_authority_withholds(monkeypatch) -> N
 
     def with_a_forget(state, chat_id):
         tokens = real(state, chat_id)
-        return tokens + ("mint-84",) if chat_id == _A else tokens
+        return (*tokens, "mint-84") if chat_id == _A else tokens
 
     monkeypatch.setattr(revocation, "_one_reading_tokens", with_a_forget)
     rows = list_conversation_sessions(limit=1000)

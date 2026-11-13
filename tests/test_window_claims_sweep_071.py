@@ -23,7 +23,6 @@ from core import runtime_paths
 from installer.bundle import vool_protocol_handler as handler
 from installer.bundle import vool_window
 
-
 # --- the bundled Python finds the real home ------------------------------------------------------
 
 def _bundle(tmp_path: Path, *, schema: str = "vool.bundle_manifest.v1", python: bool = True) -> Path:
