@@ -1174,6 +1174,24 @@ def load_session_meta() -> dict[str, dict[str, Any]]:
             if _authorized_reader_payload(row, chat_id=sid)}
 
 
+def _session_meta_entry(session_id: str) -> dict[str, Any]:
+    """ONE chat's metadata as ``load_session_meta().get(session_id)`` serves it, or {}.
+
+    For a caller that needs one chat's row (authoritative_chat_workspace, on every mode change):
+    the whole-file reader forget-authorizes every chat's row, three authority reads per chat, only
+    for the caller to keep one. The same law applies to the row kept: its owning chat must still
+    authorize it, checked again as the reader boundary rechecks a served row. A withheld row, or an
+    authority that cannot answer, gives {}.
+    """
+    sid = str(session_id or "").strip()
+    if not sid:
+        return {}
+    row = _load_session_meta_raw().get(sid)
+    if not isinstance(row, dict) or not _authorized_reader_payload(row, chat_id=sid):
+        return {}
+    return row if _authorized_reader_payload(row, chat_id=sid) else {}
+
+
 
 def set_session_meta(
     session_id: str, *, title: str | None = None, archived: bool | None = None,
