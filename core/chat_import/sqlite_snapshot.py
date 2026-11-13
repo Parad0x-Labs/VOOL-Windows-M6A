@@ -113,11 +113,16 @@ def snapshot_connection(path: Path, *, max_bytes: int, work_dir: str | os.PathLi
             raise SnapshotError("store_busy")
         # The copy is ours: opening it read-write lets SQLite apply the copied write-ahead log
         # (that is how the newest rows become visible); the connection is then made read-only.
+        connection = None
         try:
             connection = sqlite3.connect(copy, timeout=1.0)
             connection.execute("PRAGMA query_only = ON")
             connection.execute("SELECT name FROM sqlite_master LIMIT 1").fetchall()
         except sqlite3.DatabaseError:
+            # Close the copy before it is removed: on Windows an open handle keeps the file, and the
+            # private copy of the other app's chats would stay behind in the temp folder.
+            if connection is not None:
+                connection.close()
             raise SnapshotError("store_unreadable") from None
         try:
             yield connection
