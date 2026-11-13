@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import hashlib
 import hmac
 import json
@@ -621,18 +622,36 @@ def _memory_command_row_allowed(
     access_policy: ContextAccessPolicy,
 ) -> bool:
     """Command reads never expose another chat, even through a chat import."""
+    return (
+        _memory_row_governed(row)
+        and _memory_row_policy_allows(row, access_policy=access_policy)
+        and _memory_command_row_owned(row, access_policy=access_policy)
+    )
+
+
+def _memory_row_governed(row: dict[str, Any], *, load_namespace: Any = None) -> bool:
+    """The half of a command read's check that does not depend on which chat is reading.
+
+    A secret never serves; a fact carrying governed WITHHELD/ERASED bytes is suppressed on EVERY
+    read lane (operator listing AND model-context recall), so the crash window between a failed
+    sweep step and its resume never discloses, and a live-store failure fails closed; and the row's
+    origin chat must still be live, with the row unexpired and carrying provenance.
+    """
     if contains_secret(str(row.get("text") or "")):
         return False
-    # A8 serve-time gate: a fact carrying governed WITHHELD/ERASED bytes is
-    # suppressed on EVERY read lane (operator listing AND model-context
-    # recall) — the crash window between a failed sweep step and its resume
-    # never discloses. Live-store failure fails closed.
     from core.finalization import writer_may_persist_text
 
     if not writer_may_persist_text(str(row.get("text") or "")):
         return False
-    if not _memory_row_allowed(row, access_policy=access_policy):
-        return False
+    return _memory_row_origin_live(row, load_namespace=load_namespace)
+
+
+def _memory_command_row_owned(
+    row: dict[str, Any],
+    *,
+    access_policy: ContextAccessPolicy,
+) -> bool:
+    """A chat-scoped row is the reading chat's own; otherwise only project and profile rows."""
     scope = str(row.get("scope") or "").strip().lower()
     if scope == "chat":
         origin_chat = str(
@@ -943,29 +962,110 @@ def list_memory_entries(
     chat_id: str | None = None,
     limit: int = 10,
 ) -> list[dict[str, Any]]:
-    from core.memory.revocation import authorize_payload
-
     _ensure_memory_files()
     policy = resolve_memory_access_policy(
         access_policy=access_policy,
         chat_id=chat_id,
     )
-    rows = [
-        dict(row)
-        for row in _load_jsonl(memory_entries_path())
-        if _memory_command_row_allowed(
-            row,
-            access_policy=policy,
+    listing = _ONE_LISTING.get()
+    if listing is None:
+        return _memory_entries_under(
+            _load_jsonl(memory_entries_path()), policy, limit, _GovernedRows()
         )
+    if listing.rows is None:
+        listing.rows = _load_jsonl(memory_entries_path())
+    return _memory_entries_under(listing.rows, policy, limit, listing.governed)
+
+
+class _Listing:
+    def __init__(self) -> None:
+        self.rows: list[dict[str, Any]] | None = None
+        self.governed = _GovernedRows()
+
+
+_ONE_LISTING: contextvars.ContextVar[_Listing | None] = contextvars.ContextVar("memory_one_listing", default=None)
+
+
+@contextlib.contextmanager
+def _one_listing():
+    """List several chats from ONE reading of the memory store (Settings > Memory lists every chat).
+
+    Inside this scope every ``list_memory_entries`` call reads the store's rows once and runs each
+    row's chat-independent check (secret scan, A8 erase verdict, origin chat) at most once, instead
+    of re-reading and re-checking the whole store for every chat: chats x rows x three SQLite opens.
+    Each chat still gets its own policy, ownership, forget-authority and reader-boundary checks.
+    The scope lives for one synchronous request and is never shared: nothing is trusted across
+    reads. One governance connection serves the erase verdicts (availability_read_scope), which
+    still read each verdict fresh.
+    """
+    if _ONE_LISTING.get() is not None:
+        yield
+        return
+    from core.finalization import availability_read_scope
+
+    token = _ONE_LISTING.set(_Listing())
+    try:
+        with availability_read_scope():
+            yield
+    finally:
+        _ONE_LISTING.reset(token)
+
+
+class _GovernedRows:
+    """Each row's chat-independent check (``_memory_row_governed``), run at most once per listing.
+
+    Lives for one ``list_memory_entries`` call, or for one ``_one_listing`` scope (one request), and
+    is never shared beyond it, so nothing is trusted across reads. A check that raises is not remembered: the next chat asking about the same row runs it
+    again, exactly as a fresh listing would.
+    """
+
+    def __init__(self) -> None:
+        self._verdicts: dict[int, bool] = {}
+        self._namespaces: dict[str, Any] = {}
+
+    def __call__(self, row: dict[str, Any]) -> bool:
+        key = id(row)
+        verdict = self._verdicts.get(key)
+        if verdict is None:
+            verdict = self._verdicts[key] = _memory_row_governed(row, load_namespace=self._namespace)
+        return verdict
+
+    def _namespace(self, chat_id: str) -> Any:
+        # Many rows share an origin chat; its namespace is read once for this listing.
+        if chat_id not in self._namespaces:
+            self._namespaces[chat_id] = load_chat_namespace(chat_id)
+        return self._namespaces[chat_id]
+
+
+def _memory_entries_under(
+    rows: list[dict[str, Any]],
+    policy: ContextAccessPolicy,
+    limit: int,
+    governed: _GovernedRows,
+) -> list[dict[str, Any]]:
+    """One chat's listing over rows already read from the store.
+
+    The same checks ``_memory_command_row_allowed`` makes, plus the forget authority, all of which
+    must hold. The cheap ownership test runs first, so a row that is another chat's own never pays
+    for the store reads the others need.
+    """
+    from core.memory.revocation import authorize_payload
+
+    selected_rows = [
+        dict(row)
+        for row in rows
+        if _memory_command_row_owned(row, access_policy=policy)
+        and governed(row)
+        and _memory_row_policy_allows(row, access_policy=policy)
         and authorize_payload(row, chat_id=policy.chat_id)
     ]
-    rows.sort(
+    selected_rows.sort(
         key=lambda row: (
             str(row.get("created_at") or ""),
             str(row.get("record_id") or ""),
         )
     )
-    selected = rows[-max(1, int(limit)) :]
+    selected = selected_rows[-max(1, int(limit)) :]
     return selected if authorize_payload(selected, chat_id=policy.chat_id) else []
 
 
@@ -1072,6 +1172,7 @@ def load_session_meta() -> dict[str, dict[str, Any]]:
     """Serve only metadata whose owning chat still authorizes its content."""
     return {sid: row for sid, row in _load_session_meta_raw().items()
             if _authorized_reader_payload(row, chat_id=sid)}
+
 
 
 def set_session_meta(
@@ -2637,17 +2738,19 @@ def _memory_row_allowed(
     access_policy: ContextAccessPolicy,
 ) -> bool:
     """Apply scope before scoring a durable-memory candidate."""
+    return _memory_row_origin_live(row) and _memory_row_policy_allows(row, access_policy=access_policy)
+
+
+def _memory_row_origin_live(row: dict[str, Any], *, load_namespace: Any = None) -> bool:
+    """The row names a live origin chat, carries provenance and has not expired (any reader)."""
     origin_chat = str(
         row.get("origin_chat_id") or row.get("session_id") or ""
-    ).strip()
-    origin_project = str(
-        row.get("origin_project_id") or row.get("project_id") or ""
     ).strip()
     provenance = row.get("provenance")
     if not origin_chat or not isinstance(provenance, dict):
         # Ambiguous legacy records are retained on disk but quarantined.
         return False
-    namespace = load_chat_namespace(origin_chat)
+    namespace = (load_namespace or load_chat_namespace)(origin_chat)
     if namespace is None or namespace.lifecycle_state != "active":
         return False
     expires_at = str(row.get("expires_at") or "").strip()
@@ -2660,6 +2763,24 @@ def _memory_row_allowed(
                 return False
         except ValueError:
             return False
+    return True
+
+
+def _memory_row_policy_allows(
+    row: dict[str, Any],
+    *,
+    access_policy: ContextAccessPolicy,
+) -> bool:
+    """The reading chat's own policy admits this row's declared scope and provenance."""
+    origin_chat = str(
+        row.get("origin_chat_id") or row.get("session_id") or ""
+    ).strip()
+    origin_project = str(
+        row.get("origin_project_id") or row.get("project_id") or ""
+    ).strip()
+    provenance = row.get("provenance")
+    if not origin_chat or not isinstance(provenance, dict):
+        return False
     metadata = {
         "scope": str(row.get("scope") or "").strip().lower(),
         "source": str(row.get("source") or "").strip().lower(),

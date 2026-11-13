@@ -2229,7 +2229,7 @@ def dispatch_get(
         if not is_loopback_host(client_host):
             return apply_runtime_headers(json_response(403, {"ok": False, "error": "owner_local_required"}), runtime)
         from core.context_namespace import list_chat_namespaces
-        from core.memory.entries import list_memory_entries
+        from core.memory.entries import _one_listing, list_memory_entries
 
         try:
             limit = int(str((query.get("limit") or ["50"])[0] or "50"))
@@ -2257,7 +2257,10 @@ def dispatch_get(
         # 147 s per call on Steve (12 Nov) with an empty memory list.
         from core.memory.revocation import _one_reading
 
-        with _one_reading():
+        # And one reading of the memory store: every chat is listed from the same rows, and each row's
+        # chat-independent check (secret scan, erase verdict, origin chat) runs once, not once per chat --
+        # chats x rows x three store opens was the 14 s Memory page on Steve (0.7.1).
+        with _one_reading(), _one_listing():
             for chat_id in chat_ids:
                 try:
                     chat_rows = list_memory_entries(chat_id=chat_id, limit=limit)
