@@ -155,3 +155,21 @@ def test_windows_a_drive_windows_cannot_type_is_refused_too(windows, monkeypatch
 def test_windows_a_local_drive_is_not_refused_as_a_network_drive(windows) -> None:
     ok, message = ps.create_project("p", r"C:\Users\me\Documents\x")
     assert "network drive" not in str(message)
+
+
+def test_windows_a_tilde_path_whose_home_is_a_share_is_refused_before_any_lookup(windows, monkeypatch) -> None:
+    """`~\\repo` with the home on a share expands to `\\\\server\\...`, which has no drive letter: it is
+    refused by its expanded spelling, before realpath opens the share."""
+    monkeypatch.setattr(os.path, "expanduser", lambda p: p.replace("~", r"\\server\profiles\me", 1))
+    looked_up: list[str] = []
+    real = os.path.realpath
+
+    def realpath(path, *args, **kwargs):
+        looked_up.append(os.fspath(path))
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(os.path, "realpath", realpath)
+    ok, message = ps.create_project("p", "~\\repo")
+    assert ok is False, message
+    assert "server" in message, message
+    assert [p for p in looked_up if "server" in p] == []
