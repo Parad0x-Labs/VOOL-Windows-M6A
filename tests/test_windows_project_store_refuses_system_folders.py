@@ -9,6 +9,8 @@ here so the Windows decision runs on any platform.
 """
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from core import project_store as ps
@@ -100,3 +102,25 @@ def test_off_windows_the_windows_spellings_add_nothing(monkeypatch, tmp_path) ->
     folder = tmp_path / "Program Files"
     folder.mkdir()
     assert ps._too_broad_root(str(folder)) == ""
+
+
+@pytest.mark.parametrize("profile", [r"\\server\profiles\me", r"Z:\profiles\me"])
+def test_windows_profile_on_a_share_is_never_resolved(windows, monkeypatch, profile) -> None:
+    """A profile (or home) on a share or a network drive is compared by its spelling only: resolving it
+    would already be the SMB connection that leaks the user's NTLM hash."""
+    windows.pop("Profile")
+    monkeypatch.setenv("USERPROFILE", profile)
+    monkeypatch.setenv("HOME", profile)  # what expanduser("~") answers on this host
+    monkeypatch.setattr(windows_known_folders, "_drive_is_remote", lambda drive: drive.upper() == "Z:")
+    looked_up: list[str] = []
+    real = os.path.realpath
+
+    def realpath(path, *args, **kwargs):
+        looked_up.append(os.fspath(path))
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(os.path, "realpath", realpath)
+    assert ps._too_broad_root(r"C:\Users\me\Documents\repo") == ""
+    assert ps._too_broad_root(profile)
+    reached = [p for p in looked_up if p.replace("/", "\\").lower().startswith((r"\\server", "z:"))]
+    assert reached == []
