@@ -1088,7 +1088,7 @@
     "settings.row.network_research_note.help": "代理间联网（共享任务、空闲研究、代理公地）是未完成的研究。它不会在生产 VOOL 构建中运行、连接或自我宣告，这些开关在这里不起作用。只有在明确的研究调用（VOOL_RESEARCH_NETWORKING=1）下才可用。",
     "settings.row.network_research_note.label": "仅限研究 - 此构建中未启用",
     "settings.row.notifications_panel.help": "铃铛保留每条提醒。打开 macOS 通知以获得额外副本，设置免打扰时段、声音和通知可以显示的内容，并发送一条测试通知。",
-    "settings.row.notifications_panel.help.windows": "铃铛保留每条提醒。设置免打扰时段和声音，并发送一条测试提醒。VOOL 暂不发送 Windows 通知。",
+    "settings.row.notifications_panel.help.windows": "铃铛保留每条提醒。设置免打扰时段和声音。VOOL 暂不发送 Windows 通知。",
     "settings.row.notifications_panel.label": "提醒与 macOS 通知",
     "settings.row.notifications_panel.label.windows": "提醒",
     "settings.row.privacy_disclosure.help": "今天真实的情况：数据住在哪里、什么被密封、什么会在何时离开这台机器。这是一份披露，不是一排开关：保留期限和云端学习的开关并不存在，因为还没有任何东西强制它们。",
@@ -1930,7 +1930,7 @@
     "fault.wallet_payment_channel_off.action": "只有在希望通过某个支付通道付款时，才在加密设置中打开它；上限和你的批准在每个通道上都适用。",
     "fault.wallet_x402_sdk_unavailable.message": "此构建无法通过 x402 Foundation SDK 支付 Base 上的 x402 报价：这台机器上没有安装可选的 x402 扩展。没有签名或发送任何内容。钱包的其他所有功能没有它也能工作；安装之后请重试。"
   },
-  "source_catalog_sha256": "f124eaf64a998ab66f2b07c0bd7af29c9b30be85da0b7c92648c89f88e6532ca",
+  "source_catalog_sha256": "2134d6a1a63d656869082b38805f6feff2ac516d337fe912fca32d1fd3cf5c65",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",

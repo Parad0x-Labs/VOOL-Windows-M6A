@@ -1088,7 +1088,7 @@
     "settings.row.network_research_note.help": "에이전트 간 네트워킹(공유 작업, 대기 중 연구, 에이전트 공용지)은 미완성 연구입니다. 프로덕션 VOOL 빌드에서는 실행·연결·광고되지 않고, 여기 이 스위치들은 아무 효과가 없습니다. 명시적인 연구 호출(VOOL_RESEARCH_NETWORKING=1) 아래에서만 사용 가능해집니다.",
     "settings.row.network_research_note.label": "연구 전용 - 이 빌드에서는 비활성",
     "settings.row.notifications_panel.help": "종은 모든 알림을 담습니다. 추가 사본을 위해 macOS 알림을 켜고, 방해 금지 시간, 소리, 알림이 보여도 되는 것을 정하고, 시험 알림을 보내세요.",
-    "settings.row.notifications_panel.help.windows": "종은 모든 알림을 담습니다. 방해 금지 시간과 소리를 정하고, 시험 알림을 보내세요. VOOL은 아직 Windows 알림을 보내지 않습니다.",
+    "settings.row.notifications_panel.help.windows": "종은 모든 알림을 담습니다. 방해 금지 시간과 소리를 정하세요. VOOL은 아직 Windows 알림을 보내지 않습니다.",
     "settings.row.notifications_panel.label": "알림과 macOS 알림",
     "settings.row.notifications_panel.label.windows": "알림",
     "settings.row.privacy_disclosure.help": "데이터가 어디 사는지, 무엇이 봉인되어 있는지, 무엇이 언제 이 기기를 떠나는지에 대한 오늘의 사실. 스위치 묶음이 아니라 공개입니다: 보존과 클라우드 학습 전환은 아직 그것을 강제하는 것이 없어 존재하지 않습니다.",
@@ -1930,7 +1930,7 @@
     "fault.wallet_payment_channel_off.action": "그 채널로 결제하려는 경우에만 암호화폐 설정에서 결제 채널을 켜세요; 한도와 사용자 승인은 모든 채널에 적용됩니다.",
     "fault.wallet_x402_sdk_unavailable.message": "이 빌드는 x402 Foundation SDK를 통해 Base의 x402 제안을 결제할 수 없습니다: 선택적 x402 추가 요소가 이 기기에 설치되지 않았습니다. 서명되거나 보내진 것은 없습니다. 지갑의 다른 모든 기능은 없이도 작동합니다; 설치한 뒤 다시 시도하세요."
   },
-  "source_catalog_sha256": "f124eaf64a998ab66f2b07c0bd7af29c9b30be85da0b7c92648c89f88e6532ca",
+  "source_catalog_sha256": "2134d6a1a63d656869082b38805f6feff2ac516d337fe912fca32d1fd3cf5c65",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
