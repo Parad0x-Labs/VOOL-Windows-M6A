@@ -199,6 +199,22 @@ def _too_broad_root(resolved: str) -> str:
     return ""
 
 
+def _network_drive(raw: str) -> str:
+    """On Windows, the drive letter (`Z:`) of `raw` when Windows does not call that drive local; else ""."""
+    from core import windows_known_folders
+
+    if not windows_known_folders._IS_WINDOWS:
+        return ""
+    drive = ntpath.splitdrive(os.path.expanduser(raw))[0]
+    if not re.fullmatch(r"[A-Za-z]:", drive):
+        return ""
+    try:
+        local = windows_known_folders._drive_is_remote(drive.upper()) is False
+    except Exception:  # an unknown drive type counts as remote (fail closed)
+        local = False
+    return "" if local else drive.upper()
+
+
 def create_project(name: str, root: str) -> tuple[bool, Any]:
     """Register a folder as a project. Returns (True, project) or (False, error_message).
 
@@ -217,6 +233,15 @@ def create_project(name: str, root: str) -> tuple[bool, Any]:
     non_local = windows_path_policy.refused_form(root)
     if non_local:
         return False, windows_path_policy.refusal_text(root, non_local)
+    # Windows: a drive letter Windows does not call local (a mapped network drive is a share under a
+    # letter, and a drive type Windows cannot name counts as one) is refused before realpath, which
+    # would already open the SMB connection.
+    network_drive = _network_drive(raw)
+    if network_drive:
+        return False, (
+            f"the drive {network_drive} is a network drive (or one Windows can't identify), and VOOL only uses "
+            "folders on this computer's own drives. Pick a folder on a local drive."
+        )
     if not raw.startswith("~") and not os.path.isabs(raw):
         if os.name == "nt":
             return False, "type the whole folder path, starting with a drive letter or ~ (for example C:\\Users\\you\\Documents)."
