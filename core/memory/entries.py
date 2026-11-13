@@ -1197,6 +1197,42 @@ def _update_session_meta_fields(session_id: str, fields: dict[str, Any]) -> None
         _write_session_meta_atomic(meta)
 
 
+def _set_session_titles(titles: dict[str, str]) -> None:
+    """Give several chats their display title in ONE metadata write (a metadata writer, never a
+    memory reader; private so the public entries API stays exactly the classified set).
+
+    The chat import lands chats in batches; ``set_session_meta`` rewrites the whole metadata file
+    once per chat, which grows quadratically over a large import. Each title is admitted under its
+    own chat's writer fence exactly as ``set_session_meta`` admits one, every chat gets its
+    namespace, and an empty title leaves the chat's entry without one.
+    """
+    from contextlib import ExitStack
+
+    from core.memory.revocation import writing
+
+    clean = {
+        str(sid).strip(): " ".join(str(title or "").split()).strip()[:_SESSION_TITLE_MAX]
+        for sid, title in titles.items()
+        if str(sid).strip()
+    }
+    if not clean:
+        return
+    with ExitStack() as stack:
+        for sid, title in clean.items():
+            stack.enter_context(writing({"title": title}, sid))
+        stack.enter_context(_SESSION_META_LOCK)
+        for sid in clean:
+            if load_chat_namespace(sid) is None:
+                ensure_chat_namespace(sid)
+        meta = _load_session_meta_raw()
+        for sid, title in clean.items():
+            entry = dict(meta.get(sid) or {})
+            if title:
+                entry["title"] = title
+            meta[sid] = entry
+        _write_session_meta_atomic(meta)
+
+
 def _stored_mode(override: Any) -> str:
     mode = str((override or {}).get("mode") or "").strip().lower() if isinstance(override, dict) else ""
     return mode if mode in _CHAT_MODES else ""
@@ -1321,6 +1357,21 @@ def list_conversation_sessions(*, limit: int = 60) -> list[dict[str, Any]]:
             "color": color,
             "mode": _stored_mode(override),
         }
+    # Chats brought in from other apps keep their messages outside the conversation log
+    # (core.chat_import.store); their original times and message counts come from there.
+    from core.chat_import.store import imported_session_overlays
+
+    for sid, overlay in imported_session_overlays(set(by_session)).items():
+        entry = by_session[sid]
+        own_turns = int(entry.get("turn_count") or 0)
+        if overlay["created_at"]:
+            entry["created_at"] = overlay["created_at"]
+        if own_turns == 0:
+            entry["updated_at"] = overlay["updated_at"] or str(entry.get("updated_at") or "")
+        elif overlay["updated_at"] > str(entry.get("updated_at") or ""):
+            entry["updated_at"] = overlay["updated_at"]
+        entry["turn_count"] = own_turns + int(overlay["user_message_count"] or overlay["message_count"])
+        entry["imported"] = True
     sessions = sorted(by_session.values(), key=lambda item: str(item.get("updated_at") or ""), reverse=True)
     return sessions[: max(1, int(limit))]
 
@@ -2192,6 +2243,23 @@ def _memory_erasure_row_owned(row: dict[str, Any], policy: ContextAccessPolicy) 
                 and project in policy.imported_project_ids)
 
 
+def _drop_session_meta(session_id: str) -> bool:
+    """Remove one chat's entry from the session meta, live copy and backup alike. Used when a chat
+    gives up its row before anything of it was saved (core.context_namespace.release_unused_chat_row)."""
+    sid = str(session_id or "").strip()
+    if not sid:
+        return False
+    from core.memory.revocation import writing
+
+    with writing({}, sid), _SESSION_META_LOCK:
+        meta = _load_session_meta_raw()
+        if sid not in meta:
+            return False
+        meta.pop(sid)
+        _write_session_meta_atomic(meta)
+    return True
+
+
 def _write_session_meta_atomic(meta: dict[str, Any]) -> None:
     from core.memory.carriers import session_metadata_payload
     from core.memory.revocation import writing
@@ -2425,6 +2493,12 @@ def delete_conversation_session(session_id: str) -> bool:
             conn.close()
     except Exception:
         pass
+    # A chat brought in from another app keeps its messages in the import store. Not
+    # best-effort: a delete that could not remove them must not be reported as done.
+    from core.chat_import.store import delete_imported_chat
+
+    if delete_imported_chat(sid):
+        removed = True
     # The forget fence from the transcript read through the meta write, and before the entry lock: a
     # forget holds the fence for its whole command and takes the entry lock inside it, so the entry
     # lock first deadlocked a delete and another chat's forget. Read outside the fence, the kept

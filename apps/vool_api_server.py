@@ -434,7 +434,7 @@ class VoolAPIHandler(BaseHTTPRequestHandler):
         if is_raw_upload_path(urlparse(self.path).path):
             # Same door as the starlette shell: bytes, not JSON, bounded by the authority's ceiling
             # BEFORE the body is read.
-            if content_length > raw_upload_body_ceiling():
+            if content_length > raw_upload_body_ceiling(urlparse(self.path).path):
                 self._write_response(
                     apply_runtime_headers(
                         json_response(413, {"ok": False, "error": "too_large", "message": "The upload is over the attachment size limit."}),
@@ -679,6 +679,27 @@ def _warn_if_confined_job_variable_set(environ: Any = None) -> bool:
     return True
 
 
+def _arm_fatal_signal_diagnostics() -> bool:
+    """Arm faulthandler's fatal-signal handlers and VERIFY they armed.
+
+    ``faulthandler.enable`` can refuse or fail; assuming success would silently drop the
+    diagnostic. Arming is reported through its verified truth (``is_enabled``), and a
+    failed arming is logged, never raised: these handlers are diagnostics, and boot never
+    depends on them.
+    """
+    import faulthandler
+
+    try:
+        faulthandler.enable(all_threads=True)
+    except Exception:
+        logger.warning("fatal-signal diagnostics could not arm:", exc_info=True)
+        return False
+    if not faulthandler.is_enabled():
+        logger.warning("fatal-signal diagnostics report disabled after arming")
+        return False
+    return True
+
+
 def main() -> int:
     # Diagnosability law (F46): a served turn spent a measured ~97 s idle between
     # task_classified and model_routing — no events, no model call, no network — and the
@@ -692,6 +713,10 @@ def main() -> int:
     # before it could start. The stack-dump hook is a POSIX diagnostic, not a startup requirement.
     if hasattr(faulthandler, "register") and hasattr(signal, "SIGUSR1"):
         faulthandler.register(signal.SIGUSR1, all_threads=True, file=sys.stderr)
+    # Fatal-signal diagnostics: the handlers dump every thread's Python stack to stderr
+    # the moment SIGSEGV/SIGBUS/SIGABRT/SIGFPE/SIGILL lands, so a native fault names its
+    # frames instead of vanishing. Verified arming -- never assumed.
+    _arm_fatal_signal_diagnostics()
     # C15: the ONE bounded unattended preflight, before any bootstrap can reach an OS
     # credential API. A scratch/synthetic home gets non-interactive storage pinned; the
     # operator's established home is recorded, never rewritten.
@@ -788,6 +813,14 @@ def main() -> int:
             start_default_dispatcher()
         except Exception:
             logger.exception("reminder dispatcher failed to start; server continues without scheduled delivery")
+        # Market watches: the wallet and price watch poller. One daemon thread; it sleeps while
+        # nothing is watched and never runs on a fresh install. Fail-soft like the dispatcher.
+        try:
+            from core.market_watch import start_default_poller
+
+            start_default_poller()
+        except Exception:
+            logger.exception("market watch poller failed to start; server continues without watch alerts")
         # Calendar alerts: the bounded background sync of opted-in calendars (a few accounts per tick, each
         # refreshed every 10 minutes, never on chat turns). Fail-soft like the dispatcher.
         try:
@@ -819,7 +852,7 @@ def main() -> int:
 
         register_served_port(int(args.port))
         logger.info("VOOL API listening on http://%s:%s", args.bind, args.port)
-        logger.info("OpenClaw can connect to this as an Ollama provider.")
+        logger.info("Ollama-compatible clients can connect to this API.")
         server = uvicorn.Server(
             uvicorn.Config(
                 app,
@@ -846,6 +879,12 @@ def main() -> int:
             from core.operator.reminder_dispatcher import stop_default_dispatcher
 
             stop_default_dispatcher()
+        except Exception:
+            pass
+        try:
+            from core.market_watch import stop_default_poller
+
+            stop_default_poller()
         except Exception:
             pass
         try:
