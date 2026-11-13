@@ -1107,7 +1107,7 @@ def pytest_sessionfinish(session, exitstatus):
 
 
 # The Windows cloud opt-in for the rows listed in tests/CLOUD-OPTIN-90.tsv (tests/_windows_cloud_optin.py).
-from tests._windows_cloud_optin import windows_cloud_opted_in  # noqa: E402,F401
+from tests._windows_cloud_optin import windows_cloud_opted_in
 
 
 def pytest_collection_modifyitems(config, items):
