@@ -63,11 +63,11 @@ nothing here executes a tool, calls a model, or writes to disk.
 from __future__ import annotations
 
 import dataclasses
+import functools
 import re
 import unicodedata
 from contextvars import ContextVar
 from dataclasses import dataclass
-import functools
 from functools import lru_cache
 from typing import Any
 
