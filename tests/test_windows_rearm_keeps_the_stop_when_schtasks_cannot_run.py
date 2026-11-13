@@ -50,6 +50,7 @@ def test_marker_stays_when_schtasks_cannot_start(tmp_path, monkeypatch) -> None:
 
 def test_a_query_that_ran_and_found_no_task_still_clears_the_marker(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(process_liveness, "system_tool", lambda *parts: "C:\\Windows\\System32\\" + parts[0] + ".exe")
     (tmp_path / STOPPED_MARKER).write_text("stopped\n", encoding="utf-8")
 
     def run(cmd, **_kwargs):
