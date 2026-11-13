@@ -53,7 +53,8 @@ def test_deleting_a_chat_asks_in_the_calm_dialog(tmp_path):
                 trash = page.locator("#sessions .session.active .s-act[title^='Delete chat']").first
 
                 def open_dialog():
-                    page.locator("#sessions .session.active").first.hover()   # actions show on hover
+                    page.locator("#sessions .session.active").first.hover()   # its "⋯" shows on hover
+                    page.locator("#sessions .session.active .s-more").first.click()   # the port's action menu
                     trash.click()
                     page.wait_for_selector("#confirmPromptDialog[open]", timeout=5000)
                     return page.locator("#confirmPromptDialog")

@@ -258,7 +258,8 @@ def test_off_windows_every_surface_answers_as_on_base(
         "core/agent_runtime/fast_paths_machine.py",
     }
     # /api/projects: the base's own existence check answers, after looking the folder up.
-    assert project == (400, {"error": "that folder does not exist"})
+    # Mac 0.7.2 names the resolved folder and asks to check the spelling (core/project_store.py).
+    assert project == (400, {"error": "that folder does not exist: /attkr9/s. Check the spelling."})
     assert project_lookups == {"core/project_store.py"}
     # The executor: the call reaches the permission decision, then workspace confinement answers.
     assert (read.status, read.ok, read_decisions) == ("scope_violation", False, 1), read.response_text
