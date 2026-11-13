@@ -406,8 +406,12 @@ def _seal_cloud_key(secret: str, provider_id: str = "openrouter") -> str:
             "That does not look like a complete API key, so I did not store anything. Paste the "
             "whole key as `cloud key <your-key>` (an OpenRouter key starts with `sk-or-`, others vary)."
         )
+    from core.owner_only import OWNER_ONLY_SAVE_REFUSED, OwnerOnlyUnavailable
+
     try:
         credential_store.store_credential(slot, secret, label=label)
+    except OwnerOnlyUnavailable:
+        return OWNER_ONLY_SAVE_REFUSED + " Keep VOOL's data folder on a local NTFS drive, then try again."
     except Exception:
         return (
             "I could not save the cloud key just now, so nothing was stored. Check that VOOL can "
@@ -659,6 +663,29 @@ def maybe_handle_cloud_key_status_intent(user_input: str, *, owner_local: bool =
     )
 
 
+# The fixed reply for a non-owner asking about this host's stored credentials.
+_CREDENTIAL_OWNER_ONLY_REFUSAL = (
+    "Credential diagnostics are owner-only, so I won't report this host's stored keys from here."
+)
+
+
+def _credential_backend_label(backend: object) -> str:
+    return "the macOS Keychain" if backend == "keychain" else "the encrypted local vault"
+
+
+def _credential_backend_sentence(backend: object) -> str:
+    """Where stored credentials live, as one sentence (no trailing period). Windows is always the
+    vault (core.credential_store gates the Keychain to macOS)."""
+    if backend == "keychain":
+        return "Keys live in the macOS Keychain"
+    # The vault's sealing key sits in the same user profile (core.secret_storage
+    # account-file-permissions class): never call it the OS secret store.
+    return (
+        "Keys live in VOOL's encrypted local vault in your user profile, protected by your "
+        "account's file permissions, not by the OS secret store"
+    )
+
+
 _CLOUD_DIAG_RE = re.compile(
     r"\bcloud\s+diagnostics?\b"
     r"|\bcredential\s+diagnostics?\b"
@@ -679,7 +706,7 @@ def maybe_handle_cloud_diagnostics_intent(user_input: str, *, owner_local: bool 
     if not text or len(text) > 64 or not _CLOUD_DIAG_RE.search(text):
         return None
     if not owner_local:
-        return "Credential diagnostics are owner-only, so I won't report this host's stored keys from here."
+        return _CREDENTIAL_OWNER_ONLY_REFUSAL
 
     from core import credential_store
 
@@ -688,15 +715,60 @@ def maybe_handle_cloud_diagnostics_intent(user_input: str, *, owner_local: bool 
     except Exception:
         return "I couldn't read the credential store just now — try again in a moment."
     creds = list(diag.get("credentials") or [])
-    where = "the macOS Keychain" if diag.get("backend") == "keychain" else "the encrypted local vault"
+    where = _credential_backend_label(diag.get("backend"))
     if not creds:
         return f"No credentials are stored yet (backend: {where}). Add one with `cloud key <key>` or Settings."
     lines = [f"Stored credentials ({len(creds)}) — backend: {where}. No full secret is ever shown:"]
     for cred in creds:
         label = f" — {cred['label']}" if cred.get("label") else ""
         lines.append(f"- {cred.get('name')}{label}  ({cred.get('masked_suffix') or 'empty'})")
-    lines.append("`cloud key forget` erases one. Keys live in the OS secret store — never in logs, the DB, or exports.")
+    stored = _credential_backend_sentence(diag.get("backend"))
+    lines.append(f"`cloud key forget` erases one. {stored} — never in logs, the DB, or exports.")
     return "\n".join(lines)
+
+
+# "where are my keys stored?" — answered from the live backend, never by the model. Only the
+# owner's credentials qualify: "my" with nothing between it and keys/credentials, or an
+# api/cloud/provider word, or a bare "keys stored". "where are my car keys" is ordinary chat.
+_KEY_LOCATION_RE = re.compile(
+    r"^\s*where\s+(?:are|is|do\s+you\s+(?:keep|store|save))\s+"
+    r"(?:"
+    r"my\s+(?:(?:api|cloud|provider)\s+)?(?:keys?|credentials?)"
+    r"|(?:the\s+|my\s+)?(?:api|cloud|provider)\s+(?:keys?|credentials?)"
+    r"|(?:the\s+)?credentials"
+    r"|(?:the\s+)?keys(?=\s+(?:stored|kept|saved)\b)"
+    r")"
+    r"(?:\s+(?:stored|kept|saved))?\s*[?.!]*\s*$",
+    re.IGNORECASE,
+)
+
+
+def maybe_handle_key_location_intent(user_input: str, *, owner_local: bool = False) -> str | None:
+    """"where are my keys stored?" — name the live credential backend, and the wallet keys folder.
+
+    Owner-local only, as `cloud diagnostics` is: the backend is a fact about this host's stored
+    keys. A non-owner gets the same fixed refusal. Nothing is read beyond the backend choice.
+    """
+    text = str(user_input or "").strip()
+    if not text or len(text) > 64 or not _KEY_LOCATION_RE.match(text):
+        return None
+    if not owner_local:
+        return _CREDENTIAL_OWNER_ONLY_REFUSAL
+
+    from core import credential_store
+    from core.windows_path_policy import active as _windows_paths
+
+    try:
+        backend = credential_store.active_backend()
+    except Exception:
+        return "I couldn't read the credential store just now — try again in a moment."
+    keys_dir = "data\\keys\\" if _windows_paths() else "data/keys/"
+    return (
+        f"{_credential_backend_sentence(backend)}. That covers cloud and API keys: "
+        "`cloud diagnostics` lists them masked, `cloud key forget` erases one.\n"
+        f"If you mean your wallet or node-signing keys: those are files in the {keys_dir} folder "
+        "of your VOOL home."
+    )
 
 
 # A token only counts as a MODEL name when it is model-shaped: a known family, or it carries a
@@ -871,8 +943,11 @@ def _free_models_text(*, focus: str = "free") -> str:
     ``age is None`` only when there is no usable catalog, so that flag — not an empty list — is
     what makes a claim about reaching openrouter.ai true.
     """
+    from core import windows_cloud_gate
     from core.openrouter_catalog import model_is_coding, safe_free_models
 
+    if windows_cloud_gate.cloud_off():
+        return windows_cloud_gate.OFF_TEXT
     free, age = safe_free_models(allow_network=True)
     if age is None:
         return (
@@ -928,8 +1003,11 @@ def maybe_handle_cloud_models_command(user_input: str, *, owner_local: bool = Fa
 def _search_models_text(query: str) -> str:
     """Search the LIVE OpenRouter catalog by name. Ranks exact > name-part > prefix > substring, with
     free models first, so "hunyuan" or "deepseek" surfaces the right ids without the full list."""
+    from core import windows_cloud_gate
     from core.openrouter_catalog import load_openrouter_catalog, model_is_free
 
+    if windows_cloud_gate.cloud_off():
+        return windows_cloud_gate.OFF_TEXT
     q = " ".join(str(query or "").strip().lower().split())
     if len(q) < 2:
         return "Give me at least 2 characters to search, e.g. `cloud models hunyuan`."
@@ -1299,6 +1377,161 @@ _CONNECTION_TEST_RE = re.compile(
     r"|\bare\s+we\s+connected\b",
     re.IGNORECASE | re.DOTALL,
 )
+
+
+# "are you online?" / "is web lookup on?" (Windows) — a fixed status answer from the runtime's own
+# state, never small talk from the model. Capability recheck (Windows 11): "are you online?" got
+# "I'm here, Jesse…" 3 of 3 times and never said whether replies were local or cloud, or whether web
+# lookup was on. Whole-message and about VOOL only: "is the server online", "is google online" and
+# "is my friend online" name another subject and do not match.
+_ONLINE_STATUS_RE = re.compile(
+    r"^\s*(?:(?:hey|hi|so|ok(?:ay)?)[,\s]+)?(?:vool[,\s]+)?"
+    r"(?:"
+    r"(?:are|r)\s+(?:you|u)\s+(?:still\s+|currently\s+|actually\s+)?"
+    r"(?:on[- ]?line|off[- ]?line|connected\s+to\s+(?:the\s+)?(?:internet|web|net))"
+    r"|(?:do|can)\s+you\s+(?:have\s+)?(?:internet|web)\s+access"
+    r"|(?:is|are)\s+(?:the\s+|your\s+)?(?:web|internet)\s+(?:lookup|look[- ]up|search|searching|access|browsing)s?"
+    r"\s+(?:turned\s+)?(?:on|off|enabled|disabled|available|allowed|working)"
+    r")"
+    r"(?:\s+(?:right\s+)?now)?\s*[?.!]*\s*$",
+    re.IGNORECASE,
+)
+
+
+def is_online_status_question(user_input: str) -> bool:
+    text = str(user_input or "").strip()
+    return bool(text) and len(text) <= 80 and bool(_ONLINE_STATUS_RE.match(text))
+
+
+def _online_status_local_model() -> str:
+    """The local model's name when it is known: the last local reply's model, else the one enabled
+    local model registered on this machine ("" when there is none or more than one)."""
+    try:
+        from core.usage_meter import last_served_call
+
+        call = last_served_call() or {}
+        if str(call.get("lane") or "") == "local" and str(call.get("model_id") or "").strip():
+            return str(call["model_id"]).strip()
+    except Exception:
+        pass
+    try:
+        from core.local_model_policy import manifest_is_local
+        from storage.model_provider_manifest import list_provider_manifests
+
+        names = {m.model_name for m in list_provider_manifests(enabled_only=True) if manifest_is_local(m)}
+        return next(iter(names)) if len(names) == 1 else ""
+    except Exception:
+        return ""
+
+
+def _online_status_cloud_model() -> str:
+    try:
+        from core.cloud_escalation_policy import load_policy
+
+        model = str(getattr(load_policy(), "model", "") or "").strip()
+        return "" if model.lower() in {"", "auto"} else model
+    except Exception:
+        return ""
+
+
+def online_status_snapshot(source_context: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The state the answer reads. Each source fails soft to the answer that promises less."""
+    try:
+        from core.auto_local_only_mode import turn_is_local_only
+
+        local_only = bool(turn_is_local_only(source_context))
+    except Exception:
+        local_only = True  # unknown: say Local Only (no cloud), the answer that promises less (SA)
+    try:
+        from core import windows_cloud_gate
+
+        # The Windows cloud rule itself (a stored key AND cloud turned on), read directly: this
+        # answer is the Windows one, so it reports that rule whatever host the test runs on.
+        cloud_on = bool(windows_cloud_gate.cloud_key_stored() and windows_cloud_gate.owner_turned_cloud_on())
+    except Exception:
+        cloud_on = False
+    try:
+        from core.local_model_presence import local_model_running
+
+        local_running = bool(local_model_running())
+    except Exception:
+        local_running = False
+    try:
+        # Web lookup is the web-search permission the research lane asks (`allow_web_fallback`),
+        # not Local Only: Local Only keeps replies on this computer, and web search through the
+        # local browser stays available in it (product decision, 11 Nov 2026).
+        from core import policy_engine
+        from core.remote_fetch_policy import remote_fetch_forbidden
+
+        web_on = bool(policy_engine.allow_web_fallback()) and not remote_fetch_forbidden()
+    except Exception:
+        web_on = False
+    return {
+        "local_only": local_only,
+        "cloud_on": cloud_on and not local_only,
+        "local_running": local_running,
+        "local_model": _online_status_local_model() if local_running else "",
+        "cloud_model": _online_status_cloud_model() if cloud_on and not local_only else "",
+        "web_on": web_on,
+    }
+
+
+def render_online_status(snapshot: dict[str, Any]) -> str:
+    local_name = f" ({snapshot['local_model']})" if snapshot.get("local_model") else ""
+    cloud_name = f" ({snapshot['cloud_model']})" if snapshot.get("cloud_model") else ""
+    cloud_off_why = "Local Only is on" if snapshot.get("local_only") else "cloud models are off"
+    if snapshot.get("cloud_on") and snapshot.get("local_running"):
+        models = (
+            f"Replies: a local model on this computer{local_name} answers first, and cloud models "
+            f"are on{cloud_name}, so a reply can come from a cloud model."
+        )
+    elif snapshot.get("cloud_on"):
+        models = f"Replies: from a cloud model{cloud_name}. No local model is running on this computer."
+    elif snapshot.get("local_running"):
+        models = f"Replies: from a local model on this computer{local_name}. Nothing goes to a cloud model: {cloud_off_why}."
+    else:
+        models = (
+            f"Replies: no local model is running on this computer and {cloud_off_why}, so I can't "
+            "write model replies until you start a local model or add your own key in Settings."
+        )
+    if snapshot.get("web_on"):
+        web = "Web lookup: on. I can search the web when a question needs it."
+        if snapshot.get("local_only"):
+            web += " Local Only keeps replies on this computer; web search still goes through the browser."
+    else:
+        web = "Web lookup: off. I won't search the web."
+    return "\n".join([
+        "VOOL is running on this computer.", models, web,
+        "This reply: answered by VOOL's runtime from its current state, with no model call.",
+    ])
+
+
+def maybe_handle_online_status_question(
+    user_input: str, *, source_context: dict[str, Any] | None = None
+) -> str | None:
+    """Windows: "are you online?" answered from the runtime's state. None off Windows or on any
+    other message."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active() or not is_online_status_question(user_input):
+        return None
+    return render_online_status(online_status_snapshot(source_context))
+
+
+# The exact command `cloud test` (no `conn...` word, so _CONNECTION_TEST_RE misses it). Answered
+# in every mode: Plan gets advice, cloud off gets the gate's text, a non-owner a fixed line.
+_CLOUD_TEST_EXACT_RE = re.compile(r"^\s*/?cloud\s+test\s*$", re.IGNORECASE)
+_CLOUD_TEST_OWNER_ONLY = (
+    "`cloud test` sends the owner's stored cloud key to the provider, so it only runs from the "
+    "owner's own local session."
+)
+_CLOUD_TEST_READ_ONLY = "Switch to Manual to run a cloud test."
+
+
+def is_exact_cloud_test(user_input: str) -> bool:
+    return bool(_CLOUD_TEST_EXACT_RE.match(str(user_input or "")))
+
+
 # A connection test uses the owner's cloud KEY against the provider, so it must be about the
 # cloud/OpenRouter — never a bare "are we connected?" (peer/DB connectivity in a P2P product).
 _CLOUD_SUBJECT_RE = re.compile(
@@ -1330,6 +1563,21 @@ def maybe_handle_cloud_switch_intent(user_input: str, *, owner_local: bool = Fal
     ]
     if not tokens:
         return None
+
+    from core import windows_cloud_gate
+
+    if windows_cloud_gate.cloud_off():
+        # Windows, before a key is stored and cloud is turned on: no catalog is read or fetched.
+        # A request about a cloud model gets the plain line; anything else is ordinary chat.
+        if not _CLOUD_SUBJECT_RE.search(text):
+            return None
+        return {
+            "response": windows_cloud_gate.OFF_TEXT,
+            "success": False,
+            "advice_only": True,
+            "reason": windows_cloud_gate.REASON,
+            "details": {},
+        }
 
     from core.openrouter_catalog import model_is_free, safe_all_models
 
@@ -1456,8 +1704,17 @@ def maybe_handle_catalog_refresh_intent(user_input: str, *, owner_local: bool = 
     if not owner_local:
         return None  # a refresh hits the network + rewrites the on-disk cache — owner's session only
 
+    from core import windows_cloud_gate
     from core.cloud_model_control import force_catalog_refresh
 
+    if windows_cloud_gate.cloud_off():
+        return {
+            "response": windows_cloud_gate.OFF_TEXT,
+            "success": False,
+            "advice_only": True,
+            "reason": windows_cloud_gate.REASON,
+            "details": {},
+        }
     result = force_catalog_refresh()
     if result.get("ok"):
         response = (
@@ -1478,19 +1735,40 @@ def maybe_handle_catalog_refresh_intent(user_input: str, *, owner_local: bool = 
     }
 
 
-def maybe_handle_connection_test_intent(user_input: str, *, owner_local: bool = False) -> dict[str, Any] | None:
-    """"confirm the connection" — REALLY probe the provider's auth-gated endpoint and report."""
+def _cloud_test_advice(response: str, reason: str) -> dict[str, Any]:
+    return {"response": response, "success": False, "advice_only": True, "reason": reason}
+
+
+def maybe_handle_connection_test_intent(
+    user_input: str, *, owner_local: bool = False, read_only: bool = False
+) -> dict[str, Any] | None:
+    """"confirm the connection" — REALLY probe the provider's auth-gated endpoint and report.
+
+    The exact command `cloud test` never falls through to the model: a non-owner gets a fixed
+    line, Windows with cloud off gets ``windows_cloud_gate.OFF_TEXT``, and ``read_only`` (Plan
+    mode, or a turn whose actions are off) gets advice. None of those runs the probe.
+    """
     text = str(user_input or "").strip()
     if not text or len(text) > 80:
         return None
-    if not _CONNECTION_TEST_RE.search(text):
-        return None
-    if not _CLOUD_SUBJECT_RE.search(text):
-        return None  # must name the cloud/OpenRouter — "are we connected?" (peers) is not this
-    if _OPENROUTER_CODING_GUARD_RE.search(text) or re.search(r"\b(wifi|internet|ethernet|vpn|bluetooth)\b", text, re.IGNORECASE):
-        return None
-    if not owner_local:
-        return None  # the probe sends the owner's stored key to the provider — owner's session only
+    if is_exact_cloud_test(text):
+        if not owner_local:
+            return _cloud_test_advice(_CLOUD_TEST_OWNER_ONLY, "connection_test_owner_only")
+        from core import windows_cloud_gate
+
+        if windows_cloud_gate.cloud_off():
+            return _cloud_test_advice(windows_cloud_gate.OFF_TEXT, windows_cloud_gate.REASON)
+        if read_only:
+            return _cloud_test_advice(_CLOUD_TEST_READ_ONLY, "connection_test_read_only")
+    else:
+        if not _CONNECTION_TEST_RE.search(text):
+            return None
+        if not _CLOUD_SUBJECT_RE.search(text):
+            return None  # must name the cloud/OpenRouter — "are we connected?" (peers) is not this
+        if _OPENROUTER_CODING_GUARD_RE.search(text) or re.search(r"\b(wifi|internet|ethernet|vpn|bluetooth)\b", text, re.IGNORECASE):
+            return None
+        if not owner_local:
+            return None  # the probe sends the owner's stored key to the provider — owner's session only
 
     from core import cloud_escalation_policy as cep
     from core.cloud_connection_state import STATE_NO_KEY, STATE_OK, run_auth_probe
@@ -1646,6 +1924,27 @@ def maybe_handle_cloud_command(user_input: str, *, owner_local: bool = False) ->
                 "Check that VOOL can write its data directory, then try again."
             )
         prefix = f"Cloud escalation set to {arg}."
+        from core import windows_cloud_gate
+
+        if arg == cep.MODE_OFF and windows_cloud_gate.active():
+            # Windows: `cloud off` turns cloud OFF, the free lane a key save switched on included,
+            # and a pinned cloud model (the gate counts a pin as the owner turning cloud on), so the
+            # gate is closed when this reply says so (core/windows_cloud_gate.py).
+            cep.set_free_cloud_enabled(False)
+            if str(cep.load_policy().model or "").strip():
+                from dataclasses import replace as _replace
+
+                cep.save_policy(_replace(cep.load_policy(), model=""))
+            windows_cloud_gate.record_owner_pin("")
+            if not windows_cloud_gate.cloud_off():
+                return (
+                    "I could not turn cloud off just now, so it may still be on. Check that VOOL can "
+                    "write its data directory, then try again."
+                )
+            return (
+                f"{windows_cloud_gate.OFF_TEXT} VOOL will not contact a cloud provider until you turn "
+                "cloud on again with `cloud ask` or `cloud auto`."
+            )
     elif arg.startswith("cap"):
         return "Call-count limits have been removed. Use Settings → Usage & Budgets to manage monetary spending limits. No setting was changed."
     return _cloud_status_text(cep, cep.load_policy(), prefix=prefix)
@@ -2007,6 +2306,10 @@ def action_fast_path_result(
         debug_origin=reason,
         allow_planner_style=explicit_planner_style_requested_fn(user_input),
     )
+    from core.agent_runtime.research_tool_loop_facade import is_windows_run_request_output
+
+    if is_windows_run_request_output(details):
+        turn_result.windows_run_request_output = True
     agent._apply_interaction_transition(session_id, turn_result)
     decorated_response = agent._decorate_chat_response(
         turn_result,

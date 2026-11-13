@@ -503,10 +503,10 @@ def _runtime_tool_contracts_raw(*, web_available_fn: Any = None) -> list[Runtime
         ),
         RuntimeToolContract(
             intent="machine.move_path",
-            description="Move or rename a file or folder on this machine. Destructive: refuses protected system and wallet locations and requires a live OS confirmation (Windows Hello / credential prompt) before moving.",
+            description="Move or rename a file or folder on this machine. Destructive: refuses protected system and wallet locations and requires the owner's confirmation before moving: on Windows the owner's Allow on the approval card for this exact call (no other call moves anything there), elsewhere a live OS confirmation (Touch ID / device password, or the desktop's prompt).",
             tool_surface="machine",
             capability_id="machine.write",
-            capability_claim="move or rename a file or folder on this machine, guarded by a protected-path denylist and a live OS confirmation",
+            capability_claim="move or rename a file or folder on this machine, guarded by a protected-path denylist and the owner's confirmation (on Windows the Allow on its card, elsewhere a live OS prompt)",
             supported=write_enabled,
             unsupported_reason="Local machine file moves are disabled on this runtime.",
             input_schema={"source": "string", "destination": "string"},

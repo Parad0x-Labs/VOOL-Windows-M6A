@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from tests import _windows_refusals as windows_refusals
 from tests.repoops._harness import door
 from tests.repoops.test_forge_actions import _calls, _operator_authorizes, world
 from tests.repoops.test_forge_integration_review import prepare
@@ -41,6 +42,8 @@ def fail_session_storage(monkeypatch, sid, *, operation):
 
 @pytest.mark.parametrize("action,operation", [("create", "write"), ("comment", "replace")])
 def test_real_journal_io_failure_must_prevent_dispatch(world, monkeypatch, action, operation):
+    if windows_refusals.refuses_repo_session(world):
+        return
     forge, ctx, sid, *_ = prepare(world, action)
     target = fail_session_storage(monkeypatch, sid, operation=operation)
     before = target.read_bytes()
@@ -54,6 +57,8 @@ def test_real_journal_io_failure_must_prevent_dispatch(world, monkeypatch, actio
 def test_restart_after_real_journal_outage_never_duplicates(world, monkeypatch, action, operation):
     from core.repoops.plane import repo_ops_runtime
 
+    if windows_refusals.refuses_repo_session(world):
+        return
     forge, ctx, sid, *_ = prepare(world, action)
     with monkeypatch.context() as failure:
         fail_session_storage(failure, sid, operation=operation)
@@ -69,6 +74,8 @@ def test_marker_and_recovery_journal_outage_is_restart_recoverable(world, monkey
     from core import runtime_continuity as continuity
     from core.repoops.plane import repo_ops_runtime, session_dir
 
+    if windows_refusals.refuses_repo_session(world):
+        return
     forge, ctx, sid, _, _, action_hash = prepare(world, action)
     with monkeypatch.context() as failure:
         def marker_failure(**kwargs):

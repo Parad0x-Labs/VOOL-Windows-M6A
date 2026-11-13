@@ -28,6 +28,7 @@ import pytest
 from core import safe_git, user_rules
 from core.execution.git_tools import git_diff_workspace, git_status_workspace
 from core.repoops.gitops import GitRunner
+from tests import _windows_refusals as windows_refusals
 
 pytestmark = pytest.mark.skipif(subprocess.run(["git", "--version"], capture_output=True).returncode != 0,
                                 reason="git is not installed")
@@ -38,6 +39,19 @@ _POSIX_SCRIPT = pytest.mark.skipif(os.name == "nt", reason="the stand-in gpg is 
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@example.test", *args],
                           check=True, capture_output=True, text=True).stdout
+
+
+def _windows_refuses_lfs_checks(where: Path, *argvs: tuple[str, ...]) -> bool:
+    """Windows 0.7.1 runs no git, so VOOL cannot read the repository's LFS servers: each check answers
+    the git sentence, starts no git and changes nothing in the repository, and the row ends there.
+    Off Windows this is False and the row checks what it always did."""
+    if not windows_refusals.git_refused():
+        return False
+    for argv in argvs:
+        with windows_refusals.watch_git(where) as seen:
+            answer = safe_git.lfs_endpoint_refusal(where, argv)
+        assert seen.refused(answer), argv
+    return True
 
 
 def _repo(tmp_path: Path) -> tuple[Path, Path]:
@@ -113,10 +127,13 @@ def test_commands_that_sign_are_still_refused_there_and_the_users_gpg_never_runs
     (repo / "notes.txt").write_text("two\n", encoding="utf-8")
     head = _git(repo, "rev-parse", "HEAD").strip()
 
-    commit = GitRunner(root=repo).commit(message="signed")
-    tag = GitRunner(root=repo).tag("v1", message="signed")
+    with windows_refusals.watch_git(tmp_path) as seen:
+        commit = GitRunner(root=repo).commit(message="signed")
+        tag = GitRunner(root=repo).tag("v1", message="signed")
 
     assert commit.ok is False and tag.ok is False
+    if seen.refused(commit.stderr, tag.stderr):
+        return
     assert "commit.gpgsign (set in .git/config)" in commit.stderr, commit.to_dict()
     assert _git(repo, "rev-parse", "HEAD").strip() == head
     assert _git(repo, "tag", "--list").strip() == ""
@@ -209,7 +226,14 @@ def test_without_a_command_every_key_still_counts(tmp_path: Path) -> None:
     repo, _marker = _repo(tmp_path)
     _git(repo, "config", "commit.gpgSign", "true")
 
-    assert "commit.gpgsign" in GitRunner(root=repo)._repository_refusal(mutating=False)
+    with windows_refusals.watch_git(repo) as seen:
+        refusal = GitRunner(root=repo)._repository_refusal(mutating=False)
+        if seen.active:
+            with pytest.raises(safe_git.GitRefusedOnWindows) as keys:
+                safe_git.executable_local_config(repo)
+    if seen.active and seen.refused(refusal, str(keys.value)):
+        return
+    assert "commit.gpgsign" in refusal
     assert safe_git.executable_local_config(repo) == ["commit.gpgsign"]
 
 
@@ -344,9 +368,13 @@ def test_an_lfs_server_the_repository_names_elsewhere_is_refused_and_never_conta
     head = _git(repo, "rev-parse", "HEAD").strip()
     hits.clear()
 
-    result = GitRunner(root=repo).cherry_pick("lfs")
+    with windows_refusals.watch_git(repo) as seen:
+        result = GitRunner(root=repo).cherry_pick("lfs")
 
     assert result.ok is False
+    if seen.refused(result.stderr):
+        assert hits == []
+        return
     assert "Git LFS would contact 127.0.0.1" in result.stderr and ".lfsconfig" in result.stderr, result.to_dict()
     assert _git(repo, "rev-parse", "HEAD").strip() == head
     assert hits == [], "git-lfs contacted a server the repository chose"
@@ -359,9 +387,13 @@ def test_an_lfs_server_set_in_the_repositorys_own_config_is_refused(tmp_path: Pa
     repo = _lfs_repo(tmp_path, monkeypatch, port)
     _git(repo, "config", "remote.origin.lfsurl", f"http://user:secret@127.0.0.1:{port}/elsewhere")
 
-    result = GitRunner(root=repo).cherry_pick("lfs")
+    with windows_refusals.watch_git(repo) as seen:
+        result = GitRunner(root=repo).cherry_pick("lfs")
 
     assert result.ok is False
+    if seen.refused(result.stderr):
+        assert hits == []
+        return
     assert "remote.origin.lfsurl, set in .git/config" in result.stderr, result.to_dict()
     assert "secret" not in result.stderr
     assert hits == []
@@ -373,6 +405,12 @@ def test_an_lfs_server_on_the_projects_own_git_host_is_allowed(tmp_path: Path, m
     repo = _lfs_repo(tmp_path, monkeypatch, port)
     _commit_lfsconfig(repo, f"http://localhost:{port}/project.git/info/lfs")
 
+    if _windows_refuses_lfs_checks(repo, ("cherry-pick", "lfs")):
+        with windows_refusals.watch_git(repo) as seen:
+            result = GitRunner(root=repo).cherry_pick("lfs")
+        assert result.ok is False and seen.refused(result.stderr), result.to_dict()
+        assert hits == []
+        return
     assert safe_git.lfs_endpoint_refusal(repo, ("cherry-pick", "lfs")) == ""
     result = GitRunner(root=repo).cherry_pick("lfs")
 
@@ -388,6 +426,8 @@ def test_an_lfs_server_the_user_named_is_allowed(tmp_path: Path, monkeypatch, lf
                     "basic"], check=True, capture_output=True)
     _commit_lfsconfig(repo, f"http://127.0.0.1:{port}/mine")
 
+    if _windows_refuses_lfs_checks(repo, ("cherry-pick", "lfs")):
+        return
     assert safe_git.lfs_endpoint_refusal(repo, ("cherry-pick", "lfs")) == ""
 
 
@@ -398,8 +438,12 @@ def test_a_rewrite_that_sends_lfs_to_another_host_is_refused(tmp_path: Path, mon
     _git(repo, "config", f"url.http://127.0.0.1:{port}/.insteadOf", f"http://localhost:{port}/lfs/")
     _commit_lfsconfig(repo, f"http://localhost:{port}/lfs/elsewhere")
 
-    result = GitRunner(root=repo).cherry_pick("lfs")
+    with windows_refusals.watch_git(repo) as seen:
+        result = GitRunner(root=repo).cherry_pick("lfs")
 
+    if seen.refused(result.stderr):
+        assert result.ok is False and hits == []
+        return
     assert result.ok is False and "Git LFS would contact 127.0.0.1" in result.stderr, result.to_dict()
     assert hits == []
 
@@ -410,6 +454,8 @@ def test_an_lfsconfig_git_cannot_read_is_refused(tmp_path: Path) -> None:
     _git(repo, "add", ".lfsconfig")
     _git(repo, "commit", "-q", "-m", "broken")
 
+    if _windows_refuses_lfs_checks(repo, ("cherry-pick", "HEAD")):
+        return
     refusal = safe_git.lfs_endpoint_refusal(repo, ("cherry-pick", "HEAD"))
 
     assert refusal.startswith("the repository's Git LFS servers could not be checked"), refusal
@@ -420,6 +466,8 @@ def test_a_repository_that_names_no_lfs_server_is_not_checked_further(tmp_path: 
     _git(repo, "remote", "add", "origin", "https://git.example.test/project.git")
     _git(repo, "branch", "other")
 
+    if _windows_refuses_lfs_checks(repo, ("merge", "--no-ff", "-m", "a message", "other")):
+        return
     assert safe_git.lfs_endpoint_refusal(repo, ("merge", "--no-ff", "-m", "a message", "other")) == ""
 
 
@@ -475,8 +523,12 @@ def test_vool_commits_run_no_automatic_housekeeping(tmp_path: Path, strategy: st
     repo = _auto_housekeeping_repo(tmp_path, strategy)
     before = _loose_objects(repo)
 
-    result = GitRunner(root=repo).commit(message="no housekeeping")
+    with windows_refusals.watch_git(tmp_path) as seen:
+        result = GitRunner(root=repo).commit(message="no housekeeping")
 
+    if windows_refusals.refused_git_result(seen, result):
+        assert _loose_objects(repo) == before
+        return
     assert result.ok is True, result.to_dict()
     assert _loose_objects(repo) >= before, "VOOL's commit ran automatic housekeeping"
 
@@ -530,8 +582,12 @@ def test_a_revert_that_would_bring_back_another_lfs_server_is_refused(tmp_path: 
     head = _git(repo, "rev-parse", "HEAD").strip()
     hits.clear()
 
-    result = GitRunner(root=repo).revert("HEAD")
+    with windows_refusals.watch_git(repo) as seen:
+        result = GitRunner(root=repo).revert("HEAD")
 
+    if seen.refused(result.stderr):
+        assert result.ok is False and hits == []
+        return
     assert result.ok is False and "Git LFS would contact 127.0.0.1" in result.stderr, result.to_dict()
     assert "the .lfsconfig revert would write" in result.stderr
     assert _git(repo, "rev-parse", "HEAD").strip() == head
@@ -553,6 +609,8 @@ def test_a_cherry_pick_whose_merged_lfsconfig_names_another_server_is_refused(tm
     (repo / ".lfsconfig").write_text("[lfs]\n#1\n#2\n#3\n#4\n", encoding="utf-8")
     _git(repo, "commit", "-q", "-a", "-m", "empty lfs section")
 
+    if _windows_refuses_lfs_checks(repo, ("cherry-pick", "--no-rerere-autoupdate", "side")):
+        return
     refusal = safe_git.lfs_endpoint_refusal(repo, ("cherry-pick", "--no-rerere-autoupdate", "side"))
 
     assert "Git LFS would contact 127.0.0.1" in refusal and "the .lfsconfig cherry-pick would write" in refusal, refusal
@@ -564,6 +622,8 @@ def test_an_lfs_url_that_reads_as_an_option_is_refused(tmp_path: Path) -> None:
     subprocess.run(["git", "config", "-f", str(repo / ".lfsconfig"), "lfs.url", "-ox@127.0.0.1:9:elsewhere"],
                    check=True, capture_output=True)
 
+    if _windows_refuses_lfs_checks(repo, ("switch", "-c", "x")):
+        return
     refusal = safe_git.lfs_endpoint_refusal(repo, ("switch", "-c", "x"))
 
     assert refusal.startswith("the repository's Git LFS servers could not be checked"), refusal
@@ -572,6 +632,8 @@ def test_an_lfs_url_that_reads_as_an_option_is_refused(tmp_path: Path) -> None:
 def test_picking_more_than_one_commit_is_refused_rather_than_guessed(tmp_path: Path) -> None:
     repo, _marker = _repo(tmp_path)
 
+    if _windows_refuses_lfs_checks(repo, ("cherry-pick", "HEAD", "HEAD")):
+        return
     refusal = safe_git.lfs_endpoint_refusal(repo, ("cherry-pick", "HEAD", "HEAD"))
 
     assert refusal.startswith("the repository's Git LFS servers could not be checked"), refusal
@@ -634,9 +696,13 @@ def test_a_url_picked_as_the_lfs_remote_is_refused_and_never_contacted(tmp_path:
     _commit_lfsconfig(repo, f"http://127.0.0.1:{port}/picked.git", key="remote.lfsdefault")
     hits.clear()
 
-    result = GitRunner(root=repo).cherry_pick("lfs")
+    with windows_refusals.watch_git(repo) as seen:
+        result = GitRunner(root=repo).cherry_pick("lfs")
 
     assert result.ok is False, result.to_dict()
+    if seen.refused(result.stderr):
+        assert hits == []
+        return
     assert "Git LFS would contact 127.0.0.1 (remote.lfsdefault in the work tree's .lfsconfig)" in result.stderr, result.stderr
     assert hits == []
 
@@ -648,6 +714,8 @@ def test_a_branchs_remote_that_is_a_url_counts_as_a_named_lfs_server(tmp_path: P
     branch = _git(repo, "symbolic-ref", "--short", "HEAD").strip()
     _git(repo, "config", f"branch.{branch}.remote", "http://127.0.0.2:9/x.git")
 
+    if _windows_refuses_lfs_checks(repo, ("merge", "other")):
+        return
     refusal = safe_git.lfs_endpoint_refusal(repo, ("merge", "other"))
 
     assert refusal.startswith(f"Git LFS would contact 127.0.0.2 (branch.{branch}.remote, set in .git/config)"), refusal
@@ -660,6 +728,8 @@ def test_picking_one_of_the_projects_remotes_by_name_is_allowed(tmp_path: Path) 
     subprocess.run(["git", "config", "-f", str(repo / ".lfsconfig"), "remote.lfsdefault", "origin"], check=True,
                    capture_output=True)
 
+    if _windows_refuses_lfs_checks(repo, ("merge", "other")):
+        return
     assert safe_git.lfs_endpoint_refusal(repo, ("merge", "other")) == ""
 
 
@@ -672,6 +742,8 @@ def test_an_lfsconfig_that_is_a_symlink_is_refused(tmp_path: Path, argv: tuple[s
     _commit_tree_on(repo, "side", [("120000", ".lfsconfig", b"#x"),
                                    ("100644", "#x", b"[lfs]\n\turl = http://127.0.0.4:9/e\n")])
 
+    if _windows_refuses_lfs_checks(repo, argv):
+        return
     refusal = safe_git.lfs_endpoint_refusal(repo, argv)
 
     assert refusal.startswith("the repository's Git LFS servers could not be checked"), refusal
@@ -683,6 +755,8 @@ def test_an_lfsconfig_spelled_in_another_case_is_read(tmp_path: Path) -> None:
     _git(repo, "remote", "add", "origin", "https://git.example.test/project.git")
     _commit_tree_on(repo, "side", [("100644", ".LFSConfig", b"[lfs]\n\turl = http://127.0.0.5:9/e\n")])
 
+    if _windows_refuses_lfs_checks(repo, ("cherry-pick", "side")):
+        return
     refusal = safe_git.lfs_endpoint_refusal(repo, ("cherry-pick", "side"))
 
     assert refusal.startswith("Git LFS would contact 127.0.0.5 (lfs.url in the .LFSConfig in side)"), refusal
@@ -695,6 +769,8 @@ def test_commands_that_never_download_lfs_files_are_not_held_up_by_a_named_serve
     _git(repo, "remote", "add", "origin", "https://git.example.test/project.git")
     _commit_lfsconfig(repo, "https://lfs.elsewhere.test/x")
 
+    if _windows_refuses_lfs_checks(repo, argv, ("switch", "-c", "y")):
+        return
     assert safe_git.lfs_endpoint_refusal(repo, argv) == ""
     assert safe_git.lfs_endpoint_refusal(repo, ("switch", "-c", "y")).startswith("Git LFS would contact lfs.elsewhere.test")
 
@@ -709,6 +785,9 @@ def test_reverting_a_merge_against_its_second_parent_checks_what_that_parent_bri
     _git(repo, "switch", "-q", "-")
     _git(repo, "merge", "-q", "--no-ff", "-s", "ours", "-m", "M", "side")
 
+    if _windows_refuses_lfs_checks(repo, ("revert", "-m", "2", "--no-edit", "HEAD"),
+                                   ("revert", "-m", "1", "--no-edit", "HEAD"), ("revert", "--mainline=two", "HEAD")):
+        return
     refusal = safe_git.lfs_endpoint_refusal(repo, ("revert", "-m", "2", "--no-edit", "HEAD"))
 
     assert "Git LFS would contact 127.0.0.6" in refusal and "revert would write" in refusal, refusal
@@ -756,6 +835,8 @@ def test_an_lfsconfig_a_folder_rename_moves_to_the_top_is_checked(tmp_path: Path
     _git(repo, "commit", "-q", "-m", "nested lfsconfig")
     _git(repo, "config", "merge.directoryRenames", directory_renames)
 
+    if _windows_refuses_lfs_checks(repo, ("merge", "--no-ff", "--no-edit", "theirs")):
+        return
     refusal = safe_git.lfs_endpoint_refusal(repo, ("merge", "--no-ff", "--no-edit", "theirs"))
 
     assert refusal.startswith("Git LFS would contact 127.0.0.7") and "merge would write" in refusal, refusal
@@ -775,6 +856,8 @@ def test_a_commit_named_by_shorthand_is_resolved_and_checked(tmp_path: Path, arg
     repo = _project(tmp_path)
     _side_with_lfsconfig(repo)
 
+    if _windows_refuses_lfs_checks(repo, argv):
+        return
     refusal = safe_git.lfs_endpoint_refusal(repo, argv)
 
     assert refusal.startswith("Git LFS would contact 127.0.0.8"), refusal
@@ -786,6 +869,8 @@ def test_a_command_whose_incoming_commit_cannot_be_named_is_refused(tmp_path: Pa
     repo = _project(tmp_path)
     _side_with_lfsconfig(repo)
 
+    if _windows_refuses_lfs_checks(repo, argv):
+        return
     refusal = safe_git.lfs_endpoint_refusal(repo, argv)
 
     assert refusal.startswith("the repository's Git LFS servers could not be checked"), refusal
@@ -799,6 +884,8 @@ def test_a_proxy_the_repository_sets_does_not_refuse_ordinary_work(tmp_path: Pat
     _git(repo, "branch", "other")
     _git(repo, "config", key, "http://proxy.corp.test:3128")
 
+    if _windows_refuses_lfs_checks(repo, ("merge", "other"), ("switch", "-c", "p")):
+        return
     assert safe_git.lfs_endpoint_refusal(repo, ("merge", "other")) == ""
     assert safe_git.lfs_endpoint_refusal(repo, ("switch", "-c", "p")) == ""
 
@@ -814,6 +901,8 @@ def test_the_users_own_proxy_is_not_held_against_the_repository(tmp_path: Path, 
     repo = _project(tmp_path)
     _git(repo, "branch", "other")
 
+    if _windows_refuses_lfs_checks(repo, ("merge", "other")):
+        return
     assert safe_git.lfs_endpoint_refusal(repo, ("merge", "other")) == ""
 
 
@@ -829,6 +918,8 @@ def test_an_abort_checks_the_commit_it_goes_back_to(tmp_path: Path, argv: tuple[
     else:
         _git(repo, "update-ref", state, "side")
 
+    if _windows_refuses_lfs_checks(repo, argv):
+        return
     refusal = safe_git.lfs_endpoint_refusal(repo, argv)
 
     assert refusal.startswith(f"Git LFS would contact 127.0.0.8 (lfs.url in the .lfsconfig in {state})"), refusal
@@ -839,6 +930,8 @@ def test_a_project_lfsconfig_is_read_the_same_from_a_subfolder(tmp_path: Path) -
     _commit_lfsconfig(repo, "https://git.example.test/project.git/info/lfs")
     (repo / "deeper").mkdir()
 
+    if _windows_refuses_lfs_checks(repo / "deeper", ("switch", "-c", "x")):
+        return
     assert safe_git.lfs_endpoint_refusal(repo / "deeper", ("switch", "-c", "x")) == ""
 
 
@@ -853,6 +946,8 @@ def test_a_branch_that_tracks_a_local_branch_or_a_remote_without_a_url_is_not_a_
     _git(repo, "branch", "other")
     _git(repo, "config", "branch.other.remote", pick)
 
+    if _windows_refuses_lfs_checks(repo, ("merge", "--no-ff", "--no-edit", "other"), ("switch", "-c", "n")):
+        return
     assert safe_git.lfs_endpoint_refusal(repo, ("merge", "--no-ff", "--no-edit", "other")) == ""
     assert safe_git.lfs_endpoint_refusal(repo, ("switch", "-c", "n")) == ""
 
@@ -862,6 +957,8 @@ def test_a_branchs_remote_that_is_a_path_elsewhere_is_refused(tmp_path: Path) ->
     _git(repo, "branch", "other")
     _git(repo, "config", "branch.other.remote", str(tmp_path / "elsewhere.git"))
 
+    if _windows_refuses_lfs_checks(repo, ("merge", "other")):
+        return
     refusal = safe_git.lfs_endpoint_refusal(repo, ("merge", "other"))
 
     assert refusal.startswith("Git LFS would contact ") and "branch.other.remote" in refusal, refusal
@@ -874,6 +971,8 @@ def test_merging_fetch_head_is_refused_because_it_can_merge_several_heads(tmp_pa
     (repo / ".git" / "FETCH_HEAD").write_text(f"{_git(repo, 'rev-parse', 'HEAD').strip()}\t\tbranch 'a'\n",
                                               encoding="utf-8")
 
+    if _windows_refuses_lfs_checks(repo, ("merge", "--no-ff", "--no-edit", target)):
+        return
     refusal = safe_git.lfs_endpoint_refusal(repo, ("merge", "--no-ff", "--no-edit", target))
 
     assert refusal.startswith("the repository's Git LFS servers could not be checked"), refusal
@@ -892,6 +991,8 @@ def test_file_names_that_are_not_utf8_do_not_refuse_an_ordinary_merge(tmp_path: 
     _git(repo, "branch", "names", _git(repo, "commit-tree", tree, "-p", "HEAD", "-m", "names").strip())
     _commit_lfsconfig(repo, "https://git.example.test/project.git/info/lfs")
 
+    if _windows_refuses_lfs_checks(repo, ("merge", "--no-ff", "--no-edit", "names"), ("switch", "names")):
+        return
     assert safe_git.lfs_endpoint_refusal(repo, ("merge", "--no-ff", "--no-edit", "names")) == ""
     assert safe_git.lfs_endpoint_refusal(repo, ("switch", "names")) == ""
 
@@ -902,6 +1003,8 @@ def test_file_names_that_are_not_utf8_do_not_refuse_an_ordinary_merge(tmp_path: 
 def test_a_misspelled_commit_says_which_name_could_not_be_read(tmp_path: Path) -> None:
     repo = _project(tmp_path)
 
+    if _windows_refuses_lfs_checks(repo, ("merge", "nosuch")):
+        return
     refusal = safe_git.lfs_endpoint_refusal(repo, ("merge", "nosuch"))
 
     assert refusal == ("the repository's Git LFS servers could not be checked ('nosuch' is not a revision "
@@ -915,6 +1018,8 @@ def test_a_remote_whose_name_has_capitals_is_picked_by_name(tmp_path: Path) -> N
     _git(repo, "config", f"branch.{branch}.remote", "Fork/X")
     _commit_lfsconfig(repo, "https://git.example.test/project.git/info/lfs")
 
+    if _windows_refuses_lfs_checks(repo, ("switch", "-c", "n")):
+        return
     assert safe_git.lfs_endpoint_refusal(repo, ("switch", "-c", "n")) == ""
 
 

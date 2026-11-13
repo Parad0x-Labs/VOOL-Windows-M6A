@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from tests import _windows_refusals as windows_refusals
 from tests.repoops._harness import build_repo, context, door, git, head
 from tests.repoops.test_forge_actions import (
     _armed_session,
@@ -70,6 +71,8 @@ def test_a_stale_runtime_that_read_the_consent_before_the_update_landed_replays_
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, sha, base = _armed_session(world, ctx)
     forge.route("GET /pulls/8", _pr_payload("8", base_sha=base, head_sha=sha, body="novel: release notes awaiting review"))
     action_hash = _plan(ctx, sid, action="update", number="8", body="novel: the reviewed release notes")
@@ -110,6 +113,8 @@ def test_a_stale_writer_cannot_erase_an_applied_record_that_a_third_runtime_repl
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, _sha, _base = _armed_session(world, ctx)
     body = "novel: a stale writer must not erase this comment's record"
     action_hash = _plan(ctx, sid, action="comment", number="23", subject="issue", body=body)
@@ -155,6 +160,8 @@ def test_identical_content_posts_again_only_as_a_new_operator_approved_operation
     root, _bare, forge = world
     body = "novel: nightly status -- every required check is green"
     monday = context(root, session="status-thread-monday")
+    if windows_refusals.refuses_repo_session(world, monday):
+        return
     sid1, _sha, _base = _armed_session(world, monday)
     hash1 = _plan(monday, sid1, action="comment", number="31", subject="issue", body=body)
     assert _operator_authorizes(world, sid1, hash1)["ok"]
@@ -192,6 +199,8 @@ def test_a_stale_runtime_replays_a_landed_create_whose_winner_lost_its_journal_w
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, sha, base = _armed_session(world, ctx)
     title, body = "novel: draft for the reviewed release", "novel: an evidence-backed description"
     action_hash = _plan(ctx, sid, action="create", base_ref="main", title=title, body=body)
@@ -230,6 +239,8 @@ def test_another_sessions_applied_row_never_reconciles_this_dispatch_as_landed(w
     root, _bare, forge = world
     body = "novel: shared wording, two separately approved operations"
     ops_a = context(root, session="ops-a")
+    if windows_refusals.refuses_repo_session(world, ops_a):
+        return
     sid_a, _sha, _base = _armed_session(world, ops_a)
     hash_a = _plan(ops_a, sid_a, action="comment", number="44", subject="issue", body=body)
     assert _operator_authorizes(world, sid_a, hash_a)["ok"]
@@ -267,6 +278,8 @@ def test_a_stale_runtime_cannot_blind_retry_an_unproven_comment(world, monkeypat
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     sid, _sha, _base = _armed_session(world, ctx)
     body = "novel: this reply was lost in transit"
     action_hash = _plan(ctx, sid, action="comment", number="52", subject="issue", body=body)
@@ -296,6 +309,11 @@ import errno, json, os, sys, time
 from pathlib import Path
 
 sys.path.insert(0, os.environ["R5_REPO_ROOT"])
+if os.environ.get("R5_REFUSE_GIT", "None") != "None":
+    # A run that forces the parent's Windows git seam hands the same decision down (unset: the
+    # child decides from its own platform, as it always did).
+    from core import safe_git as _seam
+    _seam._REFUSE_GIT = os.environ["R5_REFUSE_GIT"] == "True"
 home = Path(os.environ["VOOL_HOME"])
 db = home / "data" / "vool_web0_v2.db"
 db.parent.mkdir(parents=True, exist_ok=True)
@@ -333,7 +351,25 @@ def emit(payload):
     os._exit(0)
 
 
-if mode == "prepare":
+if mode == "open":
+    # Only the session open, every git start recorded: where git is refused this is all a process can do.
+    import subprocess
+    from core import safe_git
+    starts, real_popen = [], subprocess.Popen
+
+    class Recording(real_popen):
+        def __init__(self, args, *rest, **kwargs):
+            if safe_git.is_git_command(args, kwargs.get("executable")):
+                starts.append(repr(args))
+            super().__init__(args, *rest, **kwargs)
+
+    subprocess.Popen = Recording
+    opened = door("repo.session.open", {"objective": spec["objective"], "pull_request": "8",
+                                        "provider": "github", "namespace": "o/r"})
+    emit({"ok": bool(opened.ok), "status": str(opened.status), "text": str(opened.response_text or ""),
+          "executed": (opened.details or {}).get("executed"), "git_refused_here": safe_git.git_refused_here(),
+          "git_starts": starts, "pid": os.getpid()})
+elif mode == "prepare":
     opened = door("repo.session.open", {"objective": spec["objective"], "pull_request": "8",
                                         "provider": "github", "namespace": "o/r"})
     sid = opened.details["repo_session_id"]
@@ -558,6 +594,30 @@ def _shared_ledger(world_home: dict, leid: str) -> list[tuple[str, str]]:
     return [(str(state), str(reason)) for state, reason in rows]
 
 
+def _windows_refuses_the_session_in_a_process(world_home: dict) -> bool:
+    """Where git is refused (Windows 0.7.1) no process can open the RepoOps session these races need:
+    a real child process's `repo.session.open` is not ok, answers exactly the write gate's status and
+    the git sentence, executes nothing and starts no git; the workspace is unchanged and the forge got
+    no call. Returns True then, and the row ends; False where git runs."""
+    if not windows_refusals.git_refused():
+        return False
+    from core import safe_git
+
+    with windows_refusals.watch_git(world_home["workspace"]) as seen:
+        opened = _run(world_home, "open", _spec(world_home), R5_REFUSE_GIT=str(safe_git._REFUSE_GIT))
+    assert opened["git_refused_here"] is True, opened
+    assert windows_refusals.refused_exactly(
+        seen,
+        (opened["ok"], False),
+        (opened["status"], windows_refusals.GIT_GATE_STATUS),
+        (opened["text"], windows_refusals.GIT_REFUSAL),
+        (opened["executed"], False),
+        (opened["git_starts"], []),
+    )
+    assert world_home["forge"].calls == [], world_home["forge"].calls
+    return True
+
+
 def _prepared(world_home: dict, action: str) -> tuple[dict, dict]:
     config = MULTIPROCESS_ACTIONS[action]
     prepared = _run(world_home, "prepare", _spec(world_home, plan=config["plan"]))
@@ -570,6 +630,8 @@ def _prepared(world_home: dict, action: str) -> tuple[dict, dict]:
 def test_real_processes_race_one_authorized_action_and_exactly_one_write_lands(shared_home, action) -> None:
     forge = shared_home["forge"]
     config = MULTIPROCESS_ACTIONS[action]
+    if _windows_refuses_the_session_in_a_process(shared_home):
+        return
     prepared, spec = _prepared(shared_home, action)
     processes, readies, go = _start_dispatchers(shared_home, spec, 4, f"race-{action}")
     snapshots = [json.loads(ready.read_text()) for ready in readies]
@@ -596,6 +658,8 @@ def test_real_processes_race_one_authorized_action_and_exactly_one_write_lands(s
 
 def test_a_process_holding_a_stale_snapshot_after_the_winner_journaled_never_resends(shared_home) -> None:
     forge = shared_home["forge"]
+    if _windows_refuses_the_session_in_a_process(shared_home):
+        return
     _, spec = _prepared(shared_home, "comment")
     (stale,), (stale_ready,), stale_go = _start_dispatchers(shared_home, spec, 1, "stale")
     assert json.loads(stale_ready.read_text())["snapshot_consumed"] is False
@@ -614,6 +678,8 @@ def test_a_process_holding_a_stale_snapshot_after_the_winner_journaled_never_res
 
 def test_a_journal_gap_in_the_winning_process_is_reconciled_by_a_stale_process_without_resending(shared_home) -> None:
     forge = shared_home["forge"]
+    if _windows_refuses_the_session_in_a_process(shared_home):
+        return
     prepared, spec = _prepared(shared_home, "create")
     (stale,), (stale_ready,), stale_go = _start_dispatchers(shared_home, spec, 1, "gap-stale")
     assert json.loads(stale_ready.read_text())["snapshot_consumed"] is False
@@ -638,6 +704,8 @@ def test_a_journal_gap_in_the_winning_process_is_reconciled_by_a_stale_process_w
 
 def test_a_compound_claim_and_journal_outage_across_processes_ends_in_exactly_one_write(shared_home) -> None:
     forge = shared_home["forge"]
+    if _windows_refuses_the_session_in_a_process(shared_home):
+        return
     prepared, spec = _prepared(shared_home, "comment")
     (held,), (held_ready,), held_go = _start_dispatchers(shared_home, spec, 1, "compound-held")
     held_snapshot = json.loads(held_ready.read_text())

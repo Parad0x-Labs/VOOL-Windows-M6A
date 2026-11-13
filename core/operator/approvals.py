@@ -102,6 +102,32 @@ def create_pending_action(
         conn.close()
 
 
+def close_pending_action(
+    action_id: str,
+    *,
+    session_id: str,
+    action_kind: str,
+    now_fn: Callable[[], str],
+    get_connection_fn: Callable[[], Any],
+) -> bool:
+    """Close a preview that is still `pending_approval` as `cancelled`, so no later lookup or typed
+    approval takes it up again. True when a row was closed; a row in any other state is left as it is."""
+    conn = get_connection_fn()
+    try:
+        cursor = conn.execute(
+            """
+            UPDATE operator_action_requests
+            SET status = 'cancelled', updated_at = ?
+            WHERE action_id = ? AND session_id = ? AND action_kind = ? AND status = 'pending_approval'
+            """,
+            (now_fn(), action_id, session_id, action_kind),
+        )
+        conn.commit()
+        return bool(cursor.rowcount)
+    finally:
+        conn.close()
+
+
 def load_pending_action(
     *,
     session_id: str,

@@ -617,19 +617,32 @@ def test_invariant_4_the_usd_ledger_cap_also_refuses(anthropic_lane, monkeypatch
 # --------------------------------------------------------------------------------------------
 
 
-def test_invariant_5_policy_off_blocks_auto_but_not_an_explicit_pick(anthropic_lane, posts) -> None:
+def test_invariant_5_policy_off_blocks_auto_but_not_an_explicit_pick(anthropic_lane, posts, monkeypatch) -> None:
     _set_policy(mode="off", daily_cap=25)
+    from tests import _windows_cloud_optin as cloud_rule
+
+    windows_rule = cloud_rule.cloud_gate_active()
+    seen = cloud_rule.record_sockets(monkeypatch) if windows_rule else []
 
     # Ambient auto-bursting: refused.
     _run_turn(source_context={"_owner_local": True}, allow_paid_fallback=True, posts=posts)
     assert not posts.posted_to_anthropic, f"policy off must block the auto burst: {posts.urls}"
 
     # The deliberate act: honored.
-    _run_turn(
+    decision = _run_turn(
         source_context={"_owner_local": True, "requested_model": anthropic_lane.provider_id},
         allow_paid_fallback=False,
         posts=posts,
     )
+    if windows_rule:
+        # Windows 0.7.1 (core/windows_cloud_gate.py): with policy off there is no cloud consent and
+        # the key is an environment key, not a stored one, so the pick is refused before the wire:
+        # nothing is posted, no socket opens, and the turn's answer is that cloud is off.
+        assert not posts.posted_to_anthropic and posts.urls == [], posts.urls
+        assert decision.used_model is False and decision.source == "selected_model_blocked", decision.source
+        assert decision.details.get("block_reason") == cloud_rule.off_text(), decision.details
+        assert seen == [], seen
+        return
     assert posts.posted_to_anthropic, "an explicit owner pick is the act that authorizes"
 
 

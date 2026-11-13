@@ -765,9 +765,12 @@ def _runtime_model_catalog(
     catalog: list[dict[str, str]] = []
     seen: set[str] = set()
 
+    from core.ollama_cloud_models import refuses_cloud_name
+
     def _add(model_id: str, *, owned_by: str) -> None:
         normalized = str(model_id or "").strip()
-        if not normalized or normalized in seen:
+        # An Ollama cloud model is never listed on /api/tags or /v1/models (core.ollama_cloud_models).
+        if not normalized or normalized in seen or refuses_cloud_name(normalized):
             return
         seen.add(normalized)
         catalog.append({"id": normalized, "owned_by": str(owned_by or "vool-runtime").strip() or "vool-runtime"})
@@ -784,6 +787,27 @@ def _runtime_model_catalog(
         if provider_id:
             _add(provider_id, owned_by=owned_by)
     return catalog
+
+
+def _ollama_cloud_model_refusal(model: Any, runtime: RuntimeServices, *, check_store: bool = False) -> ApiResponse | None:
+    """A plain 400 refusal when ``model`` names an Ollama cloud model, else None.
+
+    ``check_store`` also reads Ollama's model store on disk for a cloud stub (remote_host /
+    remote_model) or an unreadable entry; the chat door checks the name only, every turn.
+    """
+    from core.ollama_cloud_models import REASON, is_cloud_model, refusal_text, refuses_cloud_name
+
+    name = str(model or "").strip() if isinstance(model, str) else ""
+    if not name:
+        return None
+    cloud = is_cloud_model(name) if check_store else refuses_cloud_name(name)
+    if not cloud:
+        return None
+    message = refusal_text(name)
+    return apply_runtime_headers(
+        json_response(400, {"ok": False, "error": message, "reason": REASON, "message": message, "model": name}),
+        runtime,
+    )
 
 
 def _ollama_tag_parameter_size(model_id: str, *, model_name: str, runtime: RuntimeServices) -> str:
@@ -1319,6 +1343,19 @@ def dispatch_get(
                 runtime,
             )
         return apply_runtime_headers(json_response(200, payload), runtime)
+
+    if normalized_path == "/api/chat/commands":
+        # The slash commands that really work, for the composer's "/" list. The same table /help
+        # answers from (core/slash_commands.py), so the two never disagree.
+        from core.slash_commands import WORKING_SLASH_COMMANDS
+
+        return apply_runtime_headers(
+            json_response(
+                200,
+                {"commands": [{"command": command, "description": text} for command, text in WORKING_SLASH_COMMANDS]},
+            ),
+            runtime,
+        )
 
     if normalized_path == "/api/chat/sessions":
         # Sidebar list: distinct chat threads from the conversation log (verbatim user/assistant
@@ -2172,9 +2209,10 @@ def dispatch_get(
         return apply_runtime_headers(json_response(_us_status, payload), runtime)
 
     if normalized_path == "/api/memory/standing-instructions":
-        # The rules VOOL follows in every chat of a workspace (core/standing_instructions.py), listed read-only on
-        # the Memory page so the owner can see what was saved. Owner-local, like the memory listing. Removal stays
-        # the chat take-back ("stop answering in bullet points"); this route writes nothing.
+        # The rules VOOL follows in every chat of a workspace (core/standing_instructions.py), listed on the
+        # Memory page so the owner can see what was saved. Owner-local, like the memory listing. This route writes
+        # nothing: removal is the chat take-back ("stop answering in bullet points") or the page's Remove button
+        # (POST /api/memory/standing-instructions/remove).
         if not is_loopback_host(client_host):
             return apply_runtime_headers(json_response(403, {"ok": False, "error": "owner_local_required"}), runtime)
         from core.standing_instructions import list_active
@@ -2213,15 +2251,22 @@ def dispatch_get(
             except Exception:
                 chat_ids = []
         merged: dict[str, dict[str, Any]] = {}
-        for chat_id in chat_ids:
-            try:
-                chat_rows = list_memory_entries(chat_id=chat_id, limit=limit)
-            except Exception:
-                continue
-            for row in chat_rows:
-                record_id = str(row.get("record_id") or "")
-                if record_id and record_id not in merged:
-                    merged[record_id] = row
+        # One reading of the forget authority for the whole listing (core/memory/revocation.py _one_reading),
+        # the same as the chat list: each chat's revocations are read once under one held fence, instead of
+        # the memory store being opened twice for every authority check -- four checks per chat, so 46 to
+        # 147 s per call on Steve (12 Nov) with an empty memory list.
+        from core.memory.revocation import _one_reading
+
+        with _one_reading():
+            for chat_id in chat_ids:
+                try:
+                    chat_rows = list_memory_entries(chat_id=chat_id, limit=limit)
+                except Exception:
+                    continue
+                for row in chat_rows:
+                    record_id = str(row.get("record_id") or "")
+                    if record_id and record_id not in merged:
+                        merged[record_id] = row
         # One listing keeps the store's own order; several are merged by creation time.
         rows = list(merged.values())
         if len(chat_ids) > 1:
@@ -2546,6 +2591,14 @@ def dispatch_get(
             except Exception:
                 payload["auto_free_model"] = "auto"
                 payload["free_cloud_enabled"] = False
+            from core import windows_cloud_gate as _cloud_gate
+
+            if _cloud_gate.cloud_off():
+                # Windows, before a key is stored and cloud is turned on: no catalog was read or
+                # fetched, and no free cloud lane is offered (core/windows_cloud_gate.py).
+                payload["free_cloud_enabled"] = False
+                payload["cloud_off"] = True
+                payload["message"] = _cloud_gate.OFF_TEXT
             if refresh_result is not None:
                 payload["refresh"] = refresh_result
             return apply_runtime_headers(json_response(200, payload), runtime)
@@ -3249,6 +3302,13 @@ def dispatch_post(
     from core.semantic.semantic_admissions import set_request_context as _bind_req
 
     clear_active_set()
+
+    if normalized_path in {"/api/chat", "/v1/chat/completions", "/api/generate"} and isinstance(body, dict):
+        # A turn that names an Ollama cloud model is refused at the door, in plain words, before
+        # any routing, recording or model call (core.ollama_cloud_models).
+        cloud_refusal = _ollama_cloud_model_refusal(body.get("model"), runtime)
+        if cloud_refusal is not None:
+            return cloud_refusal
 
     # C3b COUNCIL MODEL-PIN FENCE — the earliest point in the ONE chat ingress.
     # A council owns the machine's global composer pin for the length of a run, so an
@@ -4332,6 +4392,9 @@ def _dispatch_post_inner(
             return apply_runtime_headers(
                 json_response(400, {"error": "provider_name and model_name are required"}), runtime
             )
+        cloud_refusal = _ollama_cloud_model_refusal(requested_model, runtime, check_store=True)
+        if cloud_refusal is not None:
+            return cloud_refusal
         try:
             timeout_seconds = float(body.get("timeout_seconds") or 90.0)
         except (TypeError, ValueError):
@@ -4433,6 +4496,9 @@ def _dispatch_post_inner(
         model_name = str(body.get("model_name") or "").strip()
         if not model_name:
             return apply_runtime_headers(json_response(400, {"error": "model_name is required"}), runtime)
+        cloud_refusal = _ollama_cloud_model_refusal(model_name, runtime, check_store=True)
+        if cloud_refusal is not None:
+            return cloud_refusal
         from core.local_model_policy import resolve_local_model_policy
         from core.web.api.runtime import (
             installed_ollama_model_names,
@@ -5845,6 +5911,42 @@ def _dispatch_post_inner(
 
         return handle_context_pages_post(body=body, runtime=runtime, client_host=client_host)
 
+    if normalized_path == "/api/memory/standing-instructions/remove":
+        # The Settings page's Remove button: take back exactly one standing instruction by id, the same row
+        # update a chat take-back makes (core.standing_instructions.remove_by_id). Owner-local + the standard
+        # POST guard suite, like /api/memory/forget below.
+        from core.web.api.runtime import host_header_allowed as _sr_host_allowed
+
+        def _sr_header(name: str) -> str:
+            for key, value in (headers or {}).items():
+                if str(key).lower() == name:
+                    return str(value or "")
+            return ""
+
+        _sr_ct = _sr_header("content-type").lower()
+        if _sr_ct and "json" not in _sr_ct:
+            return apply_runtime_headers(json_response(415, {"error": "content-type must be application/json"}), runtime)
+        _sr_origin = _sr_header("origin").strip()
+        if _sr_origin and not _sr_host_allowed(_sr_origin.split("://", 1)[-1]):
+            return apply_runtime_headers(json_response(403, {"error": "cross-origin request not allowed"}), runtime)
+        if not is_loopback_host(client_host):
+            return apply_runtime_headers(json_response(403, {"ok": False, "error": "owner_local_required"}), runtime)
+        unknown_sr = set(body.keys()) - {"id"}
+        if unknown_sr:
+            return apply_runtime_headers(json_response(400, {"error": f"unknown fields: {sorted(unknown_sr)}"}), runtime)
+        instruction_id = body.get("id")
+        if not isinstance(instruction_id, str) or not instruction_id.strip():
+            return apply_runtime_headers(json_response(400, {"error": "missing or invalid id"}), runtime)
+        from core.standing_instructions import remove_by_id
+
+        removed_text = remove_by_id(instruction_id.strip())
+        if removed_text is None:
+            return apply_runtime_headers(json_response(404, {"ok": False, "error": "unknown_instruction"}), runtime)
+        return apply_runtime_headers(
+            json_response(200, {"ok": True, "removed": True, "id": instruction_id.strip(), "text": removed_text}),
+            runtime,
+        )
+
     if normalized_path == "/api/memory/forget":
         # Remove exactly one remembered entry by record id. Owner-local + the standard POST
         # guard suite; the precise id-scoped remover exists so this button can never delete
@@ -6801,6 +6903,7 @@ def _dispatch_post_inner(
             "new_session_id",
             "through_turn",
             "project_id",
+            "mode",
         }
         if unknown:
             return apply_runtime_headers(json_response(400, {"error": f"unknown fields: {sorted(unknown)}"}), runtime)
@@ -6810,6 +6913,27 @@ def _dispatch_post_inner(
         session_id = session_id.strip()
         if len(session_id) > 200 or any(ord(ch) < 32 for ch in session_id):
             return apply_runtime_headers(json_response(400, {"error": "invalid session_id"}), runtime)
+
+        if "mode" in body:
+            # The chat's composer mode, remembered with the chat (Manual, Review edits, Auto or Plan; never
+            # bypass). A request of its own: it changes nothing else, and it never creates a chat.
+            if set(body) - {"session_id", "mode"}:
+                return apply_runtime_headers(
+                    json_response(400, {"error": "mode cannot be combined with other fields"}), runtime
+                )
+            from core.memory.entries import _set_session_mode as set_session_mode
+
+            try:
+                stored = set_session_mode(session_id, str(body.get("mode") or ""))
+            except ValueError:
+                return apply_runtime_headers(
+                    json_response(400, {"error": "mode must be manual, review_edits, auto or plan"}), runtime
+                )
+            return apply_runtime_headers(
+                json_response(200, {"session_id": session_id, "mode": str(body.get("mode")).strip().lower(),
+                                    "stored": bool(stored)}),
+                runtime,
+            )
 
         if body.get("delete") is True and body.get("operation"):
             return apply_runtime_headers(
@@ -7603,6 +7727,20 @@ def _dispatch_post_inner(
             if requested_workspace
             else ("project" if project_workspace else "default")
         )
+        if workspace_binding == "default" and owner_local:
+            # Windows: an unbound chat's Python or pytest ask that names a marked folder (or a
+            # file in one) works in that folder, instead of being refused as outside the Desktop
+            # (captest C1-C3). Only a marked folder is ever chosen; every gate still decides. Only
+            # the owner's own turns: a channel or remote turn keeps the chat's folder.
+            from core import windows_marked_code_folder
+
+            try:
+                marked_code_folder = windows_marked_code_folder.turn_folder(user_text, history)
+            except Exception:  # an unknown state places nothing: the chat keeps its folder
+                marked_code_folder = ""
+            if marked_code_folder:
+                effective_workspace = marked_code_folder
+                workspace_binding = windows_marked_code_folder.BINDING
         # Owner-local trust is derived from the real TCP peer (loopback == the owner's own
         # session), never from the caller-supplied surface. A channel surface is remote by
         # definition, so it is never owner-local even over loopback. Privileged gates (cloud

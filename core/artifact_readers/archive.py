@@ -37,13 +37,14 @@ import hashlib
 import io
 import json
 import lzma
-import os
 import posixpath
 import tarfile
 import zipfile
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
+
+from core import posix_tools
 
 from . import _sandbox
 from ._limits import (
@@ -190,7 +191,7 @@ def _zip_members(archive: zipfile.ZipFile) -> list[Member]:
 
 def _bsdtar_available() -> bool:
     """RAR needs an external decoder, so it needs confinement too; unconfinable is unavailable."""
-    return os.access(BSDTAR, os.X_OK) and _sandbox.confinement_available()
+    return posix_tools.executable(BSDTAR) and _sandbox.confinement_available()
 
 
 def _libarchive_members(path: Path, *, scratch: Path, fmt: str = "rar") -> list[Member]:

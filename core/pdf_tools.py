@@ -28,6 +28,14 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from core import posix_tools
+
+#: On Windows the helper is never run (`_run_helper` refuses before the interpreter path is looked
+#: at): it needs macOS PDFKit and Vision, and its interpreter path, run on Windows, would resolve to a
+#: plantable C:\usr\bin. The user's own file is still checked first, so a typo still reads as one.
+WINDOWS_UNAVAILABLE = "Reading PDFs isn't available on Windows in this release; nothing was run."
+_WINDOWS_REASON = WINDOWS_UNAVAILABLE + " PDF reading needs the macOS system Python and PDFKit."
+
 # The system interpreter, not the venv one: this is where PyObjC lives on macOS.
 _SYSTEM_PYTHON = "/usr/bin/python3"
 _DEFAULT_TIMEOUT = 60.0
@@ -126,9 +134,13 @@ print(json.dumps({
 
 
 def _run_helper(helper: str, args: list[str], *, timeout: float) -> dict[str, Any]:
+    if posix_tools.active():
+        # Before the interpreter path is looked at: Windows has neither PDFKit nor Vision, and the
+        # path itself would resolve to a plantable C:\usr\bin there.
+        return {"status": posix_tools.STATUS, "reason": _WINDOWS_REASON}
     try:
         proc = subprocess.run(
-            [_SYSTEM_PYTHON, "-c", helper, *args],
+            posix_tools.argv([_SYSTEM_PYTHON, "-c", helper, *args]),
             capture_output=True,
             text=True,
             timeout=timeout,

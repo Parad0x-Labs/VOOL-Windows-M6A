@@ -371,12 +371,17 @@ def test_the_buttons_are_the_reserve_that_gives_way_not_the_input(matrix) -> Non
     """
     widest = matrix["1900x1200:panel-closed"]
     narrowest = matrix["360x780:panel-closed"]
-    assert narrowest["send"]["w"] < widest["send"]["w"], (
-        f"#send did not yield any width: {narrowest['send']['w']} vs {widest['send']['w']}"
-    )
-    assert narrowest["dictate"]["w"] < widest["dictate"]["w"], (
-        f"#dictateBtn did not yield any width: {narrowest['dictate']['w']} vs {widest['dictate']['w']}"
-    )
+    # Only buttons the composer actually shows are part of the reserve. A button that is
+    # not displayed (a disabled voice control in a build without voice) takes no width at
+    # any size, so it has nothing to yield. Send is always shown and always measured.
+    assert widest["send"] and widest["send"]["w"] > 0, "#send must be shown in the composer"
+    reserve = {"send": "#send", "dictate": "#dictateBtn"}
+    for key, selector in reserve.items():
+        if not widest[key] or widest[key]["w"] <= 0:
+            continue
+        assert narrowest[key]["w"] < widest[key]["w"], (
+            f"{selector} did not yield any width: {narrowest[key]['w']} vs {widest[key]['w']}"
+        )
     # The textarea is at its floor there, not below it and not collapsed.
     assert narrowest["input"]["w"] >= narrowest["inputMin"] - 1, narrowest
     assert narrowest["input"]["w"] > 0, narrowest
@@ -652,7 +657,7 @@ def test_the_visible_pin_is_the_identity_the_request_carries(session) -> None:
     page.wait_for_timeout(200)
     label = page.evaluate("() => document.getElementById('modelLbl').textContent")
     assert label == "VOOL Auto", f"the visible model did not stay Auto: {label!r}"
-    assert page.locator('#modelWhere').inner_text() == "This computer only"
+    assert page.locator('#modelWhere').inner_text() == "Local Only"
     body = _send_and_capture(page, "local only turn")
     assert body["model"] == "vool-local-only" and body["model_selection"] == "pin", body
 

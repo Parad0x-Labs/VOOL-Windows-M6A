@@ -211,6 +211,23 @@ _CORRECTION_RE = re.compile(
     r"^(?:correction|update|replace)\b(?P<body>.+)$",
     re.IGNORECASE,
 )
+
+
+def _correction_match(text: str) -> re.Match[str] | None:
+    """The memory correction ("correction: ...", "update ...", "replace ...") this message is, or None.
+
+    On Windows a message that names a full path is about that path, never a correction of a remembered
+    value: "replace the contents of C:\\Users\\Satoshi\\VOOL HW Test\\m3b.txt with the text v2" was stored as
+    "Current corrected value: VOOL HW" (hardware captest, 0.7.1), and the marked-folder write it asked
+    for never ran (core.windows_marked_file_ops). Off Windows this reads as before."""
+    match = _CORRECTION_RE.match(text)
+    if match is None:
+        return None
+    from core.windows_marked_file_ops import names_a_file_path
+
+    return None if names_a_file_path(text) else match
+
+
 _CORRECTION_VALUE_RE = re.compile(
     r"\b(?:"
     r"\d{4}-\d{2}-\d{2}"
@@ -395,6 +412,121 @@ _NO_ACTIVE_REMEMBERED_VALUE = (
     "I don't have an active remembered value matching that request in this chat."
 )
 _EMPTY_RECALL_ANSWERS = frozenset({_NO_ACTIVE_MEMORY_RECORDED, _NO_ACTIVE_REMEMBERED_VALUE})
+
+# ---- "what is my X?" in a chat with no earlier turns ---------------------------------------------
+#
+# Memory is chat-scoped by design (`_memory_scope_for_user_fact`): "remember my test colour is teal"
+# is a chat fact, so a NEW chat cannot see it. With no transcript and nothing in active memory, a
+# bare "what is my test colour?" used to reach the model, which had nothing to read and guessed
+# ("VOOL Blue"). This lane now answers that one shape with a fixed admission instead.
+#
+# The shape is deliberately an ALLOWLIST, not "my <any noun>": the whole message must be
+# "what is / what's / what was my <modifier> [<modifier>] <attribute noun>[?]", where the modifier
+# is one of `_UNREMEMBERED_SUBJECT_MODIFIERS` and the attribute noun one of
+# `_UNREMEMBERED_SUBJECT_NOUNS`. At least one modifier is required, so the generic nouns
+# ("name", "number", "code", "word") are only claimed in a personal-attribute frame ("favourite
+# number", "lucky number", "test code", "pet's name") and never as "what is my repo name", "what
+# is my best option", "what is my name" (the identity authority's question) or "what is my phone
+# number" (personal_knowledge's). "password hint" is the one phrase admitted without a modifier.
+# Anything else -- a longer question, another noun, an unlisted modifier -- reaches the model as
+# before.
+_UNREMEMBERED_SUBJECT_MODIFIERS = (
+    r"test|favou?rite|fave|lucky|secret|magic|safe|code|pet'?s|dog'?s|cat'?s"
+)
+_UNREMEMBERED_SUBJECT_NOUNS = (
+    r"colou?r|number|code|name|word|phrase|animal|food|dish|drink|fruit|flower|song|movie|film"
+    r"|book|band|sport|season|city|place|game|holiday"
+)
+_UNREMEMBERED_SUBJECT_QUESTION_RE = re.compile(
+    r"^\s*what(?:'s|’s|\s+is|\s+was)\s+my\s+"
+    r"(?P<subject>"
+    rf"(?:(?:{_UNREMEMBERED_SUBJECT_MODIFIERS})\s+){{1,2}}(?:{_UNREMEMBERED_SUBJECT_NOUNS})"
+    r"|password\s+hint"
+    r")\s*[?.!]*\s*$",
+    re.IGNORECASE,
+)
+
+
+def _unremembered_subject_question(text: str) -> str:
+    """The asked-for subject ("test colour") when ``text`` is exactly the narrow shape, else ''."""
+    match = _UNREMEMBERED_SUBJECT_QUESTION_RE.match(" ".join(str(text or "").replace("’", "'").split()))
+    if not match:
+        return ""
+    return " ".join(match.group("subject").casefold().split())
+
+
+def _memory_lane_owns_attribute_question(text: str) -> bool:
+    """Whether ``text`` is the narrow "what is my <modifier> <attribute>?" shape this lane owns.
+
+    Read by the entity-ambiguity eligibility gate (`core.entity_ambiguity`), which runs before the
+    front door and so before this lane. A personal attribute ("my test animal") names no outside
+    entity that could have several referents; only this lane or the model can answer it.
+    """
+    return bool(_unremembered_subject_question(text))
+
+
+def _unremembered_subject_line(subject: str) -> str:
+    # Wording follows core.personal_knowledge.PERSONAL_KNOWLEDGE_ADMISSION ("If you tell me, I can
+    # remember it"), minus its "for next time": a chat fact does not carry into the next chat, and
+    # the last sentence says so while memory stays chat-scoped.
+    return (
+        f"I don't have your {subject} remembered. If you tell me, I can remember it. "
+        "Facts you saved in another chat stay in that chat."
+    )
+
+
+def _turn_has_no_earlier_turns(session_id: str, source_context: dict[str, Any] | None) -> bool:
+    """True only when the caller handed us this turn's transcript and it holds nothing before it.
+
+    Requires ``conversation_history`` to be PRESENT (the agent's front door always sets it, after
+    hydrating it from the session log); a caller that sends none is not evidence of a new chat.
+    The session log is consulted as well, so a client that dropped its history does not count.
+    """
+    context = source_context or {}
+    if "conversation_history" not in context:
+        return False
+    history = _normalized_history(context.get("conversation_history"))
+    if history and history[-1].get("role") == "user":
+        history = history[:-1]
+    if history:
+        return False
+    try:
+        return not recent_conversation_events(str(session_id or ""), limit=1)
+    except Exception:
+        return False
+
+
+def _subject_is_in_active_memory(subject: str, query: str, *, access_policy: ContextAccessPolicy) -> bool:
+    """True when anything this chat's model context could read mentions the subject's noun.
+
+    Deliberately broad (any mention of the head noun counts, "colour" and "color" alike) and
+    fail-closed (an unreadable store counts as a mention): a false True only hands the turn to the
+    model as before, while a false False would assert an absence that is not true.
+    """
+    head = subject.split()[-1]
+    nouns = {"colour", "color"} if head in {"colour", "color"} else {head}
+    pattern = re.compile(r"\b(?:" + "|".join(re.escape(noun) for noun in sorted(nouns)) + r")\b", re.IGNORECASE)
+    try:
+        texts: list[str] = [
+            str(row.get("text") or "") for row in list_memory_entries(access_policy=access_policy, limit=500)
+        ]
+        texts.extend(
+            str(row.get("text") or "") for row in search_relevant_memory(query, access_policy=access_policy, limit=8)
+        )
+        texts.extend(
+            str(row.get("text") or "") + " " + str(row.get("signal") or "")
+            for row in search_user_heuristics(query, access_policy=access_policy, limit=8)
+        )
+        texts.extend(
+            str(row.get("summary") or "")
+            for row in search_session_summaries(query, access_policy=access_policy, limit=8)
+        )
+        if access_policy.allow_user_profile_context:
+            texts.append(json.dumps(load_operator_dense_profile() or {}, ensure_ascii=False))
+    except Exception as exc:
+        LOGGER.warning("active memory unreadable for an unremembered-subject check: %s", type(exc).__name__)
+        return True
+    return any(pattern.search(text) for text in texts)
 
 # A question about WHERE in the conversation something was said -- "the very FIRST thing I asked you
 # to remember", "what did I tell you EARLIEST" -- is a property of the transcript, not of a row in
@@ -1745,6 +1877,36 @@ def _finish_forget_turn_admission(result, *, user_text, session_id, source_conte
     execution = verified_forget_outcome(
         result, user_input=user_text, session_id=session_id, source_context=source_context,
     )
+    if execution is None and _admission_recovery_enabled() and _rules_lane_finished_take_back(
+        user_text, session_id=session_id, turn_keys=_turn_keys_of(source_context),
+    ):
+        # "Forget the rule about X": the rules lane answered the whole turn. Its words are forgotten in this chat
+        # through the ordinary forget first, so the turns and recall that name the rule stay withheld from the
+        # model; only once that forget is verified complete is the admission's barrier lifted (Steve, 12 Nov:
+        # before, the admission stayed pending for good and every memory read in its scope failed closed).
+        # A rules error, or a forget that could not be verified, leaves it pending.
+        words = _take_back_words(user_text)
+        try:
+            if not words:
+                raise RuntimeError("take-back names no words")
+            # Proven now, so written down first: a kill during the forget below is finished at the next start
+            # from this record, even though the forget has already withheld the turn that proved it.
+            for home, operation in operations:
+                _take_back_journal(home, add={operation: words})
+            if not _forget_take_back_words(words, session_id=session_id, source_context=source_context,
+                                           homes={home for home, _ in operations}):
+                raise RuntimeError("the take-back's forget could not be verified")
+            with ExitStack() as locks:
+                for home, _ in sorted(operations):
+                    locks.enter_context(revocation.serialized(home))
+                for home, operation in operations:
+                    revocation.complete(operation, home)
+                    _take_back_journal(home, remove={operation})
+                _forget_outcomes.release_admission(**owner)
+        except Exception:
+            _, failure = _forget_start_failure(user_text, session_id=session_id, source_context=source_context, started=True)
+            return {**result, "response": failure, "_memory_command_outcome": failure}
+        return result
     if execution is None or not _forget_outcomes.admission_ready(**owner):
         return result
     try:
@@ -1758,6 +1920,238 @@ def _finish_forget_turn_admission(result, *, user_text, session_id, source_conte
         _, failure = _forget_start_failure(user_text, session_id=session_id, source_context=source_context, started=True)
         return {**result, "response": failure, "_memory_command_outcome": failure}
     return result
+
+
+def _admission_recovery_enabled() -> bool:
+    """The one seam for both admission fixes (the take-back finishing its own admission, and startup recovery).
+
+    All operating systems: a fail-closed bug fix that removes a barrier nothing else can lift. A Windows-only
+    decision is ``return sys.platform == "win32"`` here."""
+    return True
+
+
+_RULES_LANE_ANSWERS = frozenset({"rules.remove", "rules.answer"})
+
+
+def _turn_keys_of(source_context) -> set[str]:
+    """This turn's own keys, as the rules lane files its facts (its turn key and its request id)."""
+    from core.execution_truth import resolve_turn_key
+    from core.memory.command_result import command_turn_key
+
+    context = dict(source_context or {})
+    return {resolve_turn_key(context, None), command_turn_key(context), str(context.get("request_id") or "").strip()} - {""}
+
+
+def _rules_lane_finished_take_back(user_text, *, session_id, turn_keys) -> bool:
+    """A whole-turn rules take-back ("forget the rule about X", naming no second forget) that the rules lane
+    answered without an error on THIS turn: its own ok rules fact under one of this turn's keys. No memory
+    forget was owed by such a turn."""
+    try:
+        from core.execution_truth import facts_for_turn
+        from core.user_rules import rules_command_owns_forget
+
+        if not rules_command_owns_forget(str(user_text or "")):
+            return False
+        session = str(session_id or "").strip()
+        return any(
+            fact.name in _RULES_LANE_ANSWERS and fact.ok and fact.session_id == session
+            for key in turn_keys if key
+            for fact in facts_for_turn(key, session_id=session)
+        )
+    except Exception:
+        return False
+
+
+def _take_back_words(user_text) -> str:
+    """The words a "forget the rule about X" turn takes back (X), or "" when it names none."""
+    try:
+        from core.user_rules import parse_rule_command
+
+        command = parse_rule_command(str(user_text or ""))
+    except Exception:
+        return ""
+    if command is None or command.action != "remove_about":
+        return ""
+    return " ".join(str(command.needle or "").split())
+
+
+_TAKE_BACK_JOURNAL = "take-back-forgets.json"
+
+
+def _take_back_journal(home, *, add=None, remove=None) -> dict[str, str]:
+    """The proven rule take-backs whose forget is under way: {admission op id: the words taken back}.
+
+    Kept beside the ledger in the forget authority's own folder, under its fence, written durably. An entry is
+    added only after the take-back was proven (live in its turn, or from the transcript at startup) and removed
+    only once its admission is complete. The words are stored as plainly as a forget op already stores them."""
+    import json as _json
+
+    from core.memory import revocation
+
+    path = revocation._directory(home) / _TAKE_BACK_JOURNAL
+    with revocation.serialized(home):
+        entries: dict[str, str] = {}
+        if path.exists():
+            value = _json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(value, dict) or not isinstance(value.get("ops"), dict):
+                raise RuntimeError("take-back journal is invalid")
+            entries = {str(k): str(v) for k, v in value["ops"].items()}
+        if add or remove:
+            entries.update(add or {})
+            for key in remove or ():
+                entries.pop(key, None)
+            revocation._durable_write(path, {"version": 1, "ops": entries})
+        return entries
+
+
+def _forget_take_back_words(words, *, session_id, source_context, homes) -> bool:
+    """Forget a take-back's words in its chat through the ordinary forget command, and verify it.
+
+    True only when every home's forget authority holds a COMPLETE kind=forget operation for this chat and
+    those words afterwards (the forget's own completion, which comes only after every store verified its
+    erasure). No words (a take-back by rule number, or of all rules) is False, so its admission stays pending."""
+    from core.memory import revocation
+    from core.vool_memory import _normalize_forget_token
+
+    words = " ".join(str(words or "").split())
+    session = str(session_id or "").strip()
+    if not words or not session:
+        return False
+    command = f"forget {words}"
+    context = {**dict(source_context or {}), "chat_id": session}
+    try:
+        maybe_handle_memory_command(command, session_id=session, source_context=context)
+    except Exception:
+        return False
+    token = _normalize_forget_token(_normalize_forget_target(words))
+    if len(token) < 2:
+        return False
+    try:
+        for home in homes or {revocation._home()}:
+            with revocation.serialized(home):
+                operations = revocation._read(revocation._directory(home))["operations"].values()
+                if not any(row.get("kind", "forget") == "forget" and row["chat"] == session
+                           and row["token"] == token and row["status"] == "complete" for row in operations):
+                    return False
+    except Exception:
+        return False
+    return True
+
+
+def _transcript_turn_keys(row) -> set[str]:
+    """The keys a transcript row's turn files its facts under: its request id, and that id without the
+    ingress prefix ("req:http:<id>" files facts as "<id>")."""
+    request_id = str((row or {}).get("request_id") or "").strip()
+    return {request_id, request_id.rsplit(":", 1)[-1]} - {""} if request_id else set()
+
+
+def _recover_admissions(runtime_home=None) -> dict[str, int]:
+    """Roll a stuck rule take-back admission forward at startup, never back, and leave everything else alone.
+
+    An admission op's token is a marker, sha256 of (chat, sorted forget targets), not a forget word: completing
+    it revokes nothing and restores nothing, it only lifts the barrier. So it is completed only when it is proven
+    a finished rule take-back: exactly one user turn in that chat's own transcript recomputes the marker,
+    with non-empty targets; that turn is a whole-turn rules take-back; and the rules lane answered THAT turn
+    without an error. Any other pending admission (a turn that crashed mid-forget, an ambiguous or missing turn)
+    stays pending and withheld, with a fixed line logged. Recovery only ever completes an admission: it never
+    deletes, rewrites or reorders rows and never touches an existing kind=forget op. Before completing, the take-back's
+    words are forgotten in that chat through the ordinary forget (which adds its own kind=forget op and
+    withholds every turn and recall naming them), and only a verified forget lets the admission complete. The
+    proof is recorded in the take-back journal before that forget runs, because the forget withholds the very
+    turn that proved it: a kill in between is finished from the journal at the next start. The transcript is
+    read internally and never served or logged; a log line names only a short hash of the op id. Idempotent:
+    a completed op is not pending, and its journal entry is gone.
+    """
+    import json as _json
+    import logging
+    from hashlib import sha256
+
+    from core.memory import revocation
+    from core.memory.command_result import forget_demand_targets
+
+    log = logging.getLogger("core.memory.revocation")
+    counts = {"completed": 0, "kept_pending": 0}
+    if not _admission_recovery_enabled():
+        return counts
+    home = revocation._home(runtime_home)
+    directory = revocation._directory(home)
+    if not (directory / "ledger.json").exists():
+        return counts
+    try:
+        with revocation.serialized(home):
+            data = revocation._read(directory)
+            revocation._check_leases(directory)
+            revocation._dependencies(home)
+            pending = [(op_id, row) for op_id, row in data["operations"].items()
+                       if row["status"] == "pending" and row.get("kind") == "admission"]
+            if not pending:
+                return counts
+            transcript = []
+            path = conversation_log_path()
+            if path.exists():
+                for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                    try:
+                        row = _json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(row, dict):
+                        transcript.append(row)
+            journal = _take_back_journal(home)
+            for op_id, op in pending:
+                short = sha256(op_id.encode("utf-8")).hexdigest()[:10]
+                chat = op["chat"]
+                if op_id in journal:
+                    # Proven before a stop or a kill cut its forget short: finish that forget, then complete.
+                    if not _forget_take_back_words(
+                        journal[op_id], session_id=chat,
+                        source_context={"turn_key": "admission-recovery-" + short, "chat_id": chat}, homes={home},
+                    ):
+                        counts["kept_pending"] += 1
+                        log.warning("forget admission %s stays pending: %s", short,
+                                    "the take-back's forget could not be verified")
+                        continue
+                    revocation.complete(op_id, home)
+                    _take_back_journal(home, remove={op_id})
+                    counts["completed"] += 1
+                    log.warning("forget admission %s completed: a finished rule take-back, its words forgotten", short)
+                    continue
+                matches = []
+                for row in transcript:
+                    if str(row.get("session_id") or "") != chat:
+                        continue
+                    text = str(row.get("user") or "")
+                    targets = forget_demand_targets(text)
+                    if targets and sha256(repr((chat, sorted(targets))).encode("utf-8")).hexdigest() == op["token"]:
+                        matches.append(row)
+                reason = ""
+                if len(matches) != 1:
+                    reason = "admission request not found" if not matches else "admission request is ambiguous"
+                elif not _rules_lane_finished_take_back(
+                    str(matches[0].get("user") or ""), session_id=chat, turn_keys=_transcript_turn_keys(matches[0]),
+                ):
+                    reason = "admission is not a finished rule take-back"
+                words = _take_back_words(str(matches[0].get("user") or "")) if not reason else ""
+                if not reason and not words:
+                    reason = "admission is not a finished rule take-back"
+                if not reason:
+                    _take_back_journal(home, add={op_id: words})
+                    if not _forget_take_back_words(
+                        words, session_id=chat,
+                        source_context={"turn_key": "admission-recovery-" + short, "chat_id": chat}, homes={home},
+                    ):
+                        reason = "the take-back's forget could not be verified"
+                if reason:
+                    counts["kept_pending"] += 1
+                    log.warning("forget admission %s stays pending: %s", short, reason)
+                    continue
+                revocation.complete(op_id, home)
+                _take_back_journal(home, remove={op_id})
+                counts["completed"] += 1
+                log.warning("forget admission %s completed: a finished rule take-back, its words forgotten", short)
+    except RuntimeError as exc:
+        reason = str(exc) if str(exc) in revocation._FIXED_REFUSALS else type(exc).__name__
+        log.warning("forget admission recovery stopped: %s", reason)
+    return counts
 
 
 def _command_erasure_fence(fn):
@@ -1805,13 +2199,19 @@ def maybe_handle_memory_command(
         return False, ""
     lowered = text.lower()
     scope_command = _parse_session_scope_command(text)
+    # Only a turn with no earlier turns is ever a candidate (see `_unremembered_subject_question`);
+    # every other turn with this shape is declined here exactly as before.
+    unremembered_subject = _unremembered_subject_question(text)
+    if unremembered_subject and not _turn_has_no_earlier_turns(str(session_id or ""), source_context):
+        unremembered_subject = ""
     if not (
         scope_command is not None
         or lowered in {"/memory", "what do you remember", "show memory"}
         or _memory_capture_match(text)
-        or _CORRECTION_RE.match(text)
+        or _correction_match(text)
         or _FORGET_RE.match(text)
         or _is_memory_recall_question(text)
+        or unremembered_subject
     ):
         return False, ""
     capture_match = _memory_capture_match(text)
@@ -1830,7 +2230,7 @@ def maybe_handle_memory_command(
             return False, ""
         if _capture_object_is_another_lanes_effect(capture_match.group("verb"), text):
             return False, ""
-    if capture_match or _CORRECTION_RE.match(text):
+    if capture_match or _correction_match(text):
         # Private chat (core.private_chat): nothing from a private chat is saved, an explicit
         # "remember" included. Said plainly instead of claiming a save that never happens.
         from core.private_chat import REPLY_REMEMBER_REFUSED, turn_is_private
@@ -1864,6 +2264,9 @@ def maybe_handle_memory_command(
             chat_id=session_id,
         )
     except (TypeError, ValueError):
+        if unremembered_subject:
+            # Admitted only for the fixed absence line, which needs a readable memory to be true.
+            return False, ""
         return True, "I need an active chat before I can access memory."
     resolved_session = resolved_policy.chat_id
 
@@ -1930,7 +2333,16 @@ def maybe_handle_memory_command(
             return False, ""
         return True, response
 
-    correction = _CORRECTION_RE.match(text)
+    if unremembered_subject:
+        # A new chat (no earlier turns) asking for a personal attribute that active memory does
+        # not hold: there is nothing for the model to read, so a model answer can only be a guess.
+        # Any earlier turn, or any mention of the subject in active memory, hands the turn to the
+        # model exactly as before.
+        if not _subject_is_in_active_memory(unremembered_subject, text, access_policy=resolved_policy):
+            return True, _unremembered_subject_line(unremembered_subject)
+        return False, ""
+
+    correction = _correction_match(text)
     if correction:
         correction_body = str(correction.group("body") or "").lstrip(" :,;-")
         values = _correction_values(correction_body)

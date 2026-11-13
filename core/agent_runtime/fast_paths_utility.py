@@ -94,6 +94,16 @@ _WORKSPACE_MUTATION_INTENT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# A request to RUN a file is not a read of it. Captest C1 (installed 0.7.1-beta, 2026-11-09): "run
+# calc.py" was served by the read lane and answered "There is no file at `calc.py`" from the chat's
+# folder, a statement about reading that nobody asked for; running it is the sandbox's job. "run" must
+# stand alone: "run.py" and "run_tests.py" are names, not verbs.
+_RUN_A_FILE_INTENT_RE = re.compile(
+    r"(?<![\w./\\-])(?:re-?)?(?:run|execute)(?![\w./\\-])"
+    r"|(?<![\w./\\-])(?:python3?|py|pytest)\s+(?:-\S+\s+)*[^\s]+\.py\b",
+    re.IGNORECASE,
+)
+
 # An explicit request for the BYTES. Its presence suppresses every stand-down below: "read
 # notes.txt and todo.txt" names two files joined by "and" and is still two reads, not a comparison.
 _EXPLICIT_READ_VERB_RE = re.compile(
@@ -1268,7 +1278,7 @@ def _direct_workspace_read_request(user_input: str) -> dict[str, object] | None:
     # symmetric: missing a read verb produces fabrication, while over-matching produces a harmless
     # extra read. So the file reference itself is the signal, and only an explicit MUTATION intent
     # opts out. _WORKSPACE_READ_FILE_RE requires a real extension, so this needs a genuine filename.
-    if _WORKSPACE_MUTATION_INTENT_RE.search(text):
+    if _WORKSPACE_MUTATION_INTENT_RE.search(text) or _RUN_A_FILE_INTENT_RE.search(text):
         return None
     # ...and neither is a question ABOUT that kind of file. The inversion above has no exit for a
     # sentence whose verb is `explain` or `compare`; without one, Python-packaging questions were
@@ -1766,6 +1776,42 @@ def _another_domain_owns_the_turn(text: str, *, lane_id: str = "turn_frontdoor_d
         return False
 
 
+def is_workspace_identity_question(user_input: str) -> bool:
+    """Whether a message is the workspace-identity question `maybe_handle_workspace_identity_request` answers
+    ("which project am I in?", "what folder are you in?"), read from its words alone. The entity-ambiguity
+    preflight, which runs before the front door, asks it too (Steve R20)."""
+    text = " ".join(str(user_input or "").split()).strip()
+    if not text or len(text) > 160:
+        return False
+    if _WORKSPACE_ABOUT_RE.search(text) or _WORKSPACE_READ_FILE_RE.search(text):
+        return False
+    from core.execution.planner import (
+        is_conversational_memory_recall,
+        looks_like_explicit_workspace_search_request,
+    )
+
+    # A search names a target inside the workspace; it must reach the search tool, not be answered
+    # with the workspace's own name.
+    if is_conversational_memory_recall(text):
+        return False
+    if looks_like_explicit_workspace_search_request(text) or re.search(
+        r"\b(?:find|search|locate|grep|list|show\s+all|open|read|create|make|delete|move)\b",
+        text.lower(),
+    ):
+        return False
+    identity_match = _WORKSPACE_IDENTITY_RE.search(text)
+    if identity_match is None:
+        return False
+    # "my project BUDGET" says "project", but the question is about the budget -- a value this lane
+    # has never held and cannot get. Answering it with the bound folder is a confident wrong answer
+    # delivered in 0s, which is worse than declining.
+    if not _workspace_noun_is_the_subject(text, identity_match):
+        return False
+    # Another domain's request that merely carries a workspace noun ('append to my Apple note
+    # "Plan" with "which folder am I in?"') is that lane's turn -- see `_another_domain_owns_the_turn`.
+    return not _another_domain_owns_the_turn(text)
+
+
 def maybe_handle_workspace_identity_request(
     agent: Any,
     user_input: str,
@@ -1784,36 +1830,7 @@ def maybe_handle_workspace_identity_request(
         context_surface = str((source_context or {}).get("surface") or "").strip()
         if context_surface not in {"channel", "openclaw", "api"}:
             return None
-    text = " ".join(str(user_input or "").split()).strip()
-    if not text or len(text) > 160:
-        return None
-    if _WORKSPACE_ABOUT_RE.search(text) or _WORKSPACE_READ_FILE_RE.search(text):
-        return None
-    from core.execution.planner import (
-        is_conversational_memory_recall,
-        looks_like_explicit_workspace_search_request,
-    )
-
-    # A search names a target inside the workspace; it must reach the search tool, not be answered
-    # with the workspace's own name.
-    if is_conversational_memory_recall(text):
-        return None
-    if looks_like_explicit_workspace_search_request(text) or re.search(
-        r"\b(?:find|search|locate|grep|list|show\s+all|open|read|create|make|delete|move)\b",
-        text.lower(),
-    ):
-        return None
-    identity_match = _WORKSPACE_IDENTITY_RE.search(text)
-    if identity_match is None:
-        return None
-    # "my project BUDGET" says "project", but the question is about the budget -- a value this lane
-    # has never held and cannot get. Answering it with the bound folder is a confident wrong answer
-    # delivered in 0s, which is worse than declining.
-    if not _workspace_noun_is_the_subject(text, identity_match):
-        return None
-    # Another domain's request that merely carries a workspace noun ('append to my Apple note
-    # "Plan" with "which folder am I in?"') is that lane's turn -- see `_another_domain_owns_the_turn`.
-    if _another_domain_owns_the_turn(text):
+    if not is_workspace_identity_question(user_input):
         return None
 
     from core.runtime_execution_tools import execute_runtime_tool
@@ -3349,6 +3366,38 @@ def _looks_like_a_slash_command(phrase: str) -> bool:
     return "/" not in head[1:]
 
 
+# The Windows VOOL window has no OpenClaw and its new-chat button is "+ New" at the top left of the
+# sidebar (core/vool_chat_page.py `#newChat`). Every command /help names (core/slash_commands.py) is
+# one the Windows chat really answers: `/stop` is taken by the chat page itself before it is sent (it clicks the running
+# task's Stop control, the same one Esc presses; see `send()` in core/vool_chat_page.py), and
+# `/stopall` with its confirm is core/vool_agent_brake.py, answered before this lane.
+_WINDOWS_NEW_CHAT_REPLY = "To start a New session, use the **+ New** button at the top left of the sidebar."
+
+
+def _windows_help_reply() -> str:
+    """`/help` on Windows: one line per row of the shared table the "/" composer menu is built from."""
+
+    from core.slash_commands import WORKING_SLASH_COMMANDS
+
+    lines = "\n".join(f"- `{command}` {description}" for command, description in WORKING_SLASH_COMMANDS)
+    return f"Commands that work in this chat:\n\n{lines}"
+
+
+def _windows_ui_command_reply(phrase: str) -> str:
+    """The Windows chat's answer to a slash command this lane owns (Mac and Linux keep theirs)."""
+
+    if phrase in {"/new", "/new-session", "/new_session", "/clear", "/reset"}:
+        return _WINDOWS_NEW_CHAT_REPLY
+    if phrase in {"/help", "/commands"}:
+        return _windows_help_reply()
+    if phrase in {"/trace", "/rail", "/task-rail"}:
+        return "Open the live trace rail at `http://127.0.0.1:11435/trace`."
+    if phrase == "/stop":
+        # Reached only from a surface other than the chat window, which stops the run itself.
+        return "`/stop` stops a running reply from the VOOL chat window, the same as Esc or the task's Stop button."
+    return "That is not a command here. Type `/help` for the commands that work, or just say what you want."
+
+
 def ui_command_fast_path(normalized_input: str, *, source_surface: str) -> str | None:
     phrase = str(normalized_input or "").strip().lower()
     if not phrase.startswith("/"):
@@ -3356,6 +3405,10 @@ def ui_command_fast_path(normalized_input: str, *, source_surface: str) -> str |
     if not _looks_like_a_slash_command(phrase):
         # An absolute path, not a command. Leave the turn to the lanes that can actually read it.
         return None
+    from core import windows_write_gate
+
+    if windows_write_gate.active():
+        return _windows_ui_command_reply(phrase)
     if phrase in {"/new", "/new-session", "/new_session", "/clear", "/reset"}:
         return "Use the OpenClaw `New session` button on the lower right. Slash `/new` is not a wired command in this runtime."
     if phrase in {"/trace", "/rail", "/task-rail"}:

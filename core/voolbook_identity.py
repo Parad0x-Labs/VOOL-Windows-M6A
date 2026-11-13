@@ -76,6 +76,11 @@ def _token_path() -> Path:
 def save_token_locally(token: str) -> Path:
     """Store the VoolBook posting token in a local-only secret file."""
     path = _token_path()
+    from core import owner_only
+
+    if owner_only.seals_secrets():
+        # Windows: a plain write inherits the folder's ACL. Sealed, or nothing is written.
+        return owner_only.write_private_file(path, token)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(token, encoding="utf-8")
     try:
@@ -92,6 +97,9 @@ def load_local_token() -> str | None:
     path = _token_path()
     if not path.exists():
         return None
+    from core import owner_only
+
+    owner_only.repair_private_file(path)  # a token written before writes were sealed
     try:
         return path.read_text(encoding="utf-8").strip() or None
     except Exception:

@@ -28,6 +28,9 @@ public static class AclRules
     public const int DenyWriteMask = 0x000D0156;
     // FILE_ALL_ACCESS.
     public const int DenyAllMask = 0x001F01FF;
+    // FILE_READ_ATTRIBUTES 0x80 | SYNCHRONIZE 0x100000: a stat of the object, nothing else (no
+    // FILE_LIST_DIRECTORY, no FILE_READ_DATA, no READ_CONTROL). Granted with no inheritance flags.
+    public const int StatOnlyMask = 0x00100080;
     // Every right that changes an object, its name, its attributes or its security.
     internal const int AnyWriteBits = DenyWriteMask;
     // FILE_READ_DATA 0x1 | FILE_READ_EA 0x8 | FILE_EXECUTE 0x20 | FILE_READ_ATTRIBUTES 0x80 | READ_CONTROL 0x20000,
@@ -56,6 +59,10 @@ public static class AclRules
 
     internal static Want PropagatedAllow(SecurityIdentifier sid, int mask, bool directory) =>
         new(sid, AceQualifier.AccessAllowed, mask, AceFlags.Inherited | (directory ? FolderInherit : AceFlags.None), Placement.InheritedAllow);
+
+    /// <summary>The stat-only allow: on the object itself, never inherited by anything inside it.</summary>
+    internal static Want StatOnlyAllow(SecurityIdentifier sid) =>
+        new(sid, AceQualifier.AccessAllowed, StatOnlyMask, AceFlags.None, Placement.ExplicitAllow);
 
     internal static Want ExplicitDeny(SecurityIdentifier sid, int mask, bool directory) =>
         new(sid, AceQualifier.AccessDenied, mask, directory ? FolderInherit : AceFlags.None, Placement.ExplicitDeny);
@@ -229,6 +236,24 @@ public static class AclRules
             if (common.SecurityIdentifier.Value is "S-1-15-2-1" or "S-1-15-2-2") return common.SecurityIdentifier;
         }
         return null;
+    }
+
+    /// <summary>
+    /// True when sid holds exactly one ACE in the DACL and it is the stat-only allow: mask
+    /// <see cref="StatOnlyMask"/>, no flags at all (not inherited, not inheritable, not inherit-only).
+    /// </summary>
+    public static bool HasExactStatOnly(RawAcl acl, SecurityIdentifier sid)
+    {
+        var found = 0;
+        var exact = false;
+        foreach (GenericAce ace in acl)
+        {
+            if (ace is not KnownAce known || known.SecurityIdentifier != sid) continue;
+            found++;
+            exact = ace is CommonAce common && common.AceQualifier == AceQualifier.AccessAllowed
+                && common.AccessMask == StatOnlyMask && ace.AceFlags == AceFlags.None;
+        }
+        return found == 1 && exact;
     }
 
     /// <summary>The union of every allow ACE's mask for sid (explicit or inherited, inherit-only excluded).</summary>

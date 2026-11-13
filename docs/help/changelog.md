@@ -6,17 +6,24 @@ description: Notable changes to VOOL.
 
 Entries are added as builds go out to testers. Newest first.
 
-## 0.7.1-beta for Windows — 2026-11-12
+## 0.7.1-beta.2 for Windows — 2026-11-12
 
 The first Windows download, `VOOL-Setup.exe`, for Windows 10 22H2 and Windows 11, 64-bit.
+Windows needs 16 GB of RAM. With less, VOOL refuses to load its local model rather than freeze the PC, and chat answers that the model was blocked by the memory-safety gate. VOOL checks free memory when it loads the model (about 7 GB), so on a 16 GB PC with many apps open it may still refuse until you close some.
 
 * **Installs for your account only**, with no administrator prompt. It is not code-signed yet:
   check it against `SHA256SUMS`, then at SmartScreen use **More info → Run anyway**.
 * **You choose the folders VOOL may change**, in **Settings → Folders VOOL may change (Windows)**.
-* **Windows limits.** VOOL runs Python and pytest in its Windows sandbox. It refuses git, npm,
-  node, ruff and pip, and does not start plugins or MCP servers or read PDF or 7z files. Use
-  WSL2/Linux for those. The full list is on the
-  [Windows v0.7.1-beta release](https://github.com/Parad0x-Labs/VOOL-Windows-M6A/releases/tag/v0.7.1-beta).
+* **Offline by default.** VOOL works offline by default. Ollama's cloud models are refused. A
+  cloud provider is used only after you add your own key in Settings. Saving an OpenRouter key
+  turns cloud on; for other providers, also choose an Auto fallback model or pin a paid
+  model in Settings. To turn cloud off again, type `cloud off` (it also clears a pinned paid
+  model) or remove your key in Settings.
+* **Online add-on scan.** The add-on store's **Scan with Eyebrow** step (**Download and scan** for an external add-on) is an online service: it downloads the add-on from its source (for an external add-on) and calls api.eyebrow.cc, and runs only after you add an Eyebrow key in Settings → API Keys and agree to the scan.
+* **Windows limits.** VOOL runs Python scripts, pytest, unittest and compileall in its Windows
+  sandbox. It refuses git, pip, npm, node, ruff and any other program, and does not start plugins
+  or MCP servers or read PDF or 7z files. Use WSL2/Linux for those. The full list is on the
+  [Windows v0.7.1-beta.2 release](https://github.com/Parad0x-Labs/VOOL-Windows-M6A/releases/tag/v0.7.1-beta.2).
 
 ## 0.7.0-beta — 2026-10-13
 

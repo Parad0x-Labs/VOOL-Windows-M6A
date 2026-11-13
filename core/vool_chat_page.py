@@ -31,6 +31,12 @@ body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 -apple-sy
 #sidebar #sessions { flex:1 1 auto; overflow-y:auto; min-height:0; }
 #newProject { background:transparent; color:var(--muted); border:1px solid var(--border); border-radius:8px; padding:6px 8px; font:inherit; font-size:12px; font-weight:600; cursor:pointer; }
 #newProject:hover { color:var(--ink); border-color:var(--accent); }
+/* The Windows key cap (Ctrl+N) is wider than the Mac one; keep "+ New" and "+ Project" on one line. */
+#newChat, #newProject { white-space:nowrap; display:inline-flex; align-items:center; gap:6px; flex:0 0 auto; }
+/* At the default sidebar width the Ctrl+N key cap does not fit beside both buttons; it shows again
+   when the sidebar is dragged wider. Ctrl+N stays listed in the shortcut line under the composer. */
+#sidebar .side-head { container-type:inline-size; }
+@container (max-width: 259px) { #sidebar #newChat kbd { display:none; } }
 .proj-head { display:flex; align-items:center; gap:6px; padding:6px 10px 6px 8px; cursor:pointer; color:var(--muted); font-size:12px; font-weight:700; letter-spacing:.3px; }
 .proj-head:hover { color:var(--ink); }
 .proj-head:hover .proj-actions { opacity:1; }
@@ -280,13 +286,29 @@ code { background:var(--bg); border:1px solid var(--border); border-radius:5px; 
 #sessions .pin-head .proj-name::before { content:'\1F4CC  '; }
 #sessions .s-pin-mark { flex:0 0 auto; font-size:11px; opacity:.75; margin-left:4px; }
 #sessions .s-rename { flex:1; min-width:0; background:var(--bg); color:var(--ink); border:1px solid var(--accent); border-radius:6px; padding:2px 6px; font:inherit; font-size:13px; }
-#sessions .s-actions { display:none; gap:2px; flex:0 0 auto; }
-#sessions .session:hover .s-actions { display:flex; }
+/* A chat's actions sit behind one small "⋯" button. Shown inline on hover, the six emoji buttons
+   (wider in Segoe UI Emoji) squeezed the title to a sliver (205 px -> 52 px), so the title vanished
+   under the pointer and a click meant for it landed on an action. The title keeps its width, the
+   whole row opens the chat, and "⋯" opens the actions in a small menu beside it. */
+#sessions .session { position:relative; cursor:pointer; }
+/* The composer's "/" list of slash commands that work (core/slash_commands.py). */
+.slash-menu { position:fixed; z-index:70; max-height:240px; overflow-y:auto; padding:4px; background:var(--panel); border:1px solid var(--border); border-radius:10px; box-shadow:0 8px 26px rgba(0,0,0,.5); }
+.slash-menu[hidden] { display:none; }
+.slash-item { display:flex; gap:10px; align-items:baseline; padding:6px 8px; border-radius:6px; cursor:pointer; font-size:13px; }
+.slash-item b { flex:0 0 auto; color:var(--ink); font-weight:600; }
+.slash-item span { color:var(--muted); min-width:0; }
+.slash-item.on, .slash-item:hover { background:var(--active); }
+#sessions .s-more { display:none; flex:0 0 auto; background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:14px; line-height:1; padding:2px 6px; border-radius:4px; }
+#sessions .s-more:hover, #sessions .s-more[aria-expanded="true"] { color:var(--ink); background:var(--bg); }
+#sessions .session:hover .s-more, #sessions .session:focus-within .s-more, #sessions .s-more[aria-expanded="true"] { display:inline-block; }
+#sessions .s-actions { display:none; position:fixed; z-index:60; gap:2px; padding:4px; background:var(--panel); border:1px solid var(--border); border-radius:8px; box-shadow:0 8px 26px rgba(0,0,0,.5); }
+#sessions .s-actions.open { display:flex; }
 #sessions .s-act { background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:12px; padding:2px 5px; border-radius:4px; line-height:1; }
 #sessions .s-act:hover { color:var(--ink); background:var(--bg); }
 #sessions .arch-head { color:var(--muted); font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.5px; padding:12px 10px 4px; cursor:pointer; user-select:none; }
 #sessions .arch-head:hover { color:var(--ink); }
 #sessions .side-empty { color:var(--muted); font-size:12px; padding:8px 10px; }
+#sessions .proj-empty-new { background:none; border:0; padding:0; color:var(--accent); font:inherit; text-decoration:underline; cursor:pointer; }
 /* Chat/project lifecycle indicator: a compact, terminal-style status tag -- never a progress bar,
    never a percentage, only what the runtime has actually reported. Priority (highest first) is
    needs_user > working > complete_unseen, enforced in chatLifecycleState(), not here -- only one
@@ -362,7 +384,7 @@ header a:hover { text-decoration:underline; }
   header { gap:7px; padding-inline:12px; }
   header .ver { max-width:50px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
   header #modelCtrl { flex:1 1 200px; min-width:min(200px,100%); max-width:100%; }
-  header #pinBtn, header #searchBtn, header #exportBtn, header #panelBtn { margin-left:0; padding-inline:7px; }
+  header #pinBtn, header #searchBtn, header #exportBtn, header #panelBtn, header #councilBtn { margin-left:0; padding-inline:7px; }
   header #updateChipTxt { max-width:45px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
   header #modelWhere { font-size:12px; }
   header .spacer { display:none; }
@@ -375,6 +397,19 @@ header a:hover { text-decoration:underline; }
   body.panel-open header { gap:5px; }
   body.panel-open header .ver { display:none; }
   header #modelBtn .model-lane.auto + #modelLbl { flex-shrink:0; }
+}
+@media (max-width: 999px) {
+  /* Narrow window: one tidy header row. Search and Export become icons (their translated titles
+     and accessible names stay), the version label hides, and buttons never wrap their own text. */
+  header { gap:6px; padding-inline:10px; }
+  header .ver { display:none; }
+  header .spacer { display:none; }
+  header > button { white-space:nowrap; }
+  header #pinBtn, header #searchBtn, header #exportBtn, header #panelBtn, header #councilBtn { margin-left:0; padding-inline:7px; }
+  header #searchBtn, header #exportBtn { flex:0 0 30px; width:30px; height:30px; padding:0; font-size:0; }
+  header #searchBtn::before { content:'⌕'; font-size:18px; }
+  header #exportBtn::before { content:'⇩'; font-size:18px; }
+  header #updateChipTxt { max-width:45px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
 }
 #menu { display:none; background:transparent; color:var(--ink); border:1px solid var(--border); border-radius:8px; padding:4px 10px; font:inherit; cursor:pointer; }
 #log { flex:1; overflow-y:auto; padding:28px max(20px,calc((100% - 760px)/2)); display:flex; flex-direction:column; gap:14px; user-select:text; -webkit-user-select:text; cursor:text; background:var(--chat); }
@@ -481,6 +516,8 @@ footer { background:linear-gradient(transparent,var(--chat) 24%); padding:10px 2
 #dictateBtn, #voiceModeBtn { background:var(--field); color:var(--ink); border:1px solid var(--border); border-radius:10px; padding:0 7px; cursor:pointer; font-size:15px; line-height:1; display:inline-flex; align-items:center; }
 #dictateBtn .mic-glyph, #voiceModeBtn .mic-glyph { font-size:15px; line-height:1; }
 #dictateBtn:disabled, #voiceModeBtn:disabled { opacity:.5; cursor:default; }
+/* A control that cannot do anything in this build is not shown as a faded pill in the message bar. */
+#dictateBtn:disabled, #voiceModeBtn:disabled { display:none; }
 #dictateBtn.recording { border-color:var(--warn); box-shadow:0 0 0 2px color-mix(in srgb, var(--warn) 35%, transparent); }
 #dictateBtn.transcribing { border-color:var(--accent); opacity:.75; }
 #dictateBtn.error { border-color:var(--bad); }
@@ -765,8 +802,8 @@ body:not(.panel-open) #xpResize { display:none; }
 .search-btn { flex:0 0 auto; background:transparent; color:var(--muted); border:1px solid var(--border); border-radius:7px; padding:3px 8px; font:inherit; font-size:12px; line-height:1.2; cursor:pointer; }
 .search-btn:hover:not(:disabled) { color:var(--ink); border-color:var(--accent); }
 .search-btn:disabled { opacity:.45; cursor:default; }
-#searchBtn, #exportBtn { background:transparent; color:var(--muted); border:1px solid var(--border); border-radius:8px; padding:4px 10px; font:inherit; font-size:13px; cursor:pointer; margin-left:10px; }
-#searchBtn:hover, #searchBtn.on, #exportBtn:hover { color:var(--ink); border-color:var(--accent); }
+#searchBtn, #exportBtn, #councilBtn { background:transparent; color:var(--muted); border:1px solid var(--border); border-radius:8px; padding:4px 10px; font:inherit; font-size:13px; cursor:pointer; margin-left:10px; }
+#searchBtn:hover, #searchBtn.on, #exportBtn:hover, #councilBtn:hover { color:var(--ink); border-color:var(--accent); }
 mark.cs-hit { background:color-mix(in srgb,var(--accent) 38%,transparent); color:inherit; border-radius:3px; padding:0 1px; }
 mark.cs-hit.cs-active { background:var(--warn); color:#1a1205; }
 .msg.cs-current-turn { box-shadow:0 0 0 2px var(--accent); }
@@ -1137,10 +1174,10 @@ body:not(.panel-open) #xpanel { display:none; }
       <div class="pop-title" id="runTitle" data-i18n="header.run_title">Where VOOL can run</div>
       <div class="run-switch" role="radiogroup" aria-labelledby="runTitle">
         <button type="button" class="run-choice" role="radio" aria-checked="true" data-run-model="vool"><b data-i18n="header.run_local_first">Local first</b><small data-i18n="header.run_local_first_hint">free cloud only if needed</small></button>
-        <button type="button" class="run-choice" role="radio" aria-checked="false" data-run-model="vool-local-only"><b data-i18n="header.run_computer_only">This computer only</b><small data-i18n="header.run_computer_only_hint">cloud blocked</small></button>
+        <button type="button" class="run-choice" role="radio" aria-checked="false" data-run-model="vool-local-only"><b data-i18n="header.run_computer_only">Local Only</b><small data-i18n="header.run_computer_only_hint">cloud blocked · web search still on</small></button>
       </div>
       <div class="run-hint" data-i18n="header.run_explainer">Auto never picks a paid model. Choosing a model below pins it.</div>
-      <div class="run-hint" id="runLocalDisclosure" hidden data-i18n="header.model_local_only_explainer">Local Only routes among the models and tools on this machine and never reaches a cloud provider — not paid, not free, not for planning.</div>
+      <div class="run-hint" id="runLocalDisclosure" hidden data-i18n="header.model_local_only_explainer">Local Only runs every AI model on this machine and never reaches a cloud provider: not paid, not free, not for planning. Web search still works. It runs through VOOL's built-in browser, so your search words go to the search engine (DuckDuckGo or Bing).</div>
       <div class="pop-title" data-i18n="header.model_popover_title">Model</div>
       <div class="pop-prov" id="modelProv" hidden></div>
       <button type="button" class="pop-item" role="menuitemradio" aria-checked="false" data-model="vool"><span class="pi-check"></span><span class="pi-body"><span data-i18n="header.model_auto_option">VOOL Auto</span> <span class="pi-hint" data-i18n="header.model_auto_hint">local-first &middot; free</span></span></button>
@@ -2021,7 +2058,63 @@ const bootChatId = (() => {
 })();
 
 function loadSessionModes() { return _jget('vool_modes_v1', '{}'); }
+// A chat's mode is remembered WITH THE CHAT on the server (POST /api/chat/session {mode}), and the
+// sidebar list hands it back. The window's own storage is only a cache: the desktop window does not
+// keep it across a restart, so a chat set to Plan used to come back as Manual. Bypass is never kept.
+const _modeRestored = new Set();   // chats whose server mode this page has already adopted (or overruled)
+const _modePosted = new Set();     // chats whose window-remembered mode was already handed to the server
+function rememberableMode(mode) { return !!(mode && MODE_LABELS[mode] && mode !== 'bypass_permissions'); }
+function serverModeFor(sid) {
+  // Boot asks before the sidebar list (and its `let`) exists; that is "no server answer yet".
+  let list = [];
+  try { list = _lastSessions; } catch (e) { list = []; }
+  const rec = (list || []).find((s) => s.session_id === sid);
+  const mode = rec ? String(rec.mode || '') : '';
+  return rememberableMode(mode) ? mode : '';
+}
+async function postSessionMode(sid, mode) {
+  if (!sid || !rememberableMode(mode)) return false;
+  try {
+    const r = await fetch('/api/chat/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sid, mode: mode }) });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok && d && d.stored) {
+      const rec = _lastSessions.find((s) => s.session_id === sid);
+      if (rec) rec.mode = mode;
+      return true;
+    }
+  } catch (e) {}
+  return false;
+}
+// Called after each sidebar refresh: the displayed chat adopts its server mode once, and a chat the
+// server lists with no mode yet (its first turn just created it, or it predates this) is handed the
+// mode this window remembers for it, once.
+function adoptServerModes() {
+  const sid = displayedChat;
+  if (sid && !_modeRestored.has(sid)) {
+    const mode = serverModeFor(sid);
+    if (mode) {
+      _modeRestored.add(sid);
+      const st = chatState(sid);
+      if (!st.bypassGrant && !(st.run && !st.run.ended) && st.mode !== mode) {
+        st.mode = mode;
+        saveModeForSession(sid, mode, { local: true });
+        if (isDisplayed(sid)) reflectMode();
+      }
+    }
+  }
+  const local = loadSessionModes();
+  for (const s of _lastSessions) {
+    const sidN = s.session_id;
+    const want = local[sidN];
+    if (!s.mode && rememberableMode(want) && !_modePosted.has(sidN)) {
+      _modePosted.add(sidN);
+      postSessionMode(sidN, want);
+    }
+  }
+}
 function loadModeForSession(sid) {
+  const fromServer = serverModeFor(sid);
+  if (fromServer) { _modeRestored.add(sid); return fromServer; }
   const saved = loadSessionModes()[sid];
   if (saved && MODE_LABELS[saved] && saved !== 'bypass_permissions') return saved;
   // One-time migration from the retired global selector. Never migrate a bypass-like value.
@@ -2030,10 +2123,14 @@ function loadModeForSession(sid) {
   if (legacy) localStorage.removeItem('vool_mode');
   return migrated;
 }
-function saveModeForSession(sid, mode) {
+function saveModeForSession(sid, mode, opts) {
   if (!sid || mode === 'bypass_permissions' || !MODE_LABELS[mode]) return;
   const modes = loadSessionModes(); modes[sid] = mode;
   localStorage.setItem('vool_modes_v1', JSON.stringify(modes));
+  _modeRestored.add(sid);   // a mode set here is newer than whatever the last list said
+  // The server keeps it with the chat. It never creates a chat: an unsent draft's mode is handed
+  // over by adoptServerModes() once its first turn has made the chat.
+  if (!(opts && opts.local)) postSessionMode(sid, mode);
 }
 
 // ===================== DISPATCHER: per-chat state — BEGIN =====================
@@ -2416,7 +2513,7 @@ function showEmpty() {
     ['first_run.opener_7', 'Where do we start?']];
   const pick = openers[Math.floor(Math.random() * openers.length)];
   const line = emptyT(pick[0], pick[1]);
-  // A rotating fun fact — one per fresh session, quoted in an italic serif so it reads apart from
+  // A rotating fun fact — one per fresh session, set in an italic serif so it reads apart from
   // the greeting/opener. Two flavors, both TRUE: what VOOL genuinely does, and real how-AI-works
   // facts (including genuine "fails"). NO invented statistics — no made-up adoption % or market share.
   // Every fact resolves through the catalog (first_run.fact_*); the inline English is the honest
@@ -2448,7 +2545,9 @@ function showEmpty() {
   logEl.innerHTML = '<div class="empty">'
     + '<div class="empty-greet">' + esc(greet) + '</div>'
     + '<div class="empty-sub">' + esc(line) + '</div>'
-    + '<div class="empty-hint">“' + esc(emptyT(fact[0], fact[1])) + '”</div>'
+    // No quote marks of its own: several facts open or close with a quoted term ("Temperature", «Галлюцинация»,
+    // “幻觉”), so a wrapping pair doubled them. The italic serif line already sets the fact apart.
+    + '<div class="empty-hint">' + esc(emptyT(fact[0], fact[1])) + '</div>'
     + '</div>';
 }
 
@@ -2875,7 +2974,8 @@ async function createProjectFlow(assignSid) {
     if (!root || !root.trim()) return null;
     root = root.trim();
   }
-  const suggested = root.split('/').filter(Boolean).pop() || 'Project';
+  // Either separator: a Windows path has no '/', and its whole spelling became the name.
+  const suggested = root.split(/[\\/]/).filter(Boolean).pop() || 'Project';
   const name = await requestTextInput('Project name:', suggested);
   if (name === null) return null;
   try {
@@ -2902,7 +3002,14 @@ async function deleteProject(pid) {
 }
 async function revealProject(pid) {
   if (!_serverProjects[pid]) return;
-  try { await fetch('/api/projects/reveal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: pid }) }); } catch (e) {}
+  let ok = false;
+  try {
+    const r = await fetch('/api/projects/reveal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: pid }) });
+    const d = await r.json().catch(() => ({}));
+    ok = !!(r.ok && d && d.ok);
+  } catch (e) { ok = false; }
+  // The server opens the folder itself; say so when it could not, instead of doing nothing.
+  if (!ok) toast('Could not show this project\u2019s folder. Check that it still exists' + (String((_serverProjects[pid] || {}).root || '').indexOf(',') >= 0 ? ' (File Explorer cannot select a folder whose path contains a comma).' : '.'));
 }
 async function assignSession(sid, pid) {
   let ok = false;
@@ -2967,6 +3074,23 @@ function startProjectRename(head, nameEl, pid) {
   input.focus(); input.select();
 }
 
+// The chat whose actions menu is open. The list is re-rendered whenever it refreshes; the menu of
+// the same chat opens again on the new row instead of vanishing under the pointer.
+let openSessionActionsFor = '';
+function closeSessionActionMenus() {
+  openSessionActionsFor = '';
+  document.querySelectorAll('#sessions .s-actions.open').forEach((m) => m.classList.remove('open'));
+  document.querySelectorAll('#sessions .s-more[aria-expanded="true"]').forEach((b) => b.setAttribute('aria-expanded', 'false'));
+}
+if (typeof document.addEventListener === 'function') {
+  // A click anywhere else, Escape, the chat list scrolling or a resize closes an open chat-actions menu.
+  document.addEventListener('click', (e) => { if (!(e.target && e.target.closest && e.target.closest('#sessions .s-actions, #sessions .s-more'))) closeSessionActionMenus(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSessionActionMenus(); });
+  // Only the chat list scrolling moves the row away from its menu; a streaming answer does not.
+  document.addEventListener('scroll', (e) => { if (e.target && e.target.id === 'sessions') closeSessionActionMenus(); }, true);
+  window.addEventListener('resize', () => closeSessionActionMenus());
+}
+
 function makeSessionItem(s, archived, nested) {
   const item = document.createElement('div');
   item.className = 'session' + (s.session_id === displayedChat ? ' active' : '') + (nested ? ' nested' : '');
@@ -2976,7 +3100,13 @@ function makeSessionItem(s, archived, nested) {
   title.className = 's-title';
   title.textContent = s.title || '(new chat)';
   title.title = s.title || '';
-  title.addEventListener('click', () => openSession(s.session_id));
+  // The whole row opens the chat (the title, its emoji, the empty space beside it); an action
+  // button or the rename box never does.
+  item.addEventListener('click', (e) => {
+    const t = e.target;
+    if (t && t.closest && t.closest('.s-actions, .s-rename, input, button')) return;
+    openSession(s.session_id);
+  });
   const actions = document.createElement('div');
   actions.className = 's-actions';
   const semo = document.createElement('button');
@@ -3011,6 +3141,30 @@ function makeSessionItem(s, archived, nested) {
   item.appendChild(emo); item.appendChild(title);
   if (s.pinned && !archived) { const pm = document.createElement('span'); pm.className = 's-pin-mark'; pm.textContent = '\u{1F4CC}'; pm.title = 'Pinned'; item.appendChild(pm); }
   if (!archived) appendLifecycleBadge(item, sidebarLifecycleState(s.session_id));
+  const more = document.createElement('button');
+  more.type = 'button'; more.className = 's-more'; more.textContent = '\u22EF';
+  more.title = 'Chat actions'; more.setAttribute('aria-label', 'Chat actions'); more.setAttribute('aria-haspopup', 'true');
+  more.setAttribute('aria-expanded', 'false');
+  const openMenu = () => {
+    const r = more.getBoundingClientRect();
+    actions.style.top = Math.round(r.bottom + 4) + 'px';
+    actions.style.right = Math.max(4, Math.round(window.innerWidth - r.right)) + 'px';
+    actions.classList.add('open'); more.setAttribute('aria-expanded', 'true');
+    openSessionActionsFor = s.session_id;
+  };
+  more.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const opening = !actions.classList.contains('open');
+    closeSessionActionMenus();
+    if (opening) openMenu();
+  });
+  if (openSessionActionsFor && openSessionActionsFor === s.session_id) {
+    requestAnimationFrame(() => { if (item.isConnected && openSessionActionsFor === s.session_id) openMenu(); });
+  }
+  // Any action closes the menu; the action's own handler runs as before. Capture phase: each action
+  // stops the click's propagation, so a bubbling listener here would never hear it.
+  actions.addEventListener('click', () => closeSessionActionMenus(), true);
+  item.appendChild(more);
   item.appendChild(actions);
   return item;
 }
@@ -3430,6 +3584,7 @@ function renderSessions(sessions) {
   // A chat that has sent its first message but is not yet in the server's log is overlaid here, so
   // it survives every re-render until the server's own record replaces it.
   _lastSessions = mergePendingSessions(sessions);
+  adoptServerModes();
   // Adopt the DISPLAYED chat's project from the record the server just returned. Boot restores
   // the transcript but never the binding, so without this a restart showed "General" until the
   // chat was clicked. The server's project_id stays authoritative (openSession's own derivation
@@ -3491,7 +3646,19 @@ function renderSessions(sessions) {
     const items = byProject[pid] || [];
     const isCollapsed = !!collapsed[pid];
     sessionsEl.appendChild(makeProjectHead(pid, projects[pid].name || 'Project', groupCount(pid, items.length), isCollapsed, aggregateLifecycleState(items)));
-    if (!isCollapsed) { for (const s of items) sessionsEl.appendChild(makeSessionItem(s, false, true)); }
+    if (!isCollapsed) {
+      if (items.length) { for (const s of items) sessionsEl.appendChild(makeSessionItem(s, false, true)); }
+      else {
+        // An expanded project with no chats said nothing, which read as a broken drop-down.
+        const empty = document.createElement('div'); empty.className = 'side-empty proj-empty';
+        empty.appendChild(document.createTextNode(pageT('chats.project_empty', 'No chats yet.') + ' '));
+        const start = document.createElement('button'); start.type = 'button'; start.className = 'proj-empty-new';
+        start.textContent = pageT('chats.project_new_chat', 'New chat here');
+        start.addEventListener('click', (ev) => { ev.stopPropagation(); newChatInProject(pid); });
+        empty.appendChild(start);
+        sessionsEl.appendChild(empty);
+      }
+    }
   }
   if (projectIds.length) {
     const pn = document.createElement('div');
@@ -3687,10 +3854,14 @@ function newChat() {
   // no run, no grant, no stickiness. Nothing needs clearing, and nothing the previous chat owned
   // can leak in.
   if (view.run && !view.run.ended) detachRunDom(view.run);
+  const carriedMode = rememberableMode(view.mode) ? view.mode : 'manual';
   setDisplayedChat(mintSessionId());
   restoreChatModel(displayedChat);
   localStorage.setItem('vool.sessionId', displayedChat);
-  view.mode = loadModeForSession(displayedChat);
+  // A new chat keeps the mode you were in (never bypass, which stays with its own grant). Kept in
+  // the window only until the first turn makes the chat; then the server remembers it too.
+  view.mode = carriedMode;
+  saveModeForSession(displayedChat, carriedMode, { local: true });
   reflectMode();
   // This is an unsent draft.  Keep its preference local until the user either explicitly changes
   // the mode or sends the first turn; merely pressing New must not create runtime Activity.
@@ -3747,10 +3918,12 @@ function applyProjectModel(pid) {
 async function newChatInProject(pid) {
   // No busy guard, for the same reason as newChat(): the chat being left keeps its run.
   if (view.run && !view.run.ended) detachRunDom(view.run);
+  const carriedMode = rememberableMode(view.mode) ? view.mode : 'manual';
   const sid = mintSessionId();
   setDisplayedChat(sid); localStorage.setItem('vool.sessionId', sid);
   restoreChatModel(sid);
-  view.mode = loadModeForSession(displayedChat);
+  view.mode = carriedMode;
+  saveModeForSession(sid, carriedMode, { local: true });
   reflectMode();
   activityHistory = [];   // panel-wide cross-session list, not chat state
   view.projectId = pid || '';
@@ -5045,6 +5218,16 @@ function finishRun(run, kind, summaryText, tsIso) {
   // No card means this run's chat is off screen: the state above is complete, and paintFinishedCard
   // will replay all of it onto a fresh card the moment the chat is opened again.
   paintFinishedCard(run);
+  // The companion hears a turn's end from the server's typed terminal frame. A turn the CLIENT
+  // ended -- Stop (pressed, Esc, or a typed /stop) aborts the stream before the server's
+  // task.cancelled can arrive, and a dropped connection has no frame at all -- would otherwise
+  // leave the pet narrating the last working phrase forever, since applyTaskEvent ignores
+  // everything once the run has ended. This site reports the end the card already shows.
+  if ((kind === 'cancelled' || kind === 'failed') && run.companionOpened && !run.companionTerminal
+      && typeof window !== 'undefined' && window.VoolCompanion) {
+    run.companionTerminal = true;
+    try { window.VoolCompanion.consume(run.chatId, { type: 'task.' + kind, ts: run.endedAt }); } catch (e) {}
+  }
   if (isDisplayed(run.chatId)) renderPanel();
   setTimeout(loadActivityHistory, 250);
   // Named fragment call site: lifecycle notifications. The fragment decides visibility (it only
@@ -5112,6 +5295,7 @@ function applyTaskEvent(run, ev) {
   // Placed before the switch because the terminal cases below return early. The typeof
   // guard keeps function-slicing harnesses (no DOM globals) running unchanged.
   if (typeof window !== 'undefined' && window.VoolCompanion) window.VoolCompanion.consume(run.chatId, ev);
+  if (ev.type === 'task.cancelled' || ev.type === 'task.failed' || ev.type === 'task.completed') run.companionTerminal = true;
   run.events.push(ev);
   if (ev.stage) { run.stage = ev.stage; run.evented = true; }
   if (ev.summary) { run.action = ev.summary; run.evented = true; }
@@ -5311,6 +5495,7 @@ const LEDGER_MAP = {
   model_lane_started:           ['run', '◆', 'Model running'],
   model_lane_completed:         ['ok',  '◆', 'Model answered'],
   model_verification_receipt:   ['meta', '≡', 'Model identity receipt'],
+  model_no_tool_selected:       ['ok',  '◆', 'Answered without a tool'],
   model_lane_failed:            ['fail','⚠', 'Model call failed'],
   model_lane_contract_failed:   ['fail','⚠', 'Model output rejected'],
   model_lane_verifier_started:  ['run', '»', 'Model review running'],
@@ -7447,7 +7632,7 @@ async function runTurn(text, queueItemId, opts) {
   // acknowledgement arrived, the last card wore the previous turn's terminal phrase under a
   // `Working` header (measured 2026-09-06). `task.submitted` claims nothing about the server.
   if (typeof window !== 'undefined' && window.VoolCompanion) {
-    try { window.VoolCompanion.consume(chatId, { type: 'task.submitted', ts: run.start }); } catch (e) {}
+    try { window.VoolCompanion.consume(chatId, { type: 'task.submitted', ts: run.start }); run.companionOpened = true; } catch (e) {}
   }
   run.attachments = turnAttachments;
   reflectComposer();   // the Send button follows the DISPLAYED chat, which may not be this one
@@ -7767,6 +7952,18 @@ async function send() {
   const chatId = displayedChat;
   const draft = attachBucket(chatId);
   if (!text && !draft.length) return;
+  // `/stop` is the typed Esc: it presses the running task's Stop control through the same page
+  // action the Esc cascade uses (core/command_palette_fragment.py). It is never sent -- while a
+  // reply runs, a sent message would only be queued behind it. Staged attachments stay staged.
+  // The adapter is read as globalThis's: the page defines it once, further down this script.
+  if (/^\/stop$/i.test(text)) {
+    inputEl.value = '';
+    if (window.VoolComposerExtras) window.VoolComposerExtras.draftConsumed(chatId);
+    const p = globalThis.VoolPageActions;
+    if (p && p.hasLiveRun()) { if (p.stopDisplayedRun()) toast('Stopping…'); }
+    else toast('Nothing is running in this chat.');
+    return;
+  }
   // Attachments gate the send BEFORE the typed text is cleared: nothing is sent, nothing is
   // lost, and a second press after the upload is fixed sends the message exactly once.
   if (draft.some((i) => i.state === 'uploading')) { toast('Wait for the attachments to finish uploading.'); return; }
@@ -8256,6 +8453,17 @@ if (composerFooterEl && typeof composerFooterEl.addEventListener === 'function')
     let text = '';
     try { text = e.dataTransfer ? String(e.dataTransfer.getData('text/plain') || '') : ''; } catch (err) { text = ''; }
     if (text.length >= docThreshold()) { e.preventDefault(); addPastedDocument(text, displayedChat, { source: 'drop' }); }
+  });
+}
+// A file dropped anywhere else in the window must not replace the app with that file: the window
+// would navigate to it and there is no way back. Only the message box takes files.
+if (typeof document.addEventListener === 'function') {
+  const dropCarriesFiles = (dt) => { const t = dt && dt.types; if (!t) return false; return typeof t.contains === 'function' ? t.contains('Files') : Array.prototype.indexOf.call(t, 'Files') >= 0; };
+  document.addEventListener('dragover', (e) => { if (!e.defaultPrevented && dropCarriesFiles(e.dataTransfer)) { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'none'; } });
+  document.addEventListener('drop', (e) => {
+    if (e.defaultPrevented || !dropCarriesFiles(e.dataTransfer)) return;
+    e.preventDefault();
+    toast('Drop files on the message box to attach them.');
   });
 }
 if (inputEl && typeof inputEl.addEventListener === 'function') {
@@ -8821,7 +9029,7 @@ function reflectModel() {
   const where = document.getElementById('modelWhere');
   const known = !!modelValue && (MODEL_LABELS[modelValue] || isLocalModel(modelValue) || CLOUD_MODEL_ID_RE.test(modelValue));
   if (where) where.textContent = isLocalOnlyMode()
-    ? pageT('header.run_computer_only', 'This computer only')
+    ? pageT('header.run_computer_only', 'Local Only')
     : (known ? pageT('header.run_local_first', 'Local first') : String(modelValue || pageT('header.run_unknown', 'Unknown')));
   document.querySelectorAll('#modelPop .run-choice').forEach((it) => {
     const checked = known && (it.getAttribute('data-run-model') === LOCAL_ONLY_MODEL) === isLocalOnlyMode();
@@ -8833,7 +9041,7 @@ function reflectModel() {
     autoRow.setAttribute('aria-checked', auto ? 'true' : 'false');
     const check = autoRow.querySelector('.pi-check'); if (check) check.textContent = auto ? '✓' : '';
     const hint = autoRow.querySelector('.pi-hint');
-    if (hint) hint.textContent = isLocalOnlyMode() ? pageT('header.run_computer_only_hint', 'cloud blocked') : pageT('header.model_auto_hint', 'local-first · free');
+    if (hint) hint.textContent = isLocalOnlyMode() ? pageT('header.run_computer_only_hint', 'cloud blocked · web search still on') : pageT('header.model_auto_hint', 'local-first · free');
   }
   const disclosure = document.getElementById('runLocalDisclosure'); if (disclosure) disclosure.hidden = !isLocalOnlyMode();
   if (isLocalOnlyMode()) renderSelectionProvenance(null);
@@ -8946,7 +9154,16 @@ function initComposerControls() {
       e.stopPropagation();
       const requested = it.getAttribute('data-mode'); closePops(null);
       if (requested === 'bypass_permissions') { openBypassModal(); return; }
-      try { await setModeController(requested); } catch (err) { toast('Mode was not changed: ' + err.message); }
+      // Kept with the chat the moment it is picked (Steve round 22: POST /api/mode took 3-23 s, and a restart
+      // before it answered reopened a chat set to Plan in Manual). The controller still decides; if it refuses,
+      // the chat's previous mode is put back.
+      const pickedChat = displayedChat, previous = chatState(pickedChat).mode;
+      if (rememberableMode(requested)) saveModeForSession(pickedChat, requested);
+      try { await setModeController(requested); }
+      catch (err) {
+        if (rememberableMode(requested) && rememberableMode(previous) && previous !== requested) saveModeForSession(pickedChat, previous);
+        toast('Mode was not changed: ' + err.message);
+      }
     });
   });
   const modeItems = Array.from(document.querySelectorAll('#modePop .pop-item'));
@@ -9128,7 +9345,7 @@ function renderConnections(conns) {
     const d = document.createElement('span'); d.className = 'dot ok'; cloudPillEl.appendChild(d);
     const t = document.createElement('span'); t.className = 'cp-txt'; t.textContent = pageT('header.cloud_local', 'Local'); cloudPillEl.appendChild(t);
     cloudPillEl.title = route.kind === 'local-only'
-      ? pageT('header.run_blocked_title', 'This chat runs on this computer; cloud blocked. Click to choose a model.')
+      ? pageT('header.run_blocked_title', 'This chat\u2019s AI runs on this computer. Cloud AI is blocked, but web search still goes out. Click to choose a model.')
       : pageTF('header.run_local_title', 'This chat is pinned to the local model {model} — no cloud provider is used. Click to choose a model.', {model:route.model});
     syncModelConnectionTitle(); return;
   }
@@ -9202,7 +9419,7 @@ function setCloudConnected(on) {
   if (orKeyEl) orKeyEl.value = '';
   const note = document.querySelector('#modelPop .pop-note');
   if (note) note.textContent = isLocalOnlyMode()
-    ? pageT('header.model_local_only_explainer', 'Local Only never reaches a cloud provider.')
+    ? pageT('header.model_local_only_explainer', 'Local Only never reaches a cloud provider. Web search still goes out through the browser.')
     : (cloudKeyConnected ? pageT('header.run_explainer', 'Auto never picks a paid model. Choosing a model below pins it.') : pageT('header.model_connect_note', 'Connect a provider key in Settings.'));
   // Add the live model list when connected; strip it back to the static popover when not.
   // Only the false->true TRANSITION renders: renderCloudModels() clears the rows before its
@@ -9366,7 +9583,7 @@ function renderSelectionProvenance(sel) {
   if (!el) return;
   if (sel == null && isLocalOnlyMode()) {
     el.hidden = false;
-    el.innerHTML = '<span class="pp-row"><b>' + esc(pageT('header.run_title', 'Where VOOL can run')) + '</b><span>' + esc(pageT('header.run_prov_local_only', 'Local Only — this machine; cloud blocked')) + '</span></span>';
+    el.innerHTML = '<span class="pp-row"><b>' + esc(pageT('header.run_title', 'Where VOOL can run')) + '</b><span>' + esc(pageT('header.run_prov_local_only', 'Local Only: AI on this machine; web search still goes out')) + '</span></span>';
     return;
   }
   if (!sel || !sel.ok) {
@@ -11616,11 +11833,22 @@ if (sbExportBtn) sbExportBtn.addEventListener('click', async () => {
     const d = await r.json();
     if (!d.ok) { sbStatus(sbExportStatus, d.error || 'Export refused.', true); return; }
     sbPass && (sbPass.value = ''); sbPass2 && (sbPass2.value = '');
-    const a = document.createElement('a');
-    a.href = '/api/session/bundle/download?path=' + encodeURIComponent(d.path);
-    a.download = (d.session_id || 'chat').replace(/[^a-z0-9_-]/gi, '_') + '.voolsession';
-    document.body.appendChild(a); a.click(); a.remove();
-    sbStatus(sbExportStatus, d.encrypted ? 'Saved: signed + encrypted bundle (' + d.counts.turns + ' turns).' : 'Saved: signed, UNENCRYPTED bundle (' + d.counts.turns + ' turns).', !d.encrypted);
+    const nativeApi = window.pywebview && window.pywebview.api;
+    let where = '';
+    if (nativeApi) {
+      // The desktop window cancels page downloads: the native save dialog delivers the file.
+      if (typeof nativeApi.save_session_bundle !== 'function') { sbStatus(sbExportStatus, 'This app build cannot save chat bundles. Update the app and try again.', true); return; }
+      const saved = await nativeApi.save_session_bundle(String(d.path || ''), String(d.session_id || displayedChat));
+      if (!saved || (!saved.ok && saved.cancelled)) { sbStatus(sbExportStatus, 'Not saved: the save was cancelled.', true); return; }
+      if (!saved.ok) { sbStatus(sbExportStatus, 'Not saved: ' + (saved.message || saved.error || 'the bundle could not be written.'), true); return; }
+      if (typeof saved.path === 'string' && saved.path) where = ' to ' + saved.path;
+    } else {
+      const a = document.createElement('a');
+      a.href = '/api/session/bundle/download?path=' + encodeURIComponent(d.path);
+      a.download = (d.session_id || 'chat').replace(/[^a-z0-9_-]/gi, '_') + '.voolsession';
+      document.body.appendChild(a); a.click(); a.remove();
+    }
+    sbStatus(sbExportStatus, d.encrypted ? 'Saved: signed + encrypted bundle (' + d.counts.turns + ' turns)' + where + '.' : 'Saved: signed, UNENCRYPTED bundle (' + d.counts.turns + ' turns)' + where + '.', !d.encrypted);
     sbRenderExportPreview();
   } catch (e) { sbStatus(sbExportStatus, 'Export failed: ' + (e && e.message || e), true); }
 });
@@ -12157,8 +12385,91 @@ if (xpScopeEl) {
 // over category headlines and none of the evidence under them.
 const xpCopyEl = document.getElementById('xpCopy');
 if (xpCopyEl) xpCopyEl.addEventListener('click', () => copyPanelEvidence(xpCopyEl, panelTab || 'Activity'));
+// ---- "/" in the composer lists the slash commands that really work ----
+// One source: GET /api/chat/commands serves core/slash_commands.py, the same table /help answers
+// from. The list shows while the message is a single "/word"; arrows move, Tab or Enter picks
+// (Enter on a command already typed in full sends it), Esc closes. Nothing is sent by picking.
+let _slashCommands = null;
+let _slashIndex = 0;
+let _slashShown = [];
+const slashMenuEl = document.createElement('div');
+slashMenuEl.id = 'slashMenu'; slashMenuEl.className = 'slash-menu'; slashMenuEl.hidden = true;
+slashMenuEl.setAttribute('role', 'listbox'); slashMenuEl.setAttribute('aria-label', 'Slash commands');
+document.body.appendChild(slashMenuEl);
+async function loadSlashCommands() {
+  if (_slashCommands) return _slashCommands;
+  try {
+    const r = await fetch('/api/chat/commands');
+    const d = await r.json();
+    _slashCommands = Array.isArray(d && d.commands) ? d.commands.filter((c) => c && typeof c.command === 'string') : [];
+  } catch (e) { _slashCommands = null; return []; }
+  return _slashCommands;
+}
+function hideSlashMenu() { slashMenuEl.hidden = true; _slashShown = []; inputEl.removeAttribute('aria-activedescendant'); }
+let _slashPicked = '';   // the command just picked: the list stays closed until the text changes again
+function pickSlashCommand(i) {
+  const c = _slashShown[i];
+  if (!c) return;
+  inputEl.value = c.command;
+  _slashPicked = c.command;
+  hideSlashMenu();
+  inputEl.focus();
+  try { inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length); } catch (e) {}
+  inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+}
+function paintSlashMenu() {
+  slashMenuEl.textContent = '';
+  _slashShown.forEach((c, i) => {
+    const row = document.createElement('div');
+    row.className = 'slash-item' + (i === _slashIndex ? ' on' : '');
+    row.id = 'slashItem' + i; row.setAttribute('role', 'option'); row.setAttribute('aria-selected', i === _slashIndex ? 'true' : 'false');
+    const name = document.createElement('b'); name.textContent = c.command;
+    const text = document.createElement('span'); text.textContent = String(c.description || '');
+    row.appendChild(name); row.appendChild(text);
+    // mousedown, not click: the textarea must keep focus.
+    row.addEventListener('mousedown', (ev) => { ev.preventDefault(); pickSlashCommand(i); });
+    slashMenuEl.appendChild(row);
+  });
+  inputEl.setAttribute('aria-activedescendant', 'slashItem' + _slashIndex);
+  const r = inputEl.getBoundingClientRect();
+  slashMenuEl.style.left = Math.round(r.left) + 'px';
+  slashMenuEl.style.bottom = Math.round(window.innerHeight - r.top + 6) + 'px';
+  slashMenuEl.style.width = Math.round(Math.min(r.width, 520)) + 'px';
+}
+async function updateSlashMenu() {
+  const v = String(inputEl.value || '');
+  if (!/^\/[^\s]*$/.test(v)) { hideSlashMenu(); return; }
+  if (v === _slashPicked) { hideSlashMenu(); return; }
+  _slashPicked = '';
+  const all = await loadSlashCommands();
+  if (String(inputEl.value || '') !== v) return;   // typed on while the list was loading
+  const q = v.toLowerCase();
+  _slashShown = all.filter((c) => c.command.toLowerCase().startsWith(q));
+  if (!_slashShown.length) { hideSlashMenu(); return; }
+  _slashIndex = Math.min(_slashIndex, _slashShown.length - 1);
+  slashMenuEl.hidden = false;
+  paintSlashMenu();
+}
+inputEl.addEventListener('input', () => { _slashIndex = 0; updateSlashMenu(); });
+inputEl.addEventListener('blur', () => setTimeout(hideSlashMenu, 120));
+window.addEventListener('resize', hideSlashMenu);
 inputEl.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  if (slashMenuEl.hidden || !_slashShown.length) return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault(); e.stopImmediatePropagation();
+    _slashIndex = (_slashIndex + (e.key === 'ArrowDown' ? 1 : _slashShown.length - 1)) % _slashShown.length;
+    paintSlashMenu();
+  } else if (e.key === 'Escape') {
+    e.preventDefault(); e.stopImmediatePropagation(); hideSlashMenu();
+  } else if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+    const picked = _slashShown[_slashIndex];
+    // A command typed out in full is sent by Enter as before; anything else is completed first.
+    if (e.key === 'Enter' && picked && String(inputEl.value || '').toLowerCase() === picked.command.toLowerCase()) { hideSlashMenu(); return; }
+    e.preventDefault(); e.stopImmediatePropagation(); pickSlashCommand(_slashIndex);
+  }
+});
+inputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); hideSlashMenu(); send(); }
 });
 
 const modelConnectEl = document.getElementById('modelConnect');
@@ -12574,15 +12885,57 @@ _WINDOWS_FILE_ACTIONS = (
 )
 
 
+# Windows, before a cloud key is stored and cloud is turned on (core/windows_cloud_gate.py): nothing
+# on the composer is labelled free cloud. The default lane stays VOOL Auto ("Local first", the lane
+# `modelForChat` gives every chat without a stored choice); with cloud off it runs no cloud model, and
+# its hint says so. "Local Only" is not made the default: it is zero public egress, web
+# search included. The swapped texts drop their i18n key, so a catalog cannot put the free-cloud
+# wording back; the same texts reach the page's i18n bundle through its owner
+# (``core.i18n.page_bundle.i18n_client_bundle_for``), so the bootstrap is served byte for byte as that
+# function builds it. Auto's free-only rule ("Auto never selects a paid model") still holds with cloud
+# off and is still stated. Off Windows, or once cloud is on, the template is served byte for byte.
+from core.windows_cloud_gate import CLOUD_OFF_UI_TEXTS as _CLOUD_OFF_UI_TEXTS
+from core.windows_cloud_gate import OFF_TEXT as _CLOUD_OFF_NOTE
+
+_WINDOWS_CLOUD_OFF = (
+    ('<button type="button" class="run-choice" role="radio" aria-checked="true" data-run-model="vool">'
+     '<b data-i18n="header.run_local_first">Local first</b>'
+     '<small data-i18n="header.run_local_first_hint">free cloud only if needed</small></button>',
+     '<button type="button" class="run-choice" role="radio" aria-checked="true" data-run-model="vool">'
+     '<b data-i18n="header.run_local_first">Local first</b><small>'
+     + _CLOUD_OFF_UI_TEXTS["header.run_local_first_hint"] + '</small></button>'),
+    ('<span class="pi-hint" data-i18n="header.model_auto_hint">local-first &middot; free</span>',
+     '<span class="pi-hint">' + _CLOUD_OFF_UI_TEXTS["header.model_auto_hint"] + '</span>'),
+    ('<div class="pop-hint" hidden data-i18n-html="header.model_auto_explainer">Starts local. If needed, Auto may use a '
+     'verified-free cloud fallback. Auto never selects a paid model.</div>',
+     '<div class="pop-hint" hidden>' + _CLOUD_OFF_UI_TEXTS["header.model_auto_explainer"] + '</div>'),
+    ('<div class="pop-note" hidden data-i18n="header.model_connect_note">Connect a provider key in Settings to choose an '
+     'exact cloud model or configure Auto’s verified-free fallback.</div>',
+     '<div class="pop-note" hidden>' + _CLOUD_OFF_NOTE + '</div>'),
+    ("pageT('header.model_auto_hint', 'local-first · free')", "'" + _CLOUD_OFF_UI_TEXTS["header.model_auto_hint"] + "'"),
+    ("pageT('header.model_connect_note', 'Connect a provider key in Settings.')", "'" + _CLOUD_OFF_NOTE + "'"),
+)
+
+
+def _windows_cloud_off(page: str) -> str:
+    from core import windows_cloud_gate
+
+    if not windows_cloud_gate.cloud_off():
+        return page
+    for before, after in _WINDOWS_CLOUD_OFF:
+        page = page.replace(before, after)
+    return page
+
+
 def _host_chat_template() -> str:
     from core.generated_files import host_is_windows
 
     if not host_is_windows():
-        return _VOOL_CHAT_HTML
+        return _windows_cloud_off(_VOOL_CHAT_HTML)
     page = _VOOL_CHAT_HTML
     for mac, windows in _WINDOWS_FILE_ACTIONS:
         page = page.replace(mac, windows)
-    return page
+    return _windows_cloud_off(page)
 
 
 def render_vool_chat_html(*, build_commit: str = "", ui_locale: str = "en") -> str:

@@ -23,6 +23,8 @@ import uuid
 from types import SimpleNamespace
 from unittest import mock
 
+import pytest
+
 from core.context_budgeter import (
     ContextBudget,
     available_prompt_tokens,
@@ -34,10 +36,12 @@ from core.human_input_adapter import HumanInputInterpretation, adapt_user_input
 from core.identity_manager import load_active_persona
 from core.memory_first_router import MemoryFirstRouter, ModelExecutionDecision
 from core.model_registry import ModelRegistry
+from core.ollama_cloud_models import CloudModelRefused
 from core.task_router import classify, create_task_record, model_execution_profile
 from core.tiered_context_loader import TieredContextLoader
 from storage.db import get_connection
 from storage.migrations import run_migrations
+from tests import _windows_refusals as windows_refusals
 
 _DECLARED = ContextBudget()  # total 900, bootstrap 180, relevant 520, cold 0
 
@@ -218,6 +222,16 @@ class TestPlannedContextWindow:
         )
 
     def test_an_explicit_pick_is_the_turns_window(self) -> None:
+        if windows_refusals.cloud_models_refused():
+            # Windows 0.7.1 uses no Ollama cloud model, and a name ending in "-cloud" on the Ollama
+            # endpoint is one: registering it is refused in the plain sentence, before anything is
+            # stored, and nothing is started.
+            with windows_refusals.watch_cloud_model("big-cloud") as seen, \
+                    pytest.raises(CloudModelRefused) as refused:
+                self._manifest(provider_name="paid-cloud", model_name="big-cloud", context_window=131_072)
+            assert seen.refused(str(refused.value))
+            assert not any(m.model_name == "big-cloud" for m in self.registry.list_manifests())
+            return
         picked = self._manifest(provider_name="paid-cloud", model_name="big-cloud", context_window=131_072)
         planned = self.router.planned_context_window_tokens(
             classification={"task_class": "chat_conversation"},

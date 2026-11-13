@@ -385,6 +385,17 @@ def create_app(runtime: RuntimeServices | None = None):
         import logging
 
         logging.getLogger(__name__).warning("agent team recovery at boot failed: %s", exc)
+    # A rule take-back ("forget the rule about X") used to leave its forget admission pending for good, and
+    # every memory read in its scope then failed closed. Startup rolls such a proven take-back forward; any
+    # other pending admission stays pending (core/persistent_memory.py _recover_admissions).
+    try:
+        from core.persistent_memory import _recover_admissions
+
+        _recover_admissions()
+    except Exception as exc:  # pragma: no cover - recovery never stops the server
+        import logging
+
+        logging.getLogger(__name__).warning("forget admission recovery at boot failed: %s", type(exc).__name__)
     return create_api_app(
         runtime=runtime or _legacy_handler_runtime(),
         model_name=MODEL_NAME,
@@ -650,6 +661,24 @@ def _serve_with_exclusive_listen_sockets(server: Any, *, host: str, port: int) -
             signal.signal(signal.SIGTERM, previous_sigterm)
 
 
+def _warn_if_confined_job_variable_set(environ: Any = None) -> bool:
+    """Log a WARNING when VOOL's own environment carries VOOL_WINDOWS_CONFINED_JOB.
+
+    Only the job runner sets it, in a confined Windows job's environment (sandbox/job_runner.py), to
+    turn on the bundled Python's mkdir shim (sandbox/windows_job_mkdir.py). The shim also requires an
+    AppContainer token, so VOOL itself is not changed by it; the warning says someone set it where it
+    does not belong. True when it warned."""
+    source = os.environ if environ is None else environ
+    if "VOOL_WINDOWS_CONFINED_JOB" not in source:
+        return False
+    logger.warning(
+        "VOOL_WINDOWS_CONFINED_JOB is set in VOOL's own environment (value %r). Only VOOL's job runner "
+        "sets it, for a confined Windows job; remove it from the user or system environment.",
+        str(source.get("VOOL_WINDOWS_CONFINED_JOB"))[:16],
+    )
+    return True
+
+
 def main() -> int:
     # Diagnosability law (F46): a served turn spent a measured ~97 s idle between
     # task_classified and model_routing — no events, no model call, no network — and the
@@ -707,6 +736,17 @@ def main() -> int:
             from core.runtime_paths import active_data_dir
 
             route_logging_to_file(active_data_dir() / "logs" / "vool_api.log")
+        _warn_if_confined_job_variable_set()
+        # Windows: seal every known secret file once, so one VOOL never reads in a session (a
+        # Voolbook token with no sign-in) is not left readable by other accounts. Never blocks boot.
+        try:
+            from core.secret_files import repair_known_secret_files
+
+            unsealed = repair_known_secret_files()
+            if unsealed:
+                logger.warning("secret files not owner-only after the startup seal: %s", sorted(unsealed))
+        except Exception:
+            logger.exception("startup seal of secret files failed; server continues")
         app = create_app(runtime)
         import uvicorn
 

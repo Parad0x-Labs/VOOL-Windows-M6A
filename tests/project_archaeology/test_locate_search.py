@@ -20,6 +20,7 @@ import re
 
 import pytest
 
+from tests import _windows_refusals as windows_refusals
 from tests.project_archaeology.conftest import (
     NIGHT_WINDOW,
     SECRET_TOKEN,
@@ -150,6 +151,16 @@ def test_locate_resolves_full_commit_sha_AND_its_8_char_prefix_as_git_objects(co
     pa = _import_pa()
     repo = corpus["git"]["repo"]
     sha_b = corpus["git"]["sha_b"]
+    if windows_refusals.git_refused():
+        # Windows 0.7.1 runs no git, so neither spelling is read as a git object: each answers the
+        # git limit sentence itself (never "not found"), with no git started and the repo unchanged.
+        for reference in (sha_b, sha_b[:8]):
+            with windows_refusals.watch_git(repo) as seen, pytest.raises(pa.ArchaeologyInputError) as raised:
+                pa.locate(reference, workspace_root=str(repo))
+            assert not isinstance(raised.value, pa.ReferenceNotFound), repr(raised.value)
+            assert str(raised.value) == windows_refusals.GIT_REFUSAL, repr(raised.value)
+            assert seen.refused(str(raised.value))
+        return
     out = pa.locate(sha_b, workspace_root=str(repo))
     _assert_envelope(out, pa, "locate")
     git_items = [i for i in out["results"] if i["store"] == "git"]

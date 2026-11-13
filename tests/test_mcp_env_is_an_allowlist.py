@@ -24,6 +24,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import textwrap
@@ -33,6 +34,7 @@ import pytest
 
 from core.mcp_client import MCPError, MCPStdioClient
 from core.plugin_executor import kernel_confinement_available
+from tests import _windows_refusals as windows_refusals
 
 
 class _FakeProc:
@@ -253,9 +255,13 @@ def test_a_host_without_kernel_confinement_refuses_to_start_the_server(monkeypat
     monkeypatch.setattr(plugin_executor, "_kernel_confinement_prefix", lambda *a, **k: None)
 
     client = MCPStdioClient("echo", timeout=0.1)
-    with pytest.raises(MCPError, match="refusing to start unconfined"):
+    with windows_refusals.watch_plugins() as seen, pytest.raises(MCPError) as caught:
         client.start()
     assert client._proc is None
+    # Windows 0.7.1 starts no MCP server at all: refused with that sentence before confinement is asked.
+    if seen.refused(str(caught.value)):
+        return
+    assert re.search("refusing to start unconfined", str(caught.value)), caught.value
 
 
 # ---------------------------------------------------------------------------

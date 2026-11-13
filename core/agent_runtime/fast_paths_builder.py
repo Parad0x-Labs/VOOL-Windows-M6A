@@ -202,6 +202,11 @@ def extract_requested_builder_root(query_text: str, *, workspace_root: str = "")
         candidate = str(match.group("path") or "").strip().strip("`\"'").rstrip(".,!?")
         if not candidate:
             continue
+        # The drive letter of a full Windows path is not a folder name. Captest B3, 2026-11-08: "create
+        # hello.txt in C:\Users\..." outside the workspace was skipped by the first pattern, and the
+        # last one then read "in C" and built in `<workspace>\C`, a folder nobody named.
+        if re.match(r":[\\/]", text[match.end("path") : match.end("path") + 2]):
+            continue
         # A rooted path is NOT a workspace-relative one. This used to `lstrip("/")`, which turned
         # "scaffold a rust crate in /tmp/vool_qa_build5" into the workspace-relative root
         # "tmp/vool_qa_build5" and built the crate somewhere the user never named. The caller

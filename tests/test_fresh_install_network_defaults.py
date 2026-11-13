@@ -85,13 +85,19 @@ def test_changing_the_runtime_home_cannot_inherit_the_previous_profiles_consent(
 
 
 @pytest.mark.parametrize("mode,free", [("off", True), ("ask", False), ("auto", False)])
-def test_saved_cloud_opt_in_does_not_enable_background_peers(isolated_policy_home, mode, free):
+def test_saved_cloud_opt_in_does_not_enable_background_peers(isolated_policy_home, mode, free, monkeypatch):
     from core.cloud_escalation_policy import CloudEscalationPolicy, save_policy
     from core.cloud_transport import PolicyBoundCloudTransport
+    from tests import _windows_cloud_optin as cloud_rule
 
     save_policy(CloudEscalationPolicy(mode=mode, free_cloud_enabled=free))
     transport = PolicyBoundCloudTransport(allowed_hosts=("provider.invalid",))
-    assert transport._network_allowed() is True
+    if cloud_rule.cloud_gate_active():
+        # Windows 0.7.1 (core/windows_cloud_gate.py): a saved cloud opt-in on a fresh profile has no
+        # stored key, so the cloud transport stays closed, opens no socket and says cloud is off.
+        cloud_rule.assert_cloud_transport_closed(monkeypatch, "provider.invalid", "https://provider.invalid/inference")
+    else:
+        assert transport._network_allowed() is True
     assert policy_engine.automatic_outbound_enabled() is False
     policy_engine.set_operator_policy_values({"system.local_only_mode": True})
     assert transport._network_allowed() is False

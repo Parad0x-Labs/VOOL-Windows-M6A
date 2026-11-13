@@ -574,7 +574,14 @@ class LocalLifecycle:
             if kind:  # refused before a stat looks the share up, which is an SMB connection
                 return EffectOutcome.from_domain("rejected", reason=f"network_path:{kind}")
             target = os.path.join(self._ws.root, rel_path)
-            if not os.path.isfile(target) or _is_tracked(self._ws, rel_path):
+            if not os.path.isfile(target):
+                return EffectOutcome.from_domain(
+                    "rejected", reason="not_an_untracked_file")
+            tracked, unknown = _tracked_state(self._ws, rel_path)
+            if tracked is None:  # unknown is not untracked: the file is kept
+                return EffectOutcome.from_domain(
+                    "rejected", reason=f"not_an_untracked_file: git could not say whether it is tracked ({unknown})")
+            if tracked:
                 return EffectOutcome.from_domain(
                     "rejected", reason="not_an_untracked_file")
             os.unlink(target)
@@ -737,9 +744,24 @@ def _share_kind(path: str, *, pathspec: bool = False) -> str:
     return kind
 
 
-def _is_tracked(ws: RepositoryWorkspace, rel_path: str) -> bool:
-    proc = _run(ws.root, "ls-files", "--error-unmatch", "--", rel_path, mutating=False, timeout=15)
-    return proc.returncode == 0
+def _tracked_state(ws: RepositoryWorkspace, rel_path: str) -> tuple[bool | None, str]:
+    """``(True, "")`` when git tracks ``rel_path``, ``(False, "")`` when git says it does not, and
+    ``(None, why)`` when git could not say: refused (Windows runs no git, core/safe_git.py), refused
+    for the repository's own config, failed, or timed out. Only git's own "did not match" (exit 1 of
+    ``ls-files --error-unmatch``) means untracked; anything else is unknown, never untracked."""
+    from core import safe_git
+
+    if safe_git.git_refused_here():
+        return None, safe_git.GIT_REFUSED_TEXT
+    try:
+        proc = _run(ws.root, "ls-files", "--error-unmatch", "--", rel_path, mutating=False, timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, str(exc) or type(exc).__name__
+    if proc.returncode == 0:
+        return True, ""
+    if proc.returncode == 1:
+        return False, ""
+    return None, (proc.stderr or "").strip()[:200] or f"git ls-files exited {proc.returncode}"
 
 
 def _git_count(ws: RepositoryWorkspace) -> int:

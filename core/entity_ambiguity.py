@@ -227,6 +227,15 @@ def single_plain_know_question(
 
     if _FILENAME_RE.search(message):
         return False
+    # A question that names a filesystem PATH is the file or folder lanes' material for the same
+    # reason. Captest on real Windows: "what files are in C:\Users\<you>\Documents\vool-test?" was
+    # adjudicated, the probe failed, and the folder was never listed. The shapes are the write-root
+    # finder's (drive, share, `~/`, POSIX-rooted; a URL's authority and a slash inside a word such as
+    # `1/2` or `and/or` are none), read without any disk lookup.
+    from core.agent_runtime.write_root_honesty import _clean_path, _rooted_candidates
+
+    if any(len(_clean_path(raw)) > 1 for _start, raw in _rooted_candidates(message, typed_shares=True, look_up=False)):
+        return False
     if not message or len(message) > 400:
         return False
     # Runtime facts have their own deterministic owner in the front door, which runs
@@ -236,6 +245,34 @@ def single_plain_know_question(
 
     if runtime_lane_question(message):
         return False
+    # Windows (consistency row 1): "what is my test animal?" in a new chat is the memory lane's
+    # question, and that lane runs in the front door, after this preflight. Left eligible, the
+    # model's verdict decided the reply: "ambiguous" asked "Which specific test animal ...?",
+    # "not ambiguous" let the memory lane say it has nothing remembered, and a timed-out probe
+    # asked back that the check did not complete. The same ask got different replies from run to
+    # run. A personal attribute names no outside entity, so the probe never adjudicates that
+    # shape: the memory lane answers it, or the model answers it from what the chat holds.
+    from core import windows_write_gate
+
+    if windows_write_gate.active():
+        from core.persistent_memory import _memory_lane_owns_attribute_question
+
+        if _memory_lane_owns_attribute_question(message):
+            return False
+        # Steve R20: "which project am I in?" is the workspace-identity answer's question ("This chat is
+        # in General, not in a project."), which also runs in the front door. Left eligible, the probe
+        # asked "Which specific project are you referring to?". The chat's own place names no outside
+        # entity either.
+        from core.agent_runtime.fast_paths_utility import is_workspace_identity_question
+
+        if is_workspace_identity_question(message):
+            return False
+        # Steve R21: the first "are you online?" after a cold start was held by this probe, which timed
+        # out while the model loaded. The front door's online-status answer reads the runtime's state.
+        from core.agent_runtime.fast_command_surface import is_online_status_question
+
+        if is_online_status_question(message):
+            return False
     try:
         from core.agent_runtime.answer_coverage import demand_units
 

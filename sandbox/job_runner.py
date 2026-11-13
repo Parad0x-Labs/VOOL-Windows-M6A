@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import contextvars
 import json
 import os
+import re
 import shutil
 import signal
 import stat
@@ -14,6 +16,7 @@ import threading
 import time
 from pathlib import Path
 
+from core import posix_tools
 from sandbox.container_adapter import ExecutionResult
 from sandbox.network_guard import command_uses_network
 from sandbox.resource_limits import (
@@ -90,6 +93,71 @@ class NestedGitMetadataError(ValueError):
 _WINDOWS_PYTHON_NAMES = frozenset({"python", "python3", "py"})
 _WINDOWS_PYTEST_NAMES = frozenset({"pytest", "py.test"})
 
+#: The only modules a phase-1 Python job may run with `-m`: pytest, and the two stdlib runners
+#: VOOL's own builder uses to verify generated apps (`-m unittest`, `-m compileall -q`; see
+#: core/agent_runtime/builder/app_builder.py and builder/controller.py). Neither installs anything.
+#: Every other module is refused: pip, ensurepip, venv and ruff are tools the 0.7.1 Windows limits
+#: say VOOL refuses. Names are matched exactly, as CPython's import does.
+_WINDOWS_PYTHON_MODULES = frozenset({"pytest", "unittest", "compileall"})
+
+#: CPython flags that take no argument and neither run a module nor read code from stdin. They
+#: may come before the script, `-c` or an allowed `-m`, alone or combined (`-IB`). Every other flag
+#: is refused: `-i` (a REPL on stdin), `-W` (a warning category is imported by name), `-X`
+#: (implementation options, some of which import a module), `-h`/`-V` and every long option.
+_WINDOWS_PYTHON_PLAIN_FLAGS = frozenset("bBdEIOPqRsSuvx")
+
+#: CPython flags that take an argument, either the rest of the cluster (`-mpip`) or the next
+#: argv item. Only `-c` and an allowed `-m` are accepted; knowing the others keeps the parser in step
+#: with CPython so that `-W x -m pip` is read as CPython reads it.
+_CPYTHON_FLAGS_WITH_ARGUMENT = frozenset("cmWX")
+
+
+def _windows_python_args_refusal(args: list[str]) -> str | None:
+    """Why phase 1 refuses this Python command line, or None when it runs.
+
+    `args` is everything after the interpreter. It is read the way CPython reads its own
+    command line: flags come first, alone or combined in one item; a flag that takes an argument
+    takes the rest of its item or else the next item; `-c` and `-m` end the options; the first
+    item that does not start with `-` is the script and ends the options too. Accepted forms:
+    a `.py` script, `-c <code>` and `-m` with a module in `_WINDOWS_PYTHON_MODULES` (pytest,
+    unittest, compileall), each after plain flags only. Anything else,
+    including no program at all (`python` reads stdin), `-` (stdin), `--`, a long option or a
+    flag this parser does not know, is refused. Unknown means refused.
+    """
+    index = 0
+    while index < len(args):
+        item = args[index]
+        if item == "--":
+            return "'--' (an end-of-options marker)"
+        if item == "-":
+            return "'-' (a program read from standard input)"
+        if not item.startswith("-"):
+            name = item.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+            if item and name.lower().endswith(".py") and len(name) > 3:
+                return None
+            return f"'{item}' (only a .py script runs; not a folder, zip or wheel)"
+        if item.startswith("--"):
+            return f"the option '{item}'"
+        cluster = item[1:]
+        for position, flag in enumerate(cluster):
+            if flag in _CPYTHON_FLAGS_WITH_ARGUMENT:
+                value = cluster[position + 1:]
+                if not value:
+                    if index + 1 >= len(args):
+                        return f"'-{flag}' with nothing after it"
+                    value = args[index + 1]
+                if flag == "c":
+                    return None
+                if flag == "m":
+                    if value in _WINDOWS_PYTHON_MODULES:
+                        return None
+                    return f"'-m {value}'"
+                return f"the option '-{flag}'"
+            if flag not in _WINDOWS_PYTHON_PLAIN_FLAGS:
+                return f"the option '-{flag}'"
+        index += 1
+    return "a Python command with no script, -c code or allowed -m module"
+
 #: Policy and status files the Windows launcher was handed, keyed by the policy path in the argv,
 #: so that `run` can read the status back and delete the staging folder. Only the Windows branch
 #: of `_with_network_isolation` adds entries.
@@ -104,6 +172,10 @@ _WINDOWS_STAGED_LOCK = threading.Lock()
 #: since is a 125 there, never a silent pass, and that key is then forgotten so the next job grants
 #: again.
 _WINDOWS_GRANTED: set[str] = set()
+
+#: The working folder of the job `JobRunner.run` is wrapping right now, for the Windows policy: a
+#: pytest job there gets a stat-only right on the folder above it (see `_windows_stat_only_paths`).
+_JOB_CWD: contextvars.ContextVar[Path | None] = contextvars.ContextVar("vool_job_cwd", default=None)
 
 
 def _repository_layouts(roots: tuple[Path, ...]) -> tuple[set[str], bool]:
@@ -140,6 +212,68 @@ def _forget_staged_at_exit() -> None:
 atexit.register(_forget_staged_at_exit)
 
 
+def _windows_stat_only_paths(program: list[str], cwd: Path | None) -> tuple[Path, ...]:
+    """The folders a Windows job may stat only: the folder above a pytest job's folder, one level.
+
+    pytest 9.1.1 stats the parent of the top folder it collects on every run
+    (`Session._collect_path(root)` asks for `root.parent`'s conftests and `_get_directory` calls
+    `parent.is_file()`), and the confined job holds no right there, so every run in a marked
+    subfolder ended "PermissionError: [WinError 5] Access is denied: '<the folder above>'", exit 2.
+    The stat is not loosened further: no grandparent (a package chain above the folder still
+    fails, a known limit), and no other job (a script, -c code, unittest, compileall) gets one.
+    """
+    if cwd is None or program[1:3] != ["-m", "pytest"]:
+        return ()
+    parent = Path(cwd).parent
+    return () if parent == Path(cwd) else (parent,)
+
+
+#: What every confined Windows pytest job runs with, in `PYTEST_ADDOPTS` (the job's argv stays as it
+#: was). CPython 3.12.4 and later (gh-118486) make a folder asked for with mode 0o700 on Windows with a
+#: protected owner-only DACL (SYSTEM, Administrators, OWNER RIGHTS), and no ACE there names the job's
+#: capability. pytest's cache plugin makes its cache with `tempfile.mkdtemp(prefix="pytest-cache-files-",
+#: dir=<rootdir>)`, which asks for 0o700, so the job lost every right on the folder it had just made:
+#: the cache write failed, the folder stayed, and the next run's collection died listing it
+#: ("PermissionError: [WinError 5] ... proj\\pytest-cache-files-7i5mclpd", exit 2). The cache can never
+#: be written in the job, so the plugin is off; `--ignore-glob` (matched under the job's folder) keeps a
+#: leftover from an earlier run out of collection.
+_WINDOWS_PYTEST_ADDOPTS = ("-p", "no:cacheprovider", "--ignore-glob=pytest-cache-files-*")
+
+
+#: The variable that turns on the bundled Windows Python's mkdir shim (sandbox/windows_job_mkdir.py,
+#: shipped by build_bundle.ps1 into site-packages): inside a confined job, `os.mkdir(path, 0o700)`
+#: becomes a plain mkdir, so the folder inherits the write root's DACL instead of the owner-only one
+#: CPython gives 0o700 on Windows. Without it tmp_path, tmpdir, tmp_path_factory and
+#: tempfile.mkdtemp all made folders the job could not use. Only `_windows_job_environment` sets it.
+_WINDOWS_CONFINED_JOB_VAR = "VOOL_WINDOWS_CONFINED_JOB"
+
+
+def _windows_vool_interpreter(program: str) -> bool:
+    """Whether *program* is the interpreter running VOOL (or its base): the only program phase 1 runs."""
+    accepted = {os.path.normcase(str(Path(sys.executable).resolve()))}
+    base = getattr(sys, "_base_executable", "") or ""
+    if base:
+        accepted.add(os.path.normcase(str(Path(base).resolve())))
+    try:
+        return os.path.normcase(str(Path(program).resolve())) in accepted
+    except (OSError, ValueError):
+        return False
+
+
+def _windows_job_environment(program: list[str], env: dict[str, str]) -> dict[str, str]:
+    """*env* for the confined *program*. A Python job (VOOL's interpreter, the only program
+    `_windows_phase1_argv` lets through) gets `_WINDOWS_CONFINED_JOB_VAR=1`; a pytest job
+    (`<python> -m pytest`, the form phase 1 gives every pytest job) also gets
+    `_WINDOWS_PYTEST_ADDOPTS`. Anything else gets *env* as it is."""
+    if not program or not _windows_vool_interpreter(program[0]):
+        return env
+    env = {**env, _WINDOWS_CONFINED_JOB_VAR: "1"}
+    if program[1:3] != ["-m", "pytest"]:
+        return env
+    current = str(env.get("PYTEST_ADDOPTS") or "").strip()
+    return {**env, "PYTEST_ADDOPTS": " ".join([*_WINDOWS_PYTEST_ADDOPTS, current]).strip()}
+
+
 def _windows_path_text(path: Path | str) -> str:
     """A path as the Windows launcher's policy names it: absolute and resolved."""
     return str(Path(path).resolve())
@@ -155,6 +289,11 @@ def _windows_project_root() -> Path:
 # containers and CI runners that deny the namespace syscall it needs. Probed once per process --
 # it is a property of the host and the probe costs a subprocess.
 _BACKEND_USABLE: dict[str, bool] = {}
+
+
+def _windows_probe_key(launcher: Path | str) -> str:
+    """The `_BACKEND_USABLE` key the VoolConfine probe result is kept under."""
+    return f"voolconfine:{launcher}"
 
 
 def reset_isolation_backend_probe_cache() -> None:
@@ -233,6 +372,10 @@ def _trusted_sandbox_exec() -> str | None:
     """`_SANDBOX_EXEC` when it can be trusted to apply the profile, else None (and the job is
     refused). A symlink, a non-root owner, or a group/world-writable file or directory means
     someone other than the system can swap what runs, so it is not used."""
+    # On Windows lstat reports st_uid 0 for every file, so a sandbox-exec planted under C:\usr\bin
+    # would pass the owner check below: the POSIX path is refused before it is stat'ed.
+    if posix_tools.refused(_SANDBOX_EXEC):
+        return None
     path = Path(_SANDBOX_EXEC)
     try:
         binary = os.lstat(path)
@@ -696,7 +839,11 @@ class JobRunner:
                 "could not be checked for hard links. Refusing rather than reporting a "
                 "confinement that was not verified."
             )
-        argv = self._with_network_isolation(argv, allowed_roots)
+        cwd_token = _JOB_CWD.set(cwd_path)
+        try:
+            argv = self._with_network_isolation(argv, allowed_roots)
+        finally:
+            _JOB_CWD.reset(cwd_token)
         with _WINDOWS_STAGED_LOCK:
             staged = _WINDOWS_STAGED.pop(argv[2], None) if len(argv) > 3 and argv[1] == "--policy" else None
         if staged is None:
@@ -772,6 +919,8 @@ class JobRunner:
                     "so it was stopped before it ran anything."
                 ) from None
 
+        # argv is `[launcher, --policy, <policy>, --, *program]` (`confinement_prefix`).
+        program = list(argv[4:]) if len(argv) > 4 and argv[3] == "--" else []
         outcome: dict[str, str] = {}
         result = self._run_wrapped(
             argv,
@@ -779,7 +928,7 @@ class JobRunner:
             cancel_event,
             creationflags=windows_confinement.launcher_creationflags(),
             outcome=outcome,
-            env_filter=windows_confinement.launcher_environment,
+            env_filter=lambda env: _windows_job_environment(program, windows_confinement.launcher_environment(env)),
             after_spawn=adopt,
         )
         # The cancel and timeout outcomes are the runner's own: it killed the launcher, so the
@@ -1117,7 +1266,7 @@ class JobRunner:
         launcher = windows_confinement.launcher_path(project_root)
         if launcher is None:
             return None
-        probe_key = f"voolconfine:{launcher}"
+        probe_key = _windows_probe_key(launcher)
         usable = _BACKEND_USABLE.get(probe_key)
         if usable is None:
             usable = bool(windows_confinement.probe(project_root))
@@ -1125,7 +1274,11 @@ class JobRunner:
         if not usable:
             return None
         program = self._windows_phase1_argv(argv)
-        policy, stage = self._windows_policy(allowed_roots, deny_network=deny_network)
+        stat_only = _windows_stat_only_paths(program, _JOB_CWD.get())
+        if stat_only:
+            policy, stage = self._windows_policy(allowed_roots, deny_network=deny_network, stat_only=stat_only)
+        else:
+            policy, stage = self._windows_policy(allowed_roots, deny_network=deny_network)
         if policy is None or stage is None:
             return None
         policy_path = stage / "policy.json"
@@ -1152,6 +1305,15 @@ class JobRunner:
             granted = grant_key in _WINDOWS_GRANTED
         if not granted:
             if not windows_confinement.launcher_form(prefix[0], "grant", policy_path):
+                # A grant that failed partway can leave its ACEs on part of the roots. Revoke them
+                # once, best effort, while the policy file still exists (launcher_form logs a failed
+                # revoke's reason and never retries one). The revoke removes the write roots'
+                # capability ACEs, which another policy naming the same root shares, so every
+                # remembered grant is forgotten: the next job grants again instead of failing verify.
+                with contextlib.suppress(Exception):
+                    windows_confinement.launcher_form(prefix[0], "revoke", policy_path)
+                with _WINDOWS_STAGED_LOCK:
+                    _WINDOWS_GRANTED.clear()
                 shutil.rmtree(stage, ignore_errors=True)
                 raise KernelIsolationUnavailableError(
                     "Windows confinement could not grant this job's folders (the launcher's grant "
@@ -1171,6 +1333,10 @@ class JobRunner:
         On Windows a bare `python3` resolves to the Microsoft Store alias stub, and the
         launcher never searches PATH anyway. An absolute program is accepted only when it IS
         this interpreter or its base. Nothing else runs in phase 1.
+
+        A Python command line must also be a `.py` script, `-c <code>` or `-m pytest`, `-m unittest`
+        or `-m compileall` (`_windows_python_args_refusal`). Judging only the program name let `python -m pip`,
+        `-m ensurepip`, `-m venv` and `-m ruff` through.
         """
         interpreter = Path(sys.executable).resolve()
         accepted = {os.path.normcase(str(interpreter))}
@@ -1181,20 +1347,32 @@ class JobRunner:
         name = Path(program.replace("\\", "/")).name.lower()
         stem = name[:-4] if name.endswith(".exe") else name
         rest = [str(item) for item in argv[1:]]
+        python: list[str] | None = None
         if "/" not in program and "\\" not in program:  # a bare name, not a path (any case)
             if stem in _WINDOWS_PYTHON_NAMES:
-                return [str(interpreter), *rest]
-            if stem in _WINDOWS_PYTEST_NAMES:
+                python = [str(interpreter), *rest]
+            elif stem in _WINDOWS_PYTEST_NAMES:
                 return [str(interpreter), "-m", "pytest", *rest]
         elif Path(program).is_absolute() and os.path.normcase(str(Path(program).resolve())) in accepted:
-            return [str(Path(program).resolve()), *rest]
+            python = [str(Path(program).resolve()), *rest]
+        if python is not None:
+            refused = _windows_python_args_refusal(rest)
+            if refused is None:
+                return python
+            raise KernelIsolationUnavailableError(
+                f"Windows confinement runs Python and pytest jobs only for now: a Python job must be "
+                f"a .py script, -c code or -m pytest (or VOOL's own -m unittest and -m compileall), "
+                f"so {refused} is refused. VOOL 0.7.1 on "
+                "Windows refuses pip, ruff, venv and other Python modules. Run them under "
+                "WSL2/Linux instead. It was not run."
+            )
         raise KernelIsolationUnavailableError(
             f"Windows confinement runs Python and pytest jobs only for now; '{program}' is refused "
             "until its toolchain is proven inside the confinement (git, npm, node, cargo, cmd and "
             "PowerShell included). It was not run."
         )
 
-    def _windows_policy(self, allowed_roots: tuple[Path, ...], *, deny_network: bool):
+    def _windows_policy(self, allowed_roots: tuple[Path, ...], *, deny_network: bool, stat_only: tuple[Path, ...] = ()):
         """The launcher policy for this job and the staging folder that holds its files.
 
         The staging folder is a fresh `mkdtemp` that must sit outside every writable root, so
@@ -1204,6 +1382,12 @@ class JobRunner:
         - a write root inside VOOL's code without the Mac's exemption, where an explicit allow ACE
           would beat the inherited deny;
         - a read or write root that contains VOOL's state or a credential folder.
+
+        `stat_only` (a pytest job's folder's parent, from `_windows_stat_only_paths`) is named in
+        `stat_only_paths` only when no root of this job already reaches it, it is not a volume root
+        and it does not sit in VOOL's state or a credential folder; otherwise it is left out and the
+        job runs as before. Holding such a folder (a home folder) is fine: the ACE is on the folder
+        itself and reaches nothing inside it.
         """
         from sandbox import windows_confinement
 
@@ -1281,6 +1465,15 @@ class JobRunner:
                 # is granted to it.
                 deny_all_paths=tuple(
                     dict.fromkeys(_windows_path_text(root) for root in sensitive if Path(root).exists())
+                ),
+                stat_only_paths=tuple(
+                    dict.fromkeys(
+                        _windows_path_text(path)
+                        for path in stat_only
+                        if not any(within(path, root) for root in (*write_roots, *read_roots))
+                        and not any(within(path, secret) for secret in sensitive)
+                        and path != path.parent
+                    )
                 ),
                 deny_write_git=True,
                 network=not deny_network,
@@ -1391,3 +1584,117 @@ class JobRunner:
                 cmd += ["--remount-ro", str(root)]
         cmd += ["--", *list(argv)]
         return cmd
+
+
+#: The plain answer when phase 1 does not run a program at all, given before any approval is asked
+#: or any model is called (`windows_program_refusal`). `{program}` is the program as the user typed it.
+WINDOWS_PROGRAM_REFUSED_TEXT = (
+    "On Windows, VOOL 0.7.1 runs only Python and pytest in its sandbox; it doesn't run {program}. "
+    "Use WSL2/Linux for that. Nothing was run."
+)
+#: The plain answer when the program is a Python interpreter that is not the one running VOOL (a
+#: virtual environment's `Scripts\python.exe`, another install): phase 1 pins every Python job to
+#: this interpreter, so the refusal names it. `{interpreter}` is that interpreter's full path.
+WINDOWS_OTHER_PYTHON_REFUSED_TEXT = (
+    "On Windows, VOOL 0.7.1 runs Python only with its own interpreter, {interpreter} (ask for python "
+    "or py and VOOL uses it); it doesn't run {program}. Use WSL2/Linux for other interpreters and "
+    "virtual environments. Nothing was run."
+)
+#: A program file name that is a Python interpreter: python, python3, python3.12, pythonw, py, pyw
+#: (any case, `.exe` or not).
+_PYTHON_PROGRAM_NAME_RE = re.compile(r"(?:python[0-9.]*w?|pyw?)(?:\.exe)?", re.IGNORECASE)
+
+
+def _other_python_refusal(program: str) -> str:
+    """The refusal for a program spelled as a path to a Python interpreter phase 1 does not run;
+    "" when `program` is not such a path (a bare name is left to the plain sentence)."""
+    if "/" not in program and "\\" not in program:
+        return ""
+    name = program.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    if not _PYTHON_PROGRAM_NAME_RE.fullmatch(name):
+        return ""
+    return WINDOWS_OTHER_PYTHON_REFUSED_TEXT.format(
+        interpreter=str(Path(sys.executable).resolve()), program=program
+    )
+
+
+def windows_program_refusal(argv: list[str] | tuple[str, ...]) -> str | None:
+    """On Windows, why phase 1 would refuse to run `argv`; None when it would run it, and always off
+    Windows.
+
+    Asked BEFORE the permission decision and before a model is called, so a program that can never
+    run gets a plain refusal instead of an approval card. The decision is `JobRunner._windows_phase1_argv`
+    itself, the gate `_windows_confine_prefix` applies when the job runs, so there is one list of
+    what phase 1 runs. When the program is one phase 1 runs (Python or pytest) and only this command
+    line of it is refused, the gate's own sentence is returned. A program spelled as a share or a
+    device path is refused without being looked at: the gate would resolve it, which opens it, and it
+    is never the interpreter running VOOL. An empty argv is left to the job's own checks.
+    """
+    if not _is_windows_platform():
+        return None
+    items = [str(item) for item in argv]
+    if not items or not items[0].strip():
+        return None
+    program = items[0]
+    from core import windows_path_policy
+
+    if windows_path_policy.classify(program, network_only=True):
+        return WINDOWS_PROGRAM_REFUSED_TEXT.format(program=program)
+    try:
+        JobRunner._windows_phase1_argv(items)
+        return None
+    except KernelIsolationUnavailableError as exc:
+        refused = str(exc)
+    try:
+        JobRunner._windows_phase1_argv([program, "-c", "pass"])
+    except KernelIsolationUnavailableError:
+        return _other_python_refusal(program) or WINDOWS_PROGRAM_REFUSED_TEXT.format(program=program)
+    return refused
+
+
+#: The programs whose Windows verdict the capability report states (core/runtime_capabilities.py):
+#: the ones VOOL's own tools ask for and the README's Windows limits name. Only the names live
+#: here; each verdict comes from `JobRunner._windows_phase1_argv`, the gate a real job meets.
+WINDOWS_REPORTED_PROGRAMS = ("python", "pytest", "git", "npm", "node", "ruff", "pip")
+
+
+def windows_sandbox_report() -> dict | None:
+    """What the Windows sandbox runs, read from the gates a job meets, or None off Windows.
+
+    - `confined_programs`: the program names phase 1 accepts (`_WINDOWS_PYTHON_NAMES`,
+      `_WINDOWS_PYTEST_NAMES`); every other program is refused before anything launches.
+    - `programs`: each name in `WINDOWS_REPORTED_PROGRAMS` with the verdict
+      `_windows_phase1_argv` gives it ("confined" or "refused"). A Python name is asked as
+      `[name, "-c", "0"]`: phase 1 runs Python only with a .py script, -c or -m pytest, so a bare
+      interpreter is refused and would misreport Python as refused. Every other name is asked bare.
+    - `backend`: "launcher_missing" when no pinned VoolConfine launcher verifies, "proven" or
+      "probe_failed" from the probe the first job runs (cached per process), and "not_probed"
+      until a job has asked. This report never runs the probe: it starts a confined child, too
+      slow for a status read. Only "proven" means a confined job has run here. Any error while
+      looking reads as "launcher_missing" (fail closed)."""
+    if not _is_windows_platform():
+        return None
+    verdicts: dict[str, str] = {}
+    for name in WINDOWS_REPORTED_PROGRAMS:
+        try:
+            probe = [name, "-c", "0"] if name in _WINDOWS_PYTHON_NAMES else [name]
+            JobRunner._windows_phase1_argv(probe)
+        except KernelIsolationUnavailableError:
+            verdicts[name] = "refused"
+        else:
+            verdicts[name] = "confined"
+    backend = "launcher_missing"
+    try:
+        from sandbox import windows_confinement
+
+        launcher = windows_confinement.launcher_path(_windows_project_root())
+        if launcher is not None:
+            usable = _BACKEND_USABLE.get(_windows_probe_key(launcher))
+            backend = "not_probed" if usable is None else "proven" if usable else "probe_failed"
+    except Exception:
+        backend = "launcher_missing"
+    return {
+        "confined_programs": sorted(_WINDOWS_PYTHON_NAMES | _WINDOWS_PYTEST_NAMES),
+        "programs": verdicts,
+        "backend": backend,
+    }

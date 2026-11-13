@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from core.execution.git_tools import git_diff_workspace, git_status_workspace, git_summary_workspace
+from tests import _windows_refusals as windows_refusals
 
 pytestmark = pytest.mark.skipif(subprocess.run(["git", "--version"], capture_output=True).returncode != 0,
                                 reason="git is not installed")
@@ -46,9 +47,12 @@ def test_fsmonitor_in_repository_config_is_refused_and_never_runs(tmp_path: Path
     repo, marker = _repo(tmp_path)
     _git(repo, "config", "core.fsmonitor", _planted_program(tmp_path, marker))
 
-    status = git_status_workspace({}, workspace_root=repo)
-    summary = git_summary_workspace({}, workspace_root=repo)
+    with windows_refusals.watch_git(tmp_path) as seen:
+        status = git_status_workspace({}, workspace_root=repo)
+        summary = git_summary_workspace({}, workspace_root=repo)
 
+    if seen.refused_tool(status, summary):
+        return
     assert status["ok"] is False and status["status"] == "refused_repository_config"
     assert "core.fsmonitor" in status["response_text"]
     assert summary["status"] == "refused_repository_config"
@@ -61,9 +65,12 @@ def test_a_clean_filter_in_repository_config_is_refused_and_never_runs(tmp_path:
     (repo / ".gitattributes").write_text("*.txt filter=planted\n", encoding="utf-8")
     (repo / "notes.txt").write_text("two\n", encoding="utf-8")
 
-    status = git_status_workspace({}, workspace_root=repo)
-    diff = git_diff_workspace({}, workspace_root=repo)
+    with windows_refusals.watch_git(tmp_path) as seen:
+        status = git_status_workspace({}, workspace_root=repo)
+        diff = git_diff_workspace({}, workspace_root=repo)
 
+    if seen.refused_tool(status, diff):
+        return
     assert status["status"] == "refused_repository_config"
     assert diff["status"] == "refused_repository_config"
     assert not marker.exists(), "git ran the repository's clean filter"
@@ -75,8 +82,11 @@ def test_a_textconv_driver_in_repository_config_is_refused_and_never_runs(tmp_pa
     (repo / ".gitattributes").write_text("*.txt diff=planted\n", encoding="utf-8")
     (repo / "notes.txt").write_text("two\n", encoding="utf-8")
 
-    diff = git_diff_workspace({}, workspace_root=repo)
+    with windows_refusals.watch_git(tmp_path) as seen:
+        diff = git_diff_workspace({}, workspace_root=repo)
 
+    if seen.refused_tool(diff):
+        return
     assert diff["status"] == "refused_repository_config"
     assert not marker.exists(), "git ran the repository's textconv driver"
 
@@ -89,8 +99,12 @@ def test_a_planted_hook_never_runs_when_status_reads_the_index(tmp_path: Path) -
     (repo / "notes.txt").write_text("two\n", encoding="utf-8")
     os.utime(repo / "notes.txt", None)
 
-    status = git_status_workspace({}, workspace_root=repo)
+    with windows_refusals.watch_git(tmp_path) as seen:
+        status = git_status_workspace({}, workspace_root=repo)
 
+    if windows_refusals.refused_tool_exactly(seen, status):
+        assert not marker.exists(), "git ran a hook planted in the repository"
+        return
     assert status["ok"] is True and "notes.txt" in status["response_text"]
     assert not marker.exists(), "git ran a hook planted in the repository"
 
@@ -104,8 +118,11 @@ def test_every_program_running_key_kind_in_repository_config_is_refused(tmp_path
     repo, marker = _repo(tmp_path)
     _git(repo, "config", key, _planted_program(tmp_path, marker))
 
-    status = git_status_workspace({}, workspace_root=repo)
+    with windows_refusals.watch_git(tmp_path) as seen:
+        status = git_status_workspace({}, workspace_root=repo)
 
+    if seen.refused_tool(status):
+        return
     assert status["status"] == "refused_repository_config", key
     assert not marker.exists()
 
@@ -118,9 +135,13 @@ def test_inherited_git_config_environment_cannot_inject_a_program(tmp_path: Path
     monkeypatch.setenv("GIT_CONFIG_KEY_0", "filter.injected.clean")
     monkeypatch.setenv("GIT_CONFIG_VALUE_0", _planted_program(tmp_path, marker))
 
-    status = git_status_workspace({}, workspace_root=repo)
-    diff = git_diff_workspace({}, workspace_root=repo)
+    with windows_refusals.watch_git(tmp_path) as seen:
+        status = git_status_workspace({}, workspace_root=repo)
+        diff = git_diff_workspace({}, workspace_root=repo)
 
+    if windows_refusals.refused_tool_exactly(seen, status, diff):
+        assert not marker.exists(), "an inherited GIT_CONFIG_* variable made git run a program"
+        return
     assert status["ok"] is True and diff["ok"] is True
     assert not marker.exists(), "an inherited GIT_CONFIG_* variable made git run a program"
 
@@ -141,8 +162,11 @@ def test_a_plain_repository_still_reports_status_and_diff(tmp_path: Path) -> Non
     repo, marker = _repo(tmp_path)
     (repo / "notes.txt").write_text("two\n", encoding="utf-8")
 
-    status = git_status_workspace({}, workspace_root=repo)
-    diff = git_diff_workspace({}, workspace_root=repo)
+    with windows_refusals.watch_git(tmp_path) as seen:
+        status = git_status_workspace({}, workspace_root=repo)
+        diff = git_diff_workspace({}, workspace_root=repo)
 
+    if windows_refusals.refused_tool_exactly(seen, status, diff):
+        return
     assert status["ok"] is True and status["status"] == "executed" and "notes.txt" in status["response_text"]
     assert diff["ok"] is True and "+two" in diff["response_text"]

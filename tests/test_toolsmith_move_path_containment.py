@@ -21,18 +21,58 @@ resolution or the pre-existing denylist.
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 import core.os_consent_gate as consent_gate
+from core import windows_write_gate
 from core.machine_file_ops import move_path
 from core.runtime_execution_tools import execute_runtime_tool
+from tests import _windows_disposable_tmp
+from tests._move_allowed_on_its_card import move_allowed_on_its_card
 
 
 def _allow(reason: str) -> bool:
     return True
+
+
+#: The write gate's answer for a place outside every marked folder (core/windows_write_gate.py).
+_OUTSIDE_THE_MARKED_FOLDERS = (
+    "On Windows, VOOL changes files only inside folders explicitly marked as disposable development "
+    f"workspaces ({windows_write_gate.ENV_VAR}) until its Windows filesystem protection is complete. "
+    "This target is outside the marked folders; nothing was changed."
+)
+
+
+def _rig_where_windows_marks_only_the_workspace(test: unittest.TestCase) -> bool:
+    """On Windows, rebuild `test`'s rig in a folder nothing marks, with only its workspace marked.
+
+    The rig's tempfile folders live in this test's tempfile root, which conftest marks as a disposable
+    workspace on Windows, and the Windows machine mover takes the marked folders as roots too (by
+    design, 489bbb52). "outside" was then inside a marked folder, so a move there was allowed. Here
+    the rig is made next to that root, and only the workspace is marked, so "outside" is outside
+    every marked folder. Returns True on Windows (the row expects the gate's refusal), else False."""
+    if not _windows_disposable_tmp.running_on_windows():
+        return False
+    root = Path(tempfile.mkdtemp(prefix="move-rig-", dir=Path(tempfile.gettempdir()).parent))
+    test.addCleanup(shutil.rmtree, root, True)
+    test.root, test.workspace, test.outside = root, root / "workspace", root / "outside"
+    test.workspace.mkdir()
+    test.outside.mkdir()
+    marked = mock.patch.dict(os.environ, {windows_write_gate.ENV_VAR: str(test.workspace)})
+    marked.start()
+    test.addCleanup(marked.stop)
+    test.source_context = {**test.source_context, "workspace": str(test.workspace)}
+    return True
+
+
+def _assert_refused_at_the_gate(test: unittest.TestCase, result) -> None:
+    """Where only the workspace is marked on Windows, the gate answers first, before any move."""
+    test.assertEqual(result.status, windows_write_gate.STATUS)
+    test.assertEqual(result.response_text, _OUTSIDE_THE_MARKED_FOLDERS)
 
 
 class TraversalMatrixTests(unittest.TestCase):
@@ -66,13 +106,17 @@ class TraversalMatrixTests(unittest.TestCase):
         return secret
 
     def test_dotdot_traversal_escape_is_blocked(self) -> None:
+        windows = _rig_where_windows_marks_only_the_workspace(self)
         secret = self._secret()
         dest = f"{self.workspace}/../outside/exfil.txt"
         result = execute_runtime_tool(
             "machine.move_path", {"source": str(secret), "destination": dest}, source_context=self.source_context
         )
         self.assertFalse(result.ok)
-        self.assertEqual(result.status, "blocked_outside_scope")
+        if windows:
+            _assert_refused_at_the_gate(self, result)
+        else:
+            self.assertEqual(result.status, "blocked_outside_scope")
         self.assertTrue(secret.exists())
         self.assertFalse((self.outside / "exfil.txt").exists())
 
@@ -100,6 +144,7 @@ class TraversalMatrixTests(unittest.TestCase):
     def test_symlinked_ancestor_directory_escape_is_blocked(self) -> None:
         """An intermediate directory in the destination path is a symlink to outside -- the
         escape is in an ANCESTOR, not the leaf name."""
+        windows = _rig_where_windows_marks_only_the_workspace(self)
         secret = self._secret()
         outside_subdir = self.outside / "attacker_dir"
         outside_subdir.mkdir()
@@ -110,24 +155,32 @@ class TraversalMatrixTests(unittest.TestCase):
             "machine.move_path", {"source": str(secret), "destination": str(dest)}, source_context=self.source_context
         )
         self.assertFalse(result.ok)
-        self.assertEqual(result.status, "blocked_outside_scope")
+        if windows:
+            _assert_refused_at_the_gate(self, result)
+        else:
+            self.assertEqual(result.status, "blocked_outside_scope")
         self.assertTrue(secret.exists())
         self.assertFalse((outside_subdir / "exfil.txt").exists())
 
     def test_absolute_outside_path_is_blocked(self) -> None:
+        windows = _rig_where_windows_marks_only_the_workspace(self)
         secret = self._secret()
         dest = self.outside / "exfil.txt"
         result = execute_runtime_tool(
             "machine.move_path", {"source": str(secret), "destination": str(dest)}, source_context=self.source_context
         )
         self.assertFalse(result.ok)
-        self.assertEqual(result.status, "blocked_outside_scope")
+        if windows:
+            _assert_refused_at_the_gate(self, result)
+        else:
+            self.assertEqual(result.status, "blocked_outside_scope")
         self.assertTrue(secret.exists())
         self.assertFalse(dest.exists())
 
     def test_relative_escape_is_blocked(self) -> None:
         """A bare relative destination resolves against the process CWD, not the workspace --
         it must not land somewhere the workspace/safe-root containment cannot see."""
+        windows = _rig_where_windows_marks_only_the_workspace(self)
         secret = self._secret()
         original_cwd = os.getcwd()
         os.chdir(str(self.root))
@@ -140,7 +193,10 @@ class TraversalMatrixTests(unittest.TestCase):
         finally:
             os.chdir(original_cwd)
         self.assertFalse(result.ok)
-        self.assertEqual(result.status, "blocked_outside_scope")
+        if windows:
+            _assert_refused_at_the_gate(self, result)
+        else:
+            self.assertEqual(result.status, "blocked_outside_scope")
         self.assertTrue(secret.exists())
         self.assertFalse((self.outside / "exfil.txt").exists())
 
@@ -148,6 +204,7 @@ class TraversalMatrixTests(unittest.TestCase):
         """The destination's own parent directory does not exist yet -- containment must still
         catch the escape by resolving the ancestor chain, not defer to the (also correct, but
         different) 'destination folder does not exist' check."""
+        windows = _rig_where_windows_marks_only_the_workspace(self)
         secret = self._secret()
         dest = self.outside / "brand_new_dir" / "exfil.txt"
         self.assertFalse(dest.parent.exists())
@@ -155,15 +212,22 @@ class TraversalMatrixTests(unittest.TestCase):
             "machine.move_path", {"source": str(secret), "destination": str(dest)}, source_context=self.source_context
         )
         self.assertFalse(result.ok)
-        self.assertEqual(result.status, "blocked_outside_scope")
+        if windows:
+            _assert_refused_at_the_gate(self, result)
+            self.assertFalse(dest.parent.exists())
+        else:
+            self.assertEqual(result.status, "blocked_outside_scope")
         self.assertTrue(secret.exists())
 
     def test_in_workspace_move_still_succeeds(self) -> None:
         secret = self._secret()
         dest = self.workspace / "subdir" / "moved.txt"
         dest.parent.mkdir()
-        result = execute_runtime_tool(
-            "machine.move_path", {"source": str(secret), "destination": str(dest)}, source_context=self.source_context
+        # A move that is meant to land is the one the owner allowed on its card (on Windows that Allow is
+        # its consent and a bare dispatch is refused, captest R4-1b); the boundary dispatches it through
+        # the real `execute_runtime_tool`.
+        result = move_allowed_on_its_card(
+            {"source": str(secret), "destination": str(dest)}, source_context=self.source_context
         )
         self.assertTrue(result.ok, result.response_text)
         self.assertEqual(result.status, "moved")
@@ -178,10 +242,9 @@ class TraversalMatrixTests(unittest.TestCase):
             desktop = self.root / "Desktop"
             desktop.mkdir()
             dest = desktop / "moved.txt"
-            result = execute_runtime_tool(
-                "machine.move_path",
-                {"source": str(secret), "destination": str(dest)},
-                source_context=self.source_context,
+            # Allowed on its card, as a move meant to land is (see test_in_workspace_move_still_succeeds).
+            result = move_allowed_on_its_card(
+                {"source": str(secret), "destination": str(dest)}, source_context=self.source_context
             )
         self.assertTrue(result.ok, result.response_text)
         self.assertTrue(dest.exists())
@@ -280,10 +343,11 @@ class MutationSabotageTests(unittest.TestCase):
                     ),
                 ):
                     dest = outside / "exfil.txt"
-                    result = execute_runtime_tool(
-                        "machine.move_path",
-                        {"source": str(secret), "destination": str(dest)},
-                        source_context=source_context,
+                    # Allowed on its card, so the move reaches the containment the sabotage removed: on
+                    # Windows a move without that Allow is refused before containment is checked
+                    # (captest R4-1b), which would hide the sabotage.
+                    result = move_allowed_on_its_card(
+                        {"source": str(secret), "destination": str(dest)}, source_context=source_context
                     )
             finally:
                 consent_gate.set_consent_override_for_tests(None)
@@ -324,6 +388,7 @@ class SourceContainmentTests(unittest.TestCase):
         self.addCleanup(consent_gate.set_consent_override_for_tests, None)
 
     def test_an_outside_source_cannot_be_pulled_into_the_workspace(self) -> None:
+        windows = _rig_where_windows_marks_only_the_workspace(self)
         outside_file = self.outside / "not_yours.txt"
         outside_file.write_text("belongs outside", encoding="utf-8")
         dest = self.workspace / "pulled_in.txt"
@@ -333,7 +398,10 @@ class SourceContainmentTests(unittest.TestCase):
             source_context=self.source_context,
         )
         self.assertFalse(result.ok)
-        self.assertEqual(result.status, "blocked_outside_scope")
+        if windows:
+            _assert_refused_at_the_gate(self, result)
+        else:
+            self.assertEqual(result.status, "blocked_outside_scope")
         self.assertTrue(
             outside_file.exists(), "the outside file's original location must survive untouched"
         )
@@ -378,10 +446,9 @@ class SourceContainmentMutationSabotageTests(unittest.TestCase):
                         else _dest_only_validation(resolved, allowed_roots)
                     ),
                 ):
-                    result = execute_runtime_tool(
-                        "machine.move_path",
-                        {"source": str(outside_file), "destination": str(dest)},
-                        source_context=source_context,
+                    # Allowed on its card, as in the destination sabotage above: only containment can refuse it.
+                    result = move_allowed_on_its_card(
+                        {"source": str(outside_file), "destination": str(dest)}, source_context=source_context
                     )
             finally:
                 consent_gate.set_consent_override_for_tests(None)

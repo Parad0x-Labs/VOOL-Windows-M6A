@@ -36,6 +36,7 @@ from contextvars import ContextVar
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+from core import owner_only
 from core.runtime_paths import data_path
 
 _STORE_LABEL = "vool-credential-store-v1"
@@ -203,6 +204,7 @@ def _load_raw(*, strict: bool | None = None) -> dict[str, dict[str, str]]:
     path = _store_path()
     if not path.exists():
         return {}
+    owner_only.repair_private_file(path)  # a vault written before writes were sealed
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
@@ -220,6 +222,10 @@ def _load_raw(*, strict: bool | None = None) -> dict[str, dict[str, str]]:
 
 def _save_raw(raw: dict[str, dict[str, str]]) -> None:
     path = _store_path()
+    if owner_only.seals_secrets():
+        # Windows: a plain write inherits the folder's ACL. Sealed, or nothing is written.
+        owner_only.write_private_file(path, json.dumps(raw, sort_keys=True))
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(raw, sort_keys=True), encoding="utf-8")
     _chmod600(path)
@@ -305,6 +311,7 @@ def _meta_load() -> dict[str, dict[str, str]]:
     path = _meta_path()
     if not path.exists():
         return {}
+    owner_only.repair_private_file(path)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else {}
@@ -314,6 +321,9 @@ def _meta_load() -> dict[str, dict[str, str]]:
 
 def _meta_save(meta: dict[str, dict[str, str]]) -> None:
     path = _meta_path()
+    if owner_only.seals_secrets():
+        owner_only.write_private_file(path, json.dumps(meta, sort_keys=True))
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(meta, sort_keys=True), encoding="utf-8")
     _chmod600(path)

@@ -403,6 +403,13 @@ def should_attempt_tool_intent(
     if bool(source_context.get("live_info_partial_unresolved")):
         return True
 
+    # Windows: a whole-message Python or pytest command line ("python -m compileall .", "run: python -c
+    # ...") is the run lane's, read by the same reader the planner plans it from
+    # (`_windows_python_command`). Claims sweep: these turns returned False here, so the planner was
+    # never asked and the model answered with output it made up. Off Windows this is always "".
+    if _windows_python_command(text):
+        return True
+
     # Recording a fact for this chat is ordinary conversation. Do not expose it to
     # the model's tool schema merely because the optional catalog is enabled.
     if is_conversational_memory_declaration(text) or is_conversational_memory_recall(text):
@@ -1080,10 +1087,15 @@ def _workspace_folder_as_typed(typed: str, workspace_root: str) -> str | None:
 
 def _clean_workspace_directory_path(candidate: str, *, workspace_root: str = "") -> str:
     raw = str(candidate or "").strip().strip("`\"'")
-    typed_kind = windows_path_policy.refused_form(raw)
+    typed_kind = windows_path_policy.refused_form(raw) or windows_path_policy.refused_doubled_drive(raw)
     if typed_kind in windows_path_policy.NETWORK_KINDS:
         # On Windows a share or a device path names no workspace folder, and is not resolved to find
         # out: resolving `\\host\share` is already the SMB connection.
+        return ""
+    from core.agent_runtime.write_root_honesty import on_a_drive_not_local
+
+    if on_a_drive_not_local(raw):
+        # Nor a folder on a mapped network drive (`Z:\proj`): a share under a letter (M4 SA row).
         return ""
     clean = ""
     # A root- or drive-relative folder (`/notes`, `C:notes`) is not resolved either: the lexical clean
@@ -2442,19 +2454,46 @@ def _planned_delegate_lookup_after_read(
     )
 
 
+#: The quote pairs a replacement's two values may be written in: a code span, or plain or typographic
+#: single or double quotes. Each value opens and closes with the SAME pair, so a value never spans
+#: two different quote marks. Measured on the Windows 0.7.1-beta: "replace 'hi' with 'hello' in
+#: hello.txt" matched neither recognizer here (the code-span one needs backticks, the plain one
+#: excludes quote marks), so no replacement was planned and the turn went to the model, which only
+#: asked to confirm; the same request in backticks planned workspace.replace_in_file and landed.
+_REPLACE_QUOTE_PAIRS: tuple[tuple[str, str], ...] = (("`", "`"), ("'", "'"), ('"', '"'), ("\u2018", "\u2019"), ("\u201c", "\u201d"))
+
+
+def _quoted_value_pattern(name: str) -> str:
+    return "(?:" + "|".join(
+        f"{re.escape(open_)}(?P<{name}{index}>[^{re.escape(open_ + close)}]+){re.escape(close)}"
+        for index, (open_, close) in enumerate(_REPLACE_QUOTE_PAIRS)
+    ) + ")"
+
+
+_QUOTED_REPLACE_RE = re.compile(
+    r"replace\s+" + _quoted_value_pattern("old") + r"\s+with\s+" + _quoted_value_pattern("new")
+    + r"(?:\s+in\s+(?P<path>[A-Za-z0-9_./-]+\.[A-Za-z0-9_+-]+))?",
+    re.IGNORECASE,
+)
+
+
+def _quoted_group(match: re.Match[str], name: str) -> str:
+    for index in range(len(_REPLACE_QUOTE_PAIRS)):
+        value = match.group(f"{name}{index}")
+        if value is not None:
+            return value
+    return ""
+
+
 def _explicit_replace_request(user_text: str) -> dict[str, str] | None:
     text = str(user_text or "").strip()
     if not text:
         return None
-    fenced = re.search(
-        r"replace\s+`(?P<old>[^`]+)`\s+with\s+`(?P<new>[^`]+)`(?:\s+in\s+(?P<path>[A-Za-z0-9_./-]+\.[A-Za-z0-9_+-]+))?",
-        text,
-        re.IGNORECASE,
-    )
+    fenced = _QUOTED_REPLACE_RE.search(text)
     if fenced:
         return {
-            "old_text": str(fenced.group("old") or "").strip(),
-            "new_text": str(fenced.group("new") or "").strip(),
+            "old_text": _quoted_group(fenced, "old").strip(),
+            "new_text": _quoted_group(fenced, "new").strip(),
             "path": _normalize_inline_path(str(fenced.group("path") or "").strip()),
         }
     plain = re.search(
@@ -2502,6 +2541,104 @@ def _explicit_command_request(user_text: str) -> str:
     if common:
         return _normalize_inline_command(str(common.group("command") or "").strip())
     return ""
+
+
+#: Before the folder of "run <command> in <folder>": " in ", then an optional opening quote.
+_RUN_IN_FOLDER_LEAD_RE = re.compile(r"\s+in\s+[\"'`]?\Z", re.IGNORECASE)
+#: After it: an optional closing quote and the sentence's end.
+_RUN_IN_FOLDER_TAIL_RE = re.compile(r"[\"'`]?[\s.!?]*")
+
+
+def _windows_command_in_folder(user_text: str) -> tuple[str, str]:
+    """On Windows, ``(command, folder)`` for a run request that ends "in <full path>", else ``("", "")``.
+
+    Captest M4 on hardware (0.7.1): "run pytest in C:\\Users\\Satoshi\\VOOL HW Test\\proj" was planned as
+    `pytest in C:` with no folder, and "run python -m unittest in \"<that path>\"" as
+    `python -m unittest in`: `_explicit_command_request` reads the command a word of
+    `[A-Za-z0-9_./:-]` at a time, so the folder became the command's arguments, cut at the first `\\`
+    or quote, and the job ran in the chat's folder. The folder is read here the way "run calc.py in
+    <folder>" reads it (`write_root_honesty`'s path reader: quoted, or through folders with spaces),
+    and the command is what comes before " in ". The folder becomes the call's `cwd`, so the card
+    names it and every gate (containment, approval, the launcher) still decides it. A share, a device
+    path or a folder on a drive Windows does not call local is never taken. Off Windows nothing is
+    read here and the request is planned as before.
+    """
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return "", ""
+    text = str(user_text or "").strip()
+    if not text or "\n" in text:
+        return "", ""
+    from core.agent_runtime import write_root_honesty as paths
+    from core.windows_marked_code_folder import _on_a_local_drive
+
+    for start, candidate in paths._destination_candidates(text):
+        # A share, a device path or a mapped network drive is never taken: the folder is looked up
+        # downstream, and looking one up is already the network connection.
+        if paths.typed_path_kind(text, start, candidate) or not _on_a_local_drive(candidate):
+            continue
+        after = text[start + len(candidate):]
+        # "in <folder> run: <command>" (claims sweep): the folder first, then the run request.
+        leading = _LEADING_FOLDER_LEAD_RE.fullmatch(text[:start])
+        follows = _LEADING_FOLDER_TAIL_RE.match(after) if leading is not None else None
+        if follows is not None:
+            command = _windows_python_command(after[follows.end():])
+            if command:
+                return command, candidate
+            continue
+        lead = _RUN_IN_FOLDER_LEAD_RE.search(text[:start])
+        if lead is None or not _RUN_IN_FOLDER_TAIL_RE.fullmatch(after):
+            continue
+        command = _windows_python_command(text[: lead.start()]) or _explicit_command_request(text[: lead.start()])
+        if command:
+            return command, candidate
+    return "", ""
+
+
+#: Before the folder of "in <folder> run: <command>": the message's start, " in ", an optional quote.
+_LEADING_FOLDER_LEAD_RE = re.compile(
+    r"\s*(?:(?:please|pls|can\s+you|could\s+you|would\s+you|vool)[\s,]+)*in\s+[\"'`]?", re.IGNORECASE
+)
+#: After it: an optional closing quote, an optional comma or colon, then the run request itself.
+_LEADING_FOLDER_TAIL_RE = re.compile(r"[\"'`]?\s*[,:]?\s+(?=(?:run|execute|exec)\b)", re.IGNORECASE)
+#: The programs `_windows_python_command` reads whole: the ones the Windows sandbox runs.
+_WINDOWS_PYTHON_PROGRAMS = frozenset({"python", "python3", "py", "pytest", "py.test"})
+
+
+def _windows_python_command(user_text: str) -> str:
+    """On Windows, the whole Python or pytest command line a one-line run request names, else ``""``.
+
+    Claims sweep (Windows, marked folder): `_explicit_command_request` reads a command a word of
+    `[A-Za-z0-9_./:-]` at a time and only after "run ", so `run python -c "print(2+2)"` was planned as
+    `python -c` (refused as "'-c' with nothing after it"), and a bare `python -m compileall .` or
+    "run: python -c ..." planned nothing and went to the model, which made up the output. The command
+    is read here the way the front door's run-request reader reads it
+    (`core.agent_runtime.windows_program_request.requested_command`: "run[:] <command>", or a message
+    that is itself a `python -<flag> ...` command line), and only for the programs the Windows sandbox
+    runs. Nothing is allowed here: the job runner's phase-1 argv allowlist
+    (`sandbox.job_runner._windows_python_args_refusal`), the approval and the folder gates still decide
+    the call. Off Windows this is always ``""``."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return ""
+    from core.agent_runtime.windows_program_request import requested_command
+
+    command = requested_command(user_text)
+    program = command.split()[0].strip("\"'`") if command.split() else ""
+    name = program.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    stem = name[:-4] if name.endswith(".exe") else name
+    if "/" in program or "\\" in program or stem not in _WINDOWS_PYTHON_PROGRAMS:
+        return ""
+    return command
+
+
+def _windows_names_a_full_path(user_text: str) -> bool:
+    """Whether ``user_text`` names any full path (read without looking anything up)."""
+    from core.agent_runtime import write_root_honesty as paths
+
+    return any(True for _ in paths._destination_candidates(str(user_text or ""), look_up=False))
 
 
 def _normalize_inline_command(command: str) -> str:
@@ -2623,17 +2760,21 @@ def _regression_step_from_request(
     return {"intent": "workspace.run_tests", "arguments": {}}
 
 
-def _planned_command_payload(*, user_text: str, command: str) -> tuple[str, dict[str, Any]] | None:
+def _planned_command_payload(*, user_text: str, command: str, cwd: str = "") -> tuple[str, dict[str, Any]] | None:
+    """The call that runs ``command``; with ``cwd`` (only ever given on Windows, from
+    `_windows_command_in_folder`) the call runs it in that folder."""
     validation_step = _validation_step_from_request(user_text=user_text, explicit_command=command)
     if validation_step is not None:
+        if cwd:
+            validation_step["arguments"]["cwd"] = cwd
         return ("planned_validation_run", validation_step)
     normalized_command = _normalize_inline_command(command)
     if not normalized_command:
         return None
-    return (
-        "planned_command_run",
-        {"intent": "sandbox.run_command", "arguments": {"command": normalized_command}},
-    )
+    arguments: dict[str, Any] = {"command": normalized_command}
+    if cwd:
+        arguments["cwd"] = cwd
+    return ("planned_command_run", {"intent": "sandbox.run_command", "arguments": arguments})
 
 
 def _planned_orchestrated_operator_payload(
@@ -2910,7 +3051,23 @@ def plan_tool_workflow(
     steps = [dict(step) for step in list(executed_steps or []) if isinstance(step, dict)]
     replacement = _explicit_replace_request(raw_text)
     patch_text = _explicit_unified_diff_request(raw_text)
-    explicit_command = _explicit_command_request(raw_text)
+    # The command a job runs is read from what the user typed (`verbatim_request_text`), like a write's
+    # content: input normalization glues a lone "." to the word before it, so
+    # "run python -m compileall -q ." was planned, shown on the card and approved as `-q.`.
+    typed_request = verbatim_request_text(source_context, raw_text) or raw_text
+    explicit_command = _explicit_command_request(typed_request)
+    # Windows: "run <command> in <folder>" runs the command in that folder (`_windows_command_in_folder`).
+    # Off Windows `explicit_cwd` is always "" and every plan below is the one it was.
+    folder_command, explicit_cwd = _windows_command_in_folder(typed_request)
+    windows_run_read = bool(folder_command)
+    if folder_command:
+        explicit_command = folder_command
+    elif (whole_command := _windows_python_command(typed_request)) and not _windows_names_a_full_path(typed_request):
+        # Windows: a one-line Python or pytest run request is read whole (`_windows_python_command`), so
+        # `-c "<code>"` keeps its code and a bare `python -m compileall .` is a run. A request naming a
+        # full path keeps the reading it had. Off Windows `whole_command` is "" and nothing changes.
+        explicit_command = whole_command
+        windows_run_read = True
     compare_or_verify = any(marker in lowered for marker in (" compare ", " versus ", " vs ", " verify ", " confirm ", " is it true "))
     lookup_followup_text = ""
     if followup_resume and not (looks_like_explicit_lookup_request(text) or looks_like_public_entity_lookup_request(text)):
@@ -2927,6 +3084,11 @@ def plan_tool_workflow(
     explicit_lookup = looks_like_explicit_lookup_request(research_text) or public_entity_lookup
     tool_inventory_request = _looks_like_tool_inventory_request(text)
     machine_directory_list = _extract_safe_machine_directory_listing(text)
+    if windows_run_read:
+        # Windows (Steve R18): a Python command line is a run, not a listing. "in <...>\\Documents\\...
+        # run: python -c \"print(2+2)\"" was planned as a listing of ~/Documents: the code's `print` was
+        # read as the listing verb and the path's "Documents" as the folder. Off Windows this is never set.
+        machine_directory_list = None
     machine_directory_create = _extract_safe_machine_directory_create(text)
     machine_specs_request = _extract_machine_specs_request(text)
     machine_diagnostics = machine_diagnostics_intent(text)
@@ -3248,7 +3410,7 @@ def plan_tool_workflow(
                 next_payload=orchestrated_payload,
             )
         if explicit_command and any(marker in lowered for marker in (" retry ", " then retry", " then rerun", " rerun ")):
-            command_payload = _planned_command_payload(user_text=raw_text, command=explicit_command)
+            command_payload = _planned_command_payload(user_text=raw_text, command=explicit_command, cwd=explicit_cwd)
             if command_payload is not None:
                 reason, next_payload = command_payload
                 return WorkflowPlannerDecision(
@@ -3284,7 +3446,7 @@ def plan_tool_workflow(
                 next_payload={"intent": "web.search", "arguments": {"query": research_text, "limit": 4}},
             )
         if explicit_command:
-            command_payload = _planned_command_payload(user_text=raw_text, command=explicit_command)
+            command_payload = _planned_command_payload(user_text=raw_text, command=explicit_command, cwd=explicit_cwd)
             if command_payload is not None:
                 reason, next_payload = command_payload
                 return WorkflowPlannerDecision(handled=True, reason=reason, next_payload=next_payload)
@@ -3513,7 +3675,7 @@ def plan_tool_workflow(
             _workflow_step_exists(steps, "sandbox.run_command", key="command", value=explicit_command)
             or _workflow_validation_command_already_attempted(steps, explicit_command)
         ):
-            command_payload = _planned_command_payload(user_text=user_text, command=explicit_command)
+            command_payload = _planned_command_payload(user_text=user_text, command=explicit_command, cwd=explicit_cwd)
             if command_payload is not None:
                 reason, next_payload = command_payload
                 return WorkflowPlannerDecision(
@@ -3578,7 +3740,7 @@ def plan_tool_workflow(
             _workflow_step_exists(steps, "sandbox.run_command", key="command", value=explicit_command)
             or _workflow_validation_command_already_attempted(steps, explicit_command)
         ):
-            command_payload = _planned_command_payload(user_text=user_text, command=explicit_command)
+            command_payload = _planned_command_payload(user_text=user_text, command=explicit_command, cwd=explicit_cwd)
             if command_payload is not None:
                 reason, next_payload = command_payload
                 return WorkflowPlannerDecision(

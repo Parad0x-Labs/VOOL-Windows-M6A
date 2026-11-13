@@ -776,7 +776,7 @@ def _settings_groups() -> list[dict]:
             # Crypto (Pilot): off by default, discoverable when off. The section is absent in the School edition by the
             # edition floor (core/product_edition.py), never by a scattered check here.
             "id": "calendars",
-            "icon": "\U0001f4c5",
+            "icon": "▦",
             "title": "Calendars",
             "blurb": "The calendars VOOL reads for your agenda and alerts, and where new events go.",
             "rows": [
@@ -796,7 +796,7 @@ def _settings_groups() -> list[dict]:
         },
         {
             "id": "notifications",
-            "icon": "\U0001f514",
+            "icon": "⚑",
             "title": "Notifications",
             "blurb": "Calendar alerts, reminders, quiet hours and macOS notifications.",
             "rows": [
@@ -1021,6 +1021,13 @@ body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 -apple-sy
 #uiLocaleSelect:focus { outline:none; border-color:var(--accent); }
 #uiLocaleSelect:disabled { opacity:.55; cursor:not-allowed; }
 #uiLocaleWrap .loc-note { font-size:11px; line-height:1.5; color:var(--muted); margin:6px 0 2px; }
+/* Keep the language block small so the menu below it stays visible at 150% scaling and in a small
+   window. The help sentence repeats the select's own title and accessible name, so it is not
+   painted twice; the honest coverage line stays, one line until the control is hovered or focused. */
+#uiLocaleWrap .loc-word .set-sub { display:none; }
+#uiLocaleWrap .loc-note[data-i18n-html="settings.language_help"] { display:none; }
+#uiLocaleWrap #uiLocaleCoverage { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#uiLocaleWrap:hover #uiLocaleCoverage, #uiLocaleWrap:focus-within #uiLocaleCoverage { white-space:normal; }
 #backRow { padding:12px 12px 4px; }
 #back { display:flex; align-items:center; gap:8px; width:100%; background:transparent; color:var(--muted); border:none; border-radius:8px; padding:6px 8px; font:inherit; font-size:13px; cursor:pointer; text-align:left; }
 #back:hover { color:var(--ink); background:var(--active); }
@@ -1037,7 +1044,7 @@ body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.5 -apple-sy
 /* Selection is the background plus the tinted icon below. No accent rail: the background alone
    would be indistinguishable from :hover, so the icon carries the difference instead. */
 .nav-item[aria-current="true"] { background:var(--active); color:var(--ink); }
-.nav-item .ico { flex:0 0 16px; width:16px; text-align:center; color:var(--muted); font-size:13px; }
+.nav-item .ico { flex:0 0 16px; width:16px; text-align:center; color:var(--muted); font-size:13px; font-variant-emoji:text; }
 .nav-item[aria-current="true"] .ico { color:var(--accent); }
 .nav-item .hits { margin-left:auto; color:var(--accent); font-size:11px; font-weight:700; }
 .nav-empty { color:var(--muted); font-size:12.5px; padding:10px 9px; }
@@ -1575,9 +1582,22 @@ async function bundlePost(path, body) {
   const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   return await r.json().catch(() => ({ ok: false, error: 'HTTP ' + r.status }));
 }
+/* The pane is rebuilt whenever this window regains focus (reconcile), and closing the native Save
+   dialog gives focus back -- so the export's result line and the chosen chat are kept here, outside
+   the widget, and shown again by the rebuilt widget. Never a passphrase. */
+const bundleExportMemory = { sid: '', note: null };
 function widgetBundleExport(stack) {
   const status = el('div', 'state idle'); status.id = 'sbExportStatus'; status.setAttribute('role', 'status');
-  const say = (msg, warn) => { status.className = 'state ' + (warn ? 'failed' : 'saved'); status.textContent = msg; };
+  const paint = (node, note) => { node.className = note.cls; node.textContent = note.msg; };
+  const show = (cls, msg) => {
+    bundleExportMemory.note = { cls: cls, msg: msg };
+    /* A save that finishes after the pane was rebuilt reports into the widget now on screen. */
+    const live = document.getElementById('sbExportStatus');
+    paint(live || status, bundleExportMemory.note);
+    if (live && live !== status) paint(status, bundleExportMemory.note);
+  };
+  const say = (msg, warn) => show('state ' + (warn ? 'failed' : 'saved'), msg);
+  if (bundleExportMemory.note) paint(status, bundleExportMemory.note);
   const pick = el('div', 'inline');
   const chatSel = el('select', 'inp'); chatSel.id = 'sbChat'; chatSel.setAttribute('aria-label', 'Chat to export');
   const none = el('option', null, 'Choose a chat…'); none.value = ''; chatSel.appendChild(none);
@@ -1624,7 +1644,7 @@ function widgetBundleExport(stack) {
   };
   const syncEnc = () => { passRow.hidden = !enc.checked; warnRow.hidden = enc.checked; renderPreview(); };
   enc.addEventListener('change', syncEnc);
-  chatSel.addEventListener('change', renderPreview);
+  chatSel.addEventListener('change', () => { bundleExportMemory.sid = chatSel.value; renderPreview(); });
   getJSON('/api/chat/sessions').then(d => {
     const sessions = d.sessions || [];
     sessions.forEach(s => {
@@ -1632,6 +1652,9 @@ function widgetBundleExport(stack) {
       const o = el('option', null, (s.title || 'New chat') + ' — ' + String(s.session_id).slice(0, 28));
       o.value = s.session_id; chatSel.appendChild(o);
     });
+    if (bundleExportMemory.sid && sessions.some(s => s.session_id === bundleExportMemory.sid)) {
+      chatSel.value = bundleExportMemory.sid; renderPreview();
+    }
     if (!sessions.length) say('No chats to export yet.');
   }).catch(e => say('Could not list chats — ' + e.message, true));
 
@@ -1644,16 +1667,28 @@ function widgetBundleExport(stack) {
       if (!passphrase) { say('Type a passphrase, or untick encryption.', true); return; }
       if (passphrase !== String(pass2.value || '')) { say('The two passphrases do not match.', true); return; }
     } else if (!warn.checked) { say('Unticking encryption needs the explicit warning acknowledgement below.', true); return; }
-    exportBtn.disabled = true; status.className = 'state saving'; status.textContent = 'Working…';
+    exportBtn.disabled = true; show('state saving', 'Working…');
     try {
       const d = await bundlePost('/api/session/bundle/export', { session_id: sid, passphrase: passphrase });
       if (!d.ok) { say(d.error || 'Export refused.', true); exportBtn.disabled = false; return; }
       pass.value = ''; pass2.value = '';
-      const a = document.createElement('a');
-      a.href = '/api/session/bundle/download?path=' + encodeURIComponent(d.path);
-      a.download = String(d.session_id || 'chat').replace(/[^a-z0-9_-]/gi, '_') + '.voolsession';
-      document.body.appendChild(a); a.click(); a.remove();
-      say(d.encrypted ? 'Saved: signed + encrypted bundle (' + d.counts.turns + ' turns).' : 'Saved: signed, UNENCRYPTED bundle (' + d.counts.turns + ' turns).', !d.encrypted);
+      const nativeApi = window.pywebview && window.pywebview.api;
+      let where = '';
+      if (nativeApi) {
+        // The desktop window cancels page downloads: the native save dialog delivers the file.
+        if (typeof nativeApi.save_session_bundle !== 'function') { say('This app build cannot save chat bundles. Update the app and try again.', true); exportBtn.disabled = false; return; }
+        /* 'settings': the Save As dialog belongs to THIS window, not the chat window behind it. */
+        const saved = await nativeApi.save_session_bundle(String(d.path || ''), String(d.session_id || sid), 'settings');
+        if (!saved || (!saved.ok && saved.cancelled)) { say('Not saved: the save was cancelled.', true); exportBtn.disabled = false; return; }
+        if (!saved.ok) { say('Not saved: ' + (saved.message || saved.error || 'the bundle could not be written.'), true); exportBtn.disabled = false; return; }
+        if (typeof saved.path === 'string' && saved.path) where = ' to ' + saved.path;
+      } else {
+        const a = document.createElement('a');
+        a.href = '/api/session/bundle/download?path=' + encodeURIComponent(d.path);
+        a.download = String(d.session_id || 'chat').replace(/[^a-z0-9_-]/gi, '_') + '.voolsession';
+        document.body.appendChild(a); a.click(); a.remove();
+      }
+      say(d.encrypted ? 'Saved: signed + encrypted bundle (' + d.counts.turns + ' turns)' + where + '.' : 'Saved: signed, UNENCRYPTED bundle (' + d.counts.turns + ' turns)' + where + '.', !d.encrypted);
       renderPreview();
     } catch (e) { say('Export failed: ' + (e && e.message ? e.message : e), true); }
     exportBtn.disabled = false;
@@ -1795,6 +1830,11 @@ function openSetupPage(stepId) {
     window.location.href = url;
     return;
   }
+  // The native Settings window: Setup opens in its own native window (window.open gives none
+  // there, and the fallback below navigated the Settings window itself to /setup).
+  try {
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.open_setup) { window.pywebview.api.open_setup(stepId || ''); return; }
+  } catch (e) {}
   let opened = null;
   try { opened = window.open(url, 'vool-setup'); } catch (e) { opened = null; }
   if (opened) { try { opened.focus(); } catch (e) {} return; }
@@ -1810,6 +1850,11 @@ function removeSetupGroup() {
    the native window bridge can mark (OS folder picker + OS confirm) or unmark (by id), so a browser
    tab shows the list and no buttons. */
 const DISPOSABLE_URL = '/api/windows/disposable-folders';
+/* The folder picker and the OS confirm box hand focus back to Settings, and the focus handler
+   rebuilds the pane (reconcile) -- often with the list as it was BEFORE the mark, so right after
+   marking Settings said "No folder is marked yet", and a refusal written into the old widget was
+   never seen. The last result line lives here, and every redraw renders the pane that is on screen. */
+const disposableMemory = { note: null };
 function widgetDisposableFolders(stack) {
   const src = state.sources[DISPOSABLE_URL];
   const err = state.sourceErr[DISPOSABLE_URL];
@@ -1818,8 +1863,14 @@ function widgetDisposableFolders(stack) {
   if (!src.windows) { stack.appendChild(el('div', 'subtle', T('settings.disposable.not_windows', 'Only Windows needs this. On this computer VOOL already works in the folders described above.'))); return; }
   const api = window.pywebview && window.pywebview.api;
   const native = !!(api && api.mark_disposable_folder);
-  const status = el('div', 'state idle'); status.setAttribute('role', 'status');
-  const redraw = async () => { await readSource(DISPOSABLE_URL); stack.textContent = ''; widgetDisposableFolders(stack); };
+  const status = el('div', 'state idle'); status.id = 'disposableStatus'; status.setAttribute('role', 'status');
+  if (disposableMemory.note) { status.className = disposableMemory.note.cls; status.textContent = disposableMemory.note.msg; }
+  const fail = (msg) => {
+    disposableMemory.note = { cls: 'state failed', msg: String(msg || '') };
+    const live = document.getElementById('disposableStatus') || status;
+    live.className = disposableMemory.note.cls; live.textContent = disposableMemory.note.msg;
+  };
+  const redraw = async () => { disposableMemory.note = null; await readSource(DISPOSABLE_URL); renderPane(); };
   const folders = src.folders || [];
   if (src.problem) stack.appendChild(el('div', 'state failed', T('settings.disposable.untrusted', 'The saved folder list could not be trusted, so no marked folder is used.')));
   if (!folders.length) stack.appendChild(el('div', 'empty', T('settings.disposable.none', 'No folder is marked yet.')));
@@ -1833,7 +1884,7 @@ function widgetDisposableFolders(stack) {
       off.type = 'button';
       off.addEventListener('click', async () => {
         const res = await window.pywebview.api.unmark_disposable_folder(String(f.id || ''));
-        if (res && res.ok) await redraw(); else { status.className = 'state failed'; status.textContent = (res && (res.refused || res.error)) || ''; }
+        if (res && res.ok) await redraw(); else fail((res && (res.refused || res.error)) || '');
       });
       line.appendChild(off);
     }
@@ -1843,9 +1894,9 @@ function widgetDisposableFolders(stack) {
     const add = el('button', 'btn', T('settings.disposable.mark', 'Mark a folder…'));
     add.type = 'button';
     add.addEventListener('click', async () => {
-      const res = await window.pywebview.api.mark_disposable_folder();
+      const res = await window.pywebview.api.mark_disposable_folder('settings');
       if (res && res.ok) await redraw();
-      else if (res && !res.cancelled) { status.className = 'state failed'; status.textContent = res.refused || res.error || ''; }
+      else if (res && !res.cancelled) fail(res.refused || res.error || '');
     });
     stack.appendChild(add);
   } else {
@@ -2034,8 +2085,13 @@ function widgetUpdates(stack) {
   const src = state.sources['/api/update/status'];
   const error = state.sourceErr['/api/update/status'];
   const phase = src && src.phase || 'idle';
+  // "Loading…" only until the status has been read. An idle status with no message is the normal state
+  // when no update has run (core/updater/runtime.py status_payload); an unconfigured updater says why.
   const message = phase === 'up_to_date' ? T('update.up_to_date', 'Up to date')
-    : error || src && src.message || T('settings.widget.loading', 'Loading…');
+    : error || (!src ? T('settings.widget.loading', 'Loading…')
+      : src.configured === false && src.unavailable_plain ? src.unavailable_plain
+      : src.message || (phase === 'idle' ? T('update.idle', 'No update activity right now.')
+      : T('settings.widget.loading', 'Loading…')));
   const status = el('div', 'subtle', message); status.setAttribute('role', 'status');
   status.dataset.testid = 'settings-update-status'; stack.appendChild(status);
   const check = el('button', 'btn', T('update.action_check', 'Check for updates'));
@@ -3420,6 +3476,9 @@ function widgetLocalModels(stack) {
       body.appendChild(rowEl);
     }
     if (note) body.appendChild(el('div', 'state saved', note));
+    // The other offered models stay downloadable once one is installed (capability tests D1/D2):
+    // the box lists only offered models not installed yet, and shows nothing when every one is.
+    if (window.VoolModelDownload) window.VoolModelDownload.mount(body, { onDone: (name) => draw('Downloaded ' + name + '. Run the certification to see if it may author answers.') });
     body.appendChild(el('div', 'subtle', 'Certification is a sealed local probe (synthetic tools, no workspace, no credentials). A model that fails it can still route and call tools; it just cannot write a final answer.'));
   };
   draw();
@@ -4932,14 +4991,14 @@ def _locale_coverage_note(tag: str) -> str:
 
 
 # The always-discoverable app-language control, top-left of Settings (top of the side nav,
-# above search). Globe symbol + each language's own name (the picker fills the options from
+# above search). A plain language symbol ("文A", monochrome like the rest of the nav) + each language's own name (the picker fills the options from
 # the locale registry's endonyms — never flags, never English exonyms alone). This is the
 # APP UI language: it changes these screens only. The model ANSWER language keeps its own
 # existing Settings widget (General → Answer language) and dictation recognition keeps its
 # own control next to the microphone; the note under the select says so in the selected
 # language (settings.language_help, an existing catalog key).
 _LOCALE_BLOCK = """<div id="uiLocaleWrap">
-  <label class="loc-label" for="uiLocaleSelect"><span class="loc-globe" aria-hidden="true">&#127760;</span><span class="loc-word" data-i18n-html="settings.language_heading">Language <span class="set-sub">screens only &mdash; never the answer language</span></span></label>
+  <label class="loc-label" for="uiLocaleSelect"><span class="loc-globe" aria-hidden="true">文A</span><span class="loc-word" data-i18n-html="settings.language_heading">Language <span class="set-sub">screens only &mdash; never the answer language</span></span></label>
   <select id="uiLocaleSelect" aria-label="App language — these screens only, never the answer language" title="Choose the language of these screens and controls. It never changes the language VOOL answers in." data-i18n-aria-label="settings.language_select_aria" data-i18n-title="settings.language_select_title"></select>
   <p class="loc-note" data-i18n-html="settings.language_help">Choose the language of these screens and controls. It never changes the language VOOL answers in &mdash; that has its own setting.</p>
   <p class="loc-note" id="uiLocaleCoverage"></p>

@@ -3,29 +3,47 @@
 All notable changes to VOOL. Dates are YYYY-MM-DD. Earlier internal development
 history is not republished here.
 
-## [0.7.1-beta] — Windows — 2026-11-12
+## [0.7.1-beta.2] — Windows — 2026-11-12
 
 The first native Windows download: `VOOL-Setup.exe` with `SHA256SUMS`, for Windows 10 22H2 and
-Windows 11, 64-bit.
+Windows 11, 64-bit. Windows needs 16 GB of RAM. With less, VOOL refuses to load its local model rather than freeze the PC, and chat answers that the model was blocked by the memory-safety gate. VOOL checks free memory when it loads the model (about 7 GB), so on a 16 GB PC with many apps open it may still refuse until you close some.
 
 ### Added
 - **Windows installer.** A per-user Inno Setup installer (`%LOCALAPPDATA%\Programs\VOOL`) that never asks for administrator rights. It bundles VOOL's own Python, the local-model runner and the Windows broker, so nothing else needs installing.
-- **Folders VOOL may change.** On Windows, VOOL changes files only inside folders you mark as disposable, in **Settings → Folders VOOL may change (Windows)**. Marking asks Windows to confirm the folder. A new mark is used after VOOL restarts; unmarking takes effect at once. Outside a marked folder, VOOL refuses a write before asking you to approve it.
-- **Owner-only secrets.** Keys and other secrets on disk are locked to your Windows account, and VOOL refuses to store one where that lock can't be set.
+- **Folders VOOL may change.** On Windows, VOOL changes files only inside folders you mark as disposable, in **Settings → Folders VOOL may change (Windows)**. Marking asks Windows to confirm the folder. A new mark is used after VOOL restarts; unmarking takes effect at once. Outside a marked folder, VOOL refuses a write before asking you to approve it. You can't mark a whole drive, your user folder itself, or a folder that holds your temp or app-data folders; mark a folder inside them instead.
+- **Offline by default.** VOOL works offline by default. Ollama's cloud models are refused. A cloud provider is used only after you add your own key in Settings. Saving an OpenRouter key turns cloud on; for other providers, also choose an Auto fallback model or pin a paid model in Settings. To turn cloud off again, type `cloud off` (it also clears a pinned paid model) or remove your key in Settings. Otherwise VOOL goes online only when you ask it to: to download its model, or when you turn on web access. VOOL's bundled Ollama answers only on this computer. If you run the bundled ollama command yourself, it can download a cloud model's listing, but VOOL refuses it and starts Ollama with cloud models turned off.
+- **Local Only still searches the web.** Local Only runs every AI model on this computer and never calls a cloud AI provider, paid or free. Web search still works under Local Only: it runs through VOOL's built-in browser (Microsoft Edge), so your search words go to the search engine (DuckDuckGo or Bing). The Local Only labels and help text now say so.
+- **Online add-on scan.** The add-on store's **Scan with Eyebrow** step (**Download and scan** for an external add-on) is an online service: it downloads the add-on from its source (for an external add-on) and calls api.eyebrow.cc, and runs only after you add an Eyebrow key in Settings → API Keys and agree to the scan.
+- **Owner-only secrets.** Secrets on disk are locked to your Windows account, and VOOL refuses to store one where that lock can't be set.
 - **No console windows.** Background tools no longer flash a window on every turn.
-- **Signed updates for Windows** from the next release on, with rollback. 0.7.1 itself is installed by download.
 
 ### Windows limits in 0.7.1
-- VOOL runs **Python and pytest** for you in its Windows sandbox.
-- It refuses **git, npm, node, ruff and pip**, does not start **plugins or MCP servers**, and does not read **PDF or 7z** files. It refuses these rather than run them unprotected. To use them, run VOOL under WSL2/Linux.
-- It does not clean temp files. A patch is applied only when VOOL can reproduce it byte for byte; otherwise it is refused and nothing changes.
-- Files on other machines (network shares, mapped network drives, device paths) are refused.
+- VOOL runs **Python scripts** (`python file.py`, `python -c`), **pytest**, **unittest** and **compileall** for you in its Windows sandbox. `python -m` is allowed only for pytest, unittest and compileall. Name the marked folder in your request (for example `run the tests in C:\Users\you\Projects\calc`), and VOOL works in that folder, after your approval.
+- It refuses **git, pip, npm, node and ruff**, does not start **plugins or MCP servers**, does not read **PDF or 7z** files, and refuses **Ollama's cloud models** and any other program. It refuses these rather than run them unprotected. To use the code tools, run VOOL under WSL2/Linux.
+- It does not clean temp files. A patch is applied only when it matches the file exactly; otherwise it is refused and nothing changes.
+- **Network locations are refused.** VOOL refuses paths that name a network share or a device, and never writes to a mapped network drive.
 - The installer is **not code-signed yet**. SmartScreen shows **Windows protected your PC**; check the file against `SHA256SUMS` first, then use **More info → Run anyway**.
 - VOOL does not send Windows notifications yet; alerts stay in its own bell.
+- **API keys are kept in VOOL's encrypted vault in your user profile**, protected by your Windows account's file permissions, not by Windows Credential Manager. Anyone who can read your Windows profile can read them. Type `cloud diagnostics` to see which keys are stored.
+
+### Known issues on Windows
+- Moves work only between marked folders under your user folder, and moving between marked folders also needs the chat's own folder to be marked.
+- A relative `..` path resolves from the chat's folder, not from a subfolder you named, and VOOL refuses it.
+- On a PC without a supported GPU, a code task takes about 8 to 11 minutes.
+- If you've set OLLAMA_HOST yourself, VOOL says its model isn't certified and won't chat. Unset OLLAMA_HOST and restart VOOL.
+- Give full paths when you ask VOOL to move a file.
+- Starting a new chat sets the mode back to Manual. Pick Plan again after New chat.
+- PDF reading isn't available on Windows in 0.7.1. Asking VOOL to read a PDF says so and runs nothing. Apple Notes is a Mac app, so its tools aren't offered on Windows.
+- On Windows, a Python script run inside VOOL that makes a temporary folder outside the folder it's allowed to write (tempfile.mkdtemp or TemporaryDirectory with an outside dir) waits until the job's time limit, then reports a timeout instead of a permission error. Nothing is created outside. Temporary folders inside the allowed folder, including pytest's tmp_path, work normally.
+- After a run in a subfolder of a marked folder, a run in the marked folder itself is refused, because sandbox entries left by the earlier run count as another writer. Nothing changes. Run in the subfolder instead.
+- The approval card for undoing a create or edit says 'No specific path reported' and 'May not be reversible', but undo restores the exact earlier file, and refuses if the file changed since.
+- With cloud off, the Test button for a stored key and `cloud test` say cloud models are off.
+- Reminders and the rules list have small display problems.
 
 ### Planned
 - A native Windows sandbox for the remaining code tools (AppContainer + Job Object).
 - Authenticode signing of the installer.
+- Signed updates for Windows, with rollback. 0.7.1 itself is installed by download.
 
 ## [0.7.0-beta] — 2026-10-13
 

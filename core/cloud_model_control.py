@@ -325,7 +325,15 @@ def set_cloud_model(
     def _save(model_value: str) -> bool:
         cep.save_policy(replace(cep.load_policy(), model=model_value, provider=prov))
         p = cep.load_policy()
-        return p.model == model_value and p.provider == (prov if prov in PROVIDERS else "")
+        saved = p.model == model_value and p.provider == (prov if prov in PROVIDERS else "")
+        if saved and not council_capability:
+            # Windows: this is the owner's own pin (owner-local, no council capability), which the
+            # cloud gate counts as turning cloud on. A council's seat pin is never noted.
+            from core import windows_cloud_gate
+
+            if windows_cloud_gate.active():
+                windows_cloud_gate.record_owner_pin(model_value)
+        return saved
 
     if arg.lower() == "auto":
         # `auto` means "follow the live FREE catalog". Only OpenRouter publishes one, so for a
@@ -345,6 +353,10 @@ def set_cloud_model(
             # no verified-free candidate there is nothing to switch to and the command refuses with
             # the policy untouched. Standing in the paid default instead would answer "pick a free
             # model" by silently spending the user's credits on one they never named.
+            from core import windows_cloud_gate
+
+            if windows_cloud_gate.cloud_off():
+                return False, windows_cloud_gate.OFF_TEXT, ""  # Windows: no catalog before opt-in
             picks: dict[str, str] = {}
             try:
                 from core.openrouter_catalog import pick_auto_free_models
@@ -534,6 +546,12 @@ def force_catalog_refresh() -> dict[str, Any]:
     On failure the previous cache is untouched, so a failed refresh degrades to old-but-real
     data rather than an empty list.
     """
+    from core import windows_cloud_gate
+
+    if windows_cloud_gate.cloud_off():
+        # Windows, before a key is stored and cloud is turned on: nothing is fetched.
+        return {"ok": False, "total": 0, "free": 0, "error": windows_cloud_gate.REASON,
+                "message": windows_cloud_gate.OFF_TEXT}
     try:
         from core.openrouter_catalog import model_is_free, refresh_openrouter_catalog
 

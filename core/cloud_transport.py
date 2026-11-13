@@ -21,6 +21,12 @@ class CloudTransportError(RuntimeError):
     pass
 
 def _operator_cloud_network_allowed() -> bool:
+    from core import windows_cloud_gate
+
+    if windows_cloud_gate.cloud_off():
+        # Windows: no model call before a key is stored AND cloud is turned on
+        # (core/windows_cloud_gate.py), whatever the background-outbound switch says.
+        return False
     if policy_engine.automatic_outbound_enabled():
         return True
     try:
@@ -121,7 +127,14 @@ class PolicyBoundCloudTransport:
         timeout_seconds: float = 30.0,
     ) -> tuple[int, dict[str, str], Any]:
         if remote_fetch_forbidden() or not self._network_allowed():
-            raise CloudTransportError("cloud_network_disabled_by_policy")
+            from core import windows_cloud_gate
+
+            # Windows, before a key is stored and cloud is turned on: the refusal says so in the
+            # gate's own sentence (core/windows_cloud_gate.py), after the same machine code.
+            reason = "cloud_network_disabled_by_policy"
+            if windows_cloud_gate.cloud_off():
+                reason += ": " + windows_cloud_gate.OFF_TEXT
+            raise CloudTransportError(reason)
         parsed = urlparse(str(url or ""))
         host = str(parsed.hostname or "").strip().lower()
         if parsed.scheme != "https" or not host:

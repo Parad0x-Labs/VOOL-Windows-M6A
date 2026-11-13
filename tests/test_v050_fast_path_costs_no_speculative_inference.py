@@ -38,6 +38,7 @@ from typing import Any
 
 import pytest
 
+from tests import _windows_refusals as windows_refusals
 from tests.semantic_phase0._fixtures import (
     block_outbound_network,
     keep_the_checkout_clean,
@@ -213,6 +214,12 @@ _READ_TOOLS = {"workspace.read_file", "machine.read_file"}
 def test_a_deterministic_project_read_enters_no_provider_call(
     make_agent_module, invocations, arbiter_is_reachable, project, text, expected_tools, evidence
 ) -> None:
+    if expected_tools == {"workspace.git_status"} and windows_refusals.git_refused():
+        # Windows 0.7.1 runs no git: the front door answers a git ask with the git sentence itself.
+        with windows_refusals.watch_git(project, aimed_at=project) as seen:
+            result = _drive(make_agent_module, project, text, session=f"det-read-{abs(hash(text)) % 99999}")
+        windows_refusals.assert_git_ask_answered_at_the_door(seen, result, invocations)
+        return
     result = _drive(make_agent_module, project, text, session=f"det-read-{abs(hash(text)) % 99999}")
 
     assert invocations.count == 0, (

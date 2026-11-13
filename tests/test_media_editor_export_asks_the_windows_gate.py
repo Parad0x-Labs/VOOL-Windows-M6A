@@ -159,11 +159,15 @@ def test_a_home_editor_export_path_is_checked_where_the_export_writes_it(
     assert editor.asked == []
     assert not (editor.outside / "exports").exists()
 
-    _home(monkeypatch, editor.flagged)
+    # The home is a folder inside the flagged one, not the flagged folder itself: on Windows the
+    # profile is never a write root (b48178ea), so a flagged folder that IS the home is skipped.
+    inside = editor.flagged / "home"
+    inside.mkdir()
+    _home(monkeypatch, inside)
     monkeypatch.chdir(editor.outside)
     status, payload = _export(editor, "~/exports/clip.mp4")
     assert status == 200 and payload["receipt"]["status"] == "exported", payload
-    assert Path(editor.asked[-1]).resolve() == (editor.flagged / "exports" / "clip.mp4").resolve()
+    assert Path(editor.asked[-1]).resolve() == (inside / "exports" / "clip.mp4").resolve()
 
 
 @pytest.mark.parametrize(

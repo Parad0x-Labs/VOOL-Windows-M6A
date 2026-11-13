@@ -1,7 +1,7 @@
 """Saving or taking back a standing instruction says so on the same served turn.
 
-"Always end your reply with a one-line summary." is stored as a standing instruction for every later chat in the
-workspace (core.standing_instructions). The user must see one plain line naming what was saved,
+"Always end your reply with a one-line summary." is stored as a standing instruction (core.standing_instructions);
+said in an unbound chat on the default folder it is kept for that chat, and taken back there. The user must see one plain line naming what was saved,
 and, when a later turn takes it back, one line naming what was removed. The line rides the
 existing ``vool_profile`` frame, which the chat page renders as its confirmation line
 (core/vool_chat_page.py renderProfileFrame). An ordinary turn carries no frame at all. (A rule the
@@ -78,12 +78,14 @@ class StandingInstructionIsConfirmed(unittest.TestCase):
         saved = _confirmations(self._chat(RULE, "standing-confirm-a"))
         self.assertEqual(len(saved), 1, saved)
         self.assertIn(RULE, saved[0])
-        self.assertIn("every chat", saved[0])
+        # An unbound chat on the default folder keeps its rules to itself (core.standing_instructions
+        # workspace_key), so the line says "this chat".
+        self.assertIn("this chat", saved[0])
 
         ordinary = self._chat("What is a database index?", "standing-confirm-b")
         self.assertNotIn("vool_profile", ordinary, "an ordinary turn must not carry a confirmation")
 
-        removed = _confirmations(self._chat(TAKE_BACK, "standing-confirm-c"))
+        removed = _confirmations(self._chat(TAKE_BACK, "standing-confirm-a"))
         self.assertEqual(len(removed), 1, removed)
         self.assertIn(RULE, removed[0])
         self.assertNotEqual(removed[0], saved[0])

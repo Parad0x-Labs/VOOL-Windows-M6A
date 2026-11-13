@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from tests import _windows_refusals as windows_refusals
 from tests.repoops._forge_fixture import UNIFIED_DIFF, RecordedForge, github_pull_request
 from tests.repoops._harness import FIXED, build_repo, context, door, git, head, remote_ref
 
@@ -319,6 +320,8 @@ def test_a_simulated_push_never_moves_the_remote_and_claims_nothing(world) -> No
 def test_typed_git_operations_report_a_conflict_instead_of_guessing(world) -> None:
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session_exactly(world, ctx):
+        return
     _arm_pull_request(forge, root)
     sid = door("repo.session.open", {"objective": "branch work", "provider": "github", "namespace": "o/r", "reviewer_model": "anthropic/claude-sonnet-4"}, ctx).details["repo_session_id"]
     door("repo.inspect", {"repo_session_id": sid}, ctx)
@@ -356,6 +359,8 @@ def test_typed_git_operations_report_a_conflict_instead_of_guessing(world) -> No
 def test_cherry_pick_revert_and_tag_are_typed_and_journaled(world) -> None:
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session_exactly(world, ctx):
+        return
     _arm_pull_request(forge, root)
     sid = door("repo.session.open", {"objective": "typed git", "provider": "github", "namespace": "o/r", "reviewer_model": "anthropic/claude-sonnet-4"}, ctx).details["repo_session_id"]
     door("repo.inspect", {"repo_session_id": sid}, ctx)
@@ -398,6 +403,8 @@ def test_the_session_hands_the_adapter_a_binding_and_never_a_secret(world) -> No
 
     root, _bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session(world, ctx):
+        return
     _arm_pull_request(forge, root)
     opened = door(
         "repo.session.open",

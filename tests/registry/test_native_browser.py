@@ -14,6 +14,7 @@ from core.registry.trust import TrustedCatalog
 from registry_service.api import create_app
 from registry_service.auth import Auth
 from registry_service.store import Store
+from tests import _windows_refusals as windows_refusals
 from tests.registry.audit_helpers import package
 from tests.registry.helpers import NOW, TARGET, artifact_fixture, catalog_fixture, trust_fixture
 
@@ -50,6 +51,7 @@ def test_native_registry_inspection_and_explicit_enable_in_served_browser(tmp_pa
     monkeypatch.setattr(native_client, "configured_client", lambda: Client(root, TARGET, origin="https://registry.test", request=request, now=NOW))
     runtime = RuntimeServices(display_name="VOOL")
     actions = []
+    answers = []
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -78,6 +80,7 @@ def test_native_registry_inspection_and_explicit_enable_in_served_browser(tmp_pa
             actions.append(body.get("action"))
             result = dispatch_post(path=self.path, body=body, headers=dict(self.headers), runtime=runtime, model_name="fixture",
                 workspace_root_provider=lambda: str(tmp_path), client_host="127.0.0.1")
+            answers.append((result.status, json.loads(result.body)))
             return self.reply(result.status, result.body)
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -102,6 +105,24 @@ def test_native_registry_inspection_and_explicit_enable_in_served_browser(tmp_pa
             for declaration in ("network_send", "external_messages", "subprocess", '"network": true',
                                 "env_allowlist", "REGISTRY_PROVIDER_NAME", "credential_bindings", "binding-mail"):
                 assert declaration in visible
+        if with_tools and windows_refusals.plugins_refused():
+            # Windows 0.7.1 starts no plugin: enabling a pack with a runnable tool is refused. The
+            # install door answers HTTP 400 with the refusal in its own words, the page shows exactly
+            # that, no process starts, and the install rolls back (no pack left, nothing enabled).
+            with windows_refusals.watch_plugins() as seen:
+                page.get_by_role("button", name="Install and enable", exact=True).click()
+                shown = page.locator("#pluginsBody p.addon-error")
+                shown.wait_for()
+            assert windows_refusals.refused_exactly(
+                seen,
+                (actions, ["registry_refresh", "registry_prepare", "registry_install"]),
+                (answers[-1], (400, {"ok": False, "error": windows_refusals.PLUGIN_STATUS,
+                                     "message": windows_refusals.PLUGIN_REFUSAL})),
+                (shown.inner_text(), f"{windows_refusals.PLUGIN_REFUSAL} [{windows_refusals.PLUGIN_STATUS}]"),
+            )
+            assert list((tmp_path / "plugin-home" / "plugins").iterdir()) == []
+            assert [(record.stage, record.enabled) for record in plugin_lifecycle.records()] == [("uninstalled", False)]
+            return
         page.get_by_role("button", name="Install and enable", exact=True).click()
         page.wait_for_function("document.querySelector('#addonNav button[aria-pressed=true]')?.textContent === 'My add-ons'")
         records = plugin_lifecycle.records()

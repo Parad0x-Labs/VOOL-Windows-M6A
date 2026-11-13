@@ -63,12 +63,19 @@ function lockOptions(){
           ['hidden', NT('vns.lock.hidden', LOCK[2][1])]];
 }
 function h(tag, cls, text){ var n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; }
+// A request VOOL never answers must not leave the panel on "Loading…" forever: after REQUEST_TIMEOUT_MS the fetch is
+// aborted, the promise rejects, and the caller shows its "VOOL did not answer" line.
+var REQUEST_TIMEOUT_MS = 10000;
 function request(method, url, body){
   var options = {method: method, headers: {'Accept': 'application/json'}};
   if (body !== undefined) { options.headers['Content-Type'] = 'application/json'; options.body = JSON.stringify(body); }
+  var ctl = typeof AbortController === 'function' ? new AbortController() : null;
+  var timer = null;
+  if (ctl) { options.signal = ctl.signal; timer = setTimeout(function(){ ctl.abort(); }, REQUEST_TIMEOUT_MS); }
+  function done(){ if (timer !== null) { clearTimeout(timer); timer = null; } }
   return fetch(url, options).then(function(r){
-    return r.json().catch(function(){ return {}; }).then(function(j){ j = j || {}; if (j.ok === undefined) j.ok = r.ok; j.http_status = r.status; return j; });
-  });
+    return r.json().catch(function(){ return {}; }).then(function(j){ done(); j = j || {}; if (j.ok === undefined) j.ok = r.ok; j.http_status = r.status; return j; });
+  }, function(e){ done(); throw e; });
 }
 function button(text, onClick){ var b = h('button', 'btn vns-btn', text); b.type = 'button'; b.addEventListener('click', onClick); return b; }
 function toggle(text, on, onChange){
@@ -90,7 +97,7 @@ function mountInto(host){
   function load(){
     return Promise.all([request('GET', '/api/notifications/preferences'), request('GET', '/api/notifications/native/status').catch(function(){return {ok:false};})]).then(function(r){
       if (!r[0].ok) { say(NT('vns.status.unavailable', 'Notification settings are unavailable right now.'), true); return; }
-      prefs = r[0].preferences; native = r[1].ok ? r[1] : {supported:false}; paint();
+      prefs = r[0].preferences; native = r[1].ok ? r[1] : {supported:false}; say(''); paint();   // loaded: the "Loading…" line goes
     }).catch(function(){ say(NT('notif.no_answer', 'VOOL did not answer; nothing was changed.'), true); });
   }
   function save(patch, done){
@@ -105,7 +112,11 @@ function mountInto(host){
       return load().then(function(){ if (!j.ok) say(j.detail || j.reason || NT('vns.status.failed', 'That did not work.'), true); else say(done); });
     }).catch(function(){ say(NT('notif.no_answer', 'VOOL did not answer; nothing was changed.'), true); });
   }
-  function paint(){ paintMac(); paintPrefs(); why.textContent = native.explanation || ''; }
+  // Windows has no OS notification bridge in this version: the status route says bell_only_windows and the panel
+  // drops its macOS text and the lock-screen picker (whose preference only shapes macOS requests). The script is the
+  // same on every host; the server decides.
+  function bellOnly(){ return !!(native && native.bell_only_windows === true); }
+  function paint(){ paintMac(); paintPrefs(); why.textContent = bellOnly() ? NT('vns.why.windows', 'The bell keeps every VOOL alert. VOOL does not send Windows notifications yet.') : (native.explanation || ''); }
   function paintMac(){
     macBox.textContent = '';
     if (native.supported === false) return;
@@ -143,7 +154,7 @@ function mountInto(host){
   }
   function paintPrefs(){
     prefBox.textContent = '';
-    prefBox.appendChild(h('div', 'vns-title', NT('vns.title.prefs', 'Quiet hours, sound and what notifications show')));
+    prefBox.appendChild(h('div', 'vns-title', bellOnly() ? NT('vns.title.prefs.windows', 'Quiet hours and sound') : NT('vns.title.prefs', 'Quiet hours, sound and what notifications show')));
     var quiet = prefs.quiet_hours || {};
     var quietRow = h('div', 'vns-row');
     var quietToggle = toggle(NT('vns.quiet.label', 'Quiet hours from'), quiet.enabled, null);
@@ -152,7 +163,8 @@ function mountInto(host){
     quietRow.appendChild(quietToggle); quietRow.appendChild(start); quietRow.appendChild(h('span', null, NT('vns.quiet.to', 'to'))); quietRow.appendChild(end);
     quietRow.appendChild(button(NT('vns.btn.save', 'Save'), function(){
       save({quiet_hours: {enabled: quietToggle.querySelector('input').checked, start: start.value, end: end.value}},
-           NT('vns.saved.quiet', 'Quiet hours saved. During them macOS is not asked; the bell still records every alert.'));
+           bellOnly() ? NT('vns.saved.quiet.windows', 'Quiet hours saved. During them no sound plays; the bell still records every alert.')
+                      : NT('vns.saved.quiet', 'Quiet hours saved. During them macOS is not asked; the bell still records every alert.'));
     }));
     prefBox.appendChild(quietRow);
     prefBox.appendChild(toggle(NT('vns.toggle.sound', 'Notification sound'), prefs.sound, function(on){
@@ -165,11 +177,13 @@ function mountInto(host){
         if (!played) say(NT('vns.sound.blocked', 'Sound playback is unavailable. Notifications remain in the bell.'), true);
       });
     }));
+    if (!bellOnly()) {
     var lockRow = h('label', 'vns-row'); lockRow.appendChild(h('span', null, NT('vns.lock.label', 'A macOS notification may show')));
     var lock = h('select', 'vns-input'); lock.setAttribute('aria-label', NT('vns.lock.aria', 'What a macOS notification may show'));
     lockOptions().forEach(function(pair){ var option = h('option', null, pair[1]); option.value = pair[0]; lock.appendChild(option); });
     lock.value = prefs.lock_screen; lock.addEventListener('change', function(){ save({lock_screen: lock.value}); });
     lockRow.appendChild(lock); prefBox.appendChild(lockRow);
+    }
     var lateRow = h('div', 'vns-row'); lateRow.appendChild(h('span', null, NT('vns.late.label', 'Show an alert that comes due late, up to')));
     var late = h('input', 'vns-input'); late.type = 'number'; late.min = '0'; late.max = '60'; late.value = String(prefs.late_grace_minutes);
     late.setAttribute('aria-label', NT('vns.late.aria', 'Minutes after an event started'));

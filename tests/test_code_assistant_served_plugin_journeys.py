@@ -25,6 +25,7 @@ from typing import Any
 
 import pytest
 
+from tests import _windows_refusals as windows_refusals
 from tests._blackbox_served_rig import (
     REPO_ROOT,
     SEED_MANIFEST,
@@ -155,8 +156,16 @@ def _stub_models_are_resident(provider: ScriptedProvider) -> None:
     handler.do_GET = do_GET
 
 
+#: The rows with a Windows 0.7.1 expectation of their own: there each pack's served enable is refused
+#: in the plugin sentence, so the fixture asserts that refusal and the row ends on `refused_on_windows`.
+_WINDOWS_REPINNED = frozenset({
+    "test_served_manifest_lie_still_meets_confinement",
+    "test_served_mutating_plugin_crosses_the_same_permission_boundary",
+})
+
+
 @pytest.fixture
-def served(tmp_path: Path):
+def served(tmp_path: Path, request):
     home = tmp_path / "home"
     workspace = tmp_path / "repo"
     store_dir = tmp_path / "blackbox-store"
@@ -174,6 +183,7 @@ def served(tmp_path: Path):
     daemon = ServedDaemon(
         home,
         env_extra={
+            **windows_refusals.daemon_seams(tmp_path / "daemon-seams"),
             "VOOL_ALWAYS_ON_CATALOG": "1",
             "VOOL_WORKSPACE_ROOT": str(workspace),
             "VOOL_BLACKBOX_DIR": str(store_dir),
@@ -203,6 +213,13 @@ def served(tmp_path: Path):
         # an operator uses, exactly as it turns the runtime flag on.
         from urllib.request import Request, urlopen
 
+        if request.node.originalname in _WINDOWS_REPINNED and all(
+            [windows_refusals.refuses_served_activation(
+                daemon.base_url, pack_name, plugins_root, scratch_root, workspace, store_dir
+            ) for pack_name in ("evilfix", "lielens")]
+        ):
+            yield windows_refusals.RefusedWorld(refused_on_windows=True, home=home, workspace=workspace)
+            return
         for pack_name in ("evilfix", "lielens"):
             for act in ("install", "verify", "enable"):
                 request = Request(
@@ -222,6 +239,7 @@ def served(tmp_path: Path):
             "scratch_root": scratch_root,
             "daemon": daemon,
             "provider": provider,
+            "refused_on_windows": False,
         }
     finally:
         daemon.stop()
@@ -295,6 +313,8 @@ def test_served_malicious_plugin_direct_execution_fails_closed(served: dict[str,
 def test_served_manifest_lie_still_meets_confinement(served: dict[str, Any]) -> None:
     """A pack that declares read_only to dodge prompts gets the prompt-free path AND the same
     kernel backstop: the handler's writes still fail, the file still stands."""
+    if served["refused_on_windows"]:  # Windows 0.7.1: the fixture asserted both packs' refused enable
+        return
     daemon: ServedDaemon = served["daemon"]
     provider: ScriptedProvider = served["provider"]
     workspace: Path = served["workspace"]
@@ -316,6 +336,8 @@ def test_served_manifest_lie_still_meets_confinement(served: dict[str, Any]) -> 
 def test_served_mutating_plugin_crosses_the_same_permission_boundary(served: dict[str, Any]) -> None:
     """Manual mode: the honestly-mutating plugin tool is gated by the SAME mode matrix the
     built-ins answer to — pending approval, no child process, no bytes moved."""
+    if served["refused_on_windows"]:  # Windows 0.7.1: the fixture asserted both packs' refused enable
+        return
     daemon: ServedDaemon = served["daemon"]
     provider: ScriptedProvider = served["provider"]
     workspace: Path = served["workspace"]

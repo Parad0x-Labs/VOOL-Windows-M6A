@@ -272,6 +272,7 @@ def test_prior_lifecycle_activation_under_an_isolated_home_flips_no_availability
     import sys
 
     from core import plugin_lifecycle
+    from tests import _windows_refusals as windows_refusals
     from tests._toolchain_fixtures import make_plugin
 
     repo_root = Path(__file__).resolve().parents[2]
@@ -282,7 +283,7 @@ def test_prior_lifecycle_activation_under_an_isolated_home_flips_no_availability
     # session's VOOL_PLUGIN_LIFECYCLE_PATH) plus a fresh VOOL_HOME for the subprocess.
     env = dict(os.environ)
     env.update({"VOOL_HOME": str(home), "PYTHONPATH": str(repo_root)})
-    script = (
+    script = windows_refusals.child_seams() + (
         "import sys\n"
         f"sys.path.insert(0, {str(repo_root)!r})\n"
         "from core.plugin_lifecycle import enable, install, verify\n"
@@ -291,6 +292,7 @@ def test_prior_lifecycle_activation_under_an_isolated_home_flips_no_availability
         "enable('parity-cross-home-pack')\n"
         "print('lifecycle: installed+verified+enabled')\n"
     )
+    pack_before = windows_refusals.tree_state(pack)
     completed = subprocess.run(
         [sys.executable, "-c", script],
         cwd=str(repo_root),
@@ -299,6 +301,18 @@ def test_prior_lifecycle_activation_under_an_isolated_home_flips_no_availability
         text=True,
         timeout=180,
     )
+    if windows_refusals.plugins_refused():
+        # Windows 0.7.1: enable refuses in the plugin sentence, and the pack's files are unchanged.
+        # The crossing is still reproduced, by install and verify: the pack lands in this
+        # session's store, not enabled.
+        assert completed.returncode != 0, completed.stdout
+        assert windows_refusals.PLUGIN_REFUSAL in completed.stderr, completed.stderr
+        assert "lifecycle: installed+verified+enabled" not in completed.stdout
+        assert windows_refusals.tree_state(pack) == pack_before
+        polluted = plugin_lifecycle.lifecycle_snapshot()["plugins"]
+        assert [row["plugin_id"] for row in polluted] == ["parity-cross-home-pack"], polluted
+        assert polluted[0].get("enabled") is not True and polluted[0].get("stage") != "enabled", polluted
+        return
     assert completed.returncode == 0, completed.stderr
 
     # The reproduced boundary crossing: the activation meant for another home recorded its

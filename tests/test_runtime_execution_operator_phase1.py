@@ -15,6 +15,19 @@ from core.orchestration import build_task_envelope
 from core.runtime_execution_tools import execute_runtime_tool
 from core.task_router import classify
 from core.tool_intent_executor import plan_tool_workflow
+from tests import _windows_refusals as windows_refusals
+
+#: What a workspace.git_* tool answers where Windows 0.7.1 refuses git: the write gate's status, the git sentence.
+_GIT_GATE_STATUS = "windows_filesystem_authority_unavailable"
+
+
+def _git_tool_refused(seen: windows_refusals.Watch, *results) -> bool:
+    """Where git is refused: each RuntimeExecutionResult is not ok, has exactly the gate's status and
+    exactly the git sentence, no git started and nothing in the workspace changed. False off Windows."""
+    pairs = []
+    for result in results:
+        pairs += [(result.ok, False), (result.status, _GIT_GATE_STATUS), (result.response_text, windows_refusals.GIT_REFUSAL)]
+    return windows_refusals.refused_exactly(seen, *pairs)
 
 
 class RuntimeExecutionOperatorPhase1Tests(unittest.TestCase):
@@ -121,11 +134,19 @@ class RuntimeExecutionOperatorPhase1Tests(unittest.TestCase):
             subprocess.run(["git", "commit", "-m", "initial"], cwd=workspace, check=True, capture_output=True)
             (workspace / "tracked.py").write_text("print('goodbye')\n", encoding="utf-8")
 
-            status = execute_runtime_tool(
-                "workspace.git_status",
-                {},
-                source_context={"workspace": tmpdir, "operating_mode": "auto"},
-            )
+            with windows_refusals.watch_git(workspace) as seen:
+                status = execute_runtime_tool(
+                    "workspace.git_status",
+                    {},
+                    source_context={"workspace": tmpdir, "operating_mode": "auto"},
+                )
+            if seen.active:
+                with windows_refusals.watch_git(workspace) as seen_diff:
+                    diff = execute_runtime_tool(
+                        "workspace.git_diff", {}, source_context={"workspace": tmpdir, "operating_mode": "auto"}
+                    )
+                self.assertTrue(_git_tool_refused(seen, status) and _git_tool_refused(seen_diff, diff))
+                return
             assert status is not None
             self.assertTrue(status.ok)
             self.assertIn("tracked.py", status.response_text)
@@ -183,12 +204,15 @@ class RuntimeExecutionOperatorPhase1Tests(unittest.TestCase):
             (workspace / "tracked.py").write_text("print('three')\n", encoding="utf-8")
             subprocess.run(["git", "commit", "-am", "today-two"], cwd=workspace, check=True, capture_output=True, env=env_today)
 
-            summary = execute_runtime_tool(
-                "workspace.git_summary",
-                {},
-                source_context={"workspace": tmpdir, "operating_mode": "auto"},
-            )
+            with windows_refusals.watch_git(workspace) as seen:
+                summary = execute_runtime_tool(
+                    "workspace.git_summary",
+                    {},
+                    source_context={"workspace": tmpdir, "operating_mode": "auto"},
+                )
             assert summary is not None
+            if _git_tool_refused(seen, summary):
+                return
             self.assertTrue(summary.ok)
             self.assertTrue(summary.response_text.splitlines()[0].startswith("Git summary: branch feature-two @"))
             self.assertIn("local branches: 3", summary.response_text)
@@ -219,12 +243,15 @@ class RuntimeExecutionOperatorPhase1Tests(unittest.TestCase):
                 subprocess.run(["git", "add", "tracked.py"], cwd=workspace, check=True, capture_output=True, env=env)
                 subprocess.run(["git", "commit", "-m", f"commit-{index}"], cwd=workspace, check=True, capture_output=True, env=env)
 
-            summary = execute_runtime_tool(
-                "workspace.git_summary",
-                {"recent_limit": 3},
-                source_context={"workspace": tmpdir, "operating_mode": "auto"},
-            )
+            with windows_refusals.watch_git(workspace) as seen:
+                summary = execute_runtime_tool(
+                    "workspace.git_summary",
+                    {"recent_limit": 3},
+                    source_context={"workspace": tmpdir, "operating_mode": "auto"},
+                )
             assert summary is not None
+            if _git_tool_refused(seen, summary):
+                return
             self.assertTrue(summary.ok)
             self.assertIn("- recent commits:", summary.response_text)
             self.assertIn("commit-3", summary.response_text)

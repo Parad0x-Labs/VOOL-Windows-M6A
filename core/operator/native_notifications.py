@@ -739,6 +739,9 @@ def bridge_status(*, now_fn: Callable[[], str] = _utcnow, get_connection_fn: Cal
         "enabled": bool(preferences.get("native_notifications")),
         "connected": connected,
         "supported": sys.platform == "darwin",
+        # Windows: no OS notification bridge in this version; the bell is the only surface (the Settings panel
+        # drops its macOS text and lock-screen picker on this flag).
+        "bell_only_windows": sys.platform == "win32",
         "seen_at": state["seen_at"],
         "helper_version": state["helper_version"],
         "authorization": str(state["settings"].get("authorization") or "") or "unknown",

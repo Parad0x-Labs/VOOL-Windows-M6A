@@ -104,6 +104,27 @@ def path_size(
     return {"bytes": total, "approximate": approximate}
 
 
+def move_request_values(
+    text: str,
+    *,
+    fallback_source: str | None = None,
+    fallback_destination: str | None = None,
+    extract_quoted_values_fn: Any,
+) -> tuple[str, str]:
+    """The source and destination a move request names, exactly as written: the intent's own paths,
+    else the first two quoted values. Not yet a `Path`, which on Windows folds `C://host/s` into the
+    local `C:\\host\\s`, so a caller that refuses a path by its spelling judges these
+    (core/windows_write_gate.py `refused_spelling`)."""
+    source = str(fallback_source or "").strip()
+    destination = str(fallback_destination or "").strip()
+    quoted = extract_quoted_values_fn(text)
+    if quoted:
+        source = source or quoted[0]
+        if len(quoted) >= 2:
+            destination = destination or quoted[1]
+    return source, destination
+
+
 def parse_move_request(
     text: str,
     *,
@@ -114,13 +135,10 @@ def parse_move_request(
     expandvars_fn: Any,
 ) -> dict[str, str] | None:
     lowered = str(text or "").lower()
-    source = str(fallback_source or "").strip()
-    destination = str(fallback_destination or "").strip()
-    quoted = extract_quoted_values_fn(text)
-    if quoted:
-        source = source or quoted[0]
-        if len(quoted) >= 2:
-            destination = destination or quoted[1]
+    source, destination = move_request_values(
+        text, fallback_source=fallback_source, fallback_destination=fallback_destination,
+        extract_quoted_values_fn=extract_quoted_values_fn,
+    )
     if not source:
         return None
     if not destination:

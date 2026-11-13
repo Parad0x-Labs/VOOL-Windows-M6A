@@ -160,6 +160,26 @@ class ReferenceNotFound(LookupError):
         self.reference = str(reference)
 
 
+class GitRefused(ArchaeologyInputError):
+    """The answer needed the git store, and VOOL runs no git here (Windows, core/safe_git.py). Its text
+    is safe_git's refusal sentence: VOOL did not look, so it never says "not found"."""
+
+    status = safe_git.GIT_REFUSED_STATUS
+
+    def __init__(self) -> None:
+        super().__init__(safe_git.GIT_REFUSED_TEXT)
+
+
+#: A reference git could read as an object name: 7 to 40 hex digits (an abbreviated or full sha-1).
+_GIT_OBJECT_NAME_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
+
+
+def _git_refusal_answers(scan: _Scan, reference: str, items: list[dict]) -> bool:
+    """Whether git's refusal is the answer: git was refused for this read, and either nothing else
+    matched or the reference names what may be a git object, which VOOL could not look for."""
+    return scan.git_refused and (not items or bool(_GIT_OBJECT_NAME_RE.match(str(reference or "").strip())))
+
+
 @dataclass(frozen=True)
 class ScopeGrant:
     """One bounded scope grant. ``access`` is ``metadata`` (names only) or
@@ -278,10 +298,17 @@ class _Scan:
     excerpts_wrapped: int = 0
     files_visited: int = 0
     bytes_read: int = 0
+    #: The git store was in scope and git was refused before any process started (Windows).
+    git_refused: bool = False
+    #: Roots that journal entries naming the queried path were recorded under, which are not on this
+    #: machine: those entries cannot be canonicalized and answer nothing (fail closed).
+    unplaced_roots: list[str] | None = None
 
     def __post_init__(self) -> None:
         if self.truncation_reasons is None:
             self.truncation_reasons = []
+        if self.unplaced_roots is None:
+            self.unplaced_roots = []
 
     def cut(self, reason: str) -> None:
         self.truncated = True
@@ -546,6 +573,89 @@ def _content_sha256(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
+def _path_covers(query: str, recorded: str, *, pathmod: Any = os.path) -> bool:
+    """Whether ``recorded`` is ``query`` or lies inside it (a folder query), compared as ``pathmod``'s
+    platform compares paths: normalized, and case-insensitive on Windows (normcase). Whole components
+    only, never a string prefix: `a/b` does not cover `a/bc`. Both sides are taken as already canonical."""
+    if not str(query or "").strip() or not str(recorded or "").strip():
+        return False
+    wanted = pathmod.normcase(pathmod.normpath(str(query)))
+    candidate = pathmod.normcase(pathmod.normpath(str(recorded)))
+    if candidate == wanted:
+        return True
+    base = wanted if wanted.endswith(pathmod.sep) else wanted + pathmod.sep
+    return candidate.startswith(base)
+
+
+def _is_network_path(path: str) -> bool:
+    return str(path).startswith(("\\\\", "//"))
+
+
+def _canonical_path(path: str) -> str:
+    """``path`` after realpath (links and junctions followed). A network path is only normalized:
+    resolving it would reach the network."""
+    if _is_network_path(path):
+        return os.path.normpath(path)
+    try:
+        return os.path.realpath(path)
+    except (OSError, ValueError):
+        return os.path.normpath(os.path.abspath(path))
+
+
+def _path_matcher(query: str, workspace_root: str = "", unplaced: list[str] | None = None):
+    """A test for whether a recorded ``(path, root)`` answers a query for ``query``: its canonical path
+    equals the queried path's or lies inside it (`_path_covers`). A relative query is read inside
+    ``workspace_root``; with no root to read it in, it matches nothing.
+
+    Fails closed: a record whose root is not on this machine cannot be canonicalized, so it never
+    matches. When its root-relative path is the one asked for, its root is added to ``unplaced`` so the
+    answer can name where the journal recorded it."""
+    raw = os.path.expanduser(str(query or "").strip())
+    root = os.path.expanduser(str(workspace_root or "").strip())
+    root_canonical = _canonical_path(root) if root and os.path.isabs(root) else ""
+    if os.path.isabs(raw):
+        query_canonical = _canonical_path(raw)
+        query_relative = ""
+        if root and _path_covers(root, raw):
+            query_relative = os.path.relpath(raw, root)
+        elif root_canonical and _path_covers(root_canonical, query_canonical):
+            query_relative = os.path.relpath(query_canonical, root_canonical)
+    else:
+        query_canonical = _canonical_path(os.path.join(root_canonical, raw)) if root_canonical else ""
+        query_relative = raw
+    seen: dict[tuple[str, str], str] = {}
+
+    def recorded_canonical(path: str, record_root: str) -> str:
+        key = (path, record_root)
+        if key not in seen:
+            full = path if os.path.isabs(path) else (
+                os.path.join(record_root, path) if record_root and os.path.isabs(record_root) else "")
+            if not full:
+                seen[key] = ""
+            elif _is_network_path(full):
+                seen[key] = os.path.normpath(full)
+            else:
+                seen[key] = _canonical_path(full) if os.path.lexists(record_root or full) else ""
+        return seen[key]
+
+    def matches(path: str, record_root: str = "") -> bool:
+        path = str(path or "").strip()
+        if not path:
+            return False
+        record_root = str(record_root or "").strip()
+        recorded = recorded_canonical(path, record_root)
+        if recorded:
+            return bool(query_canonical) and _path_covers(query_canonical, recorded)
+        if (unplaced is not None and query_relative and not os.path.isabs(path)
+                and _path_covers(query_relative, path)):
+            named = record_root or "(no root recorded)"
+            if named not in unplaced:
+                unplaced.append(named)
+        return False
+
+    return matches
+
+
 def _read_blackbox(
     *, scan: _Scan, filters: dict[str, Any], deadline: float
 ) -> tuple[list[dict], dict[str, Any] | None]:
@@ -569,6 +679,10 @@ def _read_blackbox(
     text = str(filters.get("text") or "").strip().casefold()
     reference = str(filters.get("reference") or "").strip().casefold()
     since, until = filters.get("since"), filters.get("until")
+    # A path query answers only from entries recorded on that path (or inside it, for a folder).
+    queried_path = str(filters.get("path") or "").strip()
+    path_root = str(filters.get("_path_root") or filters.get("workspace_root") or "")
+    path_matches = _path_matcher(queried_path, path_root, scan.unplaced_roots) if queried_path else None
     items: list[dict] = []
     for entry in entries:
         if scan.files_visited >= LIMITS["max_files"]:
@@ -590,6 +704,8 @@ def _read_blackbox(
         if turn and entry_turn != turn:
             continue
         if path_prefix and not entry_path.startswith(path_prefix):
+            continue
+        if path_matches is not None and not path_matches(entry_path, str(entry.get("root") or "")):
             continue
         if not _in_window(stamp, since, until):
             continue
@@ -923,6 +1039,9 @@ def _memory_items(
     reference = str(filters.get("reference") or "").strip().casefold()
     turn = str(filters.get("turn_id") or "").strip()
     since, until = filters.get("since"), filters.get("until")
+    if str(filters.get("path") or "").strip() and not (session or text or reference or turn or since or until):
+        # Memory items carry no path: a query that selects only by path matches none of them.
+        return [], None
     items: list[dict] = []
     count = 0
     try:
@@ -1167,6 +1286,8 @@ def _git_repo_for(workspace_root: str) -> str:
     candidate = Path(workspace_root).expanduser()
     if not workspace_root:
         return ""
+    if safe_git.git_refused_here():  # Windows: no git evidence, and no git process to look for it
+        raise GitRefused()
     ceiling = _GIT_CEILING.get()
     probe = candidate if (candidate / ".git").exists() else candidate.parent
     while str(probe) != str(probe.parent):
@@ -1309,11 +1430,15 @@ def _git_items(
     *, scan: _Scan, filters: dict[str, Any], deadline: float
 ) -> tuple[list[dict], dict[str, Any] | None]:
     workspace_root = str(filters.get("workspace_root") or "").strip()
+    reference = str(filters.get("reference") or "").strip()
+    path = str(filters.get("path") or "").strip()
+    if workspace_root and (reference or path) and safe_git.git_refused_here():
+        # Recorded so the answer can say git was not read; _git_repo_for raises the refusal below,
+        # which _collect keeps as a truncation reason.
+        scan.git_refused = True
     repo = _git_repo_for(workspace_root) if workspace_root else ""
     if not repo:
         return [], None
-    reference = str(filters.get("reference") or "").strip()
-    path = str(filters.get("path") or "").strip()
     items: list[dict] = []
     if reference:
         item = _git_commit_item(repo, reference, "exact" if len(reference) == 40 else "derived", scan)
@@ -1840,7 +1965,12 @@ def locate(
     scope, _norm = _resolve_scope(workspace_root, grants, refused)
     filters = _filters(reference=clean, workspace_root=workspace_root)
     items, rows = _collect(scope, filters, effective, scan, deadline)
+    git_refused = _git_refusal_answers(scan, clean, items)
     if not items:
+        # Not found only when every store that could hold it was read: when git was refused, VOOL
+        # did not look, and says so.
+        if git_refused:
+            raise GitRefused()
         raise ReferenceNotFound(clean)
     envelope = _envelope(
         "locate",
@@ -1852,6 +1982,7 @@ def locate(
         rows,
         effective["limit"],
     )
+    envelope["notices"] = [safe_git.GIT_REFUSED_TEXT] if git_refused else []
     return envelope
 
 
@@ -1941,6 +2072,9 @@ def trace(
         until=until,
         trace_all=True,
     )
+    # A relative path is read inside the workspace root (the journal path match only; trace still
+    # reads no git).
+    filters["_path_root"] = str(workspace_root or "")
     effective = _effective_limits(limits)
     effective["limit"] = max(1, min(int(limit), effective["max_results"]))
     scan = _Scan()
@@ -2267,7 +2401,11 @@ def recovery_plan(
             }
         )
     recoverable = bool(steps)
-    if not items:
+    git_refused = _git_refusal_answers(scan, clean_ref, items)
+    if git_refused:
+        # git was not read, so the plan cannot say nothing was found there.
+        notes.append(safe_git.GIT_REFUSED_TEXT)
+    elif not items:
         notes.append("nothing matching the reference was found in any in-scope store")
     elif not steps:
         notes.append(
@@ -2277,6 +2415,14 @@ def recovery_plan(
         )
     if clean_ref and not blackbox_items:
         notes.append("the reference resolved outside the blackbox journal")
+    if clean_path and not recoverable and scan.unplaced_roots:
+        roots = ", ".join(repr(root) for root in scan.unplaced_roots)
+        notes.append(
+            f"NOT RECOVERABLE: the journal recorded {clean_path!r} under {roots}, which is not on this "
+            "machine, so VOOL cannot tell whether that record is this file"
+        )
+    elif clean_path and not recoverable:
+        notes.append(f"NOT RECOVERABLE: no in-scope store holds evidence recorded for {clean_path!r}")
 
     envelope = _envelope(
         "recovery_plan",
@@ -2298,4 +2444,5 @@ def recovery_plan(
         "execution": "not_performed_read_only_plan",
         "notes": notes,
     }
+    envelope["notices"] = [safe_git.GIT_REFUSED_TEXT] if git_refused else []
     return envelope

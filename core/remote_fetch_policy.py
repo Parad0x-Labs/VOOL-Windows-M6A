@@ -171,9 +171,10 @@ def _active_mode_label() -> str:
 #: The one sentence the product says when Local Only refuses to leave the machine.
 #: Named once so the served UI, the CLI and the receipts cannot drift from each other.
 LOCAL_ONLY_EGRESS_DENIAL = (
-    "Local Only is in force for this turn: no request may leave this machine, so no "
-    "socket was opened. Loopback and operator-owned LAN endpoints stay available. "
-    "To use the web, leave Local Only by changing the model selection."
+    "Local Only is in force for this turn, so this request was not sent and no socket was "
+    "opened. Loopback and operator-owned LAN endpoints stay available, and web search "
+    "through VOOL's built-in browser still works. To open this page directly, leave Local "
+    "Only by changing the model selection."
 )
 
 
@@ -225,6 +226,15 @@ def _local_only_egress_forbidden(
     if not local_only_active(source_context):
         return False, ""
     try:
+        from core import windows_cloud_gate
+
+        # Windows: a host the cloud gate names a cloud provider is never this machine or the LAN
+        # (literal local addresses are not cloud), so it is public egress with no name lookup.
+        if windows_cloud_gate.active() and windows_cloud_gate.is_cloud_provider_request(url):
+            return True, LOCAL_ONLY_EGRESS_DENIAL
+    except Exception:
+        pass
+    try:
         from core.auto_local_only_mode import endpoint_is_local
 
         if endpoint_is_local(url):
@@ -260,6 +270,63 @@ def remote_fetch_forbidden() -> bool:
 
 class RemoteFetchRefusedError(RuntimeError):
     """This turn is not permitted to reach the network, so no socket was opened."""
+
+
+def browser_navigation_refusal(url: str) -> str | None:
+    """Why a headless browser may not be started for *url* in this turn, or None when it may.
+
+    The browser is not an HTTP request, so it never passes `open_remote`. Its two doors in
+    `tools/browser/browser_render.py` asked only the explicit per-turn veto, so a turn the
+    permission gateway denies the network still started a browser that went to the public web.
+    This asks, before any process is started:
+
+    * the explicit per-turn veto;
+    * the permission gateway's network-fetch decision, when a turn's ledger is open (a refusal
+      leaves the same ``denied`` receipt the HTTP door leaves).
+
+    Local Only is deliberately NOT a check here (product decision, 11 Nov 2026): Local Only keeps
+    the turn on the local model, and web search through the local headless browser stays
+    available in it. The HTTP providers keep their own Local Only refusal in `open_remote`.
+
+    Windows only, behind the Windows rule's seam (`core.windows_write_gate.active`). Off Windows the
+    answer is always None, so the browser doors keep their veto-only check unchanged there.
+    """
+
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return None
+    from core.effect_gateway import current_effect_ledger
+
+    ledger = current_effect_ledger()
+    if remote_fetch_forbidden():
+        return "remote fetch is not permitted for this turn"
+    if ledger is None:
+        return None
+    from core.effect_gateway import (
+        DECISION_DENIED,
+        EFFECT_NETWORK_FETCH,
+        LIFECYCLE_DENIED,
+        EffectReceipt,
+        decide_network_fetch,
+    )
+
+    decision, reason = decide_network_fetch(_SCOPE_CONTEXT.get() or {})
+    if decision != DECISION_DENIED:
+        return None
+    ledger.open_effect(
+        EffectReceipt(
+            effect_class=EFFECT_NETWORK_FETCH,
+            decision=DECISION_DENIED,
+            lifecycle=LIFECYCLE_DENIED,
+            reason=reason,
+            host=_host_of(url),
+            mode=_active_mode_label(),
+            decided_by="mode_permission_policy.decide_tool_call",
+            recorded_at=_utcnow_iso(),
+        ),
+    )
+    return f"network fetch denied by the permission gateway: {reason}"
 
 
 def open_remote(
@@ -327,6 +394,22 @@ def open_remote(
 
     if current_effect_ledger() is None:
         raise RemoteFetchRefusedError(NO_ACTIVE_LEDGER_DENIAL)
+    # Windows backstop: no request to a cloud model provider (by declared provider or by host)
+    # before a key is stored AND cloud is turned on (core/windows_cloud_gate.py). Before any socket.
+    from core.windows_cloud_gate import door_refusal
+
+    _url = str(getattr(request, "full_url", "") or "")
+    refusal = door_refusal(_url, provider_id, keyed_or_keyless)
+    if refusal is not None:
+        # Local Only stays the first word: a Local Only turn reads its own sentence and leaves its
+        # own receipt, decided by its one check (which makes no name lookup for a cloud host).
+        _lo_forbidden, _lo_reason = _local_only_egress_forbidden(_SCOPE_CONTEXT.get() or {}, _url)
+        if _lo_forbidden:
+            _refuse_local_only(
+                current_effect_ledger(), _url, _lo_reason,
+                provider_id=provider_id, keyed_or_keyless=keyed_or_keyless, retry_of=retry_of,
+            )
+        raise refusal
     return _open_enforced(
         request,
         timeout=timeout,
@@ -391,6 +474,37 @@ def _file_transport_fault(exc: BaseException, *, url: str, provider_id: str) -> 
     except Exception:
         # The fault record must never change the exception's path: it propagates untouched.
         pass
+
+
+def _refuse_local_only(
+    ledger: Any, url: str, reason: str, *, provider_id: str = "", keyed_or_keyless: str = "",
+    retry_of: str = "",
+) -> None:
+    """Local Only's denial: one ``denied`` receipt carrying the host and nothing else from the
+    request, then the refusal. Always raises."""
+    from core.effect_gateway import (
+        DECISION_DENIED,
+        EFFECT_NETWORK_FETCH,
+        LIFECYCLE_DENIED,
+        EffectReceipt,
+    )
+
+    ledger.open_effect(
+        EffectReceipt(
+            effect_class=EFFECT_NETWORK_FETCH,
+            decision=DECISION_DENIED,
+            lifecycle=LIFECYCLE_DENIED,
+            reason=reason,
+            host=_host_of(url),
+            provider_id=str(provider_id or ""),
+            keyed_or_keyless=str(keyed_or_keyless or ""),
+            mode=_active_mode_label(),
+            decided_by="remote_fetch_policy.local_only_egress",
+            recorded_at=_utcnow_iso(),
+        ),
+        retry_of=retry_of,
+    )
+    raise RemoteFetchRefusedError(reason)
 
 
 def _open_enforced(
@@ -473,22 +587,10 @@ def _open_enforced(
     # without transmission.
     _lo_forbidden, _lo_reason = _local_only_egress_forbidden(_SCOPE_CONTEXT.get() or {}, url)
     if _lo_forbidden:
-        ledger.open_effect(
-            EffectReceipt(
-                effect_class=EFFECT_NETWORK_FETCH,
-                decision=DECISION_DENIED,
-                lifecycle=LIFECYCLE_DENIED,
-                reason=_lo_reason,
-                host=_host_of(url),
-                provider_id=str(provider_id or ""),
-                keyed_or_keyless=str(keyed_or_keyless or ""),
-                mode=_active_mode_label(),
-                decided_by="remote_fetch_policy.local_only_egress",
-                recorded_at=_utcnow_iso(),
-            ),
-            retry_of=retry_of,
+        _refuse_local_only(
+            ledger, url, _lo_reason,
+            provider_id=provider_id, keyed_or_keyless=keyed_or_keyless, retry_of=retry_of,
         )
-        raise RemoteFetchRefusedError(_lo_reason)
     if remote_fetch_forbidden():
         ledger.open_effect(
             EffectReceipt(
@@ -958,6 +1060,7 @@ __all__ = [
     "NO_ACTIVE_LEDGER_DENIAL",
     "CredentialRedirectRefusedError",
     "RemoteFetchRefusedError",
+    "browser_navigation_refusal",
     "effective_web_available",
     "explicit_remote_fetch_disabled",
     "local_only_active",

@@ -28,6 +28,16 @@ public interface IConfinementChecks
     /// the deny. Throws when the scan can't finish.
     /// </summary>
     IReadOnlyList<string> UnprotectedRepositories(Policy policy);
+
+    /// <summary>
+    /// Puts the policy's stat-only ACEs in place for this one job (before <see cref="VerifyAcls"/>).
+    /// Throws <see cref="SetupException"/> when it cannot. No-op by default: a check set with no ACL
+    /// code has none to write.
+    /// </summary>
+    void GrantStatOnly(Policy policy, string packageSid) { }
+
+    /// <summary>Takes the policy's stat-only ACEs off again once the job's tree is gone. No-op by default.</summary>
+    void RevokeStatOnly(Policy policy, string packageSid) { }
 }
 
 /// <summary>The second half of the repository scan, after the job has ended.</summary>
@@ -120,6 +130,28 @@ public static class Launcher
         var capabilities = Sids.CapabilitiesFor(policy);
         var trampoline = Trampoline();
         var environment = TrampolineEnvironment(program, commandLine, policy.TempDir);
+        try
+        {
+            // This job's stat-only ACEs (the folder above a pytest job's folder): granted for this run
+            // only, verified with the rest, and taken off in the finally below, after the job object is
+            // closed and its whole tree is gone.
+            checks.GrantStatOnly(policy, packageSid);
+            return RunChild(policy, checks, status, stderr, packageSid, capabilities, trampoline, environment);
+        }
+        finally
+        {
+            try { checks.RevokeStatOnly(policy, packageSid); }
+            catch (Exception e) when (e is SetupException or AclException or IOException or UnauthorizedAccessException)
+            {
+                // The ACE left behind gives only a stat of that folder, and only to a job whose policy names it.
+                stderr.WriteLine($"stat-only revoke failed: {e.Message}");
+            }
+        }
+    }
+
+    static int RunChild(Policy policy, IConfinementChecks checks, LauncherStatus status, TextWriter stderr,
+        string packageSid, IReadOnlyList<string> capabilities, string trampoline, IReadOnlyDictionary<string, string> environment)
+    {
         checks.VerifyAcls(policy, packageSid);
         var scan = checks.StartRepositoryScan(policy);
 

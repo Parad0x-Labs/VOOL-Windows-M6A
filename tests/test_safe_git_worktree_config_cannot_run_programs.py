@@ -23,6 +23,7 @@ import pytest
 from core import safe_git
 from core.execution.git_tools import git_diff_workspace, git_status_workspace
 from core.repoops.gitops import GitRunner
+from tests import _windows_refusals as windows_refusals
 
 pytestmark = pytest.mark.skipif(subprocess.run(["git", "--version"], capture_output=True).returncode != 0,
                                 reason="git is not installed")
@@ -93,9 +94,12 @@ def test_workspace_git_status_and_diff_refuse_a_filter_set_in_config_worktree(tm
     repo, marker = _repo(tmp_path)
     _plant_worktree_filter(repo, tmp_path, marker)
 
-    status = git_status_workspace({}, workspace_root=repo)
-    diff = git_diff_workspace({}, workspace_root=repo)
+    with windows_refusals.watch_git(tmp_path) as seen:
+        status = git_status_workspace({}, workspace_root=repo)
+        diff = git_diff_workspace({}, workspace_root=repo)
 
+    if seen.refused_tool(status, diff):
+        return
     assert status["status"] == "refused_repository_config"
     assert "filter.planted.clean" in status["response_text"]
     assert diff["status"] == "refused_repository_config"
@@ -141,8 +145,15 @@ def test_a_plain_repository_with_worktree_config_on_still_commits(tmp_path: Path
     _git(repo, "config", "--worktree", "core.sparseCheckout", "false")
     (repo / "notes.txt").write_text("two\n", encoding="utf-8")
 
-    result = GitRunner(root=repo).commit(message="ordinary")
+    with windows_refusals.watch_git(tmp_path) as seen:
+        result = GitRunner(root=repo).commit(message="ordinary")
+        if seen.active:  # the config read starts git too, so it is refused before any start
+            with pytest.raises(safe_git.GitRefusedOnWindows) as keys:
+                safe_git.executable_local_config(repo)
 
+    if windows_refusals.refused_git_result(seen, result):
+        windows_refusals.assert_raised_in_core(keys, safe_git.GitRefusedOnWindows, windows_refusals.GIT_REFUSAL)
+        return
     assert result.ok is True, result.to_dict()
     assert safe_git.executable_local_config(repo) == []
 
@@ -172,10 +183,14 @@ def test_a_filter_in_a_submodules_config_is_refused_in_the_superproject(tmp_path
     (superproject / "notes.txt").write_text("two\n", encoding="utf-8")
     head = _git(superproject, "rev-parse", "HEAD").strip()
 
-    status = git_status_workspace({}, workspace_root=superproject)
-    diff = git_diff_workspace({}, workspace_root=superproject)
-    commit = GitRunner(root=superproject).commit(message="planted")
+    with windows_refusals.watch_git(tmp_path) as seen:
+        status = git_status_workspace({}, workspace_root=superproject)
+        diff = git_diff_workspace({}, workspace_root=superproject)
+        commit = GitRunner(root=superproject).commit(message="planted")
 
+    if seen.refused_tool(status, diff) and seen.refused(commit.stderr):
+        assert commit.ok is False, commit.to_dict()
+        return
     assert status["status"] == "refused_repository_config"
     assert "sub:filter.planted.clean" in status["response_text"]
     assert diff["status"] == "refused_repository_config"
@@ -199,8 +214,15 @@ def test_a_superproject_with_a_plain_submodule_still_commits(tmp_path: Path) -> 
     superproject, _sub, _marker = _superproject(tmp_path)
     (superproject / "notes.txt").write_text("two\n", encoding="utf-8")
 
-    result = GitRunner(root=superproject).commit(message="ordinary")
+    with windows_refusals.watch_git(tmp_path) as seen:
+        result = GitRunner(root=superproject).commit(message="ordinary")
+        if seen.active:  # the config read starts git too, so it is refused before any start
+            with pytest.raises(safe_git.GitRefusedOnWindows) as keys:
+                safe_git.executable_local_config(superproject)
 
+    if windows_refusals.refused_git_result(seen, result):
+        windows_refusals.assert_raised_in_core(keys, safe_git.GitRefusedOnWindows, windows_refusals.GIT_REFUSAL)
+        return
     assert result.ok is True, result.to_dict()
     assert safe_git.executable_local_config(superproject) == []
 
@@ -325,8 +347,11 @@ def test_a_git_lfs_transfer_agent_set_by_the_repository_is_refused(tmp_path: Pat
     repo, marker = _repo(tmp_path)
     _git(repo, "config", key, _planted_program(tmp_path, marker))
 
-    status = git_status_workspace({}, workspace_root=repo)
+    with windows_refusals.watch_git(tmp_path) as seen:
+        status = git_status_workspace({}, workspace_root=repo)
 
+    if seen.refused_tool(status):
+        return
     assert status["status"] == "refused_repository_config", key
     assert key.lower() in status["response_text"]
     assert not marker.exists()
@@ -485,8 +510,12 @@ def test_a_branch_switch_never_rebuilds_a_submodule_from_its_git_folder(tmp_path
     marker = tmp_path / "MARKER"
     superproject, side = _submodule_rebuilt_on_switch(tmp_path, marker)
 
-    result = GitRunner(root=superproject).create_branch("next", start_point=side)
+    with windows_refusals.watch_git(tmp_path) as seen:
+        result = GitRunner(root=superproject).create_branch("next", start_point=side)
 
+    if windows_refusals.refused_git_result(seen, result):
+        assert not marker.exists(), "a recursive switch ran a filter named in a submodule's git folder"
+        return
     assert result.ok is True, result.to_dict()
     assert not marker.exists(), "a recursive switch ran a filter named in a submodule's git folder"
 
@@ -545,8 +574,11 @@ def test_every_program_naming_key_from_the_config_sweep_is_refused(tmp_path: Pat
     repo, marker = _repo(tmp_path)
     _git(repo, "config", key, _planted_program(tmp_path, marker))
 
-    status = git_status_workspace({}, workspace_root=repo)
+    with windows_refusals.watch_git(tmp_path) as seen:
+        status = git_status_workspace({}, workspace_root=repo)
 
+    if seen.refused_tool(status):
+        return
     assert status["status"] == "refused_repository_config", key
     assert key.lower() in status["response_text"]
 

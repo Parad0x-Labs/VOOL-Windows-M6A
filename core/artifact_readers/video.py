@@ -30,6 +30,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from core import posix_tools
+
 from . import _sandbox
 from ._limits import (
     MAX_VIDEO_DURATION_S,
@@ -64,7 +66,8 @@ _EXTENSION_TO_TYPE = {ext: media for media, exts in VIDEO_TYPES.items() for ext 
 
 def _which(candidates: tuple[str, ...]) -> str:
     for path in candidates:
-        if os.access(path, os.X_OK):
+        # On Windows these POSIX candidates would resolve under a plantable C:\opt or C:\usr.
+        if posix_tools.executable(path):
             return path
     found = shutil.which(os.path.basename(candidates[0]))
     return found if found and os.path.isabs(found) else ""

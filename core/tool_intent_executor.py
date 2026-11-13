@@ -107,6 +107,12 @@ __all__ = [
 ]
 
 
+#: Intents whose handler runs one sandbox command in the `cwd` its arguments name (`_run_command`).
+_CWD_COMMAND_INTENTS = frozenset(
+    {"sandbox.run_command", "workspace.run_tests", "workspace.run_lint", "workspace.run_formatter"}
+)
+
+
 def runtime_capability_ledger(*, hive_read_reachable_fn=None) -> list[dict[str, Any]]:
     return execution_capabilities.runtime_capability_ledger(
         allow_web_fallback_fn=policy_engine.allow_web_fallback,
@@ -475,8 +481,13 @@ def _undispatchable_execution(intent: str, arguments: dict[str, Any]) -> ToolInt
                     f"MCP server {server!r} is not configured (MCP is opt-in)."
                 )
             else:
+                from core.plugin_executor import windows_plugin_mcp_refusal
+
                 failure = server_failure_reason(server)
-                if failure:
+                refusal = windows_plugin_mcp_refusal()
+                if refusal:
+                    status, reason = "mcp_refused_on_windows", refusal
+                elif failure:
                     status, reason = "mcp_server_unavailable", (
                         f"MCP server {server!r} could not be started: {failure}"
                     )
@@ -793,6 +804,7 @@ def _execute_plugin_tool(intent: str, arguments: dict[str, Any]) -> ToolIntentEx
         "handler_missing",
         "handler_escaped",
         "confinement_unavailable",
+        "refused_on_windows",
     }
     text = str(result.text or "").strip()
     if not result.ok:
@@ -892,18 +904,31 @@ def _windows_write_refusal(
     `_workspace_root`, council seats left to the dispatch-time gate) and the operator lane's (over
     the action it builds from these arguments). A call the gate never refuses (off Windows, or an
     ungated intent such as a calendar event) returns None before any of that work.
+
+    A call that starts a program (`sandbox.run_command`, the validation intents) is asked the
+    Windows phase-1 program check here too, through the same runtime helper, so a program VOOL
+    never runs on Windows is refused before the permission decision, not after an approval.
     """
     from core import windows_write_gate
+    from core.runtime_execution_tools import windows_program_check_applies
 
-    if not windows_write_gate.may_refuse(intent):
+    if not windows_write_gate.may_refuse(intent) and not windows_program_check_applies(intent):
         return None
     if intent in _MUTATING_OPERATOR_INTENTS:
         from core.local_operator_actions import windows_write_refusal as operator_refusal
 
-        reason = operator_refusal(_build_operator_action_intent(intent.split(".", 1)[1], arguments))
+        operator_intent = _build_operator_action_intent(intent.split(".", 1)[1], arguments)
+        reason = operator_refusal(operator_intent)
+        status = windows_write_gate.STATUS
+        if not reason:
+            # The move handler's own scope check, asked before the card rather than after the Allow.
+            from core.local_operator_actions import windows_move_scope_refusal
+
+            reason = windows_move_scope_refusal(operator_intent)
+            status = "blocked"
         if not reason:
             return None
-        status, text = windows_write_gate.STATUS, reason
+        text = reason
         details = {
             "executed": False,
             "observation": _tool_observation(
@@ -1277,11 +1302,13 @@ def _execute_tool_intent_impl(
     # Background/internal callers are served by an explicit typed scope
     # (`mode_permission_policy.grant_internal_authority`) that names the actions it needs. Not
     # sending a mode is not that scope, and must never be read as one again.
-    if intent == "sandbox.run_command" and str(arguments.get("cwd") or "").strip():
+    if intent in _CWD_COMMAND_INTENTS and str(arguments.get("cwd") or "").strip():
         # A working directory outside the workspace is refused HERE, before the permission
         # decision: measured live 2026-09-07, the controller asked the operator to approve
         # `cwd=/Users`, the operator did, and the handler then refused -- the approval bought
         # nothing and the refusal surfaced as an unknown outcome. Same predicate as the handler.
+        # The validation commands run through that same handler with the same `cwd`, and were
+        # approved and then refused the same way (captest C3, 2026-11-09: run_tests).
         from core.runtime_execution_tools import _workspace_root, sandbox_cwd_refusal
 
         refusal = sandbox_cwd_refusal(arguments.get("cwd"), workspace_root=_workspace_root(source_context))
@@ -1771,20 +1798,37 @@ def _execute_tool_intent_impl(
         )
         return execution
     if intent in _READ_ONLY_OPERATOR_INTENTS | _MUTATING_OPERATOR_INTENTS:
-        execution = _dispatch_with_claim(
-            lambda: _with_blackbox_coverage(
-                intent,
-                arguments,
-                source_context=source_context,
-                dispatch=lambda: _execute_operator_tool(
+        # An allow that is the operator's exact approval of this call is carried to the operator
+        # handler, which would otherwise store a preview and ask again in text ("approve move <id>"),
+        # leaving the approved call a preview with no approval id. Only this dispatch carries it, and
+        # only the handlers `execute_operator_tool` lists may claim it, once. Windows only for 0.7.1.
+        import contextlib
+
+        from core.execution_gate import operator_approval_spend_applies, operator_approved_call
+
+        approved_scope = (
+            operator_approved_call(intent)
+            if permission is not None
+            and permission.effect is PermissionEffect.ALLOW
+            and bool(getattr(permission, "exact_approval", False))
+            and operator_approval_spend_applies()
+            else contextlib.nullcontext()
+        )
+        with approved_scope:
+            execution = _dispatch_with_claim(
+                lambda: _with_blackbox_coverage(
                     intent,
                     arguments,
-                    task_id=task_id,
-                    session_id=session_id,
                     source_context=source_context,
-                ),
+                    dispatch=lambda: _execute_operator_tool(
+                        intent,
+                        arguments,
+                        task_id=task_id,
+                        session_id=session_id,
+                        source_context=source_context,
+                    ),
+                )
             )
-        )
         _maybe_store_tool_receipt(
             execution,
             receipt_key=receipt_key,

@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import re
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -26,6 +29,8 @@ EXIT_SETUP_FAILED = 125
 EXIT_POLICY_INVALID = 126
 REFUSED_MARKER = "VOOLCONFINE-REFUSED:"  # human-readable stderr line only; never trusted
 
+_log = logging.getLogger(__name__)
+
 _KEYS = (
     "schema",
     "write_roots",
@@ -40,6 +45,7 @@ _KEYS = (
     "max_processes",
     "temp_dir",
     "status_path",
+    "stat_only_paths",
 )
 
 
@@ -105,6 +111,11 @@ class WindowsConfinementPolicy:
     job_read_roots: tuple[str, ...] = ()
     deny_write_paths: tuple[str, ...] = ()
     deny_all_paths: tuple[str, ...] = ()
+    #: Folders this job may stat and nothing more, for one run: the launcher's run form puts one
+    #: explicit, non-inherited FILE_READ_ATTRIBUTES | SYNCHRONIZE allow on each (for that folder's own
+    #: `vool.stat.<sha256>` capability) before the child starts and takes it off after the job. The
+    #: job runner names the folder above a pytest job's folder, which pytest 9.1.1 stats on every run.
+    stat_only_paths: tuple[str, ...] = ()
     deny_write_git: bool = True
     network: bool = False
     max_seconds: int = 120
@@ -124,6 +135,15 @@ class WindowsConfinementPolicy:
             _check_path(p, "deny_write_paths entry")
         for p in self.deny_all_paths:
             _check_path(p, "deny_all_paths entry")
+        every_root = (*self.write_roots, *self.read_roots, *self.job_read_roots)
+        for p in self.stat_only_paths:
+            text = _check_path(p, "stat_only_paths entry")
+            if len(text) == 3:
+                raise PolicyError(f"stat_only_paths entry must not be a volume root: {text!r}")
+            if any(_inside(text, root) for root in every_root):
+                raise PolicyError(f"stat_only_paths entry lies inside a root, which already reaches it: {text!r}")
+            if any(_inside(text, denied) for denied in self.deny_all_paths):
+                raise PolicyError(f"stat_only_paths entry lies inside a denied path: {text!r}")
         temp = _check_path(self.temp_dir, "temp_dir")
         if not any(_inside(temp, root) for root in roots):
             raise PolicyError("temp_dir must sit inside a write root")
@@ -140,8 +160,11 @@ class WindowsConfinementPolicy:
 
     def to_json(self) -> str:
         self.validate()
+        # Named only when there is one, so a policy with none reads byte for byte as before.
+        extra = {"stat_only_paths": list(self.stat_only_paths)} if self.stat_only_paths else {}
         return json.dumps(
             {
+                **extra,
                 "schema": SCHEMA,
                 "write_roots": list(self.write_roots),
                 "read_roots": list(self.read_roots),
@@ -175,7 +198,7 @@ class WindowsConfinementPolicy:
         missing = [key for key in ("write_roots", "temp_dir", "status_path") if key not in data]
         if missing:
             raise PolicyError(f"missing policy keys: {missing}")
-        for key in ("write_roots", "read_roots", "job_read_roots", "deny_write_paths", "deny_all_paths"):
+        for key in ("write_roots", "read_roots", "job_read_roots", "deny_write_paths", "deny_all_paths", "stat_only_paths"):
             value = data.get(key, [])
             if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
                 raise PolicyError(f"{key} must be a list of strings")
@@ -187,6 +210,7 @@ class WindowsConfinementPolicy:
             job_read_roots=tuple(data.get("job_read_roots", [])),
             deny_write_paths=tuple(data.get("deny_write_paths", [])),
             deny_all_paths=tuple(data.get("deny_all_paths", [])),
+            stat_only_paths=tuple(data.get("stat_only_paths", [])),
             deny_write_git=data.get("deny_write_git", True),
             network=data.get("network", False),
             max_seconds=data.get("max_seconds", 120),
@@ -260,6 +284,7 @@ def root_capability_name(root: str) -> str:
     trimmed = str(root).replace("/", "\\").rstrip("\\")
     normalized = "".join(chr(ord(c) - 32) if "a" <= c <= "z" else c for c in trimmed)
     return "vool.root." + hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
 
 
 def launcher_path(project_root: Path) -> Path | None:
@@ -373,6 +398,11 @@ def adopt_launcher(pid: int) -> None:
 
 def _run_launcher(argv: list[str], *, timeout: float) -> int:
     """Run one launcher invocation in VOOL's job with the scrubbed environment; its exit code."""
+    return _run_launcher_output(argv, timeout=timeout)[0]
+
+
+def _run_launcher_output(argv: list[str], *, timeout: float) -> tuple[int, bytes]:
+    """`_run_launcher`, with the launcher's stderr kept (its own refusal line, for the log)."""
     import subprocess
 
     process = subprocess.Popen(
@@ -386,12 +416,48 @@ def _run_launcher(argv: list[str], *, timeout: float) -> int:
     )
     try:
         adopt_launcher(process.pid)
-        process.communicate(timeout=timeout)
+        _stdout, stderr = process.communicate(timeout=timeout)
     except BaseException:
         process.kill()
         process.communicate()
         raise
-    return int(process.returncode)
+    return int(process.returncode), stderr or b""
+
+
+#: The reason the launcher's grant and revoke forms print: `<form> failed (<AclException code>): <message>`.
+_FORM_REASON_RE = re.compile(r"\b(?:grant|revoke) failed \(([a-z0-9_]+)\): ?(.*)")
+#: The log keeps one line of the launcher's own text, never more.
+_REASON_LOG_LIMIT = 600
+
+
+def form_failure_reason(stderr: bytes | str) -> tuple[str, str]:
+    """The launcher's reason for a failed grant or revoke: (code, message).
+
+    Only the launcher's own `VOOLCONFINE-REFUSED:` line is read. The grant and revoke forms run no
+    child, and that line names a reason code, paths and an NTSTATUS, never file contents. The code
+    is the AclException's ("nested_write_roots", "entry_vanished", ...); a refusal without one (an
+    unreadable policy, an I/O error) is "unspecified", and no refusal line at all is "no_reason"."""
+    text = stderr.decode("utf-8", "replace") if isinstance(stderr, bytes) else str(stderr or "")
+    refusal = ""
+    for line in text.splitlines():
+        if line.startswith(REFUSED_MARKER):
+            refusal = line[len(REFUSED_MARKER):].strip()
+    if not refusal:
+        return "no_reason", ""
+    refusal = "".join(ch if ch.isprintable() else "?" for ch in refusal)[:_REASON_LOG_LIMIT]
+    match = _FORM_REASON_RE.search(refusal)
+    if match:
+        return match.group(1), match.group(2)
+    return "unspecified", refusal
+
+
+#: Grant refusals that a moment later may not recur: an entry the walk listed was gone when it opened it
+#: (entry_vanished), or another program held a child (in_use) or the root (root_open_failed) without
+#: the sharing the walk needs. Only the grant form is retried, and only for these.
+GRANT_TRANSIENT_REASONS = frozenset({"entry_vanished", "in_use", "root_open_failed"})
+#: The waits before the second and the third grant attempt.
+GRANT_RETRY_DELAYS: tuple[float, ...] = (0.5, 1.5)
+_sleep = time.sleep  # a seam, so tests need not wait
 
 
 def launcher_form(launcher: Path | str, form: str, policy_path: Path, *, timeout: float = 300) -> bool:
@@ -399,15 +465,49 @@ def launcher_form(launcher: Path | str, form: str, policy_path: Path, *, timeout
 
     The run form only VERIFIES ACLs, and a miss there is 125, so a caller grants first. `grant`
     and `revoke` are run by VOOL, never by a job, and an error, a timeout or any other exit code
-    counts as not done."""
+    counts as not done.
+
+    A grant the launcher refused for a transient reason (`GRANT_TRANSIENT_REASONS`) is run again, up
+    to twice, after the `GRANT_RETRY_DELAYS` waits. Grant is idempotent and verifies at its end, so a
+    retry writes nothing a first success would not have. Any other reason, no reason, a launcher
+    that can't start or a timeout fails at once. Revoke is never retried. Every attempt is logged."""
     import subprocess
 
     if form not in ("grant", "revoke"):
         raise ValueError(f"unknown launcher form {form!r}")
-    try:
-        return _run_launcher([str(launcher), form, "--policy", str(policy_path)], timeout=timeout) == 0
-    except (OSError, subprocess.SubprocessError):
-        return False
+    delays = GRANT_RETRY_DELAYS if form == "grant" else ()
+    attempts = len(delays) + 1
+    for attempt in range(1, attempts + 1):
+        try:
+            returncode, stderr = _run_launcher_output(
+                [str(launcher), form, "--policy", str(policy_path)], timeout=timeout
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            # The exception's class only: an OSError's text can carry the launcher's path, nothing more useful.
+            _log.warning("VoolConfine %s did not finish (%s), so it counts as failed", form, type(exc).__name__)
+            return False
+        if returncode == 0:
+            if attempt > 1:
+                _log.warning("VoolConfine %s succeeded on attempt %s of %s", form, attempt, attempts)
+            return True
+        code, message = form_failure_reason(stderr)
+        if not delays or (attempt == 1 and code not in GRANT_TRANSIENT_REASONS):
+            # Revoke, or a first refusal that is not transient: one line, as before any retry existed.
+            _log.warning("VoolConfine %s failed: exit %s, reason %s: %s", form, returncode, code, message)
+            return False
+        if code not in GRANT_TRANSIENT_REASONS or attempt == attempts:
+            _log.warning(
+                "VoolConfine %s failed: exit %s, reason %s: %s (attempt %s of %s, giving up)",
+                form, returncode, code, message, attempt, attempts,
+            )
+            return False
+        delay = delays[attempt - 1]
+        _log.warning(
+            "VoolConfine %s failed: exit %s, reason %s: %s (attempt %s of %s, retrying in %s s)",
+            form, returncode, code, message, attempt, attempts, delay,
+        )
+        _sleep(delay)
+    return False
 
 
 def launcher_scan(launcher: Path | str, policy_path: Path, *, timeout: float = 300) -> int | None:

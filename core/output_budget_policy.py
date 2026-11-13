@@ -319,7 +319,11 @@ def manifest_declares_reasoning(manifest: Any) -> bool:
         try:
             from core.openrouter_catalog import cached_catalog_row
 
-            row = cached_catalog_row(name)
+            from core.windows_cloud_gate import catalog_lane
+
+            lane = dict(getattr(manifest, "runtime_config", None) or {}).get("base_url")
+            with catalog_lane(str(lane or "")):
+                row = cached_catalog_row(name)
         except Exception:
             row = None
         if row is not None:

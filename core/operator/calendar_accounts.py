@@ -588,6 +588,16 @@ def presented(account: dict[str, Any], *, now_fn: Callable[[], str] = _utcnow,
     return view
 
 
+def offered_provider_keys(platform: str | None = None) -> list[str]:
+    """The sources the Settings page offers on this host. EventKit reads calendars only on macOS, so off a Mac it
+    is not offered (adding it worked, then finding calendars failed). ``PROVIDERS`` itself still lists every
+    source, and the account routes are unchanged."""
+    import sys
+
+    host = sys.platform if platform is None else platform
+    return [key for key in PROVIDERS if key != "eventkit" or host == "darwin"]
+
+
 def settings_view(*, now_fn: Callable[[], str] = _utcnow, get_connection_fn: Callable[[], Any] = _default_connection) -> dict[str, Any]:
     """What the Calendars panel shows: every account with its calendars, the sources and their capability, and the
     credential bindings an account may name."""
@@ -599,7 +609,8 @@ def settings_view(*, now_fn: Callable[[], str] = _utcnow, get_connection_fn: Cal
         bindings = list_credential_bindings()
     except Exception as exc:
         bindings_error = type(exc).__name__
-    return {"ok": True, "accounts": accounts, "providers": PROVIDERS, "bindings": bindings, "bindings_error": bindings_error,
+    return {"ok": True, "accounts": accounts, "providers": PROVIDERS, "offered_providers": offered_provider_keys(),
+            "bindings": bindings, "bindings_error": bindings_error,
             "default_base_urls": dict(DEFAULT_BASE_URLS)}
 
 
@@ -616,6 +627,7 @@ __all__ = [
     "list_credential_bindings",
     "list_selections",
     "load_account",
+    "offered_provider_keys",
     "present_account",
     "presented",
     "reconnect_account",

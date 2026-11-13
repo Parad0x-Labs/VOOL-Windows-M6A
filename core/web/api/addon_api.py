@@ -73,6 +73,26 @@ def handle_addon_post(body: dict, headers: dict, client_host: str) -> tuple[int,
         if isinstance(exc, RegistryError):
             return 400, {"ok": False, "error": "registry_refused", "message": str(exc)}
         return 400, {"ok": False, "error": "addon_refused", "message": "The add-on input was refused."}
-    except Exception:
+    except Exception as exc:
+        refused = _windows_plugin_refusal(exc)
+        if refused:
+            return 400, {"ok": False, "error": refused[0], "message": refused[1]}
         # Never echo transport errors, credential values or personal storage paths.
         return 500, {"ok": False, "error": "addon_operation_failed", "message": "The add-on operation could not finish. Check storage access and review its status before retrying."}
+
+
+def _windows_plugin_refusal(exc: BaseException) -> tuple[str, str] | None:
+    """Windows 0.7.1 starts no plugin or MCP server. When an add-on act stopped on that refusal (a
+    plugin refusal type whose text is the refusal sentence, on a host where the plugin refusal's own
+    switch says Windows), the status and the sentence the owner reads; otherwise None, and the
+    generic answer stands."""
+    from core.mcp_client import MCPRefusedOnWindows
+    from core.plugin_executor import WINDOWS_REFUSED_STATUS, ConfinementUnavailableError, windows_plugin_mcp_refusal
+    from core.plugin_lifecycle import LifecycleError
+
+    if not isinstance(exc, (LifecycleError, ConfinementUnavailableError, MCPRefusedOnWindows)):
+        return None
+    refusal = windows_plugin_mcp_refusal()
+    if not refusal or str(exc) != refusal:
+        return None
+    return WINDOWS_REFUSED_STATUS, refusal

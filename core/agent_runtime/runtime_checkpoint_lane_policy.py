@@ -168,6 +168,14 @@ def explicit_runtime_workflow_request(*, user_input: str, task_class: str) -> bo
     lowered = f" {text.lower()} "
     if looks_like_execution_request(text, task_class="unknown"):
         return True
+    # Windows: a whole-message Python or pytest command line ("python -m compileall .", "run: python -c
+    # ...") is a run the workflow planner plans (`core.execution.planner._windows_python_command`).
+    # Claims sweep: such a turn was kept in the tools-less chat lane and the model made up the output.
+    # Off Windows this is always "".
+    from core.execution.planner import _windows_python_command
+
+    if _windows_python_command(text):
+        return True
     if any(
         marker in lowered
         for marker in (

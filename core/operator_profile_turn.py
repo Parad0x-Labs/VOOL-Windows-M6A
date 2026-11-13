@@ -51,6 +51,15 @@ def current_turn_scope() -> tuple[str, str, str]:
     return _TURN_SCOPE.get()
 
 
+#: The save confirmation's "where" for each kind of standing-instruction key (core.standing_instructions.applies_to).
+_STANDING_SAVED_WHERE = {
+    "chat": "this chat",
+    "project": "every chat in this project",
+    "folder": "every chat in this folder",
+    "default": "every chat",
+}
+
+
 def _observation(source_context: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(source_context, dict):
         return {"saved": [], "candidates": [], "conflicts": [], "used": [], "notices": []}
@@ -122,18 +131,63 @@ def _forget(proposal: ProfileProposal, *, principal: str, session_id: str) -> pr
     return profile.ProfileChange("forgotten", "; ".join(reports) + ". Say 'undo that' to restore.", item=last.item if last else None, previous=last.previous if last else None)
 
 
-def _undo(principal: str, session_id: str) -> profile.ProfileChange:
+_UNDOABLE_PROFILE_ACTIONS_SQL = (
+    "SELECT item_id, created_at FROM operator_profile_history WHERE principal = ? "
+    "AND action IN ('create','update','forget','move_scope','restore','confirm_chat') "
+    "ORDER BY created_at DESC, rowid DESC LIMIT 1"
+)
+
+
+def _latest_undoable_profile_change(principal: str) -> Any:
     from storage.db import get_connection
 
     conn = get_connection()
     try:
-        row = conn.execute(
-            "SELECT item_id FROM operator_profile_history WHERE principal = ? AND action IN ('create','update','forget','move_scope','restore','confirm_chat') "
-            "ORDER BY created_at DESC, rowid DESC LIMIT 1",
-            (principal,),
-        ).fetchone()
+        return conn.execute(_UNDOABLE_PROFILE_ACTIONS_SQL, (principal,)).fetchone()
     finally:
         conn.close()
+
+
+def _stamp(value: Any) -> Any:
+    from datetime import datetime, timezone
+
+    stamp = datetime.fromisoformat(str(value or "").strip())
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+
+
+def profile_owns_undo(principal: str, session_id: str) -> bool:
+    """Whether a bare "undo" / "revert" / "roll back the last change" in this chat undoes a PROFILE change.
+
+    The same words ask to roll back the last file change VOOL made in the chat's workspace
+    (`workspace.rollback_last_change`). Measured on the Windows 0.7.1-beta in a marked folder: after an
+    edit, "undo the last change" was answered "There is no profile change to undo." -- this lane claimed
+    every such sentence, so the rollback tool was never reached. The profile owns the undo only when it
+    holds a change to undo AND that change is newer than this chat's last tracked workspace change
+    (`latest_workspace_mutation_for_session`, rolled-back changes excluded). With no profile change, or
+    when either store cannot be read, the lane stands down: it never restores a profile item on a guess,
+    and the turn goes on to the lanes that own the workspace."""
+    try:
+        row = _latest_undoable_profile_change(principal)
+    except Exception:
+        return False
+    if row is None:
+        return False
+    try:
+        from core.execution.artifacts import latest_workspace_mutation_for_session
+
+        mutation = latest_workspace_mutation_for_session(session_id)
+    except Exception:
+        return False
+    if mutation is None:
+        return True
+    try:
+        return _stamp(row["created_at"]) > _stamp(mutation.get("created_at"))
+    except (TypeError, ValueError, KeyError, IndexError):
+        return False
+
+
+def _undo(principal: str, session_id: str) -> profile.ProfileChange:
+    row = _latest_undoable_profile_change(principal)
     if row is None:
         return profile.ProfileChange("unchanged", "There is no profile change to undo.")
     return profile.restore_previous(str(row["item_id"]), actor="chat")
@@ -170,12 +224,17 @@ def observe_profile_turn(
     # turn that only states an instruction still gets an answer (this never claims the turn).
     if principal and not private:
         try:
+            from core.standing_instructions import applies_to as _standing_applies_to
             from core.standing_instructions import observe_turn as _observe_standing
+            from core.standing_instructions import workspace_key as _standing_workspace_key
 
             standing = _observe_standing(raw_user_input, source_context, principal=principal,
                                          project_id=project_id, session_id=session_id)
             if (standing["saved"] or standing["taken_back"]) and isinstance(source_context, dict):
-                _observation(source_context)["standing_instructions"] = standing
+                # Where the saved rule applies, so the confirmation can say it (this chat, this project, ...).
+                _observation(source_context)["standing_instructions"] = {
+                    **standing, "applies_to": _standing_applies_to(_standing_workspace_key(source_context, project_id)),
+                }
         except Exception:
             pass
     try:
@@ -199,6 +258,9 @@ def observe_profile_turn(
         source_context["profile_context_lines"] = used_lines
         source_context["profile_used"] = used
         _observation(source_context)["used"] = used
+    if principal and any(getattr(p, "action", "") == "undo" for p in proposals):
+        if not profile_owns_undo(principal, session_id):
+            proposals = [p for p in proposals if getattr(p, "action", "") != "undo"]
     if not proposals:
         return None
     if not principal:
@@ -355,11 +417,14 @@ def profile_frame_for_result(result: dict[str, Any] | None) -> dict[str, Any] | 
         values = [v for v in list(obs.get(key) or []) if v]
         if values:
             frame[key] = values
-    # A standing instruction is saved for every later chat in the workspace; without its own line
-    # the user never learns it was kept, or that a take-back worked. It rides the "saved" list the
-    # chat page already renders as the confirmation line (no item_id: undo is a take-back in chat).
+    # A standing instruction is saved for later chats in its workspace; without its own line the user
+    # never learns it was kept, where it applies, or that a take-back worked. It rides the "saved" list
+    # the chat page already renders as the confirmation line (no item_id: undo is a take-back in chat).
+    # A chat with no project on the default folder keeps its rules to itself (core.standing_instructions
+    # workspace_key), so its line says "this chat"; a project or folder rule reaches every chat there.
     standing = obs.get("standing_instructions") if isinstance(obs.get("standing_instructions"), dict) else {}
-    lines = [{"report": f"Saved for every chat: {text}"} for text in standing.get("saved") or [] if text]
+    where = _STANDING_SAVED_WHERE.get(str(standing.get("applies_to") or ""), "every chat")
+    lines = [{"report": f"Saved for {where}: {text}"} for text in standing.get("saved") or [] if text]
     lines += [{"report": f"No longer following: {text}"} for text in standing.get("taken_back") or [] if text]
     if lines:
         frame["saved"] = list(frame.get("saved") or []) + lines

@@ -74,6 +74,9 @@ public static class Sids
     /// <summary>The capability SID a job read root's read grant goes to.</summary>
     public static string ReadCapability(string root) => CapabilitySid(Identity.ReadCapabilityName(root));
 
+    /// <summary>The capability SID a stat-only path's ACE goes to.</summary>
+    public static string StatCapability(string path) => CapabilitySid(Identity.StatCapabilityName(path));
+
     /// <summary>
     /// The capabilities a job's token carries: only this job's write roots and job read roots, plus
     /// internetClient when the policy grants network. Nothing else, so the job can never use another
@@ -85,6 +88,8 @@ public static class Sids
         foreach (var name in policy.WriteRoots.Select(Identity.RootCapabilityName).Distinct(StringComparer.Ordinal))
             sids.Add(CapabilitySid(name));
         foreach (var name in policy.JobReadRoots.Select(Identity.ReadCapabilityName).Distinct(StringComparer.Ordinal))
+            sids.Add(CapabilitySid(name));
+        foreach (var name in policy.StatOnlyPaths.Select(Identity.StatCapabilityName).Distinct(StringComparer.Ordinal))
             sids.Add(CapabilitySid(name));
         if (policy.Network) sids.Add(InternetClientSid);
         return sids;

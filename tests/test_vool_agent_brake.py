@@ -196,7 +196,8 @@ def test_startx402_consent_exception_keeps_spending_frozen(monkeypatch) -> None:
 
 def test_stopall_launches_the_detached_hard_stop() -> None:
     hits = []
-    result = maybe_handle_agent_brake("/stopall", "s", stopall_fn=lambda: hits.append(1) or True)
+    maybe_handle_agent_brake("/stopall", "s", stopall_fn=lambda: hits.append(1) or True)
+    result = maybe_handle_agent_brake("/stopall confirm", "s", stopall_fn=lambda: hits.append(1) or True)
     assert result is not None and result["success"] and result["intent"] == "agent_brake_stopall"
     assert hits == [1]
 
@@ -240,14 +241,30 @@ def test_stopall_variants_all_fire() -> None:
     for phrase in ("/stopall", "stop all vool", "kill vool", "stop everything",
                    "shut down vool", "shutdown vool", "kill everything"):
         hits = []
-        result = maybe_handle_agent_brake(phrase, "s", stopall_fn=lambda h=hits: h.append(1) or True)
+        maybe_handle_agent_brake(phrase, "s", stopall_fn=lambda h=hits: h.append(1) or True)
+        result = maybe_handle_agent_brake("/stopall confirm", "s", stopall_fn=lambda h=hits: h.append(1) or True)
         assert result is not None and result["intent"] == "agent_brake_stopall", f"missed: {phrase!r}"
         assert hits, f"did not launch: {phrase!r}"
 
 
 def test_stopall_launch_failure_points_at_the_desktop_button() -> None:
-    result = maybe_handle_agent_brake("/stopall", "s", stopall_fn=lambda: False)
+    from core import vool_agent_brake
+    from tests import _windows_refusals as windows_refusals
+
+    quit_button = "Use the Quit VOOL button at the bottom of the sidebar to stop everything."
+    with windows_refusals.watch_windows_answer(vool_agent_brake._is_windows(), quit_button, "shutdown") as seen:
+        maybe_handle_agent_brake("/stopall", "s", stopall_fn=lambda: False)
+        result = maybe_handle_agent_brake("/stopall confirm", "s", stopall_fn=lambda: False)
     assert result is not None and result["success"] is False
+    # Windows installs no "Stop VOOL" shortcut: the fallback names the sidebar's Quit VOOL button,
+    # in exactly these words, and starts nothing. Off Windows it names the desktop shortcut, as always.
+    if windows_refusals.refused_exactly(
+        seen,
+        (result["success"], False),
+        (result["intent"], "agent_brake_stopall"),
+        (result["response"], f"I could not start the shutdown just now. {quit_button}"),
+    ):
+        return
     assert "Stop VOOL" in result["response"]
 
 

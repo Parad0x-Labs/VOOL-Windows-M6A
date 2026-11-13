@@ -7,7 +7,8 @@ Owner decision (Jesse, 7 Nov 2026 05:14Z): "click-to-download counts as consent"
 (🔐, design D2) bound that consent:
 
 * Only a name:tag the machine-sized install plan offers (``build_install_recommendation_truth``:
-  the recommended bundle, then its fallback) is pulled, matched exactly. There is no free text and
+  the recommended bundle, then its fallback, led by the bundle manifest's own model when the machine
+  meets its documented RAM floor) is pulled, matched exactly. There is no free text and
   no host or registry field; the pull goes to the local Ollama only, which fetches from its registry.
 * Local-only (offline) mode and a local-models-disabled policy win over the click. The click only
   stands in for the default ``outbound_enabled=false``, for this one pull, and never changes it.
@@ -31,19 +32,52 @@ SOURCE = "Ollama's registry (registry.ollama.ai), through the Ollama on this com
 AUDIT_EVENT = "model_pull_user_requested"
 
 _lock = threading.Lock()
-_active: dict[str, Any] | None = None   # {"progress", "cancel", "thread", "model", "size_gb"}
+_active: dict[str, Any] | None = None   # {"progress", "cancel", "wake", "thread", "model", "size_gb"}
 _last: dict[str, Any] | None = None
 
 
+# The RAM a CPU-only PC needs to run a bundle's certified local author, as the install guide states it
+# (docs/getting-started/install.md: "qwen3:8b ... needs at least 10 GB of RAM on a PC without a
+# graphics card"). A model not listed here has no documented floor and is never added to the offer.
+_BUNDLE_AUTHOR_MIN_RAM_GB: dict[str, float] = {"qwen3:8b": 10.0}
+
+
+def _bundle_author(ram_gb: float) -> str:
+    """The installed bundle's own model (bundle_manifest.json ``selected_model``) when this machine meets
+    its documented RAM floor, else empty.
+
+    Capability tests A7/D1/D2: on a 16 GB CPU-only Windows PC the hardware bucket alone offered
+    qwen3:0.6b, qwen3:4b and gemma3:4b, never qwen3:8b -- the model the bundle ships for, the one
+    build_bundle.ps1 names the certified local author, and the one the runtime defaults to
+    (core.runtime_provider_defaults.default_runtime_model_tag). The name comes from the immutable
+    bundle manifest, never from the request, so the click door still matches a fixed plan exactly.
+    """
+    from core.bundle_manifest import selected_bundle_model
+
+    try:
+        model = str(selected_bundle_model() or "").strip()
+    except Exception:
+        return ""
+    floor = _BUNDLE_AUTHOR_MIN_RAM_GB.get(model)
+    if floor is None or float(ram_gb or 0.0) < floor:
+        return ""
+    return model
+
+
 def _plan() -> tuple[tuple[str, ...], float]:
-    """The offered names (recommended bundle first, then fallback) and the free space where models go."""
+    """The offered names (the bundle's author when it fits, then the recommended bundle, then its
+    fallback) and the free space where models go."""
+    from core.hardware_tier import probe_machine
     from core.install_recommendations import build_install_recommendation_truth
 
-    truth = build_install_recommendation_truth()
+    probe = probe_machine()
+    truth = build_install_recommendation_truth(probe=probe)
     names: list[str] = []
-    for name in (*truth.recommended_bundle_models, *truth.fallback_bundle_models):
+    from core.ollama_cloud_models import refuses_cloud_name
+
+    for name in (_bundle_author(probe.ram_gb), *truth.recommended_bundle_models, *truth.fallback_bundle_models):
         clean = str(name or "").strip()
-        if clean and clean not in names:
+        if clean and clean not in names and not refuses_cloud_name(clean):
             names.append(clean)
     return tuple(names), float(truth.free_disk_gb or 0.0)
 
@@ -83,7 +117,28 @@ def _register(model: str) -> None:
     from core.model_registry import ModelRegistry
     from core.runtime_provider_defaults import register_installed_local_model
 
-    register_installed_local_model(ModelRegistry(), model_tag=model)
+    registry = ModelRegistry()
+    register_installed_local_model(registry, model_tag=model)
+    # Boot stamps Ollama's measured size only on the lanes it saw at boot; size this one now, or
+    # every turn judges it by the parameter estimate until VOOL restarts (Windows, RTX 4060 8 GB:
+    # qwen3:8b refused at 7.5 GB estimated, against 6.37 GB measured and 6.8 GB of graphics memory).
+    # Windows only in 0.7.1, and only from the Ollama on this computer: the loopback check is made
+    # on the same base URL the inventory call reads.
+    from core.provider_routing import gpu_fit_windows_seam
+
+    if not gpu_fit_windows_seam():
+        return
+    with contextlib.suppress(Exception):
+        from core.local_ollama_inventory import installed_ollama_model_inventory
+        from core.runtime_guard import is_loopback_host
+        from core.runtime_provider_defaults import record_ollama_artifact_sizes
+
+        base_url = str(_base_url() or "").strip()
+        if not base_url or not is_loopback_host(str(urlsplit(base_url).hostname or "")):
+            return
+        record_ollama_artifact_sizes(
+            registry, installed_ollama_model_inventory(base_url=base_url, timeout_seconds=5.0)
+        )
 
 
 def _audit(model: str, size_gb: float, outcome: str, detail: str = "") -> None:
@@ -130,9 +185,19 @@ def status() -> dict[str, Any] | None:
 def start(model: Any, *, runtime: Any = None) -> tuple[int, dict[str, Any]]:
     """Start the one pull this click asked for, or refuse with a typed reason. Never blocks on the pull."""
     global _active
+    from core.ollama_cloud_models import REASON as _CLOUD_REASON
+    from core.ollama_cloud_models import is_cloud_model, refusal_text, refuses_cloud_name
+
+    # An Ollama cloud model is refused before the inventory or anything that asks Ollama
+    # (core.ollama_cloud_models): a cloud name first; an offered name is then checked against the
+    # model store for a cloud stub. The plan never offers one; this holds even if it did.
+    if isinstance(model, str) and refuses_cloud_name(model):
+        return _refusal(400, _CLOUD_REASON, refusal_text(model))
     names, free_gb = _plan()
     if not isinstance(model, str) or model not in names:
         return _refusal(400, "model_not_offered", "That model is not one VOOL offers for this computer.")
+    if is_cloud_model(model):
+        return _refusal(400, _CLOUD_REASON, refusal_text(model))
     if policy_engine.local_only_mode():
         return _refusal(409, "offline_mode", "VOOL is in local-only mode, so it downloads nothing.")
     if _local_models_disabled():
@@ -179,7 +244,8 @@ def _run(job: dict[str, Any]) -> None:
 
     progress, model, size_gb = job["progress"], job["model"], job["size_gb"]
     try:
-        _stream_ollama_pull(model, progress=progress, cancelled=job["cancel"].is_set)
+        _stream_ollama_pull(model, progress=progress, cancelled=job["cancel"].is_set,
+                            on_open=lambda wake: _hand_over_wake(job, wake))
         if job["cancel"].is_set():
             raise ModelPullCancelled(model)
         try:
@@ -203,12 +269,23 @@ def _run(job: dict[str, Any]) -> None:
         progress.finish()
 
 
+def _hand_over_wake(job: dict[str, Any], wake: Any) -> None:
+    """Keep the pull's wake for Cancel; if Cancel already came, the pull thread sees the flag next."""
+    with _lock:
+        job["wake"] = wake
+
+
 def cancel() -> tuple[int, dict[str, Any]]:
+    """Ask the running pull to stop, and wake its read so it stops now, not at Ollama's next line."""
     with _lock:
         job = _active
+        wake = job.get("wake") if job is not None else None
     if job is None:
         return _refusal(409, "no_pull_running", "No model download is running.")
     job["cancel"].set()
+    if callable(wake):
+        with contextlib.suppress(Exception):
+            wake()
     return 200, {"ok": True, "status": "cancelling", "model": job["model"]}
 
 

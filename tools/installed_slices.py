@@ -3,7 +3,8 @@
 Each slice is a check against the running API plus a negative control: the same check pointed where
 it must fail (nothing listening, or a commit this build is not). A slice passes only when its check
 passes and its control fails; a control that passes means the harness cannot tell good from bad, so
-the slice fails rather than reporting VOOL healthy. Statuses: pass, refused_as_expected (a slice whose
+the slice fails rather than reporting VOOL healthy. With --require-git-spawn-guard (the Windows smoke)
+a git_spawn_guard slice also requires the API to report its git spawn guard armed. Statuses: pass, refused_as_expected (a slice whose
 honest answer is a refusal), fail. tools/windows_install_smoke.ps1 runs this after launch.
 
     python tools/installed_slices.py --base-url http://127.0.0.1:11435 --expected-commit <sha> --out slices.json
@@ -87,6 +88,17 @@ def _check_version(base_url: str, expected_commit: str) -> tuple[bool, dict[str,
     }
 
 
+def _check_spawn_guard(base_url: str) -> tuple[bool, dict[str, Any]]:
+    """Windows 0.7.1: the installed API process refuses to start git (core/safe_git.py). The field is
+    read from the live audit hook; anything but ``armed`` (unarmed, not_needed, missing) fails."""
+    status, body, error = _probe(base_url + "/api/runtime/capabilities")
+    guard = body.get("git_spawn_guard") if isinstance(body, dict) else None
+    guard = guard if isinstance(guard, dict) else {}
+    ok = status == 200 and guard.get("armed") is True and guard.get("status") == "armed"
+    return ok, {"url": base_url + "/api/runtime/capabilities", "http_status": status,
+                "git_spawn_guard": guard or None, "error": error}
+
+
 def _closed_loopback_url() -> str:
     """A loopback address nothing listens on: a port the OS just handed out and took back."""
     with socket.socket() as probe:
@@ -116,7 +128,7 @@ def _slice(name: str, check: Callable[[], tuple[bool, dict]], control: Callable[
     return row
 
 
-def run(base_url: str, expected_commit: str) -> dict:
+def run(base_url: str, expected_commit: str, *, require_git_spawn_guard: bool = False) -> dict:
     slices = [
         _slice(
             "health",
@@ -131,6 +143,13 @@ def run(base_url: str, expected_commit: str) -> dict:
             "the same check expecting a different commit",
         ),
     ]
+    if require_git_spawn_guard:
+        slices.append(_slice(
+            "git_spawn_guard",
+            lambda: _check_spawn_guard(base_url),
+            lambda: _check_spawn_guard(_closed_loopback_url()),
+            "the same check where nothing listens",
+        ))
     status = "pass" if all(row["status"] in {"pass", "refused_as_expected"} for row in slices) else "fail"
     return {"schema": SCHEMA, "status": status, "base_url": base_url, "expected_commit": expected_commit, "slices": slices}
 
@@ -140,6 +159,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--base-url", required=True)
     parser.add_argument("--expected-commit", required=True)
     parser.add_argument("--out", required=True)
+    parser.add_argument("--require-git-spawn-guard", action="store_true",
+                        help="Windows: fail unless /api/runtime/capabilities reports git_spawn_guard armed")
     args = parser.parse_args(argv)
     parsed = urllib.parse.urlsplit(args.base_url)
     if parsed.scheme != "http" or parsed.hostname not in _LOOPBACK_HOSTS or parsed.path not in {"", "/"}:
@@ -147,7 +168,7 @@ def main(argv: list[str] | None = None) -> int:
     commit = args.expected_commit.strip().lower()
     if len(commit) != 40 or any(c not in "0123456789abcdef" for c in commit):
         parser.error("--expected-commit must be a full 40-character commit")
-    report = run(args.base_url.rstrip("/"), commit)
+    report = run(args.base_url.rstrip("/"), commit, require_git_spawn_guard=args.require_git_spawn_guard)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

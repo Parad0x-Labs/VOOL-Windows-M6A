@@ -12,7 +12,9 @@ gets a protected DACL with one ACE, full access for the current user, and the us
 
 ``P`` (SE_DACL_PROTECTED) drops every ACE inherited from the parent instead of adding to it. The
 owner is set explicitly: an elevated process creates files owned by ``BUILTIN\\Administrators``.
-SYSTEM and Administrators get no ACE, matching ``0o600``.
+SYSTEM and Administrators get no ACE, matching ``0o600``. A plain deny ACE (type 0x01) for any SID is
+accepted beside it and kept by a repair: it only takes access away, and VoolConfine's grant puts VOOL's
+AppContainer package SID on VOOL's own state as one (``vool_confine_package_sid``).
 
 Only local drive paths are accepted: a network share (``\\\\srv\\share``, ``//srv``) or a device or NT
 path (``\\\\?\\``, ``\\\\.\\``, ``\\\\?\\GLOBALROOT``) is refused ``non_local_path`` before anything is opened.
@@ -41,8 +43,12 @@ Design: jobs/broker/B3-owner-only-acl/DESIGN.md.
 """
 from __future__ import annotations
 
+import hashlib
+import logging
 import os
+import re
 import stat
+import struct
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,6 +59,14 @@ _WINDOWS = sys.platform == "win32"
 _FILE_SDDL = "O:{sid}D:P(A;;FA;;;{sid})"
 _DIRECTORY_SDDL = "O:{sid}D:P(A;OICI;FA;;;{sid})"
 _ACCESS_ALLOWED_ACE_TYPE = 0
+#: A plain ACCESS_DENIED ACE (not callback, object or conditional): it only takes access away.
+_ACCESS_DENIED_ACE_TYPE = 1
+#: GENERIC/standard/specific rights a deny keeps when its mask was not read (a fake or older reader).
+_FULL_ACCESS = 0x001F01FF
+_INHERITED_ACE = 0x10
+_SID_RE = re.compile(r"S-1-\d+(?:-\d+)+")
+#: VOOL's AppContainer profile name: windows/broker/src/VoolConfine.Core/Identity.cs (ProfileName).
+_CONFINE_PROFILE_NAME = "VOOL.Confine.v1"
 _OBJECT_INHERIT_ACE = 0x1
 _CONTAINER_INHERIT_ACE = 0x2
 _NO_PROPAGATE_INHERIT_ACE = 0x4
@@ -60,6 +74,16 @@ _INHERIT_ONLY_ACE = 0x8
 #: Windows hands a path this long or longer to the long-path form (``\\?\``); MAX_PATH less room
 #: for an 8.3 name, as CreateDirectoryW counts it.
 _LONG_PATH = 248
+
+logger = logging.getLogger(__name__)
+
+
+def vool_confine_package_sid() -> str:
+    """VOOL's own AppContainer package SID, as DeriveAppContainerSidFromAppContainerName derives it for
+    the profile VoolConfine runs jobs in (windows/broker/src/VoolConfine.Core/Sids.cs, ``Package``):
+    SHA-256 of the lower-cased name in UTF-16LE, its first 28 bytes as seven sub-authorities."""
+    digest = hashlib.sha256(_CONFINE_PROFILE_NAME.lower().encode("utf-16-le")).digest()
+    return "S-1-15-2-" + "-".join(str(part) for part in struct.unpack("<7I", digest[:28]))
 
 
 @dataclass(frozen=True)
@@ -163,6 +187,81 @@ def make_tree_owner_only(path: str | os.PathLike[str]) -> OwnerOnlyReport:
     return OwnerOnlyReport(True)
 
 
+#: Whether the secret writers below seal their files. On Windows, where a plain write inherits the
+#: parent folder's ACL (under %LOCALAPPDATA% that can include another local group's read ACE), so a
+#: secret has to be made owner-only explicitly. Off Windows the writers keep their own ``0o600``
+#: handling, unchanged. Tests switch this on to drive the Windows branch with POSIX modes.
+_SEAL_SECRETS: bool = _WINDOWS
+
+
+#: What a save says when its secret file could not be made private, so nothing was written.
+OWNER_ONLY_SAVE_REFUSED = "VOOL couldn't make this file private to your account, so the key wasn't saved."
+
+
+def seals_secrets() -> bool:
+    """Whether this process seals secret files (on Windows, or when a test switches it on)."""
+    return _SEAL_SECRETS
+
+
+def write_private_file(path: str | os.PathLike[str], data: bytes | str, *, encoding: str = "utf-8") -> Path:
+    """Write ``data`` to ``path`` so it is never readable by anyone but this user, then return ``path``.
+
+    An empty sibling is created and made owner-only first; only then are the bytes written into it,
+    and it is moved over ``path`` (the descriptor moves with it). When the sibling cannot be made
+    owner-only, :class:`OwnerOnlyUnavailable` is raised, the sibling is removed and ``path`` is left
+    as it was: nothing secret is written. The result is verified owner-only before this returns."""
+    target = Path(os.fspath(path))
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = data.encode(encoding) if isinstance(data, str) else bytes(data)
+    pending = target.with_name(f".{target.name}.{os.getpid()}.{os.urandom(4).hex()}.tmp")
+    pending.write_bytes(b"")
+    try:
+        require_owner_only(pending)
+        with open(pending, "r+b") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        # A reader holding the old file open refuses the replace for a moment on Windows (a sharing
+        # violation); the bounded retry waits it out.
+        from core import windows_sharing_retry
+
+        windows_sharing_retry.replace(pending, target)
+    except BaseException:
+        pending.unlink(missing_ok=True)
+        raise
+    report = verify_owner_only(target)
+    if not report.ok:
+        raise OwnerOnlyUnavailable(target, report.reason)
+    return target
+
+
+def repair_private_file(path: str | os.PathLike[str]) -> OwnerOnlyReport:
+    """Make an existing secret file owner-only, for installs written before the writers sealed them.
+
+    Only when :func:`seals_secrets`; an absent file needs nothing. Never raises: a read of an existing
+    secret goes on either way, and the next write seals it or fails closed."""
+    if not _SEAL_SECRETS:
+        return OwnerOnlyReport(True)
+    target = os.fspath(path)
+    key = os.path.normcase(os.path.abspath(target))
+    if key in _REPAIRED:
+        return OwnerOnlyReport(True)  # once per process: later writes are sealed at write time
+    if not os.path.isfile(target):
+        return OwnerOnlyReport(True)
+    try:
+        report = make_owner_only(target)
+    except OSError:
+        report = OwnerOnlyReport(False, "set_failed")
+    if report.ok:
+        _REPAIRED.add(key)
+    else:
+        logger.warning("secret file %s is not owner-only (%s)", Path(target).name, report.reason)
+    return report
+
+
+_REPAIRED: set[str] = set()
+
+
 # --- POSIX ---------------------------------------------------------------------------------------------
 def _posix_make(path: str, *, directory: bool) -> OwnerOnlyReport:
     try:
@@ -214,8 +313,14 @@ def _windows_apply(path: str, *, directory: bool | None, set_descriptor: bool) -
         user = api.user_sid()
         if set_descriptor:
             template = _DIRECTORY_SDDL if is_directory else _FILE_SDDL
+            sddl = template.format(sid=user)
+            # The plain denies already there are kept, ahead of the user's allow: VoolConfine puts its
+            # package SID's deny on VOOL's own state, and a repair must not hand that access back.
+            denies = _kept_denies(api, handle)
+            if denies:
+                sddl = sddl.replace("D:P", "D:P" + denies, 1)
             try:
-                api.set_descriptor(handle, template.format(sid=user))
+                api.set_descriptor(handle, sddl)
             except OSError:
                 return OwnerOnlyReport(False, "set_failed")
         try:
@@ -227,10 +332,43 @@ def _windows_apply(path: str, *, directory: bool | None, set_descriptor: bool) -
         api.close(handle)
 
 
+def _plain_deny(ace: tuple[Any, ...]) -> bool:
+    """Whether the ACE is a plain ACCESS_DENIED ACE for a SID: it only takes access away."""
+    return ace[0] == _ACCESS_DENIED_ACE_TYPE and bool(_SID_RE.fullmatch(str(ace[1] or "")))
+
+
+def _kept_denies(api: Any, handle: Any) -> str:
+    """The plain deny ACEs ``handle`` holds now, as SDDL, for the protected DACL a repair sets; "" when
+    there are none or the descriptor cannot be read (the repair then sets the plain owner-only DACL,
+    as before). An inherited deny is kept as the path's own: the protected DACL drops inheritance."""
+    try:
+        _owner, _protected, dacl = api.read_descriptor(handle)
+    except OSError:
+        return ""
+    kept: list[str] = []
+    for ace in dacl or []:
+        if not _plain_deny(ace):
+            continue
+        flags = int(ace[2]) if len(ace) > 2 else 0
+        mask = int(ace[3]) if len(ace) > 3 else _FULL_ACCESS
+        if not mask:
+            continue
+        letters = "".join(name for bit, name in ((0x1, "OI"), (0x2, "CI"), (0x4, "NP"), (0x8, "IO")) if flags & bit)
+        entry = f"(D;{letters};{mask:#x};;;{ace[1]})"
+        if entry not in kept:
+            kept.append(entry)
+    return "".join(kept)
+
+
 def _judge_descriptor(
     user: str, owner: str, protected: bool, dacl: list[tuple[int, ...]] | None, *, directory: bool = False
 ) -> OwnerOnlyReport:
-    """Each ACE is ``(ace_type, sid, ace_flags)``; a two-item ACE has no known flags."""
+    """Each ACE is ``(ace_type, sid, ace_flags[, mask])``; a two-item ACE has no known flags.
+
+    The only allow ACEs are the user's. A plain deny ACE is accepted for any SID, since it only takes
+    access away: VoolConfine's grant puts VOOL's AppContainer package SID on VOOL's own state as one
+    (captest VM, 2026-11-10: the marks file read as ``foreign_ace`` and every mark stopped counting).
+    Every other ACE type (object, callback, conditional, unknown) fails closed."""
     if dacl is None:
         return OwnerOnlyReport(False, "null_dacl")  # a NULL DACL grants everyone everything
     if owner != user:
@@ -239,8 +377,15 @@ def _judge_descriptor(
         return OwnerOnlyReport(False, "dacl_not_protected")
     if not dacl:
         return OwnerOnlyReport(False, "empty_dacl")  # locks the user out too: not what was asked
-    if any(ace[0] != _ACCESS_ALLOWED_ACE_TYPE or ace[1] != user for ace in dacl):
+    if any(not _plain_deny(ace) and (ace[0] != _ACCESS_ALLOWED_ACE_TYPE or ace[1] != user) for ace in dacl):
         return OwnerOnlyReport(False, "foreign_ace")
+    package = vool_confine_package_sid()
+    for ace in dacl:
+        if _plain_deny(ace) and ace[1] != package:
+            logger.info("owner-only check: a plain deny ACE for %s (not VOOL's AppContainer) only narrows access", ace[1])
+    dacl = [ace for ace in dacl if ace[0] == _ACCESS_ALLOWED_ACE_TYPE]
+    if not dacl:
+        return OwnerOnlyReport(False, "empty_dacl")  # denies alone grant the user nothing
     if not any(_applies_here(ace) for ace in dacl):
         # Every ACE is inherit-only: the user is not granted the path itself, so "owner-only" is not true.
         return OwnerOnlyReport(False, "ace_inherit_only")
@@ -495,7 +640,7 @@ class _WinApi:
         finally:
             self._kernel32.LocalFree(sd)
 
-    def read_descriptor(self, handle: int) -> tuple[str, bool, list[tuple[int, str, int]] | None]:
+    def read_descriptor(self, handle: int) -> tuple[str, bool, list[tuple[int, str, int, int]] | None]:
         ctypes, wintypes = self._ctypes, self._wintypes
         owner, dacl, sd = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
         status = self._advapi32.GetSecurityInfo(
@@ -514,7 +659,7 @@ class _WinApi:
                 return owner_sid, protected, None
             # ACL header: AclRevision (BYTE), Sbz1 (BYTE), AclSize (WORD), AceCount (WORD), Sbz2 (WORD).
             ace_count = ctypes.c_uint16.from_address(dacl.value + 4).value
-            aces: list[tuple[int, str, int]] = []
+            aces: list[tuple[int, str, int, int]] = []
             for index in range(ace_count):
                 ace = ctypes.c_void_p()
                 if not self._advapi32.GetAce(dacl, index, ctypes.byref(ace)):
@@ -525,7 +670,8 @@ class _WinApi:
                 # The SID starts at offset 8 for the ACCESS_ALLOWED / ACCESS_DENIED shapes. Any
                 # other type is foreign anyway.
                 sid = self._sid_string(ace.value + 8) if ace_type in (0, 1) else ""
-                aces.append((ace_type, sid, ace_flags))
+                mask = ctypes.c_uint32.from_address(ace.value + 4).value
+                aces.append((ace_type, sid, ace_flags, mask))
             return owner_sid, protected, aces
         finally:
             self._kernel32.LocalFree(sd)

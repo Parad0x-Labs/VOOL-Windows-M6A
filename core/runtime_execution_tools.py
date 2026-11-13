@@ -5,10 +5,12 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:  # annotation-only: the refusal type is imported lazily at the doors
     from core.effect_budget import EffectBudgetRefusedError
 
+import contextlib
 import json
 import os
 import platform
 import re
+import shlex
 import subprocess
 import urllib.error
 import urllib.request
@@ -2017,8 +2019,16 @@ def _machine_host_state(arguments: dict[str, Any]) -> RuntimeExecutionResult:
     )
 
 
+_MOVE_NEEDS_ALLOW = "Moving files needs your Allow on the card; nothing was moved."
+
+
+def _allowed_on_the_card(_reason: str) -> bool:
+    """The consent of a move the owner allowed on its card (Windows only, `_machine_move_path`)."""
+    return True
+
+
 def _machine_move_path(
-    arguments: dict[str, Any], *, workspace_root: Path | None = None
+    arguments: dict[str, Any], *, workspace_root: Path | None = None, session_id: str = ""
 ) -> RuntimeExecutionResult:
     from core.machine_file_ops import move_path
 
@@ -2030,11 +2040,44 @@ def _machine_move_path(
     allowed_roots = list(_safe_machine_roots())
     if workspace_root is not None:
         allowed_roots.append(workspace_root)
+    # On Windows the folders the owner marked are the places VOOL may change, wherever they are, as
+    # for machine.write_file (`_marked_folder_machine_target`): a move between two marked folders
+    # outside Desktop, Documents and Downloads was refused here (captest R1-4). The Windows write
+    # gate checks both paths again before this runs.
+    allowed_roots.extend(_marked_machine_roots())
+    # On Windows the owner's Allow on the card is this move's consent: the call that spent the live
+    # token claims the authorized boundary's scope once, and no OS prompt follows. That prompt (Windows
+    # Hello, or CredUI with no parent window, from a backend started without one) never reached the
+    # owner and the approved turn waited on it (captest R4-1b, build 5f97b517). Any other call on
+    # Windows (Auto, a direct dispatch, a task grant) is refused here, before anything moves, and the
+    # prompt is never opened. Every other check `move_path` makes still runs. Off Windows: unchanged.
+    from core.execution_gate import claim_operator_approved_call, operator_approval_spend_applies
+
+    consent: dict[str, Any] = {}
+    if operator_approval_spend_applies():
+        if not claim_operator_approved_call({"machine.move_path"}):
+            return RuntimeExecutionResult(
+                handled=True,
+                ok=False,
+                status="blocked_by_mode",
+                response_text=_MOVE_NEEDS_ALLOW,
+                details={
+                    "executed": False,
+                    "observation": _tool_observation(
+                        intent="machine.move_path", tool_surface="machine", ok=False, status="blocked_by_mode",
+                        reason=_MOVE_NEEDS_ALLOW,
+                    ),
+                },
+            )
+        consent["consent_fn"] = _allowed_on_the_card
     result = move_path(
         str((arguments or {}).get("source") or ""),
         str((arguments or {}).get("destination") or ""),
         allowed_roots=allowed_roots,
+        **consent,
     )
+    if result.ok:
+        _record_marked_move(session_id, result.source, result.dest)
     return RuntimeExecutionResult(
         handled=True,
         ok=result.ok,
@@ -2049,6 +2092,63 @@ def _machine_move_path(
             ),
         },
     )
+
+
+def _in_marked_folder(path: Path) -> bool:
+    """On Windows, whether the file ``path`` really lies in a folder the owner marked now."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return False
+    try:
+        folder = os.path.realpath(str(path.parent))
+    except (OSError, ValueError):
+        return False
+    return windows_write_gate.inside_flagged(folder) and windows_write_gate.inside_flagged(
+        os.path.join(folder, path.name))
+
+
+def _journal_marked_machine_write(target: Path, *, session_id: str, before: bytes | None, after: bytes) -> None:
+    """The machine write of ``target`` in a marked folder, as one change in the chat's change ledger
+    placed in the file's own (real) folder, with the bytes that were on disk before and the bytes
+    written (the broker's, "\n" as "\r\n" where it translates). `workspace.rollback_last_change` in
+    that folder restores the earlier bytes, or removes a file the write created."""
+    folder = Path(os.path.realpath(str(target.parent)))
+    before_text = before.decode("utf-8", errors="replace") if before is not None else ""
+    record_workspace_mutation(
+        session_id=session_id,
+        workspace_root=folder,
+        intent="machine.write_file",
+        changes=[
+            {
+                "path": target.name,
+                "action": "updated" if before is not None else "created",
+                "existed_before": before is not None,
+                "existed_after": True,
+                "before_text": before_text,
+                "after_text": after.decode("utf-8", errors="replace"),
+                "after_hash": bytes_sha256(after),
+                "before_restorable": before is None or _is_utf8(before),
+            }
+        ],
+    )
+
+
+def _record_marked_move(session_id: str, source: str, dest: str) -> None:
+    """A file moved between two marked folders on Windows goes into the chat's change ledger, so
+    "undo that" can move it back (captest b58c5eb0, M3: the move landed through the broker's rename and
+    the undo lane found nothing to undo). Off Windows, or for anything else, nothing is recorded."""
+    try:
+        moved = Path(dest)
+        if not moved.is_file() or os.path.islink(moved):
+            return
+        if not (_in_marked_folder(Path(source)) and _in_marked_folder(moved)):
+            return
+        from core.execution.artifacts import record_marked_move
+
+        record_marked_move(session_id=session_id, source=str(source), destination=str(dest))
+    except (OSError, ValueError):
+        return
 
 
 def _operator_profile_tool(intent: str, arguments: dict[str, Any], source_context: dict[str, Any] | None) -> RuntimeExecutionResult:
@@ -3308,11 +3408,14 @@ def _dispatch_runtime_tool(
         if intent == "capability.expand_family":
             return _capability_expand_family(arguments, source_context=source_context)
         if intent == "workspace.identity":
+            project_id, project_name = _sidebar_project_for(source_context)
             return _memoized_runtime_result(
                 "workspace.identity",
                 arguments,
-                lambda: _workspace_identity(workspace_root),
-                scope=(str(workspace_root),),
+                lambda: _workspace_identity(workspace_root, project_name=project_name),
+                # The project's name is part of the answer, so a rename must not be served the
+                # answer remembered under the old one.
+                scope=(str(workspace_root), project_id, project_name),
             )
         if intent == "workspace.list_files":
             return _list_files(arguments, workspace_root=workspace_root)
@@ -3341,7 +3444,8 @@ def _dispatch_runtime_tool(
         if intent == "machine.host_state":
             return _machine_host_state(arguments)
         if intent == "machine.move_path":
-            return _covered(lambda: _machine_move_path(arguments, workspace_root=workspace_root))
+            return _covered(lambda: _machine_move_path(
+                arguments, workspace_root=workspace_root, session_id=_runtime_session_id(source_context)))
         if intent == "machine.read_file":
             return _read_machine_file(arguments)
         if intent == "machine.ensure_directory":
@@ -3351,6 +3455,7 @@ def _dispatch_runtime_tool(
                 lambda: _write_machine_file(
                     arguments,
                     reviewed_destination=_approved_destination_for(source_context, intent, arguments.get("path")),
+                    session_id=_runtime_session_id(source_context),
                 )
             )
         if intent == "pdf.extract_text":
@@ -4400,7 +4505,29 @@ def _capability_expand_family(
     )
 
 
-def _workspace_identity(workspace_root: Path) -> RuntimeExecutionResult:
+def _sidebar_project_for(source_context: dict[str, Any] | None) -> tuple[str, str]:
+    """The chat's project as the sidebar shows it: (id, name), or ("", "") for General.
+
+    The sidebar's projects are `core.project_store` entries, and a chat in none of them sits under
+    "General". The working folder is a different thing: a General chat still works in a folder
+    (Desktop by default), and that folder's name is not a project name. An id that no longer
+    resolves (a deleted project) reads as General, which is where the sidebar puts its chats.
+    """
+    context = source_context or {}
+    project_id = str(context.get("_trusted_project_id") or context.get("project_id") or "").strip()
+    if not project_id:
+        return "", ""
+    try:
+        from core import project_store
+
+        project = project_store.get_project(project_id) or {}
+    except Exception:
+        project = {}
+    name = " ".join(str(project.get("name") or "").split()).strip()
+    return (project_id, name) if name else ("", "")
+
+
+def _workspace_identity(workspace_root: Path, *, project_name: str = "") -> RuntimeExecutionResult:
     """Answer "where is my workspace / what project am I in" in one line.
 
     Sixteen workspace tools existed and not one of them reported WHERE the workspace is, so a model
@@ -4435,9 +4562,15 @@ def _workspace_identity(workspace_root: Path) -> RuntimeExecutionResult:
         text = f"The workspace is set to `{root}`, but that folder does not exist right now."
     else:
         parts = [f"The workspace is set to `{root}`."]
+        # Name the chat's project the way the sidebar does, and call the folder a folder: "the
+        # project `Desktop`" gave a General chat a second name the sidebar never shows.
+        if project_name:
+            parts.append(f"This chat is in the project `{project_name}`.")
+        else:
+            parts.append("This chat is in General, not in a project.")
         parts.append(
-            f"That is the project `{name}`" + (" (a git repository)" if is_git else "")
-            + f", holding {files} file{'s' if files != 1 else ''} and "
+            f"The folder `{name}`" + (" (a git repository)" if is_git else "")
+            + f" holds {files} file{'s' if files != 1 else ''} and "
             f"{directories} folder{'s' if directories != 1 else ''} at the top level."
         )
         text = " ".join(parts)
@@ -4491,8 +4624,14 @@ def resolve_write_target(intent: str, raw_path: str | None, source_context: dict
     if not path:
         return None
     try:
-        if str(intent or "").strip().lower().startswith("machine."):
-            return _resolve_machine_directory(path)
+        clean_intent = str(intent or "").strip().lower()
+        if clean_intent.startswith("machine."):
+            try:
+                return _resolve_machine_directory(path)
+            except ValueError:
+                if clean_intent not in MACHINE_MARKED_WRITE_INTENTS or _marked_folder_machine_target(path) is None:
+                    raise
+                return _resolve_machine_write_target(path)
         return _resolve_workspace_path(path, workspace_root=_workspace_root(source_context))
     except (ValueError, OSError, RuntimeError):
         return None
@@ -4680,12 +4819,65 @@ def _expand_machine_user(raw: str) -> Path:
     return Path(value).expanduser()
 
 
+#: The machine writers that may also write inside a folder the owner marked on Windows.
+MACHINE_MARKED_WRITE_INTENTS = frozenset({"machine.write_file", "machine.ensure_directory"})
+
+
+def _marked_folder_machine_target(raw_path: str | None) -> Path | None:
+    """On Windows, where a machine write lands when that place is inside a folder the owner marked
+    (core/windows_write_gate.py), placed as the writer places it; None otherwise and off Windows.
+
+    The marked folders are the only places Windows lets VOOL change files, wherever they are, so the
+    machine writers take them as well as Desktop, Documents and Downloads (captest B3, 2026-11-08: a
+    folder marked under the profile could never be written). The gate still checks every write."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active() or not str(raw_path or "").strip():
+        return None
+    try:
+        candidate = anchor_machine_path(raw_path)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return candidate if windows_write_gate.inside_flagged(str(candidate)) else None
+
+
+def _marked_machine_roots() -> list[Path]:
+    """On Windows, the folders the owner marked (core/windows_write_gate.py); none off Windows or
+    when they cannot be read."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return []
+    try:
+        return [Path(root) for root in windows_write_gate.flagged_roots()]
+    except Exception:  # an unknown state adds no folder
+        return []
+
+
 def _resolve_machine_directory(raw_path: str | None, *, write: bool = False) -> Path:
     """A safe machine directory path, refused when it is this runtime's own state (or, for a write, its running code)."""
     target = _resolve_safe_machine_directory(raw_path)
     from core.runtime_state_protection import refusal as _protected_refusal
 
     reason = _protected_refusal(target, write=write)
+    if reason:
+        raise ValueError(reason)
+    return target
+
+
+def _resolve_machine_write_target(raw_path: str | None) -> Path:
+    """Where machine.write_file and machine.ensure_directory write: a safe machine directory path
+    (`_resolve_machine_directory`), or on Windows a path inside a folder the owner marked, refused
+    alike when it is this runtime's own state or running code."""
+    try:
+        return _resolve_machine_directory(raw_path, write=True)
+    except ValueError:
+        target = _marked_folder_machine_target(raw_path)
+        if target is None:
+            raise
+    from core.runtime_state_protection import refusal as _protected_refusal
+
+    reason = _protected_refusal(target, write=True)
     if reason:
         raise ValueError(reason)
     return target
@@ -5699,7 +5891,7 @@ def _ensure_machine_directory(arguments: dict[str, Any]) -> RuntimeExecutionResu
             },
         )
     try:
-        target = _resolve_machine_directory(arguments.get("path"), write=True)
+        target = _resolve_machine_write_target(arguments.get("path"))
     except ValueError as exc:
         return RuntimeExecutionResult(
             handled=True,
@@ -5757,7 +5949,7 @@ def _ensure_machine_directory(arguments: dict[str, Any]) -> RuntimeExecutionResu
 
 
 def _write_machine_file(
-    arguments: dict[str, Any], *, reviewed_destination: dict[str, Any] | None = None
+    arguments: dict[str, Any], *, reviewed_destination: dict[str, Any] | None = None, session_id: str = ""
 ) -> RuntimeExecutionResult:
     if not policy_engine.get("filesystem.allow_write_workspace", False):
         return RuntimeExecutionResult(
@@ -5775,7 +5967,7 @@ def _write_machine_file(
             },
         )
     try:
-        target = _resolve_machine_directory(arguments.get("path"), write=True)
+        target = _resolve_machine_write_target(arguments.get("path"))
     except ValueError as exc:
         return RuntimeExecutionResult(
             handled=True,
@@ -5833,15 +6025,31 @@ def _write_machine_file(
     if not brokered:
         target.parent.mkdir(parents=True, exist_ok=True)
     already_present = target.exists()
+    # In a folder the owner marked on Windows the change goes into the chat's change ledger, so
+    # "undo that" restores it (captest b58c5eb0, M3: the write landed through the broker and the undo
+    # lane found nothing to undo). The earlier bytes are read now, before anything is written.
+    journaled = _in_marked_folder(target) and not os.path.islink(target)
+    before_bytes: bytes | None = None
+    if journaled and already_present:
+        try:
+            before_bytes = target.read_bytes() if target.is_file() else None
+        except OSError:
+            journaled = False
+        if before_bytes is None:
+            journaled = False
+    written = content.encode("utf-8")
     expected_hash = str(arguments.get("expected_hash") or "").strip().lower()
-    checked: bytes | None = None
+    # One read: the journal's earlier bytes are the bytes the hash check and the broker's `expect` use,
+    # so what the ledger restores is exactly what this write replaced.
+    checked: bytes | None = before_bytes
     if already_present and expected_hash:
         # A claimed prior-content hash is ENFORCED at the physical mutation: the write
         # refuses when the file on disk is not the bytes the caller claimed to replace.
         # Without this the hash would be classification evidence the mutation never checks.
         import hashlib
 
-        checked = target.read_bytes()
+        if checked is None:
+            checked = target.read_bytes()
         actual = hashlib.sha256(checked).hexdigest()
         if actual != expected_hash:
             return RuntimeExecutionResult(
@@ -5885,6 +6093,7 @@ def _write_machine_file(
         except Refused as refused:
             return _broker_refusal("machine.write_file", surface="machine", label=_home_relative_label(target),
                                    refused=refused)
+        written = data
     elif reviewed_destination is not None:
         # A reviewed destination is written inside its pinned parent directory, with its reviewed bytes
         # re-read there just before the rename (`pinned_atomic_write_text`).
@@ -5910,6 +6119,8 @@ def _write_machine_file(
     action = "updated" if already_present else "created"
     status = "updated" if already_present else "executed"
     line_count = len(content.splitlines()) if content else 0
+    if journaled:
+        _journal_marked_machine_write(target, session_id=session_id, before=before_bytes, after=written)
     return RuntimeExecutionResult(
         handled=True,
         ok=True,
@@ -6249,14 +6460,17 @@ def _read_file(arguments: dict[str, Any], *, workspace_root: Path) -> RuntimeExe
         elsewhere = _nearby_workspace_matches(
             str(arguments.get("path") or ""), workspace_root=workspace_root
         )
+        # Where it looked, by name: "no file at `calc.py`" read as a statement about the folder the
+        # user meant, not the chat's own folder it was true of (captest C1, 2026-11-09).
+        looked_in = f" in `{workspace_root}`"
         if elsewhere:
             miss_text = (
-                f"There is no file at `{shown}`, but that name exists elsewhere in this project:\n"
+                f"There is no file at `{shown}`{looked_in}, but that name exists elsewhere in this project:\n"
                 + "\n".join(f"- {path}" for path in elsewhere)
             )
         else:
             miss_text = (
-                f"There is no file at `{shown}`, and no file of that name elsewhere in this "
+                f"There is no file at `{shown}`{looked_in}, and no file of that name elsewhere in this "
                 "project. If it may be outside the project folder, ask me to search your Desktop, "
                 "Downloads and Documents for it."
             )
@@ -7223,10 +7437,11 @@ def _run_validation(
                 ),
             },
         )
+    relative_cwd = str(runtime_result.details.get("cwd") or ".")
     payload = render_validation_result(
         intent,
         command=command,
-        cwd=str(runtime_result.details.get("cwd") or "."),
+        cwd=relative_cwd,
         runner_result={
             "status": runtime_result.status,
             "stdout": runtime_result.details.get("stdout"),
@@ -7240,6 +7455,11 @@ def _run_validation(
             "workspace.run_formatter": "Validation formatter run",
         }[intent],
     )
+    named = _windows_named_folder_label(workspace_root, relative_cwd, source_context)
+    if named != relative_cwd:
+        payload["response_text"] = str(payload.get("response_text") or "").replace(
+            f" in `{relative_cwd}`:", f" in `{named}`:", 1
+        )
     details = dict(payload.get("details") or {})
     followup = _extract_command_failure_followup(
         stdout=str(details.get("stdout") or ""),
@@ -7639,13 +7859,168 @@ def windows_write_refusal_before_decision(
 
     A council seat is left to the dispatch-time gate: `execute_runtime_tool` re-roots a seat onto
     its own disposable workspace first, and only that gate sees the root the seat writes to.
+
+    Then, for a call that starts a program, the Windows phase-1 program check
+    (`windows_program_refusal`): it does not depend on any workspace, so a council seat gets it too.
     """
     refusal = windows_write_refusal(intent, arguments, source_context=source_context)
-    if refusal is None:
-        return None
-    from core.council.containment import binding_for_context
+    if refusal is not None:
+        from core.council.containment import binding_for_context
 
-    return None if binding_for_context(source_context) is not None else refusal
+        if binding_for_context(source_context) is None:
+            return refusal
+    move_refusal = _windows_move_card_refusal(intent, arguments)
+    if move_refusal is not None:
+        return move_refusal
+    return windows_program_refusal(intent, arguments)
+
+
+def _windows_move_card_refusal(intent: str, arguments: dict[str, Any]) -> RuntimeExecutionResult | None:
+    """On Windows, a `machine.move_path` whose card could not name both its source and the final place
+    it lands (a path missing or unresolvable), or that lands on something already there, refused
+    before the card: the Allow is the move's consent there, so it is asked only for a move the owner
+    can see whole. None off Windows and for any other intent."""
+    from core import windows_write_gate
+
+    if intent != "machine.move_path" or not windows_write_gate.active():
+        return None
+    from core import windows_known_folders
+    from core.machine_file_ops import _canonicalize
+
+    raw_source = str((arguments or {}).get("source") or "").strip()
+    raw_destination = str((arguments or {}).get("destination") or "").strip()
+    # A council seat reaches this without the write gate's own refusal, and a mapped network drive
+    # (`Z:`) is no share spelling, so resolving it could already be the SMB connection: a path on a
+    # drive Windows does not call local is refused before anything resolves either path.
+    # Only a drive letter is asked about: a share or device spelling is never handed to GetDriveTypeW
+    # (that would be the lookup), and `_canonicalize` refuses it on its spelling alone.
+    for raw in (raw_source, raw_destination):
+        drive = re.match(r"^[A-Za-z]:", raw)
+        if drive and windows_known_folders._drive_is_remote(drive.group(0).upper()) is not False:
+            return _move_card_refused(
+                intent, f"`{raw}` is not on a local drive, so I don't look it up. Nothing was moved."
+            )
+    source = _canonicalize(raw_source) if raw_source else None
+    destination = _canonicalize(raw_destination) if raw_destination else None
+    if source is None or destination is None:
+        reason = "Name the file to move and where it goes, each by its full path. Nothing was moved."
+    else:
+        try:
+            taken = destination.exists()
+        except OSError:
+            taken = False
+        if not taken:
+            return None
+        reason = f"`{destination}` already exists. Nothing was moved."
+    return _move_card_refused(intent, reason)
+
+
+def _move_card_refused(intent: str, reason: str) -> RuntimeExecutionResult:
+    return RuntimeExecutionResult(
+        handled=True,
+        ok=False,
+        status="blocked",
+        response_text=reason,
+        details={
+            "executed": False,
+            "observation": _tool_observation(
+                intent=intent, tool_surface="machine", ok=False, status="blocked", reason=reason
+            ),
+        },
+    )
+
+
+#: Intents that start the program a command line names: `sandbox.run_command` its `command`, the
+#: validation intents the command `_run_validation` builds. A step is judged by its inner call.
+_WINDOWS_PROGRAM_INTENTS = frozenset(
+    {"sandbox.run_command", "workspace.run_tests", "workspace.run_lint", "workspace.run_formatter"}
+)
+_WINDOWS_PROGRAM_STEPS = frozenset({"code.task.step", "repo.step"})
+WINDOWS_PROGRAM_STATUS = "windows_program_refused"
+
+
+def windows_program_check_applies(intent: str) -> bool:
+    """Whether `windows_program_refusal` can refuse this intent: on Windows, a call that starts a
+    program, or a step (whose inner call may). False everywhere else, before anything is read."""
+    from sandbox.job_runner import _is_windows_platform
+
+    if not _is_windows_platform():
+        return False
+    return intent in _WINDOWS_PROGRAM_INTENTS or intent in _WINDOWS_PROGRAM_STEPS
+
+
+def _command_argv(command: str) -> list[str]:
+    """The argv the sandbox would split `command` into, or the lenient split of a line its rules
+    refuse (the program is still judged; the sandbox reports the rest), or [] when unreadable."""
+    try:
+        return [str(item) for item in parse_command(command)]
+    except ValueError:
+        pass
+    try:
+        return [str(item) for item in shlex.split(command, posix=False)]
+    except ValueError:
+        return []
+
+
+def windows_program_refusal(intent: str, arguments: dict[str, Any]) -> RuntimeExecutionResult | None:
+    """On Windows, the refusal for a call whose program phase 1 never runs, asked before the
+    permission decision; None otherwise, and always off Windows.
+
+    The verdict is `sandbox.job_runner.windows_program_refusal`, the same gate the job runner applies
+    when the job starts, so no approval is asked for a program that can never run and no allow-list
+    is kept here. The command judged is the one the handler would run: `command` (or `cmd`) for
+    `sandbox.run_command`, `_run_validation`'s command for the validation intents, the inner call for
+    a step. A call with no command is left to its handler.
+    """
+    if not windows_program_check_applies(intent):
+        return None
+    call_intent, call_arguments = intent, arguments
+    if intent in _WINDOWS_PROGRAM_STEPS:
+        call_intent = str(arguments.get("intent") or "").strip()
+        inner = arguments.get("arguments")
+        call_arguments = inner if isinstance(inner, dict) else {}
+    if call_intent not in _WINDOWS_PROGRAM_INTENTS:
+        return None
+    if call_intent == "sandbox.run_command":
+        command = str(call_arguments.get("command") or call_arguments.get("cmd") or "").strip()
+    else:
+        try:
+            command = runtime_validation_command(validation_command(call_intent, dict(call_arguments)))
+        except Exception:
+            return None  # the handler reports a validation call it cannot build
+    argv = _command_argv(command) if command else []
+    if not argv:
+        return None
+    from sandbox.job_runner import windows_program_refusal as phase1_refusal
+
+    reason = phase1_refusal(argv)
+    if not reason:
+        return None
+    contract = runtime_tool_contract_map().get(intent)
+    return RuntimeExecutionResult(
+        handled=True,
+        ok=False,
+        status=WINDOWS_PROGRAM_STATUS,
+        response_text=reason,
+        details={
+            "executed": False,
+            "command": command,
+            "observation": _tool_observation(
+                intent=intent,
+                tool_surface=str(getattr(contract, "tool_surface", "") or "sandbox"),
+                ok=False,
+                status=WINDOWS_PROGRAM_STATUS,
+                reason=reason,
+            ),
+        },
+    )
+
+
+#: The calls whose handler runs exactly one sandbox command derived from the call's arguments, so an
+#: exact approval of the call is an approval of that command (`_run_command`, `_run_validation`).
+_OPERATOR_APPROVED_COMMAND_INTENTS = frozenset(
+    {"sandbox.run_command", "workspace.run_tests", "workspace.run_lint", "workspace.run_formatter"}
+)
 
 
 def _run_command(
@@ -7694,10 +8069,20 @@ def _run_command(
         network_isolation_mode=_trusted_local_network_mode(command, arguments=arguments),
         **({"read_roots": tuple(Path(root) for root in proof_reads)} if proof_reads else {}),
     )
+    # The call the operator approved exactly runs this one command in this one folder: the sandbox
+    # gate lets exactly that through, once, instead of asking about it again (core.execution_gate).
+    from core.execution_gate import claim_operator_approved_call, operator_approved_command
+
+    approved = (
+        operator_approved_command(command, cwd=str(cwd))
+        if claim_operator_approved_call(_OPERATOR_APPROVED_COMMAND_INTENTS)
+        else contextlib.nullcontext()
+    )
     # The operator's stop button reaches INTO the command: the turn's cancel signal (and, for a
     # code task step, the task's own) is polled by the job runner while the child runs, so a
     # cancellation kills the process instead of waiting for it to finish.
-    result = runner.run_command(command, cwd=str(cwd), cancel_event=_cancel_token_from(source_context))
+    with approved:
+        result = runner.run_command(command, cwd=str(cwd), cancel_event=_cancel_token_from(source_context))
     relative_cwd = _relative_path(cwd, workspace_root=workspace_root)
     status = str(result.get("status") or ("blocked_by_policy" if result.get("error") else ""))
     if status and status != "executed":
@@ -7790,7 +8175,7 @@ def _run_command(
             )
         )
     lines = [
-        f"Command {'failed' if command_failed else 'executed'} in `{relative_cwd}`:",
+        f"Command {'failed' if command_failed else 'executed'} in `{_windows_named_folder_label(cwd, relative_cwd, source_context)}`:",
         f"$ {command}",
         f"- Exit code: {returncode}",
     ]
@@ -7826,6 +8211,22 @@ def _run_command(
             ),
         },
     )
+
+
+def _windows_named_folder_label(cwd: Path, relative_cwd: str, source_context: dict[str, Any] | None) -> str:
+    """The folder a job's reply names. On Windows, in a turn placed in the marked folder the user named
+    (`core.windows_marked_code_folder`), that folder is the workspace, so its relative name is `.`:
+    the reply names the folder in full instead (hardware M4 round 3: "Command executed in `.`" for a
+    run in `C:\\...\\VOOL HW Test\\proj`). Everywhere else, the relative name as before."""
+    from core import windows_write_gate
+
+    if relative_cwd != "." or not windows_write_gate.active():
+        return relative_cwd
+    from core import windows_marked_code_folder
+
+    if str((source_context or {}).get("workspace_binding") or "") != windows_marked_code_folder.BINDING:
+        return relative_cwd
+    return str(cwd)
 
 
 def _trusted_local_network_mode(command: str, *, arguments: dict[str, Any]) -> str | None:

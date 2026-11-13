@@ -35,11 +35,16 @@ def _sha(raw: bytes) -> str:
 
 @pytest.fixture()
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A home whose ``Documents/work`` folder is also the workspace, so both tool surfaces see one file."""
-    (tmp_path / "Documents" / "work").mkdir(parents=True)
-    monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("USERPROFILE", str(tmp_path))
-    return tmp_path
+    """A home whose ``Documents/work`` folder is also the workspace, so both tool surfaces see one file.
+
+    The home is a folder inside tmp_path, not tmp_path itself: on Windows conftest marks tmp_path as
+    this test's disposable workspace, and the profile is never a write root, so a home that WAS
+    tmp_path left Documents/work in no marked folder."""
+    home = tmp_path / "home"
+    (home / "Documents" / "work").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    return home
 
 
 def _machine_read(name: str) -> dict:

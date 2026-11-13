@@ -206,9 +206,12 @@ def _ollama_loaded_bytes(*, base_url: str | None = None) -> float:
     # The canonical LocalModelPolicy: disabled means no Ollama health probe either; report
     # no local footprint (0.0), the same truth as an unreachable daemon.
     from core.local_model_policy import local_models_enabled
+    from core.ollama_endpoint import bundle_pinned_ollama_url
 
+    # Under the bundle supervisor its pinned address wins (core.ollama_endpoint): no override splits it.
+    ps_override = "" if bundle_pinned_ollama_url() else os.environ.get("VOOL_OLLAMA_PS_URL")
     target = (str(base_url).rstrip("/") + "/api/ps") if base_url is not None else (
-        os.environ.get("VOOL_OLLAMA_PS_URL") or _ollama_api_url("/api/ps")
+        ps_override or _ollama_api_url("/api/ps")
     )
     if not is_loopback_url(target):
         return 0.0

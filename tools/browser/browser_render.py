@@ -14,8 +14,8 @@ from typing import Any
 
 from core import policy_engine, windows_path_policy
 from core.process_liveness import system_taskkill
-from core.remote_fetch_policy import note_remote_fetch_attempt, remote_fetch_forbidden
-from core.vool_browser.engine import CREDENTIAL_ISOLATION_FLAGS
+from core.remote_fetch_policy import browser_navigation_refusal, note_remote_fetch_attempt, remote_fetch_forbidden
+from core.vool_browser.engine import CREDENTIAL_ISOLATION_FLAGS, find_windows_program_files_edge
 from tools.web.browser_identity import DESKTOP_ACCEPT_LANGUAGE, DESKTOP_USER_AGENT
 
 _CAPTCHA_RE = re.compile(
@@ -149,6 +149,17 @@ def find_browser_binary() -> str | None:
     if override and os.path.isfile(override) and os.access(override, os.X_OK):
         found = override
 
+    if found is None and sys.platform == "win32":
+        # Windows: only the Edge installed for every user under Program Files, the same lookup
+        # the browser lane uses. This used to fall through to the macOS paths and to Linux names
+        # on PATH, none of which exist on Windows, so every Windows machine answered None and web
+        # search lost its only non-decoy provider. The Playwright cache is not read here: on
+        # Windows it lives under the user's own AppData, which any program the user runs can
+        # replace, and its bundled Chromium is not kept up to date the way Edge is.
+        found = find_windows_program_files_edge()
+        _browser_binary_cache[cache_key] = found
+        return found
+
     if found is None:
         cache_dir = _playwright_cache_dir()
         for pattern in _PLAYWRIGHT_CACHE_GLOBS:
@@ -259,6 +270,10 @@ def _chrome_argv(
     # escape hatch is an explicit test/container environment variable, which no
     # product launcher sets and which the production invariant test asserts is
     # absent from the default argv.
+    if sys.platform == "win32":
+        # Headless Edge otherwise checks for component updates and starts sync on its own,
+        # reaching Microsoft's servers beyond the page it was asked to render.
+        argv += ["--disable-component-update", "--disable-sync"]
     if os.environ.get(_TEST_ONLY_BROWSER_NO_SANDBOX_ENV, "").strip().lower() in {"1", "true", "yes"}:
         argv.append("--no-sandbox")
 
@@ -457,6 +472,11 @@ def chrome_render(
     note_remote_fetch_attempt(url)
     if remote_fetch_forbidden():
         return {"status": "remote_fetch_disabled", "final_url": url}
+    # Windows: the permission gateway binds a browser as it binds an HTTP request. Local Only does
+    # not stop the browser (product decision). Off Windows this answers None.
+    refusal = browser_navigation_refusal(url)
+    if refusal is not None:
+        return {"status": "egress_refused", "final_url": url, "error": refusal}
     return _chrome_render_unchecked(
         url,
         timeout_ms=timeout_ms,
@@ -492,6 +512,11 @@ def browser_render(
     note_remote_fetch_attempt(url)
     if remote_fetch_forbidden():
         return {"status": "remote_fetch_disabled", "final_url": url}
+    # Windows: the permission gateway binds a browser as it binds an HTTP request. Local Only does
+    # not stop the browser (product decision). Off Windows this answers None.
+    refusal = browser_navigation_refusal(url)
+    if refusal is not None:
+        return {"status": "egress_refused", "final_url": url, "error": refusal}
 
     env_enabled = str(os.getenv("PLAYWRIGHT_ENABLED", "")).lower()
     enabled = env_enabled in {"1", "true", "yes"} if env_enabled else policy_engine.playwright_enabled()

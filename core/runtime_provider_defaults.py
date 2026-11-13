@@ -538,6 +538,111 @@ def _model_context_ceiling(*, bucket: str, parameter_billions: float) -> int:
     return {"A": 4096, "B": 4096, "C": 4096, "D": 8192, "E": 8192}[bucket]
 
 
+# KV-cache geometry, (layers, KV heads, head dim), for the models VOOL offers. Per token the cache
+# holds K and V for every layer: 2 x layers x kv_heads x head_dim x bytes. qwen3:8b at f16 is
+# 2 x 36 x 8 x 128 x 2 B = 0.1406 MiB, exactly what Ollama allocated on the RTX 4060
+# (3456 MiB for 24576 tokens).
+_KV_GEOMETRY: dict[str, tuple[int, int, int]] = {
+    "qwen3:0.6b": (28, 8, 128),
+    "qwen3:1.7b": (28, 8, 128),
+    "qwen3:4b": (36, 8, 128),
+    "qwen3:8b": (36, 8, 128),
+    "qwen3:14b": (40, 8, 128),
+    "qwen3:32b": (64, 8, 128),
+    "qwen3:30b-a3b": (48, 4, 128),
+}
+# A model with no geometry above: qwen3:8b's 0.1406 MiB scaled by parameter count (8B -> 0.14).
+_KV_MIB_PER_TOKEN_PER_BILLION = 0.018
+# Ollama's compute graph and runtime buffers on the card, beyond weights and KV cache. With it the
+# footprint puts 12288 tokens (7.06 GB) over the RTX 4060's 6.8 GB and 8192 (6.50 GB) inside it,
+# as measured (13% CPU at 12288, 100% GPU at 8192).
+_GPU_RUNTIME_OVERHEAD_GB = 0.5
+# Matches the hardware-fit gate: what the desktop and driver keep of the card.
+_GPU_RESERVED_GB = 1.2
+_GPU_CONTEXT_FLOOR = 8192
+_GPU_CONTEXT_STEP = 4096
+
+
+def _kv_cache_mib_per_token(model_tag: str, *, kv_quant: str = "fp16") -> float:
+    """KV-cache MiB per context token for this model, at f16 (or half that at q8_0)."""
+    clean = str(model_tag or "").strip().lower()
+    geometry = _KV_GEOMETRY.get(clean)
+    if geometry is not None:
+        layers, kv_heads, head_dim = geometry
+        per_token = 2.0 * layers * kv_heads * head_dim * 2.0 / (1024.0**2)
+    else:
+        billions = _known_model_parameter_billions(clean)
+        per_token = _KV_MIB_PER_TOKEN_PER_BILLION * (billions if billions is not None else _UNPROVEN_MODEL_BILLIONS)
+    return per_token / 2.0 if kv_quant == "q8_0" else per_token
+
+
+def _gpu_resident_gb(model_tag: str, *, num_ctx: int, artifact_size_gb: float = 0.0, kv_quant: str = "fp16") -> float:
+    """Graphics memory the model needs at ``num_ctx``: weights + KV cache + runtime overhead (GiB).
+
+    Weights are Ollama's measured artifact size when known, else the parameter estimate
+    (0.75 GB per billion, as ``estimated_local_model_resident_gb`` uses).
+    """
+    weights = float(artifact_size_gb or 0.0)
+    if weights <= 0.0:
+        billions = _known_model_parameter_billions(model_tag)
+        weights = 0.75 * (billions if billions is not None else _UNPROVEN_MODEL_BILLIONS)
+    kv_gb = _kv_cache_mib_per_token(model_tag, kv_quant=kv_quant) * max(0, int(num_ctx)) / 1024.0
+    return weights + kv_gb + _GPU_RUNTIME_OVERHEAD_GB
+
+
+def _discrete_gpu_spare_gb(env_map: Mapping[str, str]) -> float:
+    """Spare graphics memory on a CUDA/DirectML card that will hold the layers, else 0.0.
+
+    Windows only in 0.7.1 (``core.provider_routing.gpu_fit_windows_seam``): elsewhere 0.0, so the
+    bucket's window stands.
+    """
+    try:
+        from core.provider_routing import gpu_fit_windows_seam
+
+        if not gpu_fit_windows_seam():
+            return 0.0
+    except Exception:
+        return 0.0
+    if _resolve_ollama_num_gpu(env_map) == 0:
+        return 0.0
+    try:
+        from core.hardware_tier import probe_machine as _probe_machine
+
+        probe = _probe_machine()
+    except Exception:
+        return 0.0
+    accelerator = str(getattr(probe, "accelerator", "cpu") or "cpu").strip().lower()
+    vram_gb = float(getattr(probe, "vram_gb", 0.0) or 0.0)
+    if accelerator not in {"cuda", "directml"} or vram_gb <= 0.0:
+        return 0.0
+    return max(0.0, vram_gb - _GPU_RESERVED_GB)
+
+
+def _fit_context_to_graphics_memory(
+    selected: int,
+    *,
+    model_tag: str,
+    artifact_size_gb: float,
+    kv_quant: str,
+    spare_gb: float,
+) -> int:
+    """The largest window <= ``selected`` whose footprint fits ``spare_gb``, never below 8192.
+
+    Only ever lowers the window: a card with room keeps what the bucket chose, and a window the
+    bucket already set at or under the floor is left alone.
+    """
+    floor = max(_GPU_CONTEXT_FLOOR, _MIN_CTX)
+    if selected <= floor:
+        return selected
+    candidate = selected
+    while candidate > floor:
+        if _gpu_resident_gb(model_tag, num_ctx=candidate, artifact_size_gb=artifact_size_gb, kv_quant=kv_quant) <= spare_gb:
+            return candidate
+        lower = (candidate - 1) // _GPU_CONTEXT_STEP * _GPU_CONTEXT_STEP
+        candidate = max(floor, lower)
+    return floor
+
+
 def _ollama_context_sizing(
     bundle_role: str,
     *,
@@ -545,6 +650,7 @@ def _ollama_context_sizing(
     bucket: str = "",
     kv_quant: str = "fp16",
     env: Mapping[str, str] | None = None,
+    artifact_size_gb: float = 0.0,
 ) -> dict[str, object]:
     env_map = os.environ if env is None else env
     selected = _flat_ollama_context_window(bundle_role)
@@ -607,6 +713,22 @@ def _ollama_context_sizing(
         adaptive = int(resolve_num_ctx(bucket=clean_bucket, role=bundle_role, kv_quant=effective_kv))
         result["selected_num_ctx"] = min(max(adaptive, _BASELINE_CONTEXT_WINDOW), safe_ceiling)
         result["context_sizing_policy"] = "adaptive_persisted_bucket"
+        # The bucket is sized from RAM. On a discrete card, a window whose KV cache overflows the
+        # card pushes layers onto the CPU (RTX 4060 8 GB, qwen3:8b: 24576 tokens ran 31% on the
+        # CPU at 18.8 tok/s, 8192 ran 100% on the GPU at 38.3 tok/s), so fit it to the card.
+        spare_gb = _discrete_gpu_spare_gb(env_map)
+        if spare_gb > 0.0:
+            result["graphics_memory_spare_gb"] = round(spare_gb, 2)
+            fitted = _fit_context_to_graphics_memory(
+                int(result["selected_num_ctx"]),
+                model_tag=model_tag,
+                artifact_size_gb=artifact_size_gb,
+                kv_quant=effective_kv,
+                spare_gb=spare_gb,
+            )
+            if fitted != result["selected_num_ctx"]:
+                result["selected_num_ctx"] = fitted
+                result["context_sizing_policy"] = "adaptive_fits_graphics_memory"
         return result
     except Exception:
         result["context_sizing_policy"] = "flat_sizing_error"
@@ -663,6 +785,11 @@ def register_installed_local_model(
     if not clean:
         return None
     env_map = os.environ if env is None else env
+    from core.ollama_cloud_models import refuse_cloud_model
+
+    # An Ollama cloud model is never registered: a cloud name, or a stub whose stored manifest names
+    # remote_host / remote_model, or one whose manifest cannot be read (core.ollama_cloud_models).
+    refuse_cloud_model(clean, env=env_map)
     from core.local_model_bundles import installed_ollama_role_for_model
 
     role = installed_ollama_role_for_model(
@@ -688,16 +815,26 @@ def _ensure_local_ollama_provider(
     env: Mapping[str, str] | None = None,
 ) -> bool:
     env_map = os.environ if env is None else env
+    from core.ollama_cloud_models import refuses_cloud_name
+
+    if refuses_cloud_name(model_tag):
+        # A cloud name (for example a VOOL_OLLAMA_MODEL pin) is never a lane; boot carries on.
+        return False
     existing = registry.get_manifest("ollama-local", model_tag)
     selected_base_url = default_local_provider_base_url(env_map)
     if existing is not None and not isinstance(existing, ModelProviderManifest):
         existing = None
+    try:
+        measured_artifact_gb = float(((getattr(existing, "metadata", None) or {}).get("artifact_size_gb")) or 0.0)
+    except (TypeError, ValueError):
+        measured_artifact_gb = 0.0
     context_sizing = _ollama_context_sizing(
         bundle_role,
         model_tag=model_tag,
         bucket=bucket,
         kv_quant=kv_quant,
         env=env,
+        artifact_size_gb=measured_artifact_gb,
     )
     context_window = int(context_sizing["selected_num_ctx"])
     forced_num_gpu = _resolve_ollama_num_gpu(env_map)
@@ -1042,7 +1179,8 @@ def _register_openrouter_manifest(
     # resolution reads; without them the persisted manifest declares nothing and a reasoning
     # model's 240–520-token chat ceiling is spent entirely on reasoning (measured 2026-09-16:
     # empty content, finish_reason length, no answer published).
-    catalog_facts = _openrouter_catalog_facts(model_name)
+    base_url = _env_first(env, *_OPENROUTER_BASE_URL_ENV_NAMES) or _DEFAULT_OPENROUTER_BASE_URL
+    catalog_facts = _openrouter_catalog_facts(model_name, base_url=base_url)
     if (
         existing
         and existing.enabled
@@ -1053,7 +1191,6 @@ def _register_openrouter_manifest(
         and _catalog_facts_stamped(existing, catalog_facts)
     ):
         return existing.provider_id
-    base_url = _env_first(env, *_OPENROUTER_BASE_URL_ENV_NAMES) or _DEFAULT_OPENROUTER_BASE_URL
     runtime_config: dict[str, object] = {
         "base_url": base_url,
         "api_path": "/chat/completions",
@@ -1117,7 +1254,7 @@ def _register_openrouter_manifest(
     return manifest.provider_id
 
 
-def _openrouter_catalog_facts(model_name: str) -> dict[str, Any]:
+def _openrouter_catalog_facts(model_name: str, *, base_url: str = "") -> dict[str, Any]:
     """The cached catalog row's facts for one byok model, or {} when nothing is known.
 
     Cache-only by construction (`cached_catalog_row` never refreshes), so a boot-time or
@@ -1128,7 +1265,10 @@ def _openrouter_catalog_facts(model_name: str) -> dict[str, Any]:
     try:
         from core.openrouter_catalog import cached_catalog_row
 
-        row = cached_catalog_row(model_name)
+        from core.windows_cloud_gate import catalog_lane
+
+        with catalog_lane(base_url):
+            row = cached_catalog_row(model_name)
     except Exception:
         return {}
     if row is None:

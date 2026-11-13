@@ -38,7 +38,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from core import windows_path_policy
+from core import posix_tools, windows_path_policy
 from core.agent_runtime.write_root_honesty import typed_path_kind
 from core.execution.constants import drive_left_behind
 
@@ -356,6 +356,12 @@ def _failure_text(status: str, *, reason: str, shown: str) -> str:
             f"renamed."
         )
     if status == "missing_dependency":
+        if posix_tools.active():
+            # The tool refused on Windows after the permission gate ran (`pdf_tools._run_helper`):
+            # its first sentence is the whole answer, without the macOS install advice.
+            from core.pdf_tools import WINDOWS_UNAVAILABLE
+
+            return WINDOWS_UNAVAILABLE
         return (
             f"I cannot read PDFs on this machine: {reason}. PDF reading needs the macOS system "
             f"Python at /usr/bin/python3 and its PyObjC bindings."

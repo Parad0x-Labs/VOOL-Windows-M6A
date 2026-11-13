@@ -17,6 +17,7 @@ which both env constructions apply AFTER the drop, so the deliberate pin wins.
 import json
 from pathlib import Path
 
+from tests import _windows_refusals as windows_refusals
 from tests._blackbox_served_rig import REPO_ROOT, ServedDaemon, run_in_home
 
 
@@ -44,6 +45,14 @@ def test_a_real_subprocess_activation_records_under_its_own_home_and_leaves_the_
     home.mkdir()
 
     before = plugin_lifecycle.lifecycle_snapshot()["plugins"]
+    # Windows 0.7.1: enable refuses in the plugin sentence. The boundary still holds there: what
+    # install and verify recorded lands under the isolated home, not enabled, and the session
+    # store is unchanged.
+    if windows_refusals.refuses_activation(home, _activation_script(pack, "rig-boundary-pack"),
+                                           "rig-boundary-pack", pack):
+        recorded = json.loads((home / "data" / "plugin_lifecycle.json").read_text(encoding="utf-8"))
+        assert "rig-boundary-pack" in recorded.get("plugins", {}), recorded
+        return
     out = run_in_home(home, _activation_script(pack, "rig-boundary-pack"))
     assert "lifecycle: installed+verified+enabled" in out, out
 
@@ -75,6 +84,17 @@ def test_a_deliberate_lifecycle_pin_supplied_by_the_caller_still_wins(tmp_path):
     home.mkdir()
 
     before = plugin_lifecycle.lifecycle_snapshot()["plugins"]
+    # Windows 0.7.1: enable refuses in the plugin sentence. The deliberate pin still wins there:
+    # what install and verify recorded lands in the pinned store, not under the home, and the
+    # daemon side keeps the same contract.
+    if windows_refusals.refuses_activation(home, _activation_script(pack, "rig-deliberate-pin-pack"),
+                                           "rig-deliberate-pin-pack", pack,
+                                           env_extra={"VOOL_PLUGIN_LIFECYCLE_PATH": str(deliberate)}):
+        assert deliberate.is_file(), "the deliberate pin was not honored"
+        assert not (home / "data" / "plugin_lifecycle.json").exists()
+        daemon = ServedDaemon(tmp_path / "daemon-home", env_extra={"VOOL_PLUGIN_LIFECYCLE_PATH": str(deliberate)})
+        assert daemon.env()["VOOL_PLUGIN_LIFECYCLE_PATH"] == str(deliberate)
+        return
     out = run_in_home(
         home,
         _activation_script(pack, "rig-deliberate-pin-pack"),

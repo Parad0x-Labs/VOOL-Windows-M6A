@@ -94,17 +94,18 @@ def test_http_stopall_resolves_without_the_model(tmp_path, monkeypatch):
     spawn_spy = mock.Mock(return_value=True)
     monkeypatch.setattr("installer.vool_stop.spawn_detached_stop", spawn_spy)
 
-    resp = dispatch_post(
-        path="/api/chat",
-        body={"messages": [{"role": "user", "content": "/stopall"}]},
-        headers={},
-        runtime=RuntimeServices(display_name="VOOL"),
-        model_name="vool",
-        workspace_root_provider=lambda: str(tmp_path),
-        run_agent_provider=_model_must_not_run,
-        resolve_null_domain_provider=lambda name: None,
-        client_host="127.0.0.1",  # /stopall is owner-local only; the owner's loopback session
-    )
+    for text in ("/stopall", "/stopall confirm"):
+        resp = dispatch_post(
+            path="/api/chat",
+            body={"session_id": "router-matrix-stopall", "messages": [{"role": "user", "content": text}]},
+            headers={},
+            runtime=RuntimeServices(display_name="VOOL"),
+            model_name="vool",
+            workspace_root_provider=lambda: str(tmp_path),
+            run_agent_provider=_model_must_not_run,
+            resolve_null_domain_provider=lambda name: None,
+            client_host="127.0.0.1",  # /stopall is owner-local only; the owner's loopback session
+        )
     assert resp.status == 200
     spawn_spy.assert_called_once()  # the shutdown was launched via the injected seam
     body = json.loads(resp.body)

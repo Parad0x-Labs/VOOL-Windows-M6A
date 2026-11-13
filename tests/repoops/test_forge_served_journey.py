@@ -24,6 +24,7 @@ No native window is driven and no packet leaves the machine.
 from __future__ import annotations
 
 import json
+import os
 import textwrap
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -34,6 +35,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
+from tests import _windows_refusals as windows_refusals
 from tests._blackbox_served_rig import REPO_ROOT, SEED_MANIFEST, ScriptedProvider, ServedDaemon, run_in_home
 
 pytestmark = [pytest.mark.served]
@@ -176,9 +178,20 @@ def served(tmp_path: Path):
         }
     )
     provider = TranscriptProvider()
+    seam_env: dict[str, str] = {}
+    from core import safe_git
+
+    if safe_git._REFUSE_GIT is True:
+        # A run that forces this process's Windows git seam hands the same decision to the daemon,
+        # which otherwise decides from its own platform (on Windows it refuses git by itself).
+        seam = tmp_path / "git-seam"
+        seam.mkdir()
+        (seam / "sitecustomize.py").write_text("import core.safe_git as _s\n_s._REFUSE_GIT = True\n", encoding="utf-8")
+        seam_env["PYTHONPATH"] = f"{seam}{os.pathsep}{REPO_ROOT}"
     daemon = ServedDaemon(
         home,
         env_extra={
+            **seam_env,
             "VOOL_ALWAYS_ON_CATALOG": "1",
             "VOOL_WORKSPACE_ROOT": str(workspace),
             "VOOL_REPOOPS_DIR": str(home / "repo_sessions"),
@@ -373,6 +386,18 @@ def _restart_daemon(served: dict[str, Any], label: str) -> ServedDaemon:
 # ---------------------------------------------------------------------------
 
 
+def _windows_refused_the_session(served: dict[str, Any], seen: windows_refusals.Watch, answer: str) -> bool:
+    """Where git is refused (Windows 0.7.1) the served repo.session.open turn answers exactly the git
+    sentence: no RepoOps session journal is written, the forge gets no call, the daemon starts no git
+    on the workspace and nothing in it changes. The journey ends there. False where git runs."""
+    return windows_refusals.refused_exactly(
+        seen,
+        (answer, windows_refusals.GIT_REFUSAL),
+        (sorted(Path(served["sessions_dir"]).glob("*.json")), []),
+        (served["forge"].calls, []),
+    )
+
+
 def test_served_original_journey_conversational_request_refusal_authorize_create(served: dict[str, Any]) -> None:
     forge: LocalForge = served["forge"]
     provider: TranscriptProvider = served["provider"]
@@ -380,12 +405,15 @@ def test_served_original_journey_conversational_request_refusal_authorize_create
 
     # [served-chat] The user asks in natural language; the repo family seats from the words;
     # the scripted model plans repo.session.open; the served lane EXECUTES it and journals it.
-    answer = _turn(
-        served, session,
-        "open a repo session for pull request 8 on o/r",
-        _call("repo__session__open", {"objective": "prepare the reviewed draft PR", "provider": "github",
-                                      "namespace": "o/r", "pull_request": "8"}, "c1"),
-    )
+    with windows_refusals.watch_git(served["workspace"]) as seen:
+        answer = _turn(
+            served, session,
+            "open a repo session for pull request 8 on o/r",
+            _call("repo__session__open", {"objective": "prepare the reviewed draft PR", "provider": "github",
+                                          "namespace": "o/r", "pull_request": "8"}, "c1"),
+        )
+    if _windows_refused_the_session(served, seen, answer):
+        return
     assert answer, "the served turn returned no answer"
     journal = _session_journal(served)
     sid = journal["session_key"]
@@ -504,12 +532,15 @@ def test_served_novel_journey_unknown_then_http_resolution_and_resume(served: di
     forge: LocalForge = served["forge"]
     session = "served-forge-novel-1"
 
-    _turn(
-        served, session,
-        "open a repo session on github for issue 17",
-        _call("repo__session__open", {"objective": "post the approved comment on issue 17",
-                                      "provider": "github", "namespace": "o/r"}, "n1"),
-    )
+    with windows_refusals.watch_git(served["workspace"]) as seen:
+        opened = _turn(
+            served, session,
+            "open a repo session on github for issue 17",
+            _call("repo__session__open", {"objective": "post the approved comment on issue 17",
+                                          "provider": "github", "namespace": "o/r"}, "n1"),
+        )
+    if _windows_refused_the_session(served, seen, opened):
+        return
     journal = _session_journal(served)
     sid = journal["session_key"]
     _turn(served, session, "inspect it", _call("repo__inspect", {"repo_session_id": sid}, "n2"))

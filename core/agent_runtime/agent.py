@@ -260,6 +260,10 @@ class ChatTurnResult:
     workflow_summary: str = ""
     debug_origin: str | None = None
     allow_planner_style: bool = False
+    #: Set only by `action_fast_path_result` for the tool loop's Windows run-request answer
+    #: (`is_windows_run_request_output`): what the owner's job printed, which the chat sanitizer
+    #: does not take for a VOOL traceback.
+    windows_run_request_output: bool = False
 
 
 def _record_conductor_demand_receipts(plan: Any, outcomes: Any, *, request: str) -> None:
@@ -2548,6 +2552,28 @@ class VoolAgent(
         # web-search machinery can see the raw phrase. Returns None for anything that does not
         # classify as a follow-up, or that classifies but has no resolvable attempt -- in which
         # case the turn proceeds exactly as it always did, honestly, with no fabricated antecedent.
+        #
+        # Ahead of that, and of every seam below that may split the message, plan it with a model or
+        # hand it to the builder: on Windows, a message that asks for a stated 0.7.1 limit (git, a
+        # program or Python form phase 1 does not run, a share or device path to write) gets that
+        # limit's own plain refusal, read from the text the user typed. Off Windows, and for every
+        # message it does not read, this returns nothing and the turn goes on as before
+        # (core.agent_runtime.windows_stated_limits).
+        from core.agent_runtime.windows_stated_limits import windows_limit_refusal
+
+        limit_response, limit_reason = windows_limit_refusal(raw_turn_text, source_context=runtime_source_context)
+        if limit_response:
+            semantic_reach.claimed(semantic_reach.GATE_FRONTDOOR, "windows stated limit")
+            return _guard_final_result(
+                self._fast_path_result(
+                    session_id=session_id,
+                    user_input=effective_input,
+                    response=limit_response,
+                    confidence=0.95,
+                    source_context=runtime_source_context,
+                    reason=limit_reason,
+                )
+            )
         followup_result = self._maybe_answer_attempt_followup_turn(
             effective_input=effective_input,
             session_id=session_id,
@@ -2974,6 +3000,18 @@ class VoolAgent(
             from core.agent_runtime.fast_paths_skill import is_skill_authoring_request
 
             if is_skill_authoring_request(str(raw_input or effective_input)):
+                return None
+        except Exception:
+            pass
+        # And on Windows for a patch request ("apply this patch to calc.py" and the diff under it): its
+        # lines are one unified diff, not separate requests. Claims sweep: the diff's `---`/`+++` and
+        # hunk lines were carved into units and answered one by one, and the patch was never applied.
+        # The front door's marked-folder lane applies it (core.windows_marked_file_ops). Off Windows
+        # this is always False.
+        try:
+            from core.windows_marked_file_ops import carries_a_patch_request
+
+            if carries_a_patch_request(str(raw_input or effective_input)):
                 return None
         except Exception:
             pass

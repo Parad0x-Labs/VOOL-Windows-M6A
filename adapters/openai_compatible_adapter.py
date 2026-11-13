@@ -285,6 +285,12 @@ class OpenAICompatibleAdapter(ModelAdapter):
         prewarm_config = dict(self.manifest.runtime_config.get("prewarm") or {})
         if not prewarm_config:
             return super().prewarm()
+        from core.ollama_cloud_models import CloudModelRefused
+
+        try:
+            self._refuse_ollama_cloud_model()
+        except CloudModelRefused as exc:
+            return {"ok": False, "provider_id": self.manifest.provider_id, "status": "error", "error": str(exc)}
 
         strategy = str(prewarm_config.get("strategy") or "").strip().lower()
         if strategy not in {"ollama_generate", "ollama_chat"}:
@@ -432,12 +438,24 @@ class OpenAICompatibleAdapter(ModelAdapter):
         """
         from core.auto_local_only_mode import assert_endpoint_allowed
 
+        self._refuse_ollama_cloud_model()
         metadata = getattr(request, "metadata", None) if request is not None else None
         assert_endpoint_allowed(
             str(self.manifest.runtime_config.get("base_url") or ""),
             lane=str(self.manifest.provider_id or "openai_compatible"),
             source_context=metadata if isinstance(metadata, dict) else None,
         )
+
+    def _refuse_ollama_cloud_model(self) -> None:
+        """No call, prewarm or probe ever goes to an Ollama cloud model (core.ollama_cloud_models).
+
+        Checked by name and by any remote host the manifest records, before bytes leave: whatever
+        selected this lane, an Ollama ``/api/chat`` or ``/api/generate`` for a cloud stub is refused.
+        """
+        from core.ollama_cloud_models import CloudModelRefused, manifest_is_ollama_cloud
+
+        if manifest_is_ollama_cloud(self.manifest):
+            raise CloudModelRefused(str(self.manifest.model_name or ""))
 
     def run_text_task(self, request: ModelRequest) -> ModelResponse:
         return self._invoke_http(request, force_json=False)
@@ -783,6 +801,10 @@ class OpenAICompatibleAdapter(ModelAdapter):
             # path deliberately does not do this: tags span NDJSON frames, so a per-frame strip
             # would cut a block it cannot see the end of.
             output_text = strip_reasoning_block(_extract_ollama_chat_text(data))
+        if bool(getattr(request, "tools_required", False)) and native_tools and not native_tool_calls:
+            native_tool_calls, output_text = _followup_prose_as_respond_direct(
+                request, definitions=native_tools, output_text=output_text
+            )
         if bool(getattr(request, "tools_required", False)) and native_tools and not native_tool_calls:
             # SWITCHBOARD repair: `_extract_ollama_tool_calls` deliberately never raises on an
             # absent/empty `tool_calls` array (see its own docstring) -- a local turn that carries
@@ -1419,8 +1441,10 @@ class OpenAICompatibleAdapter(ModelAdapter):
         if self._is_openrouter_lane():
             try:
                 from core.openrouter_catalog import cached_catalog_row
+                from core.windows_cloud_gate import catalog_lane
 
-                row = cached_catalog_row(model)
+                with catalog_lane(str(self.manifest.runtime_config.get("base_url") or "")):
+                    row = cached_catalog_row(model)
             except Exception:
                 row = None
             if row is not None:
@@ -1442,8 +1466,10 @@ class OpenAICompatibleAdapter(ModelAdapter):
         if self._is_openrouter_lane():
             try:
                 from core.openrouter_catalog import cached_catalog_row
+                from core.windows_cloud_gate import catalog_lane
 
-                row = cached_catalog_row(str(self.manifest.model_name or ""))
+                with catalog_lane(str(self.manifest.runtime_config.get("base_url") or "")):
+                    row = cached_catalog_row(str(self.manifest.model_name or ""))
             except Exception:
                 row = None
             if row is not None:
@@ -1828,6 +1854,10 @@ class OpenAICompatibleAdapter(ModelAdapter):
         base_url = str(self.manifest.runtime_config.get("base_url") or "").strip().rstrip("/")
         if not _strict_tool_certification_loopback(base_url) or self._runtime_family() != "ollama":
             return identity
+        # A row or /api/show reply naming remote_host / remote_model is an Ollama cloud stub: the
+        # identity read refuses it rather than certify a model that would run on ollama.com.
+        from core.ollama_cloud_models import CloudModelRefused, refuses_remote_entry
+
         native_base = _native_ollama_base_url(base_url)
         if _identity_base_recently_unreachable(native_base):
             return identity
@@ -1845,12 +1875,16 @@ class OpenAICompatibleAdapter(ModelAdapter):
                     names = {str(row.get("name") or ""), str(row.get("model") or "")}
                     if self.manifest.model_name not in names:
                         continue
+                    if refuses_remote_entry(row):
+                        raise CloudModelRefused(str(self.manifest.model_name or ""))
                     identity["model_digest"] = str(row.get("digest") or identity["model_digest"])
                     details = dict(row.get("details") or {})
                     identity["quantization"] = str(
                         details.get("quantization_level") or identity["quantization"]
                     )
                     break
+        except CloudModelRefused:
+            raise
         except requests.exceptions.ConnectionError:
             _note_identity_base_unreachable(native_base)
             return identity
@@ -1865,6 +1899,8 @@ class OpenAICompatibleAdapter(ModelAdapter):
             )
             if show_response.ok:
                 show = dict(show_response.json() or {})
+                if refuses_remote_entry(show):
+                    raise CloudModelRefused(str(self.manifest.model_name or ""))
                 template = str(show.get("template") or "")
                 if template:
                     identity["template_hash"] = hashlib.sha256(template.encode()).hexdigest()
@@ -1872,6 +1908,8 @@ class OpenAICompatibleAdapter(ModelAdapter):
                 identity["quantization"] = str(
                     details.get("quantization_level") or identity["quantization"]
                 )
+        except CloudModelRefused:
+            raise
         except requests.exceptions.ConnectionError:
             _note_identity_base_unreachable(native_base)
         except Exception:
@@ -1897,6 +1935,7 @@ class OpenAICompatibleAdapter(ModelAdapter):
         base_url = str(self.manifest.runtime_config.get("base_url") or "").strip().rstrip("/")
         if not _strict_tool_certification_loopback(base_url):
             raise ValueError("tool certification is restricted to a loopback model endpoint")
+        self._refuse_ollama_cloud_model()
         safe_messages = [dict(item) for item in messages if isinstance(item, dict)]
         max_tokens = max(1, min(int(max_output_tokens or 1), 1024))
         headers = self._headers()
@@ -2125,6 +2164,12 @@ class OpenAICompatibleAdapter(ModelAdapter):
         and the call itself (including a same-lane retry) — a mid-flight replacement cannot
         split one request across two bindings, and no lock is held across the network."""
         base_url = str(self.manifest.runtime_config.get("base_url") or "").rstrip("/")
+        from core import windows_cloud_gate
+
+        if windows_cloud_gate.cloud_off() and windows_cloud_gate.is_cloud_provider_request(base_url):
+            # Windows: no call to a cloud provider (a model call, a health check) before a key is
+            # stored AND cloud is turned on (core/windows_cloud_gate.py). Before any socket.
+            raise windows_cloud_gate.CloudContactRefused(base_url)
         if not self._is_custom_managed_lane():
             credential_key = str(self.manifest.runtime_config.get("credential_key") or "").strip()
             return base_url, self._dispatch_credential(credential_key)
@@ -2587,6 +2632,40 @@ def _extract_ollama_tool_call_text(
     return json.dumps(
         {"intent": calls[0].intent, "arguments": dict(calls[0].arguments)}, ensure_ascii=False
     )
+
+
+def _followup_prose_as_respond_direct(
+    request: ModelRequest,
+    *,
+    definitions: tuple[CloudToolDefinition, ...],
+    output_text: str,
+) -> tuple[tuple[CloudToolCall, ...], str]:
+    """A Windows follow-up round's plain-text answer, as the `respond.direct` it stands for.
+
+    Ollama ignores `tool_choice: required`: after a tool result qwen3:8b answers in prose, and the
+    check after this refused that answer as "required native tool call is missing" (captest,
+    calc.py: the job ran in seconds, the eight-minute answer was thrown away). Only on a round the
+    tool loop marked as following a step that ran (`TOOL_FOLLOWUP_AFTER_RUN_KEY`, Windows only),
+    only when `respond.direct` was offered, and only for non-empty text (the reasoning block is
+    already stripped). Otherwise nothing changes and the check after this still fails closed.
+    """
+
+    from core.execution_gate import TOOL_FOLLOWUP_AFTER_RUN_KEY, operator_approval_spend_applies
+
+    message = str(output_text or "").strip()
+    if not message or not dict(getattr(request, "metadata", None) or {}).get(TOOL_FOLLOWUP_AFTER_RUN_KEY):
+        return (), output_text
+    # The seam again, here: a stray or forwarded mark never turns the repair on off Windows.
+    if not operator_approval_spend_applies():
+        return (), output_text
+    respond = next((item for item in definitions if item.intent == "respond.direct"), None)
+    if respond is None:
+        return (), output_text
+    call = CloudToolCall(call_id="", intent="respond.direct", name=respond.name, arguments={"message": message})
+    request.metadata["tool_call_resolution"] = ToolCallResolution(
+        "repaired", (call,), "prose", repair_applied="followup_prose_as_respond_direct"
+    ).as_metadata()
+    return (call,), canonical_intent_text(call)
 
 
 def _ollama_tool_calls_with_recovery(

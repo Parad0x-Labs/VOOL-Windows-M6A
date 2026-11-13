@@ -5,6 +5,7 @@ production doors; the stale-runtime tests have distinct caches and locks.
 """
 import pytest
 
+from tests import _windows_refusals as windows_refusals
 from tests.repoops._harness import context, door, git, remote_ref
 from tests.repoops.test_forge_actions import _calls, world
 from tests.repoops.test_forge_integration_review import prepare
@@ -40,6 +41,8 @@ def test_push_requires_a_durable_reservation_and_winning_claim(world, monkeypatc
 def test_separate_runtime_stale_cache_cannot_repeat_applied_action(world, monkeypatch, action):
     import core.repoops.plane as plane
 
+    if windows_refusals.refuses_repo_session(world):
+        return
     forge, ctx, sid, *_ = prepare(world, action)
     original = plane.repo_ops_runtime()
     other = plane.RepoOpsRuntime()

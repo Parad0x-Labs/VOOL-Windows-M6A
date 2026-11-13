@@ -11,7 +11,22 @@ from .artifacts import build_command_artifact, truncate_text
 from .workspace_tools import resolve_workspace_path
 
 
+def git_refused(workspace_root: Path) -> dict[str, Any] | None:
+    """On Windows, the refusal every git tool here gives before git could start (core/safe_git.py)."""
+    if not safe_git.git_refused_here():
+        return None
+    return {
+        "ok": False,
+        "status": safe_git.GIT_REFUSED_STATUS,
+        "response_text": safe_git.GIT_REFUSED_TEXT,
+        "details": {"cwd": str(workspace_root), "stdout": "", "stderr": "", "executed": False},
+    }
+
+
 def git_status_workspace(arguments: dict[str, Any], *, workspace_root: Path) -> dict[str, Any]:
+    refused = git_refused(workspace_root)
+    if refused is not None:
+        return refused
     target = _git_target(arguments, workspace_root=workspace_root)
     result = _run_git(["status", "--short", "--branch"], cwd=target)
     if result["status"] == "refused_repository_config":
@@ -51,6 +66,9 @@ def git_status_workspace(arguments: dict[str, Any], *, workspace_root: Path) -> 
 
 
 def git_diff_workspace(arguments: dict[str, Any], *, workspace_root: Path) -> dict[str, Any]:
+    refused = git_refused(workspace_root)
+    if refused is not None:
+        return refused
     target = _git_target(arguments, workspace_root=workspace_root)
     command = ["diff"]
     if bool(arguments.get("cached", False)):
@@ -99,6 +117,9 @@ def git_diff_workspace(arguments: dict[str, Any], *, workspace_root: Path) -> di
 
 
 def git_summary_workspace(arguments: dict[str, Any], *, workspace_root: Path) -> dict[str, Any]:
+    refused = git_refused(workspace_root)
+    if refused is not None:
+        return refused
     target = _git_target(arguments, workspace_root=workspace_root)
     probe = _run_git(["rev-parse", "--show-toplevel"], cwd=target)
     if probe["status"] == "refused_repository_config":
@@ -256,6 +277,8 @@ def _run_git(argv: list[str], *, cwd: Path) -> dict[str, Any]:
     # repo (huge history, networked remote hints) hangs the tool call and the
     # turn, and the dispatch layer cannot cancel an in-flight subprocess.
     # Hardened: a repository's own config must not make git run programs (core/safe_git.py).
+    if safe_git.git_refused_here():  # on Windows no git runs at all, whoever calls this
+        return {"status": safe_git.GIT_REFUSED_STATUS, "returncode": -1, "stdout": "", "stderr": safe_git.GIT_REFUSED_TEXT}
     try:
         probe = subprocess.run(
             safe_git.read_only_argv(cwd, "rev-parse", "--show-toplevel"),

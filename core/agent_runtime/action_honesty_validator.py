@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import bisect
 import json
 import os
 import posixpath
 import re
 from contextlib import suppress
+from pathlib import Path
 from typing import Any
 
 from core.reply_control_sanitizer import is_bare_reply_control_token, reveal_reply_control_prefix
@@ -243,6 +245,196 @@ _HONEST_NO_BUILD_RESPONSE = (
     "this turn. Tell me the exact path you want them at and I'll say up front whether I can write "
     "there."
 )
+
+# A claim that a COMMAND RAN or a FILE WAS PATCHED/COMPILED -- the reply reports the run itself or
+# presents its output. Measured on the Windows claims sweep (build 170f6572, qwen3:8b), on turns
+# with no tool call at all: `python -c "print(2+2)"` was answered "Let me run that... Output: `4`",
+# `python -m compileall .` with an invented "Compiling './app.py'..." transcript, and a unified
+# diff with "patched" while the file was unchanged. None of the vocabularies above names a run
+# outside "the tool / the command / the tests", so all three were signed `no_action_claimed`.
+#
+# Two shapes, both narrow on purpose:
+#   * a first-person (or subjectless, sentence-initial) PAST-TENSE report: "I've patched app.py",
+#     "Patched `app.py`.", "I ran it", "the patch was applied", "compiled successfully";
+#   * PRESENTED OUTPUT: a run announced in the reply ("Let me run that", "Running `...`") followed
+#     by an "Output:" / "Result:" label or a plain/text fence. Output presented WITHOUT a run
+#     announcement ("This prints:", "Expected output:") is an explanation and is left alone.
+# A conditional, modal, second-person or future-without-output sentence is not a claim.
+_RUN_OBJECT = (
+    r"(?:it|that|this|everything|them|the\s+(?:code|command|commands|script|snippet|program|file|files|"
+    r"project|module|package|patch|diff|changes?|fix|one-?liner|line)|python3?\b|py\b|node\b|"
+    r"`[^`\n]{1,200}`|(?<![\w./\\-])[\w./\\-]+\.[A-Za-z]{1,5}\b)"
+)
+_RUN_SELF_PREFIX = r"(?:(?:i|we)(?:\s*['’]ve|\s+have|\s+just|\s+already|\s+now|\s+successfully)*\s+)"
+_RUN_SENTENCE_START = (
+    r"(?:^|(?<=[\n.!?]))[ \t>*_#`\-]{0,8}"
+    r"(?:(?:done|ok(?:ay)?|sure|great|alright|all\s+set|perfect)\W{1,4})?(?:just\s+|successfully\s+)?"
+)
+_EXECUTION_SELF_CLAIM_RE = re.compile(
+    # first person, any of the run verbs: "I've patched app.py", "I ran it", "we have run the script"
+    rf"\b{_RUN_SELF_PREFIX}(?:patched|executed\b|(?:ran|run|compiled|applied)\s+{_RUN_OBJECT})"
+    # subjectless and sentence-initial: "Patched `app.py`.", "Ran it:" -- never a bare "Run ..."
+    # (that is an instruction to the user)
+    rf"|{_RUN_SENTENCE_START}(?:patched|executed\b|(?:ran|compiled|applied)\s+{_RUN_OBJECT})"
+    # passive or result phrasing: "the patch was applied", "app.py has been patched"
+    rf"|\b(?:file|files|patch|diff|changes?|script|code|command|it|(?<![\w./\\-])[\w./\\-]+\.[A-Za-z]{{1,5}})"
+    rf"\s+(?:was|were|has\s+been|have\s+been|is\s+now|are\s+now)\s+(?:successfully\s+)?"
+    rf"(?:patched|compiled|applied|executed|run)\b"
+    rf"|\b(?:patched|compiled|applied|executed|ran)\s+(?:successfully|cleanly|without\s+(?:any\s+)?(?:errors?|issues?))\b"
+    # The run and patch tools' own result lines (Steve consistency check, 12 Nov 2026): "`python -m
+    # pytest -q` ran and exited 0." and "Applied unified diff:". A real turn has the tool's receipt,
+    # so the receipt reads them as backed claims ("clean"), and the same words with no receipt are a
+    # claim the blocker refuses, instead of both being signed "no_action_claimed".
+    rf"|{_RUN_OBJECT}\s+ran\s+and\s+exited\b"
+    rf"|{_RUN_SENTENCE_START}applied\s+(?:the\s+|a\s+)?unified\s+diff\b",
+    re.IGNORECASE,
+)
+# A conditional, temporal, modal or negated frame BEFORE the verb turns the same words into an
+# explanation or a denial: "once it has been compiled ...", "if the patch was applied ...".
+_EXECUTION_FRAME_RE = re.compile(
+    r"\b(?:if|once|when|whenever|after|before|until|unless|would|could|should|might|may|will|"
+    r"won['’]?t|wouldn['’]?t|haven['’]?t|hasn['’]?t|didn['’]?t|not|never|"
+    r"you\s+(?:said|wrote|mentioned|say|claim(?:ed)?|asked))\b",
+    re.IGNORECASE,
+)
+# "Let me run that", "I'll run it", "Running `python -m compileall .`" -- the reply announcing a run.
+_RUN_ANNOUNCE_RE = re.compile(
+    r"\blet\s+me\s+(?:just\s+|quickly\s+|now\s+)?(?:run|execute|compile|apply|try\s+running)\b(?!\s+(?:through|over|down|by))"
+    r"|\bi(?:\s*['’]ll|\s+will)\s+(?:now\s+|just\s+|quickly\s+)?(?:run|execute|compile)\b(?!\s+(?:through|over|down|by))"
+    r"|\bhere(?:\s*['’]s|\s+is)\s+(?:the\s+)?(?:output|result)s?\s+(?:i\s+got|from\s+running|of\s+running)\b"
+    r"|(?:^|(?<=[\n.!?]))[ \t>*_#`\-]{0,8}(?:(?:sure|ok(?:ay)?|alright)\W{1,4})?(?:running|executing|compiling)\b",
+    re.IGNORECASE,
+)
+# An output label at the start of a line or sentence: "Output: `4`", "**Result:**", "stdout:".
+_OUTPUT_LABEL_RE = re.compile(
+    r"(?:^|(?<=[\n.!?…]))[ \t>*_#`\-]{0,8}(?:output|result|results|stdout|console\s+output)[*_`]{0,4}[ \t]{0,4}[:=]",
+    re.IGNORECASE,
+)
+_FENCE_LINE_RE = re.compile(r"^[ \t]*```[ \t]*([\w+.-]*)[^\n]*$", re.MULTILINE)
+#: Fence info strings that hold OUTPUT rather than code for the user to type.
+_OUTPUT_FENCE_INFO = frozenset({"", "text", "txt", "output", "console", "stdout", "plaintext"})
+# Framing on the line that introduces output, or on the announcing line itself, that makes it an
+# illustration: "Expected output:", "it would print:", "running it prints:".
+_ILLUSTRATIVE_OUTPUT_RE = re.compile(
+    r"\b(?:expected|example|sample|e\.g|would|should|could|might|may|will|typically|usually|"
+    r"something\s+like|if|when|once|prints|outputs|returns|gives|produces|shows|displays|yields|"
+    # the user's own output, quoted back: "Your output:", "what you pasted:"
+    r"your|you\s+(?:got|saw|see|pasted|posted|shared|ran|sent))\b",
+    re.IGNORECASE,
+)
+
+_HONEST_NO_RUN_RESPONSE = (
+    "I did not run anything -- nothing was executed on this turn, so there is no real output to show "
+    "and no file was changed. Ask me to run it and I'll say up front whether I can."
+)
+
+
+def _line_around(text: str, start: int, end: int) -> str:
+    line_start = text.rfind("\n", 0, start) + 1
+    line_end = text.find("\n", end)
+    return text[line_start : line_end if line_end >= 0 else len(text)]
+
+
+def _output_fences(body: str) -> list[tuple[int, int, int]]:
+    """`(open_start, open_end, close_end)` of every fence whose info string marks it as output."""
+
+    fences: list[tuple[int, int, int]] = []
+    opened: re.Match[str] | None = None
+    for line in _FENCE_LINE_RE.finditer(body):
+        if opened is None:
+            opened = line
+            continue
+        if opened.group(1).lower() in _OUTPUT_FENCE_INFO:
+            fences.append((opened.start(), opened.end(), line.end()))
+        opened = None
+    if opened is not None and opened.group(1).lower() in _OUTPUT_FENCE_INFO:
+        fences.append((opened.start(), opened.end(), len(body)))
+    return fences
+
+
+def _presented_as_illustration(body: str, start: int, end: int, *, shown: str, request_text: str) -> bool:
+    """The output is an example of what WOULD appear, or the user's own output quoted back.
+
+    Read from the output's own line and the line before it ("Expected output:", "Your output:"),
+    and from the request: output whose text the user sent this turn is a quotation, not a run.
+    ``request_text`` arrives whitespace-normalised.
+    """
+
+    previous_end = body.rfind("\n", 0, start)
+    previous_start = body.rfind("\n", 0, max(0, previous_end)) + 1 if previous_end > 0 else 0
+    if _ILLUSTRATIVE_OUTPUT_RE.search(body[previous_start:end]):
+        return True
+    quoted = " ".join(shown.split())
+    return bool(quoted) and quoted in request_text
+
+
+def _shown_text(body: str, end: int, close_end: int | None) -> str:
+    """The output itself: a fence's body, or the rest of a label's line."""
+
+    if close_end is not None:
+        return _FENCE_LINE_RE.sub("", body[end:close_end]).strip()
+    line_end = body.find("\n", end)
+    return body[end : line_end if line_end >= 0 else len(body)].strip(" \t*_`")
+
+
+def _claims_a_run(body: str, *, request_text: str | None = None) -> bool:
+    """Whether a reply reports a run, a patch or a compile as done, or presents a run's output.
+
+    Every scan is a single pass: the outputs are judged once, then each announcement only asks
+    whether a real-looking output follows it (or holds it), so a reply of many announcements or
+    many fences stays linear.
+    """
+
+    for sentence in _split_sentences(body):
+        match = _EXECUTION_SELF_CLAIM_RE.search(sentence)
+        if match is None:
+            continue
+        prefix = sentence[: match.start()]
+        if _EXECUTION_FRAME_RE.search(prefix) or _NOT_A_SELF_CLAIM_RE.search(prefix):
+            continue
+        if _BUILD_CLAIM_NOT_SELF_RE.search(prefix):
+            continue
+        return True
+    announces = list(_RUN_ANNOUNCE_RE.finditer(body))
+    if not announces:
+        return False
+    request = " ".join(str(request_text or "").split())
+    # Outputs presented as real: (start, end of the span that may HOLD an announcement).
+    real: list[tuple[int, int]] = []
+    for label in _OUTPUT_LABEL_RE.finditer(body):
+        text = _shown_text(body, label.end(), None)
+        if not _presented_as_illustration(body, label.start(), label.end(), shown=text, request_text=request):
+            real.append((label.start(), label.start()))
+    for open_start, open_end, close_end in _output_fences(body):
+        text = _shown_text(body, open_end, close_end)
+        if not _presented_as_illustration(body, open_start, open_end, shown=text, request_text=request):
+            real.append((open_start, close_end))
+    if not real:
+        return False
+    real.sort()
+    real_starts = [start for start, _ in real]
+    last_real_start = real_starts[-1]
+    line_verdicts: dict[int, bool] = {}
+    for announce in announces:
+        line_start = body.rfind("\n", 0, announce.start()) + 1
+        framed = line_verdicts.get(line_start)
+        if framed is None:
+            line = _line_around(body, announce.start(), announce.end())
+            # "Running this would print 4", "I'll run it once you confirm" -- not a run shown as done.
+            framed = bool(_ILLUSTRATIVE_OUTPUT_RE.search(line) or _CONDITIONAL_OFFER_RE.search(line))
+            line_verdicts[line_start] = framed
+        if framed:
+            continue
+        if last_real_start >= announce.end():
+            return True
+        # the announcement inside an output fence ("Compiling './app.py'..." as a transcript line)
+        # (fences never overlap, so only the last output opening at or before it can hold it)
+        holder = bisect.bisect_right(real_starts, announce.start()) - 1
+        if holder >= 0 and announce.start() < real[holder][1]:
+            return True
+    return False
+
+
 # A fabricated "in progress / working on it / one moment / still running" claim when NO task actually
 # ran this turn -- the "audit in progress after it already completed" failure. Runtime state, not the
 # model, decides whether something is running.
@@ -648,7 +840,9 @@ def _only_a_file_count(fragment: str) -> bool:
 
 
 def completion_claim_kind(text: str, *, request_text: str | None = None) -> str:
-    """What kind of finished work a reply claims: ``""``, ``"mutation"``, ``"build"`` or ``"persistence"``.
+    """What kind of finished work a reply claims: ``""``, ``"mutation"``, ``"build"``,
+    ``"persistence"`` or ``"execution"`` (a command run, a file patched or compiled, or a run's
+    output presented as real).
 
     One predicate for both consumers. The blocker uses it to decide whether a claim needs a
     receipt; `emit_turn_honesty_receipt` uses it to decide whether the turn made a claim at all.
@@ -721,6 +915,9 @@ def completion_claim_kind(text: str, *, request_text: str | None = None) -> str:
         if _BUILD_CLAIM_NOT_SELF_RE.search(sentence) or _NOT_A_SELF_CLAIM_RE.search(sentence):
             continue  # "I'll store that" is an intention, not a report of a finished write
         return "persistence"
+    if _claims_a_run(body, request_text=request_text):
+        # Last, so every reply an earlier kind already names keeps that kind and its response.
+        return "execution"
     return ""
 
 
@@ -970,6 +1167,10 @@ def _file_claim_matches_output(claim: str, outputs: set[str], context: dict[str,
         return any(claim.casefold() == name.rsplit("/", 1)[-1].casefold() for name in outputs)
     root = str((context or {}).get("workspace_root") or (context or {}).get("workspace") or "")
     root = root.replace("\\", "/")
+    try:
+        home = str(Path.home().resolve()).replace("\\", "/")
+    except (OSError, RuntimeError, ValueError):
+        home = ""
 
     def absolute(path: str) -> bool:
         # A drive-rooted spelling (D:/ws, from D:\ws) is absolute on Windows; posixpath alone
@@ -978,6 +1179,13 @@ def _file_claim_matches_output(claim: str, outputs: set[str], context: dict[str,
 
     def identity(name: str) -> str:
         normalized = posixpath.normpath(name.replace("\\", "/"))
+        if (normalized == "~" or normalized.startswith("~/")) and home:
+            # A machine writer records its file home-relative (`~/VOOL Test/x.txt`, the label
+            # `_home_relative_label` makes from this process's own home); a reply names the same file
+            # by its full path. Captest B3 round 1 (2026-11-09): every write into a marked folder under
+            # the profile was read back, then replaced with "I cannot verify that file". Both
+            # spellings are placed at that one home, so only the same file matches.
+            normalized = posixpath.normpath(home + normalized[1:])
         if absolute(root) and not absolute(normalized) and not normalized.startswith("~"):
             normalized = posixpath.normpath(posixpath.join(root, normalized))
         # Windows paths compare without case, as the filesystem resolves them.
@@ -1151,6 +1359,91 @@ def _strip_unbacked_file_promises(
     guarded["action_honesty_validator"] = {
         "applied": True,
         "reason": "unbacked_file_promise_removed",
+        "removed": removed[:4],
+    }
+    return guarded
+
+
+#: Windows, hardware captest (0.7.1): "overwrite <file> with the text v2" reached the model, which answered
+#: "I'll overwrite the file ... Let me do that now." on a turn where no tool ran, so the owner waited for a
+#: write that never came. A promise to change a file (overwrite, write, replace, edit, append, update), and
+#: the "let me do that now" that goes with it, is dropped when nothing ran on the turn. An offer ("if you
+#: want, I'll edit the file") and a plan for a later step stay. Only on Windows (`windows_write_gate`).
+_FILE_CHANGE_PROMISE_RE = re.compile(
+    r"\b(?:i['’]?ll|i\s+will|let\s+me|i['’]?m\s+going\s+to|i\s+am\s+going\s+to)\s+(?:now\s+)?(?:go\s+ahead\s+and\s+)?"
+    r"(?:overwrite|write|rewrite|replace|update|edit|modify|change|append)\s+(?:(?:to|in|into)\s+)?"
+    r"(?:(?:the|this|that|your)\s+)?(?:(?:contents?|text)\s+(?:of|in)\s+(?:(?:the|this|that|your)\s+)?)?"
+    r"(?:files?\b|[`\"']?(?:[A-Za-z]:)?[\\/]|[`\"']?[\w-]+\.[A-Za-z0-9]{1,8}\b)",
+    re.IGNORECASE,
+)
+_DO_IT_NOW_RE = re.compile(
+    r"\blet\s+me\s+(?:do|handle|take\s+care\s+of)\s+(?:that|it|this)(?:\s+(?:now|right\s+away|for\s+you))*\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
+_HONEST_NO_FILE_CHANGE_RESPONSE = (
+    "I did not change any file on this turn: no write ran. To change a file in a folder you marked, say "
+    "\"write the text <text> to <full path>\", and I'll ask you to approve it."
+)
+_UNBACKED_FILE_CHANGE_NOTE = "(No file was changed on this turn: no write ran.)"
+
+
+def _turn_ran_any_tool(*, session_id: str | None, source_context: dict[str, object] | None) -> bool:
+    """Whether this turn has any tool record at all (run, refused or waiting on approval)."""
+    if list((source_context or {}).get("tool_receipts") or []):
+        return True
+    try:
+        from core.execution_truth import KIND_TOOL, facts_for_turn, resolve_turn_key
+
+        turn_key = resolve_turn_key(dict(source_context or {}), None)
+        return any(fact.in_category(KIND_TOOL)
+                   for fact in facts_for_turn(turn_key, session_id=str(session_id or "").strip()))
+    except Exception:
+        return True  # an unreadable record is not taken as "nothing ran": the reply is left alone
+
+
+def _strip_unbacked_file_change_promises(
+    output: dict[str, Any],
+    *,
+    session_id: str | None,
+    source_context: dict[str, object] | None,
+) -> dict[str, Any]:
+    """On Windows: drop a promise to change a file that no tool on this turn is changing, and say so."""
+    from core import windows_write_gate
+
+    response = str(output.get("response") or "")
+    if not windows_write_gate.active() or not response.strip() or not _FILE_CHANGE_PROMISE_RE.search(response):
+        return output
+    if str(output.get("mode") or output.get("mode_override") or "").strip().lower() == "tool_executed":
+        return output
+    if _turn_ran_any_tool(session_id=session_id, source_context=source_context):
+        return output
+    kept_lines: list[str] = []
+    removed: list[str] = []
+    for line in response.split("\n"):
+        sentences = _SENTENCE_SPLIT_RE.split(line)
+        survivors = []
+        promised_here = False
+        for sentence in sentences:
+            if (_FILE_CHANGE_PROMISE_RE.search(sentence) and not _CONDITIONAL_OFFER_RE.search(sentence)
+                    and not _DEFERRED_PLAN_RE.search(sentence)):
+                removed.append(sentence.strip())
+                promised_here = True
+                continue
+            if (promised_here or removed) and _DO_IT_NOW_RE.search(sentence):
+                removed.append(sentence.strip())
+                continue
+            survivors.append(sentence)
+        if len(survivors) != len(sentences) and not "".join(survivors).strip():
+            continue  # the whole line was the promise
+        kept_lines.append(" ".join(part for part in survivors if part) if len(survivors) != len(sentences) else line)
+    if not removed:
+        return output
+    body = "\n".join(kept_lines).strip()
+    guarded = dict(output)
+    guarded["response"] = f"{body}\n\n{_UNBACKED_FILE_CHANGE_NOTE}" if body else _HONEST_NO_FILE_CHANGE_RESPONSE
+    guarded["action_honesty_validator"] = {
+        "applied": True,
+        "reason": "unbacked_file_change_promise_removed",
         "removed": removed[:4],
     }
     return guarded
@@ -1911,6 +2204,7 @@ def enforce_final_action_honesty(
         output["route_reason"] = "fabricated_progress_blocked"
         return output
     if not claim_kind:
+        output = _strip_unbacked_file_change_promises(output, session_id=session_id, source_context=source_context)
         return _strip_unbacked_file_promises(output, session_id=session_id, source_context=source_context)
     # NOT gated on this turn's prompt. Whether "the files were deleted" is TRUE depends on whether a
     # tool actually ran -- not on what the user happened to type. The old gate required an action
@@ -1944,6 +2238,7 @@ def enforce_final_action_honesty(
         "deliverable": _HONEST_NO_DELIVERABLE_RESPONSE,
         "build": _HONEST_NO_BUILD_RESPONSE,
         "persistence": _HONEST_NO_PERSISTENCE_RESPONSE,
+        "execution": _HONEST_NO_RUN_RESPONSE,
     }.get(claim_kind, _HONEST_NO_EXECUTION_RESPONSE)
     output["confidence"] = min(float(output.get("confidence") or 1.0), 0.91)
     output["action_honesty_validator"] = {

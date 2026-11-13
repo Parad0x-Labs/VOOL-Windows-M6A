@@ -32,6 +32,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from core import posix_tools
+
 from ._limits import SUBPROCESS_TIMEOUT_S
 from ._sandbox import run_confined
 from ._types import ReaderFailed, ReaderUnavailable
@@ -225,7 +227,7 @@ def toolchain_available() -> bool:
     """Buildable AND confinable. A helper this runtime could not sandbox is not available to it."""
     from . import _sandbox
 
-    return _host_is_macos() and os.access(SWIFTC, os.X_OK) and _sandbox.confinement_available()
+    return _host_is_macos() and posix_tools.executable(SWIFTC) and _sandbox.confinement_available()
 
 
 def _binary_path() -> Path:
@@ -253,8 +255,8 @@ def ensure_tool() -> Path:
         staged = Path(build_dir) / "tool"
         try:
             completed = subprocess.run(
-                [SWIFTC, "-O", "-swift-version", "5", str(source), "-framework", "Speech",
-                 "-framework", "AVFoundation", "-framework", "Foundation", "-o", str(staged)],
+                posix_tools.argv([SWIFTC, "-O", "-swift-version", "5", str(source), "-framework", "Speech",
+                 "-framework", "AVFoundation", "-framework", "Foundation", "-o", str(staged)]),
                 capture_output=True,
                 timeout=300,
                 check=False,

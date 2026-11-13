@@ -106,6 +106,15 @@ class PermissionDecision:
     actions: tuple[PermissionAction, ...]
     reason: str
     approval_request: dict[str, Any] | None = None
+    #: True only when the allow is the operator's own answer for this exact call: the live approval
+    #: token this call spent, or a task grant the operator chose, bound to the call's fingerprint. The
+    #: sandbox command gate reads it (via the authorized boundary) so the approved command runs
+    #: instead of being asked about again. An earlier, already-spent grant does not set it.
+    exact_approval: bool = False
+    #: True only when this call spent the operator's live approval token: the card answered for this
+    #: exact call. A task grant, even one bound to the call's fingerprint, does not set it. On Windows
+    #: a `machine.move_path` runs with this Allow as its consent and asks no OS prompt (captest R4-1b).
+    token_spent: bool = False
 
     @property
     def allowed(self) -> bool:
@@ -3053,7 +3062,15 @@ def _approval_effect_summary(actions: tuple[PermissionAction, ...]) -> str:
 
 def _affected_resources(arguments: dict[str, Any]) -> list[str]:
     resources: list[str] = []
-    for key in ("path", "paths", "cwd", "resource", "url", "recipient", "channel", "target"):
+    # On Windows a move names its two paths as `source` and `destination` (`machine.move_path`): without
+    # them its card read "No specific path reported" for a move between two named folders (captest
+    # R4-1b). Off Windows the card is left exactly as it was.
+    from core import windows_write_gate
+
+    keys = ("path", "paths", "cwd", "resource", "url", "recipient", "channel", "target")
+    if windows_write_gate.active():
+        keys = ("path", "paths", "cwd", "source", "destination", "resource", "url", "recipient", "channel", "target")
+    for key in keys:
         value = arguments.get(key)
         if isinstance(value, list):
             resources.extend(str(item) for item in value[:12] if str(item).strip())
@@ -3078,6 +3095,14 @@ def _affected_resources_display(
     home. Placed under the chat workspace, the ask named "<workspace>/Documents/x.txt" while the
     write changed the real Documents folder.
     """
+    from core import windows_write_gate
+
+    if str(intent or "").strip() == "machine.move_path" and windows_write_gate.active():
+        # Windows only: off Windows the card is built as before, with nothing resolved.
+        return _machine_move_display(arguments)
+    if str(intent or "").strip() == "workspace.apply_unified_diff" and windows_write_gate.active():
+        # Windows only, like the move above: off Windows a patch card is built as before.
+        return _patch_targets_display(arguments, source_context)
     machine = str(intent or "").strip() in {"machine.write_file", "machine.ensure_directory"}
     root = _trusted_write_root(source_context).rstrip("/")
     raw = _affected_resources(arguments)
@@ -3109,6 +3134,58 @@ def _affected_resources_display(
     return displayed
 
 
+def _patch_targets_display(arguments: dict[str, Any], source_context: dict[str, Any]) -> list[str]:
+    """The files a unified diff changes, each placed where the patch tool writes it.
+
+    A patch carries its targets in its `---`/`+++` headers, not in a `path` argument, so its card read
+    "Affects: -" (Steve, Windows). Each name the review lists (`patch_review_paths`: a new file's `+++`
+    name, a deleted file's `---` name, never /dev/null) is resolved by the writer's own authority
+    (`resolve_write_target`, under the context's `workspace`, then `workspace_root`). A name the
+    patch tool would refuse is shown as the patch writes it, saying so; the tool then refuses the
+    whole patch with nothing written."""
+    patch = str(arguments.get("patch") or arguments.get("diff") or "")
+    if not patch.strip():
+        return []
+    try:
+        from core.execution.workspace_tools import patch_review_paths
+        from core.runtime_execution_tools import resolve_write_target
+
+        names = patch_review_paths(patch)
+    except Exception:
+        return []
+    root = _trusted_write_root(source_context)
+    displayed: list[str] = []
+    for name in names[:12]:
+        try:
+            target = resolve_write_target("workspace.apply_unified_diff", name, source_context)
+        except Exception:
+            target = None
+        if target is not None:
+            displayed.append(str(target))
+        elif root:
+            displayed.append(f"{name} (as the patch names it: it cannot be changed in {root})")
+        else:
+            displayed.append(f"{name} (as the patch names it: it cannot be changed here)")
+    if len(names) > 12:
+        displayed.append(f"and {len(names) - 12} more files the patch names")
+    return displayed
+
+
+def _machine_move_display(arguments: dict[str, Any]) -> list[str]:
+    """A machine move's source and the final place it lands, each resolved as the mover resolves it
+    (`machine_file_ops._canonicalize`); a path that cannot be resolved is shown as given."""
+    from core.machine_file_ops import _canonicalize
+
+    displayed: list[str] = []
+    for key in ("source", "destination"):
+        value = str(arguments.get(key) or "").strip()
+        if not value:
+            continue
+        resolved = _canonicalize(value)
+        displayed.append(str(resolved) if resolved is not None else value)
+    return displayed
+
+
 def _machine_path_display(value: str) -> str:
     try:
         from core.runtime_execution_tools import anchor_machine_path
@@ -3132,9 +3209,13 @@ def _edit_preview(intent: str, arguments: dict[str, Any], source_context: dict[s
         # Desktop/Downloads/Documents overwrite with no visibility into what content will land
         # (confirmed red-team finding, 2026-08-04).
         try:
-            from core.runtime_execution_tools import _resolve_machine_directory
+            from core.runtime_execution_tools import _resolve_machine_directory, _resolve_machine_write_target
 
-            target = _resolve_machine_directory(raw_path)
+            try:
+                target = _resolve_machine_directory(raw_path)
+            except ValueError:
+                # On Windows a folder the owner marked is written too; its preview is shown the same way.
+                target = _resolve_machine_write_target(raw_path)
         except Exception:
             return ""
         if target is None:
@@ -3227,7 +3308,14 @@ def _consume_matching_approval(
     fingerprint: str,
     session_id: str,
     task_id: str,
+    spent: list[str] | None = None,
 ) -> bool:
+    """Spend the live approval token for this exact call, or ride an earlier grant of it.
+
+    ``spent`` (when given) receives ``"token"`` when THIS call spent the live token in hand: the
+    operator's one answer was used up by it, which is what lets the sandbox command gate run the
+    approved command once (``PermissionDecision.exact_approval``). Riding an earlier, already-spent
+    grant appends nothing."""
     token = str(source_context.get("mode_approval_token") or "").strip()
     if not token:
         # No live token in hand, but the operator may already have granted this EXACT call
@@ -3267,11 +3355,15 @@ def _consume_matching_approval(
             if not remaining:
                 approval["status"] = "consumed"
                 _persist_pending_approvals_locked()
+            if spent is not None:
+                spent.append("token")
             return True
         if approval.get("fingerprint") != fingerprint:
             return False
         approval["status"] = "consumed"
         _persist_pending_approvals_locked()
+        if spent is not None:
+            spent.append("token")
         return True
 
 
@@ -3677,12 +3769,15 @@ def _decide_tool_call(
         source_context=context,
     )
 
-    token_step = _consume_matching_approval if consume else _matching_approval_covers
-    if token_step(
-        context,
-        fingerprint=fingerprint,
-        session_id=session_id,
-        task_id=logical_task_id,
+    spent: list[str] = []
+    if (
+        _consume_matching_approval(
+            context, fingerprint=fingerprint, session_id=session_id, task_id=logical_task_id, spent=spent
+        )
+        if consume
+        else _matching_approval_covers(
+            context, fingerprint=fingerprint, session_id=session_id, task_id=logical_task_id
+        )
     ):
         meta["token_matched"] = True
         if consume:
@@ -3698,22 +3793,31 @@ def _decide_tool_call(
             mode=mode,
             actions=actions,
             reason="Exact action approval matched this task, target, and side-effect class.",
+            # Only the call that spent the operator's live token: a re-emission riding an earlier,
+            # already-spent grant is allowed by the controller but is not a fresh approval to run.
+            exact_approval=bool(spent),
+            token_spent=bool(spent),
         ), meta
 
     with _LOCK:
-        task_approved = any(
-            item.get("session_id") == session_id
-            and item.get("task_id") == logical_task_id
-            and item.get("intent") == str(intent or "")
-            and tuple(item.get("actions") or ()) == tuple(action.value for action in actions)
-            and int(item.get("mode_revision") or 0) == revision
-            and float(item.get("expires_at") or 0) > time.time()
-            # The action-class tuple alone is not enough to prove THIS call was the one
-            # approved -- it only proves this call happens to classify the same way as some
-            # other, unrelated call that was. Require the exact-call fingerprint too.
-            and item.get("fingerprint") == fingerprint
-            for item in _TASK_APPROVALS
+        task_grant = next(
+            (
+                item
+                for item in _TASK_APPROVALS
+                if item.get("session_id") == session_id
+                and item.get("task_id") == logical_task_id
+                and item.get("intent") == str(intent or "")
+                and tuple(item.get("actions") or ()) == tuple(action.value for action in actions)
+                and int(item.get("mode_revision") or 0) == revision
+                and float(item.get("expires_at") or 0) > time.time()
+                # The action-class tuple alone is not enough to prove THIS call was the one
+                # approved -- it only proves this call happens to classify the same way as some
+                # other, unrelated call that was. Require the exact-call fingerprint too.
+                and item.get("fingerprint") == fingerprint
+            ),
+            None,
         )
+    task_approved = task_grant is not None
     if task_approved:
         if consume:
             _record_approval_event(
@@ -3728,6 +3832,8 @@ def _decide_tool_call(
             mode=mode,
             actions=actions,
             reason="This non-edit action type was approved for the current task and mode revision.",
+            # Only a grant bound to THIS call's fingerprint is the operator's approval of this call.
+            exact_approval=bool(fingerprint) and str(task_grant.get("fingerprint") or "") == fingerprint,
         ), meta
 
     # Project permissions can only narrow mode permissions, never widen them.

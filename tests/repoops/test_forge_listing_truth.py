@@ -25,6 +25,7 @@ from typing import Any
 import pytest
 
 from core.kas.contract import AdapterConfig, KasRequest, KasResponse
+from tests import _windows_refusals as windows_refusals
 
 
 @pytest.fixture
@@ -161,6 +162,8 @@ def test_ci_jobs_truncation_is_not_a_success_projection_at_the_door(world) -> No
 
     root, bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session_exactly(world, ctx):
+        return
     sha = head(root)
     base = git(root, "rev-parse", "HEAD~1").strip()
     forge.route("GET /pulls/7", github_pull_request("7", base_sha=base, head_sha=sha))
@@ -272,6 +275,8 @@ def test_rate_limited_ci_jobs_is_typed_at_the_door(world) -> None:
 
     root, bare, forge = world
     ctx = context(root)
+    if windows_refusals.refuses_repo_session_exactly(world, ctx):
+        return
     sha = head(root)
     base = git(root, "rev-parse", "HEAD~1").strip()
     forge.route("GET /pulls/7", github_pull_request("7", base_sha=base, head_sha=sha))
