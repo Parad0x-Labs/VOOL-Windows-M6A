@@ -17,7 +17,7 @@ description: How VOOL protects your files and API keys — workspace boundaries,
 Your provider key stays on your machine and is used from there to reach your provider. Where it
 is kept depends on the system:
 
-* **Windows:** Windows Credential Manager, as a generic credential named `VOOL/credentials/<name>`.
+* **Windows:** Windows Credential Manager, as a generic credential named `VOOL/credentials/` plus the key's name.
   Windows seals it to your sign-in; any program running as you can read it. If Credential Manager
   is not available, VOOL keeps the key in its encrypted vault file instead and says so. Keys saved
   by an older version are moved into Credential Manager once, and removed from the vault only after
