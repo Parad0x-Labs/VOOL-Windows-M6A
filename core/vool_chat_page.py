@@ -1266,7 +1266,7 @@ body:not(.panel-open) #xpanel { display:none; }
         <button id="filesBtn" type="button" class="side-foot-btn vi" data-ico="files" title="Files &mdash; everything VOOL generated, across all chats" data-i18n="sidebar.files" data-i18n-title="sidebar.files_title">Files</button>
         <button id="contactsBtn" type="button" class="side-foot-btn vi" data-ico="contacts" title="Contacts &mdash; the people and services you saved" data-i18n="sidebar.contacts" data-i18n-title="sidebar.contacts_title">Contacts</button>
         <button id="settingsBtn" type="button" class="side-foot-btn vi" data-ico="settings" title="Settings" data-i18n="sidebar.settings" data-i18n-title="sidebar.settings_title">Settings</button>
-        <button id="quitBtn" type="button" class="side-foot-btn" hidden title="Quit VOOL and stop its background services" data-i18n="sidebar.quit" data-i18n-title="sidebar.quit_title">Quit VOOL</button>
+        <button id="quitBtn" type="button" class="side-foot-btn vi" data-ico="power" hidden title="Quit VOOL and stop its background services" data-i18n="sidebar.quit" data-i18n-title="sidebar.quit_title">Quit VOOL</button>
         <div class="home-support"><button id="reportBtn" type="button" class="side-foot-btn vi" data-ico="report" title="Report a problem &mdash; builds a sanitized local draft you approve byte-for-byte" data-i18n="sidebar.report" data-i18n-title="sidebar.report_title">Report a problem</button></div>
       </div>
     </details>
