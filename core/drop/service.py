@@ -13,7 +13,6 @@ only ever holds ciphertext addressed by public fingerprints.
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import hashlib
 import json
 import os
@@ -24,6 +23,11 @@ import stat
 import threading
 import time
 from pathlib import Path
+
+try:   # POSIX only; on Windows Drop refuses before it would lock (core.drop.require_enabled)
+    import fcntl
+except ImportError:
+    fcntl = None  # type: ignore[assignment]
 
 from core.drop import DropError, require_enabled
 from core.drop.client import DropClient

@@ -17,6 +17,13 @@ def enabled() -> bool:
     return os.environ.get("VOOL_DROP") == "1"
 
 
+#: Drop guards its folders with POSIX mode bits, the owner's uid and flock, none of which hold on Windows
+#: (K4: a mode-bit check never counts as a pass there), so on Windows it refuses before touching anything.
+_IS_WINDOWS = os.name == "nt"
+
+
 def require_enabled():
     if not enabled():
         raise DropError("DROP_DISABLED")
+    if _IS_WINDOWS:
+        raise DropError("DROP_NOT_ON_WINDOWS")
