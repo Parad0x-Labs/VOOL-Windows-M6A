@@ -87,6 +87,7 @@ SETTINGS_CATALOG_KEYS = (
     "settings.row.notifications_panel.label",
     "settings.row.notifications_panel.help",
     "settings.row.calendar_accounts_panel.help",
+    "settings.row.chat_import.help",   # 0.7.2: on Windows only an export file is offered
 )
 
 
