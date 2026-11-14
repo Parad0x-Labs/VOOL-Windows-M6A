@@ -39,6 +39,8 @@ def test_the_windows_help_does_not_promise_a_test_alert(tag) -> None:
 
 def test_the_windows_panel_really_has_no_test_button() -> None:
     paint_mac = _JS[_JS.index("function paintMac(){"):_JS.index("function paintPrefs(){")]
-    stop = paint_mac.index("if (native.supported === false) return;")
+    # The early return for a host without system notifications (Mac 0.7.2 writes it as a block).
+    stop = paint_mac.index("if (native.supported === false) {")
+    assert paint_mac.index("return;", stop) < paint_mac.index("macBox.className = 'vns-box';")
     assert paint_mac.index("vns.btn.test") > stop
     assert "vns.btn.test" not in _JS[_JS.index("function paintPrefs(){"):]

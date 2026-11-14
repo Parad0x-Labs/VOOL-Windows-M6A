@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vool"
-version = "0.7.1"
+version = "0.7.2"
 description = "VOOL — local-first AI agent runtime with memory, tools, optional helpers, and visible proof"
 readme = "README.md"
 license = "MIT"
@@ -31,7 +31,7 @@ dependencies = [
     "keyring>=24.0",  # OS-keystore key protection (Windows DPAPI / macOS Keychain / Linux Secret Service)
     "psutil>=5.9",
     "pyyaml>=6.0",
-    "pypdf==6.20.1",  # Confined PDF text fallback; keep installer/bundle projections in sync.
+    "pypdf==6.21.0",  # Confined PDF text fallback; keep installer/bundle projections in sync.
     "reportlab==5.0.1",
     "markdown-it-py==4.2.0",
     "xlrd==2.0.2",  # Legacy XLS reader (pure Python, no native parts); keep installer/bundle projections in sync.
@@ -92,7 +92,7 @@ models = [
     "transformers>=4.48",
     "peft>=0.14; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "accelerate>=1.2; sys_platform != 'darwin' or platform_machine != 'x86_64'",
-    "aiohttp>=3.14.3",  # Security floor for model/data download clients.
+    "aiohttp>=3.14.4",  # Security floor for model/data download clients.
     "datasets>=3.2",
     "huggingface_hub>=0.28",
 ]
@@ -113,7 +113,7 @@ runtime = [
     "transformers>=4.48",
     "peft>=0.14; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "accelerate>=1.2; sys_platform != 'darwin' or platform_machine != 'x86_64'",
-    "aiohttp>=3.14.3",  # Security floor for model/data download clients.
+    "aiohttp>=3.14.4",  # Security floor for model/data download clients.
     "datasets>=3.2",
     "huggingface_hub>=0.28",
     "playwright>=1.52,<2.0",
@@ -137,7 +137,7 @@ dev = [
     "pytest==9.1.1",
     # Same pin as the CI gate, so `pip install -e ".[dev]"` and the gate cannot disagree about
     # which rules exist. Bump both lines together.
-    "ruff==0.17.0",
+    "ruff==0.17.1",
     "mypy>=1.8",
     # tests/test_daemon_survives_concurrent_load.py imports httpx to drive /healthz while chat turns
     # are in flight. It was never declared, so it passed only on machines that happened to have it
@@ -178,6 +178,7 @@ vool-registry = "registry_service.cli:main"
 # secret redaction cannot see a recovery phrase.
 "core.wallet" = ["bip39_english.txt"]
 "core.registry" = ["trusted-root.json"]
+"registry_service" = ["curation.json"]
 
 [tool.setuptools.packages.find]
 include = ["adapters*", "core*", "network*", "storage*", "sandbox*", "apps*", "ops*", "retrieval*", "channels*", "tools*", "relay*", "installer*", "registry_service*"]

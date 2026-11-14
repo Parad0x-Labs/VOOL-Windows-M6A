@@ -13,25 +13,23 @@ NEUTRAL_CARD = "mkCard('local', 'This computer', reads.local.ready"
 
 #: (Mac text, Windows text) for the chat page's file actions on Windows: show the folder, never open the file.
 FILE_ACTION_WORDS: tuple[tuple[str, str], ...] = (
-    ("Newest first; click a file to reveal it in Finder.</p>",
-     "Newest first; click a file to show it in its folder.</p>"),
-    ("prev.title = 'Reveal folder in Finder';",
+    ("prev.title = /Mac/.test(navigator.platform || '') ? pageT('session.reveal_folder_title', 'Reveal folder in Finder') : 'Show folder';",
      "prev.title = 'Show folder in File Explorer';"),
     ('title="Click to open in Preview - right-click for more">',
      'title="Opening files is not available on Windows yet - right-click for more">'),
     ("function openImageNative(local) { if (local) _fileOpen(local, false); }   // default app (Preview)",
      "function openImageNative(local) {}   // opening a file is not available on Windows yet"),
-    ("if (local) add('Open in Preview', () => openImageNative(local));",
+    ("if (local) add(pageT('msg.img_open_preview', 'Open in Preview'), () => openImageNative(local));",
      "if (local) { const off = document.createElement('button'); off.type = 'button'; off.className = 'proj-menu-item';"
      " off.disabled = true; off.style.opacity = '0.55'; off.textContent = 'Open (not available on Windows yet)';"
      " menu.appendChild(off); }"),
-    ("if (local) add('Show in Finder', () => revealImage(local));",
+    ("if (local) add(/Mac/.test(navigator.platform || '') ? pageT('msg.img_show_in_finder', 'Show in Finder') : 'Show in folder', () => revealImage(local));",
      "if (local) add('Show in folder', () => revealImage(local));"),
 )
 
 WINDOWS_CONSENT = "Windows shows a confirmation window; choose OK to continue."
-MAC_CONSENT = "This Mac asks you to confirm it is you in its own window."
-MAC_CONSENT_NOTE = "Setting, changing or resetting it asks this Mac to confirm it is you in its own window."
+MAC_CONSENT = "Your computer now asks you to confirm it is you, in its own window."
+MAC_CONSENT_NOTE = "Setting, changing or resetting it asks your computer to confirm it is you, in its own window."
 
 #: (page source on a Mac, page source on Windows, times drawn) for every place the wallet shows device approval to a
 #: Windows install. The option lists keep all three methods in the same order: only the words change.
@@ -42,11 +40,11 @@ WALLET_WORDS: tuple[tuple[str, str, int], ...] = (
      "btn.disabled = true; setMsg('Checking whether this wallet can be exported…');", 1),
     ("var METHOD_LABELS = { pin: 'PIN', password: 'password', device: 'Touch ID / Mac password' };",
      "var METHOD_LABELS = { pin: 'PIN', password: 'password', device: 'Device approval (Mac only; not available on Windows)' };", 1),
-    ("[['pin', 'PIN (4–8 digits)'], ['password', 'Wallet password (10+ characters)'], ['device', 'Touch ID or my Mac password']]",
+    ("[['pin', 'PIN (4–8 digits)'], ['password', 'Wallet password (10+ characters)'], ['device', 'My computer’s own sign-in (such as Touch ID)']]",
      "[['pin', 'PIN (4–8 digits)'], ['password', 'Wallet password (10+ characters)'], ['device', 'Device approval (Mac only; not available on Windows)']]", 2),
-    ("'Every payment and every export will ask for Touch ID or your Mac password. Nothing is stored behind a PIN.'",
+    ("'Every payment and every export will ask for your computer’s own sign-in (such as Touch ID). Nothing is stored behind a PIN.'",
      "'Device approval is not available on Windows, so a wallet cannot be created with it here. Choose a PIN or a wallet password.'", 1),
-    ("rform.appendChild(el('label', null, 'New PIN or password (none for Touch ID)'));",
+    ("rform.appendChild(el('label', null, 'New PIN or password (none for your computer’s own sign-in)'));",
      "rform.appendChild(el('label', null, 'New PIN or password'));", 1),
     ("el('div', 'vw-cx-env', 'Touch ID / Mac password approval: ' + ((policy.device && policy.device.text) || 'not available on this machine') + '.')",
      "el('div', 'vw-cx-env', 'Device approval (Mac only): ' + ((policy.device && policy.device.text) || 'not available on this machine') + '.')", 1),
@@ -65,11 +63,14 @@ CONTACTS_WORDS: tuple[tuple[str, str, int], ...] = (
 #: (Mac text, Windows text) for the shortcut key caps, as the chat page's palette and companion drawer fragments carry
 #: them: every shortcut already answers Ctrl, and on Windows its key cap says so.
 SHORTCUT_WORDS: tuple[tuple[str, str], ...] = (
+    ("var MOD = IS_MAC ? '\u2318' : 'Ctrl+';", "var MOD = 'Ctrl+';"),   # 0.7.2: the palette rows' key caps
     ("p.newChat(); }, '\\⌘N');", "p.newChat(); }, 'Ctrl+N');"),
     ("p.togglePanel(); }, '\\⌘J');", "p.togglePanel(); }, 'Ctrl+J');"),
     ("p.openModelMenu(); }, '\\⌘M');", "p.openModelMenu(); }, 'Ctrl+M');"),
     ("p.openSettings(); }, '\\⌘,');", "p.openSettings(); }, 'Ctrl+,');"),
-    *((f"<kbd>⌘{key}</kbd>", f"<kbd>Ctrl+{key}</kbd>") for key in "KNJ/F,"),
+    *((f"<kbd>⌘{key}</kbd>", f"<kbd>Ctrl+{key}</kbd>") for key in "KJ/F,"),
+    # 0.7.2: the Mac page itself carries '<kbd>Ctrl+N</kbd>' (its own off-Mac hint filter), so only the drawn cap
+    ("<kbd>⌘N</kbd> ' + vpHintT(", "<kbd>Ctrl+N</kbd> ' + vpHintT("),
     ("chip.textContent = '\\u2318N';", "chip.textContent = 'Ctrl+N';"),
     ("toggleDrawer, '\\u2318/');", "toggleDrawer, 'Ctrl+/');"),
 )

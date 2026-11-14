@@ -27,7 +27,7 @@ off or with a mocked credential read, and a real key or a real policy change wou
 test. No listed row's assertion changes. Off Windows the gate is open anyway, so the opt-in changes
 nothing there.
 
-``CLOUD-OPTIN-90.tsv`` is the count fence: exactly ``EXPECTED_COUNT`` unique node ids, and a listed
+``CLOUD-OPTIN-99.tsv`` is the count fence: exactly ``EXPECTED_COUNT`` unique node ids, and a listed
 row whose file is collected but whose id is not is a collection error, so the list cannot drift.
 """
 from __future__ import annotations
@@ -38,8 +38,8 @@ from pathlib import Path
 
 import pytest
 
-TSV = Path(__file__).with_name("CLOUD-OPTIN-90.tsv")
-EXPECTED_COUNT = 90
+TSV = Path(__file__).with_name("CLOUD-OPTIN-99.tsv")
+EXPECTED_COUNT = 99
 FIXTURE = "windows_cloud_opted_in"
 
 

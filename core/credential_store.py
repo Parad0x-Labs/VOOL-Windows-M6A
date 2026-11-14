@@ -11,7 +11,10 @@ backends, chosen automatically:
 * **Windows Credential Manager** (default on Windows) -- the VALUE is a generic credential named
   ``VOOL/credentials/<name>`` in the user's Credential Manager (``core.windows_credential_manager``,
   advapi32 through ctypes), sealed by Windows under the user's sign-in. It never shows a dialog, so
-  unlike the Keychain it needs no operator grant. The same non-secret sidecar keeps the labels.
+  unlike the Keychain it needs no operator grant on the installed home of an attended run. It is
+  the user's global store, outside VOOL's home, so a test, CI, an unattended boot or a scratch home
+  takes the Keychain's rule instead (a grant, or a prior use) and otherwise keeps to the vault.
+  The same non-secret sidecar keeps the labels.
 * **AES-256-GCM vault file** (fallback) -- for environments without a usable keyring backend
   (headless Linux, CI, the dev venv, a Windows session where Credential Manager does not answer).
   Each value is sealed under a key derived from the node signing key
@@ -152,6 +155,14 @@ def _active_keyring(*, write: bool = False):
     if mode == "vault":
         return None
     if sys.platform == "win32":
+        # Credential Manager never prompts, but it is the user's global store, outside VOOL's home.
+        # So it takes the macOS rule (a grant, or for reads a prior use of the store), plus one
+        # Windows allowance: an attended process on the default installed home needs no grant.
+        # A scratch or isolated home, or an unattended run, gets the vault, decided here before
+        # advapi32 is loaded, so it makes no Credential Manager call at all (Security Review, #229).
+        granted = keychain_write_granted() if write else (keychain_write_granted() or _keychain_previously_used())
+        if not (granted or _windows_home_may_use_credential_manager()):
+            return None
         backend = _load_keyring()
         if _is_windows_store(backend):
             return backend  # never prompts: no operator grant needed (module docstring)
@@ -168,6 +179,20 @@ def _active_keyring(*, write: bool = False):
     if backend is None:
         surface_fallback_notice()
     return backend
+
+
+def _windows_home_may_use_credential_manager() -> bool:
+    """Whether this Windows process may use Credential Manager without a grant: an attended run
+    (``core.unattended_preflight``) on the installed home (``runtime_home_is_isolated`` is False).
+    A test, CI, an unattended boot or a scratch home never may, so its keys stay inside its own home.
+    """
+    from core.runtime_paths import runtime_home_is_isolated
+    from core.unattended_preflight import is_unattended
+
+    try:
+        return not is_unattended() and not runtime_home_is_isolated()
+    except Exception:
+        return False
 
 
 def _is_windows_store(backend) -> bool:
@@ -310,13 +335,17 @@ def _load_raw(*, strict: bool | None = None) -> dict[str, dict[str, str]]:
 
 
 def _save_raw(raw: dict[str, dict[str, str]]) -> None:
+    global _INDEX_WRITES
     path = _store_path()
     if owner_only.seals_secrets():
         # Windows: a plain write inherits the folder's ACL. Sealed, or nothing is written.
         owner_only.write_private_file(path, json.dumps(raw, sort_keys=True))
         return
     path.parent.mkdir(parents=True, exist_ok=True)
+    # Counted before and after the write, so names read while it is in flight are never kept.
+    _INDEX_WRITES += 1
     path.write_text(json.dumps(raw, sort_keys=True), encoding="utf-8")
+    _INDEX_WRITES += 1
     _chmod600(path)
 
 
@@ -409,12 +438,15 @@ def _meta_load() -> dict[str, dict[str, str]]:
 
 
 def _meta_save(meta: dict[str, dict[str, str]]) -> None:
+    global _INDEX_WRITES
     path = _meta_path()
     if owner_only.seals_secrets():
         owner_only.write_private_file(path, json.dumps(meta, sort_keys=True))
         return
     path.parent.mkdir(parents=True, exist_ok=True)
+    _INDEX_WRITES += 1
     path.write_text(json.dumps(meta, sort_keys=True), encoding="utf-8")
+    _INDEX_WRITES += 1
     _chmod600(path)
 
 
@@ -727,12 +759,47 @@ def get_credential(name: str) -> str | None:
     return _vault_get(name)
 
 
+# The indexed names as last read, with the state of both index files they were read from. The
+# tool catalog asks whether a key is indexed many times a turn; re-reading both files (and making
+# sure the runtime folders exist) each time was a measurable share of every turn.
+_INDEX_WRITES = 0
+_INDEX_MEMO: tuple[tuple, frozenset[str]] | None = None
+
+
+def _index_files_state() -> tuple | None:
+    """Both index files as they are on disk now, or None when that cannot be told."""
+    try:
+        from core.runtime_paths import active_data_dir
+
+        data_dir = active_data_dir()
+        state: list[object] = [str(data_dir), _INDEX_WRITES, bool(_STRICT_READS.get())]
+        for file_name in (_META_FILE, _STORE_FILE):
+            try:
+                st = (data_dir / file_name).stat()
+            except FileNotFoundError:
+                state.append(None)
+                continue
+            state.append((st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns))
+        return tuple(state)
+    except Exception:
+        return None
+
+
 def credential_is_indexed(name: str) -> bool:
     """Disk-index presence only; no secret reads, migration, or Keychain prompts.
 
     This is UI inventory evidence, not authentication. Explicit actions use strict reads.
+    The names are read again whenever either index file changed on disk or was written here.
     """
-    return name in _meta_load() or name in _load_raw()
+    global _INDEX_MEMO
+    state = _index_files_state()
+    memo = _INDEX_MEMO
+    if state is not None and memo is not None and memo[0] == state:
+        return name in memo[1]
+    names = frozenset(_meta_load()) | frozenset(_load_raw())
+    if state is not None and state == _index_files_state():
+        _INDEX_MEMO = (state, names)
+    return name in names
 
 
 def has_credential(name: str) -> bool:

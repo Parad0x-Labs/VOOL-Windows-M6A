@@ -21,21 +21,28 @@ def _surface_probe(companion_displays: list[str]) -> bool:
     fragment = render_palette_fragment()
     match = re.search(r"function anyLegacySurfaceOpen\(\)\{[\s\S]+?\n\}", fragment)
     assert match, "anyLegacySurfaceOpen is the Esc cascade's press-time probe"
+    # 0.7.2: the probe asks isShown() (via surfaceReallyOpen()) whether a surface is actually showing.
+    helpers = "".join(
+        re.search(r"function " + name + r"\(el\)\{[\s\S]+?\n\}", fragment).group(0) + "\n"
+        for name in ("surfaceReallyOpen", "isShown")
+    )
     program = """
 const displays = %s;
 const companion = displays.map((display) => ({ style: { display }, hidden: false }));
 const overlay = { hidden: true };
+globalThis.window = {};
 globalThis.document = {
-  getElementById() { return { hidden: true }; },
+  // Only the five legacy overlays are mounted (hidden); nothing else the probe names exists.
+  getElementById(id) { return /Overlay$/.test(id) ? { hidden: true } : null; },
   querySelector(sel) {
-    if (sel === '.pop.open') return null;
+    if (sel.startsWith('.pop.open')) return null;
     return companion.length ? companion[0] : null;
   },
-  querySelectorAll(sel) { return sel === '.pop.open' ? [] : companion; },
+  querySelectorAll(sel) { return sel.includes('vool-ninja') ? companion : []; },
 };
 %s
 console.log(JSON.stringify({ open: anyLegacySurfaceOpen() }));
-""" % (json.dumps(companion_displays), match.group(0))
+""" % (json.dumps(companion_displays), helpers + match.group(0))
     return bool(run_node(program)["open"])
 
 

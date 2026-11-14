@@ -35,7 +35,6 @@ SETUP_SCRIPT_KEYS = (
     "setup.thinking.local_title",
     "setup.thinking.online_sub",
     "setup.status.saved_thinking",
-    "setup.folder.placeholder",
 )
 LOCALES = sorted(path.stem for path in CATALOGS_DIR.glob("*.json"))
 
@@ -106,7 +105,11 @@ def test_the_windows_setup_script_asks_for_the_windows_keys(monkeypatch) -> None
     for key in SETUP_SCRIPT_KEYS:
         assert f"T('{key}'," not in windows
         assert f"T('{key}.windows', '{english[key + '.windows']}')".replace("\\", "\\\\") in windows
-        assert f"T('{key}'," in mac and f"T('{key}.windows'," not in mac
+        # 0.7.2: a Mac page asks through PC(), which keeps the Mac key on a Mac.
+        assert f"T(PC('{key}')," in mac and f"T('{key}.windows'," not in mac
+    # The folder step's example path: a Windows page is served the Windows path and its Windows help key.
+    assert "path.placeholder = 'C:\\\\Users\\\\you\\\\Documents';" in windows
+    assert "T('setup.folder.type_help.windows'," in windows and "T('setup.folder.type_help'," not in windows
     assert "On my Mac" not in windows.split('<script id="vool-i18n">')[0]
 
 

@@ -78,6 +78,8 @@ def _overview_cards(page: str, local_models: list | None = None) -> dict:
         slice_source(scripts, "function widgetModelsOverview(stack) {", "function mpDrawDetail("),
     ])
     result = run_node(DOM + r"""
+// 0.7.2 words the overview's cards through the page catalog; English fallback here.
+const T = (key, fallback) => fallback;
 const reads = [];
 const localModels = """ + json.dumps(local_models) + r""";
 globalThis.fetch = async (url) => {

@@ -123,7 +123,7 @@ def test_an_approved_command_runs_with_the_data_folder_hidden(
     home: dict[str, Path], monkeypatch: pytest.MonkeyPatch, which: int
 ) -> None:
     """The served command lane, up to the kernel profile: the bwrap argv hides the data folder."""
-    from sandbox import job_runner
+    from sandbox import job_runner, network_guard
 
     workspace = _workspaces(home)[which]
     prefs = home["prefs"]
@@ -132,6 +132,10 @@ def test_an_approved_command_runs_with_the_data_folder_hidden(
     real_which = shutil.which
     monkeypatch.setattr(job_runner.sys, "platform", "linux")
     monkeypatch.setattr(job_runner, "_is_windows_platform", lambda: False)
+    # The whole lane is Linux's: the command line is read by the POSIX rules too. Left on Windows,
+    # the sandbox's Windows rule looks the bare `python3` up as an .exe on PATH and refuses it there,
+    # before any profile is built.
+    monkeypatch.setattr(network_guard, "_IS_WINDOWS", False)
     monkeypatch.setattr(job_runner.shutil, "which", lambda name, *a, **k: "/usr/bin/bwrap" if name == "bwrap" else real_which(name, *a, **k))
     monkeypatch.setattr(job_runner, "_backend_usable", lambda *_a, **_k: True)
     launched: list[list[str]] = []
@@ -145,6 +149,12 @@ def test_an_approved_command_runs_with_the_data_folder_hidden(
     for command in (_DELETE.format(path=relative), _DELETE.format(path=str(prefs))):
         _dispatch("sandbox.run_command", {"command": command}, workspace)
     assert _intact(home, before)
+    if job_runner.os.name != "posix":
+        # A Windows host: the Linux kernel profile is built only on a POSIX host
+        # (JobRunner._linux_bwrap_prefix), so this lane cannot confine the command here. The honest
+        # answer is that it never runs at all, confined or not, and the prefs file stays as it was.
+        assert launched == [], f"a process was started without the confinement profile: {launched}"
+        return
     profiles = [argv for argv in launched if argv and argv[0] == "/usr/bin/bwrap"]
     assert profiles, f"no confined launch was attempted: {launched}"
     data = str(prefs.parent.resolve())

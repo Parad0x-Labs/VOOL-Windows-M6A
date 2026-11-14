@@ -54,7 +54,11 @@ const HOST_ROOT = new Node('body');
 const document = { createElement: (t) => new Node(t), querySelector: (s) => { const n = ids[s.slice(1)]; return n && n.attached() ? n : null; } };
 const control = new Node('div'); control.id = 'control'; HOST_ROOT.appendChild(control);
 const liveNode = new Node('div'); liveNode.id = 'live'; HOST_ROOT.appendChild(liveNode);
-const view = { snap: null, index: 1, motion: 'auto' };
+const view = { snap: null, index: 1, motion: 'auto', notes: {} };
+const sessionStorage = { _d: {}, getItem(k) { return this._d[k] || null; }, setItem(k, v) { this._d[k] = String(v); }, removeItem(k) { delete this._d[k]; } };
+const OFFLINE = () => 'VOOL is not running.';
+function setNote(kind, text) { view.notes[current().id] = text ? { kind: kind, text: text } : null; }
+const framed = () => false;
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 const live = (msg) => { liveNode.textContent = msg; };
@@ -77,7 +81,8 @@ const byId = (id) => find((n) => n.id === id);
 
 def _run(step: dict, steps: str, after: dict | None = None, post: dict | None = None, mark=None) -> dict:
     html = render_vool_setup_html()
-    fns = "".join(_function(html, name) for name in ("renderControl", "fail", "controlFolder", "setFolderResult"))
+    fns = "".join(_function(html, name) for name in ("renderControl", "fail", "controlFolder", "setFolderResult",
+                                                               "clearFailNote", "notSaved", "draft", "hasFolderPicker"))
     rig = (_DOM.replace("__STEP__", json.dumps(step)).replace("__AFTER__", json.dumps(after))
            .replace("__POST__", json.dumps(post or {"ok": True, "status": 200, "json": {"project": {"id": "p1"}}}))
            .replace("__MARK__", json.dumps(mark)))
@@ -120,7 +125,8 @@ def test_a_refusal_shows_the_servers_words_visibly() -> None:
 
 def test_an_http_failure_without_a_body_still_says_so() -> None:
     out = _run(FOLDER, USE + REPORT, post={"ok": False, "status": 500, "json": None})
-    assert out["result"] and "HTTP 500" in out["result"] and "failed" in out["cls"]
+    # 0.7.2: a bare status code is not words for a person; the line says it was not saved and to try again.
+    assert out["result"] and "Not saved" in out["result"] and "try again" in out["result"] and "failed" in out["cls"]
 
 
 def test_saved_on_windows_says_so_and_offers_the_mark() -> None:

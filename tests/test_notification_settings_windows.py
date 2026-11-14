@@ -117,6 +117,6 @@ def test_windows_panel_reads_its_text_from_the_catalog():
 
 def test_mac_panel_still_paints_the_macos_controls():
     texts = _painted(windows=False, supported=True)
-    for text in ("macOS notifications", "A macOS notification may show", "Quiet hours, sound and what notifications show",
+    for text in ("macOS notifications", "A system notification may show", "Quiet hours, sound and what notifications show",
                  "MAC-EXPLANATION", "<select>"):
         assert text in texts

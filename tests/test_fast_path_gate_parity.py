@@ -358,8 +358,16 @@ def test_pdf_read_in_manual_runs_like_the_model_route(
         source_context=_ctx("manual"),
     )
     assert reply is not None
-    assert len(calls) == 1, "the read must run once, like the model route allows"
     assert _permission(reply).get("effect") == "allow"
+    from core import pdf_tools, posix_tools
+
+    if posix_tools.active():
+        # Windows withholds PDF reading: the gate is still asked first, as on the model route, and
+        # then the read itself is refused with the Windows sentence, never run.
+        assert calls == [], calls
+        assert reply["response"] == pdf_tools.WINDOWS_UNAVAILABLE, reply["response"]
+        return
+    assert len(calls) == 1, "the read must run once, like the model route allows"
 
 
 def test_pdf_read_denied_by_project_permissions_is_refused_like_the_model_route(

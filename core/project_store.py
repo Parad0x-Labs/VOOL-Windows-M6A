@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import ntpath
 import os
 import re
 import threading
@@ -100,28 +101,170 @@ def project_root(project_id: str) -> str | None:
     return root if root and os.path.isdir(root) else None
 
 
+# Folders that hold a whole computer's worth of files: binding VOOL to one of them is the same as
+# binding it to the whole disk. Compared by real path, so a symlink spelling cannot slip past.
+_SYSTEM_ROOTS = (
+    "/Applications", "/Library", "/System", "/Users", "/Volumes", "/bin", "/boot", "/dev", "/etc",
+    "/home", "/lib", "/opt", "/private", "/proc", "/sbin", "/sys", "/tmp", "/usr", "/var",
+)
+
+
+def _real(path: str) -> str:
+    try:
+        return os.path.realpath(path)
+    except (OSError, ValueError):
+        return path
+
+
+#: Windows known folders a project may be neither at nor inside (the OS, installed programs, machine-wide app
+#: state), and the environment variables that name the same folders when the shell cannot answer.
+_WINDOWS_SEALED_KNOWN = ("Windows", "ProgramFiles", "ProgramFilesX86", "ProgramData")
+_WINDOWS_SEALED_ENV = ("SystemRoot", "windir", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "ProgramData")
+#: Windows folders a project may sit inside but may not be: the profile, the folder holding every profile and
+#: the per-user app-state folders (the Windows counterparts of ``~`` and ``~/Library``).
+_WINDOWS_EXACT_KNOWN = ("LocalAppData", "RoamingAppData")
+
+
+def _windows_norm(path: str) -> str:
+    return ntpath.normcase(ntpath.normpath(str(path))).rstrip("\\")
+
+
+def _windows_spellings(folders: list[str]) -> set[str]:
+    """Each folder as spelled and, when it is on a drive of this machine, as it really resolves (a junction is
+    judged by its target too). A folder on a share or a network drive is compared by its spelling only:
+    resolving it would already be the SMB connection."""
+    from core import windows_known_folders
+
+    out: set[str] = set()
+    for folder in folders:
+        if not folder:
+            continue
+        out.add(_windows_norm(folder))
+        if windows_known_folders.on_local_drive(folder):
+            with contextlib.suppress(OSError, ValueError):
+                out.add(_windows_norm(os.path.realpath(folder)))
+    return out
+
+
+def _windows_system_refusal(resolved: str) -> str:
+    """Windows: a plain refusal when ``resolved`` is, or is inside, the Windows folder, a Program Files folder or
+    ProgramData, or is the profile, the folder holding every profile or a per-user app-state folder; else ''.
+
+    The folders come from the shell (SHGetKnownFolderPath, core/windows_known_folders.py), with the environment
+    added. Both only add refusals, and when neither names the Windows folder the default on the system drive is
+    refused, so a lookup that cannot answer never opens a system folder."""
+    from core import windows_known_folders
+
+    known = windows_known_folders.known_folder
+    sealed = [known(name) or "" for name in _WINDOWS_SEALED_KNOWN]
+    sealed += [os.environ.get(name, "") for name in _WINDOWS_SEALED_ENV]
+    if not (known("Windows") or os.environ.get("SystemRoot") or os.environ.get("windir")):
+        drive = ntpath.splitdrive(os.environ.get("SystemDrive", "") or "C:")[0] or "C:"
+        sealed += [drive + "\\Windows", drive + "\\Program Files", drive + "\\Program Files (x86)",
+                   drive + "\\ProgramData"]
+    profiles = [known("Profile") or "", os.environ.get("USERPROFILE", ""), os.path.expanduser("~")]
+    profiles = [p for p in profiles if p and p != "~"]
+    exact = [p for p in profiles if p] + [ntpath.dirname(ntpath.normpath(p)) for p in profiles if p]
+    exact += [ntpath.join(p, "AppData") for p in profiles if p]
+    exact += [known(name) or "" for name in _WINDOWS_EXACT_KNOWN]
+    target = _windows_norm(resolved)
+    for folder in _windows_spellings(sealed):
+        if folder and (target == folder or target.startswith(folder + "\\")):
+            return "that is a system folder. Pick a normal folder, like Documents."
+    for folder in _windows_spellings(exact):
+        if folder and target == folder:
+            if any(target == p for p in _windows_spellings(profiles)):
+                return "that is your whole home folder. Pick one folder inside it, like Documents."
+            if any(target == _windows_norm(ntpath.dirname(ntpath.normpath(p))) for p in profiles if p):
+                return "that folder holds every user's files. Pick one folder inside your home folder, like Documents."
+            return "that is a system folder. Pick a normal folder, like Documents."
+    return ""
+
+
+def _too_broad_root(resolved: str) -> str:
+    """A plain refusal when ``resolved`` is the home folder, the folder holding every home, or a system folder; else ''."""
+    if windows_path_policy.active():
+        # Windows answers from the shell's known folders and the environment alone: the POSIX checks below
+        # would resolve the home folder, which on a roaming profile is a share.
+        return _windows_system_refusal(resolved)
+    home = _real(os.path.expanduser("~"))
+    if home and home not in {"~", os.sep} and resolved == home:
+        return "that is your whole home folder. Pick one folder inside it, like Documents."
+    if home and home not in {"~", os.sep} and resolved == _real(os.path.dirname(home)):
+        return "that folder holds every user's files. Pick one folder inside your home folder, like Documents."
+    if home and resolved == _real(os.path.join(home, "Library")):
+        return "that is a system folder. Pick a normal folder, like Documents."
+    if any(resolved == _real(p) for p in _SYSTEM_ROOTS):
+        return "that is a system folder. Pick a normal folder, like Documents."
+    return ""
+
+
+def _network_drive(raw: str) -> str:
+    """On Windows, the drive letter (`Z:`) of `raw` when Windows does not call that drive local; else ""."""
+    from core import windows_known_folders
+
+    if not windows_known_folders._IS_WINDOWS:
+        return ""
+    drive = ntpath.splitdrive(os.path.expanduser(raw))[0]
+    if not re.fullmatch(r"[A-Za-z]:", drive):
+        return ""
+    try:
+        local = windows_known_folders._drive_is_remote(drive.upper()) is False
+    except Exception:  # an unknown drive type counts as remote (fail closed)
+        local = False
+    return "" if local else drive.upper()
+
+
 def create_project(name: str, root: str) -> tuple[bool, Any]:
     """Register a folder as a project. Returns (True, project) or (False, error_message).
 
     Idempotent by real path: adding the same folder twice returns the existing project (name refreshed).
-    The root must be an existing absolute directory; the filesystem root '/' is refused as a guard. On
-    Windows a share or a partial path is refused by its spelling, before anything looks it up.
+    The root must be an existing absolute directory (or start with ``~``). A relative path is refused
+    instead of being resolved against the server's own working directory (which would bind VOOL to its
+    install folder), and so are the filesystem root, the whole home folder, the folder that holds every user's home, and the
+    operating system's own folders. On Windows a share or a partial path is refused by its spelling,
+    before anything looks it up. Error messages are plain sentences that start in
+    lower case (the callers prefix them) and name the resolved path where it helps.
     """
+    raw = str(root or "").strip()
+    if not raw:
+        return False, "a project folder is required. Type its path or choose one."
+    # Windows: a share or a partial path is refused by its spelling, before anything looks it up.
     non_local = windows_path_policy.refused_form(root)
     if non_local:
         return False, windows_path_policy.refusal_text(root, non_local)
-    resolved = _normalize_root(root)
-    if not resolved:
-        return False, "a project folder is required"
+    # Windows: a drive letter Windows does not call local (a mapped network drive is a share under a
+    # letter, and a drive type Windows cannot name counts as one) is refused before realpath, which
+    # would already open the SMB connection.
+    # A `~` path is judged as it expands too: a home on a share turns `~\\x` into `\\\\server\\...`.
+    if raw.startswith("~"):
+        expanded = os.path.expanduser(raw)
+        non_local = windows_path_policy.refused_form(expanded)
+        if non_local:
+            return False, windows_path_policy.refusal_text(expanded, non_local)
+    network_drive = _network_drive(raw)
+    if network_drive:
+        return False, (
+            f"the drive {network_drive} is a network drive (or one Windows can't identify), and VOOL only uses "
+            "folders on this computer's own drives. Pick a folder on a local drive."
+        )
+    if not raw.startswith("~") and not os.path.isabs(raw):
+        if os.name == "nt":
+            return False, "type the whole folder path, starting with a drive letter or ~ (for example C:\\Users\\you\\Documents)."
+        return False, "type the whole folder path, starting with / or ~ (for example ~/Documents)."
+    resolved = _normalize_root(raw)
     # ``_normalize_root`` returns the drive root on Windows (``C:\\``), so comparing
     # with ``os.path.sep`` only protects POSIX. A filesystem root is its own parent on
     # every platform and must never become a project boundary.
     if Path(resolved).parent == Path(resolved):
-        return False, "refusing to use the whole filesystem as a project"
+        return False, "pick one folder, not the whole filesystem."
+    refusal = _too_broad_root(resolved)
+    if refusal:
+        return False, refusal
     if not os.path.exists(resolved):
-        return False, "that folder does not exist"
+        return False, f"that folder does not exist: {resolved}. Check the spelling."
     if not os.path.isdir(resolved):
-        return False, "a project must be a folder"
+        return False, f"that is a file, and a project must be a folder: {resolved}."
     clean_name = " ".join(str(name or "").split()).strip()[:_NAME_MAX] or os.path.basename(resolved) or resolved
     pid = _project_id_for(resolved)
     with _PROJECTS_LOCK:

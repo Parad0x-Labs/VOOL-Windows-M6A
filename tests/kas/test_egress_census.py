@@ -27,6 +27,7 @@ from core.kas.egress_census import modules_with_direct_egress
 KNOWN_DIRECT_EGRESS: dict[str, tuple[int, str]] = {
     # --- verified third-party egress outside the door. These are the real bypasses. ---
     "adapters/openai_compatible_adapter.py": (11, "verified: requests-named calls now delegate to core.provider_http; raw transport is owned by its worker"),
+    "core/email_setup.py": (2, "verified: imaplib and smtplib imports for the Settings email-setup login check; it resolves the user's server, refuses under Local Only unless every resolved address is local, and connects only through email_tools' pinned connectors; TLS verifies the server name (SSL and STARTTLS), plain only for loopback"),
     "core/email_providers/base.py": (2, "verified: the email lane's own provider transport -- OAuth token refresh and provider REST calls to fixed endpoints, default TLS context, bounded timeouts, typed refusal mapping; read for this entry when the census flagged it after the email lane merge"),
     "core/provider_http.py": (5, "verified: three requests imports for the provider worker and one urllib fallback for selected Ollama inventory/pulls (its build_opener and urlopen are two sites); loopback uses an empty proxy handler and refuses redirects, non-loopback admission stays with its caller"),
     "core/wallet/lifecycle.py": (1, "verified: Solana JSON-RPC client; constructor checks network and RPC URL allowlists before transport"),
@@ -69,7 +70,7 @@ KNOWN_DIRECT_EGRESS: dict[str, tuple[int, str]] = {
     "core/task_router.py": (2, "unreviewed"),
     "core/web/api/runtime.py": (1, "unreviewed"),
     # Found when the census learned raw sockets and mail clients (not read yet):
-    "core/email_tools.py": (2, "unreviewed: imaplib and smtplib imports"),
+    "core/email_tools.py": (3, "verified: imaplib and smtplib imports, plus _pinned_connection's socket.create_connection to addresses its caller already resolved (email_setup; under Local Only every one must be local); TLS still verifies the server name; the mail tools' own sends and reads connect by name as before"),
     "network/stream_transport.py": (2, "unreviewed: socket.socket and socket.create_connection, peer transport"),
     "network/transport.py": (4, "unreviewed: four socket.socket sites, peer transport"),
 }
