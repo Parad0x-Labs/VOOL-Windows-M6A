@@ -2013,6 +2013,11 @@ def _crypto_price_fallback_multi(
     (what `lookup_live_quote` does for its single result), since there is no reason to re-parse a
     float out of text this function itself just formatted.
     """
+    from core.policy_engine import web_lookups_allowed
+    from core.remote_fetch_policy import RemoteFetchRefusedError
+
+    if not web_lookups_allowed():  # Settings > Web lookups is off: no socket for a lookup (Steve, 14 Nov)
+        raise RemoteFetchRefusedError("Web lookups is off, so nothing was fetched")
     if not [coin_id for coin_id in coin_ids if str(coin_id).strip()]:
         return []
     payload = _simple_price_payload(list(coin_ids), timeout_s=timeout_s)
@@ -2287,6 +2292,11 @@ def _market_quote_fallback_multi(
     total. Concurrent because these are independent read-only network calls with no local-model
     cost, same reasoning as the multi-city weather fetch.
     """
+    from core.policy_engine import web_lookups_allowed
+    from core.remote_fetch_policy import RemoteFetchRefusedError
+
+    if not web_lookups_allowed():  # Settings > Web lookups is off: no socket for a lookup (Steve, 14 Nov)
+        raise RemoteFetchRefusedError("Web lookups is off, so nothing was fetched")
 
     def _fetch_one(target: MarketQuoteTarget) -> LiveQuoteResult | None:
         try:
@@ -2632,6 +2642,11 @@ def structured_weather_lookup(location: str, *, timeout_s: float = 8.0) -> Weath
     typed fields; a mismatch or failure on the first provider falls through to it instead of
     becoming "no observation returned".
     """
+    from core.policy_engine import web_lookups_allowed
+    from core.remote_fetch_policy import RemoteFetchRefusedError
+
+    if not web_lookups_allowed():  # Settings > Web lookups is off: no socket for a lookup (Steve, 14 Nov)
+        raise RemoteFetchRefusedError("Web lookups is off, so nothing was fetched")
     clean_location = str(location or "").strip()
     if not clean_location or not _is_plausible_weather_location(clean_location):
         return None
