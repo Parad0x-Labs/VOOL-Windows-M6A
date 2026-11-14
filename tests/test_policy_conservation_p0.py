@@ -57,6 +57,16 @@ from core.agent_runtime.demand_ownership import (
 from core.turn_contract import TURN_DEMAND_LEDGER_KEY, TURN_REQUEST_KEY, TurnRequest
 from tests.test_turn_attempt_chain import _SOURCE_CONTEXT, _Harness
 
+
+@pytest.fixture(autouse=True)
+def _web_lookups_on(monkeypatch):
+    """These rows exercise the live lookups themselves, so Settings > Web lookups is on for them. Since 0.7.2 the
+    lookups refuse while it is off (tests/test_web_lookups_off_makes_no_live_fetch.py holds those rows)."""
+    from core import policy_engine
+
+    monkeypatch.setattr(policy_engine, "allow_web_fallback", lambda: True)
+
+
 _LINE_ONE = "ALPHA-LINE-ONE the ledger was reconciled"
 _LINE_TWO = "BRAVO-LINE-TWO she jogged to the market"
 

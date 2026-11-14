@@ -52,7 +52,7 @@ from core.lane_registry import LANE_CATALOG
 from tests.test_turn_attempt_chain import _SOURCE_CONTEXT, _Harness, _incident_mocks
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def _web_lookups_on(monkeypatch):
     """These rows exercise the live lookups themselves, so Settings > Web lookups is on for them. Since 0.7.2 the
     lookups refuse while it is off (tests/test_web_lookups_off_makes_no_live_fetch.py holds those rows)."""
@@ -663,6 +663,7 @@ _LIVE_MIX_CASES = (
 )
 
 
+@pytest.mark.usefixtures("_web_lookups_on")
 def test_i6_live_mixed_both_orders_discharge_every_demand(harness):
     for case_id, text in _LIVE_MIX_CASES:
         groups = _CASE_INDEX[case_id]["atoms"]
@@ -749,6 +750,7 @@ def _planned_outcomes_spy():
     return seen, mock.patch.object(planner, "run_plan", _spy)
 
 
+@pytest.mark.usefixtures("_web_lookups_on")
 def test_i5_composite_execution_creates_one_outcome_per_demand(harness):
     """I5 on a real three-unit mixed turn: three minted demands, three owned
     outcomes, and every demand discharged in the synthesis."""
@@ -872,6 +874,7 @@ def test_S3_omitting_a_declaration_turns_the_inventory_red():
         assert missing, "an omitted declaration went undetected by the inventory"
 
 
+@pytest.mark.usefixtures("_web_lookups_on")
 def test_S4_a_skipped_planned_child_is_named_never_absent(harness):
     """S4: sabotage execution to skip one planned child entirely. The turn must
     still discharge EVERY demand — the missing unit surfaces as an explicit
