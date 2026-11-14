@@ -962,12 +962,17 @@ def list_memory_entries(
     chat_id: str | None = None,
     limit: int = 10,
 ) -> list[dict[str, Any]]:
-    _ensure_memory_files()
+    listing = _ONE_LISTING.get()
+    # One listing (Settings > Memory reads every chat) sets the memory files up once, not once per chat:
+    # with 251 chats that setup's path checks were most of the 9.6 s Memory page on Steve (0.7.2, 14 Nov).
+    if listing is None or not listing.files_ready:
+        _ensure_memory_files()
+        if listing is not None:
+            listing.files_ready = True
     policy = resolve_memory_access_policy(
         access_policy=access_policy,
         chat_id=chat_id,
     )
-    listing = _ONE_LISTING.get()
     if listing is None:
         return _memory_entries_under(
             _load_jsonl(memory_entries_path()), policy, limit, _GovernedRows()
@@ -981,6 +986,7 @@ class _Listing:
     def __init__(self) -> None:
         self.rows: list[dict[str, Any]] | None = None
         self.governed = _GovernedRows()
+        self.files_ready = False
 
 
 _ONE_LISTING: contextvars.ContextVar[_Listing | None] = contextvars.ContextVar("memory_one_listing", default=None)
