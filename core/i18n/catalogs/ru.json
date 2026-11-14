@@ -2508,6 +2508,7 @@
     "emailadd.err.smtp_timeout": "Сервер исходящей почты не ответил вовремя. Ничего не сохранено.",
     "settings.row.chat_import.label": "Перенести чаты из других ИИ-приложений",
     "settings.row.chat_import.help": "Переезд: перенесите чаты из других ИИ-приложений вместе с их названиями и сообщениями. Выберите приложение на этом компьютере или файл экспорта данных, просмотрите найденные чаты и отметьте те, которые нужно перенести. Всё остаётся на этом компьютере, а файлы другого приложения никогда не изменяются. VOOL хранит эти чаты как историю: он не учится на них и не выполняет ничего из того, что в них написано.",
+    "settings.row.chat_import.help.windows": "Переезд: перенесите чаты из других ИИ-приложений вместе с их названиями и сообщениями. Выберите файл экспорта данных из другого приложения, просмотрите найденные чаты и отметьте те, которые нужно перенести. Всё остаётся на этом компьютере, а файлы другого приложения никогда не изменяются. VOOL хранит эти чаты как историю: он не учится на них и не выполняет ничего из того, что в них написано.",
     "settings.pane.chat_import_missing": "Панель переноса чатов не загрузилась.",
     "chatimport.choose": "Где ваши чаты?",
     "chatimport.btn.look": "Показать мои чаты",
@@ -2669,7 +2670,7 @@
     "addons.registry_release_notes": "Примечания к версии",
     "addons.registry_metrics": "{stars} звёзд на сайте · {downloads} запросов скачивания"
   },
-  "source_catalog_sha256": "fbfcf1d7db601973e3603ca3dfbcd0d5e48070a6c72bf34276a8db24ae5af973",
+  "source_catalog_sha256": "7e8dced86952ab0c5f9d8ddd8af5b611004e8d8668df084e8f6630d0f0caa58a",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -2682,6 +2683,7 @@
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
     "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
     "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)",
-    "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)"
+    "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)",
+    "windows_chat_import_help_addendum": "1 Windows chat-import help key translated by the lane author (single writer)"
   }
 }

@@ -2508,6 +2508,7 @@
     "emailadd.err.smtp_timeout": "Le serveur de courrier sortant n'a pas répondu à temps. Rien n'a été enregistré.",
     "settings.row.chat_import.label": "Apporter vos discussions d’autres applis d’IA",
     "settings.row.chat_import.help": "Emménager : apportez les discussions que vous aviez dans d’autres applis d’IA, avec leurs noms et leurs messages. Choisissez une appli sur cet ordinateur ou un fichier d’export de données, parcourez les discussions trouvées et cochez celles à apporter. Tout reste sur cet ordinateur, et les fichiers de l’autre appli ne sont jamais modifiés. VOOL garde ces discussions comme historique : il n’en apprend rien et ne suit rien de ce qui y est écrit.",
+    "settings.row.chat_import.help.windows": "Emménager : apportez les discussions que vous aviez dans d’autres applis d’IA, avec leurs noms et leurs messages. Choisissez un fichier d’export de données de l’autre appli, parcourez les discussions trouvées et cochez celles à apporter. Tout reste sur cet ordinateur, et les fichiers de l’autre appli ne sont jamais modifiés. VOOL garde ces discussions comme historique : il n’en apprend rien et ne suit rien de ce qui y est écrit.",
     "settings.pane.chat_import_missing": "Le panneau pour apporter des discussions ne s’est pas chargé.",
     "chatimport.choose": "Où sont vos discussions ?",
     "chatimport.btn.look": "Afficher mes discussions",
@@ -2669,7 +2670,7 @@
     "addons.registry_release_notes": "Notes de version",
     "addons.registry_metrics": "{stars} étoiles sur le site · {downloads} demandes de téléchargement"
   },
-  "source_catalog_sha256": "fbfcf1d7db601973e3603ca3dfbcd0d5e48070a6c72bf34276a8db24ae5af973",
+  "source_catalog_sha256": "7e8dced86952ab0c5f9d8ddd8af5b611004e8d8668df084e8f6630d0f0caa58a",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -2682,6 +2683,7 @@
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
     "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
     "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)",
-    "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)"
+    "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)",
+    "windows_chat_import_help_addendum": "1 Windows chat-import help key translated by the lane author (single writer)"
   }
 }

@@ -2508,6 +2508,7 @@
     "emailadd.err.smtp_timeout": "Siunčiamų laiškų serveris laiku neatsakė. Niekas neišsaugota.",
     "settings.row.chat_import.label": "Perkelkite pokalbius iš kitų DI programėlių",
     "settings.row.chat_import.help": "Persikraustymas: perkelkite pokalbius iš kitų DI programėlių su jų pavadinimais ir žinutėmis. Pasirinkite programėlę šiame kompiuteryje arba duomenų eksporto failą, peržiūrėkite rastus pokalbius ir pažymėkite tuos, kuriuos norite perkelti. Viskas lieka šiame kompiuteryje, o kitos programėlės failai niekada nekeičiami. VOOL saugo šiuos pokalbius kaip istoriją: iš jų nesimoko ir nevykdo nieko, kas juose parašyta.",
+    "settings.row.chat_import.help.windows": "Persikraustymas: perkelkite pokalbius iš kitų DI programėlių su jų pavadinimais ir žinutėmis. Pasirinkite kitos programėlės duomenų eksporto failą, peržiūrėkite rastus pokalbius ir pažymėkite tuos, kuriuos norite perkelti. Viskas lieka šiame kompiuteryje, o kitos programėlės failai niekada nekeičiami. VOOL saugo šiuos pokalbius kaip istoriją: iš jų nesimoko ir nevykdo nieko, kas juose parašyta.",
     "settings.pane.chat_import_missing": "Pokalbių perkėlimo skydelis neužsikrovė.",
     "chatimport.choose": "Kur jūsų pokalbiai?",
     "chatimport.btn.look": "Rodyti mano pokalbius",
@@ -2669,7 +2670,7 @@
     "addons.registry_release_notes": "Versijos pastabos",
     "addons.registry_metrics": "{stars} svetainės žvaigždučių · {downloads} atsisiuntimo užklausų"
   },
-  "source_catalog_sha256": "fbfcf1d7db601973e3603ca3dfbcd0d5e48070a6c72bf34276a8db24ae5af973",
+  "source_catalog_sha256": "7e8dced86952ab0c5f9d8ddd8af5b611004e8d8668df084e8f6630d0f0caa58a",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -2682,6 +2683,7 @@
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
     "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
     "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)",
-    "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)"
+    "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)",
+    "windows_chat_import_help_addendum": "1 Windows chat-import help key translated by the lane author (single writer)"
   }
 }
