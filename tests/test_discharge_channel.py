@@ -51,6 +51,16 @@ from core.conductor import obligation_ledger as ol
 from core.finalization import finalize_answer
 from core.semantic.semantic_result_seam import admit_semantic_result, reset_admission
 
+
+@pytest.fixture(autouse=True)
+def _web_lookups_on(monkeypatch):
+    """These rows exercise the live lookups themselves, so Settings > Web lookups is on for them. Since 0.7.2 the
+    lookups refuse while it is off (tests/test_web_lookups_off_makes_no_live_fetch.py holds those rows)."""
+    from core import policy_engine
+
+    monkeypatch.setattr(policy_engine, "allow_web_fallback", lambda: True)
+
+
 CANONICAL = "and what is the weather now in nY? and what is the weather in Rome?"
 #: The served bytes, written independently of the question: the nY line never repeats the
 #: asking word "weather" — that collision-absence is exactly what the old text ladder

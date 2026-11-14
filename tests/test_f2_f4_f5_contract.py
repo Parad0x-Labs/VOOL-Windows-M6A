@@ -67,6 +67,16 @@ from tests.test_canonical_obligation_floor import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _web_lookups_on(monkeypatch):
+    """These rows exercise the live lookups themselves, so Settings > Web lookups is on for them. Since 0.7.2 the
+    lookups refuse while it is off (tests/test_web_lookups_off_makes_no_live_fetch.py holds those rows)."""
+    from core import policy_engine
+
+    monkeypatch.setattr(policy_engine, "allow_web_fallback", lambda: True)
+
+
+
 def _drive(prompt: str, *clauses: dict, generation=None, propose_semantics=None):
     plan = plan_conductor_turn(
         prompt,

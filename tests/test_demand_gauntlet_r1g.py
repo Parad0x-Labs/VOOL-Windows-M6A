@@ -51,6 +51,16 @@ from core.agent_runtime.demand_ownership import (
 from core.lane_registry import LANE_CATALOG
 from tests.test_turn_attempt_chain import _SOURCE_CONTEXT, _Harness, _incident_mocks
 
+
+@pytest.fixture(autouse=True)
+def _web_lookups_on(monkeypatch):
+    """These rows exercise the live lookups themselves, so Settings > Web lookups is on for them. Since 0.7.2 the
+    lookups refuse while it is off (tests/test_web_lookups_off_makes_no_live_fetch.py holds those rows)."""
+    from core import policy_engine
+
+    monkeypatch.setattr(policy_engine, "allow_web_fallback", lambda: True)
+
+
 # ======================================================================
 # 1. THE CORPUS — deterministic cases with expected demand atoms.
 #

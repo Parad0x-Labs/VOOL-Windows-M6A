@@ -34,6 +34,16 @@ from core.live_quote_contract import LiveQuoteResult
 from core.weather_result_contract import WeatherResult
 from tests.conductor_product import compose_product
 
+
+@pytest.fixture(autouse=True)
+def _web_lookups_on(monkeypatch):
+    """These rows exercise the live lookups themselves, so Settings > Web lookups is on for them. Since 0.7.2 the
+    lookups refuse while it is off (tests/test_web_lookups_off_makes_no_live_fetch.py holds those rows)."""
+    from core import policy_engine
+
+    monkeypatch.setattr(policy_engine, "allow_web_fallback", lambda: True)
+
+
 ARITHMETIC_AND_WEATHER = (
     "What is 137 x 29? Explain the calculation briefly. "
     "Also get the current weather for Kaunas and Tallinn and tell me which city is warmer."

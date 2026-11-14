@@ -45,6 +45,16 @@ from apps.vool_agent import VoolAgent
 from core.turn_contract import TURN_REQUEST_KEY
 from tests.test_turn_attempt_chain import _Harness, _incident_mocks
 
+
+@pytest.fixture
+def _web_lookups_on(monkeypatch):
+    """The rows marked with this exercise the live lookups themselves, so Settings > Web lookups is on for them. Since 0.7.2 the
+    lookups refuse while it is off (tests/test_web_lookups_off_makes_no_live_fetch.py holds those rows)."""
+    from core import policy_engine
+
+    monkeypatch.setattr(policy_engine, "allow_web_fallback", lambda: True)
+
+
 _MIXED_EXPLAIN_WEATHER = "Explain how a hash table works and tell me the weather in Kaunas"
 _MIXED_CONVERT_EXPLAIN = "convert 100 usd to eur and explain what a hedge fund is"
 _MIXED_TWO_LIVE_GENERAL = "weather in Kaunas and Rome plus explain inflation briefly"
@@ -158,6 +168,7 @@ def _children(harness: _Harness, context: dict, *, session_id: str | None = None
 # ------------------------------------------------- 1. the user-visible defect (RED)
 
 
+@pytest.mark.usefixtures("_web_lookups_on")
 def test_mixed_explanation_and_weather_loses_neither_demand(harness):
     """THE R1e incident. A message with one live-data entity and one general demand must
     answer BOTH: the live lane serves its unit, the normal path serves the other, and the
@@ -252,6 +263,7 @@ def test_near_miss_city_name_without_live_request_never_fetches(harness):
     assert "GENERAL-STAND-IN" in str(result.get("response") or "")
 
 
+@pytest.mark.usefixtures("_web_lookups_on")
 def test_pure_live_request_keeps_the_direct_fast_path(harness):
     """Invariant 4: one live demand, one direct answer — no unit plan, no children, the
     same fast-path reply the runtime served before this contract existed."""
@@ -385,6 +397,7 @@ def test_no_demand_unit_executes_twice(harness):
     )
 
 
+@pytest.mark.usefixtures("_web_lookups_on")
 def test_followup_recall_sees_the_complete_synthesized_turn(harness):
     """Invariant 10: the turn's persisted answer — what the next turn's history
     augmentation reads — is the COMPLETE synthesis, carrying both the live half and the
@@ -554,6 +567,7 @@ def _parent_rerun_recorder(parent_text: str):
     return reruns, stack
 
 
+@pytest.mark.usefixtures("_web_lookups_on")
 def test_a_merge_failure_after_children_ran_never_reruns_the_turn(harness):
     """Requirements 3 and 6. The first child answers through the model lane, the
     second serves live weather, then `merge_outcomes` RAISES. The seam must keep
@@ -629,6 +643,7 @@ def test_all_children_failed_answers_with_a_typed_failure_not_a_fallback(harness
     )
 
 
+@pytest.mark.usefixtures("_web_lookups_on")
 def test_childrens_distinct_evidence_all_reaches_the_parent(harness):
     """Requirement 7. Two live children publish DISTINCT observation identities
     (a weather lookup and a market quote). The parent turn's evidence channel must

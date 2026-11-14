@@ -36,6 +36,18 @@ from __future__ import annotations
 import subprocess
 import sys
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _web_lookups_on(monkeypatch):
+    """These rows exercise the live lookups themselves, so Settings > Web lookups is on for them. Since 0.7.2 the
+    lookups refuse while it is off (tests/test_web_lookups_off_makes_no_live_fetch.py holds those rows)."""
+    from core import policy_engine
+
+    monkeypatch.setattr(policy_engine, "allow_web_fallback", lambda: True)
+
+
 #: The leaking file, and one victim. The victim's tests pass on their own; run after
 #: the leaker in the SAME process they die in `open_execution` on a stale request id.
 _LEAKER = "tests/foundation/test_r5_pipeline_order.py"

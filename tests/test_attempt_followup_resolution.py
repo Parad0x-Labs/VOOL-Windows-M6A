@@ -15,10 +15,22 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 from apps.vool_agent import VoolAgent
 from core.runtime_continuity import configure_runtime_continuity_db_path, reset_runtime_continuity_state
 from storage.migrations import run_migrations
 from tests._turn_session_identity import echoed_session_identity
+
+
+@pytest.fixture(autouse=True)
+def _web_lookups_on(monkeypatch):
+    """These rows exercise the live lookups themselves, so Settings > Web lookups is on for them. Since 0.7.2 the
+    lookups refuse while it is off (tests/test_web_lookups_off_makes_no_live_fetch.py holds those rows)."""
+    from core import policy_engine
+
+    monkeypatch.setattr(policy_engine, "allow_web_fallback", lambda: True)
+
 
 _SOURCE_CONTEXT = {"surface": "openclaw", "platform": "openclaw"}
 _INCIDENT_TEXT = "market prices for gold and bitcoin plus weather in Atlantisxyzabc123 and Kaunas"

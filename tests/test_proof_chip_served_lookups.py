@@ -23,6 +23,16 @@ import pytest
 
 import tests._reader_served_rig as rig
 
+
+@pytest.fixture(autouse=True)
+def _web_lookups_on(monkeypatch):
+    """These rows exercise the live lookups themselves, so Settings > Web lookups is on for them. Since 0.7.2 the
+    lookups refuse while it is off (tests/test_web_lookups_off_makes_no_live_fetch.py holds those rows)."""
+    from core import policy_engine
+
+    monkeypatch.setattr(policy_engine, "allow_web_fallback", lambda: True)
+
+
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "tests" / "fixtures" / "live_quotes" / "quotes_manifest.json"
 SHIM = ROOT / "tests" / "fixture_transport"
@@ -34,6 +44,8 @@ def _daemon(tmp_path: Path, provider, manifest: Path):
         "PYTHONPATH": os.pathsep.join([str(SHIM), str(rig.REPO_ROOT), str(rig.READER_DEPS)]),
         "VOOL_FIXTURE_TRANSPORT_MANIFEST": str(manifest),
         "VOOL_FIXTURE_TRANSPORT_LOG": str(log),
+        # The daemon is its own process: Settings > Web lookups is on there through its documented env switch.
+        "VOOL_ENABLE_WEB": "1",
     }
     daemon = rig.ServedDaemon(tmp_path / "home", provider=provider, env_extra=env_extra)
     daemon.register_provider()

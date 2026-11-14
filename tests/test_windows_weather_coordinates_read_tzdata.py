@@ -18,6 +18,16 @@ import pytest
 from tests.test_a_failed_weather_lookup_never_fabricates_a_city import _always_returns, _wttr_payload
 from tools.web import web_research
 
+
+@pytest.fixture(autouse=True)
+def _web_lookups_on(monkeypatch):
+    """These rows exercise the live lookups themselves, so Settings > Web lookups is on for them. Since 0.7.2 the
+    lookups refuse while it is off (tests/test_web_lookups_off_makes_no_live_fetch.py holds those rows)."""
+    from core import policy_engine
+
+    monkeypatch.setattr(policy_engine, "allow_web_fallback", lambda: True)
+
+
 _ZONE_TAB = "# tzdb zone.tab (two real rows)\nEE\t+5925+02445\tEurope/Tallinn\nFR\t+4852+00220\tEurope/Paris\n"
 
 
