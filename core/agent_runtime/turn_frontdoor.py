@@ -2279,6 +2279,19 @@ def handle_turn_frontdoor(
     if apple_notes_on_windows is not None:
         return {"result": apple_notes_on_windows}
 
+    # The same on Windows for Apple Calendar, the Skill Codex and VOOL Drop, none of which runs there in
+    # 0.7.2: the model had no tool for them and answered in prose (measured on Steve, 14 Nov).
+    from core.agent_runtime.fast_paths_windows_unavailable import maybe_refuse_windows_unavailable
+
+    unavailable_on_windows = maybe_refuse_windows_unavailable(
+        agent,
+        effective_input,
+        session_id=session_id,
+        source_context=source_context,
+    )
+    if unavailable_on_windows is not None:
+        return {"result": unavailable_on_windows}
+
     # The mirror of the lane above. `web.fetch` works when called directly and nothing routed a URL
     # to it, so "fetch https://example.com and tell me what the page says" was answered by the
     # machine file-read lane ("I can only read files inside: ~/Desktop, ~/Downloads, ~/Documents")
