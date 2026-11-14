@@ -46,6 +46,8 @@ from __future__ import annotations
 
 from unittest import mock
 
+import pytest
+
 from core.agent_runtime.live_data_plan import (
     SubtaskLifecycle,
     build_live_data_plan,
@@ -54,6 +56,16 @@ from core.agent_runtime.live_data_runner import _run_weather_subtask
 from tools.web.web_research import (
     _GEOGRAPHIC_QUALIFIER_TERMS,
 )
+
+
+@pytest.fixture(autouse=True)
+def _web_lookups_on(monkeypatch):
+    """These rows exercise the live lookups themselves, so Settings > Web lookups is on for them. Since 0.7.2 the
+    lookups refuse while it is off (tests/test_web_lookups_off_makes_no_live_fetch.py holds those rows)."""
+    from core import policy_engine
+
+    monkeypatch.setattr(policy_engine, "allow_web_fallback", lambda: True)
+
 
 
 def _weather(prompt: str) -> list[str]:

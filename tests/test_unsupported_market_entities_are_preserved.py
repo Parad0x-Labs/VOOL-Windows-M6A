@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from unittest import mock
 
+import pytest
+
 from core.agent_runtime.live_data_plan import (
     SubtaskLifecycle,
     build_live_data_plan,
@@ -19,6 +21,16 @@ from core.agent_runtime.live_data_render import render_live_data_answer
 from core.agent_runtime.live_data_runner import run_live_data_plan
 from core.live_quote_contract import LiveQuoteResult
 from tools.web.web_research import _extract_market_entity_candidates
+
+
+@pytest.fixture(autouse=True)
+def _web_lookups_on(monkeypatch):
+    """These rows exercise the live lookups themselves, so Settings > Web lookups is on for them. Since 0.7.2 the
+    lookups refuse while it is off (tests/test_web_lookups_off_makes_no_live_fetch.py holds those rows)."""
+    from core import policy_engine
+
+    monkeypatch.setattr(policy_engine, "allow_web_fallback", lambda: True)
+
 
 # --- extraction-level: recognized crypto / commodity / precious metal / unsupported / mixed ---
 

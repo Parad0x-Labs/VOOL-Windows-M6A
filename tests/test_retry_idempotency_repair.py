@@ -17,6 +17,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 from core.runtime_continuity import (
     compute_retry_idempotency_key,
     configure_runtime_continuity_db_path,
@@ -26,6 +28,16 @@ from core.runtime_continuity import (
     upsert_runtime_attempt_subtask,
 )
 from storage.migrations import run_migrations
+
+
+@pytest.fixture(autouse=True)
+def _web_lookups_on(monkeypatch):
+    """These rows exercise the live lookups themselves, so Settings > Web lookups is on for them. Since 0.7.2 the
+    lookups refuse while it is off (tests/test_web_lookups_off_makes_no_live_fetch.py holds those rows)."""
+    from core import policy_engine
+
+    monkeypatch.setattr(policy_engine, "allow_web_fallback", lambda: True)
+
 
 
 class ComputeRetryIdempotencyKeyTests(unittest.TestCase):

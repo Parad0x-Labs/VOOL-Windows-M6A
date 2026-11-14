@@ -18,6 +18,16 @@ from core.live_quote_contract import LiveQuoteResult
 from core.mode_permission_policy import reset_mode_permission_state
 from core.weather_result_contract import WeatherResult
 
+
+@pytest.fixture(autouse=True)
+def _web_lookups_on(monkeypatch):
+    """These rows exercise the live lookups themselves, so Settings > Web lookups is on for them. Since 0.7.2 the
+    lookups refuse while it is off (tests/test_web_lookups_off_makes_no_live_fetch.py holds those rows)."""
+    from core import policy_engine
+
+    monkeypatch.setattr(policy_engine, "allow_web_fallback", lambda: True)
+
+
 BENCHMARK = (
     "Give me the current price and 24-hour change for gold, silver, Bitcoin, and BNB, "
     "and the weather in Kaunas, Tallinn, and Warsaw."

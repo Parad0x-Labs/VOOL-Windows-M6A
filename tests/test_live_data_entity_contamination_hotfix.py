@@ -58,6 +58,8 @@ from __future__ import annotations
 import re
 from unittest import mock
 
+import pytest
+
 from apps.vool_agent import VoolAgent
 from core.agent_runtime.live_data_plan import (
     LiveDataSubtask,
@@ -72,6 +74,16 @@ from core.agent_runtime.live_data_render import (
     warmest_city,
 )
 from tools.web.web_research import _extract_weather_locations
+
+
+@pytest.fixture(autouse=True)
+def _web_lookups_on(monkeypatch):
+    """These rows exercise the live lookups themselves, so Settings > Web lookups is on for them. Since 0.7.2 the
+    lookups refuse while it is off (tests/test_web_lookups_off_makes_no_live_fetch.py holds those rows)."""
+    from core import policy_engine
+
+    monkeypatch.setattr(policy_engine, "allow_web_fallback", lambda: True)
+
 
 # The exact two production reproductions from the incident report.
 PROD_PROMPT_INLINE_CLAUSE = """Run independent, compatible live-data requests in parallel. I need the current price of gold, silver, Bitcoin, and BNB; and the current weather in Kaunas, Tallinn, and Warsaw.
