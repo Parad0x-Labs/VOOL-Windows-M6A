@@ -80,5 +80,7 @@ def test_turning_the_composite_off_restores_product_defaults_and_keeps_the_walle
     })
     assert status == 200
     assert policy_engine.local_only_mode() is False
-    assert policy_engine.allow_web_fallback() is True
-    assert policy_engine.get("network.outbound_enabled") is True
+    # The product defaults for both are OFF (config/default_policy.yaml): turning Local Only off must not open
+    # Web lookups or "Go online on its own" for a user who never chose them (Steve, 14 Nov 2026).
+    assert policy_engine.allow_web_fallback() is False
+    assert policy_engine.get("network.outbound_enabled") is False
