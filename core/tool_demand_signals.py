@@ -687,6 +687,10 @@ _RULES: tuple[tuple[str, str, re.Pattern[str]], ...] = (
             r"\bmy\s+(?:(?:last|latest|recent|newest|past|previous|old|top)\s+)?(?:\d{1,3}\s+|few\s+|couple\s+(?:of\s+)?)?"
             r"(?:tweets|(?:x|twitter)\s+(?:posts|mentions|likes|timeline|feed))\b"
             r"|\bmy\s+(?:(?:home\s+)?timeline|mentions|feed|likes)\s+(?:on|from)\s+(?:x|twitter)\b(?!\.)"
+            # "read my latest posts on X" (Steve, 14 Nov, 0.7.2 claims row 2) went to web search: the posts noun was
+            # only read in the "my X posts" order. The trailing "on X"/"on Twitter" is what anchors it.
+            r"|\bmy\s+(?:(?:last|latest|recent|newest|past|previous|old|top)\s+)?(?:\d{1,3}\s+|few\s+)?"
+            r"(?:posts|tweets)\s+(?:on|from)\s+(?:x|twitter)\b(?!\.)"
             r"|\bwho\s+(?:has\s+|have\s+)?(?:mentioned|tagged|replied\s+to)\s+me\s+on\s+(?:x|twitter)\b(?!\.)"
             r"|\bwhat\s+(?:did|has|have|does|is|was)\s+@[A-Za-z0-9_]{1,15}\s+(?:been\s+)?(?:tweet|post|say|said|share)"
             r"|\bwhat\s+(?:did|has|have|does|is|was)\s+[^.?!]{1,40}?\s+(?:been\s+)?"

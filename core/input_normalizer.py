@@ -678,6 +678,11 @@ _LITERAL_SPAN_RE = re.compile(
       # literal evidence; the writer capability boundary still decides what can be produced.
       # Pure decimals are excluded because an extension needs a letter.
       | (?<![\w.])\.(?:[^\W\d_][\w-]*|\d+[^\W\d_][\w-]*)(?:\.[\w-]+)*\b(?!\.\w)
+      # A CASHTAG ($BONK) is one literal. The tokenizer split it into "$ BONK", and every market rule reads `\$TICKER`:
+      # measured on Steve 14 Nov (0.7.2 claims row 3), "collect the last 7 days of trades for $BONK on Solana" was stored
+      # and routed as "$ BONK", so market.collect never seated and the turn got a price quote instead. Money ("$50") keeps
+      # its old path, since a cashtag must start with a letter.
+      | (?<![\w$])\$[A-Za-z][A-Za-z0-9_]{0,14}\b                # cashtag  $BONK, $wif
       | \b\d{4}-\d{2}-\d{2}(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?\b   # ISO date [+ time]
       | \b\d{1,2}:\d{2}(?::\d{2})?\b                             # clock time    14:30
       | \b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b                         # grouped number  3,000 / 1,234.56
