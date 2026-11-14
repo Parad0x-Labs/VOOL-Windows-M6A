@@ -149,6 +149,12 @@ def test_an_approved_command_runs_with_the_data_folder_hidden(
     for command in (_DELETE.format(path=relative), _DELETE.format(path=str(prefs))):
         _dispatch("sandbox.run_command", {"command": command}, workspace)
     assert _intact(home, before)
+    if job_runner.os.name != "posix":
+        # A Windows host: the Linux kernel profile is built only on a POSIX host
+        # (JobRunner._linux_bwrap_prefix), so this lane cannot confine the command here. The honest
+        # answer is that it never runs at all, confined or not, and the prefs file stays as it was.
+        assert launched == [], f"a process was started without the confinement profile: {launched}"
+        return
     profiles = [argv for argv in launched if argv and argv[0] == "/usr/bin/bwrap"]
     assert profiles, f"no confined launch was attempted: {launched}"
     data = str(prefs.parent.resolve())
