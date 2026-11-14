@@ -1115,14 +1115,18 @@ def _set_composite(on: bool) -> None:
         # (wallet_freeze) so a partial composite is observable and truthful
     else:
         # Leaving the composite restores the product defaults for the three policy
-        # keys. The wallet panic freeze is deliberately NOT lifted here: unfreezing
+        # keys, and those defaults are OFF for Web lookups and "Go online on its own"
+        # (config/default_policy.yaml, policy_engine.get(..., False)). This used to set both
+        # to True, so a user who tried Local Only and turned it off had both doors opened
+        # without ever choosing them (Steve, 14 Nov 2026). Each stays a switch of its own.
+        # The wallet panic freeze is deliberately NOT lifted here: unfreezing
         # is an OS-consent-gated action (wallet law), so it stays frozen and the
         # details view says so honestly.
         policy_engine.set_operator_policy_values(
             {
                 "system.local_only_mode": False,
-                "system.allow_web_fallback": True,
-                "network.outbound_enabled": True,
+                "system.allow_web_fallback": False,
+                "network.outbound_enabled": False,
             }
         )
 
