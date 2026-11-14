@@ -299,6 +299,11 @@ def water_temperature_lookup(
     the marine API has no current reading for the point the last non-null hourly
     value of today is used and labelled with its own timestamp.
     """
+    from core.policy_engine import web_lookups_allowed
+    from core.remote_fetch_policy import RemoteFetchRefusedError
+
+    if not web_lookups_allowed():  # Settings > Web lookups is off: no socket for a lookup (Steve, 14 Nov)
+        raise RemoteFetchRefusedError("Web lookups is off, so nothing was fetched")
     import json
     import time as _time
 

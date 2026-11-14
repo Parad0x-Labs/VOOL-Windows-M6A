@@ -457,6 +457,14 @@ def local_only_mode() -> bool:
 def allow_web_fallback() -> bool:
     return get("system.allow_web_fallback", False) is True
 
+def web_lookups_allowed() -> bool:
+    """Settings > Web lookups, for a fetch door about to go online for a lookup: a policy that cannot be
+    read counts as off, so a lookup never goes out on an unreadable switch."""
+    try:
+        return bool(allow_web_fallback())
+    except Exception:
+        return False
+
 def automatic_outbound_enabled() -> bool:
     """Whether background work may contact remote peers or services."""
     return get("network.outbound_enabled", False) is True and not local_only_mode()
