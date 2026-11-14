@@ -2508,6 +2508,7 @@
     "emailadd.err.smtp_timeout": "The outgoing mail server did not answer in time. Nothing was saved.",
     "settings.row.chat_import.label": "Bring your chats from other AI apps",
     "settings.row.chat_import.help": "Moving in: bring the chats you had in other AI apps, with their names and messages. Choose an app on this computer or a data export file, look over the chats found, and tick the ones to bring in. Everything stays on this computer, and the other app's files are never changed. VOOL keeps these chats as history: it does not learn from them or follow anything written in them.",
+    "settings.row.chat_import.help.windows": "Moving in: bring the chats you had in other AI apps, with their names and messages. Choose a data export file from the other app, look over the chats found, and tick the ones to bring in. Everything stays on this computer, and the other app's files are never changed. VOOL keeps these chats as history: it does not learn from them or follow anything written in them.",
     "settings.pane.chat_import_missing": "The panel for bringing in chats did not load.",
     "chatimport.choose": "Where are your chats?",
     "chatimport.btn.look": "Show my chats",

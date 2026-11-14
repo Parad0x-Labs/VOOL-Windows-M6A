@@ -2508,6 +2508,7 @@
     "emailadd.err.smtp_timeout": "Giden posta sunucusu zamanında yanıt vermedi. Hiçbir şey kaydedilmedi.",
     "settings.row.chat_import.label": "Diğer yapay zekâ uygulamalarındaki sohbetlerinizi getirin",
     "settings.row.chat_import.help": "Taşınma: diğer yapay zekâ uygulamalarındaki sohbetlerinizi adları ve iletileriyle birlikte getirin. Bu bilgisayardaki bir uygulamayı ya da bir veri dışa aktarma dosyasını seçin, bulunan sohbetlere göz atın ve getirmek istediklerinizi işaretleyin. Her şey bu bilgisayarda kalır ve diğer uygulamanın dosyaları asla değiştirilmez. VOOL bu sohbetleri geçmiş olarak saklar: onlardan öğrenmez ve içlerinde yazan hiçbir şeye uymaz.",
+    "settings.row.chat_import.help.windows": "Taşınma: diğer yapay zekâ uygulamalarındaki sohbetlerinizi adları ve iletileriyle birlikte getirin. Diğer uygulamanın veri dışa aktarma dosyasını seçin, bulunan sohbetlere göz atın ve getirmek istediklerinizi işaretleyin. Her şey bu bilgisayarda kalır ve diğer uygulamanın dosyaları asla değiştirilmez. VOOL bu sohbetleri geçmiş olarak saklar: onlardan öğrenmez ve içlerinde yazan hiçbir şeye uymaz.",
     "settings.pane.chat_import_missing": "Sohbet getirme paneli yüklenmedi.",
     "chatimport.choose": "Sohbetleriniz nerede?",
     "chatimport.btn.look": "Sohbetlerimi göster",
@@ -2669,7 +2670,7 @@
     "addons.registry_release_notes": "Sürüm notları",
     "addons.registry_metrics": "{stars} site yıldızı · {downloads} indirme isteği"
   },
-  "source_catalog_sha256": "fbfcf1d7db601973e3603ca3dfbcd0d5e48070a6c72bf34276a8db24ae5af973",
+  "source_catalog_sha256": "7e8dced86952ab0c5f9d8ddd8af5b611004e8d8668df084e8f6630d0f0caa58a",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -2682,6 +2683,7 @@
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
     "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
     "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)",
-    "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)"
+    "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)",
+    "windows_chat_import_help_addendum": "1 Windows chat-import help key translated by the lane author (single writer)"
   }
 }

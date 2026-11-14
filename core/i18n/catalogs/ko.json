@@ -2508,6 +2508,7 @@
     "emailadd.err.smtp_timeout": "보내는 메일 서버가 제시간에 응답하지 않았습니다. 아무것도 저장되지 않았습니다.",
     "settings.row.chat_import.label": "다른 AI 앱의 채팅 가져오기",
     "settings.row.chat_import.help": "이사하기: 다른 AI 앱에서 나눈 채팅을 이름과 메시지 그대로 가져옵니다. 이 컴퓨터의 앱이나 데이터 내보내기 파일을 선택하고, 찾은 채팅을 살펴본 뒤 가져올 채팅에 체크하세요. 모든 것은 이 컴퓨터에 남으며, 다른 앱의 파일은 절대 바뀌지 않습니다. VOOL은 이 채팅을 기록으로 보관합니다. 채팅에서 학습하지 않으며, 그 안에 적힌 내용을 따르지도 않습니다.",
+    "settings.row.chat_import.help.windows": "이사하기: 다른 AI 앱에서 나눈 채팅을 이름과 메시지 그대로 가져옵니다. 다른 앱의 데이터 내보내기 파일을 선택하고, 찾은 채팅을 살펴본 뒤 가져올 채팅에 체크하세요. 모든 것은 이 컴퓨터에 남으며, 다른 앱의 파일은 절대 바뀌지 않습니다. VOOL은 이 채팅을 기록으로 보관합니다. 채팅에서 학습하지 않으며, 그 안에 적힌 내용을 따르지도 않습니다.",
     "settings.pane.chat_import_missing": "채팅 가져오기 패널이 로드되지 않았습니다.",
     "chatimport.choose": "채팅이 어디에 있나요?",
     "chatimport.btn.look": "내 채팅 보기",
@@ -2669,7 +2670,7 @@
     "addons.registry_release_notes": "릴리스 노트",
     "addons.registry_metrics": "웹사이트 별 {stars}개 · 다운로드 요청 {downloads}회"
   },
-  "source_catalog_sha256": "fbfcf1d7db601973e3603ca3dfbcd0d5e48070a6c72bf34276a8db24ae5af973",
+  "source_catalog_sha256": "7e8dced86952ab0c5f9d8ddd8af5b611004e8d8668df084e8f6630d0f0caa58a",
   "generator": {
     "engine": "GLM-5.3 (ZCode idle translation agent)",
     "status": "MACHINE_DRAFT",
@@ -2682,6 +2683,7 @@
     "sidebar_honesty_addendum": "3 sidebar and activity keys translated by the lane author (single writer)",
     "standing_rule_remove_addendum": "4 standing-rule Remove keys translated by the lane author (single writer)",
     "local_only_web_switch_addendum": "3 Local Only web-search switch keys translated by the lane author (single writer)",
-    "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)"
+    "windows_setup_folder_addendum": "7 Windows setup folder-step keys translated by the lane author (single writer)",
+    "windows_chat_import_help_addendum": "1 Windows chat-import help key translated by the lane author (single writer)"
   }
 }
