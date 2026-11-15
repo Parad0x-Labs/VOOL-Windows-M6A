@@ -283,7 +283,14 @@ class OperatorActionTests(unittest.TestCase):
         self.assertEqual(result["mode"], "tool_executed")
         response = result["response"]
         self.assertIn("Tool families on this runtime:", response)
-        self.assertIn("- operator: 20 available", response)  # 7 legacy + calendar/notes vertical + its read kinds declared 2026-09-15
+        from core import posix_tools
+
+        if posix_tools.active():
+            # Windows withholds the two Apple Notes tools (a Mac app): listed as unavailable, with why.
+            self.assertIn("- operator: 18 available, 2 unavailable", response)
+            self.assertIn("operator.apple_note_list: unavailable (Apple Notes is a Mac app and isn't available on Windows.)", response)
+        else:
+            self.assertIn("- operator: 20 available", response)  # 7 legacy + calendar/notes vertical + its read kinds declared 2026-09-15
         self.assertIn("- workspace:", response)
         self.assertIn("capability.expand_family", response)
         # Disabled lanes stay visible as unavailable metadata with their reason. The per-tool

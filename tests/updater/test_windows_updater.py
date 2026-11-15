@@ -553,6 +553,7 @@ def test_windows_worker_never_takes_trust_keys_or_target_from_the_plan(tmp_path,
 
     shipped = TrustedPublishers(pinned_keys={"vool-release-2026": "11" * 32})
     monkeypatch.setattr(UpdateSubsystem, "_load_trust", staticmethod(lambda: shipped))
+    monkeypatch.setattr(worker, "_is_windows", lambda: True)
     app = tmp_path / "Programs" / "VOOL"
     plan = {"platform": "windows-x64", "feed": {"app_path": str(app)}, "keys": {"attacker": "22" * 32}}
     trust = worker.plan_trust(plan, env={"VOOL_UPDATE_WORKER_APP": str(app)})
@@ -563,7 +564,22 @@ def test_windows_worker_never_takes_trust_keys_or_target_from_the_plan(tmp_path,
     with pytest.raises(ValueError, match="program folder"):
         worker.plan_trust(plan, env={})
     # Mac and Linux keep their plan-carried keys (their worker is not outside any job).
+    monkeypatch.setattr(worker, "_is_windows", lambda: False)
     assert "attacker" in worker.plan_trust({**plan, "platform": "linux-x64"}).key_ids
+
+
+@pytest.mark.parametrize("on_windows, platform", [(True, "linux-x64"), (True, "macos-arm64"), (True, ""),
+                                                  (False, "windows-x64")])
+def test_a_plan_for_another_platform_than_the_computer_is_refused(tmp_path, monkeypatch, on_windows, platform):
+    """The trust branch follows the computer the worker runs on, never the plan's own platform: a
+    Windows worker handed a "linux-x64" plan would otherwise verify with the plan's keys."""
+    from core.updater import worker
+
+    monkeypatch.setattr(worker, "_is_windows", lambda: on_windows)
+    app = tmp_path / "Programs" / "VOOL"
+    plan = {"platform": platform, "feed": {"app_path": str(app)}, "keys": {"attacker": "22" * 32}}
+    with pytest.raises(ValueError, match="another platform"):
+        worker.plan_trust(plan, env={"VOOL_UPDATE_WORKER_APP": str(app)})
 
 
 def test_api_side_waits_for_the_supervisor_lease_and_fails_closed(tmp_path):

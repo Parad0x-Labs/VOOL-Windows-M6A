@@ -16,6 +16,14 @@ def asgi_request(
 ) -> tuple[int, dict[str, str], bytes]:
     sent_body = False
     messages: list[dict[str, Any]] = []
+    # A server hands the app the query in scope["query_string"], never inside the path; keep the
+    # scope as a server builds it, so routing sees only the path (Starlette 1.9 escapes a "?" left
+    # in scope["path"]).
+    if "?" in path:
+        if query_string:
+            raise ValueError("pass the query either in the path or as query_string, not both")
+        path, _, inline_query = path.partition("?")
+        query_string = inline_query.encode("utf-8")
 
     # An ASGI server never puts the query in "path": it splits the request target at "?" and
     # hands the rest over as "query_string". Callers here pass "/route?x=1" for convenience, so

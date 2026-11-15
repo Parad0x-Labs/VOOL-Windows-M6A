@@ -27,6 +27,25 @@ from typing import Any
 
 from core.agent_runtime.live_data_plan import LiveDataPlan, LiveDataSubtask, SubtaskLifecycle, SubtaskOutcome
 
+#: The refusal a live-data subtask records when Web lookups is off: the same switch the search, page and
+#: fresh-data lanes answer to (Settings > Web lookups: "nothing goes online for lookups until you switch this on").
+WEB_LOOKUPS_OFF = "Web lookups is off, so nothing was fetched"
+
+
+def _web_lookups_off(subtask: LiveDataSubtask) -> SubtaskOutcome | None:
+    """A FAILED outcome, before any network attempt, when Web lookups is off; None when it is on.
+
+    Every caller reaches the network through the three runners below (the typed live-data plan and the
+    conductor's weather, market and water nodes), so the switch is consulted here, at the fetch boundary.
+    Measured on Steve, 14 Nov 2026 (0.7.2 at 0360e41e): with Web lookups off, a price question went to
+    CoinGecko through this runner. A policy that cannot be read counts as off.
+    """
+    from core import policy_engine
+
+    if policy_engine.web_lookups_allowed():
+        return None
+    return SubtaskOutcome(subtask=subtask, state=SubtaskLifecycle.FAILED, failure_reason=WEB_LOOKUPS_OFF)
+
 
 def _now() -> tuple[float, str]:
     """(monotonic seconds, wall-clock ISO string) captured together, for the same instant."""
@@ -34,6 +53,9 @@ def _now() -> tuple[float, str]:
 
 
 def _run_market_subtask(subtask: LiveDataSubtask, *, timeout_s: float) -> SubtaskOutcome:
+    refused = _web_lookups_off(subtask)
+    if refused is not None:
+        return refused
     from tools.web.web_research import _MARKET_QUOTE_TARGETS, _crypto_price_fallback_multi, _market_quote_fallback_multi
 
     asset_key = str(subtask.arguments.get("asset_key") or "")
@@ -78,6 +100,9 @@ def _run_market_subtask(subtask: LiveDataSubtask, *, timeout_s: float) -> Subtas
 
 
 def _run_weather_subtask(subtask: LiveDataSubtask, *, timeout_s: float) -> SubtaskOutcome:
+    refused = _web_lookups_off(subtask)
+    if refused is not None:
+        return refused
     from tools.web.web_research import _is_plausible_weather_location, structured_weather_lookup
 
     location = str(subtask.arguments.get("location") or "")
@@ -138,6 +163,9 @@ def _run_water_subtask(subtask: LiveDataSubtask, *, timeout_s: float) -> Subtask
     """One sea/water-temperature observation. None from the fetcher is an honest
     failure (unresolved place, provider down, no reading for that point) — never
     a fallback number and never prose."""
+    refused = _web_lookups_off(subtask)
+    if refused is not None:
+        return refused
     from core.fresh_data.water_temperature import water_temperature_lookup
 
     place = str(subtask.arguments.get("place") or "")

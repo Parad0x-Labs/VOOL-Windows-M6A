@@ -23,6 +23,7 @@ from unittest import mock
 
 import pytest
 
+from core import posix_tools
 from core.runtime_execution_tools import execute_runtime_tool
 from core.runtime_tool_contracts import runtime_tool_contract_map
 
@@ -175,6 +176,12 @@ def test_a_missing_framework_says_so_rather_than_returning_nothing(tmp_path) -> 
         result = pdf_tools.extract_text(str(pdf))
 
     assert result["status"] == "missing_dependency"
+    if posix_tools.active():
+        # Windows withholds PDF reading (no PDFKit or Vision): the reason is the Windows sentence,
+        # given before any interpreter is looked for, and still never an empty "ok".
+        assert result["reason"] == pdf_tools.WINDOWS_UNAVAILABLE
+        assert result["text"] == ""
+        return
     assert "system Python" in result["reason"]
 
 
@@ -392,7 +399,7 @@ def test_no_package_was_added_to_this_project() -> None:
 
     History: this pin used to forbid EVERY pdf package in pyproject, because core/pdf_tools
     parses through the macOS system Python (PDFKit/Quartz) and must stay dependency-free.
-    The artifact-reader lane later added `pypdf==6.20.1` as a measured, DELIBERATE exception:
+    The artifact-reader lane later added `pypdf==6.21.0` as a measured, DELIBERATE exception:
     it runs only inside the confined decoder subprocess (core/artifact_readers/pdf.py — a
     hostile PDF meets pypdf inside the same sandbox every other decoder gets), with its
     projections kept in sync in requirements*.txt and installer/bundle. Everything else
@@ -407,7 +414,7 @@ def test_no_package_was_added_to_this_project() -> None:
     for package in ("PyPDF2", "pdfminer", "pdfplumber", "PyMuPDF", "pyobjc"):
         assert package.lower() not in pyproject.lower(), package
     # The one sanctioned pdf dependency is the confined-reader fallback, pinned exactly.
-    assert "pypdf==6.20.1" in pyproject
+    assert "pypdf==6.21.0" in pyproject
 
 
 # --------------------------------------------------------------------------------------

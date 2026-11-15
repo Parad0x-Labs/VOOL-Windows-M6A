@@ -158,6 +158,15 @@ def program_files_folders() -> list[str]:
     return folders
 
 
+def on_local_drive(value: str) -> bool:
+    """Whether `value` is a full path on a drive of this machine, so resolving it opens nothing remote:
+    judged on its spelling first (no share, device or partial form), then the drive's type. A drive
+    Windows cannot type counts as remote."""
+    if not _full_local_path(value):
+        return False
+    return _drive_is_remote(ntpath.splitdrive(value)[0]) is False
+
+
 def known_folder(name: str) -> str | None:
     """The folder the shell reports for `name` (one of `_FOLDER_IDS`) as a full local path, or None
     off Windows or when the shell cannot answer. Redirected folders (OneDrive backup, known-folder

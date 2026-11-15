@@ -378,8 +378,17 @@ def test_eventkit_occurrences_of_one_series_keep_their_own_alerts_and_policy(hom
     tomorrow = _NativeOccurrence(kitchen, start=T0 + timedelta(days=1, hours=1))
     cancelled = _NativeOccurrence(kitchen, start=T0 + timedelta(hours=5), status=3)
     factory = _eventkit_factory(_NativeStore([kitchen], [today, tomorrow, cancelled]))
-    account_id = connect("eventkit", clock, select=["EK-CAL-HOME"], adapter_factory=factory)
     from core.operator import calendar_accounts, calendar_alerts
+
+    if calendar_accounts._host_is_windows():
+        # Windows has no EventKit, so no Apple Calendar account can exist to keep occurrences in:
+        # the add is refused before anything is stored, and no alert is scheduled.
+        refused = calendar_accounts.add_account(provider="eventkit", label="eventkit fixture account")
+        assert (refused["ok"], refused["reason"]) == (False, "provider_not_on_this_host"), refused
+        assert calendar_accounts.list_accounts() == []
+        assert calendar_alerts.upcoming_alerts(now_fn=clock) == []
+        return
+    account_id = connect("eventkit", clock, select=["EK-CAL-HOME"], adapter_factory=factory)
 
     [calendar] = calendar_accounts.list_selections(account_id)
     assert calendar["can_write"] is True, calendar

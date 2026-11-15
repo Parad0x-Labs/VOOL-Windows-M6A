@@ -33,6 +33,15 @@ import pytest
 from apps.vool_agent import VoolAgent
 
 
+@pytest.fixture
+def _web_lookups_on(monkeypatch):
+    """These rows exercise the live lookups themselves, so Settings > Web lookups is on for them. Since 0.7.2 the
+    lookups refuse while it is off (tests/test_web_lookups_off_makes_no_live_fetch.py holds those rows)."""
+    from core import policy_engine
+
+    monkeypatch.setattr(policy_engine, "allow_web_fallback", lambda: True)
+
+
 def _tripwire(*_args, **_kwargs):
     raise AssertionError(
         "ordinary turn frontdoor was reached -- the LIVE_DATA fail-closed invariant was violated"
@@ -103,6 +112,7 @@ def test_an_exception_building_the_plan_never_reaches_the_ordinary_turn(agent: V
 # --- every subtask fails: still a deterministic answer, never a fallthrough ---
 
 
+@pytest.mark.usefixtures("_web_lookups_on")
 def test_every_subtask_failing_still_renders_a_deterministic_answer(agent: VoolAgent) -> None:
     def _all_fail(coin_ids, **_kwargs):
         raise RuntimeError("network down")

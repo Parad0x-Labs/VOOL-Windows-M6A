@@ -62,7 +62,8 @@ def test_the_windows_setup_script_never_says_on_my_mac(monkeypatch) -> None:
     assert "On my Mac" not in script
     assert "this Mac" not in script
     _host(monkeypatch, False)
-    assert "<b>On my Mac</b>" in _host_setup_script()
+    # 0.7.2 draws the animated example from PC_WORDS; the Mac words live there on a Mac.
+    assert "local_title: 'On my Mac'" in _host_setup_script()
 
 
 # ---------------------------------------------------------------------------------------- #16

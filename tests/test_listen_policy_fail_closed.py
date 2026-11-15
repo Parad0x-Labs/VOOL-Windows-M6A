@@ -433,7 +433,7 @@ def test_registry_serve_hands_every_resolved_address_to_run_sockets(monkeypatch,
     config_path.write_text(json.dumps({"catalog_file": str(catalog), "target": "test"}), encoding="utf-8")
 
     with (
-        unittest.mock.patch.object(registry_cli, "load_service", return_value=tuple(unittest.mock.Mock() for _ in range(3))),
+        unittest.mock.patch.object(registry_cli, "load_service", return_value=tuple(unittest.mock.Mock() for _ in range(4))),
         unittest.mock.patch("uvicorn.Server") as server_cls,
         unittest.mock.patch("uvicorn.Config"),
     ):
@@ -455,7 +455,7 @@ def _registry_config(tmp_path):
 def test_registry_names_a_refused_exclusive_bind_instead_of_blaming_the_configuration(monkeypatch, tmp_path, capsys):
     config_path = _registry_config(tmp_path)
     with (
-        unittest.mock.patch.object(registry_cli, "load_service", return_value=tuple(unittest.mock.Mock() for _ in range(3))),
+        unittest.mock.patch.object(registry_cli, "load_service", return_value=tuple(unittest.mock.Mock() for _ in range(4))),
         unittest.mock.patch("uvicorn.Server"),
         unittest.mock.patch("uvicorn.Config"),
         unittest.mock.patch.object(registry_cli, "pre_bind_listen_sockets", side_effect=OSError("taken")),
@@ -471,7 +471,7 @@ def test_registry_names_a_refused_exclusive_bind_instead_of_blaming_the_configur
 def test_registry_exits_with_uvicorns_startup_failure_when_the_server_never_started(monkeypatch, tmp_path):
     config_path = _registry_config(tmp_path)
     with (
-        unittest.mock.patch.object(registry_cli, "load_service", return_value=tuple(unittest.mock.Mock() for _ in range(3))),
+        unittest.mock.patch.object(registry_cli, "load_service", return_value=tuple(unittest.mock.Mock() for _ in range(4))),
         unittest.mock.patch("uvicorn.Server") as server_cls,
         unittest.mock.patch("uvicorn.Config"),
         unittest.mock.patch.object(registry_cli, "pre_bind_listen_sockets", return_value=[]),
@@ -487,7 +487,7 @@ def test_registry_exits_with_uvicorns_startup_failure_when_the_server_never_star
 def test_registry_reports_an_oserror_while_serving_as_a_startup_refusal_not_a_bind_refusal(tmp_path, capsys):
     config_path = _registry_config(tmp_path)
     with (
-        unittest.mock.patch.object(registry_cli, "load_service", return_value=tuple(unittest.mock.Mock() for _ in range(3))),
+        unittest.mock.patch.object(registry_cli, "load_service", return_value=tuple(unittest.mock.Mock() for _ in range(4))),
         unittest.mock.patch("uvicorn.Server"),
         unittest.mock.patch("uvicorn.Config"),
         unittest.mock.patch.object(registry_cli, "pre_bind_listen_sockets", return_value=[]),

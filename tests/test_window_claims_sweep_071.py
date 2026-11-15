@@ -22,6 +22,7 @@ import pytest
 from core import runtime_paths
 from installer.bundle import vool_protocol_handler as handler
 from installer.bundle import vool_window
+from tests._windows_system32 import trust_system32
 
 # --- the bundled Python finds the real home ------------------------------------------------------
 
@@ -134,6 +135,7 @@ def test_both_pages_show_a_refusal(page) -> None:
 
 def test_starting_vool_passes_on_the_foreground_first(monkeypatch, tmp_path) -> None:
     (tmp_path / "VOOL.cmd").write_text("@echo off\n", encoding="utf-8")
+    trust_system32(monkeypatch)   # VOOL.cmd runs through System32's cmd.exe, never ComSpec
     order: list[str] = []
     monkeypatch.setattr(handler, "_pass_on_the_foreground", lambda: order.append("allow") or True)
     monkeypatch.setattr(handler.subprocess, "Popen", lambda *a, **k: order.append("popen"))

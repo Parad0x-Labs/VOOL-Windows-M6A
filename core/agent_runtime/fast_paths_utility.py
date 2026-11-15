@@ -3410,7 +3410,7 @@ def ui_command_fast_path(normalized_input: str, *, source_surface: str) -> str |
     if windows_write_gate.active():
         return _windows_ui_command_reply(phrase)
     if phrase in {"/new", "/new-session", "/new_session", "/clear", "/reset"}:
-        return "Use the OpenClaw `New session` button on the lower right. Slash `/new` is not a wired command in this runtime."
+        return "New session: use the `+ New` button in the chat sidebar. Slash `/new` is not a wired command in this runtime."
     if phrase in {"/trace", "/rail", "/task-rail"}:
         return "Open the live trace rail at `http://127.0.0.1:11435/trace`."
     return "That slash command is not wired here. Use plain language, the `New session` button, or open `http://127.0.0.1:11435/trace` for the runtime rail."

@@ -1,5 +1,8 @@
 @echo off
 setlocal enabledelayedexpansion
+rem UTF-8 mode for every Python this launcher starts (as installer\bundle\vool-launch.cmd does):
+rem without it Python on Windows reads and writes text as cp1252.
+set "PYTHONUTF8=1"
 REM Open the VOOL .null (Web0) browser. A normal browser cannot open a .null site
 REM directly (it lives on Arweave, behind the resolver), so this points at the page
 REM VOOL serves at http://127.0.0.1:11435/web0 - the always-on API server renders it
@@ -7,6 +10,16 @@ REM and the page resolves .null names through POST /api/null on that same origin
 set "SCRIPT_DIR=%~dp0"
 for %%I in ("%SCRIPT_DIR%.") do set "SCRIPT_ROOT=%%~fI"
 set "WEB0_URL=http://127.0.0.1:11435/web0"
+
+REM After a Stop the watchdog task is disabled and a stop marker remains. Opening VOOL on
+REM purpose re-arms auto-restart and clears the marker (installer.vool_stop --rearm); with
+REM no earlier Stop the marker is absent and nothing runs.
+if exist "%SCRIPT_ROOT%\.vool_stopped" (
+  if exist "%SCRIPT_ROOT%\.venv\Scripts\python.exe" (
+    set "PYTHONPATH=%SCRIPT_ROOT%"
+    "%SCRIPT_ROOT%\.venv\Scripts\python.exe" -m installer.vool_stop --rearm --project-root "%SCRIPT_ROOT%" >nul 2>&1
+  )
+)
 
 REM Is VOOL already healthy? If so, just open the browser.
 powershell -NoProfile -Command "try { $null = Invoke-WebRequest -Uri 'http://127.0.0.1:11435/healthz' -UseBasicParsing -TimeoutSec 2; exit 0 } catch { exit 1 }" >nul 2>&1

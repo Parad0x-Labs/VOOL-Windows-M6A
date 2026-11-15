@@ -75,6 +75,10 @@ def child_env(home: Path, *, port: int) -> dict[str, str]:
     env["VOOL_DAEMON_BIND_PORT"] = str(port)
     env["PYTHONPATH"] = str(PROJECT_ROOT)
     env.setdefault("PYTHONUNBUFFERED", "1")
+    # The children drive the live lookups against their own stubs, so Settings > Web lookups is on in them through
+    # its documented env switch: since 0.7.2 the weather and price lookups refuse while it is off. The dead proxy
+    # below still keeps every real service out of reach.
+    env["VOOL_ENABLE_WEB"] = "1"
     # Hermetic means no internet. The child is a separate interpreter, so the parent's in-process
     # network guards never reach it; measured 2026-10-06 with a refusing, recording proxy, gauntlet
     # children called api.coingecko.com, search.yahoo.com, search.brave.com, api.duckduckgo.com and

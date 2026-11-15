@@ -308,12 +308,11 @@ def _served_chat(monkeypatch, platform: str) -> str:
 
 # (macOS text, Windows text) as the served page carries them.
 _TEXTS = (
-    ("click a file to reveal it in Finder.", "click a file to show it in its folder."),
-    ("prev.title = 'Reveal folder in Finder';", "prev.title = 'Show folder in File Explorer';"),
+    ("pageT('session.reveal_folder_title', 'Reveal folder in Finder')", "prev.title = 'Show folder in File Explorer';"),
     ('title="Click to open in Preview - right-click for more"',
      'title="Opening files is not available on Windows yet - right-click for more"'),
-    ("add('Open in Preview',", "'Open (not available on Windows yet)'"),
-    ("add('Show in Finder',", "add('Show in folder',"),
+    ("add(pageT('msg.img_open_preview', 'Open in Preview'),", "'Open (not available on Windows yet)'"),
+    ("pageT('msg.img_show_in_finder', 'Show in Finder')", "add('Show in folder',"),
 )
 
 
@@ -326,6 +325,8 @@ def test_served_chat_page_says_show_in_folder_only_on_a_windows_host(monkeypatch
         assert mac.count(mac_text) == 1 and mac_text not in windows, mac_text
         assert windows.count(windows_text) == 1 and windows_text not in mac, windows_text
     assert "_fileOpen(local, false)" in mac and "_fileOpen(local, false)" not in windows
+    hint = "Newest first; click a file to show it in its folder.</p>"   # Mac 0.7.2 says it on every host
+    assert mac.count(hint) == 1 and windows.count(hint) == 1
     assert as_the_mac_page(windows) == mac   # nothing else on the page differs
 
 

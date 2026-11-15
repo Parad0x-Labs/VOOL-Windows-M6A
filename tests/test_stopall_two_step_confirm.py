@@ -154,7 +154,7 @@ def test_off_windows_the_success_reply_is_unchanged(monkeypatch) -> None:
     maybe_handle_agent_brake("/stopall", "s1", stopall_fn=fn)
     result = maybe_handle_agent_brake("/stopall confirm", "s1", stopall_fn=fn)
     assert result["response"] == (
-        "Shutting down all of VOOL now -- the API, the OpenClaw gateway, the agent, and the "
+        "Shutting down all of VOOL now -- the API, the agent, and the "
         "auto-restart task. The dashboard will go offline in a few seconds and stay down until "
         "you launch VOOL again from the desktop shortcut."
     )

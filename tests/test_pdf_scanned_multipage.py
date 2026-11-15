@@ -15,7 +15,7 @@ from unittest import mock
 
 import pytest
 
-from core import pdf_tools
+from core import pdf_tools, posix_tools
 from core.runtime_execution_tools import execute_runtime_tool
 
 SYSTEM_PYTHON = "/usr/bin/python3"
@@ -73,12 +73,18 @@ def test_a_page_that_only_reads_like_a_marker_is_text(scan) -> None:
 def test_the_model_is_told_to_run_ocr_on_a_two_page_scan(scan) -> None:
     """The tool result the model reads: not ok, and it names pdf.ocr as the next step."""
 
-    with mock.patch.object(pdf_tools, "_run_helper", return_value=_helper_reply(["", ""])):
+    with mock.patch.object(pdf_tools, "_run_helper", return_value=_helper_reply(["", ""])) as helper:
         result = execute_runtime_tool(
             "pdf.extract_text", {"path": str(scan)}, source_context={"surface": "api"}
         )
 
     assert result is not None and not result.ok
+    if posix_tools.active():
+        # Windows withholds pdf.* at the contract: the model is told why, and nothing is read.
+        assert result.status == "disabled", result.status
+        assert pdf_tools.WINDOWS_UNAVAILABLE in result.response_text, result.response_text
+        assert helper.call_count == 0
+        return
     assert result.status == "no_text_layer"
     assert "pdf.ocr" in result.response_text
     assert "[page 2]" not in result.response_text

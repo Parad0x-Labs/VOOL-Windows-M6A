@@ -25,6 +25,23 @@ def _is_windows_platform() -> bool:
     return os.name == "nt"
 
 
+def _system32_cmd() -> str:
+    """Windows' own ``%SystemRoot%\\System32\\cmd.exe`` by absolute path, or OSError. COMSPEC is a
+    user variable and a bare ``cmd.exe`` is looked up through the current folder and PATH, so
+    neither is used. The rule of core/process_liveness.py ``_system32``, repeated here because
+    vool_background.cmd runs this file as a script, without VOOL's packages on the path."""
+    import ntpath
+
+    root = os.environ.get("SystemRoot") or ""
+    drive, rest = ntpath.splitdrive(root)
+    if len(drive) != 2 or drive[1] != ":" or not rest.startswith(("\\", "/")):
+        raise OSError("SystemRoot is not an absolute Windows folder; cmd.exe is not trusted")
+    exe = ntpath.join(root, "System32", "cmd.exe")
+    if not os.path.isfile(exe):
+        raise OSError(f"{exe} is missing")
+    return exe
+
+
 def _wrap_command_for_windows(command: list[str]) -> list[str] | str:
     if not _is_windows_platform() or not command:
         return command
@@ -45,7 +62,7 @@ def _wrap_command_for_windows(command: list[str]) -> list[str] | str:
     if any(char in part for part in command for char in '"%\r\n'):
         raise ValueError("a batch launcher argument holds a quote, % or line break cmd cannot keep")
     quoted = " ".join(f'"{part}{part[len(part.rstrip(chr(92))):]}"' for part in command)
-    return f'"{os.environ.get("COMSPEC") or "cmd.exe"}" /s /c "{quoted}"'
+    return f'"{_system32_cmd()}" /s /c "{quoted}"'
 
 
 def _creationflags(*, include_breakaway: bool) -> int:

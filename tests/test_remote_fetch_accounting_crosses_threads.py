@@ -21,12 +21,24 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from contextvars import copy_context
 
+import pytest
+
 from core.remote_fetch_policy import (
     note_remote_fetch_attempt,
     remote_fetch_attempt_count,
     remote_fetch_policy_scope,
     remote_fetch_scope_active,
 )
+
+
+@pytest.fixture(autouse=True)
+def _web_lookups_on(monkeypatch):
+    """These rows exercise the live lookups themselves, so Settings > Web lookups is on for them. Since 0.7.2 the
+    lookups refuse while it is off (tests/test_web_lookups_off_makes_no_live_fetch.py holds those rows)."""
+    from core import policy_engine
+
+    monkeypatch.setattr(policy_engine, "allow_web_fallback", lambda: True)
+
 
 
 def test_a_main_thread_fetch_is_counted() -> None:

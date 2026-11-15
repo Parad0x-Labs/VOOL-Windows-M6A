@@ -22,6 +22,16 @@ from tests.gauntlet.hermetic import groups as G  # noqa: N812  (reads as the mod
 from tests.gauntlet.hermetic import protocol as P  # noqa: N812  (reads as the module name at every call site)
 from tests.gauntlet.hermetic.runner import PROJECT_ROOT, child_env, run_group
 
+
+@pytest.fixture(autouse=True)
+def _web_lookups_on(monkeypatch):
+    """These rows exercise the live lookups themselves, so Settings > Web lookups is on for them. Since 0.7.2 the
+    lookups refuse while it is off (tests/test_web_lookups_off_makes_no_live_fetch.py holds those rows)."""
+    from core import policy_engine
+
+    monkeypatch.setattr(policy_engine, "allow_web_fallback", lambda: True)
+
+
 # The two files whose failure proved the gauntlet was polluting the parent interpreter.
 CONTAMINATION_TARGETS = (
     "tests/test_public_hive_bridge.py",

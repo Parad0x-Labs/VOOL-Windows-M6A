@@ -43,6 +43,16 @@ from apps.vool_agent import VoolAgent
 from core.turn_contract import TURN_REQUEST_KEY
 from tests.test_turn_attempt_chain import _INCIDENT, _Harness, _incident_mocks
 
+
+@pytest.fixture(autouse=True)
+def _web_lookups_on(monkeypatch):
+    """These rows exercise the live lookups themselves, so Settings > Web lookups is on for them. Since 0.7.2 the
+    lookups refuse while it is off (tests/test_web_lookups_off_makes_no_live_fetch.py holds those rows)."""
+    from core import policy_engine
+
+    monkeypatch.setattr(policy_engine, "allow_web_fallback", lambda: True)
+
+
 _PARENT = "market prices for gold and bitcoin plus weather in Kaunas"
 _TASKS = ("market prices for gold and bitcoin", "weather in Kaunas")
 _ENTITY_QUESTION = "Which assets and cities did I originally ask for?"

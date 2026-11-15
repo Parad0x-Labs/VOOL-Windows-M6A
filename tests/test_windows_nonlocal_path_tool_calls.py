@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from core import policy_engine
+from core import pdf_tools, policy_engine, posix_tools
 from core import tool_intent_executor as executor
 from core import windows_write_gate as gate
 from core.hive_activity_tracker import HiveActivityTracker, HiveActivityTrackerConfig
@@ -35,6 +35,7 @@ from tests._nonlocal_touch_recorder import MARKER_FORMS, MarkerForm, recorder, w
 from tools.browser import browser_render
 
 STATUS = "non_local_path_refused"
+WITHHELD_PDF = pdf_tools.WINDOWS_UNAVAILABLE
 #: The home folders a machine write may land in (runtime_execution_tools._SAFE_MACHINE_DIRECTORY_NAMES).
 SAFE_FOLDERS = ("Desktop", "Documents", "Downloads")
 
@@ -156,6 +157,10 @@ def test_a_tool_path_naming_a_share_is_refused_before_the_permission_decision(
     decisions = _spy(monkeypatch, executor, "decide_tool_call")
     reservations = _spy(monkeypatch, executor, "reserve_logical_effect")
     _keys, local_arguments = _TOOLS[intent]
+    # Windows withholds pdf.* at the contract (core.posix_tools, core.pdf_tools.WINDOWS_UNAVAILABLE):
+    # there the call is refused as a disabled tool, before its path is read at all, so it names no
+    # argument and no path kind. It still reaches for nothing and asks for no decision.
+    withheld = intent.startswith("pdf.") and posix_tools.active()
     windows_host.on()
 
     # Every form in both modes: Manual is where the operator would be asked to approve the call,
@@ -179,19 +184,21 @@ def test_a_tool_path_naming_a_share_is_refused_before_the_permission_decision(
                 # The refusal names the argument, as the model sent it or as the dispatcher binds it.
                 "argument": details.get("argument") in {key, ARGUMENT_ALIASES.get(key, key)},
                 "kind": details.get("kind"),
-                "response says what and why": _sentence(form) in str(execution.response_text or ""),
-                "user-safe response says what and why": _sentence(form) in str(execution.user_safe_response_text or ""),
+                "response says what and why": (WITHHELD_PDF if withheld else _sentence(form))
+                in str(execution.response_text or ""),
+                "user-safe response says what and why": (WITHHELD_PDF if withheld else _sentence(form))
+                in str(execution.user_safe_response_text or ""),
                 # No approval card and no A6 reservation for a call that will never run.
                 "permission decisions": len(decisions) - asked,
                 "A6 reservations": len(reservations) - reserved,
                 **_reached(recorder, touches, starts),
             }
             expected[f"{form.id} {mode}"] = {
-                "status": STATUS,
+                "status": "disabled" if withheld else STATUS,
                 "ok": False,
                 "executed": False,
-                "argument": True,
-                "kind": form.kind,
+                "argument": not withheld,
+                "kind": None if withheld else form.kind,
                 "response says what and why": True,
                 "user-safe response says what and why": True,
                 "permission decisions": 0,

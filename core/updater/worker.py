@@ -231,7 +231,12 @@ def plan_trust(params: dict, *, env=None):
     from core.updater.runtime import UpdateSubsystem
     from core.updater.trust import TrustedPublishers
 
-    if not str(params.get("platform") or "").startswith("windows-"):
+    # The branch is chosen by the computer this worker runs on, never by the plan: a Windows worker
+    # handed a plan that says "linux-x64" would otherwise take the plan's own keys.
+    windows_plan = str(params.get("platform") or "").startswith("windows-")
+    if windows_plan != _is_windows():
+        raise ValueError("the update plan is for another platform than this computer")
+    if not windows_plan:
         return TrustedPublishers(params["keys"])
     environ = os.environ if env is None else env
     served = str(environ.get(WINDOWS_WORKER_APP_ENV) or "")

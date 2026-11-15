@@ -26,4 +26,4 @@ def test_installed_version_returns_the_constant() -> None:
 def test_beta_release_channel_matches_runtime_version() -> None:
     root = Path(__file__).resolve().parents[1]
     payload = json.loads((root / "config" / "release" / "update_channel.json").read_text(encoding="utf-8"))
-    assert payload["release_version"] == f"{VOOL_VERSION}-beta.2"
+    assert payload["release_version"] == f"{VOOL_VERSION}-beta"
