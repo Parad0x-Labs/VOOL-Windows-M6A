@@ -855,7 +855,9 @@ _WRAPPERS = frozenset({"cmd", "command", "powershell", "pwsh", "sh", "bash", "zs
                        "xargs", "wsl", "conhost", "runas"})
 #: git as a standalone name: bounded by any character that cannot be part of a name ({git}, git,status,
 #: x=git, /c git), not by a list of delimiters. "$git" is a PowerShell variable and ".git" a file name.
-_GIT_WORD = re.compile(r"""(?<![\w.$-])git(?:-[\w.-]+)?(?:\.exe|\.cmd|\.bat|\.com)?(?![\w-])""", re.IGNORECASE)
+#: A git followed by / or \ is a folder on a path (tests/git/x, Git\cmd\git.exe), not the program;
+#: a trailing dot still counts, because Windows drops it (git. runs git).
+_GIT_WORD = re.compile(r"""(?<![\w.$-])git(?:-[\w.-]+)?(?:\.exe|\.cmd|\.bat|\.com)?(?![\w/\\-])""", re.IGNORECASE)
 _GUARD_INSTALLED = False
 #: Whether the installed hook enforces. install_spawn_guard sets it; tests that install the hook put
 #: it back afterwards (an audit hook cannot be removed, and on Windows `git_refused_here()` stays true
