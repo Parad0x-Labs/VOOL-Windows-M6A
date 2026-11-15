@@ -87,3 +87,15 @@ def test_a_startfile_verb_other_than_open_is_refused(armed, operation) -> None:
 def test_control_read_as_bare_text_a_cd_then_git_is_not_found(armed) -> None:
     """Why the os.system rows need the shell reading: as bare text the program is `cd`."""
     assert not safe_git.is_git_command("cd C:\\ws\\repo && git status")
+
+
+@pytest.mark.parametrize("command", [["cmd", "/c", "echo tests/git/x"], ["sh", "-c", "type C:\\src\\git\\notes.txt"]])
+def test_a_folder_named_git_on_a_path_is_not_git(command) -> None:
+    """The bounded name search must not read a path folder as the program (test_windows_runs_no_git)."""
+    assert safe_git.is_git_command(command) is False
+
+
+@pytest.mark.parametrize("command", [["cmd", "/c", "git. status"], ["cmd", "/c", "C:\\Git\\cmd\\git.exe status"]])
+def test_git_with_a_trailing_dot_or_behind_its_folder_is_still_git(command) -> None:
+    """Windows drops a trailing dot, so git. runs git; the Git folder does not hide the git.exe after it."""
+    assert safe_git.is_git_command(command) is True
