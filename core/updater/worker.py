@@ -209,9 +209,9 @@ def claim_transaction(job: Path, outcome: str, txid: str) -> bool:
 
 
 def transaction_abandoned(job: Path) -> bool:
-    """Whether this worker must not run: True when the claim says anything but "started" or cannot be
-    read (a link, a folder, a partial or foreign file: fail closed). No claim at all is a worker no
-    supervisor started (not the Windows supervisor flow), which the claim does not judge."""
+    """The supervisor's check before it copies the interpreter: True when the claim says anything but
+    "started" or cannot be read (a link, a folder, a partial or foreign file: fail closed). No claim yet
+    is False: the supervisor makes it after the copy. The worker itself uses `supervisor_started`."""
     path = Path(job) / START_CLAIM_NAME
     try:
         info = os.lstat(path)
@@ -223,6 +223,23 @@ def transaction_abandoned(job: Path) -> bool:
     except (OSError, ValueError):
         return True
     return not (isinstance(claim, dict) and claim.get("outcome") == CLAIM_STARTED)
+
+
+def supervisor_started(job: Path, txid: str) -> bool:
+    """The worker's own check on Windows: True only for a regular claim file that says "started" for
+    this transaction. Every start on Windows goes through the supervisor, which makes the claim before it
+    starts the worker, so a missing claim, a claim for another transaction or one that cannot be read
+    means this worker was not started by that flow (fail closed)."""
+    path = Path(job) / START_CLAIM_NAME
+    try:
+        info = os.lstat(path)
+        if not stat.S_ISREG(info.st_mode) or getattr(info, "st_file_attributes", 0) & _REPARSE_POINT:
+            return False
+        claim = json.loads(path.read_bytes().decode("utf-8"))
+    except (OSError, ValueError):
+        return False
+    return (isinstance(claim, dict) and bool(txid) and claim.get("outcome") == CLAIM_STARTED
+            and claim.get("txid") == txid)
 
 
 def check_plan_digest(raw: bytes, *, env=None) -> None:
@@ -372,7 +389,7 @@ def main() -> int:
             time.sleep(.02)
         else:
             raise ValueError("the parent did not publish the detached transaction lease; nothing was installed")
-        if _windows_worker() and transaction_abandoned(plan.parent):
+        if _windows_worker() and not supervisor_started(plan.parent, params["txid"]):
             raise ValueError("the app stopped waiting for this update before it began; nothing was installed")
         if params.get('rollback') or params.get('rollback_recovery'):
             from core.updater.rollback import recover_manual_rollbacks, run_manual_rollback
