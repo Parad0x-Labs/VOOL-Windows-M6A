@@ -231,7 +231,10 @@ def refusal_reason(path: str, *, extra_sealed: tuple[str, ...] = ()) -> str:
 
         home = str(active_vool_home())
     except Exception:
-        home = ""
+        # Without VOOL home the folder cannot be checked against it: refuse, never mark blind.
+        return "VOOL could not tell where its home folder is"
+    if not home.strip():
+        return "VOOL could not tell where its home folder is"
     app_root = str(Path(__file__).resolve().parents[1])
     sealed, exact, temp_roots = protected_folders((home, app_root, *extra_sealed))
     for temp in temp_roots:

@@ -119,7 +119,18 @@ def _pass_on_the_foreground() -> bool:
 
 
 def _wscript() -> str:
-    """``%SystemRoot%\\System32\\wscript.exe`` by absolute path, or OSError.
+    """``%SystemRoot%\\System32\\wscript.exe`` by absolute path, or OSError."""
+    return _system32("wscript.exe")
+
+
+def _cmd() -> str:
+    """``%SystemRoot%\\System32\\cmd.exe`` by absolute path, or OSError. ComSpec is never read:
+    it is a user variable, and a bare ``cmd.exe`` would be looked up like a bare ``wscript.exe``."""
+    return _system32("cmd.exe")
+
+
+def _system32(name: str) -> str:
+    """``%SystemRoot%\\System32\\<name>`` by absolute path, or OSError.
 
     A bare name would be looked up through pythonw's own folder, the current folder and PATH first.
     Only a drive-letter SystemRoot is trusted (never a network share); anything else fails closed.
@@ -131,7 +142,7 @@ def _wscript() -> str:
     drive, rest = ntpath.splitdrive(root)
     if len(drive) != 2 or drive[1] != ":" or not rest.startswith(("\\", "/")):
         raise OSError("SystemRoot is not an absolute Windows folder")
-    exe = ntpath.join(root, "System32", "wscript.exe")
+    exe = ntpath.join(root, "System32", name)
     if not os.path.isfile(exe):
         raise OSError(f"{exe} is missing")
     return exe
@@ -174,11 +185,12 @@ def _start_bundle(root: Path) -> None:
     if any(char in str(launcher) for char in '"%\r\n'):
         # Inside quotes cmd still expands %NAME% and ends the line at a line break.
         raise ValueError("the VOOL.cmd path holds a quote, % or line break cmd cannot keep")
+    cmd = _cmd()   # OSError when System32 cannot be trusted: nothing starts
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
     _pass_on_the_foreground()
     subprocess.Popen(
         # A string, not a list: /s with doubled quotes keeps the path quoted even when it holds & or ( ).
-        f'"{os.environ.get("ComSpec", "cmd.exe")}" /s /c ""{launcher}""',
+        f'"{cmd}" /s /c ""{launcher}""',
         cwd=str(root),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
