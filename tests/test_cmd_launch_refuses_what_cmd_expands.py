@@ -21,7 +21,7 @@ from tests._windows_system32 import trust_system32
 @pytest.fixture
 def on_windows(monkeypatch):
     monkeypatch.setattr(start_windows_detached, "_is_windows_platform", lambda: True)
-    monkeypatch.setenv("COMSPEC", "C:\\Windows\\System32\\cmd.exe")
+    trust_system32(monkeypatch)   # cmd.exe comes from System32, never from COMSPEC
 
 
 @pytest.mark.parametrize("bad", ["100%OS%", "a\rb", "a\nb"])

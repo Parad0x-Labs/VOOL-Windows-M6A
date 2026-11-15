@@ -173,3 +173,22 @@ def test_windows_a_tilde_path_whose_home_is_a_share_is_refused_before_any_lookup
     assert ok is False, message
     assert "server" in message, message
     assert [p for p in looked_up if "server" in p] == []
+
+
+def test_windows_a_stored_root_on_a_network_drive_is_never_looked_up(windows, monkeypatch) -> None:
+    """A project stored before network drives were refused keeps its Z:\\ root in the store: listing
+    it, or binding it, must not call isdir on it, which would open the SMB connection (F1 01#3)."""
+    monkeypatch.setattr(windows_known_folders, "_drive_is_remote", lambda drive: drive.upper() == "Z:")
+    stored = {"old": {"id": "old", "name": "old", "root": r"Z:\proj", "created_at": "2026-10-01"}}
+    monkeypatch.setattr(ps, "_load", lambda: {k: dict(v) for k, v in stored.items()})
+    looked_up: list[str] = []
+    real = os.path.isdir
+
+    def isdir(path):
+        looked_up.append(os.fspath(path))
+        return real(path)
+
+    monkeypatch.setattr(os.path, "isdir", isdir)
+    assert [p["exists"] for p in ps.list_projects()] == [False]
+    assert ps.project_root("old") is None
+    assert [p for p in looked_up if p.replace("/", "\\").lower().startswith("z:")] == []

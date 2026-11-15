@@ -5,6 +5,7 @@ from unittest import mock
 import pytest
 
 from installer import start_windows_detached
+from tests._windows_system32 import trust_system32
 from installer.start_windows_detached import (
     CREATE_BREAKAWAY_FROM_JOB,
     CREATE_NEW_PROCESS_GROUP,
@@ -29,7 +30,7 @@ def test_wrap_command_wraps_batch_launchers_on_windows(monkeypatch) -> None:
     # Path() construction, so a global flip poisons every other Path in the process --
     # including pytest's own failure formatter (run 36063857499 shards 5/9).
     monkeypatch.setattr(start_windows_detached, "_is_windows_platform", lambda: True)
-    monkeypatch.setenv("COMSPEC", "C:\\Windows\\System32\\cmd.exe")
+    trust_system32(monkeypatch)   # cmd.exe comes from System32, never from COMSPEC
 
     # One string, not a list: list2cmdline would leave a path holding & or ( ) unquoted for cmd, and
     # cmd strips quotes it did not expect. /s with an outer pair keeps every argument quoted.
@@ -122,3 +123,25 @@ def test_main_accepts_command_without_separator() -> None:
         stdout_path="C:\\temp\\out.log",
         stderr_path="C:\\temp\\err.log",
     )
+
+
+@pytest.mark.parametrize("comspec", [None, "C:\\Users\\me\\evil.exe", "cmd.exe"])
+def test_wrap_command_runs_cmd_from_system32_whatever_comspec_says(monkeypatch, comspec) -> None:
+    monkeypatch.setattr(start_windows_detached, "_is_windows_platform", lambda: True)
+    trust_system32(monkeypatch)
+    if comspec is None:
+        monkeypatch.delenv("COMSPEC", raising=False)
+        monkeypatch.delenv("ComSpec", raising=False)
+    else:
+        monkeypatch.setenv("COMSPEC", comspec)
+    wrapped = _wrap_command_for_windows(["C:\\vool\\openclaw.cmd"])
+    assert wrapped.startswith('"C:\\Windows\\System32\\cmd.exe" /s /c ')
+
+
+@pytest.mark.parametrize("system_root", ["", "Windows", "\\\\server\\share\\Windows", "C:", "C:Windows"])
+def test_wrap_command_refuses_when_system32_cannot_be_trusted(monkeypatch, system_root) -> None:
+    monkeypatch.setattr(start_windows_detached, "_is_windows_platform", lambda: True)
+    monkeypatch.setenv("SystemRoot", system_root)
+    monkeypatch.setenv("COMSPEC", "C:\\Windows\\System32\\cmd.exe")
+    with pytest.raises(OSError):
+        _wrap_command_for_windows(["C:\\vool\\openclaw.cmd"])

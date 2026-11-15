@@ -539,3 +539,11 @@ def test_a_mark_is_refused_when_vool_home_cannot_be_read(home, tmp_path, monkeyp
 
     monkeypatch.setattr("core.runtime_paths.active_vool_home", _no_home)
     assert "home folder" in store.refusal_reason(str(folder))
+
+
+def test_a_mark_is_refused_when_windows_cannot_name_the_profile(home, tmp_path, monkeypatch) -> None:
+    """Without the profile its private folders (.ssh, AppData, ...) cannot be sealed (F1 03#2)."""
+    folder = _folder(tmp_path / "profile" / "Documents", "scratch")
+    assert store.refusal_reason(str(folder)) == ""
+    monkeypatch.setattr(windows_known_folders, "known_folder", lambda name: None)
+    assert "profile folder" in store.refusal_reason(str(folder))
