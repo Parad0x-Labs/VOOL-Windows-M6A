@@ -5,7 +5,6 @@ from unittest import mock
 import pytest
 
 from installer import start_windows_detached
-from tests._windows_system32 import trust_system32
 from installer.start_windows_detached import (
     CREATE_BREAKAWAY_FROM_JOB,
     CREATE_NEW_PROCESS_GROUP,
@@ -15,6 +14,7 @@ from installer.start_windows_detached import (
     _fallback_log_path,
     _wrap_command_for_windows,
 )
+from tests._windows_system32 import trust_system32
 
 
 def test_wrap_command_leaves_executables_unchanged() -> None:
