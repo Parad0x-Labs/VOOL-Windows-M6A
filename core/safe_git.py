@@ -829,7 +829,9 @@ read_only_argv = hardened_argv
 # The search for git in a wrapper's command text is by name, so it also does not read: shell escapes
 # beyond the plain ones (cmd `^`, PowerShell's typographic quotes, bash `$''`), `powershell
 # -EncodedCommand`, launchers outside the wrapper list (rundll32, pcalua, wmic), and git-suite
-# programs with another name (gitk, scalar). Shells VOOL starts run under VoolConfine.
+# programs with another name (gitk, scalar), and an os.startfile target that only reaches git through
+# a shortcut, a URL or an extension ShellExecute adds (run.lnk, file:///...g%69t.exe). Shells VOOL
+# starts run under VoolConfine.
 
 GIT_REFUSED_STATUS = "git_refused_on_windows"
 GIT_REFUSED_TEXT = ("VOOL doesn't run git on Windows in 0.7.1; use WSL2/Linux for git. "
