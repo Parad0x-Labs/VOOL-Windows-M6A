@@ -23,6 +23,7 @@ from core.updater.worker import (
     SupervisorStartedWorker,
     claim_transaction,
     request_supervisor_start,
+    supervisor_started,
     transaction_abandoned,
 )
 from tests.updater.test_worker_plan_and_abandon import TXID, _installed_bundle, _prepared_job, _RecordingPopen
@@ -140,3 +141,35 @@ def test_sabotage_without_the_supervisors_claim_an_abandoned_request_starts_a_wo
     popen = _RecordingPopen()
     assert consume_worker_request(home, app_root, popen=popen, copytree=lambda *_a, **_k: None, now=lambda: 1.0)
     assert len(popen.calls) == 1
+
+
+@pytest.mark.parametrize(("content", "started"), [
+    (None, False),
+    ({"outcome": "started", "txid": TXID}, True),
+    ({"outcome": "started", "txid": "tx-another"}, False),
+    ({"outcome": "started"}, False),
+    ({"outcome": "abandoned", "txid": TXID}, False),
+    ("not json", False),
+])
+def test_the_worker_runs_only_on_a_started_claim_for_its_own_transaction(tmp_path, content, started) -> None:
+    """L1-11: on Windows every start goes through the supervisor, which claims first, so the worker
+    refuses a missing claim and a claim another transaction made."""
+    if content is not None:
+        text = content if isinstance(content, str) else json.dumps(content)
+        (tmp_path / START_CLAIM_NAME).write_text(text, encoding="utf-8")
+    assert supervisor_started(tmp_path, TXID) is started
+
+
+def test_the_worker_does_not_take_a_link_at_the_claim_for_a_start(tmp_path) -> None:
+    elsewhere = tmp_path / "elsewhere.json"
+    elsewhere.write_text(json.dumps({"outcome": "started", "txid": TXID}), encoding="utf-8")
+    try:
+        os.symlink(elsewhere, tmp_path / START_CLAIM_NAME)
+    except OSError:
+        (tmp_path / START_CLAIM_NAME).mkdir()
+    assert supervisor_started(tmp_path, TXID) is False
+
+
+def test_the_claim_the_supervisor_makes_is_one_the_worker_accepts(tmp_path) -> None:
+    assert claim_transaction(tmp_path, CLAIM_STARTED, TXID)
+    assert supervisor_started(tmp_path, TXID) is True
