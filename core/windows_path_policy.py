@@ -396,19 +396,83 @@ def argument_refusal(intent: Any, arguments: Any, *, network_only: bool = False)
     return refusal
 
 
-def _server_defined_tool(intent: str) -> bool:
-    """Whether `intent` is an MCP tool or a registered plugin tool. A registry that cannot be read
-    answers False, which keeps the full rule."""
+def _server_tool_state(intent: str) -> bool | None:
+    """True for an MCP tool or a registered plugin tool, False for any other tool, and None when the
+    registry cannot be read (the caller then applies both rules)."""
+    name = str(intent or "").strip()
     try:
         from core.execution.mcp_bridge import is_mcp_intent
+
+        if is_mcp_intent(name):
+            return True
+    except Exception:
+        return None
+    try:
         from core.tool_registry import tool_for_intent
 
-        if is_mcp_intent(intent):
-            return True
-        contract = tool_for_intent(intent)
+        contract = tool_for_intent(name)
     except Exception:
-        return False
+        return None
     return contract is not None and str(getattr(contract, "source", "") or "").startswith("plugin:")
+
+
+def _server_defined_tool(intent: str) -> bool:
+    """Whether `intent` is an MCP tool or a registered plugin tool. A registry that cannot be read
+    answers False here; `tool_call_refusal` reads `_server_tool_state` and applies both rules then."""
+    return _server_tool_state(intent) is True
+
+
+def _network_text_kind(text: str) -> str:
+    """The network kind `text` names as a path or as a URL, as written or with `%VAR%` and `$VAR`
+    expanded (an MCP or plugin server may expand them), or ""."""
+    for candidate in (text, ntpath.expandvars(text)):
+        kind = classify(candidate, network_only=True) or classify_url(candidate)
+        if kind in NETWORK_KINDS:
+            return kind
+    return ""
+
+
+def _server_tool_refusal(arguments: Any) -> PathRefusal | None:
+    """The first text anywhere in a server-defined tool's arguments that names a share or a device
+    path, or None.
+
+    An MCP or plugin tool's arguments mean whatever its server says, so no key set tells which of
+    them is a path: every text is judged, under any key and inside nested mappings, lists, tuples
+    and sets, on the network tier only. Keys are judged as well as values, and top-level `_` keys too:
+    the MCP bridge forwards every key to the server, so a `_` key the model sets reaches it. Arguments
+    that are not a mapping are read as the bridge reads them (`dict(arguments)`); arguments it could
+    not read are refused, because nothing could judge them. The walk keeps its own stack, so deep or
+    cyclic nesting cannot overflow or loop.
+    """
+    if not isinstance(arguments, Mapping):
+        try:
+            arguments = dict(arguments or {})
+        except (TypeError, ValueError):
+            return PathRefusal("arguments", str(arguments)[:120], "unjudged")
+    stack: list[tuple[str, Any]] = []
+    for key, value in reversed(list(arguments.items())):
+        stack.append((str(key), value))
+        stack.append(("(key)", key))
+    seen: set[int] = set()
+    while stack:
+        where, value = stack.pop()
+        if isinstance(value, (Mapping, list, tuple, set, frozenset)):
+            if id(value) in seen:
+                continue
+            seen.add(id(value))
+            if isinstance(value, Mapping):
+                children = []
+                for key, item in value.items():
+                    children.extend([(f"{where}.(key)", key), (f"{where}.{key}", item)])
+            else:
+                children = [(f"{where}[{index}]", item) for index, item in enumerate(value)]
+            stack.extend(reversed(children))
+            continue
+        text = _text(value)
+        kind = _network_text_kind(text) if text else ""
+        if kind:
+            return PathRefusal(where, text, kind)
+    return None
 
 
 def tool_call_refusal(intent: Any, arguments: Any) -> PathRefusal | None:
@@ -425,8 +489,16 @@ def tool_call_refusal(intent: Any, arguments: Any) -> PathRefusal | None:
     """
     if not _IS_WINDOWS:
         return None
-    if _server_defined_tool(str(intent or "")):
-        return argument_refusal(intent, arguments, network_only=True)
+    state = _server_tool_state(str(intent or ""))
+    if state is True:
+        refusal = argument_refusal(intent, arguments, network_only=True)
+        return refusal if refusal is not None else _server_tool_refusal(arguments)
+    if state is None:
+        # The registry could not say what this tool is: judge it as both. The full rule for a VOOL
+        # tool, and the server walk for an MCP or plugin tool, whose arguments the full rule's key
+        # sets do not cover.
+        refusal = argument_refusal(intent, arguments)
+        return refusal if refusal is not None else _server_tool_refusal(arguments)
     return argument_refusal(intent, arguments)
 
 
