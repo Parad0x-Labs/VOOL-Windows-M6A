@@ -86,6 +86,7 @@ def test_self_update_refuses_a_launcher_path_cmd_would_expand(monkeypatch, bad) 
 def test_a_plain_launcher_path_still_starts(monkeypatch) -> None:
     # The refusal is not a blanket one: the same fake with an ordinary path is launched.
     launched: list[object] = []
+    trust_system32(monkeypatch)
     monkeypatch.setattr(vool_protocol_handler.subprocess, "Popen", lambda cmd, **kwargs: launched.append(cmd))
     vool_protocol_handler._start_bundle(_NamedPath("C:\\Program Files (x86)\\A&B"))
     trust_system32(monkeypatch)

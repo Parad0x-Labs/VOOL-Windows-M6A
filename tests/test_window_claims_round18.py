@@ -36,6 +36,15 @@ def system32(monkeypatch):
     return expected
 
 
+def _cmd_only(monkeypatch) -> str:
+    """A trusted SystemRoot whose System32 holds cmd.exe but no wscript.exe."""
+    monkeypatch.setenv("SystemRoot", "C:\\Windows")
+    real_isfile = handler.os.path.isfile
+    expected = ntpath.join("C:\\Windows", "System32", "cmd.exe")
+    monkeypatch.setattr(handler.os.path, "isfile", lambda p: p == expected or real_isfile(p))
+    return expected
+
+
 def _install(tmp_path: Path, *, vbs: bool = True) -> Path:
     root = tmp_path / "VOOL (x) & co"
     root.mkdir()
@@ -69,13 +78,22 @@ def test_wscript_is_never_taken_from_an_untrusted_place(monkeypatch, system_root
 
 def test_without_a_trusted_wscript_vool_cmd_is_started_instead(monkeypatch, tmp_path) -> None:
     root = _install(tmp_path)
-    monkeypatch.setenv("SystemRoot", "\\\\server\\share\\Windows")   # never trusted
+    cmd = _cmd_only(monkeypatch)   # System32 is trusted and holds cmd.exe, but no wscript.exe
     seen: list = []
     monkeypatch.setattr(handler, "_pass_on_the_foreground", lambda: True)
     monkeypatch.setattr(handler.subprocess, "Popen", lambda args, **kw: seen.append(args))
     handler._start_bundle(root)
     assert len(seen) == 1 and isinstance(seen[0], str) and seen[0].endswith(f'/s /c ""{root / "VOOL.cmd"}""')
-    assert not seen[0].lower().startswith(("wscript", '"\\\\server'))
+    assert seen[0].startswith(f'"{cmd}" ')
+
+
+def test_with_an_untrusted_system_root_nothing_starts(monkeypatch, tmp_path) -> None:
+    root = _install(tmp_path)
+    monkeypatch.setenv("SystemRoot", "\\\\server\\share\\Windows")   # never trusted, for wscript or cmd
+    monkeypatch.setattr(handler, "_pass_on_the_foreground", lambda: True)
+    monkeypatch.setattr(handler.subprocess, "Popen", lambda *a, **k: pytest.fail("nothing may start"))
+    with pytest.raises(OSError):
+        handler._start_bundle(root)
 
 
 @pytest.mark.parametrize("bad", ["100%OS%", "a\rb", "a\nb"])
@@ -93,6 +111,7 @@ def test_an_install_path_wscript_would_expand_is_refused_too(monkeypatch, tmp_pa
 
 def test_an_install_without_vool_vbs_still_starts_vool_cmd(monkeypatch, tmp_path) -> None:
     root = _install(tmp_path, vbs=False)
+    _cmd_only(monkeypatch)
     seen: list = []
     monkeypatch.setattr(handler, "_pass_on_the_foreground", lambda: True)
     monkeypatch.setattr(handler.subprocess, "Popen", lambda args, **kw: seen.append(args))
