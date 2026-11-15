@@ -826,6 +826,10 @@ read_only_argv = hardened_argv
 # What this does not cover: a separate program VOOL starts that then starts git itself (a job's own
 # code in the sandbox, a .bat file, gh), and a process start made through ctypes. The hook lives in
 # VOOL's Python processes only; the sandbox's own Windows program list is a separate gate.
+# The search for git in a wrapper's command text is by name, so it also does not read: shell escapes
+# beyond the plain ones (cmd `^`, PowerShell's typographic quotes, bash `$''`), `powershell
+# -EncodedCommand`, launchers outside the wrapper list (rundll32, pcalua, wmic), and git-suite
+# programs with another name (gitk, scalar). Shells VOOL starts run under VoolConfine.
 
 GIT_REFUSED_STATUS = "git_refused_on_windows"
 GIT_REFUSED_TEXT = ("VOOL doesn't run git on Windows in 0.7.1; use WSL2/Linux for git. "
@@ -839,13 +843,19 @@ _REFUSE_GIT: bool | None = None
 #: test runner or a build script that imports core is not armed; see arm_spawn_guard_for_this_process).
 _RUNTIME_MAIN_PREFIXES = ("apps.", "installer.bundle.", "core.")
 _SPAWN_EVENTS = frozenset({"subprocess.Popen", "os.system", "os.spawn", "os.exec", "os.posix_spawn",
-                           "_winapi.CreateProcess", "os.startfile"})
+                           "_winapi.CreateProcess", "os.startfile", "os.startfile/2"})
+#: os.startfile's arguments are audited in a second event, os.startfile/2 (path, operation, arguments,
+#: cwd, show_cmd), from Python 3.10; before that a wrapper started through it is refused unread.
+_STARTFILE_ARGUMENTS_AUDITED = sys.version_info >= (3, 10)
+#: The startfile operations that only open the named file; any other verb is refused while git is.
+_STARTFILE_PLAIN_OPERATIONS = (None, "", "open")
 #: Programs that run another program named in their arguments: their command text is searched for git.
 _WRAPPERS = frozenset({"cmd", "command", "powershell", "pwsh", "sh", "bash", "zsh", "dash", "ksh", "fish",
                        "busybox", "env", "start", "call", "nohup", "time", "timeout", "nice", "sudo", "stdbuf",
                        "xargs", "wsl", "conhost", "runas"})
-_GIT_WORD = re.compile(r"""(?:^|[\s"'`&|;(<>=\\/^])git(?:-[\w.-]+)?(?:\.exe|\.cmd|\.bat|\.com)?(?=$|[\s"'`&|;)<>^])""",
-                       re.IGNORECASE)
+#: git as a standalone name: bounded by any character that cannot be part of a name ({git}, git,status,
+#: x=git, /c git), not by a list of delimiters. "$git" is a PowerShell variable and ".git" a file name.
+_GIT_WORD = re.compile(r"""(?<![\w.$-])git(?:-[\w.-]+)?(?:\.exe|\.cmd|\.bat|\.com)?(?![\w-])""", re.IGNORECASE)
 _GUARD_INSTALLED = False
 #: Whether the installed hook enforces. install_spawn_guard sets it; tests that install the hook put
 #: it back afterwards (an audit hook cannot be removed, and on Windows `git_refused_here()` stays true
@@ -977,11 +987,24 @@ def _spawn_audit(event: str, args: tuple) -> None:
         if event == "subprocess.Popen":      # (executable, args, cwd, env)
             executable, argv = args[0], args[1]
         elif event == "os.system":           # (command,)
-            executable, argv = None, args[0]
+            # system() always runs its text through the shell (cmd on Windows), and no other start
+            # event follows, so the text is read as the shell's: "cd repo && git status" runs git.
+            executable, argv = None, ["cmd", "/c", args[0]]
         elif event == "os.spawn":            # (mode, path, args, env)
             executable, argv = args[1], args[2]
-        elif event == "os.startfile":        # (path, operation, ...)
+        elif event == "os.startfile":        # (path, operation): its arguments come in os.startfile/2
             executable, argv = args[0], None
+            if args[1] not in _STARTFILE_PLAIN_OPERATIONS:
+                # A shell verb is whatever a program registered: Git for Windows adds "git_gui" and
+                # "git_shell" to every folder, which start git with no git in the path or arguments.
+                raise ValueError("a startfile verb other than open cannot be read")  # refused below
+            if _program_name(executable) in _WRAPPERS and not _STARTFILE_ARGUMENTS_AUDITED:
+                raise ValueError("a wrapper's startfile arguments cannot be read")  # refused below
+        elif event == "os.startfile/2":      # (path, operation, arguments, cwd, show_cmd)
+            if args[1] not in _STARTFILE_PLAIN_OPERATIONS:
+                raise ValueError("a startfile verb other than open cannot be read")  # refused below
+            arguments = args[2]
+            executable, argv = args[0], [args[0], "" if arguments is None else arguments]
         else:                                # os.exec / os.posix_spawn / _winapi.CreateProcess
             executable, argv = args[0], args[1]
         runs_git = is_git_command(argv, executable)
