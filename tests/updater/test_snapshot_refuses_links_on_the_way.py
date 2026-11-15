@@ -182,3 +182,51 @@ def test_a_snapshot_whose_config_is_or_holds_a_junction_is_refused(layout) -> No
     with pytest.raises(ValueError, match="symlink"):
         snapshot.snapshot_runtime(layout["data"], layout["home"].parent / "snap-b")
     assert not list((layout["home"].parent).glob("snap-*/config/**/secret.txt"))
+
+
+def _saved_config_holding_a_junction(layout) -> Path:
+    """A snapshot whose saved config tree got a junction to the user's Documents after it was taken."""
+    (layout["outside"] / "secret.txt").write_text("user secret\n", encoding="utf-8")
+    (layout["home"] / "config").mkdir(parents=True)
+    (layout["home"] / "config" / "settings.json").write_text("{\"live\": true}\n", encoding="utf-8")
+    source = layout["data"] / "update_v2" / "transactions" / TXID / "runtime-snapshot"
+    (source / "config").mkdir(parents=True)
+    (source / "config" / "settings.json").write_text("{}\n", encoding="utf-8")
+    _dir_link(source / "config" / "x", layout["outside"])
+    (source / "index.json").write_text(json.dumps([{"path": "config", "kind": "config", "present": True}]),
+                                       encoding="utf-8")
+    return source
+
+
+def test_a_restore_whose_saved_config_holds_a_junction_is_refused(layout) -> None:
+    """M1-13 review #2: copytree descends into a junction inside the saved tree, so the user's files
+    would be copied into the VOOL config. The live config is left as it was."""
+    source = _saved_config_holding_a_junction(layout)
+    with pytest.raises(ValueError, match="link or junction"):
+        snapshot.restore_runtime(layout["data"], source)
+    assert not list((layout["home"] / "config").rglob("secret.txt"))
+    assert (layout["home"] / "config" / "settings.json").read_text(encoding="utf-8") == "{\"live\": true}\n"
+
+
+def test_sabotage_without_the_tree_walk_the_restore_copies_through_the_junction(layout, monkeypatch) -> None:
+    """The control: with the saved tree not walked, copytree follows the junction on Windows (and copies
+    a symlinked folder's contents elsewhere, since symlinks=False)."""
+    source = _saved_config_holding_a_junction(layout)
+    real = snapshot._refuse_links_in_tree
+    monkeypatch.setattr(snapshot, "_refuse_links_in_tree",
+                        lambda root, message: None if Path(root) == source / "config" else real(root, message))
+    snapshot.restore_runtime(layout["data"], source)
+    assert (layout["home"] / "config" / "x" / "secret.txt").read_text(encoding="utf-8") == "user secret\n"
+
+
+def test_a_restore_with_an_entry_of_unknown_kind_is_refused_before_any_write(layout) -> None:
+    """M2-13 review #3: an unknown kind would take the file branch and be copied over the target."""
+    (layout["data"] / "note.txt").write_text("live\n", encoding="utf-8")
+    source = layout["data"] / "update_v2" / "transactions" / TXID / "runtime-snapshot"
+    (source / "data").mkdir(parents=True)
+    (source / "data" / "note.txt").write_text("old\n", encoding="utf-8")
+    (source / "index.json").write_text(json.dumps([{"path": "data/note.txt", "kind": "folder", "present": True}]),
+                                       encoding="utf-8")
+    with pytest.raises(ValueError, match="unknown kind"):
+        snapshot.restore_runtime(layout["data"], source)
+    assert (layout["data"] / "note.txt").read_text(encoding="utf-8") == "live\n"
