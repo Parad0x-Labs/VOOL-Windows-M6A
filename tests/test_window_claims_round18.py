@@ -41,7 +41,9 @@ def _cmd_only(monkeypatch) -> str:
     monkeypatch.setenv("SystemRoot", "C:\\Windows")
     real_isfile = handler.os.path.isfile
     expected = ntpath.join("C:\\Windows", "System32", "cmd.exe")
-    monkeypatch.setattr(handler.os.path, "isfile", lambda p: p == expected or real_isfile(p))
+    wscript = ntpath.join("C:\\Windows", "System32", "wscript.exe")
+    # On a Windows runner the real wscript.exe exists: it must read as missing here.
+    monkeypatch.setattr(handler.os.path, "isfile", lambda p: p == expected or (p != wscript and real_isfile(p)))
     return expected
 
 
