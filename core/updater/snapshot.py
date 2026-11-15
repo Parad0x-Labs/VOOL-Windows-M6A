@@ -19,6 +19,8 @@ def _refuse_unlistable(error: OSError) -> None:
     raise error
 
 
+#: The entry kinds snapshot_runtime writes; restore refuses any other.
+_RESTORE_KINDS = frozenset({"config", "sqlite", "file"})
 #: A junction, a mount point or a symlink on Windows; `stat` names it only there.
 _REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 
@@ -58,6 +60,17 @@ def _refuse_links_below(root: Path, target: Path) -> None:
             raise ValueError(f"update path passes through a link or junction; refused: {relative.as_posix()}")
 
 
+def _refuse_links_in_tree(root: Path, message: str) -> None:
+    """Refuse when anything inside the folder `root` is a link, a junction or another reparse point.
+
+    lstat on every entry, not rglob or is_symlink: a junction is a link too, and os.walk, rglob and
+    copytree all descend into one on Windows. The walk itself runs on the io_path spelling, so a deep
+    tree is judged rather than skipped, and a folder it cannot list refuses."""
+    for directory, dirs, names in os.walk(io_path(root), followlinks=False, onerror=_refuse_unlistable):
+        if any(_is_link(os.lstat(os.path.join(directory, name))) for name in [*dirs, *names]):
+            raise ValueError(message)
+
+
 def snapshot_runtime(data_dir: Path, destination: Path) -> None:
     home = Path(data_dir).resolve().parent
     data = Path(data_dir).resolve()
@@ -73,11 +86,8 @@ def snapshot_runtime(data_dir: Path, destination: Path) -> None:
         raise ValueError("runtime config is a symlink; refusing an ambiguous backup")
     entries.append({"path": "config", "kind": "config", "present": config.exists()})
     if config.exists():
-        # lstat on every entry, not rglob + is_symlink: a junction is a link too, and both follow it.
-        for directory, dirs, names in os.walk(config, followlinks=False, onerror=_refuse_unlistable):
-            if any(_is_link(os.lstat(io_path(Path(directory) / name))) for name in [*dirs, *names]):
-                raise ValueError("runtime config contains a symlink; backup refused")
-        shutil.copytree(config, io_path(destination / "config"))
+        _refuse_links_in_tree(config, "runtime config contains a symlink; backup refused")
+        shutil.copytree(io_path(config), io_path(destination / "config"))
     files = []
     for directory, dirs, names in os.walk(data, followlinks=False, onerror=_refuse_unlistable):
         if Path(directory) == data:
@@ -140,6 +150,9 @@ def restore_runtime(data_dir: Path, source: Path) -> None:
         relative = Path(item["path"])
         if relative.is_absolute() or ".." in relative.parts:
             raise ValueError("invalid snapshot index")
+        if item.get("kind") not in _RESTORE_KINDS:
+            # An unknown kind would otherwise take the file branch and be copied over the target.
+            raise ValueError(f"invalid snapshot index: unknown kind {item.get('kind')!r}")
         target = home / relative
         # Containment is judged on the logical paths; io_path spells only the OS call.
         target.resolve().relative_to(home)
@@ -151,6 +164,8 @@ def restore_runtime(data_dir: Path, source: Path) -> None:
         _refuse_links_below(source, saved)
         if item["present"] and not os.path.exists(io_path(saved)):
             raise FileNotFoundError(f"snapshot missing: {relative}")
+        if item["kind"] == "config" and item["present"]:
+            _refuse_links_in_tree(saved, "saved runtime config contains a link or junction; restore refused")
     for item in entries:
         target = home / item["path"]
         saved = source / item["path"]
@@ -161,6 +176,8 @@ def restore_runtime(data_dir: Path, source: Path) -> None:
             if os.path.exists(io_path(staged)):
                 shutil.rmtree(io_path(staged))
             if item["present"]:
+                # The saved tree is walked again here: copytree follows a junction planted inside it.
+                _refuse_links_in_tree(saved, "saved runtime config contains a link or junction; restore refused")
                 shutil.copytree(io_path(saved), io_path(staged))
             if os.path.exists(io_path(target)):
                 shutil.rmtree(io_path(target))
