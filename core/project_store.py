@@ -81,7 +81,9 @@ def list_projects() -> list[dict[str, Any]]:
     for entry in projects:
         root = str(entry.get("root") or "")
         # On Windows a stored share is listed as missing without being looked up.
-        entry["exists"] = not windows_path_policy.refused_form(root, network_only=True) and os.path.isdir(root)
+        # So is a root on a mapped network drive (stored before 45654525): isdir would open it.
+        entry["exists"] = (not windows_path_policy.refused_form(root, network_only=True)
+                           and not _network_drive(root) and os.path.isdir(root))
     projects.sort(key=lambda p: str(p.get("created_at") or ""), reverse=True)
     return projects
 
@@ -96,8 +98,8 @@ def project_root(project_id: str) -> str | None:
     if not project:
         return None
     root = str(project.get("root") or "")
-    if windows_path_policy.refused_form(root, network_only=True):
-        return None  # a stored share on Windows: never looked up, so never bound or revealed
+    if windows_path_policy.refused_form(root, network_only=True) or (root and _network_drive(root)):
+        return None  # a stored share or network drive on Windows: never looked up, never bound
     return root if root and os.path.isdir(root) else None
 
 

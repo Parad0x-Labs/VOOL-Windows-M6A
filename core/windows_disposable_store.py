@@ -235,6 +235,9 @@ def refusal_reason(path: str, *, extra_sealed: tuple[str, ...] = ()) -> str:
         return "VOOL could not tell where its home folder is"
     if not home.strip():
         return "VOOL could not tell where its home folder is"
+    if not _known("Profile"):
+        # Without the profile its private folders (.ssh, AppData, ...) cannot be sealed: refuse.
+        return "Windows did not say where your profile folder is"
     app_root = str(Path(__file__).resolve().parents[1])
     sealed, exact, temp_roots = protected_folders((home, app_root, *extra_sealed))
     for temp in temp_roots:
