@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ntpath
 import os
+import threading
 from pathlib import Path
 
 from core import windows_path_policy
@@ -44,8 +45,42 @@ _LOCAL_DRIVE_TYPES = frozenset({2, 3, 6})
 _DRIVE_REMOTE = 4
 
 
+#: SHGetKnownFolderPath answers that mean "this PC has no such folder" (owner decision D13 A: a
+#: missing OneDrive is no reason to refuse a mark): HRESULT_FROM_WIN32 of ERROR_FILE_NOT_FOUND and
+#: ERROR_PATH_NOT_FOUND, and E_INVALIDARG ("not present on the system"). Every other failure,
+#: E_FAIL included, is a lookup that failed.
+_ABSENT_RESULTS = frozenset({0x80070002, 0x80070003, 0x80070057})
+#: What the last `known_folder` call on this thread learned, per name (see `outcome`).
+_OUTCOMES = threading.local()
+FOUND = "found"
+ABSENT = "absent"
+FAILED = "failed"
+
+
+def _record(name: str, kind: str) -> None:
+    table = getattr(_OUTCOMES, "table", None)
+    if table is None:
+        table = _OUTCOMES.table = {}
+    table[name] = kind
+
+
+def clear_outcome(name: str) -> None:
+    """Forget what an earlier `known_folder(name)` call on this thread learned."""
+    getattr(_OUTCOMES, "table", {}).pop(name, None)
+
+
+def outcome(name: str) -> str:
+    """How the last `known_folder(name)` call on this thread ended: FOUND, ABSENT (the shell said
+    this PC has no such folder), FAILED or ``failed: <why>`` (the shell could not answer, or
+    answered with a folder that is not a full local path), or '' when nothing was asked (off
+    Windows, or a name this module does not know)."""
+    return str(getattr(_OUTCOMES, "table", {}).get(name, ""))
+
+
 def _shell_known_folder(name: str) -> str | None:
-    """SHGetKnownFolderPath for one of `_FOLDER_IDS`, or None when the shell cannot answer."""
+    """SHGetKnownFolderPath for one of `_FOLDER_IDS`, or None when the shell cannot answer. Why it
+    could not is noted for `known_folder` (ABSENT only when the shell said there is no such folder)."""
+    _record(name, FAILED)
     try:
         import ctypes
         import uuid
@@ -61,11 +96,14 @@ def _shell_known_folder(name: str) -> str | None:
         try:
             result = ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(guid), 0, None, ctypes.byref(found))
             if result == 0 and found.value:
+                _record(name, FOUND)
                 return str(found.value)
+            code = int(result) & 0xFFFFFFFF
+            _record(name, ABSENT if code in _ABSENT_RESULTS else f"{FAILED}: shell answer 0x{code:08X}")
         finally:
             ctypes.windll.ole32.CoTaskMemFree(found)  # owed even when the call fails
-    except (AttributeError, KeyError, OSError, ValueError):
-        pass
+    except (AttributeError, KeyError, OSError, ValueError) as exc:
+        _record(name, f"{FAILED}: {type(exc).__name__}")
     return None
 
 
@@ -170,10 +208,19 @@ def on_local_drive(value: str) -> bool:
 def known_folder(name: str) -> str | None:
     """The folder the shell reports for `name` (one of `_FOLDER_IDS`) as a full local path, or None
     off Windows or when the shell cannot answer. Redirected folders (OneDrive backup, known-folder
-    move) are reported where they really are, which an environment variable would miss."""
+    move) are reported where they really are, which an environment variable would miss. Why a
+    None came back is kept for `outcome`: an absent folder and a failed lookup are not the same."""
+    clear_outcome(name)
     if not _IS_WINDOWS or name not in _FOLDER_IDS:
         return None
     reported = _shell_known_folder(name)
-    if not reported or not _full_local_path(reported):
+    if not reported:
+        if outcome(name) != ABSENT and not outcome(name).startswith(FAILED):
+            # No answer and no word on why: a failed lookup (fail closed), never an absent folder.
+            _record(name, f"{FAILED}: no answer")
         return None
+    if not _full_local_path(reported):
+        _record(name, f"{FAILED}: not a full local path")
+        return None
+    _record(name, FOUND)
     return reported
