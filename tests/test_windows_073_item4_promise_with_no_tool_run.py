@@ -61,22 +61,26 @@ def _verdicts(talk) -> list[str]:
 HOSTS = pytest.mark.parametrize("windows", [True, False], ids=["windows", "mac-linux"])
 
 
-@HOSTS
+@pytest.fixture(autouse=True)
+def _on_windows(monkeypatch):
+    """The guard is Windows-only (`windows_write_gate`); a row that drives another host says so."""
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+
+
 @pytest.mark.parametrize(
     "promise",
     ["Let me pull the data 🚀", "On it! I'll grab the latest BONK trades.", "One moment while I gather the trades."],
 )
-def test_a_bare_promise_with_no_tool_run_gets_the_honest_reply(chat, machine, monkeypatch, windows, promise) -> None:
-    reply, talk = _served(chat, machine, monkeypatch, windows=windows, model_says=promise)
+def test_a_bare_promise_with_no_tool_run_gets_the_honest_reply(chat, machine, monkeypatch, promise) -> None:
+    reply, talk = _served(chat, machine, monkeypatch, windows=True, model_says=promise)
     assert reply == HONEST, reply
     verdicts = _verdicts(talk)
     assert verdicts and verdicts[-1] == "blocked_false_claim", verdicts
 
 
-@HOSTS
-def test_content_before_the_promise_stays_and_says_nothing_ran(chat, machine, monkeypatch, windows) -> None:
+def test_content_before_the_promise_stays_and_says_nothing_ran(chat, machine, monkeypatch) -> None:
     said = "BONK is a Solana memecoin with a large community. I'll grab the latest trades now."
-    reply, _talk = _served(chat, machine, monkeypatch, windows=windows, model_says=said)
+    reply, _talk = _served(chat, machine, monkeypatch, windows=True, model_says=said)
     assert reply == f"BONK is a Solana memecoin with a large community.\n\n{NOTE}", reply
 
 
@@ -126,3 +130,12 @@ def test_offers_and_inline_answers_are_not_promises(monkeypatch, said) -> None:
     monkeypatch.setattr(validator, "_turn_ran_any_tool", lambda **_kwargs: False)
     out = validator._strip_unbacked_work_promises({"response": said}, session_id="s", source_context={})
     assert out["response"] == said and "action_honesty_validator" not in out
+
+
+def test_off_windows_the_promise_reply_is_left_as_mac_ships_it(chat, machine, monkeypatch) -> None:
+    said = "Let me pull the data 🚀"
+    reply, talk = _served(chat, machine, monkeypatch, windows=False, model_says=said)
+    assert reply == said, reply
+    monkeypatch.setattr(validator, "_turn_ran_any_tool", lambda **_kwargs: False)
+    out = validator._strip_unbacked_work_promises({"response": said}, session_id="s", source_context={})
+    assert out == {"response": said}

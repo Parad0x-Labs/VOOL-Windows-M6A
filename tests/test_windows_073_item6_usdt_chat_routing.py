@@ -26,6 +26,7 @@ from typing import Any
 
 import pytest
 
+from core import windows_write_gate as gate
 from core.contacts import store
 from tests.contacts import protected_changes
 from tests.test_windows_run_in_folder_served_end_to_end import chat, machine  # fixtures
@@ -39,6 +40,12 @@ TESTY = "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"
 SOL_TO = "2fgqQMyTitjLceky7ZTFwQDKCFjitKAc5A4EpVpk54FQ"
 PIN = "482913"
 COPIED_CARD_SENTENCE = "Manual mode requires approval for this exact action."
+
+
+@pytest.fixture(autouse=True)
+def _on_windows(monkeypatch):
+    """The USDT rule and the approval-text strip are Windows-only (`windows_write_gate`)."""
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
 
 
 @pytest.fixture
@@ -235,3 +242,17 @@ def test_the_runtime_card_sentence_stays_while_its_approval_is_pending() -> None
         assert stripped["action_honesty_validator"]["reason"] == "runtime_approval_text_without_pending_approval"
     finally:
         mpp.reset_mode_permission_state()
+
+
+def test_off_windows_the_wallet_rule_and_the_reply_are_as_mac_ships_them(monkeypatch) -> None:
+    from core import tool_demand_signals as tds
+    from core.agent_runtime.action_honesty_validator import _strip_runtime_approval_text_without_a_card
+
+    monkeypatch.setattr(gate, "_IS_WINDOWS", False)
+    assert tds._rules() is tds._RULES
+    assert "usdt" not in next(p.pattern for i, _f, p in tds._RULES if i == "wallet.propose").lower()
+    for text in ("send Testy 1 USDT", "send 1 USDT to Testy", "send Testy 1 SOL"):
+        assert "wallet.propose" not in tds.resolve_demand_signals(text).explicit_intents, text
+    assert tds.resolve_demand_signals("send 0.5 SOL to Testy").explicit_intents == ("wallet.propose",)
+    copied = {"response": COPIED_CARD_SENTENCE}
+    assert _strip_runtime_approval_text_without_a_card(dict(copied), session_id="openclaw:none") == copied
