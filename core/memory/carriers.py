@@ -430,6 +430,10 @@ def verify_forget_stores(
 
     verify("chat_session_metadata", session_metadata)
 
+    from core import windows_write_gate
+
+    windows_documents = windows_write_gate.active()
+
     def chat_documents() -> bool:
         # Every stored record of the chat, staged ones included, re-read; an unreadable one raises
         # and stays incomplete (NO RECORD = REFUSE: unknown is never clean).
@@ -437,7 +441,8 @@ def verify_forget_stores(
 
         return bool(documents_carrying(chat_id, token))
 
-    verify("chat_documents", chat_documents)
+    if windows_documents:
+        verify("chat_documents", chat_documents)
 
     from core.vool_memory import _node_forget_payload, _node_matches_session, _row_to_node
 
@@ -568,7 +573,15 @@ def verify_forget_stores(
 
     verify("packet_receipt_ledgers", ledgers)
 
-    # chat_documents is verified once, above (`documents_carrying`, which re-reads staged records too).
+    # On Windows chat_documents is verified once, above (`documents_carrying`, which re-reads staged records too).
+    # Every other host verifies it here, as Mac 0.7.3 does.
+    def mac_chat_documents() -> bool:
+        from core.chat_attachments import documents_still_carrying
+
+        return documents_still_carrying(session_id=chat_id, carries=lambda words: carries(words, token))
+
+    if not windows_documents and chat_id:
+        verify("chat_documents", mac_chat_documents)
     from core.runtime_paths import data_path
 
     roots = [("bootstrap_snapshots", data_path("bootstrap")), ("relay_mirror_snapshots", Path("relay_mirror"))]
