@@ -157,10 +157,15 @@ def test_unreadable_registries_apply_the_server_walk(windows, monkeypatch):
         {"items": ["one", "two", {"nested": "C:\\data\\x.csv"}]},
         # A JSON text spells a backslash as `\\`, which D11 refuses, so a JSON payload passes with `/`.
         {"payload": json.dumps({"path": "C:/Users/you/a.txt"})},
-        {"_trusted_workspace_root": "//server/share", "name": "notes"},
+        {"text": "50% off and 20% more"},
+        {"text": "100%% done, 5 % left, %MY VAR% is not a name"},
+        {"code": "for f in $VOOL_TEST_UNSET_A; do echo ${VOOL_TEST_UNSET_B} $(date); done"},
+        {"code": "price=$5; echo \"$VOOL_TEST_UNSET_A\""},
     ],
 )
-def test_local_paths_and_ordinary_text_still_pass(mcp_tool, arguments):
+def test_local_paths_and_ordinary_text_still_pass(mcp_tool, monkeypatch, arguments):
+    monkeypatch.delenv("VOOL_TEST_UNSET_A", raising=False)
+    monkeypatch.delenv("VOOL_TEST_UNSET_B", raising=False)
     assert policy.tool_call_refusal(MCP_INTENT, arguments) is None
 
 
@@ -195,3 +200,141 @@ def test_off_windows_nothing_changes(monkeypatch):
     ):
         assert policy.tool_call_refusal(MCP_INTENT, arguments) is None, arguments
     assert looked_up == []
+
+
+# Required by the Security Architect's review of this fix.
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"_path": r"\\host\s"},
+        {"_trusted_workspace_root": "//server/share", "name": "notes"},
+        {"opts": {"_cwd": r"\\host\s"}},
+    ],
+)
+def test_underscore_keys_are_judged_because_the_bridge_forwards_them(mcp_tool, arguments):
+    refusal = policy.tool_call_refusal(MCP_INTENT, arguments)
+    assert refusal is not None and refusal.kind == "unc", (arguments, refusal)
+
+
+@pytest.mark.parametrize("text", [r"%ProgramFiles(x86)%\x", "%CD%\\x", "%_vool_unset_%"])
+def test_an_unresolved_percent_variable_of_a_name_shape_is_refused(mcp_tool, monkeypatch, text):
+    for name in ("ProgramFiles(x86)", "CD", "_vool_unset_"):
+        monkeypatch.delenv(name, raising=False)
+    refusal = policy.tool_call_refusal(MCP_INTENT, {"arg": text})
+    assert refusal is not None and refusal.kind == "unresolved_variable", (text, refusal)
+
+
+@pytest.mark.parametrize("text", ["$VOOL_TEST_SHARE_ROOT\\x", "${VOOL_TEST_SHARE_ROOT}/x", "cd $VOOL_TEST_SHARE_ROOT && ls"])
+def test_a_dollar_variable_is_judged_by_what_it_expands_to(mcp_tool, monkeypatch, text):
+    monkeypatch.setenv("VOOL_TEST_SHARE_ROOT", "//server/share")
+    refusal = policy.tool_call_refusal(MCP_INTENT, {"arg": text})
+    assert refusal is not None and refusal.kind == "unc", (text, refusal)
+
+
+def test_a_variable_that_never_settles_is_refused(mcp_tool, monkeypatch):
+    monkeypatch.setenv("VOOL_TEST_LOOP", "%VOOL_TEST_LOOP%%VOOL_TEST_LOOP%")
+    refusal = policy.tool_call_refusal(MCP_INTENT, {"arg": "%VOOL_TEST_LOOP%"})
+    assert refusal is not None and refusal.kind == "unresolved_variable", refusal
+
+
+@pytest.mark.parametrize("text", ["https://example.com/a//b", "https://example.com/x?next=//server/share"])
+def test_a_later_pair_inside_an_http_url_is_still_judged(mcp_tool, text):
+    refusal = policy.tool_call_refusal(MCP_INTENT, {"url": text})
+    assert refusal is not None and refusal.kind == "unc", (text, refusal)
+
+
+def test_unresolved_and_unjudged_refusals_say_vool_cannot_tell(mcp_tool):
+    sentence = "VOOL can't tell where this value would point on the server, so the call was not run."
+    for arguments in ({"arg": "%VOOL_TEST_UNSET_SHARE_VAR%"}, 5):
+        refusal = policy.tool_call_refusal(MCP_INTENT, arguments)
+        assert refusal is not None and refusal.kind in ("unresolved_variable", "unjudged"), refusal
+        assert sentence in policy.refusal_text(refusal.value, refusal.kind)
+    assert policy.refusal_text("", "unjudged") == sentence
+
+
+# Rows folded in from windows/port-k4-path-policy (81ee0f81), adapted.
+
+K4_MCP = "mcp.files.read"
+
+
+@pytest.fixture
+def k4_mcp(windows, monkeypatch):
+    monkeypatch.setattr("core.execution.mcp_bridge.is_mcp_intent", lambda intent: intent.strip() == K4_MCP)
+
+
+@pytest.mark.parametrize(
+    ("arguments", "kind"),
+    [
+        ({"blob": "\\\\evil\\s\\x.txt"}, "unc"),
+        ({"opts": {"files": ["notes.txt", "\\\\.\\PhysicalDrive0"]}}, "device"),
+        ({"\\\\evil\\s": "x"}, "unc"),
+        ({"_cwd": "\\\\evil\\s"}, "unc"),
+        ({"where": "//evil/s/x"}, "unc"),
+        ({"link": "file://evil/s/x"}, "unc"),
+        ([("blob", "\\\\evil\\s\\x")], "unc"),
+    ],
+    ids=["unknown-key", "nested-list", "key", "underscore-key", "slashes", "file-url", "pairs"],
+)
+def test_k4_a_share_anywhere_in_a_server_tools_arguments_is_refused(k4_mcp, arguments, kind):
+    refusal = policy.tool_call_refusal(K4_MCP, arguments)
+    assert refusal is not None, arguments
+    assert refusal.kind == kind, refusal
+
+
+def test_k4_a_share_behind_a_variable_the_server_expands_is_refused(k4_mcp, monkeypatch):
+    monkeypatch.setenv("VOOLSHARE", "\\\\evil\\s")
+    refusal = policy.tool_call_refusal(K4_MCP, {"blob": "%VOOLSHARE%\\x"})
+    assert refusal is not None and refusal.kind == "unc", refusal
+
+
+@pytest.mark.parametrize("arguments", [5, 2.5, True, '{"path": "notes.txt"}', ["notes.txt"]])
+def test_k4_arguments_the_bridge_cannot_read_are_refused(k4_mcp, arguments):
+    refusal = policy.tool_call_refusal(K4_MCP, arguments)
+    assert refusal is not None and refusal.kind == "unjudged", (arguments, refusal)
+
+
+def test_k4_arguments_are_judged_as_the_bridge_reads_them(k4_mcp):
+    # Pairs the bridge reads as a mapping pass when nothing in them is a share; empty arguments are `{}`.
+    assert policy.tool_call_refusal(K4_MCP, [("name", "notes")]) is None
+    assert policy.tool_call_refusal(K4_MCP, 0) is None
+    assert policy.tool_call_refusal(K4_MCP, "") is None
+
+
+def test_k4_an_unreadable_registry_applies_both_rules(windows, monkeypatch):
+    def broken(_intent):
+        raise RuntimeError("registry unavailable")
+
+    monkeypatch.setattr("core.execution.mcp_bridge.is_mcp_intent", lambda intent: False)
+    monkeypatch.setattr("core.tool_registry.tool_for_intent", broken)
+    refusal = policy.tool_call_refusal("plugin.notes.sync", {"blob": "\\\\evil\\s\\x"})
+    assert refusal is not None and refusal.kind == "unc", refusal
+    # The full rule still applies too: a VOOL path field that is not a full local path.
+    refusal = policy.tool_call_refusal("plugin.notes.sync", {"path": "\\x.txt"})
+    assert refusal is not None and refusal.kind == "root_relative", refusal
+
+
+def test_k4_local_arguments_pass_and_cyclic_ones_end(k4_mcp):
+    arguments = {"target": "C:\\Users\\you\\a.txt", "count": 3, "opts": {"x": ["a", None]}}
+    assert policy.tool_call_refusal(K4_MCP, arguments) is None
+    loop: dict = {"name": "x"}
+    loop["self"] = loop
+    assert policy.tool_call_refusal(K4_MCP, {"opts": loop}) is None
+
+
+def test_k4_a_vool_tools_text_fields_are_not_walked(windows, monkeypatch):
+    monkeypatch.setattr("core.execution.mcp_bridge.is_mcp_intent", lambda intent: False)
+    assert policy.tool_call_refusal("workspace.write_file", {"path": "a.txt", "content": "\\\\evil\\s\\x"}) is None
+
+
+def test_k4_off_windows_nothing_is_judged(monkeypatch):
+    monkeypatch.setattr(policy, "_IS_WINDOWS", False)
+    assert policy.tool_call_refusal(K4_MCP, {"blob": "\\\\evil\\s\\x.txt"}) is None
+    assert policy.tool_call_refusal(K4_MCP, {"_path": "\\\\evil\\s"}) is None
+    assert policy.tool_call_refusal(K4_MCP, 5) is None
+
+
+def test_k4_sabotage_without_the_walk_a_share_under_an_unknown_key_passes(k4_mcp, monkeypatch):
+    monkeypatch.setattr(policy, "_server_tool_refusal", lambda arguments: None)
+    assert policy.tool_call_refusal(K4_MCP, {"blob": "\\\\evil\\s\\x.txt"}) is None
