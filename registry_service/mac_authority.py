@@ -406,7 +406,15 @@ class Authority:
 
     def _store(self, raw: bytes) -> None:
         folder = self.dir / "artifacts"
-        folder.mkdir(mode=0o700, exist_ok=True)
+        if _IS_WINDOWS:
+            from core import owner_only
+
+            try:
+                owner_only.ensure_private_dir(folder)
+            except owner_only.OwnerOnlyUnavailable as exc:
+                raise RegistryError("the kept-skills folder could not be made private (" + exc.reason + ")") from None
+        else:
+            folder.mkdir(mode=0o700, exist_ok=True)
         path = folder / (hashlib.sha256(raw).hexdigest() + ".json")
         if not path.exists():
             _write(path, raw)
@@ -699,6 +707,7 @@ def setup(directory: Path, *, server: str, catalog_key: str, targets: list[dict]
     require(len(passphrase) >= 12, "the main key's passphrase needs at least 12 characters")
     require(review.get("provider") in {"openrouter", "ollama"} and review.get("model"), "choose the review model")
     if _IS_WINDOWS:
+        windows_keeper.require_no_keys()  # before the folder exists, so a refused setup leaves nothing behind
         windows_keeper.make_folder(directory)  # never reuse a folder: keys are made once
     else:
         directory.mkdir(mode=0o700)  # never reuse a folder: keys are made once
@@ -721,12 +730,18 @@ def setup(directory: Path, *, server: str, catalog_key: str, targets: list[dict]
     else:
         for name, data in private.items():
             _write(directory / name, data)
-    _write(directory / "trusted-root.json", canonical(envelope))
-    _write(directory / "config.json", json.dumps({"server": server.rstrip("/"), "review": review}, sort_keys=True).encode())
-    _write(directory / "state.json", json.dumps({
-        "epoch": 0, "entries": [], "revoked": [], "targets": targets, "verdicts": {}, "attempts": {}, "totp_last": 0,
-        "authorized_until": 0, "marks": {"sequence": 0, "tested": [], "highlighted": [], "suspended": [], "teams": {}}},
-        sort_keys=True).encode())
+    try:
+        _write(directory / "trusted-root.json", canonical(envelope))
+        _write(directory / "config.json", json.dumps({"server": server.rstrip("/"), "review": review},
+                                                     sort_keys=True).encode())
+        _write(directory / "state.json", json.dumps({
+            "epoch": 0, "entries": [], "revoked": [], "targets": targets, "verdicts": {}, "attempts": {}, "totp_last": 0,
+            "authorized_until": 0, "marks": {"sequence": 0, "tested": [], "highlighted": [], "suspended": [], "teams": {}}},
+            sort_keys=True).encode())
+    except RegistryError as exc:
+        if not _IS_WINDOWS:
+            raise
+        raise RegistryError(str(exc) + windows_keeper.LEFT_BEHIND + str(directory)) from None
     return otpauth(secret), secret
 
 
@@ -775,6 +790,8 @@ def main(argv=None) -> int:
                 print("Set up. Copy trusted-root.json to the server and into the app release. Keep a copy of root.pem "
                       "and its passphrase offline, for example on a USB stick in a drawer.")
             return 0
+        require(args.command != "forget-root" or _IS_WINDOWS,
+                "on a Mac the main key is the root.pem file; move it yourself")  # before a code is spent
         authority = Authority(args.dir)
         if args.command == "run":
             while True:
@@ -799,7 +816,6 @@ def main(argv=None) -> int:
             return 0
         authority.gate(getpass.getpass("Authenticator code: "))
         if args.command == "forget-root":
-            require(_IS_WINDOWS, "on a Mac the main key is the root.pem file; move it yourself")
             from registry_service import windows_keeper
 
             print(windows_keeper.forget_root())

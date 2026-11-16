@@ -782,7 +782,9 @@ def quiet(report: dict) -> dict:
 def setup(repo: Path, *, github: str, catalog_key: str, targets: list[dict], review: dict, passphrase: str,
           offline: Path, vool_commit: str, now: int, set_secret) -> dict:
     """Make the keys and the repository's files. The online keys go straight into GitHub's secrets."""
-    repo, offline = _in_workspace(repo, "--repo"), _in_workspace(offline, "--offline")
+    require(not _WINDOWS, "set up on a Mac or Linux once: setup hands the keys to gh, a program VOOL doesn't run "
+            "on Windows. Runs can then come from Windows")
+    repo, offline = Path(repo), Path(offline)
     require(bool(re.fullmatch(r"[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}", github)), "name the repository as OWNER/NAME")
     require((repo / ".git").exists(), "--repo must be a checkout of the new repository")
     require(not (repo / FOLDER).exists() and not (repo / ".gitattributes").exists(),

@@ -172,6 +172,16 @@ def read_key(file_name: str) -> bytes:
         raise RegistryError("the " + name + " key in Windows Credential Manager is not one VOOL wrote") from None
 
 
+def require_no_keys() -> None:
+    """Credential Manager is reachable and holds no authority key; setup checks this before it makes anything."""
+    require(not _names(_store()), "Windows Credential Manager already holds signing keys under VOOL/" + STORE +
+            "; keys are made once")
+
+
+LEFT_BEHIND = ("; the keys were already saved, so before running setup again delete VOOL/" + STORE +
+               "/* in Windows Credential Manager and the folder ")
+
+
 def write_keys(keys: dict[str, bytes]) -> None:
     """Store every secret once. Refused when any authority entry exists; a partial write is taken back."""
     from core import windows_credential_manager as wcm
@@ -206,4 +216,4 @@ def forget_root() -> str:
 
 
 __all__ = ["AUTHORITY_FOLDER", "KEYS", "STORE", "authority_folder", "forget_root", "locked", "make_folder", "open_folder", "read",
-           "read_key", "require_fixed_folder", "require_private", "write", "write_keys"]
+           "read_key", "require_fixed_folder", "require_no_keys", "require_private", "write", "write_keys"]

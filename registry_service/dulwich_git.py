@@ -21,6 +21,7 @@ These rules hold:
 from __future__ import annotations
 
 import os
+import re
 import ssl
 import stat
 import time
@@ -47,10 +48,18 @@ def _redirect_refused(status: int) -> None:
         raise RegistryError("git redirect refused")
 
 
+#: Names Windows opens as devices whatever their extension (judged on the part before the first dot).
+_DEVICES = frozenset({"con", "prn", "aux", "nul", "conin$", "conout$",
+                      *(f"{port}{n}" for port in ("com", "lpt") for n in (*"0123456789", "\u00b9", "\u00b2", "\u00b3"))})
+_SHORT_NAME = re.compile(r"~\d")  # an 8.3 short name such as GIT~1 can stand for .git or any other folder
+
+
 def _safe_part(name: bytes) -> str:
+    """One path part VOOL will write on any OS: no traversal, no .git, no Windows alias or device name."""
     text = name.decode("utf-8")
     require(text not in {"", ".", ".."} and not any(ch in text for ch in ':\\/\0') and
-            text.lower() != ".git" and not text.lower().startswith(".git ") and text.strip() == text.rstrip(". "),
+            text.lower() != ".git" and not text.lower().startswith(".git ") and text.strip() == text.rstrip(". ") and
+            not _SHORT_NAME.search(text) and text.split(".", 1)[0].rstrip(" ").casefold() not in _DEVICES,
             "the repository holds a path VOOL won't write: " + text[:80])
     return text
 
@@ -89,12 +98,16 @@ class Checkout:
         self._judge_config(opened)
         return opened
 
-    def _judge_config(self, opened) -> None:
+    def _judge_config(self, opened, *, whose: str = "checkout") -> None:
+        self._judge_config_files(Path(opened.controldir()), whose)
+
+    @staticmethod
+    def _judge_config_files(controldir: Path, whose: str) -> None:
         from core import safe_git
 
         programs, followed = [], []
         for name in ("config", "config.worktree"):
-            source = Path(opened.controldir()) / name
+            source = controldir / name
             if not source.exists():
                 continue
             from dulwich.config import ConfigFile
@@ -109,9 +122,11 @@ class Checkout:
                     elif _followed_key(full):
                         followed.append(full)
         if programs:
-            raise RegistryError("the checkout's own git config names programs git would run: " + ", ".join(sorted(programs)))
+            raise RegistryError("the " + whose + "'s own git config names programs git would run: " +
+                                ", ".join(sorted(programs)))
         if followed:
-            raise RegistryError("the checkout's own git config has settings VOOL won't follow: " + ", ".join(sorted(followed)))
+            raise RegistryError("the " + whose + "'s own git config has settings VOOL won't follow: " +
+                                ", ".join(sorted(followed)))
 
     def _remote(self, opened):
         """The origin's client and path: https or a full local drive path, nothing else."""
@@ -126,7 +141,24 @@ class Checkout:
                     not parsed.fragment, "the origin must be a plain https:// address")
             return self._https(client, url), parsed.path
         require(self._local_path(url), "the origin must be https:// or a folder on a local drive")
-        return client.LocalGitClient(), url
+        self._require_plain_origin(url)
+        return self._open_local(url), url
+
+    @staticmethod
+    def _open_local(url: str):
+        client, _objects, _repo = _dulwich()
+        return client.LocalGitClient()
+
+    def _require_plain_origin(self, url: str) -> None:
+        """A bare repository in a plain local folder: no link on its path, and its own config judged too."""
+        origin = Path(url)
+        for part in (origin, *origin.parents):
+            info = os.lstat(part)
+            require(not stat.S_ISLNK(info.st_mode) and not getattr(info, "st_file_attributes", 0) & 0x400,
+                    "the origin's path goes through a link; it must be a plain local folder")
+        controldir = origin if (origin / "HEAD").is_file() and (origin / "objects").is_dir() else origin / ".git"
+        require(controldir.is_dir(), "the origin is not a git repository")
+        self._judge_config_files(controldir, "origin")
 
     @staticmethod
     def _local_path(url: str) -> bool:
@@ -187,7 +219,18 @@ class Checkout:
         return None
 
     def _files(self, opened, tree_id: bytes | None, prefix: str = "") -> dict[str, tuple[int, bytes]]:
-        """Every path in a tree, refusing anything but folders and regular files."""
+        """Every path in a tree, refusing anything but folders and regular files, and two paths one on Windows."""
+        found = self._tree_files(opened, tree_id, prefix)
+        seen: dict[str, str] = {}
+        for path in found:
+            for depth in range(1, path.count("/") + 2):
+                part = "/".join(path.split("/")[:depth])
+                twin = seen.setdefault(part.casefold(), part)
+                require(twin == part, "the repository holds a path VOOL won't write: " + part[:80] + " and " +
+                        twin[:80] + " are one path on Windows")
+        return found
+
+    def _tree_files(self, opened, tree_id: bytes | None, prefix: str = "") -> dict[str, tuple[int, bytes]]:
         found: dict[str, tuple[int, bytes]] = {}
         if tree_id is None:
             return found
@@ -195,7 +238,7 @@ class Checkout:
             name = _safe_part(entry.path)
             path = prefix + name
             if entry.mode == _TREE:
-                found.update(self._files(opened, entry.sha, path + "/"))
+                found.update(self._tree_files(opened, entry.sha, path + "/"))
             else:
                 require(entry.mode in _REGULAR, "the repository holds a link or submodule VOOL won't write: " + path[:80])
                 found[path] = (entry.mode, entry.sha)
