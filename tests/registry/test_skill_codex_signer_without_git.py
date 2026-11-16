@@ -378,3 +378,28 @@ def test_a_signer_run_starts_no_process_where_vool_runs_no_git(tmp_path, monkeyp
     report = signer_rows.signer(world, path).run_once()
 
     assert report["admitted"] == ["alice/notes 1.0.0"] and started == []
+
+
+def test_a_fast_forward_writes_only_the_state_folder_and_the_steps_file(pair) -> None:
+    """A remote commit can't plant a .gitattributes, a script or a workflow in the checkout (Code Integration)."""
+    _origin, seed, work = pair
+    (seed / FOLDER / "state.json").write_text('{"epoch": 7}', encoding="utf-8")
+    (seed / STEPS).write_text("# steps\n", encoding="utf-8")
+    (seed / ".gitattributes").write_text("*.json -diff\n", encoding="utf-8")
+    (seed / "scripts").mkdir()
+    (seed / "scripts" / "run.sh").write_text("echo planted\n", encoding="utf-8")
+    (seed / "README.md").write_text("changed\n", encoding="utf-8")
+    git(seed, "add", "-A")
+    git(seed, "commit", "-q", "-m", "remote moves")
+    git(seed, "push", "-q", "origin", "main")
+    checkout = library(work)
+
+    checkout.start()
+
+    assert (work / FOLDER / "state.json").read_text(encoding="utf-8") == '{"epoch": 7}'
+    assert (work / STEPS).read_text(encoding="utf-8") == "# steps\n"
+    assert not (work / ".gitattributes").exists() and not (work / "scripts").exists()
+    assert (work / "README.md").read_text(encoding="utf-8") == "signer\n"
+    (work / FOLDER / "state.json").write_text('{"epoch": 8}', encoding="utf-8")
+    assert checkout.save("Signer state") is True  # the commit is built from the remote's tree, not the disk
+    assert git(_origin, "show", "main:README.md") == "changed\n"
