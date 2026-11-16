@@ -189,10 +189,14 @@ def _public_coin_argument(intent: str, normalized_key: str, value: Any) -> bool:
 
     Only the exact key `token`, only for `_PUBLIC_COIN_TOKEN_INTENTS`, and only a value shaped like
     an address or a ticker. `api_token`, `access_token`, `token_secret` and the rest stay masked, as
-    does a `token` of any other intent, and events, logs and receipts are unchanged.
+    does a `token` of any other intent, and events, logs and receipts are unchanged. Windows only:
+    off Windows the resume slot masks it as before.
     """
+    from core import windows_write_gate
+
     return (
-        normalized_key == "token"
+        windows_write_gate.active()
+        and normalized_key == "token"
         and intent in _PUBLIC_COIN_TOKEN_INTENTS
         and isinstance(value, str)
         and _PUBLIC_COIN_VALUE_RE.fullmatch(value.strip()) is not None
