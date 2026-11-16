@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -51,6 +52,14 @@ REFUSED = ["vool", "repo", "apps", "myapp", "app.old", "app ", "app.", "_app", "
 ACCEPTED = ["app", "App", "APP", "aPp"]
 
 
+def _base(tmp_path: Path, name: str) -> Path:
+    """Win32 drops a trailing space or dot from a folder name; only the \\\\?\\ spelling keeps it, so on
+    Windows a row like "app " is built there to really test a folder of that name."""
+    if os.name == "nt" and name[-1:] in (" ", "."):
+        return Path("\\\\?\\" + str(tmp_path))
+    return tmp_path
+
+
 # --- refused names: only the checkout pair, never the parent -------------------------------------
 
 @pytest.mark.parametrize("name", REFUSED)
@@ -65,12 +74,14 @@ def test_a_checkout_root_yields_only_its_own_pair(tmp_path: Path, name: str) -> 
 
 @pytest.mark.parametrize("name", REFUSED)
 def test_a_checkout_without_its_own_publish_never_uses_the_parent_launcher(tmp_path: Path, name: str) -> None:
+    tmp_path = _base(tmp_path, name)
     root = _foreign_parent(tmp_path, name)
     assert pin.verified_launcher(root) is None
 
 
 @pytest.mark.parametrize("name", REFUSED)
 def test_a_checkout_uses_its_own_publish_not_the_parent_launcher(tmp_path: Path, name: str) -> None:
+    tmp_path = _base(tmp_path, name)
     root = _foreign_parent(tmp_path, name)
     folder, pin_path = _checkout_pair(root)
     _populate(folder, pin_path, FILES)
@@ -113,6 +124,7 @@ def test_an_installed_launcher_beside_an_app_root_verifies(tmp_path: Path, name:
 
 @pytest.mark.parametrize("name", ACCEPTED + REFUSED)
 def test_the_install_marker_resolves_inside_the_app_folder(tmp_path: Path, name: str) -> None:
+    tmp_path = _base(tmp_path, name)
     root = tmp_path / "VOOL" / name
     root.mkdir(parents=True)
     marker = pin.install_marker(root)

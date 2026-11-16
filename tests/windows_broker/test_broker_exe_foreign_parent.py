@@ -5,6 +5,7 @@ Same rule as the confinement pin: only an absolute app root named `app` probes `
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,14 @@ from core.windows_broker.process import broker_executable
 
 REFUSED = ["vool", "repo", "apps", "myapp", "app.old", "app ", "_app", "application", "VOOL"]
 ACCEPTED = ["app", "App", "APP", "aPp"]
+
+
+def _base(tmp_path: Path, name: str) -> Path:
+    """Win32 drops a trailing space or dot from a folder name; only the \\\\?\\ spelling keeps it, so on
+    Windows a row like "app " is built there to really test a folder of that name."""
+    if os.name == "nt" and name[-1:] in (" ", "."):
+        return Path("\\\\?\\" + str(tmp_path))
+    return tmp_path
 
 
 def _plant_parent_broker(parent: Path) -> Path:
@@ -31,6 +40,7 @@ def _publish(root: Path) -> Path:
 
 @pytest.mark.parametrize("name", REFUSED)
 def test_a_checkout_without_a_publish_never_gets_the_parent_broker(tmp_path: Path, name: str) -> None:
+    tmp_path = _base(tmp_path, name)
     _plant_parent_broker(tmp_path)
     root = tmp_path / name
     root.mkdir()
@@ -39,6 +49,7 @@ def test_a_checkout_without_a_publish_never_gets_the_parent_broker(tmp_path: Pat
 
 @pytest.mark.parametrize("name", REFUSED)
 def test_a_checkout_gets_its_own_publish_not_the_parent_broker(tmp_path: Path, name: str) -> None:
+    tmp_path = _base(tmp_path, name)
     _plant_parent_broker(tmp_path)
     root = tmp_path / name
     published = _publish(root)
