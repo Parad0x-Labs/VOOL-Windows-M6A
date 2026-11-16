@@ -50,8 +50,15 @@ def test_the_windows_lean_install_is_read_as_packages_not_flags():
         assert phantom not in names, f"{phantom!r} read as a package"
 
 
+def _macos_framework_binding(name: str) -> bool:
+    """pyobjc-* packages bind macOS frameworks (EventKit, Contacts, ...) and do not install on Windows,
+    where those features answer os_binding_unavailable. Every other macOS lean package is required."""
+    return _normalized(name).startswith("pyobjc-")
+
+
 def test_every_macos_lean_package_is_installed_by_the_windows_bundle():
-    missing = sorted({_normalized(name) for name in prov.lean_requirements()} - _windows_lean_names())
+    required = {_normalized(name) for name in prov.lean_requirements() if not _macos_framework_binding(name)}
+    missing = sorted(required - _windows_lean_names())
     assert not missing, f"the Windows bundle drops packages the macOS bundle ships: {missing}"
 
 

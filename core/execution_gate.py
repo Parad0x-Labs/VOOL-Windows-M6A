@@ -580,7 +580,15 @@ class ExecutionGate:
         # operator gave for it, a grant, or the mode's own allowance), so it is not asked for
         # again here and the mode matrix is not re-derived. A command it does not cover --
         # another string, an action it did not allow -- is decided below exactly as before.
-        authorization = ExecutionGate._covering_authorization(text, policy_mode=mode)
+        # Windows keeps the 9 Nov narrowing (Security Architect, 16 Nov): an operator approval runs its
+        # one command once through the operator-approved spend below, a code task step's inner command
+        # needs its own approval, and a mode's allowance does not stand behind a command. So on Windows
+        # the published decision does not cover the command here; off Windows it does, as Mac ships.
+        authorization = (
+            None
+            if operator_approval_spend_applies()
+            else ExecutionGate._covering_authorization(text, policy_mode=mode)
+        )
         if authorization is not None and unrunnable:
             return _receipted(
                 DECISION_DENIED,
@@ -844,6 +852,10 @@ class ExecutionGate:
             # Auto is the owner's opt-in to run routine local work unprompted, so it is never
             # stricter than the default hands_off. Destructive commands asked above; the mode
             # matrix recheck in evaluate_command still has the final word on side effects.
+            # Windows keeps the 9 Nov narrowing (Security Architect, 16 Nov): there an Auto turn's
+            # side-effecting command still asks, as it did before the 0.7.3 merge.
+            if operator_approval_spend_applies():
+                return not read_only
             return False
         return not read_only
 

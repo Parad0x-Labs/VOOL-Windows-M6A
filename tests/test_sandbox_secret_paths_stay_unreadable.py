@@ -48,6 +48,8 @@ def home_with_secrets(tmp_path, monkeypatch) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("SECRET-VALUE\n", encoding="utf-8")
     monkeypatch.setenv("HOME", str(home))
+    # Path.home() reads USERPROFILE on Windows, HOME elsewhere.
+    monkeypatch.setenv("USERPROFILE", str(home))
     return home
 
 

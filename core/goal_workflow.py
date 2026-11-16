@@ -214,6 +214,19 @@ def _conn():
     return get_connection()
 
 
+def _release_read_connection(conn) -> None:
+    """Windows: close a connection these reads opened as soon as they are done.
+
+    The readers below leave their connection to the garbage collector, which can hold the database
+    file open past the call. Windows refuses to delete or replace a file that is still open
+    (WinError 32), so an open handle there blocks removing the store. Off Windows nothing changes:
+    the connection is left as Mac ships it."""
+    from core import windows_write_gate
+
+    if windows_write_gate.active():
+        conn.close()
+
+
 def _ensure_table(conn) -> None:
     conn.execute(
         """
@@ -358,21 +371,27 @@ def create_goal_unless_active(goal: dict[str, Any]) -> dict[str, Any] | None:
 
 def load_goal(goal_id: str) -> dict[str, Any] | None:
     conn = _conn()
-    _ensure_table(conn)
-    row = conn.execute(
-        f"SELECT {','.join(_GOAL_COLUMNS)} FROM chat_goals WHERE goal_id = ?", (str(goal_id or ""),)
-    ).fetchone()
+    try:
+        _ensure_table(conn)
+        row = conn.execute(
+            f"SELECT {','.join(_GOAL_COLUMNS)} FROM chat_goals WHERE goal_id = ?", (str(goal_id or ""),)
+        ).fetchone()
+    finally:
+        _release_read_connection(conn)
     return _row_to_goal(row) if row is not None else None
 
 
 def load_active_goal_for_session(session_id: str) -> dict[str, Any] | None:
     """The chat's one non-terminal goal, or None. One explicit goal per chat at a time."""
     conn = _conn()
-    _ensure_table(conn)
-    rows = conn.execute(
-        f"SELECT {','.join(_GOAL_COLUMNS)} FROM chat_goals WHERE session_id = ? ORDER BY created_at DESC",
-        (str(session_id or ""),),
-    ).fetchall()
+    try:
+        _ensure_table(conn)
+        rows = conn.execute(
+            f"SELECT {','.join(_GOAL_COLUMNS)} FROM chat_goals WHERE session_id = ? ORDER BY created_at DESC",
+            (str(session_id or ""),),
+        ).fetchall()
+    finally:
+        _release_read_connection(conn)
     for row in rows:
         goal = _row_to_goal(row)
         if str(goal.get("state")) not in TERMINAL_GOAL_STATES:
@@ -382,20 +401,26 @@ def load_active_goal_for_session(session_id: str) -> dict[str, Any] | None:
 
 def load_latest_goal_for_session(session_id: str) -> dict[str, Any] | None:
     conn = _conn()
-    _ensure_table(conn)
-    row = conn.execute(
-        f"SELECT {','.join(_GOAL_COLUMNS)} FROM chat_goals WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
-        (str(session_id or ""),),
-    ).fetchone()
+    try:
+        _ensure_table(conn)
+        row = conn.execute(
+            f"SELECT {','.join(_GOAL_COLUMNS)} FROM chat_goals WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
+            (str(session_id or ""),),
+        ).fetchone()
+    finally:
+        _release_read_connection(conn)
     return _row_to_goal(row) if row is not None else None
 
 
 def reset_goal_state_for_tests() -> None:
     """Tests only: drop every goal row. A process with real goals must never call this."""
     conn = _conn()
-    _ensure_table(conn)
-    conn.execute("DELETE FROM chat_goals")
-    conn.commit()
+    try:
+        _ensure_table(conn)
+        conn.execute("DELETE FROM chat_goals")
+        conn.commit()
+    finally:
+        _release_read_connection(conn)
     with _LOCK:
         _WORKERS.clear()
 
@@ -961,10 +986,13 @@ def _freeze_running_steps(goal: dict[str, Any], state: str, reason: str) -> None
 
 def reconcile_on_startup() -> int:
     conn = _conn()
-    _ensure_table(conn)
-    rows = conn.execute(
-        f"SELECT {','.join(_GOAL_COLUMNS)} FROM chat_goals WHERE state IN ('running','planning','queued','waiting_approval')"
-    ).fetchall()
+    try:
+        _ensure_table(conn)
+        rows = conn.execute(
+            f"SELECT {','.join(_GOAL_COLUMNS)} FROM chat_goals WHERE state IN ('running','planning','queued','waiting_approval')"
+        ).fetchall()
+    finally:
+        _release_read_connection(conn)
     reconciled = 0
     now = time.time()
     for row in rows:
