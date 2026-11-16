@@ -2400,6 +2400,8 @@ function setDisplayedChat(chatId) {
   if (previousChat && previousChat !== String(chatId || '') && typeof closeBypassModal === 'function') closeBypassModal();
   displayedChat = String(chatId || '');
   view = chatState(displayedChat);
+  // Leaving a private chat that nothing was saved of takes its page-only row with it.
+  if (previousChat && previousChat !== displayedChat && typeof dropLeftPrivateRow === 'function') dropLeftPrivateRow(previousChat);
   // The address follows the chat on screen (replaced, not pushed, so Back history is not flooded).
   try { if (CANONICAL.test(displayedChat) && location.hash !== '#' + displayedChat) history.replaceState(null, '', '#' + displayedChat); } catch (e) {}
   // Named fragment call site: per-chat composer state (drafts, accent) follows the ONE place the
@@ -2505,6 +2507,16 @@ function markPendingSessionPrivate(chatId, isPrivate, savedText) {
     delete row.private;
     row.title = String(savedText || '').split('\n')[0].trim().slice(0, 60) || '(new chat)';
   }
+  renderSessions(_lastSessions);
+}
+// That page-only private row is for the chat on screen. Once the person has left it (opened another
+// chat or started a new one) nothing of it is listed anywhere, so its row goes too, instead of
+// staying until a restart. A chat whose answer is still on its way keeps the row until that turn ends.
+function dropLeftPrivateRow(chatId) {
+  const id = String(chatId || '');
+  const row = _pendingSessions.get(id);
+  if (!row || !row.private || isDisplayed(id) || isChatBusy(id)) return;
+  _pendingSessions.delete(id);
   renderSessions(_lastSessions);
 }
 // A chat exists on the server only once its first turn ends, so a rename (or archive) made while
@@ -5654,6 +5666,8 @@ function releaseComposer(run) {
   if (run && run !== owner.run) return;
   if (run) run.released = true;
   owner.pumpHold = false;
+  // A private chat left while its answer was running: its row goes now that the turn is over.
+  if (run && !owner.resumeApprovedTurn && !isDisplayed(owner.chatId) && typeof dropLeftPrivateRow === 'function') dropLeftPrivateRow(owner.chatId);
   // The composer belongs to the chat on screen. A background chat finishing must not repaint the
   // Send button of the chat the user is actually typing in.
   reflectComposer();
