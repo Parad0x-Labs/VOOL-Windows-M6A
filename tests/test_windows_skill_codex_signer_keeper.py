@@ -129,6 +129,26 @@ def test_a_refused_setup_leaves_no_folder_behind(windows, monkeypatch) -> None:
     assert not _folder().exists()
 
 
+def test_a_key_write_that_fails_partway_leaves_no_folder_and_setup_can_run_again(windows, monkeypatch) -> None:
+    real = windows.CredWriteW
+    writes = []
+
+    def second_fails(pcred, flags):
+        writes.append(1)
+        if len(writes) == 2:
+            windows.error = 5  # ERROR_ACCESS_DENIED
+            return 0
+        return real(pcred, flags)
+
+    monkeypatch.setattr(windows, "CredWriteW", second_fails)
+    with pytest.raises(RegistryError, match="could not be saved in Windows Credential Manager"):
+        _setup()
+    assert _targets(windows) == [] and not _folder().exists()
+    monkeypatch.setattr(windows, "CredWriteW", real)
+    _setup()
+    assert _targets(windows) == ["VOOL/registry-authority/" + name for name in NAMES]
+
+
 def test_a_setup_that_fails_after_the_keys_are_saved_names_what_to_delete(windows, monkeypatch) -> None:
     real = windows_keeper.write
 
