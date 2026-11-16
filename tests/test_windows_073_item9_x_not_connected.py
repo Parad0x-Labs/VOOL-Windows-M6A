@@ -81,7 +81,7 @@ def test_windows_x_ask_without_keys_gets_the_fixed_reply_and_no_model_round(mach
     session, reply, provenance = _turn(chat, machine)
 
     assert reply == X_NOT_CONNECTED
-    assert "Settings > API Keys > X (Twitter) > Connect X" in reply
+    assert "Settings → API Keys → X (Twitter) → Connect X" in reply
     assert session.model_rounds == 0
     assert provenance.get("route") == "x_not_connected", provenance
     assert provenance.get("model_ran") is False
