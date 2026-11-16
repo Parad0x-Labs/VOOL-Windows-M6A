@@ -73,15 +73,26 @@ def _windows_private_directory(path: Path, *, create=False):
         raise DropError("DIRECTORY_PERMISSIONS")
 
 
-def _windows_secure_file(path: Path):
-    """A file Drop itself just made in its owner-only folder: made owner-only, then verified."""
+def _windows_secure_file(path: Path, *, created: bool):
+    """Verified owner-only on every open; repaired only when Drop itself just made the file."""
     from core import owner_only
 
     info = path.lstat()
     if not stat.S_ISREG(info.st_mode) or _reparse(info) or info.st_nlink != 1:
         raise DropError("UNSAFE_STORE_PATH")
-    if not owner_only.make_owner_only(path).ok:
+    report = owner_only.make_owner_only(path) if created else owner_only.verify_owner_only(path)
+    if not report.ok:
         raise DropError("UNSAFE_STORE_PERMISSIONS")
+
+
+def _refuse_remote_spelling(path, refusal: str) -> None:
+    """On Windows, a share, device or NT path is refused as written: resolving it already contacts the share."""
+    if not _WINDOWS:
+        return
+    from core import windows_write_gate
+
+    if windows_write_gate.refused_spelling(os.fspath(path), windows=True):
+        raise DropError(refusal)
 
 
 def _require_workspace(path: Path, refusal: str) -> None:
@@ -154,6 +165,7 @@ def _json(data):
 class LocalRelay:
     def __init__(self, root, *, create=False):
         require_enabled()
+        _refuse_remote_spelling(root, "RELAY_NOT_IN_WORKSPACE")
         self.root = Path(root).absolute()
         _require_workspace(self.root, "RELAY_NOT_IN_WORKSPACE")
         _private_directory(self.root, create=create)
@@ -262,6 +274,9 @@ class DropHome:
 
         if relay is None:
             raise DropError("RELAY_REQUIRED")
+        if home is not None:
+            _refuse_remote_spelling(home, "HOME_NOT_IN_WORKSPACE")
+        _refuse_remote_spelling(relay, "RELAY_NOT_IN_WORKSPACE")
         self.home = Path(home).absolute() if home is not None else active_vool_home()
         self._own_home = self.home.resolve() == active_vool_home().resolve()
         if not self._own_home:
@@ -277,6 +292,11 @@ class DropHome:
         key = _vault_key(crypto / "vault.key")
         self.client = DropClient(crypto / "sessions", key)
         self.fingerprint = self.client.fingerprint
+        made = {name: not os.path.lexists(self.root / name) for name in ("drops.db", "actor.lock")}
+        if _WINDOWS:
+            for name, new in made.items():
+                if not new:  # an existing one is judged before SQLite or the lock opens it
+                    _windows_secure_file(self.root / name, created=False)
         self.db = sqlite3.connect(self.root / "drops.db", timeout=15)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
@@ -300,8 +320,8 @@ class DropHome:
         self.db.commit()
         self.lock = (self.root / "actor.lock").open("a+")
         if _WINDOWS:
-            _windows_secure_file(self.root / "drops.db")
-            _windows_secure_file(self.root / "actor.lock")
+            for name, new in made.items():
+                _windows_secure_file(self.root / name, created=new)
         else:
             os.chmod(self.root / "drops.db", 0o600)
             os.chmod(self.root / "actor.lock", 0o600)
