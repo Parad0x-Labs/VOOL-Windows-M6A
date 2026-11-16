@@ -7,6 +7,8 @@ server-created import grant.
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import hashlib
 import logging
 import threading
@@ -15,7 +17,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from storage.db import get_connection
+from storage.db import active_default_db_path, get_connection
 
 NamespaceState = Literal["active", "archived", "deleted"]
 GrantScope = Literal["chat", "project", "user_profile", "action_receipt"]
@@ -159,7 +161,42 @@ def _ensure_unsaved_namespace(
     return namespace
 
 
+# Database paths whose namespace schema this request already ensured (see _schema_once). None outside one.
+_SCHEMA_READY: contextvars.ContextVar[set[str] | None] = contextvars.ContextVar("namespace_schema_ready", default=None)
+
+
+@contextlib.contextmanager
+def _schema_once():
+    """Ensure the namespace schema at most once per database for one synchronous request.
+
+    Settings > Memory resolves every chat's policy, and each resolve ensured the schema twice: two
+    SQLite opens with WAL setup per chat, on top of the reads themselves (Steve, 0.7.2: 4.8 s with
+    259 chats; 1041 SQLite opens for one listing). Inside this scope a schema ensured once for a
+    database path is not ensured again; the reads still open the store and read fresh rows. A
+    failed ensure is not remembered. The scope lives for one request and is never shared."""
+    if _SCHEMA_READY.get() is not None:
+        yield
+        return
+    token = _SCHEMA_READY.set(set())
+    try:
+        yield
+    finally:
+        _SCHEMA_READY.reset(token)
+
+
 def ensure_context_namespace_schema() -> None:
+    ready = _SCHEMA_READY.get()
+    if ready is not None:
+        path = active_default_db_path()
+        if path in ready:
+            return
+        _ensure_context_namespace_schema()
+        ready.add(path)
+        return
+    _ensure_context_namespace_schema()
+
+
+def _ensure_context_namespace_schema() -> None:
     conn = get_connection()
     try:
         conn.executescript(
