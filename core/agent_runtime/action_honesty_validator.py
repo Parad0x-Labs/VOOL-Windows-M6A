@@ -280,12 +280,17 @@ _EXECUTION_SELF_CLAIM_RE = re.compile(
     rf"|\b(?:file|files|patch|diff|changes?|script|code|command|it|(?<![\w./\\-])[\w./\\-]+\.[A-Za-z]{{1,5}})"
     rf"\s+(?:was|were|has\s+been|have\s+been|is\s+now|are\s+now)\s+(?:successfully\s+)?"
     rf"(?:patched|compiled|applied|executed|run)\b"
-    rf"|\b(?:patched|compiled|applied|executed|ran)\s+(?:successfully|cleanly|without\s+(?:any\s+)?(?:errors?|issues?))\b"
-    # The run and patch tools' own result lines (Steve consistency check, 12 Nov 2026): "`python -m
-    # pytest -q` ran and exited 0." and "Applied unified diff:". A real turn has the tool's receipt,
-    # so the receipt reads them as backed claims ("clean"), and the same words with no receipt are a
-    # claim the blocker refuses, instead of both being signed "no_action_claimed".
-    rf"|{_RUN_OBJECT}\s+ran\s+and\s+exited\b"
+    rf"|\b(?:patched|compiled|applied|executed|ran)\s+(?:successfully|cleanly|without\s+(?:any\s+)?(?:errors?|issues?))\b",
+    re.IGNORECASE,
+)
+#: Windows only (Jesse, 16 Nov: Windows-only fixes by default); off Windows the reader is the Mac one.
+_IS_WINDOWS: bool = os.name == "nt"
+#: The run and patch tools' own result lines (Steve consistency check, 12 Nov 2026): "`python -m
+#: pytest -q` ran and exited 0." and "Applied unified diff:". A real turn has the tool's receipt, so on
+#: Windows the receipt reads them as backed claims ("clean"), and the same words with no receipt are a
+#: claim the blocker refuses, instead of both being signed "no_action_claimed".
+_TOOL_RESULT_CLAIM_RE = re.compile(
+    rf"{_RUN_OBJECT}\s+ran\s+and\s+exited\b"
     rf"|{_RUN_SENTENCE_START}applied\s+(?:the\s+|a\s+)?unified\s+diff\b",
     re.IGNORECASE,
 )
@@ -387,6 +392,8 @@ def _claims_a_run(body: str, *, request_text: str | None = None) -> bool:
 
     for sentence in _split_sentences(body):
         match = _EXECUTION_SELF_CLAIM_RE.search(sentence)
+        if match is None and _IS_WINDOWS:
+            match = _TOOL_RESULT_CLAIM_RE.search(sentence)
         if match is None:
             continue
         prefix = sentence[: match.start()]
