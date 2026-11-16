@@ -1406,8 +1406,9 @@ def register(reg) -> None:
         reg.add(spec)
 
 
-#: Windows Settings has no "Show me around" entry (Steve, 15 Nov), so there the tour copy names the
-#: one door Windows serves: the begin endpoint this group registers.
+#: Windows Settings has no "Show me around" entry (Steve, 15 Nov). The command description is
+#: developer-facing and names the begin endpoint this group registers; the remediation is read in
+#: chat, so it says plainly that the tour is not in the Windows app yet.
 _WINDOWS_TOUR_BEGIN = "POST /api/onboarding/pact/begin"
 
 
@@ -1425,7 +1426,7 @@ def _tour_begin_description() -> str:
 
 def _remediation(code: str) -> tuple[str, ...]:
     if code == "not_applicable_readonly" and _on_windows():
-        return (f"start or replay the tour with {_WINDOWS_TOUR_BEGIN}",)
+        return ("the tour isn't available in the Windows app in this version",)
     return _FAULT_REMEDIATIONS.get(code, ("retry or skip the step",))
 
 
