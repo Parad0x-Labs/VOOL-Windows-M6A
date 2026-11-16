@@ -9,6 +9,7 @@ word is expanded.
 from __future__ import annotations
 
 import shlex
+import shutil
 import subprocess
 
 import pytest
@@ -81,7 +82,7 @@ def test_the_shell_script_quotes_every_word_so_nothing_is_expanded(tmp_path) -> 
     script = chain.shell_script()
     assert script == "ls '*.py' | wc -l && echo 'a b' c"
     # The shell runs exactly those words: the glob stays a literal name, so `ls` reports it missing.
-    result = subprocess.run(["/bin/sh", "-c", script], cwd=tmp_path, capture_output=True, text=True)
+    result = subprocess.run([shutil.which("sh"), "-c", script], cwd=tmp_path, capture_output=True, text=True)
     assert "a.py" not in result.stdout
     assert result.stdout.strip().endswith("a b c")
     # Re-splitting the script gives back the parsed words and operators, and nothing else.

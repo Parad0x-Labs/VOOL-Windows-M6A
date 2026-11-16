@@ -47,6 +47,10 @@ REASONING_CAPS = ["summarize", "classify", "format", "extract", "structured_json
 GENERAL_CAPS = ["summarize", "classify", "format", "extract", "structured_json", "code_basic", "tool_intent"]
 
 PROBE = "hard-capability-probe"
+# On Windows the sandbox runs only Python and pytest, so there the probe and the carry commands
+# are python -c one-liners with the same output; elsewhere they are the shell commands as before.
+_ON_WINDOWS = os.name == "nt"
+PROBE_COMMAND = f"python -c \"print('{PROBE}')\"" if _ON_WINDOWS else f"echo {PROBE}"
 
 # Result-carry cases. Each command's real output holds a marker that appears nowhere in the
 # operator's request or the command's arguments (the data lives only in a workspace file), so the
@@ -61,14 +65,20 @@ PROBE = "hard-capability-probe"
 # re-plans it as workspace.search_text), so the turn reaches a model tool step, not a fast path.
 CARRY_CASES = {
     "head": {
-        "command": "head -n 1 ledger/carry-note.log",
+        "command": (
+            "python -c \"print(open('ledger/carry-note.log').readline().strip())\""
+            if _ON_WINDOWS else "head -n 1 ledger/carry-note.log"
+        ),
         "file": "ledger/carry-note.log",
         "content": "ledger-total-4817-teal\nsecond line stays unread\n",
         "marker": "ledger-total-4817-teal",
         "answer": "The first line is",
     },
     "sed": {
-        "command": "sed -n 2p shipments/batch.csv",
+        "command": (
+            "python -c \"print(open('shipments/batch.csv').read().splitlines()[1])\""
+            if _ON_WINDOWS else "sed -n 2p shipments/batch.csv"
+        ),
         "file": "shipments/batch.csv",
         "content": "amber line\ninvoice-7c2e-quartz paid\nslate line\n",
         "marker": "invoice-7c2e-quartz",
@@ -160,7 +170,7 @@ def _reply(body: dict[str, Any]) -> Any:
         return carry
     if prompt.count(PROBE) >= 3:
         return json.dumps({"intent": "respond.direct", "arguments": {"message": f"The command printed {PROBE}."}})
-    return json.dumps({"intent": "sandbox.run_command", "arguments": {"command": f"echo {PROBE}"}})
+    return json.dumps({"intent": "sandbox.run_command", "arguments": {"command": PROBE_COMMAND}})
 
 
 @pytest.fixture(scope="module")
@@ -345,7 +355,7 @@ def test_served_tool_turn_without_a_tool_capable_model_dispatches_no_tool_step(s
     _seed(served, [(REASONING, REASONING_CAPS)])
     start = _event_count(served["home"])
 
-    payload = _chat_with_operator(served["daemon"], served["home"], "hc-tool-none", f"run the command: echo {PROBE}", model="vool")
+    payload = _chat_with_operator(served["daemon"], served["home"], "hc-tool-none", f"run the command: {PROBE_COMMAND}", model="vool")
     events = _events_since(served["home"], start)
 
     assert ("tool_intent", REASONING) not in _dispatches(events), _diag(events, served["local"])
@@ -360,7 +370,7 @@ def test_served_tool_turn_runs_on_the_capable_model_and_executes_once(served) ->
     start = _event_count(served["home"])
 
     payload = _chat_with_operator(
-        served["daemon"], served["home"], "hc-tool-capable", f"run the command: echo {PROBE}", model="vool",
+        served["daemon"], served["home"], "hc-tool-capable", f"run the command: {PROBE_COMMAND}", model="vool",
         workspace=str(served["workspace"]),
     )
     events = _events_since(served["home"], start)
@@ -461,7 +471,7 @@ def test_served_plain_pin_is_exact_and_an_incapable_pin_is_never_substituted(ser
 
     served["local"].reset()
     start = _event_count(served["home"])
-    _chat_with_operator(served["daemon"], served["home"], "hc-pin", f"run the command: echo {PROBE}", model=REASONING)
+    _chat_with_operator(served["daemon"], served["home"], "hc-pin", f"run the command: {PROBE_COMMAND}", model=REASONING)
     tool_events = _events_since(served["home"], start)
     # The pinned model declares no tool selection: it is not handed the tool step, and no
     # other model silently answers or acts in its place.
@@ -494,14 +504,14 @@ def test_served_chats_keep_their_own_policy_and_auto_never_dispatches_paid(serve
 def test_served_a_capability_change_moves_the_next_tool_step(served) -> None:
     _seed(served, [(GENERAL, GENERAL_CAPS), (SPARE, [c for c in GENERAL_CAPS if c != "tool_intent"])])
     start = _event_count(served["home"])
-    _chat_with_operator(served["daemon"], served["home"], "hc-switch", f"run the command: echo {PROBE}", model="vool")
+    _chat_with_operator(served["daemon"], served["home"], "hc-switch", f"run the command: {PROBE_COMMAND}", model="vool")
     first = {model for kind, model in _dispatches(_events_since(served["home"], start)) if kind == "tool_intent"}
     assert first == {GENERAL}
 
     # The operator's catalog changes between turns: GENERAL no longer selects tools, SPARE does.
     _seed(served, [(GENERAL, [c for c in GENERAL_CAPS if c != "tool_intent"]), (SPARE, GENERAL_CAPS)])
     start = _event_count(served["home"])
-    _chat_with_operator(served["daemon"], served["home"], "hc-switch", f"run the command: echo {PROBE}", model="vool")
+    _chat_with_operator(served["daemon"], served["home"], "hc-switch", f"run the command: {PROBE_COMMAND}", model="vool")
     events = _events_since(served["home"], start)
     second = {model for kind, model in _dispatches(events) if kind == "tool_intent"}
 
