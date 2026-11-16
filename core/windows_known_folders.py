@@ -211,16 +211,24 @@ def known_folder(name: str) -> str | None:
     move) are reported where they really are, which an environment variable would miss. Why a
     None came back is kept for `outcome`: an absent folder and a failed lookup are not the same."""
     clear_outcome(name)
-    if not _IS_WINDOWS or name not in _FOLDER_IDS:
-        return None
-    reported = _shell_known_folder(name)
-    if not reported:
-        if outcome(name) != ABSENT and not outcome(name).startswith(FAILED):
-            # No answer and no word on why: a failed lookup (fail closed), never an absent folder.
-            _record(name, f"{FAILED}: no answer")
-        return None
-    if not _full_local_path(reported):
-        _record(name, f"{FAILED}: not a full local path")
-        return None
-    _record(name, FOUND)
-    return reported
+    if not _IS_WINDOWS:
+        return None  # nothing is asked off Windows: `outcome` stays ''
+    reported: str | None = None
+    try:
+        if name not in _FOLDER_IDS:
+            return None
+        reported = _shell_known_folder(name)
+        if not reported:
+            reported = None
+            return None
+        if not _full_local_path(reported):
+            _record(name, f"{FAILED}: not a full local path")
+            reported = None
+            return None
+        _record(name, FOUND)
+        return reported
+    finally:
+        if reported is None and outcome(name) in ("", FOUND):
+            # A None that no step explained (an early return, a shell that answered nothing and
+            # said nothing, an exception) is a failed lookup, never an absent folder (fail closed).
+            _record(name, FAILED)
