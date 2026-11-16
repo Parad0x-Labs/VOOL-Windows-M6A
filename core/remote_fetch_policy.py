@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any
@@ -76,6 +76,7 @@ class _FetchLedger:
 
 
 _REMOTE_FETCH_FORBIDDEN: ContextVar[bool] = ContextVar("vool_remote_fetch_forbidden", default=False)
+_REMOTE_FETCH_CONSTRAINTS: ContextVar[tuple[Callable[[], bool], ...]] = ContextVar("remote_fetch_constraints", default=())
 _REMOTE_FETCH_ATTEMPTS: ContextVar[_FetchLedger | None] = ContextVar(
     "vool_remote_fetch_attempts", default=None
 )
@@ -364,7 +365,26 @@ def effective_web_available(source_context: dict[str, Any] | None = None) -> boo
 
 
 def remote_fetch_forbidden() -> bool:
-    return bool(_REMOTE_FETCH_FORBIDDEN.get())
+    if _REMOTE_FETCH_FORBIDDEN.get():
+        return True
+    for refuses in _REMOTE_FETCH_CONSTRAINTS.get():
+        try:
+            if refuses():
+                return True
+        except Exception:
+            return True
+    return False
+
+
+@contextmanager
+def remote_fetch_veto(*, when: Callable[[], bool] | None = None) -> Iterator[None]:
+    """Narrow ordinary retrieval without replacing the turn's accounting or policy."""
+    variable = _REMOTE_FETCH_FORBIDDEN if when is None else _REMOTE_FETCH_CONSTRAINTS
+    token = variable.set(True if when is None else (*_REMOTE_FETCH_CONSTRAINTS.get(), when))
+    try:
+        yield
+    finally:
+        variable.reset(token)
 
 
 class RemoteFetchRefusedError(RuntimeError):
@@ -1076,6 +1096,21 @@ def _url_scheme(url: str) -> str:
         return ""
 
 
+def capture_remote_fetch_telemetry():
+    """Bind this turn's counter in a worker while preserving that worker's authority."""
+    ledger = _REMOTE_FETCH_ATTEMPTS.get()
+
+    @contextmanager
+    def bind():
+        token = _REMOTE_FETCH_ATTEMPTS.set(ledger)
+        try:
+            yield
+        finally:
+            _REMOTE_FETCH_ATTEMPTS.reset(token)
+
+    return bind
+
+
 def note_remote_fetch_attempt(
     url: str = "",
     *,
@@ -1203,6 +1238,7 @@ __all__ = [
     "CredentialRedirectRefusedError",
     "RemoteFetchRefusedError",
     "browser_navigation_refusal",
+    "capture_remote_fetch_telemetry",
     "effective_web_available",
     "explicit_remote_fetch_disabled",
     "local_only_active",
@@ -1221,4 +1257,5 @@ __all__ = [
     "remote_fetch_policy_scope",
     "remote_fetch_scope_active",
     "remote_fetch_turn_scope",
+    "remote_fetch_veto",
 ]

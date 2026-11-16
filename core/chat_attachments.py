@@ -1915,8 +1915,9 @@ def carried_documents_for_turn(*, session_id: str, exclude_turn_id: str = "", bu
     """The chat's documents from EARLIER turns, as bounded carried context for a later turn.
 
     Most recent first; each cut on a line boundary within what is left of `budget`, the cut
-    stated on the entry. A document whose bytes were erased is never carried. Nothing of another
-    chat can appear here: the session id is the door's, never the client's.
+    stated on the entry. A document whose bytes were erased is never carried, and neither is one
+    that holds words this chat forgot (or is forgetting) while the forget could not erase it.
+    Nothing of another chat can appear here: the session id is the door's, never the client's.
     """
     session = _valid_session(session_id)
     exclude = str(exclude_turn_id or "").strip()
@@ -2851,6 +2852,57 @@ class _LazyScreen:
                     return False
                 entry[key] = screened
         return True
+def _forgotten_name(record: dict[str, Any]) -> str:
+    extension = os.path.splitext(str(record.get("name") or ""))[1].lower()
+    return f"{DOCUMENT_NAME_PREFIX}-forgotten{extension if extension in TEXT_EXTENSIONS else '.txt'}"
+
+
+def _documents_carrying(session: str, carries: Any) -> list[tuple[dict[str, Any], bool, bool]]:
+    """Each of the chat's documents whose bytes or name carry the words, with which of the two do.
+
+    Bytes that are present but cannot be read raise: an unread document is not a cleared one.
+    """
+    found = []
+    for record in _all_manifests():
+        if record.get("session_id") != session or not record.get("document"):
+            continue
+        path = _bytes_path(record["id"])
+        held = path.exists() or path.is_symlink()
+        in_bytes = held and bool(carries(_open_regular(path).decode("utf-8", errors="replace")))
+        in_name = bool(carries(str(record.get("name") or "")))
+        if in_bytes or in_name:
+            found.append((record, in_bytes, in_name))
+    return found
+
+
+def forget_documents_carrying(*, session_id: str, carries: Any) -> int:
+    """Forget's step for the chat's documents: every document whose text or name carries the forgotten
+    words loses its bytes (as `erase_document`), and a name that carries them is replaced. Returns how
+    many documents held the words. Nothing of another chat is read or touched."""
+    session = _valid_session(session_id)
+    erased = 0
+    with _LOCK:
+        for record, in_bytes, in_name in _documents_carrying(session, carries):
+            erased += 1
+            if in_bytes:
+                _forget_bytes(record["id"])
+                if record.get("state") == "staged":
+                    _unlink_no_follow(_manifest_path(record["id"]))
+                    continue
+                record["state"] = "erased"
+                record["erased_at"] = _iso(_utcnow())
+                record["bytes_retained"] = False
+            if in_name:
+                record["name"] = _forgotten_name(record)
+            _write_manifest(record)
+    return erased
+
+
+def documents_still_carrying(*, session_id: str, carries: Any) -> bool:
+    """Forget's verification read of the chat's documents, after the erasure."""
+    session = _valid_session(session_id)
+    with _LOCK:
+        return bool(_documents_carrying(session, carries))
 
 
 # --- the seams other authorities bind to (portability, Blackbox) -----------------------------------

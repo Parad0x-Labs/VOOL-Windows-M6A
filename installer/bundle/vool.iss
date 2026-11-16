@@ -121,7 +121,7 @@ Type: filesandordirs; Name: "{app}\update_backups"
 Type: files; Name: "{app}\.vool_updating.lock"
 
 [Code]
-procedure StopNulla();
+procedure StopVoolProcesses();
 var
   ResultCode: Integer;
   InstallDir: String;
@@ -153,13 +153,13 @@ end;
   there. In the uninstaller the app constant is the installed folder from the start. }
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
-  StopNulla();
+  StopVoolProcesses();
   Result := '';
 end;
 
 function InitializeUninstall(): Boolean;
 begin
-  StopNulla();
+  StopVoolProcesses();
   Result := True;
 end;
 
