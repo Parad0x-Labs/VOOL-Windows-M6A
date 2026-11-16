@@ -666,6 +666,24 @@ def handle_turn_frontdoor(
             )
         }
 
+    # Windows: an X ask while X is not connected gets one fixed line naming where the keys go (and
+    # Local Only when that is on), instead of a web search or a "Web lookups are off" refusal for a
+    # question only the X tools answer. None off Windows, with X connected, or for any other ask.
+    from core.agent_runtime.windows_x_not_connected import maybe_handle_x_not_connected
+
+    x_not_connected_reply = maybe_handle_x_not_connected(raw_user_input, source_context=source_context)
+    if x_not_connected_reply is not None:
+        return {
+            "result": agent._fast_path_result(
+                session_id=session_id,
+                user_input=effective_input,
+                response=x_not_connected_reply,
+                confidence=0.97,
+                source_context=source_context,
+                reason="x_not_connected",
+            )
+        }
+
     # Exact literal user directives are already fully determined by the current turn. Sending a
     # JSON-looking ``task: output the word BANANA`` through tool-intent routing made every local
     # provider fail for not calling a tool, then bought a second synthesis pass for text the user
