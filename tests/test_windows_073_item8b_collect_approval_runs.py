@@ -5,7 +5,8 @@ address) raised an approval card. Once allowed and the turn resent, VOOL minted 
 of running the call: the pending call is stored for the resume with every argument whose name holds
 "token" masked as a secret, so the resumed call carried `token: "[redacted]"`, its approval
 fingerprint no longer matched the allowed one, and nothing was collected. Found serving item 8 of
-CARRY-FROM-0.7.2 (Steve r072-4). The bug is the same on every host.
+CARRY-FROM-0.7.2 (Steve r072-4). The bug is the same on every host; the fix is Windows-only
+(`core.windows_write_gate.active()`), so off Windows the resume slot masks `token` as before.
 
 Served end to end through /api/chat with the fixtures of
 tests/test_windows_run_in_folder_served_end_to_end.py; the model is stubbed.
@@ -19,6 +20,7 @@ from typing import Any
 import pytest
 
 from core import mode_permission_policy as mpp
+from core import windows_write_gate as gate
 from tests.asgi_harness import asgi_request
 from tests.test_windows_run_in_folder_served_end_to_end import HEADERS, chat, machine
 
@@ -26,6 +28,11 @@ MINT = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
 #: Reaches the tool loop on this base (a no-guessing ask is grounded) and seats market.collect.
 ASK = f"collect the swaps for {MINT} over the last week. Do not guess."
 CALL = {"intent": "market.collect", "arguments": {"token": MINT, "chain": "solana", "window": "7d"}}
+
+
+@pytest.fixture(autouse=True)
+def _on_windows(monkeypatch):
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
 
 
 def _stub_model(talk, monkeypatch) -> list[dict[str, Any]]:
@@ -139,3 +146,11 @@ def test_events_and_receipts_still_mask_the_token_argument() -> None:
     from core.agent_runtime.orchestrator import redact_tool_arguments
 
     assert redact_tool_arguments({"token": MINT, "chain": "solana"})["token"] == "[redacted]"
+
+
+def test_off_windows_the_resume_slot_masks_the_coin_token_as_before(monkeypatch) -> None:
+    from core.agent_runtime.research_tool_loop_facade import resumable_pending_payload
+
+    monkeypatch.setattr(gate, "_IS_WINDOWS", False)
+    stored = resumable_pending_payload({"intent": "market.collect", "arguments": {"token": MINT, "chain": "solana"}})
+    assert stored["arguments"] == {"token": "[redacted]", "chain": "solana"}
