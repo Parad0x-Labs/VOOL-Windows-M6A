@@ -758,9 +758,12 @@ def unlock_root(directory: Path, passphrase: str) -> Ed25519PrivateKey:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Skill Codex signing authority (runs on the owner's Mac or Windows PC)")
+    # Off Windows the command line is exactly as Mac ships it; forget-root exists only on Windows.
+    parser = argparse.ArgumentParser(description="Skill Codex signing authority (runs on the owner's Mac"
+                                     + (" or Windows PC)" if _IS_WINDOWS else ")"))
     parser.add_argument("command", choices=["setup", "run", "status", "targets", "mark", "unmark", "highlight",
-                                            "unhighlight", "remove", "suspend", "unsuspend", "team", "forget-root"])
+                                            "unhighlight", "remove", "suspend", "unsuspend", "team"]
+                        + (["forget-root"] if _IS_WINDOWS else []))
     parser.add_argument("target", nargs="?", default="")
     parser.add_argument("--dir", required=True, type=Path)
     parser.add_argument("--server", default="")
@@ -795,8 +798,6 @@ def main(argv=None) -> int:
                 print("Set up. Copy trusted-root.json to the server and into the app release. Keep a copy of root.pem "
                       "and its passphrase offline, for example on a USB stick in a drawer.")
             return 0
-        require(args.command != "forget-root" or _IS_WINDOWS,
-                "on a Mac the main key is the root.pem file; move it yourself")  # before a code is spent
         authority = Authority(args.dir)
         if args.command == "run":
             while True:

@@ -308,8 +308,25 @@ def test_forget_root_off_windows_refuses_before_spending_an_authenticator_code(t
     monkeypatch.setattr(mac_authority.Authority, "gate", lambda self, code: gated.append(code))
     monkeypatch.setattr(mac_authority.getpass, "getpass", lambda prompt="": "123456")
 
-    assert mac_authority.main(["forget-root", "--dir", str(tmp_path / "authority")]) != 0
+    with pytest.raises(SystemExit) as refused:  # a Mac has no forget-root command, as Mac ships it
+        mac_authority.main(["forget-root", "--dir", str(tmp_path / "authority")])
+    assert refused.value.code == 2
     assert gated == []
+
+
+@pytest.mark.parametrize("windows", [False, True])
+def test_the_command_line_off_windows_is_exactly_as_mac_ships_it(windows, monkeypatch, capsys) -> None:
+    """Owner rule (16 Nov): fixes are Windows-only by default. forget-root and the Windows wording exist only there."""
+    monkeypatch.setattr(mac_authority, "_IS_WINDOWS", windows)
+
+    with pytest.raises(SystemExit) as shown:
+        mac_authority.main(["--help"])
+    usage = capsys.readouterr().out
+
+    assert shown.value.code == 0
+    assert ("forget-root" in usage) is windows
+    assert ("runs on the owner's Mac or Windows PC" in usage) is windows
+    assert windows or "runs on the owner's Mac)" in usage
 
 
 def test_only_the_signer_names_the_authority_namespace() -> None:
