@@ -122,6 +122,15 @@ def _market_rule(branch: str, *, datasets: bool = False) -> re.Pattern[str]:
 _FLOW_TOKEN = (r"(?:\$[A-Za-z][A-Za-z0-9]{1,9}\b|\b0x[0-9a-fA-F]{40}\b|\b[1-9A-HJ-NP-Za-km-z]{32,44}\b"
                r"|\b(?:this|that|the|my)\s+(?:token|coin|memecoin)\b)")
 
+#: the assets a chat payment names: every pilot row's native coin, and USDT (the owner's own token transfers)
+_WALLET_COIN = r"(?:lamports?|sol|eth|bnb|usdc|usdt)"
+#: one word of a payee named with no "to" ("send Testy 1 USDT"): never a pronoun or a function word
+_WALLET_PAYEE_WORD = (
+    r"(?!(?:me|us|you|it|them|him|her|myself|ourselves|yourself|for|the|a|an|my|our|your|their|his|its|this|that|"
+    r"these|those|back|out|over|in|on|of|with|from|by|at|about|up|off|away|all|some|only|just|another|more|again)\b)"
+    r"[A-Za-z][\w'.-]*"
+)
+
 _RULES: tuple[tuple[str, str, re.Pattern[str]], ...] = (
     # -- repository operations (RepoOps control plane) ------------------------
     # GitHub-management demands -- pull requests, issues, CI truth, the typed git vertical --
@@ -155,13 +164,18 @@ _RULES: tuple[tuple[str, str, re.Pattern[str]], ...] = (
         ),
     ),
     # -- wallet (propose/read only; approval is never a tool) ----------------
-    # a decimal amount ("0.0005 SOL", "0.001 ETH") is not a sentence boundary; the native coins of every pilot row count.
+    # a decimal amount ("0.0005 SOL", "0.001 ETH") is not a sentence boundary; the native coins of every pilot row count,
+    # and so does USDT, the token the owner's own transfers may send (core.wallet.chains.USER_TRANSFER_TOKENS), the same
+    # asset the Crypto page's Send form offers. The wallet itself decides where USDT can go (Mainnet rows only).
     # The recipient may also be a bare address with no "to" ("pay 0x... 1 USDC on base"): then an exact amount must
-    # stand before the coin, so an address and a coin name alone are not a payment
+    # stand before the coin, so an address and a coin name alone are not a payment. A saved name with no "to"
+    # ("send Testy 1 USDT", "pay Tomas Berg 0.5 SOL") is the same shape: one to three words, none of them a pronoun or
+    # a function word ("pay for 1 ETH", "send me 1 SOL" name nobody), right before the exact amount and the coin.
     ("wallet.propose", "wallet", re.compile(
-        r"\b(?:pay|send|transfer|prepare|propose)\b(?:[^.?!]|\.(?=\d)){0,60}?\b(?:lamports?|sol|eth|bnb|usdc)\b(?:[^.?!]|\.(?=\d)){0,60}?\bto\b"
-        r"|\b(?:pay|send|transfer)\b(?:[^.?!]|\.(?=\d)){0,60}?\b(?:0x[0-9a-f]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})\b(?:[^.?!]|\.(?=\d)){0,60}?\b\d[\d,]*(?:\.\d+)?\s*(?:lamports?|sol|eth|bnb|usdc)\b"
-        r"|\b(?:pay|send|transfer)\b(?:[^.?!]|\.(?=\d)){0,60}?\b\d[\d,]*(?:\.\d+)?\s*(?:lamports?|sol|eth|bnb|usdc)\b(?:[^.?!]|\.(?=\d)){0,60}?\b(?:0x[0-9a-f]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})\b",
+        rf"\b(?:pay|send|transfer|prepare|propose)\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b{_WALLET_COIN}\b(?:[^.?!]|\.(?=\d)){{0,60}}?\bto\b"
+        rf"|\b(?:pay|send|transfer)\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b(?:0x[0-9a-f]{{40}}|[1-9A-HJ-NP-Za-km-z]{{32,44}})\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b\d[\d,]*(?:\.\d+)?\s*{_WALLET_COIN}\b"
+        rf"|\b(?:pay|send|transfer)\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b\d[\d,]*(?:\.\d+)?\s*{_WALLET_COIN}\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b(?:0x[0-9a-f]{{40}}|[1-9A-HJ-NP-Za-km-z]{{32,44}})\b"
+        rf"|\b(?:pay|send|transfer)\s+{_WALLET_PAYEE_WORD}(?:\s+{_WALLET_PAYEE_WORD}){{0,2}}\s+\d[\d,]*(?:\.\d+)?\s*{_WALLET_COIN}\b",
         re.I)),
     # -- contacts (the saved people and services; resolution itself happens inside each consumer) -----------
     # possession or the address-book name, never a bare mention: "contact card"/"Contacts are stored locally"

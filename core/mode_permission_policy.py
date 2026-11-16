@@ -748,6 +748,27 @@ def pending_approval_record(session_id: str, approval_id: str, *, include_approv
         return dict(entry)
 
 
+def session_has_pending_approval(session_id: str) -> bool:
+    """Whether THIS chat has any unexpired pending approval (a card waiting for allow or deny).
+
+    A read over the one approval store, for the reply guard that keeps the runtime's own
+    approval sentence ("Manual mode requires approval for this exact action.") from being
+    shown when no card stands behind it.
+    """
+    clean_session = str(session_id or "").strip()
+    if not clean_session:
+        return False
+    _ensure_approvals_restored()
+    now = time.time()
+    with _LOCK:
+        return any(
+            str(approval.get("session_id") or "") == clean_session
+            and approval.get("status") == "pending"
+            and float(approval.get("expires_at") or 0) > now
+            for approval in _APPROVALS.values()
+        )
+
+
 def session_has_pending_workspace_approval(session_id: str) -> bool:
     """Whether THIS chat currently shows a pending permission ask inside the chat-workspace class.
 
