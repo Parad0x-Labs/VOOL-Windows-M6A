@@ -1489,9 +1489,14 @@ def _strip_unbacked_work_promises(
     session_id: str | None,
     source_context: dict[str, object] | None,
 ) -> dict[str, Any]:
-    """Drop a closing promise of work ("Let me pull the data") that no tool on this turn is doing, and say so."""
+    """Drop a closing promise of work ("Let me pull the data") that no tool on this turn is doing, and say so.
+
+    Only on Windows (`windows_write_gate`): off Windows the reply is left as Mac ships it.
+    """
+    from core import windows_write_gate
+
     response = str(output.get("response") or "")
-    if not response.strip() or not _WORK_PROMISE_RE.search(response):
+    if not windows_write_gate.active() or not response.strip() or not _WORK_PROMISE_RE.search(response):
         return output
     if (output.get("action_honesty_validator") or {}).get("applied"):
         return output
@@ -2012,10 +2017,13 @@ def _strip_runtime_approval_text_without_a_card(
     The sentence belongs to the approval card. A turn that raised a card carries its
     ``approval_request``, and the chat's pending approval is in the one approval store; either
     keeps the reply as it is. Otherwise the copied sentences are removed, and a reply left
-    with nothing says plainly that nothing is waiting for approval.
+    with nothing says plainly that nothing is waiting for approval. Only on Windows
+    (`windows_write_gate`): off Windows the reply is left as Mac ships it.
     """
+    from core import windows_write_gate
+
     response = str(output.get("response") or "")
-    if not _RUNTIME_APPROVAL_SENTENCE_RE.search(response):
+    if not windows_write_gate.active() or not _RUNTIME_APPROVAL_SENTENCE_RE.search(response):
         return output
     if output.get("approval_request"):
         return output

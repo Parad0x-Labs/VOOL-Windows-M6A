@@ -167,19 +167,13 @@ _RULES: tuple[tuple[str, str, re.Pattern[str]], ...] = (
         ),
     ),
     # -- wallet (propose/read only; approval is never a tool) ----------------
-    # a decimal amount ("0.0005 SOL", "0.001 ETH") is not a sentence boundary; the native coins of every pilot row count,
-    # and so does USDT, the token the owner's own transfers may send (core.wallet.chains.USER_TRANSFER_TOKENS), the same
-    # asset the Crypto page's Send form offers. The wallet itself decides where USDT can go (Mainnet rows only).
+    # a decimal amount ("0.0005 SOL", "0.001 ETH") is not a sentence boundary; the native coins of every pilot row count.
     # The recipient may also be a bare address with no "to" ("pay 0x... 1 USDC on base"): then an exact amount must
-    # stand before the coin, so an address and a coin name alone are not a payment. A saved name with no "to"
-    # ("send Testy 1 USDT", "pay Tomas Berg 0.5 SOL") is the same shape: one to three words, none of them a pronoun or
-    # a function word ("pay for 1 ETH", "send me 1 SOL" name nobody), right before the exact amount and the coin.
-    # That arm never reads a question ("did you send Bob 1 SOL?", "how do I pay Testy 1 USDT"): asked about, not asked for.
+    # stand before the coin, so an address and a coin name alone are not a payment
     ("wallet.propose", "wallet", re.compile(
-        rf"\b(?:pay|send|transfer|prepare|propose)\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b{_WALLET_COIN}\b(?:[^.?!]|\.(?=\d)){{0,60}}?\bto\b"
-        rf"|\b(?:pay|send|transfer)\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b(?:0x[0-9a-f]{{40}}|[1-9A-HJ-NP-Za-km-z]{{32,44}})\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b\d[\d,]*(?:\.\d+)?\s*{_WALLET_COIN}\b"
-        rf"|\b(?:pay|send|transfer)\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b\d[\d,]*(?:\.\d+)?\s*{_WALLET_COIN}\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b(?:0x[0-9a-f]{{40}}|[1-9A-HJ-NP-Za-km-z]{{32,44}})\b"
-        rf"|{_WALLET_NOT_A_QUESTION}[^\n]*?\b(?:pay|send|transfer)\s+{_WALLET_PAYEE_WORD}(?:\s+{_WALLET_PAYEE_WORD}){{0,2}}\s+\d[\d,]*(?:\.\d+)?\s*{_WALLET_COIN}\b",
+        r"\b(?:pay|send|transfer|prepare|propose)\b(?:[^.?!]|\.(?=\d)){0,60}?\b(?:lamports?|sol|eth|bnb|usdc)\b(?:[^.?!]|\.(?=\d)){0,60}?\bto\b"
+        r"|\b(?:pay|send|transfer)\b(?:[^.?!]|\.(?=\d)){0,60}?\b(?:0x[0-9a-f]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})\b(?:[^.?!]|\.(?=\d)){0,60}?\b\d[\d,]*(?:\.\d+)?\s*(?:lamports?|sol|eth|bnb|usdc)\b"
+        r"|\b(?:pay|send|transfer)\b(?:[^.?!]|\.(?=\d)){0,60}?\b\d[\d,]*(?:\.\d+)?\s*(?:lamports?|sol|eth|bnb|usdc)\b(?:[^.?!]|\.(?=\d)){0,60}?\b(?:0x[0-9a-f]{40}|[1-9A-HJ-NP-Za-km-z]{32,44})\b",
         re.I)),
     # -- contacts (the saved people and services; resolution itself happens inside each consumer) -----------
     # possession or the address-book name, never a bare mention: "contact card"/"Contacts are stored locally"
@@ -1149,6 +1143,33 @@ _X_ASK_TO_ACT = re.compile(
 )
 
 
+#: Windows only (0.7.3 carry 6): the wallet.propose rule also counts USDT, the token the owner's own transfers may
+#: send (core.wallet.chains.USER_TRANSFER_TOKENS) and the Crypto page's Send form offers; the wallet itself decides where
+#: USDT can go (Mainnet rows only). A saved name with no "to" ("send Testy 1 USDT", "pay Tomas Berg 0.5 SOL") is a
+#: payee too: one to three words, none of them a pronoun or a function word ("pay for 1 ETH", "send me 1 SOL" name
+#: nobody), right before the exact amount and the coin. That arm never reads a question ("did you send Bob 1 SOL?",
+#: "how do I pay Testy 1 USDT"): asked about, not asked for. Off Windows the rule in _RULES is the one Mac ships.
+_WINDOWS_WALLET_PROPOSE = re.compile(
+    rf"\b(?:pay|send|transfer|prepare|propose)\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b{_WALLET_COIN}\b(?:[^.?!]|\.(?=\d)){{0,60}}?\bto\b"
+    rf"|\b(?:pay|send|transfer)\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b(?:0x[0-9a-f]{{40}}|[1-9A-HJ-NP-Za-km-z]{{32,44}})\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b\d[\d,]*(?:\.\d+)?\s*{_WALLET_COIN}\b"
+    rf"|\b(?:pay|send|transfer)\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b\d[\d,]*(?:\.\d+)?\s*{_WALLET_COIN}\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b(?:0x[0-9a-f]{{40}}|[1-9A-HJ-NP-Za-km-z]{{32,44}})\b"
+    rf"|{_WALLET_NOT_A_QUESTION}[^\n]*?\b(?:pay|send|transfer)\s+{_WALLET_PAYEE_WORD}(?:\s+{_WALLET_PAYEE_WORD}){{0,2}}\s+\d[\d,]*(?:\.\d+)?\s*{_WALLET_COIN}\b",
+    re.I,
+)
+
+
+def _rules() -> tuple[tuple[str, str, re.Pattern[str]], ...]:
+    """_RULES, with the Windows wallet.propose rule in place of the shipped one on Windows."""
+    from core import windows_write_gate
+
+    if not windows_write_gate.active():
+        return _RULES
+    return tuple(
+        (intent, family, _WINDOWS_WALLET_PROPOSE if intent == "wallet.propose" else pattern)
+        for intent, family, pattern in _RULES
+    )
+
+
 def _x_action_asked(cleaned: str) -> bool:
     words = _X_QUOTED.sub(" ", cleaned)
     if not any(p.search(words) for i, _f, p in _RULES if i == "x.action.propose"):
@@ -1187,10 +1208,11 @@ def resolve_demand_signals(text: str) -> DemandSignals:
         _note("vool-browser.inspect", "web")
 
     database_is_context_only = bool(_DATABASE_CONTEXT_ONLY.search(cleaned))
+    rules = _rules()
     is_wallet_move = any(
-        pattern.search(cleaned) for intent, _family, pattern in _RULES if intent == "wallet.propose"
+        pattern.search(cleaned) for intent, _family, pattern in rules if intent == "wallet.propose"
     )
-    for intent, family, pattern in _RULES:
+    for intent, family, pattern in rules:
         if pattern.search(cleaned):
             if family == "database" and database_is_context_only:
                 # Discussed, not demanded. Recorded here rather than by narrowing the
