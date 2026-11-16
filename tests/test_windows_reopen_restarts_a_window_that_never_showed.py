@@ -24,6 +24,14 @@ def _windows(monkeypatch):
     monkeypatch.setattr(bundle_supervisor, "_is_windows_platform", lambda: True)
 
 
+@pytest.fixture(autouse=True)
+def _no_real_taskkill():
+    """On Windows _stop_child runs taskkill through subprocess.run, which would take the next fake
+    child from the patched Popen and kill a real process by a fake pid. Stub it."""
+    with mock.patch("installer.bundle.bundle_supervisor.subprocess.run", return_value=mock.Mock(returncode=0)):
+        yield
+
+
 def _supervisor(tmp_path: Path) -> BundleSupervisor:
     root = tmp_path / "bundle"
     root.mkdir(exist_ok=True)
