@@ -16,11 +16,11 @@ from __future__ import annotations
 from typing import Any
 
 X_NOT_CONNECTED = (
-    "X is not connected. Add your X keys in Settings > API Keys > X (Twitter) > Connect X."
+    "X is not connected. Add your X keys in Settings → API Keys → X (Twitter) → Connect X."
 )
 X_NOT_CONNECTED_LOCAL_ONLY = (
-    "Local Only is on, so VOOL stays on this computer and does not reach X. "
-    "X is also not connected: add your X keys in Settings > API Keys > X (Twitter) > Connect X."
+    "Local Only is on, so VOOL does not reach X. "
+    "X is also not connected: add your X keys in Settings → API Keys → X (Twitter) → Connect X."
 )
 
 
