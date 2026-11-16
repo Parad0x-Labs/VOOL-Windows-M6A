@@ -24,10 +24,11 @@ import threading
 import time
 from pathlib import Path
 
-try:   # POSIX only; on Windows Drop refuses before it would lock (core.drop.require_enabled)
-    import fcntl
-except ImportError:
-    fcntl = None  # type: ignore[assignment]
+#: Patched by tests to drive the Windows branch on any platform. Windows mode bits and uids say nothing
+#: about who can read a folder, so there every folder and secret is judged by its ACL (core/owner_only),
+#: a junction or other reparse point is refused, and the lock is core/os_file_lock's.
+_WINDOWS = os.name == "nt"
+_REPARSE_POINT = 0x400
 
 from core.drop import DropError, require_enabled
 from core.drop.client import DropClient
@@ -51,7 +52,51 @@ def summary_block(sid):
     return "drop_" + hashlib.sha256(_id(sid).encode()).hexdigest()[:32]
 
 
+def _reparse(info) -> bool:
+    return bool(getattr(info, "st_file_attributes", 0) & _REPARSE_POINT)
+
+
+def _windows_private_directory(path: Path, *, create=False):
+    from core import owner_only
+
+    if create and not os.path.lexists(path):
+        try:
+            owner_only.ensure_private_dir(path)
+        except owner_only.OwnerOnlyUnavailable as exc:
+            raise DropError("DIRECTORY_PERMISSIONS") from exc
+    try:
+        mode = path.lstat()
+    except OSError as exc:
+        raise DropError("MISSING_RELAY") from exc
+    # An existing folder is verified, never repaired: a handle opened on it earlier would keep its access.
+    if not stat.S_ISDIR(mode.st_mode) or _reparse(mode) or not owner_only.verify_owner_only(path).ok:
+        raise DropError("DIRECTORY_PERMISSIONS")
+
+
+def _windows_secure_file(path: Path):
+    """A file Drop itself just made in its owner-only folder: made owner-only, then verified."""
+    from core import owner_only
+
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or _reparse(info) or info.st_nlink != 1:
+        raise DropError("UNSAFE_STORE_PATH")
+    if not owner_only.make_owner_only(path).ok:
+        raise DropError("UNSAFE_STORE_PERMISSIONS")
+
+
+def _require_workspace(path: Path, refusal: str) -> None:
+    """On Windows, Drop writes outside VOOL's own home only inside a folder the owner marked disposable."""
+    if not _WINDOWS:
+        return
+    from core import windows_write_gate
+
+    if not windows_write_gate.inside_flagged(str(path)):
+        raise DropError(refusal)
+
+
 def _private_directory(path: Path, *, create=False):
+    if _WINDOWS:
+        return _windows_private_directory(path, create=create)
     if create:
         path.mkdir(mode=0o700, parents=True, exist_ok=True)
     try:
@@ -64,11 +109,17 @@ def _private_directory(path: Path, *, create=False):
 
 def _write(path, data):
     temp = path.with_name(path.name + "." + secrets.token_hex(8) + ".tmp")
-    fd = os.open(temp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    fd = os.open(temp, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0), 0o600)
     with os.fdopen(fd, "wb") as out:
         out.write(data)
         out.flush()
         os.fsync(out.fileno())
+    if _WINDOWS:
+        from core import windows_sharing_retry
+
+        # The folder is owner-only, so the new file inherits that; a folder can't be opened to fsync there.
+        windows_sharing_retry.replace(temp, path)
+        return
     os.replace(temp, path)
     directory = os.open(path.parent, os.O_RDONLY)
     try:
@@ -82,7 +133,7 @@ def _read(path, limit):
         info = path.lstat()
     except OSError as exc:
         raise DropError("INPUT_UNAVAILABLE") from exc
-    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > limit:
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > limit or _reparse(info):
         raise DropError("INPUT_LIMIT")
     data = path.read_bytes()
     if len(data) > limit:
@@ -104,6 +155,7 @@ class LocalRelay:
     def __init__(self, root, *, create=False):
         require_enabled()
         self.root = Path(root).absolute()
+        _require_workspace(self.root, "RELAY_NOT_IN_WORKSPACE")
         _private_directory(self.root, create=create)
         if create:
             _private_directory(self.root / "invites", create=True)
@@ -162,7 +214,31 @@ def _discard(path: Path):
         path.unlink()
 
 
+def _windows_vault_key(path: Path) -> bytes:
+    from core import owner_only
+
+    if not os.path.lexists(path):
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0))
+        os.close(fd)
+        # Owner-only before the key's bytes go in; a file that can't be made so is removed, never filled.
+        if not owner_only.make_owner_only(path).ok:
+            path.unlink()
+            raise DropError("VAULT_KEY_PERMISSIONS")
+        with open(path, "r+b") as out:
+            out.write(secrets.token_bytes(32))
+            out.flush()
+            os.fsync(out.fileno())
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or _reparse(info) or not owner_only.verify_owner_only(path).ok:
+        raise DropError("VAULT_KEY_PERMISSIONS")
+    if info.st_size != 32:
+        raise DropError("VAULT_KEY_SIZE")
+    return path.read_bytes()
+
+
 def _vault_key(path: Path) -> bytes:
+    if _WINDOWS:
+        return _windows_vault_key(path)
     if not path.exists():
         fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, "wb") as out:
@@ -188,6 +264,8 @@ class DropHome:
             raise DropError("RELAY_REQUIRED")
         self.home = Path(home).absolute() if home is not None else active_vool_home()
         self._own_home = self.home.resolve() == active_vool_home().resolve()
+        if not self._own_home:
+            _require_workspace(self.home, "HOME_NOT_IN_WORKSPACE")
         _private_directory(self.home, create=True)
         self.root = self.home / "drop"
         _private_directory(self.root, create=True)
@@ -220,9 +298,13 @@ class DropHome:
                 expires INTEGER NOT NULL);
         """)
         self.db.commit()
-        os.chmod(self.root / "drops.db", 0o600)
         self.lock = (self.root / "actor.lock").open("a+")
-        os.chmod(self.root / "actor.lock", 0o600)
+        if _WINDOWS:
+            _windows_secure_file(self.root / "drops.db")
+            _windows_secure_file(self.root / "actor.lock")
+        else:
+            os.chmod(self.root / "drops.db", 0o600)
+            os.chmod(self.root / "actor.lock", 0o600)
         try:
             with self.scope():
                 from core.memory.entries import _ensure_memory_files
@@ -271,11 +353,11 @@ class DropHome:
         Only a second home in the same process (the two-home tests and demo)
         swaps the process-wide home, under a lock, for the duration of a call.
         """
-        from core import runtime_paths
+        from core import os_file_lock, runtime_paths
         from storage.db import active_default_db_path, configure_default_db_path
 
         with _HOME_LOCK:
-            fcntl.flock(self.lock, fcntl.LOCK_EX)
+            os_file_lock.lock_exclusive(self.lock.fileno())
             try:
                 if self._own_home:
                     yield
@@ -290,7 +372,7 @@ class DropHome:
                     configure_default_db_path(previous_db)
                     runtime_paths.configure_runtime_home(previous_home)
             finally:
-                fcntl.flock(self.lock, fcntl.LOCK_UN)
+                os_file_lock.unlock(self.lock.fileno())
 
     def _row(self, sid):
         _id(sid)
