@@ -1,4 +1,7 @@
-"""The Skill Codex's signing authority. It runs on the owner's Mac, never on the server.
+"""The Skill Codex's signing authority. It runs on the owner's Mac or Windows PC, never on the server.
+
+On Windows the keys live in Credential Manager and the state in one fixed owner-only folder; see
+registry_service/windows_keeper.py.
 
     python -m registry_service.mac_authority setup --dir DIR --server URL --catalog-key HEX --targets FILE
     python -m registry_service.mac_authority run --dir DIR [--once]
@@ -56,14 +59,13 @@ try:  # POSIX only. github_authority and publication import from here, so Window
 except ImportError:  # pragma: no cover - Windows
     fcntl = None  # type: ignore[assignment]
 
-#: Patched by tests to drive the Windows refusal on any platform.
+#: Patched by tests to drive the Windows branch on any platform. On Windows the keys live in Credential Manager
+#: and the state in one fixed owner-only folder (registry_service/windows_keeper.py); elsewhere, as before.
 _IS_WINDOWS = os.name == "nt"
-#: Its keys and lock rely on POSIX modes and flock, which Windows does not have.
-_NOT_ON_WINDOWS = "the signing authority runs on the owner's Mac; it cannot run on Windows"
 
 
-def _refuse_windows() -> None:
-    require(not _IS_WINDOWS and fcntl is not None, _NOT_ON_WINDOWS)
+def _posix_only() -> None:
+    require(fcntl is not None, "this system has no flock, so the signing authority can't lock its folder")
 
 
 PREFIX = "/registry/api"
@@ -110,6 +112,11 @@ def otpauth(secret: bytes) -> str:
 # ---- private files ----
 
 def _write(path: Path, data: bytes) -> None:
+    if _IS_WINDOWS:
+        from registry_service import windows_keeper
+
+        windows_keeper.write(path, data)  # sealed owner-only before the bytes go in; mode bits mean nothing there
+        return
     temporary = path.with_name(path.name + ".new")
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(descriptor, "wb") as handle:
@@ -120,9 +127,22 @@ def _write(path: Path, data: bytes) -> None:
 
 
 def _private(path: Path) -> bytes:
-    _refuse_windows()  # Windows mode bits say nothing about who can read a key
+    if _IS_WINDOWS:
+        from registry_service import windows_keeper
+
+        return windows_keeper.read(path)  # judged by its ACL: Windows mode bits say nothing about who can read it
+    _posix_only()
     require(path.is_file() and path.stat().st_mode & 0o077 == 0, path.name + " is missing or readable by others")
     return path.read_bytes()
+
+
+def _key(directory: Path, name: str) -> bytes:
+    """A secret by its file name: a private file in the folder, or on Windows a Credential Manager entry."""
+    if _IS_WINDOWS:
+        from registry_service import windows_keeper
+
+        return windows_keeper.read_key(name)
+    return _private(Path(directory) / name)
 
 
 def _raw_key(key: Ed25519PrivateKey) -> bytes:
@@ -176,12 +196,18 @@ class Authority:
     """Everything the signing Mac keeps, in one private folder."""
 
     def __init__(self, directory: Path, *, transport=None, review=None, clock=time.time):
-        _refuse_windows()
-        self.dir = Path(directory)
-        require(self.dir.is_dir() and self.dir.stat().st_mode & 0o077 == 0, "the authority folder must be private (0700)")
+        if _IS_WINDOWS:
+            from registry_service import windows_keeper
+
+            self.dir = windows_keeper.open_folder(Path(directory))
+        else:
+            _posix_only()
+            self.dir = Path(directory)
+            require(self.dir.is_dir() and self.dir.stat().st_mode & 0o077 == 0,
+                    "the authority folder must be private (0700)")
         self._begin(json.loads(_private(self.dir / "config.json")), decode(_private(self.dir / "trusted-root.json"), 65536),
-                    Ed25519PrivateKey.from_private_bytes(_private(self.dir / "admission.key")),
-                    Ed25519PrivateKey.from_private_bytes(_private(self.dir / "review.key")),
+                    Ed25519PrivateKey.from_private_bytes(_key(self.dir, "admission.key")),
+                    Ed25519PrivateKey.from_private_bytes(_key(self.dir, "review.key")),
                     transport=transport, review=review, clock=clock)
 
     def _begin(self, config: dict, root_envelope: dict, admission_key: Ed25519PrivateKey, review_key: Ed25519PrivateKey,
@@ -208,7 +234,13 @@ class Authority:
 
     @contextlib.contextmanager
     def _locked(self):
-        _refuse_windows()
+        if _IS_WINDOWS:
+            from registry_service import windows_keeper
+
+            with windows_keeper.locked(self.dir):
+                yield
+            return
+        _posix_only()
         descriptor = os.open(self.dir / "lock", os.O_RDWR | os.O_CREAT, 0o600)
         try:
             fcntl.flock(descriptor, fcntl.LOCK_EX)
@@ -381,7 +413,8 @@ class Authority:
 
     def _artifact(self, sha256: str) -> bytes:
         """The exact bytes of a skill on the signed list, kept for re-checking and re-signing."""
-        return (self.dir / "artifacts" / (sha256 + ".json")).read_bytes()
+        path = self.dir / "artifacts" / (sha256 + ".json")
+        return _private(path) if _IS_WINDOWS else path.read_bytes()
 
     def _renew(self) -> bool:
         """Re-sign entries before they expire, or when the release list changed. Each is checked again first."""
@@ -575,7 +608,7 @@ class Authority:
 
     @_exclusive
     def gate(self, code: str) -> None:
-        secret = _private(self.dir / "totp.key")
+        secret = _key(self.dir, "totp.key")
         counter = check_code(secret, code, now=self.now(), last=self.state.get("totp_last", 0))
         self.state["totp_last"] = counter
         self.save()
@@ -653,14 +686,22 @@ class Authority:
 def setup(directory: Path, *, server: str, catalog_key: str, targets: list[dict], review: dict,
           passphrase: str, now: int) -> tuple[str, bytes]:
     """Create the keys, the trust root and the authenticator secret. Returns (otpauth URI, totp secret)."""
-    _refuse_windows()
+    if _IS_WINDOWS:
+        from registry_service import windows_keeper
+
+        windows_keeper.require_fixed_folder(directory)
+    else:
+        _posix_only()
     parsed = urllib.parse.urlsplit(server)
     require(parsed.scheme == "https" and parsed.netloc and not parsed.path.strip("/") and not parsed.query,
             "the server must be a plain https:// address")
     require(bool(HEX.fullmatch(catalog_key)) and len(catalog_key) == 64, "paste the online key's public line")
     require(len(passphrase) >= 12, "the main key's passphrase needs at least 12 characters")
     require(review.get("provider") in {"openrouter", "ollama"} and review.get("model"), "choose the review model")
-    directory.mkdir(mode=0o700)  # never reuse a folder: keys are made once
+    if _IS_WINDOWS:
+        windows_keeper.make_folder(directory)  # never reuse a folder: keys are made once
+    else:
+        directory.mkdir(mode=0o700)  # never reuse a folder: keys are made once
     keys = {role: Ed25519PrivateKey.generate() for role in ("root", "admission", "review")}
     public = {keyid(key): _public(key) for key in keys.values()}
     catalog_id = digest({"ed25519": catalog_key})
@@ -671,12 +712,15 @@ def setup(directory: Path, *, server: str, catalog_key: str, targets: list[dict]
             "roles": roles, "policies": [validate_policy(checks.policy(targets))]}
     root_document(root, now)
     envelope = add_signature({"signed": root, "signatures": []}, keys["root"])
-    _write(directory / "root.pem", keys["root"].private_bytes(Encoding.PEM, PrivateFormat.PKCS8,
-                                                              BestAvailableEncryption(passphrase.encode())))
-    _write(directory / "admission.key", _raw_key(keys["admission"]))
-    _write(directory / "review.key", _raw_key(keys["review"]))
     secret = secrets.token_bytes(20)
-    _write(directory / "totp.key", secret)
+    private = {"root.pem": keys["root"].private_bytes(Encoding.PEM, PrivateFormat.PKCS8,
+                                                      BestAvailableEncryption(passphrase.encode())),
+               "admission.key": _raw_key(keys["admission"]), "review.key": _raw_key(keys["review"]), "totp.key": secret}
+    if _IS_WINDOWS:
+        windows_keeper.write_keys(private)  # Credential Manager; refused when any authority key is already there
+    else:
+        for name, data in private.items():
+            _write(directory / name, data)
     _write(directory / "trusted-root.json", canonical(envelope))
     _write(directory / "config.json", json.dumps({"server": server.rstrip("/"), "review": review}, sort_keys=True).encode())
     _write(directory / "state.json", json.dumps({
@@ -688,15 +732,15 @@ def setup(directory: Path, *, server: str, catalog_key: str, targets: list[dict]
 
 def unlock_root(directory: Path, passphrase: str) -> Ed25519PrivateKey:
     """Only for a future root change; day-to-day signing never needs the main key."""
-    key = load_pem_private_key(_private(directory / "root.pem"), password=passphrase.encode())
+    key = load_pem_private_key(_key(directory, "root.pem"), password=passphrase.encode())
     require(isinstance(key, Ed25519PrivateKey), "invalid main key")
     return key
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Skill Codex signing authority (runs on the owner's Mac)")
+    parser = argparse.ArgumentParser(description="Skill Codex signing authority (runs on the owner's Mac or Windows PC)")
     parser.add_argument("command", choices=["setup", "run", "status", "targets", "mark", "unmark", "highlight",
-                                            "unhighlight", "remove", "suspend", "unsuspend", "team"])
+                                            "unhighlight", "remove", "suspend", "unsuspend", "team", "forget-root"])
     parser.add_argument("target", nargs="?", default="")
     parser.add_argument("--dir", required=True, type=Path)
     parser.add_argument("--server", default="")
@@ -722,8 +766,14 @@ def main(argv=None) -> int:
             print("Add this to your authenticator app (scan it as a QR code, or type the key):\n" + uri)
             authority = Authority(args.dir)
             authority.gate(input("Type the code your app shows now, to confirm: "))
-            print("Set up. Copy trusted-root.json to the server and into the app release. Keep a copy of root.pem "
-                  "and its passphrase offline, for example on a USB stick in a drawer.")
+            if _IS_WINDOWS:
+                print("Set up. Copy trusted-root.json to the server and into the app release.\n"
+                      "Your main key is below, locked with your passphrase. Save it and the passphrase offline, for "
+                      "example on paper or a USB stick in a drawer, then run forget-root so this PC no longer holds it:\n"
+                      + _key(args.dir, "root.pem").decode("ascii"))
+            else:
+                print("Set up. Copy trusted-root.json to the server and into the app release. Keep a copy of root.pem "
+                      "and its passphrase offline, for example on a USB stick in a drawer.")
             return 0
         authority = Authority(args.dir)
         if args.command == "run":
@@ -748,7 +798,12 @@ def main(argv=None) -> int:
                               "marks": authority.state["marks"]}, indent=2, sort_keys=True))
             return 0
         authority.gate(getpass.getpass("Authenticator code: "))
-        if args.command == "targets":
+        if args.command == "forget-root":
+            require(_IS_WINDOWS, "on a Mac the main key is the root.pem file; move it yourself")
+            from registry_service import windows_keeper
+
+            print(windows_keeper.forget_root())
+        elif args.command == "targets":
             print(authority.set_targets(json.loads(args.file.read_text())))
         else:
             print(authority.act(args.command, args.target, members=args.github_id))
