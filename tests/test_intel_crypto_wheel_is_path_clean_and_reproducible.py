@@ -20,6 +20,7 @@ from pathlib import Path
 import yaml
 
 from ops.bundle_dependency_provenance import verify_record
+from tests.platform_helpers import bash_executable
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/macos-intel.yml"
@@ -48,7 +49,7 @@ def test_the_build_environment_moves_tmpdir_under_the_build_dir_and_remaps_every
     runner_tmp = "/var/folders/ab/cd1234/T/"
     probe = _env_block() + '\nenv | grep -E "^(TMPDIR|RUSTFLAGS|CFLAGS|CARGO_[A-Z_]+|SOURCE_DATE_EPOCH|ZERO_AR_DATE)=" | sort\n'
     done = subprocess.run(
-        ["bash", "-c", "set -euo pipefail\n" + probe],
+        [bash_executable(), "-c", "set -euo pipefail\n" + probe],
         env={"PATH": "/usr/bin:/bin", "HOME": "/Users/builder", "W": str(w), "TMPDIR": runner_tmp},
         capture_output=True, text=True,
     )

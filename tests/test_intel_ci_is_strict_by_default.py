@@ -18,6 +18,7 @@ import pytest
 import yaml
 
 from ops.bundle_dependency_provenance import verify_record
+from tests.platform_helpers import bash_executable
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/macos-intel.yml"
@@ -169,7 +170,7 @@ def test_a_sha_mismatch_fails_the_run_unless_record_wheel_is_true(tmp_path: Path
 
     def run_tail(record_wheel: str) -> subprocess.CompletedProcess:
         env = {**os.environ, "WHL": str(stub), "RECORD_WHEEL": record_wheel}
-        return subprocess.run(["bash", "-c", tail], cwd=ROOT, env=env, capture_output=True, text=True)
+        return subprocess.run([bash_executable(), "-c", tail], cwd=ROOT, env=env, capture_output=True, text=True)
 
     default = run_tail("false")  # what a default dispatch renders for the input
     assert default.returncode != 0
@@ -338,7 +339,7 @@ def test_a_proxy_tools_wheel_that_is_not_the_record_fails_unless_record_wheel_is
 
     def run_tail(record_wheel: str) -> subprocess.CompletedProcess:
         env = {**os.environ, "PTW": str(ptw), "WH": str(wh), "RECORD_WHEEL": record_wheel}
-        return subprocess.run(["bash", "-c", "set -euo pipefail\n" + tail], cwd=ROOT, env=env,
+        return subprocess.run([bash_executable(), "-c", "set -euo pipefail\n" + tail], cwd=ROOT, env=env,
                               capture_output=True, text=True)
 
     assert run_tail("false").returncode != 0
