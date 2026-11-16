@@ -46,7 +46,7 @@ CLOUD_MODEL = "cloudy-model-x"
 
 SEED = '''
 import sys
-sys.path.insert(0, "{root}")
+sys.path.insert(0, {root!r})
 from storage.db import get_connection
 from storage.migrations import run_migrations
 from storage.model_provider_manifest import ModelProviderManifest, list_provider_manifests, upsert_provider_manifest
@@ -196,7 +196,7 @@ def served(tmp_path: Path):
         run_in_home(
             home,
             SEED.format(
-                root=REPO_ROOT,
+                root=str(REPO_ROOT),
                 base_url=local_provider.base_url,
                 cloud_base_url=cloud_provider.base_url,
                 cloud_model=CLOUD_MODEL,

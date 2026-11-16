@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -462,18 +463,32 @@ def test_chat_delete_waits_for_real_profile_cleanup_and_can_retry(world):
     rig,item,origin,requests=world
     finish(world,'navigate',{'url':origin+'/'})
     profile=item.profile
-    moved=profile.with_name(profile.name+'-moved')
-    profile.rename(moved)
-    profile.symlink_to(moved, target_is_directory=True)
-    try:
-        status,data=rig.post('/api/chat/session',{'session_id':'live-test','operation':'delete'})
-        assert status==409 and data['code']=='browser_cleanup_failed',data
-        from core.context_namespace import load_chat_namespace
-        assert load_chat_namespace('live-test').lifecycle_state=='active'
-        assert item.closed and item.state=='cleanup_failed' and profile.is_symlink()
-    finally:
-        profile.unlink()
-        moved.rename(profile)
+    if os.name=='nt':
+        # Windows cannot rename a profile folder the live browser still holds open, and a symlink
+        # needs privilege there. The real Windows cleanup failure is a file in the profile that is
+        # still open: a plain open() does not share delete, so removing the profile fails for real.
+        held=open(profile/'vool-test-held-open','w',encoding='utf-8')
+        try:
+            status,data=rig.post('/api/chat/session',{'session_id':'live-test','operation':'delete'})
+            assert status==409 and data['code']=='browser_cleanup_failed',data
+            from core.context_namespace import load_chat_namespace
+            assert load_chat_namespace('live-test').lifecycle_state=='active'
+            assert item.closed and item.state=='cleanup_failed' and profile.exists()
+        finally:
+            held.close()
+    else:
+        moved=profile.with_name(profile.name+'-moved')
+        profile.rename(moved)
+        profile.symlink_to(moved, target_is_directory=True)
+        try:
+            status,data=rig.post('/api/chat/session',{'session_id':'live-test','operation':'delete'})
+            assert status==409 and data['code']=='browser_cleanup_failed',data
+            from core.context_namespace import load_chat_namespace
+            assert load_chat_namespace('live-test').lifecycle_state=='active'
+            assert item.closed and item.state=='cleanup_failed' and profile.is_symlink()
+        finally:
+            profile.unlink()
+            moved.rename(profile)
     status,data=rig.post('/api/chat/session',{'session_id':'live-test','operation':'delete'})
     assert status==200 and item.state=='stopped',data
     assert not profile.exists()

@@ -20,7 +20,7 @@ REPO = Path(__file__).resolve().parent.parent
 
 
 def _tree(root: Path) -> dict[str, tuple[int, int]]:
-    return {str(p.relative_to(root)): (p.stat().st_size, p.stat().st_mtime_ns) for p in sorted(root.rglob("*"))}
+    return {p.relative_to(root).as_posix(): (p.stat().st_size, p.stat().st_mtime_ns) for p in sorted(root.rglob("*"))}
 
 
 def _save_key_like_vool(home: Path, name: str, value: str) -> None:
