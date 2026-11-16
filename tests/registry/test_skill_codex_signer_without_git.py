@@ -248,3 +248,133 @@ def test_the_repository_takes_this_route_exactly_when_git_is_refused(pair, monke
     assert github_authority.Repository(work)._no_git_program() is None
     monkeypatch.setattr(safe_git, "_REFUSE_GIT", True)
     assert isinstance(github_authority.Repository(work, token=TOKEN)._no_git_program(), dulwich_git.Checkout)
+
+
+# ---- Windows path aliases in the remote's tree (Security Review, 16 Nov) ----
+
+def _remote_with_paths(tmp_path, paths: list[str]):
+    """A remote whose second commit holds exactly ``paths`` (one blob each), written as a hostile remote would."""
+    origin = tmp_path / "alias.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+    seed = tmp_path / "alias-seed"
+    subprocess.run(["git", "clone", "-q", str(origin), str(seed)], check=True, capture_output=True)
+    git(seed, "checkout", "-q", "-b", "main")
+    (seed / "README.md").write_text("x\n", encoding="utf-8")
+    git(seed, "add", "-A")
+    git(seed, "commit", "-q", "-m", "one")
+    git(seed, "push", "-q", "origin", "main")
+    work = tmp_path / "alias-work"
+    subprocess.run(["git", "clone", "-q", "-b", "main", str(origin), str(work)], check=True, capture_output=True)
+    blob = git(seed, "rev-parse", "HEAD:README.md").strip()
+
+    def tree(level: dict) -> str:
+        lines = []
+        for name, child in sorted(level.items()):
+            lines.append(("040000 tree " + tree(child) if child else "100644 blob " + blob) + "\t" + name + "\n")
+        return git(seed, "mktree", stdin="".join(lines)).strip()
+
+    top: dict = {"README.md": {}}
+    for path in paths:
+        level = top
+        for part in path.split("/"):
+            level = level.setdefault(part, {})
+    commit = git(seed, "commit-tree", tree(top), "-p", "HEAD", "-m", "two").strip()
+    git(seed, "push", "-q", "origin", commit + ":refs/heads/main")
+    return work
+
+
+def _plain_files(work) -> list[str]:
+    return sorted(str(p.relative_to(work)) for p in work.rglob("*") if ".git" not in p.relative_to(work).parts)
+
+
+@pytest.mark.parametrize("paths", [["git~1/config"], ["GIT~2/hooks/pre-commit"], ["sub/x~1"], ["nul"], ["con.txt"],
+                                   ["aux .json"], ["COM1"], ["lpt9.log"], ["conin$"], ["CONOUT$.x"], ["com¹"],
+                                   ["lpt³.txt"], ["A/x", "a/y"], ["Notes.md", "notes.MD"]])
+def test_a_windows_short_name_device_name_or_case_twin_refuses_before_a_file_is_written(tmp_path, paths) -> None:
+    work = _remote_with_paths(tmp_path, paths)
+    before = _plain_files(work)
+
+    with pytest.raises(RegistryError, match="won't write"):
+        library(work).start()
+
+    assert _plain_files(work) == before
+
+
+@pytest.mark.parametrize("name", [b"git~1", b"GIT~12", b"a~1b", b"nul", b"NUL.txt", b"con ", b"prn.tar.gz", b"com0",
+                                  b"lpt\xc2\xb2", b"conin$"])
+def test_a_windows_alias_part_is_refused(name) -> None:
+    with pytest.raises(RegistryError, match="won't write"):
+        dulwich_git._safe_part(name)
+
+
+@pytest.mark.parametrize("name", [b"console.txt", b"null", b"com10", b"nul-notes", b"tilde~", b"a~b", b"state.json"])
+def test_ordinary_names_near_the_aliases_are_kept(name) -> None:
+    assert dulwich_git._safe_part(name) == name.decode()
+
+
+# ---- a local-folder origin (Security Review, 16 Nov) ----
+
+def test_a_local_origin_reached_through_a_link_refuses_before_it_is_opened(pair, tmp_path, monkeypatch) -> None:
+    origin, _seed, work = pair
+    linked = tmp_path / "linked-origin.git"
+    linked.symlink_to(origin, target_is_directory=True)
+    git(work, "remote", "set-url", "origin", str(linked))
+    opened = []
+    monkeypatch.setattr(dulwich_git.Checkout, "_open_local", lambda self, url: opened.append(url))
+
+    with pytest.raises(RegistryError, match="origin's path goes through a link"):
+        library(work).start()
+    assert opened == []
+
+
+def test_a_local_origin_whose_own_config_names_a_program_refuses(pair) -> None:
+    origin, _seed, work = pair
+    git(origin, "config", "core.fsmonitor", "/bin/true")
+
+    with pytest.raises(RegistryError, match="origin's own git config names programs"):
+        library(work).start()
+
+
+def test_hooks_in_a_local_bare_origin_never_run_on_a_push(pair, tmp_path, monkeypatch) -> None:
+    origin, _seed, work = pair
+    marker = tmp_path / "origin-hook-ran"
+    for name in ("pre-receive", "update", "post-receive", "post-update", "reference-transaction", "proc-receive"):
+        hook = origin / "hooks" / name
+        hook.write_text("#!/bin/sh\necho " + name + " >> '" + str(marker) + "'\n", encoding="utf-8")
+        hook.chmod(0o755)
+    checkout = library(work)
+    checkout.start()
+    (work / FOLDER / "state.json").write_text('{"epoch": 3}', encoding="utf-8")
+
+    with monkeypatch.context() as during:
+        during.setattr(subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(AssertionError("process started")))
+        during.setattr(os, "system", lambda *a, **k: (_ for _ in ()).throw(AssertionError("process started")))
+        assert checkout.save("Signer state") is True
+
+    assert not marker.exists()
+    assert git(origin, "show", "main:" + FOLDER + "/state.json") == '{"epoch": 3}'
+
+
+# ---- a whole signer run starts no process where git is refused (Security Review, 16 Nov) ----
+
+def test_a_signer_run_starts_no_process_where_vool_runs_no_git(tmp_path, monkeypatch) -> None:
+    from tests.registry import test_skill_codex_github_signer as signer_rows
+    from tests.registry.test_skill_codex_authority import creator, draft
+
+    world = signer_rows.world.__wrapped__(tmp_path, monkeypatch)
+    _, token, csrf = creator(world, "101", "alice")
+    assert draft(world, token, csrf, "alice/notes").json()["state"] == "checking"
+    path = signer_rows.checkout(world)
+    monkeypatch.setattr(safe_git, "_REFUSE_GIT", True)
+    started = []
+
+    def refuse(*args, **kwargs):
+        started.append(args)
+        raise AssertionError("a process was started")
+
+    monkeypatch.setattr(subprocess, "Popen", refuse)
+    monkeypatch.setattr(os, "system", refuse)
+
+    report = signer_rows.signer(world, path).run_once()
+
+    assert report["admitted"] == ["alice/notes 1.0.0"] and started == []

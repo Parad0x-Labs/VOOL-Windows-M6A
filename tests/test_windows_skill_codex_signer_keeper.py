@@ -116,6 +116,45 @@ def test_setup_refuses_when_any_authority_key_already_exists(windows) -> None:
     assert _targets(windows) == ["VOOL/registry-authority/review"]
 
 
+def test_a_refused_setup_leaves_no_folder_behind(windows, monkeypatch) -> None:
+    """Credential Manager is judged before the folder is made, so a refused setup can be run again."""
+    windows.plant("VOOL/registry-authority/totp", b"00" * 20)
+    with pytest.raises(RegistryError, match="keys are made once"):
+        _setup()
+    assert not _folder().exists()
+    del windows.records["VOOL/registry-authority/totp"]
+    monkeypatch.setattr(wcm, "_load_advapi32", lambda: None)
+    with pytest.raises(RegistryError, match="Credential Manager isn't available"):
+        _setup()
+    assert not _folder().exists()
+
+
+def test_a_setup_that_fails_after_the_keys_are_saved_names_what_to_delete(windows, monkeypatch) -> None:
+    real = windows_keeper.write
+
+    def fail_on_state(path, data):
+        if Path(path).name == "state.json":
+            raise RegistryError("state.json could not be made private (unsupported), so it wasn't saved")
+        return real(path, data)
+
+    monkeypatch.setattr(windows_keeper, "write", fail_on_state)
+    with pytest.raises(RegistryError, match=r"VOOL/registry-authority/\* in Windows Credential Manager"):
+        _setup()
+
+
+def test_the_store_folder_for_kept_skills_is_made_owner_only(windows, monkeypatch) -> None:
+    _setup()
+    made = []
+    real = owner_only.ensure_private_dir
+    monkeypatch.setattr(owner_only, "ensure_private_dir",
+                        lambda path, fresh=False: made.append(Path(path).name) or real(path, fresh=fresh))
+    authority = mac_authority.Authority(_folder(), clock=lambda: 1_800_000_000)
+
+    authority._store(b'{"kept": true}')
+
+    assert "artifacts" in made and owner_only.verify_owner_only(_folder() / "artifacts").ok
+
+
 def test_setup_and_open_refuse_any_folder_but_the_fixed_one(windows, tmp_path) -> None:
     other = tmp_path / "elsewhere" / "authority"
 
@@ -230,6 +269,27 @@ def test_a_by_name_write_lands_in_vools_own_namespace(app_store, name) -> None:
     cs.store_credential(name, "value", label="x")
     assert api.records["VOOL/credentials/" + name]["blob"] == b"value"
     assert {t: r for t, r in api.records.items() if t.startswith("VOOL/registry-authority/")} == planted
+
+
+def test_deleting_every_listed_credential_leaves_the_authority_keys(app_store) -> None:
+    """VOOL has no separate wipe: clearing the vault is a by-name delete of every listed entry."""
+    api, planted = app_store
+    cs.store_credential("llm.cloud.openrouter", "sk-or-v1-fake", label="OpenRouter")
+    for item in cs.list_credentials():
+        assert cs.delete_credential(item["name"])
+    assert cs.list_credentials() == []
+    assert {t: r for t, r in api.records.items() if t.startswith("VOOL/registry-authority/")} == planted
+
+
+def test_forget_root_off_windows_refuses_before_spending_an_authenticator_code(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(mac_authority, "_IS_WINDOWS", False)
+    gated = []
+    monkeypatch.setattr(mac_authority.Authority, "__init__", lambda self, directory, **kw: None)
+    monkeypatch.setattr(mac_authority.Authority, "gate", lambda self, code: gated.append(code))
+    monkeypatch.setattr(mac_authority.getpass, "getpass", lambda prompt="": "123456")
+
+    assert mac_authority.main(["forget-root", "--dir", str(tmp_path / "authority")]) != 0
+    assert gated == []
 
 
 def test_only_the_signer_names_the_authority_namespace() -> None:

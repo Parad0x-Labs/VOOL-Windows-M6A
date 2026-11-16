@@ -1,7 +1,7 @@
 """Windows: the GitHub signer writes only in a disposable workspace and the authority's own folder (D19).
 
-Owner decision D19 A (16 Nov 2026), to Security Review's design bar: the checkout and the main key's
-offline folder sit inside a folder the owner marked disposable (VOOL_WINDOWS_DISPOSABLE_WORKSPACES), and a
+Owner decision D19 A (16 Nov 2026), to Security Review's design bar: the checkout sits inside a folder
+the owner marked disposable (VOOL_WINDOWS_DISPOSABLE_WORKSPACES), setup (which runs gh) is refused, and a
 run's scratch goes in the authority's folder (%LOCALAPPDATA%\\VOOL-Registry-Authority), never in %TEMP%.
 A share, device or NT spelling refuses before anything resolves it. The Windows branch is driven on any OS
 through github_authority._WINDOWS and the shell's known folder.
@@ -53,21 +53,17 @@ def test_a_share_or_device_spelling_is_refused(windows, spelled) -> None:
         github_authority.Repository(spelled)
 
 
-def test_setup_refuses_a_checkout_or_offline_folder_outside_a_marked_folder(windows, tmp_path) -> None:
+def test_setup_is_refused_on_windows_before_anything_is_sent_or_made(windows, tmp_path) -> None:
+    """Setup hands secrets to gh, a program VOOL doesn't run on Windows: set up once on a Mac or Linux."""
     sent = {}
-    repo = tmp_path / "outside-repo"
+    repo = windows / "repo"
     (repo / ".git").mkdir(parents=True)
-    common = {"github": "o/r", "catalog_key": "ab" * 32, "targets": [], "passphrase": "correct horse battery",
-              "review": {"provider": "openrouter", "model": "m"}, "vool_commit": "c" * 40, "now": 1,
-              "set_secret": sent.__setitem__}
 
-    with pytest.raises(RegistryError, match="disposable workspace"):
-        github_authority.setup(repo, offline=windows / "usb", **common)
-    inside = windows / "repo"
-    (inside / ".git").mkdir(parents=True)
-    with pytest.raises(RegistryError, match="disposable workspace"):
-        github_authority.setup(inside, offline=tmp_path / "usb", **common)
-    assert sent == {} and not (tmp_path / "usb").exists() and not (windows / "usb").exists()
+    with pytest.raises(RegistryError, match="set up on a Mac or Linux once"):
+        github_authority.setup(repo, offline=windows / "usb", github="o/r", catalog_key="ab" * 32, targets=[],
+                               passphrase="correct horse battery", review={"provider": "openrouter", "model": "m"},
+                               vool_commit="c" * 40, now=1, set_secret=sent.__setitem__)
+    assert sent == {} and not (windows / "usb").exists() and not (repo / github_authority.FOLDER).exists()
 
 
 def test_a_runs_scratch_is_in_the_authority_folder_not_temp(windows, tmp_path, monkeypatch) -> None:
