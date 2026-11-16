@@ -334,6 +334,10 @@ class AuditRunner:
 
                 # the vault inside this home, never an OS credential store
                 with mock.patch.dict(os.environ, {"VOOL_CREDENTIAL_STORE": "vault"}):
+                    if credential_store.active_backend() != "vault":
+                        raise RuntimeError(
+                            "the audit control's synthetic key would leave the disposable home's vault"
+                        )
                     credential_store.store_credential("llm.cloud.openrouter", "sk-or-v1-" + "0" * 64)
                 cep.set_free_cloud_enabled(True)
 
