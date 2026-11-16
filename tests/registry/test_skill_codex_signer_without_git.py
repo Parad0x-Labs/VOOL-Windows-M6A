@@ -357,15 +357,30 @@ def test_hooks_in_a_local_bare_origin_never_run_on_a_push(pair, tmp_path, monkey
 
 # ---- a whole signer run starts no process where git is refused (Security Review, 16 Nov) ----
 
-def test_a_signer_run_starts_no_process_where_vool_runs_no_git(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize("windows", [False, True], ids=["actions-job", "windows"])
+def test_a_signer_run_starts_no_process_where_vool_runs_no_git(tmp_path, monkeypatch, windows) -> None:
+    """As the GitHub Actions job, and on Windows inside a marked workspace with scratch in the authority folder (D19)."""
+    from core import owner_only, windows_known_folders
+    from registry_service import windows_keeper
     from tests.registry import test_skill_codex_github_signer as signer_rows
     from tests.registry.test_skill_codex_authority import creator, draft
 
     world = signer_rows.world.__wrapped__(tmp_path, monkeypatch)
+    monkeypatch.setattr(github_authority, "_WINDOWS", windows)
+    if windows:
+        local = tmp_path / "LocalAppData"
+        local.mkdir()
+        monkeypatch.setattr(windows_known_folders, "_IS_WINDOWS", True)
+        monkeypatch.setattr(windows_known_folders, "_shell_known_folder",
+                            lambda name: str(local) if name == "LocalAppData" else None)
+        monkeypatch.setattr(windows_known_folders, "_full_local_path", lambda value: True)
+        monkeypatch.setenv("VOOL_WINDOWS_DISPOSABLE_WORKSPACES", str(tmp_path))
+        owner_only.ensure_private_dir(windows_keeper.authority_folder(), fresh=True)
     _, token, csrf = creator(world, "101", "alice")
     assert draft(world, token, csrf, "alice/notes").json()["state"] == "checking"
     path = signer_rows.checkout(world)
     monkeypatch.setattr(safe_git, "_REFUSE_GIT", True)
+    dulwich_git._dulwich()  # loaded before Popen is replaced: the library names subprocess.Popen when it loads
     started = []
 
     def refuse(*args, **kwargs):
@@ -378,6 +393,8 @@ def test_a_signer_run_starts_no_process_where_vool_runs_no_git(tmp_path, monkeyp
     report = signer_rows.signer(world, path).run_once()
 
     assert report["admitted"] == ["alice/notes 1.0.0"] and started == []
+    authority = tmp_path / "LocalAppData" / windows_keeper.AUTHORITY_FOLDER[0]
+    assert (authority / "scratch").is_dir() is windows  # on Windows the run's scratch is in the authority folder
 
 
 def test_a_fast_forward_writes_only_the_state_folder_and_the_steps_file(pair) -> None:
