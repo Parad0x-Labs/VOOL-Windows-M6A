@@ -121,6 +121,15 @@ def require_disposable_profile_root(profile_root: Path) -> Path:
     root = Path(profile_root).expanduser().resolve()
     home = Path.home().resolve()
     real_homes = [home / ".vool", home / ".nulla"]
+    from core.windows_write_gate import active as windows_rules
+
+    if windows_rules() and os.environ.get("HOME"):
+        # Path.home() reads USERPROFILE on Windows, while HOME (set by Git Bash, MSYS and CI
+        # shells) names a home too: a root at or inside either is refused.
+        other = Path(os.environ["HOME"]).expanduser().resolve()
+        if root == other:
+            raise ValueError(f"profile root {root} must be a dedicated directory, not the home or filesystem root")
+        real_homes += [other / ".vool", other / ".nulla"]
     for env in ("VOOL_HOME", "NULLA_HOME"):
         if os.environ.get(env):
             real_homes.append(Path(os.environ[env]).expanduser().resolve())
@@ -310,6 +319,23 @@ class AuditRunner:
             import core.cloud_escalation_policy as cep
 
             cep.save_policy(_replace(cep.load_policy(), **env["cloud_escalation"]))
+
+        # -- Windows: a control scenario proves the GUARD refuses the external dispatch. The
+        # Windows cloud gate refuses every cloud contact before opt-in, earlier and with no
+        # socket, so the control would only ever see that gate. Opt this disposable home in
+        # (a synthetic stored key slot and free cloud on), through the real seams, so the
+        # dispatch reaches the guard as it does off Windows.
+        if scenario.get("expect", {}).get("control"):
+            from core import windows_cloud_gate
+
+            if windows_cloud_gate.active():
+                import core.cloud_escalation_policy as cep
+                from core import credential_store
+
+                # the vault inside this home, never an OS credential store
+                with mock.patch.dict(os.environ, {"VOOL_CREDENTIAL_STORE": "vault"}):
+                    credential_store.store_credential("llm.cloud.openrouter", "sk-or-v1-" + "0" * 64)
+                cep.set_free_cloud_enabled(True)
 
         # -- pre-open circuits, real seam
         for provider_id in env.get("circuit_open", []):
