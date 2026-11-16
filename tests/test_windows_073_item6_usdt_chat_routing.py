@@ -183,6 +183,32 @@ def test_words_that_name_no_payee_are_still_not_a_wallet_demand(text: str) -> No
     assert "wallet.propose" not in resolve_demand_signals(text).explicit_intents
 
 
+@pytest.mark.parametrize("text", [
+    "did you send Bob 1 SOL",
+    "have I paid Testy 1 USDT already",
+    "has Tomas sent Testy 5 USDC",
+    "was it pay Testy 1 USDT or 2",
+    "were we going to send Bob 1 SOL",
+    "how do I send Testy 1 USDT",
+    "why did you send Bob 1 SOL",
+    "when will you send Testy 1 USDT",
+    "did you send Bob 1 SOL?",
+    "send Testy 1 USDT?",
+])
+def test_a_question_about_a_named_payee_payment_is_not_a_wallet_demand(text: str) -> None:
+    """The no-"to" payee arm reads a request only: a question asks about a payment, it does not ask for one."""
+    from core.tool_demand_signals import resolve_demand_signals
+
+    assert "wallet.propose" not in resolve_demand_signals(text).explicit_intents
+
+
+def test_the_same_payee_request_with_a_lead_in_is_still_a_wallet_demand() -> None:
+    from core.tool_demand_signals import resolve_demand_signals
+
+    for text in ("please send Testy 1 USDT", "ok. send Testy 1 USDT now", "send Testy 1 USDT. Thanks!"):
+        assert resolve_demand_signals(text).explicit_intents == ("wallet.propose",), text
+
+
 def test_a_copied_approval_sentence_with_nothing_pending_is_not_shown(wallet_chat) -> None:
     model, _eth = wallet_chat
     reply = model.ask("send Testy 1 DOGE", {})  # no wallet coin: nothing seated, the model copies the card
