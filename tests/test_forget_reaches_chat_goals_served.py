@@ -74,7 +74,7 @@ def daemon(tmp_path_factory):
             served.start(timeout=240)
         except Exception as exc:  # pragma: no cover - environment, not the change
             pytest.fail(f"served daemon could not boot here: {exc}")
-        run_in_home(home, SEED.format(root=REPO_ROOT, base_url=provider.base_url, models=[MODEL]))
+        run_in_home(home, SEED.format(root=str(REPO_ROOT), base_url=provider.base_url, models=[MODEL]))
         assert _certify(served, MODEL).get("state") == "verified"
         provider.reset()
         yield {"daemon": served, "provider": provider, "db": home / "data" / "vool_web0_v2.db"}
