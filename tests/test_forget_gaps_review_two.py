@@ -61,6 +61,14 @@ def _events(chat: str) -> list[dict]:
     return list_recent_runtime_session_events(chat, limit=500)
 
 
+@pytest.fixture
+def windows_gate_on(monkeypatch):
+    """Run with the Windows gate on: these tests pin the Windows forget line redaction (Jesse OK 16 Nov 18:25Z)."""
+    from core import windows_write_gate as gate
+
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+
+
 # --- N1 (and N4) -------------------------------------------------------------------------------------
 
 def test_a_subject_forget_after_a_rename_applies_and_the_chat_keeps_working(tmp_path, receipts):
@@ -102,6 +110,7 @@ def test_a_subject_forget_after_a_rename_applies_and_the_chat_keeps_working(tmp_
 
 # --- N2 ----------------------------------------------------------------------------------------------
 
+@pytest.mark.usefixtures("windows_gate_on")
 def test_a_name_renamed_before_this_branch_is_healed_by_the_next_forget(tmp_path, receipts):
     rng = random.Random(4402)
     profile = _profile(tmp_path)
@@ -145,6 +154,7 @@ def test_the_fallback_name_is_distinct_per_record_keeps_its_extension_and_is_nev
         assert clear(name), name
 
 
+@pytest.mark.usefixtures("windows_gate_on")
 def test_the_fallback_is_never_the_wordless_name_in_a_forget(tmp_path, receipts, monkeypatch):
     rng = random.Random(4403)
     profile = _profile(tmp_path)
