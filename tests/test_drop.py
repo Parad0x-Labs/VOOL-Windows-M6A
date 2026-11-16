@@ -16,6 +16,8 @@ from ops.drop_demo import real_readers, seed_real_derivatives
 @pytest.fixture
 def pair(tmp_path, monkeypatch):
     monkeypatch.setenv("VOOL_DROP", "1")
+    # On Windows Drop writes outside VOOL's own home only inside a marked folder; off Windows this is unused.
+    monkeypatch.setenv("VOOL_WINDOWS_DISPOSABLE_WORKSPACES", str(tmp_path))
     relay = tmp_path / "relay"
     LocalRelay(relay, create=True)
     with ExitStack() as stack:
@@ -174,7 +176,7 @@ def test_explicit_local_cli_approval_and_result(tmp_path):
     relay = tmp_path / "relay"
 
     def cli(home, *args, exit_code=0, enabled=True):
-        env = dict(os.environ, VOOL_DROP="1" if enabled else "0")
+        env = dict(os.environ, VOOL_DROP="1" if enabled else "0", VOOL_WINDOWS_DISPOSABLE_WORKSPACES=str(tmp_path))
         command = [sys.executable, "-m", "core.drop", "--home", str(home), "--relay", str(relay)]
         result = subprocess.run([*command, *args], env=env, capture_output=True, text=True, timeout=40)
         assert result.returncode == exit_code, result.stdout + result.stderr
