@@ -121,7 +121,7 @@ Type: filesandordirs; Name: "{app}\update_backups"
 Type: files; Name: "{app}\.vool_updating.lock"
 
 [Code]
-procedure StopVoolProcesses();
+procedure StopNulla();
 var
   ResultCode: Integer;
   InstallDir: String;
@@ -145,6 +145,13 @@ begin
     '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$r = ''' + InstallDir + '''; $rootPrefix = $r.TrimEnd([char[]]@(92,47)) + [char]92; $python = $rootPrefix + ''python\python.exe''; $pythonw = $rootPrefix + ''python\pythonw.exe''; $script = [regex]::Escape($rootPrefix) + ''(?:app\\apps\\vool_api_server\.py|vool_window\.py)''; $scriptArgument = ''^(?:\x22(?:[^\x22]*\\)?pythonw?\.exe\x22|(?:[^\s\x22]*\\)?pythonw?\.exe)(?:\s+-[bBdEhIiOPqRsSuvVx]+|\s+-W(?:\s+\x22[^\x22]*\x22|\s+\S+|[^\s\x22]+)|\s+-X(?:\s+\x22[^\x22]*\x22|\s+\S+|[^\s\x22]+)|\s+--check-hash-based-pycs\s+(?:\x22[^\x22]*\x22|\S+))*\s+\x22?'' + $script + ''(?:\x22|\s|$)''; Get-CimInstance Win32_Process -EA SilentlyContinue | Where-Object { ($_.Name -ieq ''python.exe'' -or $_.Name -ieq ''pythonw.exe'') -and ([string]::Equals([string]$_.ExecutablePath, $python, [System.StringComparison]::OrdinalIgnoreCase) -or [string]::Equals([string]$_.ExecutablePath, $pythonw, [System.StringComparison]::OrdinalIgnoreCase) -or ([string]$_.CommandLine -match $scriptArgument)) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA SilentlyContinue }; Start-Sleep -Milliseconds 900"',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Sleep(1500);
+end;
+
+{ The one name install and uninstall call to stop VOOL before touching files (the Mac build's name);
+  the Windows stop itself is StopNulla above. }
+procedure StopVoolProcesses();
+begin
+  StopNulla();
 end;
 
 { Setup sets the app constant only once the destination folder is known: expanding it from
