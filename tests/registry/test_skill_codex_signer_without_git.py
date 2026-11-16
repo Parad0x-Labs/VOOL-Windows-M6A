@@ -2,7 +2,8 @@
 
 Owner decision D18 A (16 Nov 2026), to Security Review's design bar. Rows:
 - No git process starts, and a hook planted in the checkout never runs.
-- The checkout's config naming a program refuses before any request.
+- The checkout's config naming a program, an include, a proxy, a credential setting, a URL rewrite or an
+  extra header refuses before any request.
 - Only https:// or a full local path is a remote; ssh, git://, file:// and a relative path refuse.
 - A redirect refuses with the token sent only once, in the Authorization header, and never in an error.
 - A link, a submodule or a ``.git`` path in the remote's tree refuses before a file is written.
@@ -127,6 +128,25 @@ def test_a_checkout_config_naming_a_program_refuses_before_any_request(pair, key
     monkeypatch.setattr(dulwich_git.Checkout, "_remote", lambda self, opened: asked.append(1))
 
     with pytest.raises(RegistryError, match="names programs git would run"):
+        library(work).start()
+    assert asked == []
+
+
+@pytest.mark.parametrize(("key", "value"), [("include.path", "elsewhere.cfg"), ("includeIf.gitdir:/x/.path", "elsewhere.cfg"),
+                                          ("http.proxy", "http://proxy.example:8080"),
+                                          ("http.https://github.com.proxy", "http://proxy.example:8080"),
+                                          ("remote.origin.proxy", "http://proxy.example:8080"),
+                                          ("credential.username", "someone"),
+                                          ("url.https://evil.example/.insteadOf", "https://github.com/"),
+                                          ("url.https://evil.example/.pushInsteadOf", "https://github.com/"),
+                                          ("http.extraHeader", "Authorization: Basic eA==")])
+def test_a_checkout_config_that_redirects_or_reaches_credentials_refuses(pair, key, value, monkeypatch) -> None:
+    _origin, _seed, work = pair
+    git(work, "config", key, value)
+    asked = []
+    monkeypatch.setattr(dulwich_git.Checkout, "_remote", lambda self, opened: asked.append(1))
+
+    with pytest.raises(RegistryError, match=r"git config (has settings VOOL won't follow|names programs)"):
         library(work).start()
     assert asked == []
 
