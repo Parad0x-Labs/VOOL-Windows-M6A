@@ -10,7 +10,8 @@ bits that mean anything nor flock, so here:
   VOOL's own credential surfaces are bound to ``VOOL/credentials/`` and never see this namespace.
 - The state (spent list number, revoked skills, last authenticator code, settings, the trust root,
   the kept skill bytes and the check scratch) lives in exactly one owner-only folder,
-  :data:`AUTHORITY_FOLDER` under the shell's LocalAppData. It is the single folder outside the
+  :data:`AUTHORITY_FOLDER` under the shell's LocalAppData, beside VOOL's own home folder and not inside it,
+  so nothing that cleans or moves VOOL's home reaches the signer. It is the single folder outside the
   disposable workspaces the authority writes to; any other folder is refused, as is one reached
   through a junction or a symlink.
 - One signer at a time holds the folder's ``lock`` file (``core/os_file_lock``).
@@ -25,8 +26,8 @@ from pathlib import Path
 
 from core.registry.codec import RegistryError, require
 
-#: The authority's one state folder, under the shell's LocalAppData (owner decision D17). Read only here.
-AUTHORITY_FOLDER = ("VOOL", "registry-authority")
+#: The authority's one state folder, %LOCALAPPDATA%\VOOL-Registry-Authority (owner decision D17). Read only here.
+AUTHORITY_FOLDER = ("VOOL-Registry-Authority",)
 #: The Credential Manager store: targets are ``VOOL/registry-authority/<name>`` (owner decision D16).
 STORE = "registry-authority"
 #: The file names the Mac signer uses for its secrets, and the credential each one is on Windows.
