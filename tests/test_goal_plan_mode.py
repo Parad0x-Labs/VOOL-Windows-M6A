@@ -96,11 +96,19 @@ def test_planning_turn_carries_the_authority_deny_and_plan_mode_holds() -> None:
     from core.mode_permission_policy import PermissionAction
 
     agent = _PlanProbeAgent()
-    with mock.patch("core.web.api.runtime.run_agent", agent):
-        from tests.test_goal_served_workflow import _asgi, _Resp, _shared_app
+    # Build the shared app first: its first build imports apps.vool_api_server, which binds run_agent at
+    # import, so a patch in place during that import would stay bound for the rest of the run (Jesse OK
+    # 16 Nov 18:56Z). The probe is then patched at the name the server calls, as well as at its source.
+    from tests.test_goal_served_workflow import _asgi, _Resp, _shared_app
 
+    app = _shared_app()
+    import apps.vool_api_server as vool_api_server
+
+    with mock.patch("core.web.api.runtime.run_agent", agent), mock.patch.object(
+        vool_api_server, "_run_agent_impl", agent
+    ):
         status, body = _asgi(
-            _shared_app(), "POST", "/api/chat",
+            app, "POST", "/api/chat",
             {"session_id": SESSION, "stream": True, "mode": "plan", "turn_id": "plan-t1",
              "messages": [{"role": "user", "content": "/goal build the plan demo"}]},
         )
