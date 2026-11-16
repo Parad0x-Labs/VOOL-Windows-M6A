@@ -285,6 +285,8 @@ class Checkout:
         opened = self._repo()
         fetched = self._fetch(opened)
         head = self._head(opened)
+        if head is not None:
+            self._committed_line_endings(opened, head)
         if head == fetched:
             return
         if head is not None:
@@ -410,6 +412,22 @@ class Checkout:
         status = (result.ref_status or {}).get(self._ref)  # a ref that went through has no entry (local) or None (https)
         refs = getattr(result, "refs", None) or {}
         return status is None and refs.get(self._ref, commit) == commit
+
+    def _committed_line_endings(self, opened, head: bytes) -> None:
+        """Put back HEAD's bytes where Git for Windows wrote a state or steps file with CRLF (core.autocrlf).
+
+        Only a file that is exactly HEAD's blob with each LF written as CRLF is rewritten: that is a checkout's
+        line endings, not a hand edit. Anything else is left for the local-change and hand-edit checks."""
+        for path, (_mode, sha) in self._files(opened, opened[head].tree).items():
+            if path != self._steps and not path.startswith(self._folder + "/"):
+                continue
+            committed = opened[sha].data
+            target = self.path / path
+            if b"\n" not in committed or b"\r" in committed or not target.is_file() or target.is_symlink():
+                continue
+            if target.read_bytes() == committed.replace(b"\n", b"\r\n"):
+                self._no_link_on_the_way(target)
+                target.write_bytes(committed)
 
     def _move_to(self, opened, head: bytes | None, target: bytes, *, keep: str | None = None) -> None:
         """Write the state folder's and the steps file's changes from ``head`` to ``target``, each checked first.
