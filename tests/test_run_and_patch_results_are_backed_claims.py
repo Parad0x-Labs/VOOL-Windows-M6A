@@ -6,6 +6,7 @@ Steve consistency check (12 Nov 2026, ec7c3205): a sandbox run and a file write 
 each turn had its tool's executed receipt: the shared claim reader (`completion_claim_kind`) did not
 read the tools' own result lines as claims. It now does. With the receipt the turn is `clean`; the same
 words with no receipt are a claim the blocker refuses and the ledger signs `blocked_false_claim`.
+This is Windows-only: off Windows the reader is the Mac one (last row).
 
 The served rows drive the real lanes as the VOOL window does, with the fixtures of
 tests/test_windows_run_in_folder_served_end_to_end.py.
@@ -27,6 +28,14 @@ __all__ = ["chat", "jobs", "machine"]
 
 RUN_TESTS_REPLY = "`python -m pytest -q` ran and exited 0.\n\nCommand output:\n2 passed in 0.03s"
 PATCH_REPLY = "Applied unified diff:\n- calc.py"
+
+
+@pytest.fixture(autouse=True)
+def _windows_reader(monkeypatch):
+    """The reading is a Windows fix (Jesse, 16 Nov: Windows-only by default); every host judges it here."""
+    from core.agent_runtime import action_honesty_validator
+
+    monkeypatch.setattr(action_honesty_validator, "_IS_WINDOWS", True)
 
 
 def _verdicts(session: str) -> list[str]:
@@ -98,3 +107,11 @@ def test_the_tools_result_lines_are_execution_claims(reply) -> None:
 ])
 def test_explanations_and_quotes_are_not_claims(reply) -> None:
     assert completion_claim_kind(reply) == ""
+
+
+@pytest.mark.parametrize("reply", [RUN_TESTS_REPLY, PATCH_REPLY])
+def test_off_windows_the_reader_is_the_mac_one(monkeypatch, reply) -> None:
+    from core.agent_runtime import action_honesty_validator
+
+    monkeypatch.setattr(action_honesty_validator, "_IS_WINDOWS", False)
+    assert completion_claim_kind(reply) == ""  # as before the fix: no claim read
