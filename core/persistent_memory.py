@@ -2747,9 +2747,21 @@ def maybe_handle_memory_command(
                 # The forgotten value is removed from the chat's documents (store `chat_documents`), or the
                 # forget is not verified (FIX-PLAN 1.2 step 6).
                 try:
-                    from core.chat_attachments import forget_in_documents
+                    from core import windows_write_gate
 
-                    _record_erasure_store(erasures, "chat_documents", "verified", forget_in_documents(resolved_session, token))
+                    if windows_write_gate.active():
+                        # Windows keeps the 0.7.2 design: the carrying lines are redacted, the document stays.
+                        from core.chat_attachments import forget_in_documents
+
+                        _record_erasure_store(erasures, "chat_documents", "verified", forget_in_documents(resolved_session, token))
+                    else:
+                        # Every other host as Mac 0.7.3 ships: the whole document that carries the words is erased.
+                        from core.chat_attachments import forget_documents_carrying
+                        from core.memory.carriers import carries as carries_forget_token
+
+                        erased_documents = forget_documents_carrying(
+                            session_id=resolved_session, carries=lambda words: carries_forget_token(words, token))
+                        _record_erasure_store(erasures, "chat_documents", "verified", erased_documents)
                 except Exception as exc:
                     LOGGER.warning("chat document erasure failed: %s", type(exc).__name__)
                     _record_erasure_store(erasures, "chat_documents", "incomplete")

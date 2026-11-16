@@ -195,6 +195,20 @@ _LOCK = threading.RLock()
 _LOGGER = logging.getLogger(__name__)
 
 
+def _windows_forget_design() -> bool:
+    """Whether this host keeps the port's 0.7.2 forget-in-documents design.
+
+    On Windows a forget redacts the carrying lines of a chat's document (`forget_in_documents`),
+    staging refuses words the chat forgot, and every delivery runs the serve-time screen. Every
+    other host behaves as Mac 0.7.3 ships: a forget erases the whole document that carries the
+    words (`forget_documents_carrying`), staging keeps whatever is pasted, and a carried document
+    holding forgotten words is withheld whole. Patched in tests through `windows_write_gate._IS_WINDOWS`.
+    """
+    from core import windows_write_gate
+
+    return windows_write_gate.active()
+
+
 class AttachmentRefused(Exception):
     """A typed refusal: a stable ``code`` for machines, a plain ``message`` for people."""
 
@@ -869,8 +883,10 @@ def stage_attachment(*, session_id: str, declared_name: Any, declared_type: Any,
             _refuse_credential_shaped_extraction(name, extraction)
             extra = _extraction_summary(extraction)
     # The name is kept on the receipt after the turn: a forgotten word never comes back through it.
+    # (Windows; Mac 0.7.3 stages the name unfenced.)
+    fenced = _windows_forget_design()
     record = _stage_bytes(session=session, name=name, kind=kind, media_type=media_type, stored=stored, extra=extra,
-                          fence_name=True, fence_handles=(str(session_id or ""),))
+                          fence_name=fenced, fence_handles=(str(session_id or ""),) if fenced else ())
     if extraction is not None:
         _write_derivative(record["id"], extraction)
     return record
@@ -1335,6 +1351,20 @@ def stage_document(*, session_id: str, data: bytes, declared_name: Any = "", sou
         rule = "declared_name"
     else:
         extension, media_type, rule = document_type_for(text)
+    if not _windows_forget_design():
+        # Mac 0.7.3: no forget fence at the paste door (and no forget ledger opened by it); a document
+        # carrying words this chat forgot is kept, and never carried into a later turn.
+        with _LOCK:
+            name = label or f"{DOCUMENT_NAME_PREFIX}-{_document_count(session) + 1}{extension}"
+            extra = {
+                "document": True,
+                "source": str(source or DOCUMENT_SOURCE_PASTE)[:64],
+                "retention": RETENTION_CHAT,
+                "chars": len(text),
+                "lines": text.count("\n") + 1,
+                "type_rule": rule,
+            }
+            return _stage_bytes(session=session, name=name, kind="text", media_type=media_type, stored=bytes(data), extra=extra)
     from core.memory import revocation
 
     # The forget ledger's lock before `_LOCK`, in the order a forget takes them (see `_stage_bytes`):
@@ -1783,24 +1813,69 @@ def _serve_under_lock(session_id: str, collect, serve) -> list[dict[str, Any]]:
     and the records are collected again; nothing is served by a call whose screen was not built.
     A forget that lands between building the screen and retaking `_LOCK` purged the chat's documents
     under `_LOCK` itself, so the records collected again already carry its redactions.
+
+    The screen is read again after the bytes were read (Mac 0.7.3's rule for carried documents): a
+    forget that began while this call was reading them changed what the ledger says, and what was
+    read under the older screen is dropped and served again under the new one. A ledger that keeps
+    changing serves nothing.
     """
     screen = _LazyScreen(session_id)
-    while True:
+    for _attempt in range(_SERVE_SCREEN_ATTEMPTS):
         with _LOCK:
             records = collect()
             if not records:
                 return []
-            if screen.ready:
-                return serve(records, screen)
-        screen.read_ledger()
+            served = serve(records, screen) if screen.ready else None
+        if served is None:
+            screen.read_ledger()
+            continue
+        fresh = _LazyScreen(session_id).read_ledger()
+        if fresh.signature == screen.signature:
+            return served
+        screen = fresh
+    return []
+
+
+#: How many times one delivery call may find the forget ledger changed under it before it serves nothing.
+_SERVE_SCREEN_ATTEMPTS = 8
 
 
 def evidence_items_for_turn(*, session_id: str, turn_id: str, question: str = "") -> list[dict[str, Any]]:
     """The turn's attachments as bounded evidence items: text inlined as data, images by reference."""
+    if not _windows_forget_design():
+        return _mac_evidence_items_for_turn(session_id=session_id, turn_id=turn_id, question=question)
     def collect() -> list[dict[str, Any]]:
         return [r for r in _bound_records(session_id, turn_id) if r.get("state") == "bound"]
 
     return _serve_under_lock(session_id, collect, lambda records, screen: _evidence_items(records, screen, question))
+
+
+def _mac_evidence_items_for_turn(*, session_id: str, turn_id: str, question: str = "") -> list[dict[str, Any]]:
+    """The turn's attachments as bounded evidence items: text inlined as data, images by reference."""
+    items: list[dict[str, Any]] = []
+    remaining = MAX_TEXT_CHARS_PER_TURN
+    with _LOCK:
+        for record in _bound_records(session_id, turn_id):
+            if record.get("state") != "bound":
+                continue
+            item = _item_base(record)
+            if record["kind"] == "text":
+                budget = max(0, min(MAX_TEXT_CHARS_PER_FILE, remaining))
+                text, truncated, selection = _deliver_text(_open_regular(_bytes_path(record["id"])), budget=budget, exact=bool(record.get("document")), question=question)
+                remaining = max(0, remaining - len(text))
+                item["text"] = text
+                item["truncated"] = truncated
+                if selection:
+                    item["selection"] = selection
+            elif record["kind"] == KIND_ARTIFACT:
+                # Evidence carries the EXTRACTION, never the frames: an evidence item is read by
+                # runtime code, and a base64 video frame in it is megabytes nothing there can use.
+                item = _artifact_entry(record, budget=min(MAX_ARTIFACT_CHARS_PER_FILE, remaining), question=question, with_images=False)
+                item.setdefault("reference", f"attachment:{record['id']}")
+                item["origin"] = "chat_attachment"
+                remaining = max(0, remaining - len(str(item.get("text") or "")))
+            items.append(item)
+    return items
 
 
 def _evidence_items(records: list[dict[str, Any]], screen: _LazyScreen, question: str) -> list[dict[str, Any]]:
@@ -1841,10 +1916,62 @@ def _evidence_items(records: list[dict[str, Any]], screen: _LazyScreen, question
 
 def model_attachments_for_turn(*, session_id: str, turn_id: str, question: str = "") -> list[dict[str, Any]]:
     """What a model may be handed: bounded text, and images as data URLs of the stripped bytes."""
+    if not _windows_forget_design():
+        return _mac_model_attachments_for_turn(session_id=session_id, turn_id=turn_id, question=question)
     def collect() -> list[dict[str, Any]]:
         return [r for r in _bound_records(session_id, turn_id) if r.get("state") == "bound"]
 
     return _serve_under_lock(session_id, collect, lambda records, screen: _model_attachments(records, screen, question))
+
+
+def _mac_model_attachments_for_turn(*, session_id: str, turn_id: str, question: str = "") -> list[dict[str, Any]]:
+    """What a model may be handed: bounded text, and images as data URLs of the stripped bytes."""
+    entries: list[dict[str, Any]] = []
+    remaining = MAX_TEXT_CHARS_PER_TURN
+    with _LOCK:
+        for record in _bound_records(session_id, turn_id):
+            if record.get("state") != "bound":
+                continue
+            if record["kind"] == KIND_ARTIFACT:
+                entry = _artifact_entry(record, budget=min(MAX_ARTIFACT_CHARS_PER_FILE, remaining), question=question)
+                entry.pop("reference", None)
+                entry.pop("origin", None)
+                remaining = max(0, remaining - len(str(entry.get("text") or "")))
+                entries.append(entry)
+                continue
+            raw = _open_regular(_bytes_path(record["id"]))
+            entry = _item_base(record)
+            entry.pop("reference", None)
+            entry.pop("origin", None)
+            if record["kind"] == "text":
+                budget = max(0, min(MAX_TEXT_CHARS_PER_FILE, remaining))
+                text, truncated, selection = _deliver_text(raw, budget=budget, exact=bool(record.get("document")), question=question)
+                remaining = max(0, remaining - len(text))
+                entry["text"] = text
+                entry["truncated"] = truncated
+                entry["lines"] = int(record.get("lines") or 0)
+                if selection:
+                    entry["selection"] = selection
+            else:
+                entry["data_url"] = f"data:{record['media_type']};base64,{base64.b64encode(raw).decode('ascii')}"
+                # The words the pixels carry ride along for EVERY model. Budget comes out of the
+                # same per-turn allowance as every other text, and an over-budget read states the
+                # cut instead of travelling silently whole.
+                extraction = _read_derivative(record["id"]) or {}
+                rendered = str(extraction.get("rendered") or "")
+                if rendered.strip():
+                    allowance = max(0, min(MAX_ARTIFACT_CHARS_PER_FILE, remaining))
+                    text, truncated, selection = select_document_text(rendered, budget=allowance, question=question)
+                    remaining = max(0, remaining - len(text))
+                    entry["ocr_text"] = text
+                    entry["ocr_truncated"] = truncated
+                    entry["extractor"] = str(extraction.get("extractor") or "")
+                    entry["reader_warnings"] = list(extraction.get("warnings") or [])
+                    entry["source_sha256"] = str(extraction.get("source_sha256") or record.get("sha256") or "")
+                    if truncated:
+                        entry["selection"] = selection
+            entries.append(entry)
+    return entries
 
 
 def _model_attachments(records: list[dict[str, Any]], screen: _LazyScreen, question: str) -> list[dict[str, Any]]:
@@ -1919,6 +2046,8 @@ def carried_documents_for_turn(*, session_id: str, exclude_turn_id: str = "", bu
     that holds words this chat forgot (or is forgetting) while the forget could not erase it.
     Nothing of another chat can appear here: the session id is the door's, never the client's.
     """
+    if not _windows_forget_design():
+        return _mac_carried_documents_for_turn(session_id=session_id, exclude_turn_id=exclude_turn_id, budget=budget, question=question)
     session = _valid_session(session_id)
     exclude = str(exclude_turn_id or "").strip()
 
@@ -1935,6 +2064,61 @@ def carried_documents_for_turn(*, session_id: str, exclude_turn_id: str = "", bu
         ]
 
     return _serve_under_lock(session, collect, lambda records, screen: _carried_documents(records, screen, budget, question))
+
+
+def _mac_carried_documents_for_turn(*, session_id: str, exclude_turn_id: str = "", budget: int = MAX_CARRIED_TEXT_CHARS_PER_TURN, question: str = "") -> list[dict[str, Any]]:
+    """The chat's documents from EARLIER turns, as bounded carried context for a later turn.
+
+    Most recent first; each cut on a line boundary within what is left of `budget`, the cut
+    stated on the entry. A document whose bytes were erased is never carried, and neither is one
+    that holds words this chat forgot (or is forgetting) while the forget could not erase it.
+    Nothing of another chat can appear here: the session id is the door's, never the client's.
+    """
+    from core.memory.revocation import authorize_payload, memory_home_is_new
+
+    session = _valid_session(session_id)
+    exclude = str(exclude_turn_id or "").strip()
+    entries: list[dict[str, Any]] = []
+    remaining = max(0, int(budget))
+    with _LOCK:
+        records = [
+            r
+            for r in _all_manifests()
+            if r.get("session_id") == session
+            and r.get("document")
+            and _retained(r)
+            and r.get("state") in {"bound", "released"}
+            and r.get("turn_id")
+            and r.get("turn_id") != exclude
+        ]
+    records.sort(key=lambda r: (str(r.get("bound_at") or r.get("created_at") or ""), int(r.get("bind_index") or 0), r["id"]), reverse=True)
+    for record in records:
+        if remaining <= 0:
+            break
+        with _LOCK:
+            path = _bytes_path(record["id"])
+            if not path.exists() or path.is_symlink():
+                continue
+            raw = _open_regular(path)
+        # Asked outside the store's lock: a forget holds the revocation authority while it erases documents.
+        # The authority answers False on a revoked word and on any failure to read it.
+        # The forget's ledger names the chat as the turn's door gave it; that can be the handle this store folded.
+        words = raw.decode("utf-8", errors="replace")
+        # A home that never held memory never forgot anything; one whose authority is missing or unreadable carries
+        # nothing. Asked for each document after its bytes are read: a forget that starts after an earlier answer
+        # writes the ledger first, and this answer then sees it.
+        if not memory_home_is_new() and not all(authorize_payload(words, chat_id=chat) for chat in {session, str(session_id).strip()}):
+            continue
+        text, truncated, selection = _deliver_text(raw, budget=min(MAX_TEXT_CHARS_PER_FILE, remaining), exact=True, question=question)
+        remaining = max(0, remaining - len(text))
+        entry = _item_base(record)
+        entry.pop("reference", None)
+        entry.pop("origin", None)
+        entry.update({"text": text, "truncated": truncated, "carried": True, "origin_turn_id": str(record.get("turn_id") or ""), "lines": int(record.get("lines") or 0)})
+        if selection:
+            entry["selection"] = selection
+        entries.append(entry)
+    return entries
 
 
 def _carried_documents(records: list[dict[str, Any]], screen: _LazyScreen, budget: int, question: str) -> list[dict[str, Any]]:
@@ -2545,6 +2729,13 @@ def carries_forgotten_words(session_id: str, text: str) -> bool:
     if not str(text or "").strip():
         return False
     try:
+        if not _windows_forget_design():
+            from core.memory.revocation import memory_home_is_new
+
+            # Off Windows the paste door no longer opens the forget ledger (Mac 0.7.3), so a home that never
+            # held memory has none; it never forgot anything (Mac's own rule for carried documents).
+            if memory_home_is_new():
+                return False
         return _carries_any(text, forgotten_words(session_id))
     except Exception:
         return True
@@ -2766,9 +2957,13 @@ def _revocation_screen(session_id: str):
         def withhold(text: str) -> str:
             raise _Withheld("revocation_unavailable")
         withhold.unreadable = True  # type: ignore[attr-defined]
+        withhold.signature = None  # type: ignore[attr-defined]
         return withhold
     if not tokens:
-        return lambda text: text
+        def unchanged(text: str) -> str:
+            return text
+        unchanged.signature = ()  # type: ignore[attr-defined]
+        return unchanged
 
     def allowed(chunk: str) -> bool:
         try:
@@ -2788,6 +2983,7 @@ def _revocation_screen(session_id: str):
             raise _Withheld("revoked_words_span_windows")
         return screened
 
+    screen.signature = tuple(tokens)  # type: ignore[attr-defined]
     return screen
 
 
@@ -2811,6 +3007,11 @@ class _LazyScreen:
     @property
     def ready(self) -> bool:
         return self._screen is not None
+
+    @property
+    def signature(self) -> Any:
+        """What the ledger said when this screen was built: the words, or None when it could not be read."""
+        return getattr(self._screen, "signature", None)
 
     def text(self, text: str) -> str | None:
         """The screened text, or None when the record must be withheld whole.
