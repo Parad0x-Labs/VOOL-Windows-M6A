@@ -26,6 +26,19 @@ INVENTORY = "\n".join(f"Inventory note {index:03d}: crate {index} holds spare ha
 
 
 @pytest.fixture(autouse=True)
+def _mac_forget_design(monkeypatch):
+    """These rows pin Mac 0.7.3's design: a forget erases the whole document that carries the words.
+
+    A Windows host keeps the port's 0.7.2 line-redaction design instead (`core.chat_attachments._windows_forget_design`,
+    covered by tests/test_windows_073_forget_docs_redaction_and_read_race.py), so the in-process rows here run with
+    the Windows write gate off. The served daemon is its own process and keeps its host's design.
+    """
+    from core import windows_write_gate
+
+    monkeypatch.setattr(windows_write_gate, "_IS_WINDOWS", False)
+
+
+@pytest.fixture(autouse=True)
 def _a_chat_that_has_taken_turns(request):
     """A chat's first turn opens its memory, which sets up the home's forget authority."""
     if "isolated_pages" not in request.fixturenames:
