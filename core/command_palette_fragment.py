@@ -467,6 +467,12 @@ window.VoolPalette = Object.freeze({
 # caps say ⌘, which a Windows keyboard does not have. A Windows host is served these exact pieces
 # with Ctrl; every other host gets the script byte for byte.
 _WINDOWS_SHORTCUT_LABELS = (
+    # Every key-cap decision on the page (MOD, VP_APPLE, the browser-tab Ctrl+N withholding) reads IS_MAC.
+    # A Windows page is served IS_MAC = false, so all of them agree on the Windows keyboard even when the
+    # engine reports an Apple platform: a cap never says Ctrl+N where Ctrl+N belongs to the browser.
+    ("var IS_MAC = /Mac|iPhone|iPad/.test((navigator.userAgentData && navigator.userAgentData.platform)"
+     " || navigator.platform || '');",
+     "var IS_MAC = false;"),
     # The palette rows' key caps come from MOD (0.7.2); a Windows page is served Ctrl+ for it, whatever the
     # browser says its platform is.
     ("var MOD = IS_MAC ? '\u2318' : 'Ctrl+';", "var MOD = 'Ctrl+';"),
