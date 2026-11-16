@@ -185,6 +185,9 @@ def _factory(store):
 
 def test_adding_apple_calendar_in_settings_asks_and_sync_never_does(home, monkeypatch):
     from core.operator import calendar_accounts, calendar_alerts
+    # EventKit is the Mac's calendar store: these rows run with the host treated as a Mac (on Windows
+    # the provider is refused by design).
+    monkeypatch.setattr(calendar_accounts, "_host_is_windows", lambda: False)
 
     clock = Clock(T0, monkeypatch)
     binding = _EventKitBinding(0, answer=3)
@@ -207,6 +210,9 @@ def test_adding_apple_calendar_in_settings_asks_and_sync_never_does(home, monkey
 
 def test_a_declined_prompt_shows_the_system_settings_step_and_not_a_provider_reconnect(home, monkeypatch):
     from core.operator import calendar_accounts
+    # EventKit is the Mac's calendar store: these rows run with the host treated as a Mac (on Windows
+    # the provider is refused by design).
+    monkeypatch.setattr(calendar_accounts, "_host_is_windows", lambda: False)
 
     clock = Clock(T0, monkeypatch)
     binding = _EventKitBinding(0, answer=2)
