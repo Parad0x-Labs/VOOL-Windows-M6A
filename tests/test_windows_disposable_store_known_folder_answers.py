@@ -27,6 +27,8 @@ from core import windows_known_folders as kf
 from core import windows_path_policy
 from core import windows_write_gate as gate
 
+#: The real lookup, taken before any fixture replaces it.
+_REAL_KNOWN_FOLDER = kf.known_folder
 #: The answers `windows_known_folders.outcome` gives (spelled out, so each row runs on its own).
 FOUND, ABSENT, FAILED = "found", "absent", "failed"
 _USER = ("Desktop", "Documents", "Downloads", "Pictures", "Music", "Videos")
@@ -262,3 +264,20 @@ def test_a_profile_that_answers_once_then_fails_still_seals_its_private_folders(
     reason = store.refusal_reason(str(keys))
     assert ".ssh" in reason, reason
 
+
+def test_a_real_lookup_that_returns_none_unexplained_is_failed_and_refuses(machine, monkeypatch) -> None:
+    """The real `known_folder`, with its shell call cut short: None comes back before any step
+    noted why. That None counts as a failed lookup, so OneDrive is not taken as simply absent."""
+    monkeypatch.setattr(kf, "_IS_WINDOWS", True)
+    monkeypatch.setattr(kf, "_shell_known_folder", lambda name: None)  # records no outcome
+    assert _REAL_KNOWN_FOLDER("OneDrive") is None
+    assert kf.outcome("OneDrive") == FAILED
+
+    fake = kf.known_folder
+    monkeypatch.setattr(kf, "known_folder", lambda name: _REAL_KNOWN_FOLDER(name) if name == "OneDrive" else fake(name))
+    folder = _candidates(machine)["control_documents"]
+    reason = store.refusal_reason(str(folder))
+    assert "OneDrive" in reason and "could not say" in reason, reason
+    with pytest.raises(store.MarkRefused):
+        store.mark(str(folder))
+    assert not store.store_path().exists()
