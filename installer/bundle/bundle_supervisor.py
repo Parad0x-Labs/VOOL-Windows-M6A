@@ -714,7 +714,7 @@ class BundleSupervisor:
         # window host that never shows its window) still leaves a line there.
         with contextlib.suppress(OSError, ValueError):
             stamp = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-            handle.write(f"{stamp} bundle supervisor started {name} pid={child.pid}\n".encode("utf-8"))
+            handle.write(f"{stamp} bundle supervisor started {name} pid={child.pid}\n".encode())
             handle.flush()
         self._log(f"{name} started pid={child.pid}")
         self.exit_seen_at.pop(name, None)
