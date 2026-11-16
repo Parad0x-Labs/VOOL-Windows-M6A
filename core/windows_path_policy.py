@@ -27,7 +27,8 @@ ordinary path and POSIX keeps exactly the answers it had. Tests switch the rule 
 `_IS_WINDOWS`, never through `os.name` or `sys.platform`, which pathlib branches on.
 
 Not judged here: reserved DOS device names (`CON`, `NUL`, `COM1`), a local link or junction that
-points at a share, and the text of shell commands, patches and file contents.
+points at a share, and the text of shell commands, patches and file contents of VOOL's own tools. An
+MCP or plugin tool's call is the exception: every text in it is judged (`_server_tool_refusal`).
 """
 from __future__ import annotations
 
@@ -411,6 +412,206 @@ def _server_defined_tool(intent: str) -> bool:
     return contract is not None and str(getattr(contract, "source", "") or "").startswith("plugin:")
 
 
+_UNRESOLVED_VARIABLE_KIND = "unresolved_variable"
+_UNJUDGED_KIND = "unjudged"
+# A `%NAME%` (any name: hex digits, spaces, `=` or a leading digit included), `${NAME}`, `$(` or `$NAME`.
+_VARIABLE_REFERENCE_RE = re.compile(r"%[^%]+%|\$\{[^}]*\}|\$\(|\$[A-Za-z_][A-Za-z0-9_]*")
+# An http(s) URL as its authority, then the rest, where alone a `%XX` of two hex digits is percent-encoding.
+_HTTP_URL_RE = re.compile(r"(?i)(https?://[^/?#\s\\]*)([^\s\"'<>`]*)")
+_PERCENT_ENCODING_RE = re.compile(r"%[0-9A-Fa-f]{2}")
+_TOKEN_SEPARATORS_RE = re.compile(r"[\s\"'`<>|,;=()\[\]{}]+")
+_RUN_RE = re.compile(r"\S*")
+_PATH_SEPARATORS = "\\/"
+_NT_OBJECT_PREFIX = "\\??\\"
+_MAX_EXPANSION_ROUNDS = 8
+
+
+def _server_tool_state(intent: str) -> bool | None:
+    """Whether `intent` is an MCP tool or a registered plugin tool: True, False, or None when a
+    registry cannot be read. The two registries are asked separately, so one that fails does not
+    hide the other's answer."""
+    unknown = False
+    try:
+        from core.execution.mcp_bridge import is_mcp_intent
+
+        if is_mcp_intent(intent):
+            return True
+    except Exception:
+        unknown = True
+    try:
+        from core.tool_registry import tool_for_intent
+
+        contract = tool_for_intent(intent)
+        plugin = contract is not None and str(getattr(contract, "source", "") or "").startswith("plugin:")
+    except Exception:
+        return None
+    if plugin:
+        return True
+    return None if unknown else False
+
+
+def _variable_expansions(text: str) -> tuple[list[str], bool]:
+    """`text` and each further `%VAR%`, `${VAR}` and `$VAR` expansion of it in VOOL's environment,
+    and whether the expansion had not settled after `_MAX_EXPANSION_ROUNDS` rounds."""
+    levels = [text]
+    current = text
+    for _ in range(_MAX_EXPANSION_ROUNDS):
+        expanded = ntpath.expandvars(current)
+        if expanded == current:
+            return levels, False
+        levels.append(expanded)
+        current = expanded
+    return levels, True
+
+
+def _unresolved_reference(text: str) -> bool:
+    """Whether `text` still holds a `%NAME%`, `${NAME}`, `$(` or `$NAME` reference. A server may
+    expand one in its own environment, so one left unresolved is an unknown value. Only in the path,
+    query and fragment of an http(s) URL, which no expansion turns into a share, is a `%XX` of two hex
+    digits taken as percent-encoding instead of a reference."""
+
+    def without_encoding(match: re.Match[str]) -> str:
+        return match.group(1) + _PERCENT_ENCODING_RE.sub("", match.group(2))
+
+    return _VARIABLE_REFERENCE_RE.search(_HTTP_URL_RE.sub(without_encoding, text)) is not None
+
+
+def _url_scheme_before(text: str, index: int) -> bool:
+    """Whether the `//` at `index` follows a URL scheme of two or more characters (`https://`). A
+    one-letter scheme is a drive (`C://host/s`), whose doubled separator reads as a share."""
+    if index < 3 or text[index - 1] != ":":
+        return False
+    start = index - 1
+    while start > 0 and (text[start - 1].isascii() and (text[start - 1].isalnum() or text[start - 1] in "+.-")):
+        start -= 1
+    scheme = text[start : index - 1]
+    return len(scheme) >= 2 and scheme[0].isascii() and scheme[0].isalpha()
+
+
+def _text_candidates(text: str) -> list[str]:
+    """`text`, each word of it, and the run up to the next whitespace from every two adjacent path
+    separators (slash or backslash, in any mix) and every NT object prefix in it, so a share or a
+    device path glued to any character is still judged. Only a `//` right after a URL scheme
+    (`https://`) starts no run; a pair right after a separator is inside a run already."""
+    candidates = {text: None}
+    for word in _TOKEN_SEPARATORS_RE.split(text):
+        if word:
+            candidates.setdefault(word, None)
+    for index in range(len(text) - 1):
+        if not text.startswith(_NT_OBJECT_PREFIX, index):
+            if text[index] not in _PATH_SEPARATORS or text[index + 1] not in _PATH_SEPARATORS:
+                continue
+            if index and text[index - 1] in _PATH_SEPARATORS:
+                continue
+            if text[index : index + 2] == "//" and _url_scheme_before(text, index):
+                continue
+        candidates.setdefault(_RUN_RE.match(text, index).group(), None)
+    return list(candidates)
+
+
+def _server_candidate_kind(candidate: str) -> str:
+    """The network kind of one candidate text of a server-defined tool's arguments, or "": judged as a
+    path and as a URL (`file://host/share`), whatever argument name carries it."""
+    kind = classify(candidate, network_only=True)
+    if not kind:
+        kind = classify_url(candidate)
+    return kind if kind in NETWORK_KINDS else ""
+
+
+def _server_text_refusal(where: str, text: str) -> PathRefusal | None:
+    """Whether one text of a server-defined tool's arguments names a share or a device path, as a
+    whole, as any word of it or as a run glued to any character, as written or as expanded, or holds
+    a variable VOOL cannot resolve."""
+    levels, unsettled = _variable_expansions(text)
+    for level in levels:
+        for candidate in _text_candidates(level):
+            kind = _server_candidate_kind(candidate)
+            if kind:
+                return PathRefusal(where, text, kind)
+    if unsettled or _unresolved_reference(levels[-1]):
+        return PathRefusal(where, text, _UNRESOLVED_VARIABLE_KIND)
+    return None
+
+
+def _server_tool_refusal(arguments: Any) -> PathRefusal | None:
+    """The first text anywhere in a server-defined tool's arguments that names a share or a device
+    path, or that holds a variable VOOL cannot resolve, or None.
+
+    An MCP or plugin tool's arguments mean whatever its server says, so no key set tells which of
+    them is a path: every text is judged, keys as well as values, under any name and inside nested
+    mappings, lists, tuples and sets, and a text that parses as JSON is judged again as what it
+    holds. Any text with `\\\\` or `//` in it (a URL's own `scheme://` aside) is refused, so XPath
+    selectors and `//` code comments are refused too (owner decision D11, option A). Arguments that
+    are not a mapping are walked the same way. A value that is neither a container, a text, a number
+    nor None cannot be judged and is refused. Top-level `_` keys are left to `_arguments_refusal`'s
+    rule. The walk keeps its own stack and holds every container it has seen, so deep or cyclic
+    nesting cannot overflow or loop.
+    """
+    import json
+
+    stack: list[tuple[str, Any]] = []
+    if isinstance(arguments, Mapping):
+        for key, value in reversed(list(arguments.items())):
+            if isinstance(key, str) and key.startswith("_"):
+                continue
+            stack.append((str(key), value))
+            stack.append((str(key), key))
+    else:
+        stack.append(("arguments", arguments))
+    seen: dict[int, Any] = {}
+    while stack:
+        where, value = stack.pop()
+        if value is None or isinstance(value, (bool, int, float)):
+            continue
+        if isinstance(value, (Mapping, list, tuple, set, frozenset)):
+            if id(value) in seen:
+                continue
+            seen[id(value)] = value
+            children: list[tuple[str, Any]] = []
+            if isinstance(value, Mapping):
+                for key, item in value.items():
+                    children.append((f"{where}.{key}", key))
+                    children.append((f"{where}.{key}", item))
+            else:
+                for index, item in enumerate(value):
+                    children.append((f"{where}[{index}]", item))
+            stack.extend(reversed(children))
+            continue
+        if isinstance(value, str):
+            text = value
+        elif isinstance(value, (bytes, bytearray)):
+            text = bytes(value).decode("utf-8", "replace")
+        elif isinstance(value, os.PathLike):
+            text = os.fsdecode(value)
+        else:
+            return PathRefusal(where, "", _UNJUDGED_KIND)
+        if not text:
+            continue
+        refusal = _server_text_refusal(where, text)
+        if refusal is not None:
+            return refusal
+        if text.lstrip()[:1] in ("{", "[", '"'):
+            try:
+                parsed = json.loads(text)
+            except ValueError:
+                continue
+            stack.append((where, parsed))
+    return None
+
+
+def _server_tier_refusal(intent: str, arguments: Any) -> PathRefusal | None:
+    """The network-tier judgment of a server-defined tool's call: `argument_refusal` on the network
+    tier, then the walk of every text. A judgment that raises refuses."""
+    try:
+        if isinstance(arguments, Mapping):
+            refusal = argument_refusal(intent, arguments, network_only=True)
+            if refusal is not None:
+                return refusal
+        return _server_tool_refusal(arguments)
+    except Exception:
+        return PathRefusal("arguments", "", _UNJUDGED_KIND)
+
+
 def tool_call_refusal(intent: Any, arguments: Any) -> PathRefusal | None:
     """On Windows, `argument_refusal` in the tier the tool doors judge `intent(arguments)` on, or None.
     Off Windows, always None.
@@ -421,12 +622,21 @@ def tool_call_refusal(intent: Any, arguments: Any) -> PathRefusal | None:
     operator is not refused by the next door once it is approved. The network tier is applied directly,
     not only to what the full rule refuses: the full rule judges a URL name, and an ambiguous name of a
     tool that is not a file tool, on the network tier as typed, and only the network tier judges such a
-    value again as expanded.
+    value again as expanded. An MCP or plugin tool's call is also walked by `_server_tool_refusal`: any
+    text in it, under any name, that holds `\\\\` or `//` (a URL's `scheme://` aside) or a variable
+    VOOL cannot resolve is refused. A registry that cannot be read applies both tiers.
     """
     if not _IS_WINDOWS:
         return None
-    if _server_defined_tool(str(intent or "")):
-        return argument_refusal(intent, arguments, network_only=True)
+    name = str(intent or "").strip()
+    server_tool = _server_tool_state(name)
+    if server_tool is True:
+        return _server_tier_refusal(name, arguments)
+    if server_tool is None:
+        # A registry that cannot be read leaves the tier unknown: both tiers judge the call.
+        refusal = _server_tier_refusal(name, arguments)
+        if refusal is not None:
+            return refusal
     return argument_refusal(intent, arguments)
 
 
