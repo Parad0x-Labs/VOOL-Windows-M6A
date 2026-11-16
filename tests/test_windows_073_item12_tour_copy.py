@@ -3,8 +3,10 @@
 Steve, 15 Nov: the tour faults and the registry told the owner to replay the tour from
 "Settings → Show me around", and the pact refusal said "press 'Show me around' first". The Windows
 Settings page has no such entry, so the advice pointed at nothing. On Windows the tour is started
-by POST /api/onboarding/pact/begin, which is what the copy now names. Off Windows the Settings
-entry exists, so the Mac copy is unchanged.
+only by POST /api/onboarding/pact/begin, which a person in chat cannot call, so the lines they read
+say plainly that the tour isn't available in the Windows app in this version; only the
+developer-facing command description names the endpoint. Off Windows the Settings entry exists, so
+the Mac copy is unchanged.
 """
 from __future__ import annotations
 
@@ -68,7 +70,9 @@ def test_on_windows_the_pact_refusal_names_the_begin_endpoint(pact_rig, monkeypa
     text = _refusal()
 
     assert "Show me around" not in text
-    assert BEGIN in text
+    # The person reading this uses chat: no HTTP call they cannot make, just the plain truth.
+    assert "/api/" not in text and "POST" not in text
+    assert "isn't available in the Windows app" in text
 
 
 def test_off_windows_the_pact_refusal_keeps_the_settings_entry(pact_rig, monkeypatch) -> None:  # noqa: F811
@@ -91,7 +95,10 @@ def test_on_windows_no_first_run_command_points_at_show_me_around(monkeypatch) -
         if binding.when == "not_applicable_readonly"
         for line in binding.remediation
     ]
-    assert remediation and all(BEGIN in line for line in remediation), remediation
+    assert remediation, remediation
+    for line in remediation:
+        assert "/api/" not in line and "POST" not in line, line
+        assert "isn't available in the Windows app" in line, line
 
 
 def test_off_windows_the_first_run_commands_keep_the_settings_entry(monkeypatch) -> None:
