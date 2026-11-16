@@ -13,6 +13,8 @@ from contextlib import closing
 from pathlib import Path
 from urllib.parse import quote
 
+from core import windows_path_policy
+
 # Read at call time, so tests can drive the Windows spelling on any host.
 _IS_WINDOWS = sys.platform == "win32"
 _EXTENDED_PREFIX = "\\\\?\\"
@@ -23,35 +25,33 @@ _KINDS = frozenset({"config", "sqlite", "file"})
 
 
 def _extended_length(text: str) -> str:
-    r"""The ``\\?\`` spelling of a full Windows path, which has no MAX_PATH limit (WinError 3 past 260).
+    r"""The ``\\?\`` spelling of a full local drive path, which has no MAX_PATH limit (WinError 3 past 260).
 
-    The prefix turns off Win32 normalisation, so the path is normalised first and a component that Win32
-    would have rewritten (a trailing dot or space, a reserved device name) is refused rather than created.
-    A local drive path becomes ``\\?\C:\...``, a share ``\\?\UNC\server\share\...``; a device path or a
-    root-, drive- or plain-relative path raises ValueError (unknown forms fail closed).
+    Only ``X:\...`` is spelled. A share (``\\server\share``), a device or NT-namespace path (``\\.\``,
+    ``\\?\UNC``, ``\\?\GLOBALROOT``), and a root-, drive- or plain-relative path raise ValueError before any
+    file call: the updater never snapshots or restores over SMB, and unknown forms fail closed. The prefix
+    turns off Win32 normalisation, so the path is normalised first and a component Win32 would have
+    rewritten (``..``, a trailing dot or space, a reserved device name) is refused rather than created.
+    An already extended drive path is checked the same way, without normalising.
     """
     if not isinstance(text, str):
         raise ValueError("a bytes path has no extended-length spelling")
-    if text.startswith(_EXTENDED_PREFIX):
-        return text
     spelled = text.replace("/", "\\")
-    if spelled.startswith("\\\\.\\") or spelled.startswith("\\\\?\\"):
-        raise ValueError(f"device paths are not used for update files: {text!r}")
-    drive, rest = ntpath.splitdrive(spelled)
-    if not rest.startswith("\\"):
-        raise ValueError(f"update file path is not absolute: {text!r}")
-    if len(drive) == 2 and drive[1] == ":" and drive[0].isascii() and drive[0].isalpha():
-        head = _EXTENDED_PREFIX + drive
-    elif drive.startswith("\\\\") and len(drive.strip("\\").split("\\")) == 2:
-        head = _EXTENDED_PREFIX + "UNC\\" + drive[2:]
+    if spelled.startswith(_EXTENDED_PREFIX):
+        body = spelled[len(_EXTENDED_PREFIX):]
     else:
-        raise ValueError(f"update file path has no drive or share: {text!r}")
-    rest = ntpath.normpath(rest)
+        if windows_path_policy.classify(spelled):
+            raise ValueError(f"update file path is a share, device or relative path; refused: {text!r}")
+        body = ntpath.normpath(spelled)
+    drive, rest = ntpath.splitdrive(body)
+    if not (len(drive) == 2 and drive[1] == ":" and drive[0].isascii() and drive[0].isalpha()
+            and rest.startswith("\\")):
+        raise ValueError(f"update file path is not a full local drive path; refused: {text!r}")
     for name in rest.split("\\"):
         if name and (name in (".", "..") or name != name.rstrip(" .")
                      or name.split(".", 1)[0].rstrip(" ").upper() in _RESERVED_NAMES):
-            raise ValueError(f"update file path has a name Windows would rewrite: {text!r}")
-    return head + rest
+            raise ValueError(f"update file path has a name Windows would rewrite; refused: {text!r}")
+    return _EXTENDED_PREFIX + body
 
 
 def _io(path: str | os.PathLike[str]) -> str:
@@ -117,14 +117,22 @@ def _refuse_links_below(base: Path, relative: Path, what: str) -> None:
             raise ValueError(f"{what} crosses a link or junction; refused: {current}")
 
 
-def _refuse_links_to(home: Path, path: Path, what: str) -> None:
-    """Refuse a link on `path` and, when it lies in `home`, on every component between them."""
-    try:
-        relative = path.relative_to(home)
-    except ValueError:
-        _refuse_link_entry(path, what)
-    else:
-        _refuse_links_below(home, relative, what)
+def _refuse_links_from_home(data_dir: Path, path: Path, what: str) -> None:
+    """Refuse a link on every component from the VOOL home down to `path`, `path` included.
+
+    The home is taken in both spellings: resolved, and as `data_dir` was spelled (an 8.3 short name such
+    as RUNNER~1 does not compare equal to its long form). A path under neither is not walked from the home,
+    so it is walked from its root instead: every component is judged, and none is taken on trust.
+    """
+    path = Path(os.path.abspath(path))
+    homes = {Path(data_dir).resolve().parent, Path(os.path.abspath(data_dir)).parent}
+    walked = False
+    for home in homes:
+        if path.is_relative_to(home):
+            _refuse_links_below(home, path.relative_to(home), what)
+            walked = True
+    if not walked:
+        _refuse_links_below(Path(path.anchor), path.relative_to(path.anchor), what)
 
 
 def _refuse_link_names(directory: str, names: list[str], what: str) -> None:
@@ -169,7 +177,7 @@ def snapshot_runtime(data_dir: Path, destination: Path) -> None:
     # The mirrored layout under data/update_v2/transactions/<txid>/runtime-snapshot can pass MAX_PATH on
     # Windows (WinError 3 with LongPathsEnabled=0), so every OS call takes the _io spelling.
     destination = Path(os.path.abspath(destination))
-    _refuse_links_to(home, destination, "snapshot destination")
+    _refuse_links_from_home(data_dir, destination, "snapshot destination")
     os.makedirs(_io(destination), exist_ok=True)
     os.chmod(_io(destination), 0o700)
     entries = []
@@ -248,12 +256,14 @@ def restore_runtime(data_dir: Path, source: Path) -> None:
     """
     home = Path(data_dir).resolve().parent
     source = Path(os.path.abspath(source))
-    _refuse_links_to(home, source, "snapshot")
+    _refuse_links_from_home(data_dir, source, "snapshot")
     with open(_io(source / "index.json"), encoding="utf-8") as handle:
         entries = json.loads(handle.read())
     for item in entries:
-        if not isinstance(item.get("path"), str) or item.get("kind") not in _KINDS:
+        if not isinstance(item.get("path"), str):
             raise ValueError("invalid snapshot index")
+        if item.get("kind") not in _KINDS:
+            raise ValueError("invalid snapshot index: unknown kind")
         relative = Path(item["path"])
         if relative.is_absolute() or ".." in relative.parts or not relative.parts:
             raise ValueError("invalid snapshot index")
