@@ -15,7 +15,7 @@ These rules hold:
 - Redirects are off. Any 3xx refuses with "git redirect refused".
 - The token reaches the server only in the Authorization header, and only to the remote's own origin.
   It is never in a URL, an argument, a log line or an error.
-- A fast-forward writes only regular files, as plain bytes. A symlink, a submodule, a ``.git`` path, a
+- A fast-forward writes only the state folder and the steps file, as plain bytes. A symlink, a submodule, a ``.git`` path, a
   path with a drive, a colon or a backslash, or a ``..`` part is refused before anything is written.
 """
 from __future__ import annotations
@@ -412,10 +412,15 @@ class Checkout:
         return status is None and refs.get(self._ref, commit) == commit
 
     def _move_to(self, opened, head: bytes | None, target: bytes, *, keep: str | None = None) -> None:
-        """Write the files that change from ``head`` to ``target``, after checking each one is unchanged on disk."""
+        """Write the state folder's and the steps file's changes from ``head`` to ``target``, each checked first.
+
+        Nothing else in the repository is written to disk: the signer reads only these, and every commit it
+        makes is built from the remote's own tree, so a remote commit can't plant a script, a workflow or a
+        .gitattributes in the checkout."""
         before = self._files(opened, opened[head].tree if head else None)
         after = self._files(opened, opened[target].tree)
         changed = sorted(path for path in set(before) | set(after) if before.get(path) != after.get(path) and
+                         (path == self._steps or path.startswith(self._folder + "/")) and
                          not (keep and path.startswith(keep + "/")))
         for path in changed:
             target_file = self.path / path
