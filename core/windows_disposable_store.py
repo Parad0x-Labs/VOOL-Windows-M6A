@@ -152,8 +152,12 @@ def _redirected(answers: dict[str, str]) -> str:
         found = answers.get(name)
         if not found:
             continue
+        usual = ntpath.join(profile, default)
         try:
-            moved = _norm(_real(found)) != _norm(_real(ntpath.join(profile, default)))
+            # A junction or link at the answer or at the usual place moves the folder too, even
+            # when the answer is the usual spelling: realpath follows both to the same target.
+            moved = (_is_link_itself(found) or _is_link_itself(usual)
+                     or _norm(_real(found)) != _norm(_real(usual)))
         except (OSError, ValueError):
             moved = True
         if moved:
@@ -164,6 +168,17 @@ def _redirected(answers: dict[str, str]) -> str:
 
 def _real(value: str) -> str:
     return os.path.realpath(value)
+
+
+def _is_link_itself(path: str) -> bool:
+    """Whether ``path`` itself (not followed) is a link, a junction or, on Windows, a reparse point
+    other than a cloud-sync placeholder. A folder that is not there is not a link: realpath judges it."""
+    if not os.path.lexists(path):
+        return False
+    isjunction = getattr(os.path, "isjunction", None)
+    if os.path.islink(path) or (isjunction is not None and isjunction(path)):
+        return True
+    return _IS_NT and _reparse_attribute(path)
 
 
 #: IO_REPARSE_TAG_CLOUD and CLOUD_1..CLOUD_F (OneDrive Files-On-Demand placeholders) share this
