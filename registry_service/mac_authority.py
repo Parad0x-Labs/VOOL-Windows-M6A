@@ -726,7 +726,12 @@ def setup(directory: Path, *, server: str, catalog_key: str, targets: list[dict]
                                                       BestAvailableEncryption(passphrase.encode())),
                "admission.key": _raw_key(keys["admission"]), "review.key": _raw_key(keys["review"]), "totp.key": secret}
     if _IS_WINDOWS:
-        windows_keeper.write_keys(private)  # Credential Manager; refused when any authority key is already there
+        try:
+            windows_keeper.write_keys(private)  # Credential Manager; a partial write is taken back
+        except RegistryError:
+            with contextlib.suppress(OSError):
+                os.rmdir(directory)  # the folder this setup just made, still empty; rmdir never removes contents
+            raise
     else:
         for name, data in private.items():
             _write(directory / name, data)
