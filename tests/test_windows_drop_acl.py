@@ -127,3 +127,37 @@ def test_a_write_never_opens_a_folder_on_windows(windows, monkeypatch) -> None:
     service._write(folder / "one.wire", b"frame")
     assert (folder / "one.wire").read_bytes() == b"frame"
     assert stat.S_IMODE((folder / "one.wire").stat().st_mode) & 0o077 == 0 or os.name == "nt"
+
+
+@pytest.mark.parametrize("spelled", [r"\\server\share\drop", "//server/share/drop", r"\\?\UNC\server\share\drop",
+                                     r"\\.\pipe\drop"])
+@pytest.mark.parametrize("what", ["home", "relay"])
+def test_a_share_or_device_spelling_is_refused_before_anything_resolves_it(windows, monkeypatch, spelled, what) -> None:
+    def _path(value, *rest):
+        if str(value) == spelled:
+            raise AssertionError("a share spelling was made into a path to look up")
+        return Path(value, *rest)
+
+    monkeypatch.setattr(service, "Path", _path)
+    with pytest.raises(DropError, match=r"HOME_NOT_IN_WORKSPACE|RELAY_NOT_IN_WORKSPACE"):
+        if what == "home":
+            service.DropHome(spelled, windows / "relay")
+        else:
+            service.LocalRelay(spelled, create=True)
+
+
+@pytest.mark.parametrize("name", ["drops.db", "actor.lock"])
+def test_an_existing_store_file_that_is_not_owner_only_is_refused_never_repaired(windows, monkeypatch, name) -> None:
+    relay = windows / "relay"
+    service.LocalRelay(relay, create=True)
+    service.DropHome(windows / "a", relay).close()
+    real_verify = owner_only.verify_owner_only
+    made: list[str] = []
+    real_make = owner_only.make_owner_only
+    monkeypatch.setattr(owner_only, "verify_owner_only",
+                        lambda path: OwnerOnlyReport(False, "foreign_ace") if Path(path).name == name else real_verify(path))
+    monkeypatch.setattr(owner_only, "make_owner_only",
+                        lambda path, directory=False: made.append(Path(path).name) or real_make(path, directory=directory))
+    with pytest.raises(DropError, match="UNSAFE_STORE_PERMISSIONS"):
+        service.DropHome(windows / "a", relay)
+    assert name not in made
