@@ -127,15 +127,21 @@ def test_setup_and_open_refuse_any_folder_but_the_fixed_one(windows, tmp_path) -
         mac_authority.Authority(other)
 
 
+def test_the_folder_is_its_own_sibling_of_vools_home_under_local_app_data(windows, tmp_path) -> None:
+    """Owner decision D17: %LOCALAPPDATA%\\VOOL-Registry-Authority, outside VOOL's own home folder."""
+    assert _folder() == tmp_path / "LocalAppData" / "VOOL-Registry-Authority"
+    _setup()
+    assert not (tmp_path / "LocalAppData" / "VOOL").exists()
+
+
 def test_the_fixed_folder_reached_through_a_link_is_refused(windows, tmp_path) -> None:
     real = tmp_path / "real"
     real.mkdir()
-    vool = _folder().parent
-    vool.symlink_to(real, target_is_directory=True)
+    _folder().symlink_to(real, target_is_directory=True)
 
     with pytest.raises(RegistryError, match="link"):
         _setup()
-    assert _targets(windows) == []
+    assert _targets(windows) == [] and list(real.iterdir()) == []
 
 
 def test_credential_manager_unavailable_refuses_with_no_fallback(windows, monkeypatch) -> None:
