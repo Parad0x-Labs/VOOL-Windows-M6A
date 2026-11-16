@@ -738,6 +738,37 @@ _NO_FOLDER_RETURNED = (
 )
 
 
+def _write_window_shown(*_args: object) -> None:
+    """Tell the bundle supervisor this host showed its window: its pid in VOOL_WINDOW_SHOWN_PATH.
+
+    The supervisor starts again a host that is running but never showed its window when VOOL is
+    launched again (bundle_supervisor._recreate_hidden_window). No path set (not under the bundle
+    supervisor): nothing is written."""
+    path = str(os.environ.get("VOOL_WINDOW_SHOWN_PATH") or "").strip()
+    if not path:
+        return
+    try:
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(f"{os.getpid()}\n")
+    except OSError as exc:
+        _log(f"window shown marker not written ({type(exc).__name__})")
+        return
+    _log("main window shown")
+
+
+def _mark_shown_with(window: object) -> bool:
+    """Write the shown marker when the main window is first shown. True when the hook was installed."""
+    try:
+        window.events.shown += _write_window_shown
+        return True
+    except Exception as exc:
+        # Without the hook a shown window could not be told from a hidden one: say it was shown, so
+        # the supervisor never restarts a window the person may be using.
+        _log(f"main window shown hook unavailable ({exc!r}); marked shown")
+        _write_window_shown()
+        return False
+
+
 def _close_secondaries_with(window: object, api: _WindowApi) -> bool:
     """Close the pet, Settings and Setup windows when the main chat window closes (not macOS).
     True when the hook was installed. See ``_WindowApi._close_secondary_windows``."""
@@ -2147,6 +2178,7 @@ def main() -> int:
     # claimed before any window so the taskbar never groups VOOL under pythonw. No-op elsewhere.
     windows_chrome.set_app_user_model_id()
     try:
+        _log(f"window host started pid={os.getpid()}")
         if not _single_instance():
             _log("another VOOL window is already open; not opening a second")
             return 0
@@ -2211,6 +2243,7 @@ def main() -> int:
             raise RuntimeError("pywebview returned no native window")
         api.set_window(window, webview)
         _close_secondaries_with(window, api)
+        _mark_shown_with(window)
         _register_url_scheme_handler()   # catch vool://auth/<provider>/callback launches (macOS)
         runtime_lost = _start_runtime_watchdog(supervisor, window, done)
         notification_bridge = _start_notification_bridge(window)
