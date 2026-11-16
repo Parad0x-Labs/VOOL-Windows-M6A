@@ -533,7 +533,7 @@ def test_a_snapshot_and_restore_with_no_links_still_round_trip(layout):
 def test_a_snapshot_whose_config_is_or_holds_a_junction_is_refused(layout):
     (layout["outside"] / "secret.txt").write_text("user secret\n", encoding="utf-8")
     _dir_link(layout["home"] / "config", layout["outside"])
-    with pytest.raises(ValueError, match="symlink|link or junction"):
+    with pytest.raises(ValueError, match=r"symlink|link or junction"):
         snapshot.snapshot_runtime(layout["data"], layout["home"].parent / "snap-a")
     if os.name == "nt":
         os.rmdir(layout["home"] / "config")  # removes the junction itself, not its target
