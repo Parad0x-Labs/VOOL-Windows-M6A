@@ -20,6 +20,7 @@ Pinned:
 from __future__ import annotations
 
 import json
+import os
 import socketserver
 import threading
 import time
@@ -46,9 +47,10 @@ INFERENCE_PATHS = ("/api/chat", "/api/generate", "/v1/chat/completions")
 
 class LocalEndpointRecorder:
     """Logs every request line it receives, then hangs up without a reply. With ``lists_models``
-    it answers ``GET /api/tags`` with one chat model, as a running Ollama would."""
+    it answers ``GET /api/tags`` with one chat model, as a running Ollama would, plus any
+    ``extra_models``."""
 
-    def __init__(self, *, lists_models: bool = False) -> None:
+    def __init__(self, *, lists_models: bool = False, extra_models: tuple[str, ...] = ()) -> None:
         self.requests: list[str] = []
         self.bodies: list[tuple[str, str]] = []
         self.lock = threading.Lock()
@@ -87,7 +89,9 @@ class LocalEndpointRecorder:
                     recorder.requests.append(line)
                     recorder.bodies.append((line, body.decode("utf-8", "replace")))
                 if lists_models and line.startswith("GET /api/tags"):
-                    body = json.dumps({"models": [{"name": "qwen3:4b", "details": {"families": ["qwen3"]}}]}).encode()
+                    models = [{"name": "qwen3:4b", "details": {"families": ["qwen3"]}}]
+                    models += [{"name": name, "details": {"families": ["qwen3"]}} for name in extra_models]
+                    body = json.dumps({"models": models}).encode()
                     self.request.sendall(
                         b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
                         + str(len(body)).encode() + b"\r\nConnection: close\r\n\r\n" + body
@@ -233,7 +237,9 @@ def test_a_picked_cloud_model_is_still_called(cloud) -> None:
 
 @pytest.fixture(scope="module")
 def running(tmp_path_factory):
-    recorder = LocalEndpointRecorder(lists_models=True)
+    # On Windows the fact extractor skips a model /api/tags does not list, so there the running
+    # Ollama also lists the extractor's default model (qwen3:0.6b).
+    recorder = LocalEndpointRecorder(lists_models=True, extra_models=("qwen3:0.6b",) if os.name == "nt" else ())
     daemon = BareDaemon(tmp_path_factory.mktemp("local-running") / "home", recorder)
     try:
         daemon.start()
