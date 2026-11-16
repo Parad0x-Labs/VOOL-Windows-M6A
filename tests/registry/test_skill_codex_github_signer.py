@@ -85,9 +85,11 @@ def world(tmp_path, monkeypatch):
     subprocess.run(["git", "clone", "-q", str(w.origin), str(owner)], check=True, capture_output=True)
     git(owner, "checkout", "-q", "-b", "main")
     w.secrets = {}
-    setup(owner, github=GITHUB, catalog_key=public(online_key), targets=[TARGET],
-          review={"provider": "openrouter", "model": "test/model", "monthly_cap": 1.0}, passphrase=PASSPHRASE,
-          offline=tmp_path / "usb", vool_commit="c" * 40, now=NOW, set_secret=w.secrets.__setitem__)
+    with monkeypatch.context() as owners_mac:  # setup is done once on a Mac or Linux (D19); this plays that step anywhere
+        owners_mac.setattr(github_authority, "_WINDOWS", False)
+        setup(owner, github=GITHUB, catalog_key=public(online_key), targets=[TARGET],
+              review={"provider": "openrouter", "model": "test/model", "monthly_cap": 1.0}, passphrase=PASSPHRASE,
+              offline=tmp_path / "usb", vool_commit="c" * 40, now=NOW, set_secret=w.secrets.__setitem__)
     git(owner, "add", "-A")
     git(owner, "commit", "-q", "-m", "Skill Codex signer")
     git(owner, "push", "-q", "origin", "main")
