@@ -86,6 +86,10 @@ SHORT_VERSION="${RELEASE_VERSION%%-*}"; [[ -n "${SHORT_VERSION}" ]] || SHORT_VER
 say() { printf '%s\n' "$*"; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
+# A host that can't build VOOL.app is refused first: before the git probes below run any git, and
+# before the output directory is made (owner rule: a refused run leaves nothing behind and starts no git).
+[[ "$(uname)" == "Darwin" ]] || die "VOOL.app can only be built on macOS (got $(uname))."
+
 # ── Build provenance gate ─────────────────────────────────────────────────────────────────
 # The bundle's bytes must come from ONE commit. A dirty tree cannot prove that: uncommitted
 # files would ride the staging copy while BUILD_MANIFEST and Info.plist claim the committed
@@ -185,8 +189,6 @@ else
 fi
 [[ "${BUNDLE_IDENTIFIER}" =~ ^[A-Za-z0-9.-]+$ ]] || die "invalid macOS bundle identifier: ${BUNDLE_IDENTIFIER}"
 [[ "${BUNDLE_URL_SCHEME}" =~ ^[A-Za-z][A-Za-z0-9+.-]*$ ]] || die "invalid macOS URL scheme: ${BUNDLE_URL_SCHEME}"
-
-[[ "$(uname)" == "Darwin" ]] || die "VOOL.app can only be built on macOS (got $(uname))."
 
 case "${TARGET_ARCH}" in
   arm64|x86_64) : ;;
