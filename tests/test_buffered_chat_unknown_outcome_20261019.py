@@ -85,7 +85,10 @@ def served(tmp_path_factory):
         home = tmp / "home"
         home.mkdir()
         daemon = ServedDaemon(home, port, extra_env={"PYTHONPATH": os.pathsep.join(
-            [str(rig.REPO_ROOT), os.environ.get("PYTHONPATH", "")]).rstrip(os.pathsep)})
+            [str(rig.REPO_ROOT), os.environ.get("PYTHONPATH", "")]).rstrip(os.pathsep),
+            # this module's disposable folder, marked for the Windows write gate; ignored elsewhere
+            # (Jesse OK 16 Nov 18:56Z)
+            "VOOL_WINDOWS_DISPOSABLE_WORKSPACES": str(tmp)})
         real_popen = subprocess.Popen
 
         def lossy_popen(command, *args, **kwargs):
