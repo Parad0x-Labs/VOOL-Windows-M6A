@@ -131,6 +131,9 @@ _WALLET_PAYEE_WORD = (
     r"[A-Za-z][\w'.-]*"
 )
 
+#: the no-"to" payee arm reads only a request: never text that opens with a question word or ends with "?"
+_WALLET_NOT_A_QUESTION = r"^(?!\s*(?:did|have|has|was|were|how|why|when)\b)(?![^\n]*\?\s*$)"
+
 _RULES: tuple[tuple[str, str, re.Pattern[str]], ...] = (
     # -- repository operations (RepoOps control plane) ------------------------
     # GitHub-management demands -- pull requests, issues, CI truth, the typed git vertical --
@@ -171,11 +174,12 @@ _RULES: tuple[tuple[str, str, re.Pattern[str]], ...] = (
     # stand before the coin, so an address and a coin name alone are not a payment. A saved name with no "to"
     # ("send Testy 1 USDT", "pay Tomas Berg 0.5 SOL") is the same shape: one to three words, none of them a pronoun or
     # a function word ("pay for 1 ETH", "send me 1 SOL" name nobody), right before the exact amount and the coin.
+    # That arm never reads a question ("did you send Bob 1 SOL?", "how do I pay Testy 1 USDT"): asked about, not asked for.
     ("wallet.propose", "wallet", re.compile(
         rf"\b(?:pay|send|transfer|prepare|propose)\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b{_WALLET_COIN}\b(?:[^.?!]|\.(?=\d)){{0,60}}?\bto\b"
         rf"|\b(?:pay|send|transfer)\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b(?:0x[0-9a-f]{{40}}|[1-9A-HJ-NP-Za-km-z]{{32,44}})\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b\d[\d,]*(?:\.\d+)?\s*{_WALLET_COIN}\b"
         rf"|\b(?:pay|send|transfer)\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b\d[\d,]*(?:\.\d+)?\s*{_WALLET_COIN}\b(?:[^.?!]|\.(?=\d)){{0,60}}?\b(?:0x[0-9a-f]{{40}}|[1-9A-HJ-NP-Za-km-z]{{32,44}})\b"
-        rf"|\b(?:pay|send|transfer)\s+{_WALLET_PAYEE_WORD}(?:\s+{_WALLET_PAYEE_WORD}){{0,2}}\s+\d[\d,]*(?:\.\d+)?\s*{_WALLET_COIN}\b",
+        rf"|{_WALLET_NOT_A_QUESTION}[^\n]*?\b(?:pay|send|transfer)\s+{_WALLET_PAYEE_WORD}(?:\s+{_WALLET_PAYEE_WORD}){{0,2}}\s+\d[\d,]*(?:\.\d+)?\s*{_WALLET_COIN}\b",
         re.I)),
     # -- contacts (the saved people and services; resolution itself happens inside each consumer) -----------
     # possession or the address-book name, never a bare mention: "contact card"/"Contacts are stored locally"
