@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -50,6 +51,11 @@ class GoalWorkflowTestBase(unittest.TestCase):
         reset_goal_state_for_tests()
 
     def tearDown(self) -> None:
+        # A goal worker is detached by design and can still be settling (an overtaken worker's refused
+        # write) after the goal reads completed; Windows cannot delete a store a live thread holds open.
+        for thread in threading.enumerate():
+            if thread.name.startswith("goal-worker-"):
+                thread.join(5)
         reset_goal_state_for_tests()
         configure_default_db_path(self._previous_db_override)
         self._tmp.cleanup()
