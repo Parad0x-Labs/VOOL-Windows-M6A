@@ -448,9 +448,23 @@ def _seed_locked() -> dict[str, Any]:
 
 # --- mutations --------------------------------------------------------------------------------
 
+def tour_start_hint() -> str:
+    """Where the owner starts the tour, named as this platform serves it.
+
+    The Mac Settings page has a "Show me around" entry. The Windows Settings page has none (Steve,
+    15 Nov), so there the only door is the begin endpoint the registry already serves; naming the
+    Settings entry would point at nothing.
+    """
+    from core import windows_write_gate
+
+    if windows_write_gate.active():
+        return "start it first with POST /api/onboarding/pact/begin"
+    return "press 'Show me around' first"
+
+
 def _require_mututable(data: dict[str, Any]) -> None:
     if data.get("state") == STATE_NOT_APPLICABLE:
-        raise PactFault(FAULT_NOT_APPLICABLE_READONLY, "this home is not part of the tour; press 'Show me around' first")
+        raise PactFault(FAULT_NOT_APPLICABLE_READONLY, f"this home is not part of the tour; {tour_start_hint()}")
 
 
 def _mutate(expect_revision: int | None, mutate, *, allow_not_applicable: bool = False) -> dict[str, Any]:
