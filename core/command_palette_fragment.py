@@ -470,12 +470,20 @@ _WINDOWS_SHORTCUT_LABELS = (
     # The palette rows' key caps come from MOD (0.7.2); a Windows page is served Ctrl+ for it, whatever the
     # browser says its platform is.
     ("var MOD = IS_MAC ? '\u2318' : 'Ctrl+';", "var MOD = 'Ctrl+';"),
-    ("<kbd>⌘K</kbd>", "<kbd>Ctrl+K</kbd>"),
-    ("<kbd>⌘N</kbd>", "<kbd>Ctrl+N</kbd>"),
-    ("<kbd>⌘J</kbd>", "<kbd>Ctrl+J</kbd>"),
-    ("<kbd>⌘/</kbd>", "<kbd>Ctrl+/</kbd>"),
-    ("<kbd>⌘F</kbd>", "<kbd>Ctrl+F</kbd>"),
-    ("<kbd>⌘,</kbd>", "<kbd>Ctrl+,</kbd>"),
+    # 0.7.3 builds the hint bar's key caps and relabels registered caps in the browser, from IS_MAC
+    # (vpCombo / vpKbdLabel). A Windows page is served the Ctrl caps themselves, so an engine that
+    # reports an Apple platform still shows the keys a Windows keyboard has.
+    ("function vpCombo(key){ return (VP_APPLE ? '⌘' : 'Ctrl+') + key; }",
+     "function vpCombo(key){ return 'Ctrl+' + key; }"),
+    # A Windows page registers every cap as Ctrl+ already (MOD above, and the drawer's own swap), so
+    # there is no Apple cap left to relabel.
+    ("  return kbd.charAt(0) === '⌘' ? vpCombo(kbd.slice(1)) : kbd;", "  return kbd;"),
+    ("<kbd>' + vpCombo('K') + '</kbd>", "<kbd>Ctrl+K</kbd>"),
+    ("<kbd>' + vpCombo('N') + '</kbd>", "<kbd>Ctrl+N</kbd>"),
+    ("<kbd>' + vpCombo('J') + '</kbd>", "<kbd>Ctrl+J</kbd>"),
+    ("<kbd>' + vpCombo('/') + '</kbd>", "<kbd>Ctrl+/</kbd>"),
+    ("<kbd>' + vpCombo('F') + '</kbd>", "<kbd>Ctrl+F</kbd>"),
+    ("<kbd>' + vpCombo(',') + '</kbd>", "<kbd>Ctrl+,</kbd>"),
 )
 
 
