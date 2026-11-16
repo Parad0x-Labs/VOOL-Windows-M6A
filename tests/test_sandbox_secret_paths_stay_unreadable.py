@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from sandbox.job_runner import JobRunner, _macos_confined_profile, _sensitive_read_deny_roots
+from sandbox.job_runner import JobRunner, _macos_confined_profile, _seatbelt_subpath_literal, _sensitive_read_deny_roots
 from sandbox.resource_limits import ExecutionPolicy
 
 SECRETS = [
@@ -72,7 +72,8 @@ def test_the_macos_profile_denies_reading_each_credential_path(home_with_secrets
     profile = _macos_confined_profile((workspace,), deny_network=False, read_roots=(home_with_secrets,))
     secret_clause = profile[profile.index("(deny file-read* (subpath"):]
     for name in (".npmrc", ".pypirc", ".netrc", ".git-credentials", ".docker", ".kube", ".azure", ".terraform.d"):
-        assert f'(subpath "{(home_with_secrets / name).resolve()}")' in secret_clause, name
+        # Compared as the profile writes it: Seatbelt escapes a backslash, which a Windows path has.
+        assert _seatbelt_subpath_literal((home_with_secrets / name).resolve()) in secret_clause, name
 
 
 @pytest.mark.skipif(not _bwrap_usable(), reason="needs a usable bwrap backend")
