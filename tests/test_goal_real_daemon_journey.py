@@ -258,6 +258,9 @@ def journey(tmp_path_factory):
         env_extra={
             "VOOL_ALWAYS_ON_CATALOG": "1",
             "VOOL_WORKSPACE_ROOT": str(workspace),
+            # The daemon's workspace is this rig's disposable folder: marked for the Windows write gate
+            # (core.windows_write_gate), ignored elsewhere.
+            "VOOL_WINDOWS_DISPOSABLE_WORKSPACES": str(workspace),
             "VOOL_MODEL_LOAD_FLOOR_GB": "0",
             "VOOL_FORCE_OLLAMA_MODEL": MODEL_A,
             "OLLAMA_HOST": provider.base_url,
