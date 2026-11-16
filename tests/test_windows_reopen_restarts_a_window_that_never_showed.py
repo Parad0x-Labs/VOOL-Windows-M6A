@@ -12,8 +12,16 @@ import os
 from pathlib import Path
 from unittest import mock
 
+import pytest
+
 from installer.bundle import bundle_supervisor, vool_window
 from installer.bundle.bundle_supervisor import BundleSupervisor
+
+
+@pytest.fixture(autouse=True)
+def _windows(monkeypatch):
+    """These rows drive the Windows-only hidden-window restart (0.7.3: Windows-only fixes)."""
+    monkeypatch.setattr(bundle_supervisor, "_is_windows_platform", lambda: True)
 
 
 def _supervisor(tmp_path: Path) -> BundleSupervisor:

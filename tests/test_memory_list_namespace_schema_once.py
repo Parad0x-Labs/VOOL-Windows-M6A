@@ -12,6 +12,14 @@ import json
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _windows(monkeypatch):
+    """These rows drive the Windows-only schema-once scope (0.7.3: Windows-only fixes)."""
+    from core import context_namespace
+
+    monkeypatch.setattr(context_namespace, "_SCHEMA_ONCE_ON", True)
+
 _SEED_CHATS = """
 from core.context_namespace import ensure_chat_namespace
 from core.memory.entries import resolve_memory_access_policy

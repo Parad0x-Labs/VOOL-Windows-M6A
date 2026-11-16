@@ -27,6 +27,12 @@ MOUNT_POINT = 0xA0000003  # IO_REPARSE_TAG_MOUNT_POINT: a directory junction
 CLOUD_FILE = 0x9000001A  # IO_REPARSE_TAG_CLOUD_6: a OneDrive placeholder, the file itself
 
 
+@pytest.fixture(autouse=True)
+def _windows_link_rules(monkeypatch):
+    """These rows drive the Windows-only link rules (0.7.3: Windows-only fixes)."""
+    monkeypatch.setattr(snapshot, "_GUARD_LINKS", True)
+
+
 def _home(tmp_path: Path) -> tuple[Path, Path]:
     home = tmp_path / "home"
     data = home / "data"

@@ -12,6 +12,14 @@ import json
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _windows(monkeypatch):
+    """These rows drive the Windows-only one reading of the sweep steps (0.7.3: Windows-only fixes)."""
+    from core import finalization
+
+    monkeypatch.setattr(finalization, "_SWEEP_ONE_READING", True)
+
 _DELETED = "openclaw:" + "d" * 20
 _FORGOTTEN_TOKEN = "quillseventyseven"
 

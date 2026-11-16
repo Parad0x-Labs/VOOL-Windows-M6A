@@ -11,6 +11,7 @@ import contextlib
 import contextvars
 import hashlib
 import logging
+import os
 import threading
 import uuid
 from dataclasses import dataclass, replace
@@ -163,6 +164,8 @@ def _ensure_unsaved_namespace(
 
 # Database paths whose namespace schema this request already ensured (see _schema_once). None outside one.
 _SCHEMA_READY: contextvars.ContextVar[set[str] | None] = contextvars.ContextVar("namespace_schema_ready", default=None)
+# Windows only (0.7.3 carry 10). Mac and Linux ensure the schema on every call, as Mac ships. Patched by tests.
+_SCHEMA_ONCE_ON = os.name == "nt"
 
 
 @contextlib.contextmanager
@@ -174,7 +177,7 @@ def _schema_once():
     259 chats; 1041 SQLite opens for one listing). Inside this scope a schema ensured once for a
     database path is not ensured again; the reads still open the store and read fresh rows. A
     failed ensure is not remembered. The scope lives for one request and is never shared."""
-    if _SCHEMA_READY.get() is not None:
+    if not _SCHEMA_ONCE_ON or _SCHEMA_READY.get() is not None:
         yield
         return
     token = _SCHEMA_READY.set(set())

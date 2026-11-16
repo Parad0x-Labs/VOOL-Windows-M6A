@@ -15,8 +15,11 @@ from urllib.parse import quote
 
 from core import windows_path_policy
 
-# Read at call time, so tests can drive the Windows spelling on any host.
+# Both are read at call time, so tests can drive the Windows behaviour on any host. _IS_WINDOWS gives OS calls
+# the extended-length spelling; _GUARD_LINKS turns on the Windows link, junction and index checks. Off
+# Windows neither is set and snapshot/restore run the unchanged code at the end of this module.
 _IS_WINDOWS = sys.platform == "win32"
+_GUARD_LINKS = sys.platform == "win32"
 _EXTENDED_PREFIX = "\\\\?\\"
 _RESERVED_NAMES = frozenset(
     {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}
@@ -171,7 +174,13 @@ def _walk_files(data: Path) -> list[Path]:
     return files
 
 
+def _windows_rules() -> bool:
+    return _IS_WINDOWS or _GUARD_LINKS
+
+
 def snapshot_runtime(data_dir: Path, destination: Path) -> None:
+    if not _windows_rules():
+        return _snapshot_runtime_off_windows(data_dir, destination)
     home = Path(data_dir).resolve().parent
     data = Path(data_dir).resolve()
     # The mirrored layout under data/update_v2/transactions/<txid>/runtime-snapshot can pass MAX_PATH on
@@ -253,7 +262,11 @@ def restore_runtime(data_dir: Path, source: Path) -> None:
 
     Keep backups intact if any operation fails; propagate the error to the status.
     WAL/SHM sidecars cannot accompany a restored database from another generation.
+    On Windows (and when a test sets _IS_WINDOWS or _GUARD_LINKS) the checked, long-path code below runs;
+    elsewhere the code from before that work runs unchanged.
     """
+    if not _windows_rules():
+        return _restore_runtime_off_windows(data_dir, source)
     home = Path(data_dir).resolve().parent
     source = Path(os.path.abspath(source))
     _refuse_links_from_home(data_dir, source, "snapshot")
@@ -302,3 +315,101 @@ def restore_runtime(data_dir: Path, source: Path) -> None:
                 for suffix in ("-wal", "-shm", '-journal'):
                     Path(_io(str(target) + suffix)).unlink(missing_ok=True)
             os.replace(_io(staged), _io(target))
+
+
+# Off Windows: snapshot and restore exactly as before the Windows long-path and link work (fe546d26).
+
+def _snapshot_runtime_off_windows(data_dir: Path, destination: Path) -> None:
+    home = Path(data_dir).resolve().parent
+    data = Path(data_dir).resolve()
+    destination.mkdir(parents=True, exist_ok=True)
+    os.chmod(destination, 0o700)
+    entries = []
+    config = home / "config"
+    if config.is_symlink():
+        raise ValueError("runtime config is a symlink; refusing an ambiguous backup")
+    entries.append({"path": "config", "kind": "config", "present": config.exists()})
+    if config.exists():
+        if any(p.is_symlink() for p in config.rglob("*")):
+            raise ValueError("runtime config contains a symlink; backup refused")
+        shutil.copytree(config, destination / "config")
+    files = []
+    for directory, dirs, names in os.walk(data, followlinks=False):
+        if Path(directory) == data:
+            dirs[:] = [name for name in dirs if name != 'update_v2']
+        if any((Path(directory) / name).is_symlink() for name in [*dirs, *names]):
+            raise ValueError('runtime data contains a symlink; backup refused')
+        files.extend(Path(directory) / name for name in names)
+    databases = [p for p in files if p.suffix.lower() in ('.db', '.sqlite', '.sqlite3')]
+    if len(databases) > 64 or len(files) > 100000 or sum(p.stat().st_size for p in files) > 8 * 1024**3:
+        raise ValueError("runtime database backup exceeds limits")
+    for database in sorted(databases):
+        if database.is_symlink() or not database.is_file():
+            raise ValueError("runtime DB backup requires regular files")
+        relative = database.relative_to(home)
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        deadline = time.monotonic() + 60
+
+        def bounded(_status, _remaining, _total, deadline=deadline):
+            if time.monotonic() > deadline:
+                raise TimeoutError("SQLite snapshot did not finish in time")
+
+        # Close both explicitly: 'with' alone commits but leaves the file open until GC, and Windows then
+        # refuses the restore's rename over it.
+        with closing(sqlite3.connect(f"file:{quote(str(database))}?mode=ro", uri=True, timeout=5)) as source:
+            with closing(sqlite3.connect(target)) as backup, backup:
+                source.backup(backup, pages=256, progress=bounded, sleep=0.05)
+                if backup.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
+                    raise ValueError("SQLite snapshot failed its integrity check")
+        os.chmod(target, 0o600)
+        entries.append({"path": relative.as_posix(), "kind": "sqlite", "present": True})
+    sidecars = {Path(str(path) + suffix) for path in databases for suffix in ('-wal', '-shm', '-journal')}
+    for path in sorted(set(files) - set(databases) - sidecars):
+        if not path.is_file():
+            raise ValueError('runtime history backup requires regular files')
+        relative = path.relative_to(home)
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, target)
+        os.chmod(target, 0o600)
+        entries.append({'path': relative.as_posix(), 'kind': 'file', 'present': True})
+    (destination / "index.json").write_text(json.dumps(entries, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _restore_runtime_off_windows(data_dir: Path, source: Path) -> None:
+    """restore_runtime off Windows: unchanged from before the Windows long-path and link work."""
+    home = Path(data_dir).resolve().parent
+    entries = json.loads((source / "index.json").read_text(encoding="utf-8"))
+    for item in entries:
+        relative = Path(item["path"])
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError("invalid snapshot index")
+        target = home / relative
+        target.resolve().relative_to(home)
+        if target.is_symlink():
+            raise ValueError("restore destination became a symlink")
+        saved = source / relative
+        if item["present"] and not saved.exists():
+            raise FileNotFoundError(f"snapshot missing: {relative}")
+    for item in entries:
+        target = home / item["path"]
+        saved = source / item["path"]
+        if item["kind"] == "config":
+            staged = target.with_name(".vool-update-config-restore")
+            if staged.exists():
+                shutil.rmtree(staged)
+            if item["present"]:
+                shutil.copytree(saved, staged)
+            if target.exists():
+                shutil.rmtree(target)
+            if item["present"]:
+                os.replace(staged, target)
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            staged = target.with_name(target.name + ".vool-restore")
+            shutil.copy2(saved, staged)
+            if item['kind'] == 'sqlite':
+                for suffix in ("-wal", "-shm", '-journal'):
+                    Path(str(target) + suffix).unlink(missing_ok=True)
+            os.replace(staged, target)

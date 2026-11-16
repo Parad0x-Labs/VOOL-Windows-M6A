@@ -2178,7 +2178,8 @@ def main() -> int:
     # claimed before any window so the taskbar never groups VOOL under pythonw. No-op elsewhere.
     windows_chrome.set_app_user_model_id()
     try:
-        _log(f"window host started pid={os.getpid()}")
+        if sys.platform == "win32":   # Windows only (carry 15); Mac and Linux log as Mac ships them
+            _log(f"window host started pid={os.getpid()}")
         if not _single_instance():
             _log("another VOOL window is already open; not opening a second")
             return 0
@@ -2243,7 +2244,8 @@ def main() -> int:
             raise RuntimeError("pywebview returned no native window")
         api.set_window(window, webview)
         _close_secondaries_with(window, api)
-        _mark_shown_with(window)
+        if sys.platform == "win32":   # only the Windows bundle supervisor reads the shown mark (carry 15)
+            _mark_shown_with(window)
         _register_url_scheme_handler()   # catch vool://auth/<provider>/callback launches (macOS)
         runtime_lost = _start_runtime_watchdog(supervisor, window, done)
         notification_bridge = _start_notification_bridge(window)

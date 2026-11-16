@@ -58,6 +58,10 @@ class ReplayAmbiguityRefused(RuntimeError):
 # Re-exported so callers of this authority have a single import site.
 from core.final_response_store import FinalizationRejected
 
+# Windows only (0.7.3 carry 7): the A8 transcript sweep steps read the forget authority once per step
+# (revocation._one_reading). Mac and Linux read it per row, as Mac ships. Patched by tests.
+_SWEEP_ONE_READING = os.name == "nt"
+
 
 def _sha256_hex(text: str) -> str:
     return "sha256:" + hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()
@@ -2953,7 +2957,7 @@ def _sweep_step_conversation_log(request_id: str, content_hash: str) -> str:
     # finalization of the chat, so one delete took minutes. Inside the block the tokens each chat gets
     # are what a fresh read gives (the fence is held, so no forget starts or completes in between); the
     # rewrite below admits its rows against the ledger itself, not through this memo.
-    with serialized(), _one_reading():
+    with serialized(), (_one_reading() if _SWEEP_ONE_READING else contextlib.nullcontext()):
         rows = load_jsonl(conversation_log_path())
         kept = [
             row
@@ -2983,7 +2987,7 @@ def _sweep_step_memory_jsonl(request_id: str) -> str:
     sweep_governed_memory_rows(request_id)
     # Read and write back inside the forget fence, with one reading of the authority, as in
     # _sweep_step_conversation_log.
-    with serialized(), _one_reading():
+    with serialized(), (_one_reading() if _SWEEP_ONE_READING else contextlib.nullcontext()):
         for path in (session_summaries_path(), user_heuristics_path()):
             rows = load_jsonl(path)
             kept = [row for row in rows if str(row.get("request_id") or "") != request_id]

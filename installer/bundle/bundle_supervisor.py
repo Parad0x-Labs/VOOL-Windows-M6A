@@ -712,11 +712,13 @@ class BundleSupervisor:
         self.started_at[name] = self._last_measured()
         # Every start is written in the child's own log, so a start that writes nothing itself (a
         # window host that never shows its window) still leaves a line there.
-        with contextlib.suppress(OSError, ValueError):
-            stamp = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-            handle.write(f"{stamp} bundle supervisor started {name} pid={child.pid}\n".encode())
-            handle.flush()
-        self._log(f"{name} started pid={child.pid}")
+        # Windows only (0.7.3 carry 15); Mac and Linux log as Mac ships.
+        if _is_windows_platform():
+            with contextlib.suppress(OSError, ValueError):
+                stamp = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+                handle.write(f"{stamp} bundle supervisor started {name} pid={child.pid}\n".encode())
+                handle.flush()
+            self._log(f"{name} started pid={child.pid}")
         self.exit_seen_at.pop(name, None)
         self._forget_answers(name)
         self.next_attempt[name] = now
@@ -1059,10 +1061,11 @@ class BundleSupervisor:
         window_env = {
             "VOOL_NATIVE_REQUIRE_OWNED_RUNTIME": "0",
             "VOOL_EXPECTED_COMMIT": self._bundle_commit(),
-            "VOOL_WINDOW_SHOWN_PATH": str(self.window_shown_path),
         }
-        with contextlib.suppress(OSError):
-            self.window_shown_path.unlink()
+        if _is_windows_platform():   # the shown mark is read only on Windows (carry 15)
+            window_env["VOOL_WINDOW_SHOWN_PATH"] = str(self.window_shown_path)
+            with contextlib.suppress(OSError):
+                self.window_shown_path.unlink()
         self._window_shown_check = False
         api = self.processes.get("api")
         if api is not None and api.poll() is None:
@@ -1176,7 +1179,7 @@ class BundleSupervisor:
         started again. It is given _HIDDEN_WINDOW_GRACE_SECONDS of awake time from its start first,
         because a slow first start is not a hidden window. A host that showed its window (and may
         be minimized or behind others) is left as it is; the second launch brings it forward."""
-        if not self._window_shown_check:
+        if not self._window_shown_check or not _is_windows_platform():
             return
         child = self.processes.get("window")
         if child is None or child.poll() is not None:
