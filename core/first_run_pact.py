@@ -448,9 +448,23 @@ def _seed_locked() -> dict[str, Any]:
 
 # --- mutations --------------------------------------------------------------------------------
 
+def _not_part_of_the_tour() -> str:
+    """Why a home that predates the tour cannot change tour state, and what the owner can do.
+
+    The Mac Settings page has a "Show me around" entry. The Windows Settings page has none (Steve,
+    15 Nov), and the person reading this uses chat, so there it says plainly that the tour is not
+    in the Windows app yet rather than naming an entry or an HTTP call they cannot use.
+    """
+    from core import windows_write_gate
+
+    if windows_write_gate.active():
+        return "The tour isn't available in the Windows app in this version, so this can't be changed here."
+    return "this home is not part of the tour; press 'Show me around' first"
+
+
 def _require_mututable(data: dict[str, Any]) -> None:
     if data.get("state") == STATE_NOT_APPLICABLE:
-        raise PactFault(FAULT_NOT_APPLICABLE_READONLY, "this home is not part of the tour; press 'Show me around' first")
+        raise PactFault(FAULT_NOT_APPLICABLE_READONLY, _not_part_of_the_tour())
 
 
 def _mutate(expect_revision: int | None, mutate, *, allow_not_applicable: bool = False) -> dict[str, Any]:
