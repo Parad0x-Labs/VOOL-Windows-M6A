@@ -172,6 +172,37 @@ def _describe_batch_member(member: dict[str, Any]) -> str:
     return intent
 
 
+#: Crypto tools whose contract declares a bare `token` argument as the coin itself: "token mint or
+#: contract address" (market.collect, token.flow, web.chain_lookup, token.performance) or that, or a
+#: $TICKER / name (token.research). Only the exact key `token` of these intents is exempt.
+_PUBLIC_COIN_TOKEN_INTENTS = frozenset(
+    {"market.collect", "token.flow", "token.research", "token.performance", "web.chain_lookup"}
+)
+#: What such a value looks like: an EVM address, a Solana (base58) address, or a ticker / short name.
+_PUBLIC_COIN_VALUE_RE = re.compile(
+    r"0x[0-9a-fA-F]{40}|[1-9A-HJ-NP-Za-km-z]{32,44}|\$?[A-Za-z][A-Za-z0-9]{0,14}"
+)
+
+
+def _public_coin_argument(intent: str, normalized_key: str, value: Any) -> bool:
+    """Whether this argument is a coin's public identifier, kept unmasked in the resume slot.
+
+    Only the exact key `token`, only for `_PUBLIC_COIN_TOKEN_INTENTS`, and only a value shaped like
+    an address or a ticker. `api_token`, `access_token`, `token_secret` and the rest stay masked, as
+    does a `token` of any other intent, and events, logs and receipts are unchanged. Windows only:
+    off Windows the resume slot masks it as before.
+    """
+    from core import windows_write_gate
+
+    return (
+        windows_write_gate.active()
+        and normalized_key == "token"
+        and intent in _PUBLIC_COIN_TOKEN_INTENTS
+        and isinstance(value, str)
+        and _PUBLIC_COIN_VALUE_RE.fullmatch(value.strip()) is not None
+    )
+
+
 def resumable_pending_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
     """The pending tool call as it must be stored to be RE-EXECUTED later, not merely displayed.
 
@@ -185,6 +216,11 @@ def resumable_pending_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
 
     Secret-named arguments are still masked, on the same key set, because a masked secret is not
     something a resume should reproduce either. Everything else is kept byte-exact.
+
+    One exception (`_public_coin_argument`): the bare `token` argument of the crypto tools names a
+    coin (a mint or contract address, or a ticker), not a credential. Masked, the resumed call
+    carried `token: "[redacted]"`, its approval fingerprint missed the allowed one, and an approved
+    market.collect raised a second card instead of running.
     """
     from core.agent_runtime.orchestrator import _SENSITIVE_TOOL_ARGUMENT_KEYS
 
@@ -193,10 +229,13 @@ def resumable_pending_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
     arguments = payload.get("arguments")
     if not isinstance(arguments, dict):
         return dict(payload)
+    intent = str(payload.get("intent") or "").strip()
     masked: dict[str, Any] = {}
     for key, value in arguments.items():
         normalized = str(key or "").strip().lower().replace("-", "_")
-        if normalized in _SENSITIVE_TOOL_ARGUMENT_KEYS or any(
+        if _public_coin_argument(intent, normalized, value):
+            masked[str(key)] = value
+        elif normalized in _SENSITIVE_TOOL_ARGUMENT_KEYS or any(
             marker in normalized
             for marker in ("api_key", "authorization", "password", "private_key", "secret", "token")
         ):
