@@ -17,7 +17,7 @@ import pytest
 from core import first_run_pact, windows_write_gate
 from core.command_registry.registry import CommandRegistry
 from core.first_run_pact import PactFault
-from tests.first_run_pact_rig import pact_rig  # noqa: F401
+from tests.first_run_pact_rig import pact_rig
 
 BEGIN = "POST /api/onboarding/pact/begin"
 
@@ -63,7 +63,7 @@ def _all_copy(reg) -> str:
     return "\n".join(parts)
 
 
-def test_on_windows_the_pact_refusal_names_the_begin_endpoint(pact_rig, monkeypatch) -> None:  # noqa: F811
+def test_on_windows_the_pact_refusal_names_the_begin_endpoint(pact_rig, monkeypatch) -> None:
     monkeypatch.setattr(windows_write_gate, "_IS_WINDOWS", True)
     _not_applicable_home()
 
@@ -75,7 +75,7 @@ def test_on_windows_the_pact_refusal_names_the_begin_endpoint(pact_rig, monkeypa
     assert "isn't available in the Windows app" in text
 
 
-def test_off_windows_the_pact_refusal_keeps_the_settings_entry(pact_rig, monkeypatch) -> None:  # noqa: F811
+def test_off_windows_the_pact_refusal_keeps_the_settings_entry(pact_rig, monkeypatch) -> None:
     monkeypatch.setattr(windows_write_gate, "_IS_WINDOWS", False)
     _not_applicable_home()
 
