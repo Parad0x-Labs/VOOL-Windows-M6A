@@ -107,6 +107,52 @@ def test_start_fresh_and_untouched_start_no_process(pair, no_git_program) -> Non
     assert not checkout.untouched(FOLDER + "/state.json")
 
 
+def _crlf_checkout(origin, seed, tmp_path):
+    """The state folder and steps file with several lines, cloned again and written as Git for Windows' autocrlf does."""
+    committed = {FOLDER + "/config.json": b'{\n "review": {}\n}\n', FOLDER + "/vool-commit": b"c" * 40 + b"\n",
+                 STEPS: b"# steps\n\n"}
+    for name, data in committed.items():
+        (seed / name).write_bytes(data)
+    git(seed, "add", "-A")
+    git(seed, "commit", "-q", "-m", "more lines")
+    git(seed, "push", "-q", "origin", "main")
+    work = tmp_path / "crlf"
+    subprocess.run(["git", "clone", "-q", "-b", "main", str(origin), str(work)], check=True, capture_output=True)
+    for name, data in committed.items():
+        (work / name).write_bytes(data.replace(b"\n", b"\r\n"))
+    return work, committed
+
+
+def test_a_checkout_with_windows_line_endings_is_put_back_to_the_committed_bytes(pair, tmp_path, monkeypatch) -> None:
+    """Git for Windows checks text out with CRLF; that is not a hand edit, and the signer must not commit it."""
+    origin, seed, _work = pair
+    work, committed = _crlf_checkout(origin, seed, tmp_path)
+    checkout = library(work)
+    dulwich_git._dulwich()
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("a process was started")
+
+    with monkeypatch.context() as during:
+        during.setattr(subprocess, "Popen", refuse)
+        checkout.start()
+        assert {name: (work / name).read_bytes() for name in committed} == committed
+        assert all(checkout.untouched(name) for name in committed)
+        assert checkout.save("Signer state") is False
+
+
+def test_a_windows_line_ending_file_that_also_changed_is_still_a_local_change(pair, tmp_path) -> None:
+    origin, seed, _work = pair
+    work, _committed = _crlf_checkout(origin, seed, tmp_path)
+    (work / FOLDER / "config.json").write_bytes(b'{\r\n "review": {"model": "other"}\r\n}\r\n')
+    checkout = library(work)
+
+    checkout.start()
+
+    assert (work / FOLDER / "config.json").read_bytes() == b'{\r\n "review": {"model": "other"}\r\n}\r\n'
+    assert not checkout.untouched(FOLDER + "/config.json")
+
+
 def test_a_remote_state_change_stops_the_run(pair) -> None:
     _origin, seed, work = pair
     checkout = library(work)
