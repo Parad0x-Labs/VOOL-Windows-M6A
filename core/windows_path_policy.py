@@ -44,6 +44,10 @@ _IS_WINDOWS: bool = os.name == "nt"
 STATUS = "non_local_path_refused"
 #: The kinds that reach another machine or a device. The network tier refuses only these.
 NETWORK_KINDS = frozenset({"unc", "device", "nt_namespace"})
+#: The kinds an MCP or plugin call is refused for when VOOL cannot tell what a value would name on the
+#: server: a `%NAME%` left unresolved, or arguments that cannot be judged.
+_UNRESOLVED_VARIABLE_KIND = "unresolved_variable"
+_UNJUDGED_KIND = "unjudged"
 
 _DRIVE_ROOT_RE = re.compile(r"[A-Za-z]:[\\/]?")
 _URL_SCHEME_RE = re.compile(r"^\s*([A-Za-z][A-Za-z0-9+.\-]*):")
@@ -229,6 +233,9 @@ def refusal_text(value: Any, kind: str, *, nothing: str = "opened") -> str:
     """
     text = _text(value)
     shown = _LINE_BREAK_RE.sub(" ", (str(value) if text is None else text).replace("`", ""))[:120]
+    if kind in (_UNRESOLVED_VARIABLE_KIND, _UNJUDGED_KIND):
+        sentence = "VOOL can't tell where this value would point on the server, so the call was not run."
+        return f"`{shown}`: {sentence}" if shown else sentence
     if kind in NETWORK_KINDS:
         return (
             f"`{shown}` is a network or device path. On Windows, VOOL only opens files on a local drive "
@@ -412,10 +419,10 @@ def _server_defined_tool(intent: str) -> bool:
     return contract is not None and str(getattr(contract, "source", "") or "").startswith("plugin:")
 
 
-_UNRESOLVED_VARIABLE_KIND = "unresolved_variable"
-_UNJUDGED_KIND = "unjudged"
-# A `%NAME%` (any name: hex digits, spaces, `=` or a leading digit included), `${NAME}`, `$(` or `$NAME`.
-_VARIABLE_REFERENCE_RE = re.compile(r"%[^%]+%|\$\{[^}]*\}|\$\(|\$[A-Za-z_][A-Za-z0-9_]*")
+# A `%NAME%` whose NAME has a variable name's shape: a letter or `_`, then letters, digits, `_` and
+# parentheses (`%ProgramFiles(x86)%`), no spaces. `$NAME`, `${NAME}` and `$(` are judged only as
+# expanded in VOOL's environment and never refused unresolved: they are everyday code and shell text.
+_PERCENT_VARIABLE_RE = re.compile(r"%[A-Za-z_][A-Za-z0-9_()]*%")
 # An http(s) URL as its authority, then the rest, where alone a `%XX` of two hex digits is percent-encoding.
 _HTTP_URL_RE = re.compile(r"(?i)(https?://[^/?#\s\\]*)([^\s\"'<>`]*)")
 _PERCENT_ENCODING_RE = re.compile(r"%[0-9A-Fa-f]{2}")
@@ -465,15 +472,16 @@ def _variable_expansions(text: str) -> tuple[list[str], bool]:
 
 
 def _unresolved_reference(text: str) -> bool:
-    """Whether `text` still holds a `%NAME%`, `${NAME}`, `$(` or `$NAME` reference. A server may
-    expand one in its own environment, so one left unresolved is an unknown value. Only in the path,
-    query and fragment of an http(s) URL, which no expansion turns into a share, is a `%XX` of two hex
-    digits taken as percent-encoding instead of a reference."""
+    """Whether `text` still holds a `%NAME%` reference with a variable name's shape. A server may
+    expand one in its own environment, so one left unresolved is an unknown value; text such as
+    `50% off and 20% more` holds none. Only in the path, query and fragment of an http(s) URL, which
+    no expansion turns into a share, is a `%XX` of two hex digits taken as percent-encoding instead of
+    a reference."""
 
     def without_encoding(match: re.Match[str]) -> str:
         return match.group(1) + _PERCENT_ENCODING_RE.sub("", match.group(2))
 
-    return _VARIABLE_REFERENCE_RE.search(_HTTP_URL_RE.sub(without_encoding, text)) is not None
+    return _PERCENT_VARIABLE_RE.search(_HTTP_URL_RE.sub(without_encoding, text)) is not None
 
 
 def _url_scheme_before(text: str, index: int) -> bool:
@@ -521,7 +529,7 @@ def _server_candidate_kind(candidate: str) -> str:
 def _server_text_refusal(where: str, text: str) -> PathRefusal | None:
     """Whether one text of a server-defined tool's arguments names a share or a device path, as a
     whole, as any word of it or as a run glued to any character, as written or as expanded, or holds
-    a variable VOOL cannot resolve."""
+    a `%NAME%` VOOL cannot resolve, or expands past `_MAX_EXPANSION_ROUNDS` rounds."""
     levels, unsettled = _variable_expansions(text)
     for level in levels:
         for candidate in _text_candidates(level):
@@ -541,23 +549,32 @@ def _server_tool_refusal(arguments: Any) -> PathRefusal | None:
     them is a path: every text is judged, keys as well as values, under any name and inside nested
     mappings, lists, tuples and sets, and a text that parses as JSON is judged again as what it
     holds. Any text with `\\\\` or `//` in it (a URL's own `scheme://` aside) is refused, so XPath
-    selectors and `//` code comments are refused too (owner decision D11, option A). Arguments that
-    are not a mapping are walked the same way. A value that is neither a container, a text, a number
-    nor None cannot be judged and is refused. Top-level `_` keys are left to `_arguments_refusal`'s
-    rule. The walk keeps its own stack and holds every container it has seen, so deep or cyclic
-    nesting cannot overflow or loop.
+    selectors and `//` code comments are refused too (owner decision D11, option A). Top-level `_`
+    keys are judged like any other: the MCP bridge forwards every key to the server unstripped
+    (`dict(arguments)`), so a `_` key the model sets reaches it. Arguments that are not a mapping are
+    walked as given and also as the bridge reads them (`dict(arguments or {})`); when the bridge could
+    not read them and nothing else refused, they are refused, because nothing could judge what the
+    server would get. A value that is neither a container, a text, a number nor None cannot be judged
+    and is refused. The walk keeps its own stack and holds every container it has seen, so deep or
+    cyclic nesting cannot overflow or loop.
     """
     import json
 
+    roots: list[Any] = [arguments]
+    readable = True
+    if not isinstance(arguments, Mapping) and arguments:
+        try:
+            roots.append(dict(arguments))
+        except Exception:
+            readable = False
     stack: list[tuple[str, Any]] = []
-    if isinstance(arguments, Mapping):
-        for key, value in reversed(list(arguments.items())):
-            if isinstance(key, str) and key.startswith("_"):
-                continue
-            stack.append((str(key), value))
-            stack.append((str(key), key))
-    else:
-        stack.append(("arguments", arguments))
+    for root in reversed(roots):
+        if isinstance(root, Mapping):
+            for key, value in reversed(list(root.items())):
+                stack.append((str(key), value))
+                stack.append((str(key), key))
+        else:
+            stack.append(("arguments", root))
     seen: dict[int, Any] = {}
     while stack:
         where, value = stack.pop()
@@ -596,6 +613,8 @@ def _server_tool_refusal(arguments: Any) -> PathRefusal | None:
             except ValueError:
                 continue
             stack.append((where, parsed))
+    if not readable:
+        return PathRefusal("arguments", str(arguments)[:120], _UNJUDGED_KIND)
     return None
 
 
