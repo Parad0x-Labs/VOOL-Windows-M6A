@@ -155,6 +155,8 @@ class Repository:
 
     def __init__(self, path: Path, *, branch: str = "main", token: str = ""):
         self.path, self.branch = Path(path), branch
+        self._token = token  # for the git library where VOOL runs no git program; never written anywhere
+        self._library = None
         # The checkout keeps no credentials, so the install step can't push; only this process holds the token,
         # passed to git in its environment and never written to the checkout.
         self._env: dict[str, str] = {}  # only this signer's own additions, laid over safe_git.safe_env()
@@ -200,19 +202,48 @@ class Repository:
             return False
         return probe.returncode == 128 and "not a git repository" in probe.stderr.lower()
 
+    def _no_git_program(self):
+        """Where VOOL runs no git (Windows), the same steps through a git library (owner decision D18 A)."""
+        from core import safe_git
+
+        if not safe_git.git_refused_here():
+            return None
+        if self._library is None:
+            from registry_service.dulwich_git import Checkout
+
+            self._library = Checkout(self.path, branch=self.branch, token=self._token, folder=FOLDER, steps=STEPS,
+                                     identity=BOT, superseded=Superseded)
+        return self._library
+
+    def untouched(self, path: str) -> bool:
+        """Whether the checkout's file is exactly what HEAD holds."""
+        library = self._no_git_program()
+        if library is not None:
+            return library.untouched(path)
+        return self._git("diff", "--quiet", "HEAD", "--", path, check=False).returncode == 0
+
     def start(self) -> None:
         """Begin from the newest state on GitHub; a run queued behind another must not start from older state."""
+        library = self._no_git_program()
+        if library is not None:
+            return library.start()
         self._git("fetch", "-q", "origin", self.branch)
         self._git("merge", "-q", "--ff-only", "FETCH_HEAD")
 
     def fresh(self) -> None:
         """Stop when a remote state or operator-step commit overtakes this run."""
+        library = self._no_git_program()
+        if library is not None:
+            return library.fresh()
         self._git("fetch", "-q", "origin", self.branch)
         if self._git("diff", "--name-only", "HEAD...FETCH_HEAD", "--", FOLDER, STEPS).stdout.strip():
             raise Superseded("another signer run changed the state meanwhile; this run stopped before sending anything")
 
     def save(self, message: str) -> bool:
         """Commit and push the state folder; False when nothing changed. Always looks at GitHub first."""
+        library = self._no_git_program()
+        if library is not None:
+            return library.save(message)
         self.fresh()
         self._git("add", "--", FOLDER)
         if self._git("diff", "--cached", "--quiet", "--", FOLDER, check=False).returncode == 0:
@@ -378,8 +409,7 @@ class RepoAuthority(Authority):
         return contextlib.nullcontext()
 
     def _load_state(self) -> dict:
-        require(self.repository._git("diff", "--quiet", "HEAD", "--", FOLDER + "/state.json",
-                                     check=False).returncode == 0, "the signer's public state was edited by hand")
+        require(self.repository.untouched(FOLDER + "/state.json"), "the signer's public state was edited by hand")
         public = decode((self.repo / FOLDER / "state.json").read_bytes())
         private = unseal(self._state_key, (self.repo / FOLDER / "private.bin").read_bytes())
         self._sealed = json.dumps(private, sort_keys=True)
