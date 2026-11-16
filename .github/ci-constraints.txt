@@ -3,7 +3,7 @@
 #
 # ci.yml and wallet-order-replay.yml pass this file to pip with -c on every install. It only caps
 # what pip may pick; it adds no packages. Packages pyproject.toml already pins exactly (pytest,
-# ruff, idna, pypdf, reportlab, markdown-it-py, xlrd) are left out so pyproject keeps their
+# ruff, idna, pypdf, reportlab, markdown-it-py, xlrd, dulwich) are left out so pyproject keeps their
 # version; their own dependencies (pluggy, iniconfig, packaging, pygments, ...) are pinned here.
 #
 # Not covered: -c does not reach pip's isolated build environment, so the build backend

@@ -103,6 +103,13 @@ $PytestRequirements = Join-Path $PSScriptRoot "requirements-windows-pytest.txt"
 if ($LASTEXITCODE -ne 0) { throw "Embedded Python pytest installation failed." }
 & $py -m pytest --version
 if ($LASTEXITCODE -ne 0) { throw "Embedded Python pytest does not start." }
+# dulwich, the Skill Codex signer's git steps where VOOL runs no git program (owner decision D18). One
+# pure-Python wheel, pinned by version and sha256 to the one uv.lock pins, with no dependency resolution:
+# its one runtime dependency, urllib3, comes with requests in the lean install above.
+$SignerRequirements = Join-Path $PSScriptRoot "requirements-windows-signer.txt"
+& $py -m pip install --no-warn-script-location -q --require-hashes --no-deps --only-binary=:all: `
+    -r $SignerRequirements
+if ($LASTEXITCODE -ne 0) { throw "Embedded Python dulwich installation failed." }
 # The confined-job mkdir shim (sandbox\windows_job_mkdir.py; tests\test_windows_confined_job_mkdir_0o700.py).
 # CPython >= 3.12.4 makes a 0o700 folder owner-only on Windows, so a confined job lost every right on
 # the folders tmp_path, tmpdir and tempfile.mkdtemp made. The .pth imports it at every start; it acts

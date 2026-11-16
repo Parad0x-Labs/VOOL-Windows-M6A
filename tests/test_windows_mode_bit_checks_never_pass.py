@@ -191,14 +191,16 @@ def test_mac_authority_imports_without_fcntl() -> None:
 
 
 def test_mac_authority_refuses_plainly_on_windows(tmp_path, monkeypatch) -> None:
+    """Owner decision D15 A (16 Nov): the authority runs on Windows, but only in its one fixed folder
+    (tests/test_windows_skill_codex_signer_keeper.py), so any other folder is still refused before anything is made."""
     from registry_service import mac_authority
 
     monkeypatch.setattr(mac_authority, "_IS_WINDOWS", True, raising=False)
     folder = tmp_path / "authority"
     folder.mkdir(mode=0o700)
-    with pytest.raises(RegistryError, match="Mac"):
+    with pytest.raises(RegistryError, match=r"authority folder must be|local app data"):
         mac_authority.Authority(folder)
-    with pytest.raises(RegistryError, match="Mac"):
+    with pytest.raises(RegistryError, match=r"authority folder must be|local app data"):
         mac_authority.setup(tmp_path / "new", server="https://example.invalid", catalog_key="0" * 64, targets=[],
                             review={"provider": "ollama", "model": "m"}, passphrase="x" * 12, now=0)
     assert not (tmp_path / "new").exists()

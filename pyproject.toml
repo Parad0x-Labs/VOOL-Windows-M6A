@@ -44,6 +44,9 @@ dependencies = [
     # Windows ships no system tz database: zoneinfo and the clock lane's city-to-zone table read
     # the pip tzdata package there. Declared directly so it never rests on a transitive pull.
     "tzdata>=2024.1; sys_platform == 'win32'",
+    # The Skill Codex signer's git steps where VOOL runs no git program (Windows, owner decision D18):
+    # pure Python, exact pin; installer/bundle/requirements-windows-signer.txt carries its wheel hash.
+    "dulwich==1.2.20",
 ]
 
 [project.optional-dependencies]

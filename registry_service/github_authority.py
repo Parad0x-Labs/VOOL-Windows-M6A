@@ -143,6 +143,46 @@ def _public_json(value) -> bytes:
 
 # ---- the repository ----
 
+_WINDOWS = os.name == "nt"
+_WORKSPACE = " must be inside a disposable workspace you marked (VOOL_WINDOWS_DISPOSABLE_WORKSPACES)"
+
+
+def _in_workspace(path, what: str) -> Path:
+    """On Windows the signer writes only inside a folder the owner marked disposable (owner decision D19).
+
+    A share, device or NT spelling is refused as written, before anything resolves it."""
+    if not _WINDOWS:
+        return Path(path)
+    from core import windows_write_gate
+
+    text = os.fspath(path)
+    require(not windows_write_gate.refused_spelling(text, windows=True),
+            what + " is not a folder VOOL writes to on Windows (a share, device or NT path)")
+    require(windows_write_gate.inside_flagged(text), what + _WORKSPACE)
+    return Path(text)
+
+
+def _scratch() -> Path:
+    """This run's scratch: a new private folder. On Windows it sits in the authority's own folder, not %TEMP%."""
+    if not _WINDOWS:
+        return Path(tempfile.mkdtemp(prefix="skill-codex-"))
+    from core import owner_only
+    from registry_service import windows_keeper
+
+    folder = windows_keeper.authority_folder()
+    windows_keeper.require_fixed_folder(folder)
+    require(folder.is_dir(), "the authority folder is missing; run the Windows signing authority's setup first")
+    windows_keeper.require_private(folder)
+    try:
+        holder = owner_only.ensure_private_dir(folder / "scratch")
+        scratch = Path(tempfile.mkdtemp(prefix="skill-codex-", dir=holder))
+        owner_only.ensure_private_dir(scratch)
+    except owner_only.OwnerOnlyUnavailable as exc:
+        raise RegistryError("the run's scratch folder could not be made private (" + exc.reason + ")") from None
+    windows_keeper.require_private(scratch)
+    return scratch
+
+
 class Superseded(RunStopped):
     """Another signer run changed the state first. This run stops before further writes or reviews.
 
@@ -154,7 +194,9 @@ class Repository:
     """The checkout the workflow made. The signer's state goes back to GitHub before anything is sent."""
 
     def __init__(self, path: Path, *, branch: str = "main", token: str = ""):
-        self.path, self.branch = Path(path), branch
+        self.path, self.branch = _in_workspace(path, "the signer's checkout"), branch
+        self._token = token  # for the git library where VOOL runs no git program; never written anywhere
+        self._library = None
         # The checkout keeps no credentials, so the install step can't push; only this process holds the token,
         # passed to git in its environment and never written to the checkout.
         self._env: dict[str, str] = {}  # only this signer's own additions, laid over safe_git.safe_env()
@@ -200,19 +242,48 @@ class Repository:
             return False
         return probe.returncode == 128 and "not a git repository" in probe.stderr.lower()
 
+    def _no_git_program(self):
+        """Where VOOL runs no git (Windows), the same steps through a git library (owner decision D18 A)."""
+        from core import safe_git
+
+        if not safe_git.git_refused_here():
+            return None
+        if self._library is None:
+            from registry_service.dulwich_git import Checkout
+
+            self._library = Checkout(self.path, branch=self.branch, token=self._token, folder=FOLDER, steps=STEPS,
+                                     identity=BOT, superseded=Superseded)
+        return self._library
+
+    def untouched(self, path: str) -> bool:
+        """Whether the checkout's file is exactly what HEAD holds."""
+        library = self._no_git_program()
+        if library is not None:
+            return library.untouched(path)
+        return self._git("diff", "--quiet", "HEAD", "--", path, check=False).returncode == 0
+
     def start(self) -> None:
         """Begin from the newest state on GitHub; a run queued behind another must not start from older state."""
+        library = self._no_git_program()
+        if library is not None:
+            return library.start()
         self._git("fetch", "-q", "origin", self.branch)
         self._git("merge", "-q", "--ff-only", "FETCH_HEAD")
 
     def fresh(self) -> None:
         """Stop when a remote state or operator-step commit overtakes this run."""
+        library = self._no_git_program()
+        if library is not None:
+            return library.fresh()
         self._git("fetch", "-q", "origin", self.branch)
         if self._git("diff", "--name-only", "HEAD...FETCH_HEAD", "--", FOLDER, STEPS).stdout.strip():
             raise Superseded("another signer run changed the state meanwhile; this run stopped before sending anything")
 
     def save(self, message: str) -> bool:
         """Commit and push the state folder; False when nothing changed. Always looks at GitHub first."""
+        library = self._no_git_program()
+        if library is not None:
+            return library.save(message)
         self.fresh()
         self._git("add", "--", FOLDER)
         if self._git("diff", "--cached", "--quiet", "--", FOLDER, check=False).returncode == 0:
@@ -354,7 +425,7 @@ class RepoAuthority(Authority):
         self.repo = Path(repo)
         self.repository = repository or Repository(self.repo)
         # This run's scratch, and the review's spend ledger while it runs; the workflow's machine is thrown away.
-        self.dir = Path(tempfile.mkdtemp(prefix="skill-codex-"))
+        self.dir = _scratch()
         self._state_key = _secret(env, SECRETS["state"])
         self._releases = releases
         self._sealed = ""
@@ -378,8 +449,7 @@ class RepoAuthority(Authority):
         return contextlib.nullcontext()
 
     def _load_state(self) -> dict:
-        require(self.repository._git("diff", "--quiet", "HEAD", "--", FOLDER + "/state.json",
-                                     check=False).returncode == 0, "the signer's public state was edited by hand")
+        require(self.repository.untouched(FOLDER + "/state.json"), "the signer's public state was edited by hand")
         public = decode((self.repo / FOLDER / "state.json").read_bytes())
         private = unseal(self._state_key, (self.repo / FOLDER / "private.bin").read_bytes())
         self._sealed = json.dumps(private, sort_keys=True)
@@ -712,6 +782,8 @@ def quiet(report: dict) -> dict:
 def setup(repo: Path, *, github: str, catalog_key: str, targets: list[dict], review: dict, passphrase: str,
           offline: Path, vool_commit: str, now: int, set_secret) -> dict:
     """Make the keys and the repository's files. The online keys go straight into GitHub's secrets."""
+    require(not _WINDOWS, "set up on a Mac or Linux once: setup hands the keys to gh, a program VOOL doesn't run "
+            "on Windows. Runs can then come from Windows")
     repo, offline = Path(repo), Path(offline)
     require(bool(re.fullmatch(r"[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}", github)), "name the repository as OWNER/NAME")
     require((repo / ".git").exists(), "--repo must be a checkout of the new repository")
