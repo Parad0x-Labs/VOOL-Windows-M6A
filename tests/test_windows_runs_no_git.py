@@ -351,7 +351,9 @@ def test_the_spawn_guard_lets_every_other_program_run(guarded) -> None:
 
 
 def test_runtime_processes_arm_the_guard_and_test_runners_do_not(windows, monkeypatch) -> None:
-    monkeypatch.delenv(safe_git.SPAWN_GUARD_ENV, raising=False)
+    # Arming writes os.environ itself: setenv first records the starting state, so teardown restores it.
+    monkeypatch.setenv(safe_git.SPAWN_GUARD_ENV, "0")
+    monkeypatch.delenv(safe_git.SPAWN_GUARD_ENV)
     installs: list = []
     monkeypatch.setattr(safe_git, "install_spawn_guard", lambda: installs.append(True))
 

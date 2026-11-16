@@ -20,6 +20,7 @@ import json
 
 import pytest
 
+from core.generated_files import host_is_windows
 from core.i18n.catalog import catalog_for, clear_catalog_cache
 from core.web.api.service import dispatch_get
 from tests import served_browser
@@ -143,7 +144,9 @@ def _open_chat(browser, platform_name: str, html: str, *, desktop_shell: bool = 
 @pytest.mark.parametrize("platform_name", sorted(PLATFORMS))
 def test_footer_hint_names_the_platform_modifier(browser, platform_name: str, locale: str, shell: str) -> None:
     catalog = catalog_for(locale)
-    apple = platform_name.startswith("macos")
+    # A Windows host serves every viewer its Ctrl page (no Mac shell reaches a Windows VOOL), so there a
+    # Mac identity is expected to read the Windows render; any other host keeps the Mac render.
+    apple = platform_name.startswith("macos") and not host_is_windows()
     desktop_shell = shell == "desktop-shell"
     context, page = _open_chat(browser, platform_name, _served_chat(locale), desktop_shell=desktop_shell)
     try:
@@ -176,7 +179,9 @@ def test_footer_hint_names_the_platform_modifier(browser, platform_name: str, lo
 
 @pytest.mark.parametrize("platform_name", sorted(PLATFORMS))
 def test_the_hinted_combination_opens_the_palette_and_its_rows_agree(browser, platform_name: str) -> None:
-    apple = platform_name.startswith("macos")
+    # A Windows host serves every viewer its Ctrl page (no Mac shell reaches a Windows VOOL), so there a
+    # Mac identity is expected to read the Windows render; any other host keeps the Mac render.
+    apple = platform_name.startswith("macos") and not host_is_windows()
     context, page = _open_chat(browser, platform_name, _served_chat("en"))
     try:
         assert page.locator("#vpOverlay").is_hidden()
