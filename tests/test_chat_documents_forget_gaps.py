@@ -68,9 +68,18 @@ def receipts(monkeypatch):
     return seen
 
 
+@pytest.fixture
+def windows_gate_on(monkeypatch):
+    """Run with the Windows gate on: these tests pin the Windows forget line redaction (Jesse OK 16 Nov 18:25Z)."""
+    from core import windows_write_gate as gate
+
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+
+
 # --- 1. Activity -------------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("handle_kind", ["canonical", "other_handle"])
+@pytest.mark.usefixtures("windows_gate_on")
 def test_a_refused_upload_never_writes_the_forgotten_name_to_activity(tmp_path, handle_kind):
     from core.chat_session_identity import canonical_chat_session_id
     from core.runtime_continuity import list_recent_runtime_session_events
@@ -113,6 +122,7 @@ def test_forget_document_verifies_when_a_name_holds_the_word(tmp_path, receipts)
 
 
 @pytest.mark.parametrize("second", ["document", "doc", "id_piece"])
+@pytest.mark.usefixtures("windows_gate_on")
 def test_a_later_forget_of_the_neutral_names_words_verifies(tmp_path, receipts, second):
     """The realistic case: an earlier forget already renamed a record of the chat."""
     rng = random.Random(9105)
@@ -161,6 +171,7 @@ def _bound_kinds(chat: str, value: str) -> dict[str, dict]:
 
 
 @pytest.mark.parametrize("ledger", ["unreadable", "revoked"])
+@pytest.mark.usefixtures("windows_gate_on")
 def test_every_kind_of_name_is_screened_at_serve_time(tmp_path, monkeypatch, ledger):
     import core.memory.revocation as revocation
 
@@ -205,6 +216,7 @@ def test_an_unrevoked_name_is_served_as_it_is(tmp_path, monkeypatch):
     assert {r["name"] for r in records.values()} <= names, names
 
 
+@pytest.mark.usefixtures("windows_gate_on")
 def test_forget_renames_a_staged_image(tmp_path, receipts):
     rng = random.Random(9104)
     profile = _profile(tmp_path)

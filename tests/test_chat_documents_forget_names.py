@@ -59,6 +59,15 @@ def receipts(monkeypatch):
     return seen
 
 
+@pytest.fixture
+def windows_gate_on(monkeypatch):
+    """Run with the Windows gate on: these tests pin the Windows forget line redaction (Jesse OK 16 Nov 18:25Z)."""
+    from core import windows_write_gate as gate
+
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+
+
+@pytest.mark.usefixtures("windows_gate_on")
 def test_forget_renames_a_document_whose_name_holds_the_value(tmp_path, receipts):
     rng = random.Random(701)
     profile = _profile(tmp_path)
@@ -101,6 +110,7 @@ def test_the_verifier_reads_names(tmp_path):
     assert erasures["stores"]["chat_documents"]["status"] == "verified"
 
 
+@pytest.mark.usefixtures("windows_gate_on")
 def test_the_serve_screen_hides_a_name_carrying_a_revoked_word(tmp_path, monkeypatch):
     import core.memory.revocation as revocation
 
@@ -116,6 +126,7 @@ def test_the_serve_screen_hides_a_name_carrying_a_revoked_word(tmp_path, monkeyp
     assert "Harmless line two." in later[0]["text"]
 
 
+@pytest.mark.usefixtures("windows_gate_on")
 def test_staging_refuses_a_name_carrying_a_forgotten_value(tmp_path, receipts):
     rng = random.Random(704)
     profile = _profile(tmp_path)
@@ -135,6 +146,7 @@ def test_staging_refuses_a_name_carrying_a_forgotten_value(tmp_path, receipts):
     assert ca.stage_document(session_id=other, data=b"Clean text.\n", declared_name=f"code-{value}.txt")["name"] == f"code-{value}.txt"
 
 
+@pytest.mark.usefixtures("windows_gate_on")
 def test_the_withheld_notice_is_not_the_users_words(tmp_path, monkeypatch):
     import core.memory.revocation as revocation
 
