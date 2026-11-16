@@ -4683,19 +4683,25 @@ def _workspace_identity(workspace_root: Path, *, project_name: str = "") -> Runt
     if not exists:
         text = f"The workspace is set to `{root}`, but that folder does not exist right now."
     else:
-        parts = [f"The workspace is set to `{root}`."]
-        # Name the chat's project the way the sidebar does, and call the folder a folder: "the
-        # project `Desktop`" gave a General chat a second name the sidebar never shows.
-        if project_name:
-            parts.append(f"This chat is in the project `{project_name}`.")
-        else:
-            parts.append("This chat is in General, not in a project.")
-        parts.append(
-            f"The folder `{name}`" + (" (a git repository)" if is_git else "")
-            + f" holds {files} file{'s' if files != 1 else ''} and "
+        from core import windows_write_gate
+
+        counts = (
+            f"{files} file{'s' if files != 1 else ''} and "
             f"{directories} folder{'s' if directories != 1 else ''} at the top level."
         )
-        text = " ".join(parts)
+        git_note = " (a git repository)" if is_git else ""
+        if windows_write_gate.active():
+            # Name the chat's project the way the sidebar does, and call the folder a folder: "the
+            # project `Desktop`" gave a General chat a second name the sidebar never shows.
+            project_line = (
+                f"This chat is in the project `{project_name}`."
+                if project_name
+                else "This chat is in General, not in a project."
+            )
+            text = f"The workspace is set to `{root}`. {project_line} The folder `{name}`{git_note} holds {counts}"
+        else:
+            # Off Windows the answer is Mac's, unchanged (Windows-only fixes by default, 16 Nov).
+            text = f"The workspace is set to `{root}`. That is the project `{name}`{git_note}, holding {counts}"
 
     return RuntimeExecutionResult(
         handled=True,
