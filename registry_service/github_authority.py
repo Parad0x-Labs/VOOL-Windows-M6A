@@ -143,6 +143,46 @@ def _public_json(value) -> bytes:
 
 # ---- the repository ----
 
+_WINDOWS = os.name == "nt"
+_WORKSPACE = " must be inside a disposable workspace you marked (VOOL_WINDOWS_DISPOSABLE_WORKSPACES)"
+
+
+def _in_workspace(path, what: str) -> Path:
+    """On Windows the signer writes only inside a folder the owner marked disposable (owner decision D19).
+
+    A share, device or NT spelling is refused as written, before anything resolves it."""
+    if not _WINDOWS:
+        return Path(path)
+    from core import windows_write_gate
+
+    text = os.fspath(path)
+    require(not windows_write_gate.refused_spelling(text, windows=True),
+            what + " is not a folder VOOL writes to on Windows (a share, device or NT path)")
+    require(windows_write_gate.inside_flagged(text), what + _WORKSPACE)
+    return Path(text)
+
+
+def _scratch() -> Path:
+    """This run's scratch: a new private folder. On Windows it sits in the authority's own folder, not %TEMP%."""
+    if not _WINDOWS:
+        return Path(tempfile.mkdtemp(prefix="skill-codex-"))
+    from core import owner_only
+    from registry_service import windows_keeper
+
+    folder = windows_keeper.authority_folder()
+    windows_keeper.require_fixed_folder(folder)
+    require(folder.is_dir(), "the authority folder is missing; run the Windows signing authority's setup first")
+    windows_keeper.require_private(folder)
+    try:
+        holder = owner_only.ensure_private_dir(folder / "scratch")
+        scratch = Path(tempfile.mkdtemp(prefix="skill-codex-", dir=holder))
+        owner_only.ensure_private_dir(scratch)
+    except owner_only.OwnerOnlyUnavailable as exc:
+        raise RegistryError("the run's scratch folder could not be made private (" + exc.reason + ")") from None
+    windows_keeper.require_private(scratch)
+    return scratch
+
+
 class Superseded(RunStopped):
     """Another signer run changed the state first. This run stops before further writes or reviews.
 
@@ -154,7 +194,7 @@ class Repository:
     """The checkout the workflow made. The signer's state goes back to GitHub before anything is sent."""
 
     def __init__(self, path: Path, *, branch: str = "main", token: str = ""):
-        self.path, self.branch = Path(path), branch
+        self.path, self.branch = _in_workspace(path, "the signer's checkout"), branch
         self._token = token  # for the git library where VOOL runs no git program; never written anywhere
         self._library = None
         # The checkout keeps no credentials, so the install step can't push; only this process holds the token,
@@ -385,7 +425,7 @@ class RepoAuthority(Authority):
         self.repo = Path(repo)
         self.repository = repository or Repository(self.repo)
         # This run's scratch, and the review's spend ledger while it runs; the workflow's machine is thrown away.
-        self.dir = Path(tempfile.mkdtemp(prefix="skill-codex-"))
+        self.dir = _scratch()
         self._state_key = _secret(env, SECRETS["state"])
         self._releases = releases
         self._sealed = ""
@@ -742,7 +782,7 @@ def quiet(report: dict) -> dict:
 def setup(repo: Path, *, github: str, catalog_key: str, targets: list[dict], review: dict, passphrase: str,
           offline: Path, vool_commit: str, now: int, set_secret) -> dict:
     """Make the keys and the repository's files. The online keys go straight into GitHub's secrets."""
-    repo, offline = Path(repo), Path(offline)
+    repo, offline = _in_workspace(repo, "--repo"), _in_workspace(offline, "--offline")
     require(bool(re.fullmatch(r"[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}", github)), "name the repository as OWNER/NAME")
     require((repo / ".git").exists(), "--repo must be a checkout of the new repository")
     require(not (repo / FOLDER).exists() and not (repo / ".gitattributes").exists(),
