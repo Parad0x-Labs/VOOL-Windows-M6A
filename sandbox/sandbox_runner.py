@@ -88,6 +88,13 @@ def _network_grant_reason(cmd: str) -> str:
     is the operator's own approval for it -- or the turn is in Bypass. Anything unreadable is "".
     """
     try:
+        if network_guard._IS_WINDOWS:
+            # Local Only allows no public egress but browser search, so on Windows an approved install
+            # never opens the network while it binds the turn. Unreadable counts as on (except below).
+            from core.remote_fetch_policy import local_only_active
+
+            if local_only_active():
+                return ""
         from core.effect_gateway import consume_turn_policy
         from core.mode_permission_policy import OperatingMode, PermissionAction, command_actions
 
