@@ -13,6 +13,7 @@ import contextvars
 import copy
 import ipaddress
 import json
+import os
 import shutil
 import socket
 import tempfile
@@ -32,6 +33,11 @@ from urllib.request import Request
 from core.runtime_paths import active_data_dir
 from core.vool_browser.engine import find_engine_binary, isolation_launch_flags, refuse_real_profile_target
 from core.vool_browser.ops import Untrusted
+
+#: Windows: a proxy connection the engine resets can make the proactor's connection_lost callback
+#: raise (WinError 10054 from its socket shutdown) before it detaches from the server, so
+#: Server.wait_closed() never returns and every later stop times out. There the wait is bounded.
+_BOUND_PROXY_WAIT = os.name == "nt"
 
 MAX_BYTES = 2_000_000
 TIMEOUT = 8
@@ -1099,7 +1105,11 @@ class LiveSession:
             await asyncio.gather(*routes, return_exceptions=True)
         if self._proxy_server:
             self._proxy_server.close()
-            await self._proxy_server.wait_closed()
+            if _BOUND_PROXY_WAIT:
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(self._proxy_server.wait_closed(), timeout=1)
+            else:
+                await self._proxy_server.wait_closed()
         for writer in tuple(self._proxy_clients):
             writer.close()
         self._proxy_clients.clear()
