@@ -8,8 +8,8 @@ These rules hold:
   commits are written straight into the object store, so a pre-commit hook, a ``.gitattributes`` filter
   or an LFS driver in the checkout never runs.
 - The checkout's own config is judged as ``safe_git`` judges it: any key naming a program refuses
-  (``safe_git.is_executable_key``). It is never handed to the transport either, so a proxy, credential
-  helper or URL rewrite in it has no effect.
+  (``safe_git.is_executable_key``), and so does an include, a proxy, an extra header, a credential
+  setting or a URL rewrite. It is never handed to the transport either.
 - The remote is ``https://`` or a full path on a local drive (dulwich's in-process local client). ssh,
   git://, file:// and anything else are refused, so no ssh vendor is ever made.
 - Redirects are off. Any 3xx refuses with "git redirect refused".
@@ -55,6 +55,17 @@ def _safe_part(name: bytes) -> str:
     return text
 
 
+def _followed_key(full: str) -> bool:
+    """Config that would pull in other config, change where requests go, or reach credentials."""
+    lowered = full.lower()
+    section = lowered.partition(".")[0]
+    last = lowered.rsplit(".", 1)[-1]
+    return (section in {"include", "includeif", "credential"} or
+            (section in {"http", "remote"} and last in {"proxy", "extraheader", "proxyauthmethod", "cookiefile"}) or
+            (section == "url" and last in {"insteadof", "pushinsteadof"}) or
+            (section == "remote" and last in {"pushurl", "uploadpack", "receivepack"}))
+
+
 class Checkout:
     """One working checkout of the signer's repository, driven without git."""
 
@@ -81,7 +92,7 @@ class Checkout:
     def _judge_config(self, opened) -> None:
         from core import safe_git
 
-        programs = []
+        programs, followed = [], []
         for name in ("config", "config.worktree"):
             source = Path(opened.controldir()) / name
             if not source.exists():
@@ -95,8 +106,12 @@ class Checkout:
                     full = prefix + "." + key.decode("utf-8", "replace")
                     if safe_git.is_executable_key(full):
                         programs.append(full)
+                    elif _followed_key(full):
+                        followed.append(full)
         if programs:
             raise RegistryError("the checkout's own git config names programs git would run: " + ", ".join(sorted(programs)))
+        if followed:
+            raise RegistryError("the checkout's own git config has settings VOOL won't follow: " + ", ".join(sorted(followed)))
 
     def _remote(self, opened):
         """The origin's client and path: https or a full local drive path, nothing else."""
