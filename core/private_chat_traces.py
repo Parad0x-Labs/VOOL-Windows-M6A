@@ -221,6 +221,8 @@ def erase_chat_traces(session_id: str) -> dict[str, Any]:
     if files:
         removed["receipt_files"] = files
     if left:
+        # A caller never takes the erase for a clean one while files remain.
+        removed["receipt_files_in_use"] = len(left)
         # Nothing is logged: a line would itself say a private chat was erased, and the file names
         # are the chat's digest. The files are removed in the background once their holder lets go.
         _erase_later(left)
