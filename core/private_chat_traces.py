@@ -14,7 +14,9 @@ deleted content: ``PRAGMA secure_delete``), checkpoints the WAL so no frame keep
 the chat's receipt ledger files. :func:`sweep_unsaved_private_chats` does the same for every chat
 still private, for records a turn cut off by a stop (or an older build) left behind; it is not run
 at startup, because it erases records that existed before this build, which waits on the owner's
-word. The private switch itself (``private_chat_sessions``) stays while
+word. On Windows only, startup does remove one thing (:func:`sweep_receipt_files_at_startup`, the
+owner's pick): the receipt ledger files of every chat still private with nothing saved, which a file
+held open when VOOL closed can leave behind. No run record is touched there. The private switch itself (``private_chat_sessions``) stays while
 the chat is private, by design.
 
 Money is never erased. When the chat has a spend record (a money liability or a model spend
@@ -37,7 +39,13 @@ from typing import Any
 
 from storage.db import get_connection
 
-__all__ = ["chat_is_unsaved", "erase_chat_traces", "erase_if_unsaved", "sweep_unsaved_private_chats"]
+__all__ = [
+    "chat_is_unsaved",
+    "erase_chat_traces",
+    "erase_if_unsaved",
+    "sweep_receipt_files_at_startup",
+    "sweep_unsaved_private_chats",
+]
 
 _log = logging.getLogger(__name__)
 
@@ -339,3 +347,40 @@ def sweep_unsaved_private_chats() -> int:
         _log.warning("private chat sweep could not read the switch store", exc_info=True)
         return 0
     return sum(1 for sid in chats if erase_if_unsaved(sid) is not None)
+
+
+def sweep_receipt_files_at_startup() -> int:
+    """Windows only, at startup: remove the receipt ledger files of every chat still private with
+    nothing saved. A file another program held open when VOOL closed outlives the erase of its chat
+    (and the background retry, which ends with the process). Only those files are removed: no run
+    record, no database row. A chat whose state cannot be read, that has a request running, or that is
+    waiting on the person, is left alone. Nothing is logged that names a chat or a file. Returns how many files were removed.
+    Off Windows it does nothing."""
+    if not _windows_host():
+        return 0
+    try:
+        conn = get_connection()
+        try:
+            if "private_chat_sessions" not in _tables(conn):
+                return 0
+            tables = _tables(conn)
+            chats = [str(row[0]) for row in conn.execute("SELECT session_id FROM private_chat_sessions")]
+            # A chat waiting on the person (an approval, a queued message, a turn to resume) keeps
+            # what that wait runs on, as its erase does.
+            chats = [sid for sid in chats if not _waiting(conn, sid, tables)]
+        finally:
+            conn.close()
+    except Exception as exc:
+        _log.warning("private chat receipt sweep could not read the switch store (%s)", type(exc).__name__)
+        return 0
+    removed = 0
+    for sid in chats:
+        if _still_erasable(sid) is not True:
+            continue
+        for path in _ledger_files(sid):
+            try:
+                path.unlink()
+            except OSError:
+                continue
+            removed += 1
+    return removed
