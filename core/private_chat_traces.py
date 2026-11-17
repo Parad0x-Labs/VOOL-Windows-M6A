@@ -225,7 +225,7 @@ def erase_chat_traces(session_id: str) -> dict[str, Any]:
         removed["receipt_files_in_use"] = len(left)
         # Nothing is logged: a line would itself say a private chat was erased, and the file names
         # are the chat's digest. The files are removed in the background once their holder lets go.
-        _erase_later(left)
+        _erase_later(sid, left)
     return {"removed": removed, "kept_for_money": [t for t, _c, _h in _MONEY_LINKED] if money else []}
 
 
@@ -263,8 +263,23 @@ def _unlink_on_windows(path: Path) -> str:
     return "in_use"
 
 
-def _erase_later(paths: list[Path]) -> threading.Thread:
-    """Windows only: keep trying to remove the files left behind, off the request path."""
+def _still_erasable(sid: str) -> bool | None:
+    """For a background pass: True to erase now, None to wait (a request of the chat is running and
+    may be writing its ledgers, .lock included), False to stop for good (the chat was saved or is no
+    longer private: its files, under the same digest names, are its records now). Unknown is False."""
+    try:
+        from core.private_chat import chat_has_request_in_flight, is_private
+
+        if not (is_private(sid) and chat_is_unsaved(sid)):
+            return False
+        return None if chat_has_request_in_flight(sid) else True
+    except Exception:
+        return False
+
+
+def _erase_later(sid: str, paths: list[Path]) -> threading.Thread:
+    """Windows only: keep trying to remove the files left behind, off the request path, while the
+    chat is still private with nothing saved."""
 
     def run() -> None:
         pending = list(paths)
@@ -272,6 +287,11 @@ def _erase_later(paths: list[Path]) -> threading.Thread:
             if not pending:
                 return
             time.sleep(pause)
+            state = _still_erasable(sid)
+            if state is False:
+                return
+            if state is None:
+                continue
             still: list[Path] = []
             for path in pending:
                 try:
