@@ -205,13 +205,55 @@ def erase_chat_traces(session_id: str) -> dict[str, Any]:
     finally:
         conn.close()
     files = 0
+    in_use = 0
+    windows = _windows_host()
     for path in _ledger_files(sid):
+        if windows:
+            outcome = _unlink_on_windows(path)
+            files += outcome == "removed"
+            in_use += outcome == "in_use"
+            continue
         with contextlib.suppress(FileNotFoundError):
             path.unlink()
             files += 1
     if files:
         removed["receipt_files"] = files
+    if in_use:
+        # No path and no chat id in the log: the file names are the chat's digest.
+        _log.info("private chat erase: %d receipt file(s) still in use; they are removed at the next erase", in_use)
     return {"removed": removed, "kept_for_money": [t for t, _c, _h in _MONEY_LINKED] if money else []}
+
+
+def _windows_host() -> bool:
+    with contextlib.suppress(Exception):
+        from core import windows_write_gate
+
+        return windows_write_gate.active()
+    return False
+
+
+#: Windows only: a file another handle has open (a reader, an indexer, antivirus) cannot be deleted
+#: until that handle closes, and the delete fails with a sharing violation instead of waiting.
+_IN_USE_TRIES = 30
+_IN_USE_PAUSE_S = 0.1
+
+
+def _unlink_on_windows(path: Path) -> str:
+    """Remove one receipt file on Windows: "removed", "absent", or "in_use" after the retries.
+
+    One file in use no longer stops the erase of the others."""
+    for attempt in range(_IN_USE_TRIES):
+        try:
+            path.unlink()
+            return "removed"
+        except FileNotFoundError:
+            return "absent"
+        except PermissionError:
+            if attempt + 1 < _IN_USE_TRIES:
+                time.sleep(_IN_USE_PAUSE_S)
+        except OSError:
+            return "in_use"
+    return "in_use"
 
 
 def erase_if_unsaved(session_id: str) -> dict[str, Any] | None:
@@ -221,8 +263,13 @@ def erase_if_unsaved(session_id: str) -> dict[str, Any] | None:
         return None
     try:
         return erase_chat_traces(sid)
-    except Exception:
-        _log.warning("a private chat's run records could not be erased", exc_info=True)
+    except Exception as exc:
+        if _windows_host():
+            # The traceback names the chat's files (their names are the chat's digest): the log
+            # keeps the fault's kind only.
+            _log.warning("a private chat's run records could not be erased (%s)", type(exc).__name__)
+        else:
+            _log.warning("a private chat's run records could not be erased", exc_info=True)
         return None
 
 
