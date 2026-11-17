@@ -21,10 +21,13 @@ from pathlib import Path
 
 import pytest
 
+from core import private_chat
 from core import private_chat_traces as traces
 from core import windows_write_gate as gate
 
 SID = "openclaw:" + "d4" * 10
+#: The chat's state as the background retry sees it, set by the `ledgers` fixture.
+files_chat: dict = {}
 
 
 @pytest.fixture
@@ -38,6 +41,11 @@ def ledgers(tmp_path, monkeypatch):
     monkeypatch.setattr(traces, "get_connection", lambda: sqlite3.connect(":memory:", isolation_level=None))
     monkeypatch.setattr(traces, "_IN_USE_PAUSE_S", 0.0)
     monkeypatch.setattr(traces, "_LATER_PAUSES_S", (0.0,) * 5)
+    chat = {"private": True, "unsaved": True, "running": False}
+    monkeypatch.setattr(private_chat, "is_private", lambda _sid: chat["private"])
+    monkeypatch.setattr(private_chat, "chat_has_request_in_flight", lambda _sid, **_kw: chat["running"])
+    monkeypatch.setattr(traces, "chat_is_unsaved", lambda _sid: chat["unsaved"])
+    files_chat.update(chat=chat)
     return files
 
 
@@ -47,8 +55,8 @@ def later(monkeypatch):
     workers = []
     real = traces._erase_later
 
-    def record(paths):
-        workers.append(real(paths))
+    def record(sid, paths):
+        workers.append(real(sid, paths))
         return workers[-1]
 
     monkeypatch.setattr(traces, "_erase_later", record)
@@ -148,3 +156,49 @@ def test_off_windows_the_erase_is_as_before(ledgers, monkeypatch, caplog):
     with caplog.at_level(logging.WARNING, logger=traces.__name__):
         assert traces.erase_if_unsaved(SID) is None
     assert [record.exc_info is not None for record in caplog.records] == [True]
+
+
+def _gate_pass(monkeypatch, before) -> None:
+    """Run `before` just ahead of each background pass's check, as a person acting mid-window would."""
+    real = traces._still_erasable
+
+    def check(sid):
+        before()
+        return real(sid)
+
+    monkeypatch.setattr(traces, "_still_erasable", check)
+
+
+@pytest.mark.parametrize("change", ["saved", "not_private"])
+def test_on_windows_a_held_file_is_kept_once_the_chat_is_saved_or_leaves_private(ledgers, later, monkeypatch, change):
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    _held(monkeypatch, {ledgers[0].name: traces._IN_USE_TRIES})  # released just as the request gives up
+    chat = files_chat["chat"]
+
+    def act():
+        chat["unsaved" if change == "saved" else "private"] = False
+
+    _gate_pass(monkeypatch, act)
+    traces.erase_chat_traces(SID)
+    later[0].join(10)
+
+    assert ledgers[0].exists(), "a saved chat's receipt file under the same name must stay"
+
+
+def test_on_windows_the_retry_waits_while_a_request_of_the_chat_runs(ledgers, later, monkeypatch):
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    _held(monkeypatch, {ledgers[0].name: traces._IN_USE_TRIES})
+    chat = files_chat["chat"]
+    chat["running"] = True
+    passes = {"n": 0}
+
+    def tick():
+        passes["n"] += 1
+        if passes["n"] == 3:
+            chat["running"] = False
+
+    _gate_pass(monkeypatch, tick)
+    traces.erase_chat_traces(SID)
+    later[0].join(10)
+
+    assert passes["n"] == 3 and not ledgers[0].exists()
