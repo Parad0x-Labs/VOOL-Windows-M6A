@@ -396,8 +396,8 @@ def create_app(runtime: RuntimeServices | None = None):
         import logging
 
         logging.getLogger(__name__).warning("forget admission recovery at boot failed: %s", type(exc).__name__)
-    # Windows only (core/private_chat_traces.py): a private chat's receipt file held open when VOOL
-    # closed is removed now. Off Windows this does nothing. It never raises and logs no chat.
+    # Windows only (core/private_chat_traces.py): a private chat's honesty receipt file held open when
+    # VOOL closed is removed now. Off Windows this does nothing. It never raises and logs no chat.
     from core.private_chat_traces import sweep_receipt_files_at_startup
 
     sweep_receipt_files_at_startup()
