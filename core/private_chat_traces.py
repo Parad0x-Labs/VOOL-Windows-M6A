@@ -15,8 +15,9 @@ the chat's receipt ledger files. :func:`sweep_unsaved_private_chats` does the sa
 still private, for records a turn cut off by a stop (or an older build) left behind; it is not run
 at startup, because it erases records that existed before this build, which waits on the owner's
 word. On Windows only, startup does remove one thing (:func:`sweep_receipt_files_at_startup`, the
-owner's pick): the honesty receipt files (ledger, lock, temporary files) of every chat still private
-with nothing saved, which a file held open when VOOL closed can leave behind. Nothing else is swept. The private switch itself (``private_chat_sessions``) stays while
+owner's picks): the receipt ledger files (the honesty receipt ledger, its lock and temporary files,
+and the chat's own receipts_v2 ledgers) of every chat still private with nothing saved, which a file
+held open when VOOL closed can leave behind. No run record or database row is touched. The private switch itself (``private_chat_sessions``) stays while
 the chat is private, by design.
 
 Money is never erased. When the chat has a spend record (a money liability or a model spend
@@ -355,10 +356,11 @@ def sweep_unsaved_private_chats() -> int:
 
 
 def sweep_receipt_files_at_startup() -> int:
-    """Windows only, at startup: remove the honesty receipt files (.jsonl, .lock, .tmp) of every chat
-    still private with nothing saved. A file another program held open when VOOL closed outlives the erase of its chat
-    (and the background retry, which ends with the process). Only those files are removed: no other
-    receipt ledger, no run record, no database row. A chat whose state cannot be read, that has a request running, or that is
+    """Windows only, at startup: remove the receipt ledger files of every chat still private with
+    nothing saved: the honesty receipt files (.jsonl, .lock, .tmp) and the chat's own receipts_v2
+    ledgers (.jsonl, .head.json, .tmp), the same files its erase removes. A file another program held open when VOOL closed outlives the erase of its chat
+    (and the background retry, which ends with the process). Only those files are removed: no run
+    record, no database row. A chat whose state cannot be read, that has a request running, or that is
     waiting on the person, is left alone. Nothing is logged that names a chat or a file. Returns how many files were removed.
     Off Windows it does nothing."""
     if not _windows_host():
@@ -383,7 +385,7 @@ def sweep_receipt_files_at_startup() -> int:
         try:
             if _still_erasable(sid) is not True:
                 continue
-            for path in _honesty_ledger_files(sid):
+            for path in _ledger_files(sid):
                 try:
                     path.unlink()
                 except OSError:
