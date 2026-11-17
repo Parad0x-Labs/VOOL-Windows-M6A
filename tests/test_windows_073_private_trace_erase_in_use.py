@@ -9,8 +9,9 @@ a sharing violation. Only FileNotFoundError was expected, so the PermissionError
 later files still there, and ``erase_if_unsaved`` logged the traceback, whose paths are named with the
 chat's digest, into ``vool_api.log``.
 
-On Windows the erase now retries a file in use, goes on to the rest when one stays in use, and logs
-neither a path nor the chat. Off Windows nothing changes.
+On Windows the erase now retries a file in use, goes on to the rest when one stays in use, keeps trying
+the one left in the background until its holder lets go, and logs neither a path nor the chat. Off
+Windows nothing changes.
 """
 from __future__ import annotations
 
@@ -36,7 +37,22 @@ def ledgers(tmp_path, monkeypatch):
     monkeypatch.setattr(traces, "_ledger_files", lambda _sid: list(files))
     monkeypatch.setattr(traces, "get_connection", lambda: sqlite3.connect(":memory:", isolation_level=None))
     monkeypatch.setattr(traces, "_IN_USE_PAUSE_S", 0.0)
+    monkeypatch.setattr(traces, "_LATER_PAUSES_S", (0.0,) * 5)
     return files
+
+
+@pytest.fixture
+def later(monkeypatch):
+    """The background retries the erase starts, so a test can wait for them."""
+    workers = []
+    real = traces._erase_later
+
+    def record(paths):
+        workers.append(real(paths))
+        return workers[-1]
+
+    monkeypatch.setattr(traces, "_erase_later", record)
+    return workers
 
 
 def _held(monkeypatch, busy: dict[str, int]) -> None:
@@ -63,18 +79,41 @@ def test_on_windows_a_file_briefly_in_use_is_still_removed(ledgers, monkeypatch)
     assert result["removed"]["receipt_files"] == 3
 
 
-def test_on_windows_one_file_held_open_does_not_keep_the_others_and_logs_no_name(ledgers, monkeypatch, caplog):
+def test_on_windows_a_file_held_open_does_not_keep_the_others_and_goes_once_released(ledgers, later, monkeypatch,
+                                                                                     caplog):
     monkeypatch.setattr(gate, "_IS_WINDOWS", True)
-    _held(monkeypatch, {ledgers[0].name: 10_000})
+    # Held through the request's retries and the first background passes, then released.
+    _held(monkeypatch, {ledgers[0].name: traces._IN_USE_TRIES + 3})
 
-    with caplog.at_level(logging.INFO, logger=traces.__name__):
+    with caplog.at_level(logging.DEBUG, logger=traces.__name__):
         result = traces.erase_chat_traces(SID)
+        assert result["removed"]["receipt_files"] == 2
+        assert [path.exists() for path in ledgers][1:] == [False, False]
+        assert len(later) == 1
+        later[0].join(10)
 
-    assert [path.exists() for path in ledgers] == [True, False, False]
+    assert [path.exists() for path in ledgers] == [False, False, False]
+    assert caplog.records == []
+
+
+def test_on_windows_a_file_that_fails_otherwise_is_also_tried_again(ledgers, later, monkeypatch):
+    monkeypatch.setattr(gate, "_IS_WINDOWS", True)
+    real = Path.unlink
+    fails = {"left": 2}
+
+    def unlink(self, *args, **kwargs):
+        if self.name == ledgers[1].name and fails["left"]:
+            fails["left"] -= 1
+            raise OSError(5, "Access is denied")
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    assert traces._unlink_on_windows(ledgers[1]) == "failed"
+
+    result = traces.erase_chat_traces(SID)
     assert result["removed"]["receipt_files"] == 2
-    logged = "\n".join(record.getMessage() for record in caplog.records)
-    assert "still in use" in logged
-    assert "c495697830c206b3" not in logged and SID not in logged and "d4d4" not in logged
+    later[0].join(10)
+    assert [path.exists() for path in ledgers] == [False, False, False]
 
 
 def test_on_windows_a_failed_erase_logs_no_traceback(monkeypatch, caplog):
