@@ -30,6 +30,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -205,13 +206,105 @@ def erase_chat_traces(session_id: str) -> dict[str, Any]:
     finally:
         conn.close()
     files = 0
+    left: list[Path] = []
+    windows = _windows_host()
     for path in _ledger_files(sid):
+        if windows:
+            outcome = _unlink_on_windows(path)
+            files += outcome == "removed"
+            if outcome in ("in_use", "failed"):
+                left.append(path)
+            continue
         with contextlib.suppress(FileNotFoundError):
             path.unlink()
             files += 1
     if files:
         removed["receipt_files"] = files
+    if left:
+        # A caller never takes the erase for a clean one while files remain.
+        removed["receipt_files_in_use"] = len(left)
+        # Nothing is logged: a line would itself say a private chat was erased, and the file names
+        # are the chat's digest. The files are removed in the background once their holder lets go.
+        _erase_later(sid, left)
     return {"removed": removed, "kept_for_money": [t for t, _c, _h in _MONEY_LINKED] if money else []}
+
+
+def _windows_host() -> bool:
+    with contextlib.suppress(Exception):
+        from core import windows_write_gate
+
+        return windows_write_gate.active()
+    return False
+
+
+#: Windows only: a file another handle has open (a reader, an indexer, antivirus) cannot be deleted
+#: until that handle closes, and the delete fails with a sharing violation instead of waiting.
+_IN_USE_TRIES = 30
+_IN_USE_PAUSE_S = 0.1
+#: Windows only: when a file is still held after the retries, it is tried again in the background at
+#: these pauses (about eight minutes in all); the chat's next private turn erases it again as well.
+_LATER_PAUSES_S = (0.5, 1.0, 2.0, 4.0, 8.0, 15.0, 30.0, 60.0, 120.0, 240.0)
+
+
+def _unlink_on_windows(path: Path) -> str:
+    """Remove one receipt file on Windows: "removed", "absent", "in_use" (still held after the
+    retries) or "failed" (another error). One file left no longer stops the erase of the others."""
+    for attempt in range(_IN_USE_TRIES):
+        try:
+            path.unlink()
+            return "removed"
+        except FileNotFoundError:
+            return "absent"
+        except PermissionError:
+            if attempt + 1 < _IN_USE_TRIES:
+                time.sleep(_IN_USE_PAUSE_S)
+        except OSError:
+            return "failed"
+    return "in_use"
+
+
+def _still_erasable(sid: str) -> bool | None:
+    """For a background pass: True to erase now, None to wait (a request of the chat is running and
+    may be writing its ledgers, .lock included), False to stop for good (the chat was saved or is no
+    longer private: its files, under the same digest names, are its records now). Unknown is False."""
+    try:
+        from core.private_chat import chat_has_request_in_flight, is_private
+
+        if not (is_private(sid) and chat_is_unsaved(sid)):
+            return False
+        return None if chat_has_request_in_flight(sid) else True
+    except Exception:
+        return False
+
+
+def _erase_later(sid: str, paths: list[Path]) -> threading.Thread:
+    """Windows only: keep trying to remove the files left behind, off the request path, while the
+    chat is still private with nothing saved."""
+
+    def run() -> None:
+        pending = list(paths)
+        for pause in _LATER_PAUSES_S:
+            if not pending:
+                return
+            time.sleep(pause)
+            state = _still_erasable(sid)
+            if state is False:
+                return
+            if state is None:
+                continue
+            still: list[Path] = []
+            for path in pending:
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    continue
+                except OSError:
+                    still.append(path)
+            pending = still
+
+    worker = threading.Thread(target=run, name="private-chat-erase", daemon=True)
+    worker.start()
+    return worker
 
 
 def erase_if_unsaved(session_id: str) -> dict[str, Any] | None:
@@ -221,8 +314,13 @@ def erase_if_unsaved(session_id: str) -> dict[str, Any] | None:
         return None
     try:
         return erase_chat_traces(sid)
-    except Exception:
-        _log.warning("a private chat's run records could not be erased", exc_info=True)
+    except Exception as exc:
+        if _windows_host():
+            # The traceback names the chat's files (their names are the chat's digest): the log
+            # keeps the fault's kind only.
+            _log.warning("a private chat's run records could not be erased (%s)", type(exc).__name__)
+        else:
+            _log.warning("a private chat's run records could not be erased", exc_info=True)
         return None
 
 
