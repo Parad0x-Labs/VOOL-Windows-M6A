@@ -77,6 +77,7 @@ def test_on_windows_a_file_briefly_in_use_is_still_removed(ledgers, monkeypatch)
 
     assert [path.exists() for path in ledgers] == [False, False, False]
     assert result["removed"]["receipt_files"] == 3
+    assert "receipt_files_in_use" not in result["removed"]
 
 
 def test_on_windows_a_file_held_open_does_not_keep_the_others_and_goes_once_released(ledgers, later, monkeypatch,
@@ -88,6 +89,7 @@ def test_on_windows_a_file_held_open_does_not_keep_the_others_and_goes_once_rele
     with caplog.at_level(logging.DEBUG, logger=traces.__name__):
         result = traces.erase_chat_traces(SID)
         assert result["removed"]["receipt_files"] == 2
+        assert result["removed"]["receipt_files_in_use"] == 1
         assert [path.exists() for path in ledgers][1:] == [False, False]
         assert len(later) == 1
         later[0].join(10)
