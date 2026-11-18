@@ -253,7 +253,7 @@ def _windows_host() -> bool:
 
 #: Windows only: a file another handle has open (a reader, an indexer, antivirus) cannot be deleted
 #: until that handle closes, and the delete fails with a sharing violation instead of waiting.
-_IN_USE_TRIES = 30
+_IN_USE_TRIES = 5
 _IN_USE_PAUSE_S = 0.1
 #: Windows only: when a file is still held after the retries, it is tried again in the background at
 #: these pauses (about eight minutes in all); the chat's next private turn erases it again as well.
@@ -307,7 +307,16 @@ def _erase_later(sid: str, paths: list[Path]) -> threading.Thread:
             if state is None:
                 continue
             still: list[Path] = []
-            for path in pending:
+            for index, path in enumerate(pending):
+                # Checked again before each delete: a save landing mid-pass keeps the rest, and a
+                # request starting mid-pass puts the rest off to the next pass.
+                if index:
+                    state = _still_erasable(sid)
+                    if state is False:
+                        return
+                    if state is None:
+                        still.extend(pending[index:])
+                        break
                 try:
                     path.unlink()
                 except FileNotFoundError:
