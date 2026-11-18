@@ -33,6 +33,10 @@ STEP_MARKER = "You are executing one step of an explicit goal"
 
 @pytest.fixture(autouse=True)
 def _isolated_home(tmp_path, monkeypatch):
+    # The server binds core.web.api.runtime.run_agent when it is first imported. Import it here,
+    # before a test patches run_agent, so a patched agent never stays bound for later served tests.
+    import apps.vool_api_server
+
     monkeypatch.setenv("VOOL_HOME", str(tmp_path))
     runtime_paths.configure_runtime_home(tmp_path)
     from storage.db import configure_default_db_path, reset_default_connection
