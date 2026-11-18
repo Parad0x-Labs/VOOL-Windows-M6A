@@ -463,9 +463,20 @@ def test_a_pet_parked_on_send_or_approve_never_takes_their_click(tmp_path):
                         provider.reset()
                         page.locator("#input").fill("Write one friendly sentence about a harbor lantern.")
                         page.locator("#send").click(timeout=5000)
-                        page.wait_for_function(
-                            "text => [...document.querySelectorAll('.msg.assistant .msg-text')].at(-1).textContent.includes(text)",
-                            arg=PROVIDER_REPLY_MARK, timeout=15000)
+                        try:
+                            page.wait_for_function(
+                                "text => [...document.querySelectorAll('.msg.assistant .msg-text')].at(-1).textContent.includes(text)",
+                                arg=PROVIDER_REPLY_MARK, timeout=15000)
+                        except Exception as error:
+                            # Same wait, same error: the note only names the iteration and what the
+                            # turn had reached, which -q --tb=short otherwise leaves out.
+                            last = page.evaluate(
+                                "() => { const m = [...document.querySelectorAll('.msg.assistant .msg-text')].at(-1);"
+                                " return m ? m.textContent : null; }")
+                            error.add_note(f"width={width} motion={motion} provider_calls={len(provider.calls)} "
+                                           f"answer_attempts={sum(map(is_answer_attempt, provider.calls))} "
+                                           f"last_assistant_text={last!r}")
+                            raise
                         answers = [call for call in provider.calls if is_answer_attempt(call)]
                         assert len(answers) == 1, (width, motion, len(answers))
                         assert not any(map(is_search_expansion, provider.calls)), (width, motion)
