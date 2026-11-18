@@ -3,9 +3,10 @@
 0.7.3 carry 6 (tests/test_windows_073_item6_usdt_chat_routing.py) taught the Windows wallet.propose
 rule that a question about a payee named with no "to" ("did you send Bob 1 SOL?") asks about a
 payment, not for one. The older "to" arm still read "did you send 1 SOL to Bob?" as a send and
-offered wallet.propose. On Windows that arm now reads no text that opens with a question word (did,
-have, has, was, were, how, why, when), as the payee arm does. A request is still a request, also
-one put as a question ("can you send 1 SOL to Bob?"). Off Windows the rule is the one Mac ships.
+offered wallet.propose. On Windows that arm now reads no question about a past or possible payment.
+Every request still reaches the approval card: one put as a question ("can you send 1 SOL to Bob?"),
+one opening with a clause ("When you can, send 1 SOL to Bob"), any imperative. Off Windows the rule is
+the one Mac ships.
 """
 from __future__ import annotations
 
@@ -16,6 +17,9 @@ from core.tool_demand_signals import resolve_demand_signals
 
 QUESTIONS = [
     "did you send 1 SOL to Bob?",
+    "Did you send 1 SOL to Bob?",
+    "have you sent 1 SOL to Bob yet?",
+    "can you tell me if I sent 1 SOL to Bob",
     "did you send 1 SOL to Bob",
     "have I paid 2 USDC to Testy already",
     "has Tomas sent 5 USDC to Testy",
@@ -27,6 +31,11 @@ QUESTIONS = [
 ]
 REQUESTS = [
     "send 1 SOL to Bob",
+    "When you can, send 1 SOL to Bob",
+    "when you get a moment please send 1 SOL to Bob",
+    "Have a look at the balance and send 1 SOL to Bob",
+    "how about you send 1 SOL to Bob",
+    "was going to ask: please send 1 SOL to Bob",
     "please send 1 SOL to Bob",
     "can you send 1 SOL to Bob?",
     "pay 0.5 USDT to Testy",
