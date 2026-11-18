@@ -35,6 +35,7 @@ REQUESTS = [
     "when you get a moment please send 1 SOL to Bob",
     "Have a look at the balance and send 1 SOL to Bob",
     "how about you send 1 SOL to Bob",
+    "Have you got time to send 1 SOL to Bob?",
     "was going to ask: please send 1 SOL to Bob",
     "please send 1 SOL to Bob",
     "can you send 1 SOL to Bob?",
